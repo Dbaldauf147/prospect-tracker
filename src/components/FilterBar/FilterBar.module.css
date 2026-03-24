@@ -1,0 +1,184 @@
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.25rem;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+  flex-wrap: wrap;
+}
+
+.searchWrap {
+  position: relative;
+  flex: 1;
+  min-width: 200px;
+  max-width: 320px;
+}
+
+.searchIcon {
+  position: absolute;
+  left: 0.6rem;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  pointer-events: none;
+}
+
+.searchInput {
+  width: 100%;
+  padding: 0.45rem 0.6rem 0.45rem 2rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  background: var(--color-bg);
+  transition: border-color 0.15s;
+}
+
+.searchInput:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.filterGroup {
+  position: relative;
+}
+
+.filterBtn {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  transition: border-color 0.15s;
+}
+
+.filterBtn:hover {
+  border-color: var(--color-accent);
+}
+
+.filterBtnActive {
+  composes: filterBtn;
+  border-color: var(--color-accent);
+  background: var(--color-accent-light);
+  color: var(--color-accent);
+}
+
+.filterCount {
+  background: var(--color-accent);
+  color: #fff;
+  font-size: 0.6rem;
+  padding: 1px 5px;
+  border-radius: 999px;
+  margin-left: 2px;
+}
+
+.dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 0.4rem;
+  min-width: 180px;
+  z-index: 50;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.dropdownItem {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  color: var(--color-text);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.dropdownItem:hover {
+  background: var(--color-surface-alt);
+}
+
+.dropdownCheck {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--color-accent);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-left: auto;
+}
+
+.clearBtn {
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  padding: 0.3rem 0.5rem;
+}
+
+.clearBtn:hover {
+  color: var(--color-danger);
+}
+
+.addBtn {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.45rem 0.75rem;
+  background: var(--color-accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  transition: background 0.15s;
+}
+
+.addBtn:hover {
+  background: var(--color-accent-hover);
+}
+
+.viewToggle {
+  display: flex;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.viewBtn {
+  padding: 0.4rem 0.6rem;
+  border: none;
+  background: var(--color-surface);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  transition: background 0.15s, color 0.15s;
+}
+
+.viewBtn:hover { background: var(--color-surface-alt); }
+
+.viewBtnActive {
+  composes: viewBtn;
+  background: var(--color-accent);
+  color: #fff;
+}
+
+.resultCount {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}

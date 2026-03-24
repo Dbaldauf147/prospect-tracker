@@ -1,0 +1,100 @@
+.board {
+  display: flex;
+  gap: 0.75rem;
+  padding: 1rem;
+  overflow-x: auto;
+  flex: 1;
+  align-items: flex-start;
+}
+
+.column {
+  min-width: 260px;
+  max-width: 300px;
+  flex-shrink: 0;
+  background: var(--color-surface-alt);
+  border-radius: var(--radius-lg);
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 140px);
+}
+
+.columnHeader {
+  padding: 0.6rem 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-bottom: 2px solid transparent;
+}
+
+.columnDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.columnTitle {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.columnCount {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  margin-left: auto;
+}
+
+.columnBody {
+  padding: 0.4rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  flex: 1;
+}
+
+.columnDragOver {
+  background: var(--color-accent-light);
+}
+
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  padding: 0.6rem 0.7rem;
+  cursor: grab;
+  transition: box-shadow 0.15s, transform 0.1s;
+}
+
+.card:hover {
+  box-shadow: var(--shadow-md);
+}
+
+.card:active {
+  cursor: grabbing;
+  transform: scale(0.98);
+}
+
+.cardCompany {
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  margin-bottom: 0.25rem;
+  cursor: pointer;
+}
+
+.cardCompany:hover {
+  color: var(--color-accent);
+}
+
+.cardMeta {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.cardMetaText {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
