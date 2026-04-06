@@ -546,19 +546,27 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       if (!sheet?.records) continue;
       if (sheet.headers) console.log(`Target Accounts sheet "${sheetName}" columns:`, sheet.headers.filter(Boolean));
 
+      const skippedAccounts = [];
       for (const r of sheet.records) {
+        const companyForLog = findCol(r, ['Account', 'Company', 'Account Name', 'Client', 'Name']);
         let cdm = findCol(r, ['CDM', 'Salesperson', 'Sales Rep', 'Account Owner', 'Owner', 'Rep', 'Assigned', 'Team Member', 'Sales']).toLowerCase();
         if (!cdm) {
           cdm = Object.values(r).find(v => String(v || '').toLowerCase().includes('baldauf')) || '';
           cdm = String(cdm).toLowerCase();
         }
-        if (!cdm.includes('baldauf') && !cdm.includes('dan b')) continue;
+        if (!cdm.includes('baldauf') && !cdm.includes('dan b')) {
+          if (companyForLog) skippedAccounts.push({ company: companyForLog, reason: `CDM="${cdm}" (not Baldauf)` });
+          continue;
+        }
         let tier = findCol(r, ['Tier', 'Account Tier', 'Tier Level', 'Target']);
         if (!tier) {
           tier = Object.values(r).find(v => /Tier\s*[12]/i.test(String(v || ''))) || '';
           tier = String(tier);
         }
-        if (!tier.match(/(Tier\s*)?[12]/i)) continue;
+        if (!tier.match(/(Tier\s*)?[12]/i)) {
+          if (companyForLog) skippedAccounts.push({ company: companyForLog, reason: `Tier="${tier}" (not Tier 1/2)` });
+          continue;
+        }
         const company = findCol(r, ['Account', 'Company', 'Account Name', 'Client', 'Name']);
         if (!company) continue;
         const normalizedTier = tier.match(/1/) ? 'Tier 1' : 'Tier 2';
@@ -566,6 +574,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       }
     }
     console.log(`Target Accounts: found ${accounts.length} Dan Baldauf Tier 1/2 accounts`);
+    if (skippedAccounts.length > 0) console.log('Target Accounts SKIPPED:', skippedAccounts);
     return accounts;
   }, [targetAccountsData]);
 
