@@ -356,28 +356,30 @@ export function VibeProspecting({ prospects = [] }) {
                 </select>
               </div>
 
-              <div className={styles.formGroup}>
-                <label className={styles.label}>Titles to Include</label>
-                <textarea
-                  className={styles.input}
-                  placeholder={'One per line, e.g.:\nVP Sustainability\nDirector ESG\nHead of Energy'}
-                  value={filters.titleKeywords}
-                  onChange={e => updateFilter('titleKeywords', e.target.value)}
-                  rows={4}
-                  style={{ resize: 'vertical', minHeight: '60px', lineHeight: '1.5' }}
-                />
-              </div>
+              <div style={{ gridColumn: '2 / 4', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                <div className={styles.formGroup}>
+                  <label className={styles.label}>Titles to Include</label>
+                  <textarea
+                    className={styles.input}
+                    placeholder={'One per line, e.g.:\nVP Sustainability\nDirector ESG\nHead of Energy'}
+                    value={filters.titleKeywords}
+                    onChange={e => updateFilter('titleKeywords', e.target.value)}
+                    rows={4}
+                    style={{ resize: 'vertical', minHeight: '60px', lineHeight: '1.5' }}
+                  />
+                </div>
 
-              <div className={styles.formGroup}>
-                <label className={styles.label}>Titles to Exclude</label>
-                <textarea
-                  className={styles.input}
-                  placeholder={'One per line, e.g.:\nIntern\nAssistant\nJunior'}
-                  value={filters.titleExclude}
-                  onChange={e => updateFilter('titleExclude', e.target.value)}
-                  rows={4}
-                  style={{ resize: 'vertical', minHeight: '60px', lineHeight: '1.5' }}
-                />
+                <div className={styles.formGroup}>
+                  <label className={styles.label}>Titles to Exclude</label>
+                  <textarea
+                    className={styles.input}
+                    placeholder={'One per line, e.g.:\nIntern\nAssistant\nJunior'}
+                    value={filters.titleExclude}
+                    onChange={e => updateFilter('titleExclude', e.target.value)}
+                    rows={4}
+                    style={{ resize: 'vertical', minHeight: '60px', lineHeight: '1.5' }}
+                  />
+                </div>
               </div>
 
               <div className={styles.formGroupFull}>
