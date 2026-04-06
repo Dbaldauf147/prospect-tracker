@@ -80,6 +80,14 @@ const ACCOUNT_LIST_OPTIONS = [
   { value: 'pipeline', label: 'In Pipeline' },
 ];
 
+const TITLE_PRESETS_KEY = 'vibe-title-presets';
+function loadTitlePresets() {
+  try { return JSON.parse(localStorage.getItem(TITLE_PRESETS_KEY)) || []; } catch { return []; }
+}
+function saveTitlePresets(presets) {
+  localStorage.setItem(TITLE_PRESETS_KEY, JSON.stringify(presets));
+}
+
 export function VibeProspecting({ prospects = [] }) {
   const [filters, setFilters] = useState(getInitialFilters);
   const [results, setResults] = useState([]);
@@ -91,6 +99,8 @@ export function VibeProspecting({ prospects = [] }) {
   const [history, setHistory] = useState(loadHistory);
   const [formOpen, setFormOpen] = useState(true);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [titlePresets, setTitlePresets] = useState(loadTitlePresets);
+  const [presetName, setPresetName] = useState('');
 
   const updateFilter = useCallback((key, value) => {
     setFilters(prev => ({ ...prev, [key]: value }));
@@ -356,29 +366,98 @@ export function VibeProspecting({ prospects = [] }) {
                 </select>
               </div>
 
-              <div style={{ gridColumn: '2 / 4', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                <div className={styles.formGroup}>
-                  <label className={styles.label}>Titles to Include</label>
-                  <textarea
-                    className={styles.input}
-                    placeholder={'One per line, e.g.:\nVP Sustainability\nDirector ESG\nHead of Energy'}
-                    value={filters.titleKeywords}
-                    onChange={e => updateFilter('titleKeywords', e.target.value)}
-                    rows={4}
-                    style={{ resize: 'vertical', minHeight: '60px', lineHeight: '1.5' }}
-                  />
+              <div style={{ gridColumn: '2 / 4' }}>
+                {/* Saved presets row */}
+                <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', alignItems: 'center', marginBottom: '0.5rem' }}>
+                  <span style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Saved Presets:</span>
+                  {titlePresets.map((p, i) => (
+                    <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem' }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          updateFilter('titleKeywords', p.include || '');
+                          updateFilter('titleExclude', p.exclude || '');
+                        }}
+                        style={{
+                          padding: '0.2rem 0.5rem', borderRadius: '999px', fontSize: '0.7rem', fontWeight: 500,
+                          cursor: 'pointer', fontFamily: 'inherit', border: '1px solid var(--color-border)',
+                          background: 'var(--color-surface)', color: 'var(--color-text-secondary)',
+                        }}
+                      >{p.name}</button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = titlePresets.filter((_, j) => j !== i);
+                          setTitlePresets(next);
+                          saveTitlePresets(next);
+                        }}
+                        style={{ background: 'none', border: 'none', color: '#CBD5E1', fontSize: '0.7rem', cursor: 'pointer', padding: '0 2px', lineHeight: 1 }}
+                        title="Delete preset"
+                      >&times;</button>
+                    </span>
+                  ))}
+                  {titlePresets.length === 0 && <span style={{ fontSize: '0.7rem', color: '#9CA3AF', fontStyle: 'italic' }}>None saved</span>}
                 </div>
-
-                <div className={styles.formGroup}>
-                  <label className={styles.label}>Titles to Exclude</label>
-                  <textarea
-                    className={styles.input}
-                    placeholder={'One per line, e.g.:\nIntern\nAssistant\nJunior'}
-                    value={filters.titleExclude}
-                    onChange={e => updateFilter('titleExclude', e.target.value)}
-                    rows={4}
-                    style={{ resize: 'vertical', minHeight: '60px', lineHeight: '1.5' }}
+                {/* Save current as preset */}
+                <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginBottom: '0.6rem' }}>
+                  <input
+                    type="text"
+                    placeholder="Preset name..."
+                    value={presetName}
+                    onChange={e => setPresetName(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && presetName.trim() && (filters.titleKeywords || filters.titleExclude)) {
+                        e.preventDefault();
+                        const next = [...titlePresets, { name: presetName.trim(), include: filters.titleKeywords, exclude: filters.titleExclude }];
+                        setTitlePresets(next);
+                        saveTitlePresets(next);
+                        setPresetName('');
+                      }
+                    }}
+                    style={{ padding: '0.25rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '0.72rem', fontFamily: 'inherit', width: '160px' }}
                   />
+                  <button
+                    type="button"
+                    disabled={!presetName.trim() || (!filters.titleKeywords && !filters.titleExclude)}
+                    onClick={() => {
+                      const next = [...titlePresets, { name: presetName.trim(), include: filters.titleKeywords, exclude: filters.titleExclude }];
+                      setTitlePresets(next);
+                      saveTitlePresets(next);
+                      setPresetName('');
+                    }}
+                    style={{
+                      padding: '0.25rem 0.6rem', borderRadius: '6px', fontSize: '0.72rem', fontWeight: 600,
+                      cursor: 'pointer', fontFamily: 'inherit', border: 'none',
+                      background: (!presetName.trim() || (!filters.titleKeywords && !filters.titleExclude)) ? '#E2E8F0' : 'var(--color-accent)',
+                      color: (!presetName.trim() || (!filters.titleKeywords && !filters.titleExclude)) ? '#94A3B8' : '#fff',
+                    }}
+                  >Save Preset</button>
+                </div>
+                {/* Title textareas */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                  <div className={styles.formGroup}>
+                    <label className={styles.label}>Titles to Include</label>
+                    <textarea
+                      className={styles.input}
+                      placeholder={'One per line, e.g.:\nVP Sustainability\nDirector ESG\nHead of Energy'}
+                      value={filters.titleKeywords}
+                      onChange={e => updateFilter('titleKeywords', e.target.value)}
+                      rows={4}
+                      style={{ resize: 'vertical', minHeight: '60px', lineHeight: '1.5' }}
+                    />
+                  </div>
+
+                  <div className={styles.formGroup}>
+                    <label className={styles.label}>Titles to Exclude</label>
+                    <textarea
+                      className={styles.input}
+                      placeholder={'One per line, e.g.:\nIntern\nAssistant\nJunior'}
+                      value={filters.titleExclude}
+                      onChange={e => updateFilter('titleExclude', e.target.value)}
+                      rows={4}
+                      style={{ resize: 'vertical', minHeight: '60px', lineHeight: '1.5' }}
+                    />
+                  </div>
                 </div>
               </div>
 
