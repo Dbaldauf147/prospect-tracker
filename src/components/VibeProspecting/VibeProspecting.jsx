@@ -382,26 +382,6 @@ export function VibeProspecting({ prospects = [] }) {
                 </div>
               </div>
 
-              <div className={styles.formGroupFull}>
-                <label className={styles.label}>Job Department</label>
-                {renderCheckboxGroup(DEPARTMENT_OPTIONS, 'departments')}
-              </div>
-
-              <div className={styles.formGroupFull}>
-                <label className={styles.label}>Job Level</label>
-                {renderCheckboxGroup(LEVEL_OPTIONS, 'levels')}
-              </div>
-
-              <div className={styles.formGroupFull}>
-                <label className={styles.label}>Company Size (Employees)</label>
-                {renderCheckboxGroup(SIZE_OPTIONS, 'companySizes')}
-              </div>
-
-              <div className={styles.formGroupFull}>
-                <label className={styles.label}>Company Revenue</label>
-                {renderCheckboxGroup(REVENUE_OPTIONS, 'companyRevenues')}
-              </div>
-
               <div className={styles.formGroup}>
                 <label className={styles.label}>Country</label>
                 <input
