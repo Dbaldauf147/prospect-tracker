@@ -1,5 +1,8 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import * as XLSX from 'xlsx';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { db } from '../../firebase';
+import { useAuth } from '../../contexts/AuthContext';
 import { DataTable } from '../common/DataTable';
 import styles from './TargetAccountsView.module.css';
 
@@ -79,7 +82,48 @@ async function saveCache(data) {
   }
 }
 
-export { loadCache as loadTargetAccountsFromDB };
+// Firestore persistence for target accounts
+async function loadFromFirestore(userId) {
+  try {
+    const ref = doc(db, 'targetAccounts', userId);
+    const snap = await getDoc(ref);
+    if (snap.exists()) {
+      const raw = snap.data();
+      // Data is stored as JSON string to handle large payloads
+      if (raw.json) return JSON.parse(raw.json);
+      return raw;
+    }
+  } catch (err) {
+    console.error('Failed to load target accounts from Firestore:', err);
+  }
+  return null;
+}
+
+async function saveToFirestore(userId, data) {
+  try {
+    const ref = doc(db, 'targetAccounts', userId);
+    // Store as JSON string to avoid Firestore nested field limits
+    await setDoc(ref, { json: JSON.stringify(data), updatedAt: new Date().toISOString() });
+    console.log('Target accounts saved to Firestore');
+  } catch (err) {
+    console.error('Failed to save target accounts to Firestore:', err);
+    alert('Failed to save Target Accounts to cloud: ' + err.message);
+  }
+}
+
+// Load target accounts: try Firestore first, fall back to IndexedDB
+export async function loadTargetAccountsFromDB(userId) {
+  if (userId) {
+    const firestoreData = await loadFromFirestore(userId);
+    if (firestoreData) {
+      // Also cache in IndexedDB for faster loads
+      saveCache(firestoreData);
+      return firestoreData;
+    }
+  }
+  // Fall back to IndexedDB
+  return loadCache();
+}
 
 function InlineEditCell({ value, rowIndex, colKey, onSave }) {
   const [editing, setEditing] = useState(false);
@@ -105,6 +149,7 @@ function InlineEditCell({ value, rowIndex, colKey, onSave }) {
 }
 
 export function TargetAccountsView({ onDataLoaded }) {
+  const { user } = useAuth();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -115,9 +160,9 @@ export function TargetAccountsView({ onDataLoaded }) {
   const [filters, setFilters] = useState({});
   const fileRef = useRef(null);
 
-  // Load from IndexedDB on mount
+  // Load from Firestore (then IndexedDB fallback) on mount
   useEffect(() => {
-    loadCache().then(cached => {
+    loadTargetAccountsFromDB(user?.uid).then(cached => {
       if (cached) {
         setData(cached);
         if (onDataLoaded) onDataLoaded(cached);
@@ -125,7 +170,7 @@ export function TargetAccountsView({ onDataLoaded }) {
       }
       setLoading(false);
     });
-  }, []);
+  }, [user]);
 
   function processFile(file) {
     if (!file) return;
@@ -182,6 +227,7 @@ export function TargetAccountsView({ onDataLoaded }) {
 
         setData(result);
         saveCache(result);
+        if (user?.uid) saveToFirestore(user.uid, result);
         if (onDataLoaded) onDataLoaded(result);
         setActiveSheet(sheetNames[0]);
         setStatus(`Uploaded "${file.name}" — ${sheetNames.length} sheet${sheetNames.length > 1 ? 's' : ''}, ${sheetNames.map(n => `${sheets[n].records.length} rows in ${n}`).join(', ')}`);
@@ -206,6 +252,7 @@ export function TargetAccountsView({ onDataLoaded }) {
       const sheet = prev.sheets[activeSheet];
       const updated = { ...prev, sheets: { ...prev.sheets, [activeSheet]: { ...sheet, records: sheet.records.map((r, i) => i === rowIndex ? { ...r, [colKey]: newValue } : r) } } };
       saveCache(updated);
+      if (user?.uid) saveToFirestore(user.uid, updated);
       if (onDataLoaded) onDataLoaded(updated);
       return updated;
     });

@@ -39,12 +39,13 @@ function App() {
   const [showSync, setShowSync] = useState(false);
   const [targetAccountsData, setTargetAccountsData] = useState(null);
 
-  // Load Target Accounts from IndexedDB on startup
+  // Load Target Accounts from Firestore/IndexedDB on startup
   useEffect(() => {
-    loadTargetAccountsFromDB().then(data => {
+    if (!user) return;
+    loadTargetAccountsFromDB(user.uid).then(data => {
       if (data) setTargetAccountsData(data);
     });
-  }, []);
+  }, [user]);
 
   if (authLoading) {
     return <div className="loading">Loading...</div>;
