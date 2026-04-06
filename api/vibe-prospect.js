@@ -1,67 +1,117 @@
 /**
- * Vercel serverless function: proxies Vibe Prospecting search requests.
- * This endpoint receives search criteria from the website UI and returns
- * prospect data. In the current version, it stores the search request
- * so Claude Code can process it via the MCP tools, then returns results.
- *
+ * Vercel serverless function: searches Apollo.io for prospects.
  * POST /api/vibe-prospect
- * Body: { filters, numberOfResults }
  */
+
+const APOLLO_BASE = 'https://api.apollo.io/api/v1';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  // Accept filters either as req.body.filters or as req.body directly
+  const apiKey = process.env.APOLLO_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: 'Apollo API key not configured' });
+
   const filters = req.body.filters || req.body;
-  const numberOfResults = filters.limit || req.body.numberOfResults || 50;
   if (!filters || Object.keys(filters).length === 0) return res.status(400).json({ error: 'Missing filters' });
 
-  // For now, store the search request in a simple format
-  // and return a placeholder response indicating the search was queued.
-  // In production, this would call the Vibe Prospecting API directly.
+  const limit = Math.min(filters.limit || 50, 100); // Apollo max 100 per page
+  const totalRequested = filters.limit || 50;
+  const pages = Math.min(Math.ceil(totalRequested / 100), 5); // Max 5 pages (500 results)
 
-  // Build a summary of what was requested
-  const summary = [];
-  if (filters.companyName) summary.push(`Company: ${filters.companyName}`);
-  if (filters.industry) summary.push(`Industry: ${filters.industry}`);
-  if (filters.jobTitle) summary.push(`Title: ${filters.jobTitle}`);
-  if (filters.jobDepartments?.length) summary.push(`Depts: ${filters.jobDepartments.join(', ')}`);
-  if (filters.jobLevels?.length) summary.push(`Levels: ${filters.jobLevels.join(', ')}`);
-  if (filters.companySizes?.length) summary.push(`Size: ${filters.companySizes.join(', ')}`);
-  if (filters.companyRevenue?.length) summary.push(`Revenue: ${filters.companyRevenue.join(', ')}`);
-  if (filters.country) summary.push(`Country: ${filters.country}`);
-  if (filters.hasEmail) summary.push('Has email');
+  // Parse company names from comma-separated string
+  const companyNames = (filters.companyName || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
 
-  return res.status(200).json({
-    status: 'ready',
-    message: `Search configured: ${summary.join(' | ')}. Use Claude Code with Vibe Prospecting to execute this search and push results.`,
-    searchCriteria: {
-      ...filters,
-      numberOfResults,
-    },
-    // Provide the exact MCP tool call parameters so Claude Code can execute it
-    mcpCall: {
-      tool: 'fetch-entities',
-      params: {
-        entity_type: 'prospects',
-        number_of_results: numberOfResults,
-        filters: {
-          ...(filters.jobDepartments?.length ? { job_department: { values: filters.jobDepartments } } : {}),
-          ...(filters.jobLevels?.length ? { job_level: { values: filters.jobLevels } } : {}),
-          ...(filters.companySizes?.length ? { company_size: { values: filters.companySizes } } : {}),
-          ...(filters.companyRevenue?.length ? { company_revenue: { values: filters.companyRevenue } } : {}),
-          ...(filters.country ? { company_country_code: { values: [filters.country] } } : {}),
-          ...(filters.hasEmail ? { has_email: true } : {}),
+  // Parse title keywords from newline-separated string
+  const titlesInclude = (filters.titleKeywords || '')
+    .split('\n')
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  const titlesExclude = (filters.titleExclude || '')
+    .split('\n')
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  // Build Apollo search params
+  const searchParams = {
+    per_page: Math.min(limit, 100),
+    page: 1,
+    ...(titlesInclude.length > 0 ? { person_titles: titlesInclude } : {}),
+    ...(companyNames.length > 0 ? { q_organization_name: companyNames.join(' OR ') } : {}),
+    ...(filters.country ? { person_locations: [filters.country === 'US' ? 'United States' : filters.country] } : {}),
+    ...(filters.industry ? { q_organization_keyword_tags: [filters.industry] } : {}),
+    ...(filters.hasEmail ? { contact_email_status: ['verified', 'guessed', 'unavailable'] } : {}),
+  };
+
+  try {
+    let allPeople = [];
+
+    for (let page = 1; page <= pages; page++) {
+      const body = { ...searchParams, page };
+      const apolloRes = await fetch(`${APOLLO_BASE}/mixed_people/api_search`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-cache',
+          'x-api-key': apiKey,
         },
-        // Note: job_title and linkedin_category need autocomplete first
-        // These are provided as hints for the Claude Code operator
-        _hints: {
-          jobTitleQuery: filters.jobTitle || null,
-          industryQuery: filters.industry || null,
-          companyNameQuery: filters.companyName || null,
-        },
-      },
-    },
-    prospects: [], // Will be populated when Claude Code executes the search
-  });
+        body: JSON.stringify(body),
+      });
+
+      if (!apolloRes.ok) {
+        const errText = await apolloRes.text();
+        throw new Error(`Apollo API ${apolloRes.status}: ${errText.slice(0, 300)}`);
+      }
+
+      const data = await apolloRes.json();
+      const people = data.people || [];
+      allPeople.push(...people);
+
+      // Stop if we have enough or no more results
+      if (allPeople.length >= totalRequested || people.length < searchParams.per_page) break;
+    }
+
+    // Trim to requested amount
+    allPeople = allPeople.slice(0, totalRequested);
+
+    // Filter out excluded titles client-side
+    if (titlesExclude.length > 0) {
+      const excludeLower = titlesExclude.map(t => t.toLowerCase());
+      allPeople = allPeople.filter(p => {
+        const title = (p.title || '').toLowerCase();
+        return !excludeLower.some(ex => title.includes(ex));
+      });
+    }
+
+    // Map to consistent format
+    const prospects = allPeople.map(p => ({
+      id: p.id,
+      first_name: p.first_name,
+      last_name: p.last_name,
+      name: p.name || [p.first_name, p.last_name].filter(Boolean).join(' '),
+      title: p.title,
+      company: p.organization?.name || '',
+      company_domain: p.organization?.website_url || '',
+      email: p.email || '',
+      email_status: p.email_status || '',
+      phone: p.phone_number?.number || '',
+      city: p.city,
+      state: p.state,
+      country: p.country,
+      linkedin_url: p.linkedin_url || '',
+      seniority: p.seniority,
+      departments: p.departments || [],
+    }));
+
+    return res.status(200).json({
+      prospects,
+      total: prospects.length,
+      source: 'apollo',
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'Apollo search failed' });
+  }
 }
