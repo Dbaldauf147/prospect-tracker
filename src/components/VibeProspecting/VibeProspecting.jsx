@@ -32,7 +32,7 @@ function getInitialFilters() {
   return {
     companyName: '',
     accountList: '',
-    cdm: '',
+    cdm: 'Dan Baldauf',
     industry: '',
     titleKeywords: '',
     titleExclude: '',
