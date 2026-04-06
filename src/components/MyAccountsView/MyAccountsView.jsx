@@ -710,7 +710,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   }, [oppsRecords]);
 
   // Build source maps: which companies exist in each data source
-  const BUCKET_TAGS = ['esg', 'utilities', 'procurement', 'capital planning', 'climate risk'];
+  const BUCKET_TAGS = ['esg', 'procurement', 'private equity', 'real estate', 'capital planning'];
 
   const { hubspotCompanies, decisionMakerByCompany, contactCountByCompany, bucketsByCompany } = useMemo(() => {
     const list = [];

@@ -27,11 +27,11 @@ function getOrgKey(company) {
 }
 
 const BUCKETS = [
-  { key: 'esg',             label: 'ESG Reporting',   tag: 'esg',             accent: '#059669', bg: '#ECFDF5', border: '#6EE7B7', headerBg: '#D1FAE5', headerColor: '#065F46' },
-  { key: 'utilities',      label: 'Utilities',        tag: 'utilities',       accent: '#2563EB', bg: '#EFF6FF', border: '#93C5FD', headerBg: '#DBEAFE', headerColor: '#1E3A8A' },
+  { key: 'esg',             label: 'ESG',              tag: 'esg',              accent: '#059669', bg: '#ECFDF5', border: '#6EE7B7', headerBg: '#D1FAE5', headerColor: '#065F46' },
   { key: 'procurement',    label: 'Procurement',      tag: 'procurement',     accent: '#7C3AED', bg: '#F5F3FF', border: '#C4B5FD', headerBg: '#EDE9FE', headerColor: '#4C1D95' },
+  { key: 'privateequity',  label: 'Private Equity',   tag: 'private equity',  accent: '#2563EB', bg: '#EFF6FF', border: '#93C5FD', headerBg: '#DBEAFE', headerColor: '#1E3A8A' },
+  { key: 'realestate',     label: 'Real Estate',      tag: 'real estate',     accent: '#DC2626', bg: '#FEF2F2', border: '#FCA5A5', headerBg: '#FEE2E2', headerColor: '#7F1D1D' },
   { key: 'capitalplanning',label: 'Capital Planning', tag: 'capital planning',accent: '#D97706', bg: '#FFFBEB', border: '#FDE68A', headerBg: '#FEF3C7', headerColor: '#78350F' },
-  { key: 'compliance',     label: 'Compliance',       tag: 'climate risk',    accent: '#DC2626', bg: '#FEF2F2', border: '#FCA5A5', headerBg: '#FEE2E2', headerColor: '#7F1D1D' },
 ];
 
 const ROLE_COLORS = {
@@ -175,7 +175,7 @@ const EMPTY = {
 
 // ── Inline HubSpot Contact Editor ──
 const ROLE_OPTIONS = ['Decision Maker', 'Influencer', 'Other', 'Left', 'Unknown'];
-const TAG_OPTIONS = ['ESG', 'Utilities', 'Procurement', 'Capital Planning', 'Climate Risk'];
+const TAG_OPTIONS = ['ESG', 'Procurement', 'Private Equity', 'Real Estate', 'Capital Planning', 'Dan Key Target', 'Test', 'EU'];
 
 function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS }) {
   const rawTags = contact.dans_tags || contact.dan_s_tags || contact.dans_tag || '';
