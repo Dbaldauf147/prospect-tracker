@@ -27,7 +27,15 @@ export function useUserSettings(user) {
     initUserSettings(user.uid).catch(err => console.error('initUserSettings error:', err));
 
     const unsub = subscribeToUserSettings(user.uid, (data) => {
-      setSettings(data || {});
+      // Merge incoming Firestore data but preserve any keys with pending writes
+      setSettings(prev => {
+        const merged = { ...(data || {}) };
+        // Keep local values for keys that are still pending a Firestore write
+        for (const key of Object.keys(pendingRef.current)) {
+          merged[key] = pendingRef.current[key];
+        }
+        return merged;
+      });
       setLoaded(true);
     });
 
