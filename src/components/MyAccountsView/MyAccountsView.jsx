@@ -152,11 +152,19 @@ const ACCOUNT_COLUMNS = [
   { key: 'divisions', label: 'Divisions', defaultWidth: 200, render: null /* set in columns memo */ },
   { key: 'otherReps', label: 'Other Reps', defaultWidth: 260, render: (row) => {
     if (!row.otherReps || row.otherReps.length === 0) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>—</span>;
+    // Deduplicate by rep name, collect all companies per rep
+    const byRep = {};
+    for (const r of row.otherReps) {
+      const key = r.rep.toLowerCase();
+      if (!byRep[key]) byRep[key] = { rep: r.rep, companies: [] };
+      if (!byRep[key].companies.includes(r.company)) byRep[key].companies.push(r.company);
+    }
     return <span style={{ display: 'flex', gap: '3px', flexWrap: 'nowrap', overflow: 'hidden' }}>
-      {row.otherReps.map((r, i) => <span key={i} style={{
+      {Object.values(byRep).map((r, i) => <span key={i} title={r.companies.join(', ')} style={{
         padding: '2px 6px', borderRadius: '4px', fontSize: '0.65rem',
         background: '#FEF9C3', color: '#92400E', lineHeight: 1.3, whiteSpace: 'nowrap', flexShrink: 0,
-      }}><strong>{r.rep}</strong> — {r.company}</span>)}
+        cursor: 'default',
+      }}>{r.rep}</span>)}
     </span>;
   }},
   { key: 'sources', label: 'Sources', defaultWidth: 160, render: (row) => {
@@ -805,8 +813,8 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       for (const [dmCompany, names] of Object.entries(decisionMakerByCompany)) {
         if (allCompanyNames.some(name => companiesMatch(name, dmCompany))) { dmNames = names; break; }
       }
-      // Find similar accounts assigned to other salespeople
-      const otherReps = allTargetReps.filter(t => companiesMatch(p.company, t.company));
+      // Find similar accounts assigned to other salespeople (check parent + all divisions)
+      const otherReps = allTargetReps.filter(t => allCompanyNames.some(name => companiesMatch(name, t.company)));
       // Count HubSpot contacts across parent + all divisions (fuzzy match)
       let contactCount = 0;
       for (const [co, count] of Object.entries(contactCountByCompany)) {
