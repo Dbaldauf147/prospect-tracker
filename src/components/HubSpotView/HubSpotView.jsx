@@ -892,7 +892,9 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
   }
 
   // Inline cell save — updates HubSpot and local cache
-  // Properties that don't exist in HubSpot — save locally only
+  // decision_maker maps to HubSpot 'role' property, but only for values HubSpot accepts
+  const HUBSPOT_ROLE_VALUES = new Set(['Decision Maker', 'End user', 'System integrator', 'Consultant']);
+  const FIELD_MAP = {};
   const LOCAL_ONLY_PROPS = new Set(['decision_maker']);
 
   const handleInlineUpdate = useCallback(async (contactId, properties) => {
@@ -901,7 +903,13 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
       const hubspotProps = {};
       const localProps = {};
       for (const [k, v] of Object.entries(properties)) {
-        if (LOCAL_ONLY_PROPS.has(k)) localProps[k] = v;
+        if (LOCAL_ONLY_PROPS.has(k)) {
+          localProps[k] = v;
+          // Also sync decision_maker to HubSpot 'role' if it's a valid HubSpot value
+          if (k === 'decision_maker' && HUBSPOT_ROLE_VALUES.has(v)) {
+            hubspotProps['role'] = v;
+          }
+        }
         else hubspotProps[k] = v;
       }
       // Filter out invalid tag values that aren't in HubSpot's allowed options

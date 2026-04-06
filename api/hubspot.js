@@ -25,7 +25,7 @@ async function getAllContacts(token) {
     'hs_linkedinid', 'linkedin_url', 'hs_linkedin_url',
     'city', 'state', 'country',
     'dans_tags', 'dan_s_tags', 'dans_tag',
-    'decision_maker',
+    'decision_maker', 'role',
   ];
 
   while (true) {
@@ -128,6 +128,8 @@ export default async function handler(req, res) {
         contacts: contacts.map(c => ({
           id: c.id,
           ...c.properties,
+          // Map HubSpot 'role' property to 'decision_maker' for frontend compatibility
+          decision_maker: c.properties.role || c.properties.decision_maker || '',
         })),
         total: contacts.length,
       });
