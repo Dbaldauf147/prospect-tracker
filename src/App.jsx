@@ -100,7 +100,7 @@ function App() {
           ) : view === 'drafts' ? (
             <DraftEmailView prospects={prospects} settings={settings} updateSettings={updateSettings} />
           ) : view === 'vibe' ? (
-            <VibeProspecting />
+            <VibeProspecting prospects={prospects} />
           ) : view === 'dedupe' ? (
             <DedupeView />
           ) : view === 'privacy' ? (
