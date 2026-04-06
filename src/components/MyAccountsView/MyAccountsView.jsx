@@ -386,9 +386,10 @@ function TargetNamePicker({ values, companyId, targetOptions, onToggle }) {
     <span ref={anchorRef}>
       <button
         onClick={(e) => { e.stopPropagation(); setInputText(''); setOpen(p => !p); }}
+        title={count > 1 ? values.join('\n') : ''}
         style={{ fontSize: '0.72rem', cursor: 'pointer', background: count > 0 ? '#EBF2FC' : 'none', border: count > 0 ? '1px solid #BFDBFE' : '1px solid transparent', padding: '2px 8px', borderRadius: '4px', fontFamily: 'inherit', fontWeight: 500, color: count > 0 ? '#1E40AF' : 'var(--color-accent)', textAlign: 'left', lineHeight: 1.3 }}
       >
-        {count > 0 ? values.join(', ') : '— Click to map —'}
+        {count === 0 ? '— Click to map —' : count === 1 ? values[0] : `${values[0]} +${count - 1} more`}
       </button>
       {open && createPortal(
         <div
