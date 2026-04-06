@@ -721,15 +721,20 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
       const seen = new Set();
       for (const c of (cache?.contacts || [])) {
+        // Skip hidden contacts
+        const role = c.decision_maker || 'Unknown';
+        const isHidden = role === 'Hide';
         const lower = (c.company || '').toLowerCase();
         if (lower) {
           if (!seen.has(lower)) { seen.add(lower); list.push(lower); }
-          countMap[lower] = (countMap[lower] || 0) + 1;
-          // Track which buckets this company has covered
-          const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').split(';').map(t => t.trim().toLowerCase()).filter(Boolean);
-          if (!bucketMap[lower]) bucketMap[lower] = new Set();
-          for (const tag of tags) {
-            if (BUCKET_TAGS.includes(tag)) bucketMap[lower].add(tag);
+          if (!isHidden) {
+            countMap[lower] = (countMap[lower] || 0) + 1;
+            // Track which buckets this company has covered
+            const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').split(';').map(t => t.trim().toLowerCase()).filter(Boolean);
+            if (!bucketMap[lower]) bucketMap[lower] = new Set();
+            for (const tag of tags) {
+              if (BUCKET_TAGS.includes(tag)) bucketMap[lower].add(tag);
+            }
           }
         }
         if (lower && (c.decision_maker === 'true' || c.decision_maker === 'Yes' || c.decision_maker === 'Decision Maker')) {
