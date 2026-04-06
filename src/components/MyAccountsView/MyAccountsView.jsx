@@ -138,6 +138,11 @@ const ACCOUNT_COLUMNS = [
   { key: 'cdm', label: 'CDM', defaultWidth: 120 },
   { key: 'notes', label: 'Notes', defaultWidth: 200 },
   { key: 'contactCount', label: 'Contacts', defaultWidth: 80, render: (row) => row.contactCount > 0 ? <span style={{ fontWeight: 700, color: '#0891B2' }}>{row.contactCount}</span> : <span style={{ color: 'var(--color-text-muted)' }}>0</span> },
+  { key: 'bucketCount', label: 'Buckets', defaultWidth: 70, render: (row) => {
+    const count = row.bucketCount || 0;
+    const color = count === 5 ? '#059669' : count >= 3 ? '#D97706' : count > 0 ? '#DC2626' : 'var(--color-text-muted)';
+    return <span style={{ fontWeight: 700, color }}>{count}/5</span>;
+  }},
   { key: 'activityCount', label: 'Activity (30d)', defaultWidth: 85, render: (row) => row.activityCount > 0 ? <span style={{ fontWeight: 700, color: 'var(--color-accent)' }}>{row.activityCount}</span> : <span style={{ color: 'var(--color-text-muted)' }}>0</span> },
   { key: 'oppsCount', label: 'Opps', defaultWidth: 70, render: (row) => {
     const active = row.oppsCount || 0;
@@ -705,10 +710,13 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   }, [oppsRecords]);
 
   // Build source maps: which companies exist in each data source
-  const { hubspotCompanies, decisionMakerByCompany, contactCountByCompany } = useMemo(() => {
+  const BUCKET_TAGS = ['esg', 'utilities', 'procurement', 'capital planning', 'climate risk'];
+
+  const { hubspotCompanies, decisionMakerByCompany, contactCountByCompany, bucketsByCompany } = useMemo(() => {
     const list = [];
     const dmMap = {}; // company lowercase → [names]
     const countMap = {}; // company lowercase → count
+    const bucketMap = {}; // company lowercase → Set of matched bucket tags
     try {
       const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
       const seen = new Set();
@@ -717,6 +725,12 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         if (lower) {
           if (!seen.has(lower)) { seen.add(lower); list.push(lower); }
           countMap[lower] = (countMap[lower] || 0) + 1;
+          // Track which buckets this company has covered
+          const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').split(';').map(t => t.trim().toLowerCase()).filter(Boolean);
+          if (!bucketMap[lower]) bucketMap[lower] = new Set();
+          for (const tag of tags) {
+            if (BUCKET_TAGS.includes(tag)) bucketMap[lower].add(tag);
+          }
         }
         if (lower && (c.decision_maker === 'true' || c.decision_maker === 'Yes' || c.decision_maker === 'Decision Maker')) {
           const name = [c.firstname, c.lastname].filter(Boolean).join(' ');
@@ -725,7 +739,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         }
       }
     } catch {}
-    return { hubspotCompanies: list, decisionMakerByCompany: dmMap, contactCountByCompany: countMap };
+    return { hubspotCompanies: list, decisionMakerByCompany: dmMap, contactCountByCompany: countMap, bucketsByCompany: bucketMap };
   }, []);
 
   const targetCompanies = useMemo(() => {
@@ -801,10 +815,18 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       const otherReps = allTargetReps.filter(t => allCompanyNames.some(name => companiesMatch(name, t.company)));
       // Count HubSpot contacts across parent + all divisions (fuzzy match)
       let contactCount = 0;
+      const bucketsSeen = new Set();
       for (const [co, count] of Object.entries(contactCountByCompany)) {
-        if (allCompanyNames.some(name => companiesMatch(name, co))) { contactCount += count; }
+        if (allCompanyNames.some(name => companiesMatch(name, co))) {
+          contactCount += count;
+          // Merge bucket coverage from matching company names
+          if (bucketsByCompany[co]) {
+            for (const b of bucketsByCompany[co]) bucketsSeen.add(b);
+          }
+        }
       }
-      const entry = { ...p, myTier: tier, activityCount, oppsCount, totalOpps, sources: sources.join(', '), dmFound: !!dmNames, dmNames: dmNames ? dmNames.join(', ') : '', cdmMismatch: !isBaldauf, targetNames, targetTier, tierMismatch, otherReps, contactCount };
+      const bucketCount = bucketsSeen.size;
+      const entry = { ...p, myTier: tier, activityCount, oppsCount, totalOpps, sources: sources.join(', '), dmFound: !!dmNames, dmNames: dmNames ? dmNames.join(', ') : '', cdmMismatch: !isBaldauf, targetNames, targetTier, tierMismatch, otherReps, contactCount, bucketCount };
       if (tier === 'Tier 1') t1.push(entry);
       else t2.push(entry);
       const s = p.status || 'Unknown';
@@ -816,7 +838,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     if (skippedCdm.length > 0) console.log('My Accounts: skipped (CDM not Baldauf):', skippedCdm);
     console.log(`My Accounts: ${t1.length} Tier 1, ${t2.length} Tier 2`);
     return { tier1: t1, tier2: t2, allAccounts: [...t1, ...t2], statusCounts: counts };
-  }, [prospects, targetMap, targetAccounts, allTargetReps, activityByCompany, activeOppsByAccount, totalOppsByAccount, hubspotCompanies, targetCompanies, decisionMakerByCompany, contactCountByCompany, divisionsMap]);
+  }, [prospects, targetMap, targetAccounts, allTargetReps, activityByCompany, activeOppsByAccount, totalOppsByAccount, hubspotCompanies, targetCompanies, decisionMakerByCompany, contactCountByCompany, bucketsByCompany, divisionsMap]);
 
   const clientCount = statusCounts['Client'] || 0;
   const qualifyingCount = (statusCounts['Qualifying'] || 0) + (statusCounts['Inside Sales'] || 0);
@@ -990,7 +1012,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         return { ...col, render: (row) => <InlineCell row={row} field="emailDomain" value={row.emailDomain} onUpdate={onUpdate} /> };
       }
       // Skip computed columns — they stay read-only
-      if (['myTier', 'activityCount', 'oppsCount', 'contactCount', 'dmFound', 'sources', 'targetName', 'otherReps', 'divisions', '_hide'].includes(col.key)) {
+      if (['myTier', 'activityCount', 'oppsCount', 'contactCount', 'bucketCount', 'dmFound', 'sources', 'targetName', 'otherReps', 'divisions', '_hide'].includes(col.key)) {
         return col;
       }
       // Make any remaining columns editable as text
