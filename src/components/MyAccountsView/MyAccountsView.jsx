@@ -541,12 +541,12 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       return '';
     }
 
+    const skippedAccounts = [];
     for (const sheetName of data.sheetNames || []) {
       const sheet = data.sheets[sheetName];
       if (!sheet?.records) continue;
       if (sheet.headers) console.log(`Target Accounts sheet "${sheetName}" columns:`, sheet.headers.filter(Boolean));
 
-      const skippedAccounts = [];
       for (const r of sheet.records) {
         const companyForLog = findCol(r, ['Account', 'Company', 'Account Name', 'Client', 'Name']);
         let cdm = findCol(r, ['CDM', 'Salesperson', 'Sales Rep', 'Account Owner', 'Owner', 'Rep', 'Assigned', 'Team Member', 'Sales']).toLowerCase();
