@@ -358,6 +358,11 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
     }
     return hubspotContacts
       .filter(c => companiesMatch(c.company, fields.company))
+      .filter(c => {
+        const r = c.decision_maker || 'Unknown';
+        const normalized = (r === 'true' || r === 'Yes') ? 'Decision Maker' : (r === 'No' || r === 'false') ? 'Unknown' : r;
+        return normalized !== 'Hide';
+      })
       .sort((a, b) => roleRank(a) - roleRank(b));
   }, [fields.company, hubspotContacts, isNew]);
 
