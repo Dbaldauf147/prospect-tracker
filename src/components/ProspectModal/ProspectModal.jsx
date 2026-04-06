@@ -52,7 +52,7 @@ function getContactTags(c) {
   return raw.split(';').map(t => t.trim().toLowerCase()).filter(Boolean);
 }
 
-function OrgChart({ contacts, onDeleteContact, deletingContact }) {
+function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact }) {
   if (contacts.length === 0) {
     return <div style={{ fontSize: '0.78rem', color: '#9CA3AF', fontStyle: 'italic', padding: '1rem 0' }}>No contacts to display</div>;
   }
@@ -81,20 +81,26 @@ function OrgChart({ contacts, onDeleteContact, deletingContact }) {
     const isDeleting = deletingContact === (contact.id || contact.vid);
 
     return (
-      <div style={{
-        background: '#fff',
-        border: `1px solid #E2E8F0`,
-        borderLeft: `3px solid ${bucketAccent}`,
-        borderRadius: '6px',
-        padding: '0.45rem 0.55rem',
-        position: 'relative',
-      }}>
+      <div
+        onClick={() => onEditContact && onEditContact(contact)}
+        style={{
+          background: '#fff',
+          border: `1px solid #E2E8F0`,
+          borderLeft: `3px solid ${bucketAccent}`,
+          borderRadius: '6px',
+          padding: '0.45rem 0.55rem',
+          position: 'relative',
+          cursor: 'pointer',
+        }}
+        onMouseEnter={e => e.currentTarget.style.background = '#F8FAFC'}
+        onMouseLeave={e => e.currentTarget.style.background = '#fff'}
+      >
         {onDeleteContact && (
           <button
             onClick={e => { e.stopPropagation(); onDeleteContact(contact); }}
             disabled={isDeleting}
             title="Delete contact"
-            style={{ position: 'absolute', top: '3px', right: '3px', background: 'none', border: 'none', color: '#CBD5E1', fontSize: '0.72rem', cursor: 'pointer', lineHeight: 1, padding: '1px 2px' }}
+            style={{ position: 'absolute', top: '3px', right: '3px', background: 'none', border: 'none', color: '#CBD5E1', fontSize: '0.78rem', cursor: 'pointer', lineHeight: 1, padding: '1px 3px', zIndex: 1 }}
             onMouseEnter={e => e.currentTarget.style.color = '#EF4444'}
             onMouseLeave={e => e.currentTarget.style.color = '#CBD5E1'}
           >{isDeleting ? '…' : '×'}</button>
@@ -167,13 +173,107 @@ const EMPTY = {
   hqRegion: '', frameworks: [], notes: '', website: '', emailDomain: '',
 };
 
+// ── Inline HubSpot Contact Editor ──
+const ROLE_OPTIONS = ['Decision Maker', 'Influencer', 'Other', 'Left', 'Unknown'];
+
+function ContactEditModal({ contact, onSave, onClose }) {
+  const [f, setF] = useState({
+    firstname: contact.firstname || '',
+    lastname: contact.lastname || '',
+    email: contact.email || '',
+    phone: contact.phone || '',
+    jobtitle: contact.jobtitle || '',
+    company: contact.company || '',
+    decision_maker: (() => {
+      const r = contact.decision_maker || 'Unknown';
+      return (r === 'true' || r === 'Yes') ? 'Decision Maker' : (r === 'No' || r === 'false') ? 'Unknown' : (r || 'Unknown');
+    })(),
+    dans_tags: contact.dans_tags || contact.dan_s_tags || contact.dans_tag || '',
+    hs_linkedin_url: contact.hs_linkedin_url || contact.linkedin_url || '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+
+  function set(key, val) { setF(prev => ({ ...prev, [key]: val })); }
+
+  async function handleSave() {
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/hubspot?action=update-contact', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contactId: contact.id || contact.vid, properties: f }),
+      });
+      const json = await res.json();
+      if (json.error) throw new Error(json.error);
+      // Update localStorage cache so changes show immediately
+      try {
+        const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
+        if (cache?.contacts) {
+          const idx = cache.contacts.findIndex(c => String(c.id || c.vid) === String(contact.id || contact.vid));
+          if (idx !== -1) cache.contacts[idx] = { ...cache.contacts[idx], ...f };
+          localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache));
+        }
+      } catch {}
+      onSave({ ...contact, ...f });
+    } catch (err) {
+      setError(err.message || 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const inputStyle = { width: '100%', padding: '0.35rem 0.5rem', border: '1px solid #E2E8F0', borderRadius: '6px', fontSize: '0.78rem', fontFamily: 'inherit', boxSizing: 'border-box', outline: 'none' };
+  const labelStyle = { fontSize: '0.65rem', fontWeight: 600, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'block', marginBottom: '3px' };
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onClose}>
+      <div style={{ background: '#fff', borderRadius: '12px', padding: '1.5rem', width: '480px', maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+          <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: '#1E293B' }}>Edit HubSpot Contact</h3>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '1.2rem', color: '#94A3B8', cursor: 'pointer', lineHeight: 1 }}>×</button>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+          <div><label style={labelStyle}>First Name</label><input style={inputStyle} value={f.firstname} onChange={e => set('firstname', e.target.value)} /></div>
+          <div><label style={labelStyle}>Last Name</label><input style={inputStyle} value={f.lastname} onChange={e => set('lastname', e.target.value)} /></div>
+          <div><label style={labelStyle}>Email</label><input style={inputStyle} type="email" value={f.email} onChange={e => set('email', e.target.value)} /></div>
+          <div><label style={labelStyle}>Phone</label><input style={inputStyle} value={f.phone} onChange={e => set('phone', e.target.value)} /></div>
+          <div style={{ gridColumn: '1 / -1' }}><label style={labelStyle}>Job Title</label><input style={inputStyle} value={f.jobtitle} onChange={e => set('jobtitle', e.target.value)} /></div>
+          <div style={{ gridColumn: '1 / -1' }}><label style={labelStyle}>Company</label><input style={inputStyle} value={f.company} onChange={e => set('company', e.target.value)} /></div>
+          <div>
+            <label style={labelStyle}>Role</label>
+            <select style={inputStyle} value={f.decision_maker} onChange={e => set('decision_maker', e.target.value)}>
+              {ROLE_OPTIONS.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </div>
+          <div><label style={labelStyle}>LinkedIn URL</label><input style={inputStyle} value={f.hs_linkedin_url} onChange={e => set('hs_linkedin_url', e.target.value)} /></div>
+          <div style={{ gridColumn: '1 / -1' }}>
+            <label style={labelStyle}>Tags (semicolon-separated)</label>
+            <input style={inputStyle} value={f.dans_tags} onChange={e => set('dans_tags', e.target.value)} placeholder="e.g. ESG;Utilities;Procurement" />
+            <div style={{ fontSize: '0.6rem', color: '#94A3B8', marginTop: '3px' }}>Use: ESG · Utilities · Procurement · Capital Planning · Climate Risk</div>
+          </div>
+        </div>
+        {error && <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', background: '#FEF2F2', borderRadius: '6px', fontSize: '0.75rem', color: '#DC2626' }}>{error}</div>}
+        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1.25rem' }}>
+          <button onClick={onClose} style={{ padding: '0.5rem 1rem', border: '1px solid #E2E8F0', borderRadius: '6px', background: '#fff', fontSize: '0.8rem', fontFamily: 'inherit', cursor: 'pointer', color: '#64748B' }}>Cancel</button>
+          <button onClick={handleSave} disabled={saving} style={{ padding: '0.5rem 1rem', border: 'none', borderRadius: '6px', background: '#0078D4', color: '#fff', fontSize: '0.8rem', fontFamily: 'inherit', cursor: saving ? 'wait' : 'pointer', fontWeight: 600 }}>
+            {saving ? 'Saving…' : 'Save to HubSpot'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContacts = [], onDeleteContact, orgCharts = {}, onUpdateOrgChart = () => {} }) {
   const [fields, setFields] = useState(() => {
     if (prospect) return { ...EMPTY, ...prospect };
     return { ...EMPTY };
   });
 
-  const companyContacts = useMemo(() => {
+  // Local contact state — updated optimistically after HubSpot saves
+  const baseContacts = useMemo(() => {
     if (!fields.company || isNew) return [];
     const ROLE_ORDER = { 'Decision Maker': 0, 'Influencer': 1, 'Other': 2, 'Left': 3, 'Unknown': 4 };
     function roleRank(c) {
@@ -186,9 +286,19 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
       .sort((a, b) => roleRank(a) - roleRank(b));
   }, [fields.company, hubspotContacts, isNew]);
 
+  const [localContacts, setLocalContacts] = useState(baseContacts);
+  useEffect(() => { setLocalContacts(baseContacts); }, [baseContacts]);
+  const companyContacts = localContacts;
+
   const [contactView, setContactView] = useState('table'); // 'table' | 'orgchart'
+  const [editingContact, setEditingContact] = useState(null);
   const [showSaved, setShowSaved] = useState(false);
   const [deletingContact, setDeletingContact] = useState(null);
+
+  function handleContactSaved(updated) {
+    setLocalContacts(prev => prev.map(c => (String(c.id || c.vid) === String(updated.id || updated.vid) ? { ...c, ...updated } : c)));
+    setEditingContact(null);
+  }
 
   async function handleDeleteContact(contact) {
     const name = [contact.firstname, contact.lastname].filter(Boolean).join(' ') || 'this contact';
@@ -464,7 +574,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
               </div>
 
               {contactView === 'orgchart' ? (
-                <OrgChart contacts={companyContacts} onDeleteContact={handleDeleteContact} deletingContact={deletingContact} />
+                <OrgChart contacts={companyContacts} onDeleteContact={handleDeleteContact} deletingContact={deletingContact} onEditContact={setEditingContact} />
               ) : companyContacts.length > 0 ? (
                 <div style={{ maxHeight: '400px', overflowY: 'auto', border: '1px solid #E2E8F0', borderRadius: '6px' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.75rem' }}>
@@ -472,12 +582,12 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                       <tr style={{ background: '#F8FAFC', position: 'sticky', top: 0, zIndex: 1 }}>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Name</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Title</th>
+                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Tags</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Category</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Email</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Phone</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Role</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>LinkedIn</th>
-                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'center', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Email</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'center', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0', width: '40px' }}></th>
                       </tr>
                     </thead>
@@ -490,16 +600,16 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                         const rs = roleColors[role] || roleColors['Unknown'];
                         const linkedinUrl = c.hs_linkedin_url || c.linkedin_url || c.hs_linkedinid;
                         return (
-                          <tr key={c.id || i} style={{ borderBottom: '1px solid #F1F5F9' }}>
+                          <tr key={c.id || i} onClick={() => setEditingContact(c)} style={{ borderBottom: '1px solid #F1F5F9', cursor: 'pointer' }} onMouseEnter={e => e.currentTarget.style.background = '#F8FAFC'} onMouseLeave={e => e.currentTarget.style.background = ''}>
                             <td style={{ padding: '0.35rem 0.5rem', fontWeight: 600, color: '#1E293B', whiteSpace: 'nowrap' }}>{name || '—'}</td>
                             <td style={{ padding: '0.35rem 0.5rem', color: '#475569', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.jobtitle || '—'}</td>
+                            <td style={{ padding: '0.35rem 0.5rem', maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.68rem', color: '#475569' }}>
+                              {(c.dans_tags || c.dan_s_tags || c.dans_tag || '—')}
+                            </td>
                             <td style={{ padding: '0.35rem 0.5rem', maxWidth: '180px' }}>
                               {(() => {
                                 const matched = BUCKETS.filter(b => getContactTags(c).includes(b.tag));
-                                if (matched.length === 0) {
-                                  const raw = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').trim();
-                                  return <span style={{ fontSize: '0.62rem', color: '#94A3B8', fontStyle: 'italic' }}>{raw || 'Untagged'}</span>;
-                                }
+                                if (matched.length === 0) return <span style={{ fontSize: '0.62rem', color: '#CBD5E1' }}>—</span>;
                                 return <span style={{ display: 'flex', flexWrap: 'wrap', gap: '2px' }}>
                                   {matched.map(b => <span key={b.key} style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 700, background: b.headerBg, color: b.headerColor, whiteSpace: 'nowrap' }}>{b.label}</span>)}
                                 </span>;
@@ -509,27 +619,11 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                             <td style={{ padding: '0.35rem 0.5rem', color: '#475569', whiteSpace: 'nowrap' }}>{c.phone || '—'}</td>
                             <td style={{ padding: '0.35rem 0.5rem' }}><span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.62rem', fontWeight: 700, background: rs.bg, color: rs.color }}>{role}</span></td>
                             <td style={{ padding: '0.35rem 0.5rem' }}>
-                              {linkedinUrl ? <a href={linkedinUrl.startsWith('http') ? linkedinUrl : `https://linkedin.com/in/${linkedinUrl}`} target="_blank" rel="noopener noreferrer" style={{ color: '#0A66C2', fontSize: '0.7rem', fontWeight: 600, textDecoration: 'none' }}>View</a> : <span style={{ color: '#CBD5E1' }}>—</span>}
-                            </td>
-                            <td style={{ padding: '0.35rem 0.5rem', textAlign: 'center' }}>
-                              {c.email ? (
-                                <button
-                                  onClick={() => {
-                                    const firstName = c.firstname || '';
-                                    const companyName = fields.company || '';
-                                    const subject = encodeURIComponent(`Introduction — ${companyName}`);
-                                    const body = encodeURIComponent(`Hi ${firstName},\n\nI hope this message finds you well.\n\n`);
-                                    window.open(`https://outlook.office.com/mail/deeplink/compose?to=${encodeURIComponent(c.email)}&subject=${subject}&body=${body}`, '_blank');
-                                  }}
-                                  style={{ padding: '2px 8px', border: '1px solid #0078D4', borderRadius: '4px', background: '#EFF6FF', color: '#0078D4', fontSize: '0.65rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
-                                >
-                                  Draft
-                                </button>
-                              ) : <span style={{ color: '#CBD5E1' }}>—</span>}
+                              {linkedinUrl ? <a href={linkedinUrl.startsWith('http') ? linkedinUrl : `https://linkedin.com/in/${linkedinUrl}`} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ color: '#0A66C2', fontSize: '0.7rem', fontWeight: 600, textDecoration: 'none' }}>View</a> : <span style={{ color: '#CBD5E1' }}>—</span>}
                             </td>
                             <td style={{ padding: '0.35rem 0.3rem', textAlign: 'center' }}>
                               <button
-                                onClick={() => handleDeleteContact(c)}
+                                onClick={e => { e.stopPropagation(); handleDeleteContact(c); }}
                                 disabled={deletingContact === (c.id || c.vid)}
                                 title="Delete contact"
                                 style={{ background: 'none', border: 'none', color: '#CBD5E1', fontSize: '0.85rem', cursor: 'pointer', padding: '0 2px', lineHeight: 1, fontFamily: 'inherit' }}
@@ -569,6 +663,13 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
           )}
         </div>
       </div>
+      {editingContact && (
+        <ContactEditModal
+          contact={editingContact}
+          onSave={handleContactSaved}
+          onClose={() => setEditingContact(null)}
+        />
+      )}
     </div>
   );
 }
