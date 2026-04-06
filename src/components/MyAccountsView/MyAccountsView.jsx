@@ -139,8 +139,12 @@ const ACCOUNT_COLUMNS = [
   { key: 'notes', label: 'Notes', defaultWidth: 200 },
   { key: 'contactCount', label: 'Contacts', defaultWidth: 80, render: (row) => row.contactCount > 0 ? <span style={{ fontWeight: 700, color: '#0891B2' }}>{row.contactCount}</span> : <span style={{ color: 'var(--color-text-muted)' }}>0</span> },
   { key: 'activityCount', label: 'Activity (30d)', defaultWidth: 85, render: (row) => row.activityCount > 0 ? <span style={{ fontWeight: 700, color: 'var(--color-accent)' }}>{row.activityCount}</span> : <span style={{ color: 'var(--color-text-muted)' }}>0</span> },
-  { key: 'oppsCount', label: 'Active Opps', defaultWidth: 85, render: (row) => row.oppsCount > 0 ? <span style={{ fontWeight: 700, color: '#7C3AED' }}>{row.oppsCount}</span> : <span style={{ color: 'var(--color-text-muted)' }}>0</span> },
-  { key: 'totalOpps', label: 'Total Opps', defaultWidth: 80, render: (row) => row.totalOpps > 0 ? <span style={{ fontWeight: 700, color: 'var(--color-text-secondary)' }}>{row.totalOpps}</span> : <span style={{ color: 'var(--color-text-muted)' }}>0</span> },
+  { key: 'oppsCount', label: 'Opps', defaultWidth: 70, render: (row) => {
+    const active = row.oppsCount || 0;
+    const total = row.totalOpps || 0;
+    if (total === 0) return <span style={{ color: 'var(--color-text-muted)' }}>0/0</span>;
+    return <span style={{ fontWeight: 700, color: active > 0 ? '#7C3AED' : 'var(--color-text-secondary)' }}>{active}/{total}</span>;
+  }},
   { key: 'dmFound', label: 'Decision Maker', defaultWidth: 140, render: (row) => row.dmFound
     ? <span title={row.dmNames} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
         <span style={{ color: '#10B981', fontWeight: 700, fontSize: '0.75rem' }}>&#10003;</span>
@@ -986,7 +990,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         return { ...col, render: (row) => <InlineCell row={row} field="emailDomain" value={row.emailDomain} onUpdate={onUpdate} /> };
       }
       // Skip computed columns — they stay read-only
-      if (['myTier', 'activityCount', 'oppsCount', 'totalOpps', 'contactCount', 'dmFound', 'sources', 'targetName', 'otherReps', 'divisions', '_hide'].includes(col.key)) {
+      if (['myTier', 'activityCount', 'oppsCount', 'contactCount', 'dmFound', 'sources', 'targetName', 'otherReps', 'divisions', '_hide'].includes(col.key)) {
         return col;
       }
       // Make any remaining columns editable as text
