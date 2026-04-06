@@ -207,6 +207,7 @@ function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS }
   const extraTags = parsedTags.filter(t => !knownTagsLower.has(t.toLowerCase()));
 
   const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [error, setError] = useState(null);
   const [tagsOpen, setTagsOpen] = useState(false);
   const tagsRef = useRef(null);
@@ -255,6 +256,8 @@ function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS }
         }
       } catch {}
       onSave({ ...contact, ...props });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
     } catch (err) {
       setError(err.message || 'Save failed');
     } finally {
@@ -329,8 +332,8 @@ function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS }
         {error && <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', background: '#FEF2F2', borderRadius: '6px', fontSize: '0.75rem', color: '#DC2626' }}>{error}</div>}
         <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1.25rem' }}>
           <button onClick={onClose} style={{ padding: '0.5rem 1rem', border: '1px solid #E2E8F0', borderRadius: '6px', background: '#fff', fontSize: '0.8rem', fontFamily: 'inherit', cursor: 'pointer', color: '#64748B' }}>Cancel</button>
-          <button onClick={handleSave} disabled={saving} style={{ padding: '0.5rem 1rem', border: 'none', borderRadius: '6px', background: '#0078D4', color: '#fff', fontSize: '0.8rem', fontFamily: 'inherit', cursor: saving ? 'wait' : 'pointer', fontWeight: 600 }}>
-            {saving ? 'Saving…' : 'Save to HubSpot'}
+          <button onClick={handleSave} disabled={saving || saved} style={{ padding: '0.5rem 1rem', border: 'none', borderRadius: '6px', background: saved ? '#059669' : '#0078D4', color: '#fff', fontSize: '0.8rem', fontFamily: 'inherit', cursor: saving ? 'wait' : 'pointer', fontWeight: 600, transition: 'background 0.2s' }}>
+            {saving ? 'Saving…' : saved ? '✓ Saved!' : 'Save to HubSpot'}
           </button>
         </div>
       </div>

@@ -33,7 +33,13 @@ export function useUserSettings(user) {
     setSettings(prev => ({ ...prev, ...updates }));
     writingRef.current = true;
     saveUserSettings(userIdRef.current, updates)
-      .catch(err => console.error('Failed to save user settings:', err))
+      .then(() => {
+        console.log('Settings saved to Firestore:', Object.keys(updates));
+      })
+      .catch(err => {
+        console.error('Failed to save user settings:', err);
+        alert('Failed to save settings: ' + err.message);
+      })
       .finally(() => { writingRef.current = false; });
   }, []);
 
