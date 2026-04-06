@@ -34,17 +34,12 @@ const BUCKETS = [
   { key: 'capitalplanning',label: 'Capital Planning', tag: 'capital planning',accent: '#D97706', bg: '#FFFBEB', border: '#FDE68A', headerBg: '#FEF3C7', headerColor: '#78350F' },
 ];
 
-const ROLE_COLORS = {
-  'Decision Maker': { bg: '#DCFCE7', color: '#166534' },
-  'Influencer':     { bg: '#DBEAFE', color: '#1E40AF' },
-  'Left':           { bg: '#FEF9C3', color: '#92400E' },
-  'Other':          { bg: '#F3E8FF', color: '#7C3AED' },
-  'Unknown':        { bg: '#F3F4F6', color: '#6B7280' },
-};
+function contactHasTag(c, tag) {
+  return getContactTags(c).includes(tag.toLowerCase());
+}
 
-function getContactRole(c) {
-  const r = c.decision_maker || 'Unknown';
-  return (r === 'true' || r === 'Yes') ? 'Decision Maker' : (r === 'No' || r === 'false') ? 'Unknown' : (r || 'Unknown');
+function contactIsHidden(c) {
+  return contactHasTag(c, 'hide');
 }
 
 function getContactTags(c) {
@@ -76,8 +71,7 @@ function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact })
 
   function ContactCard({ contact, bucketAccent }) {
     const name = [contact.firstname, contact.lastname].filter(Boolean).join(' ') || '—';
-    const role = getContactRole(contact);
-    const roleStyle = ROLE_COLORS[role] || ROLE_COLORS['Unknown'];
+    const tags = getContactTags(contact);
     const isDeleting = deletingContact === (contact.id || contact.vid);
 
     return (
@@ -109,9 +103,14 @@ function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact })
         {contact.jobtitle && (
           <div style={{ fontSize: '0.62rem', color: '#64748B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: '1px' }}>{contact.jobtitle}</div>
         )}
-        <div style={{ marginTop: '4px', display: 'flex', flexWrap: 'wrap', gap: '2px', alignItems: 'center' }}>
-          <span style={{ display: 'inline-block', padding: '1px 6px', borderRadius: '999px', fontSize: '0.55rem', fontWeight: 700, background: roleStyle.bg, color: roleStyle.color, letterSpacing: '0.02em' }}>{role}</span>
-        </div>
+        {tags.length > 0 && (
+          <div style={{ marginTop: '4px', display: 'flex', flexWrap: 'wrap', gap: '2px', alignItems: 'center' }}>
+            {tags.map(t => {
+              const bucket = BUCKETS.find(b => b.tag === t);
+              return <span key={t} style={{ display: 'inline-block', padding: '1px 6px', borderRadius: '999px', fontSize: '0.5rem', fontWeight: 700, background: bucket?.headerBg || '#F3F4F6', color: bucket?.headerColor || '#6B7280', letterSpacing: '0.02em' }}>{bucket?.label || t}</span>;
+            })}
+          </div>
+        )}
       </div>
     );
   }
@@ -174,7 +173,6 @@ const EMPTY = {
 };
 
 // ── Inline HubSpot Contact Editor ──
-const ROLE_OPTIONS = ['Decision Maker', 'Influencer', 'Other', 'Left', 'Unknown'];
 const TAG_OPTIONS = ['ESG', 'Procurement', 'Private Equity', 'Real Estate', 'Capital Planning', 'Dan Key Target', 'Test', 'EU'];
 
 function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS }) {
@@ -190,10 +188,6 @@ function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS }
     phone: contact.phone || '',
     jobtitle: contact.jobtitle || '',
     company: contact.company || '',
-    decision_maker: (() => {
-      const r = contact.decision_maker || 'Unknown';
-      return (r === 'true' || r === 'Yes') ? 'Decision Maker' : (r === 'No' || r === 'false') ? 'Unknown' : (r || 'Unknown');
-    })(),
     hs_linkedin_url: contact.hs_linkedin_url || contact.linkedin_url || '',
   });
   // Checked state for the 5 known tags
@@ -237,8 +231,7 @@ function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS }
     setSaving(true);
     setError(null);
     try {
-      const { decision_maker, ...hubspotFields } = f;
-      const props = { ...hubspotFields, dans_tags: buildTagsString() };
+      const props = { ...f, dans_tags: buildTagsString() };
       const res = await fetch('/api/hubspot?action=update-contact', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -282,13 +275,7 @@ function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS }
           <div><label style={labelStyle}>Phone</label><input style={inputStyle} value={f.phone} onChange={e => set('phone', e.target.value)} /></div>
           <div style={{ gridColumn: '1 / -1' }}><label style={labelStyle}>Job Title</label><input style={inputStyle} value={f.jobtitle} onChange={e => set('jobtitle', e.target.value)} /></div>
           <div style={{ gridColumn: '1 / -1' }}><label style={labelStyle}>Company</label><input style={inputStyle} value={f.company} onChange={e => set('company', e.target.value)} /></div>
-          <div>
-            <label style={labelStyle}>Role</label>
-            <select style={inputStyle} value={f.decision_maker} onChange={e => set('decision_maker', e.target.value)}>
-              {ROLE_OPTIONS.map(r => <option key={r} value={r}>{r}</option>)}
-            </select>
-          </div>
-          <div><label style={labelStyle}>LinkedIn URL</label><input style={inputStyle} value={f.hs_linkedin_url} onChange={e => set('hs_linkedin_url', e.target.value)} /></div>
+          <div style={{ gridColumn: '1 / -1' }}><label style={labelStyle}>LinkedIn URL</label><input style={inputStyle} value={f.hs_linkedin_url} onChange={e => set('hs_linkedin_url', e.target.value)} /></div>
           <div style={{ gridColumn: '1 / -1' }} ref={tagsRef}>
             <label style={labelStyle}>Tags</label>
             <button
@@ -350,20 +337,9 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
   // Local contact state — updated optimistically after HubSpot saves
   const baseContacts = useMemo(() => {
     if (!fields.company || isNew) return [];
-    const ROLE_ORDER = { 'Decision Maker': 0, 'Influencer': 1, 'Other': 2, 'Left': 3, 'Unknown': 4 };
-    function roleRank(c) {
-      const r = c.decision_maker || 'Unknown';
-      const normalized = (r === 'true' || r === 'Yes') ? 'Decision Maker' : (r === 'No' || r === 'false') ? 'Unknown' : r;
-      return ROLE_ORDER[normalized] ?? 5;
-    }
     return hubspotContacts
       .filter(c => companiesMatch(c.company, fields.company))
-      .filter(c => {
-        const r = c.decision_maker || 'Unknown';
-        const normalized = (r === 'true' || r === 'Yes') ? 'Decision Maker' : (r === 'No' || r === 'false') ? 'Unknown' : r;
-        return normalized !== 'Hide';
-      })
-      .sort((a, b) => roleRank(a) - roleRank(b));
+      .filter(c => !contactIsHidden(c));
   }, [fields.company, hubspotContacts, isNew]);
 
   const [localContacts, setLocalContacts] = useState(baseContacts);
@@ -678,7 +654,6 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Category</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Email</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Phone</th>
-                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Role</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>LinkedIn</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'center', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0', width: '40px' }}></th>
                       </tr>
@@ -686,10 +661,6 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                     <tbody>
                       {companyContacts.map((c, i) => {
                         const name = [c.firstname, c.lastname].filter(Boolean).join(' ');
-                        const r = c.decision_maker || 'Unknown';
-                        const role = (r === 'true' || r === 'Yes') ? 'Decision Maker' : (r === 'No' || r === 'false') ? 'Unknown' : r;
-                        const roleColors = { 'Decision Maker': { bg: '#DCFCE7', color: '#166534' }, 'Influencer': { bg: '#DBEAFE', color: '#1E40AF' }, 'Left': { bg: '#FEF9C3', color: '#92400E' }, 'Other': { bg: '#F3E8FF', color: '#7C3AED' }, 'Unknown': { bg: '#F3F4F6', color: '#6B7280' } };
-                        const rs = roleColors[role] || roleColors['Unknown'];
                         const linkedinUrl = c.hs_linkedin_url || c.linkedin_url || c.hs_linkedinid;
                         return (
                           <tr key={c.id || i} onClick={() => setEditingContact(c)} style={{ borderBottom: '1px solid #F1F5F9', cursor: 'pointer' }} onMouseEnter={e => e.currentTarget.style.background = '#F8FAFC'} onMouseLeave={e => e.currentTarget.style.background = ''}>
@@ -709,7 +680,6 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                             </td>
                             <td style={{ padding: '0.35rem 0.5rem', color: '#475569', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.email || '—'}</td>
                             <td style={{ padding: '0.35rem 0.5rem', color: '#475569', whiteSpace: 'nowrap' }}>{c.phone || '—'}</td>
-                            <td style={{ padding: '0.35rem 0.5rem' }}><span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.62rem', fontWeight: 700, background: rs.bg, color: rs.color }}>{role}</span></td>
                             <td style={{ padding: '0.35rem 0.5rem' }}>
                               {linkedinUrl ? <a href={linkedinUrl.startsWith('http') ? linkedinUrl : `https://linkedin.com/in/${linkedinUrl}`} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ color: '#0A66C2', fontSize: '0.7rem', fontWeight: 600, textDecoration: 'none' }}>View</a> : <span style={{ color: '#CBD5E1' }}>—</span>}
                             </td>

@@ -892,10 +892,8 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
   }
 
   // Inline cell save — updates HubSpot and local cache
-  // decision_maker maps to HubSpot 'role' property, but only for values HubSpot accepts
-  const HUBSPOT_ROLE_VALUES = new Set(['Decision Maker', 'End user', 'System integrator', 'Consultant']);
   const FIELD_MAP = {};
-  const LOCAL_ONLY_PROPS = new Set(['decision_maker']);
+  const LOCAL_ONLY_PROPS = new Set([]);
 
   const handleInlineUpdate = useCallback(async (contactId, properties) => {
     try {
@@ -903,13 +901,7 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
       const hubspotProps = {};
       const localProps = {};
       for (const [k, v] of Object.entries(properties)) {
-        if (LOCAL_ONLY_PROPS.has(k)) {
-          localProps[k] = v;
-          // Also sync decision_maker to HubSpot 'role' if it's a valid HubSpot value
-          if (k === 'decision_maker' && HUBSPOT_ROLE_VALUES.has(v)) {
-            hubspotProps['role'] = v;
-          }
-        }
+        if (LOCAL_ONLY_PROPS.has(k)) localProps[k] = v;
         else hubspotProps[k] = v;
       }
       // Filter out invalid tag values that aren't in HubSpot's allowed options
@@ -1167,22 +1159,6 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
       const res = await fetch('/api/hubspot?action=full-sync');
       const json = await res.json();
       if (json.error) throw new Error(json.error);
-      // Preserve local-only fields (decision_maker/role) from existing cache
-      const oldCache = loadCache();
-      if (oldCache?.contacts && json.contacts) {
-        const localFieldsMap = new Map();
-        for (const c of oldCache.contacts) {
-          const locals = {};
-          for (const key of LOCAL_ONLY_PROPS) {
-            if (c[key]) locals[key] = c[key];
-          }
-          if (Object.keys(locals).length > 0) localFieldsMap.set(c.id, locals);
-        }
-        json.contacts = json.contacts.map(c => {
-          const saved = localFieldsMap.get(c.id);
-          return saved ? { ...c, ...saved } : c;
-        });
-      }
       setData(json);
       saveCache(json);
     } catch (err) {
@@ -1306,9 +1282,9 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
 
     return contacts
       .filter(c => {
-        // Hide contacts with "Hide" role
-        const role = c.decision_maker || '';
-        if (role === 'Hide') return false;
+        // Hide contacts with "Hide" tag
+        const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
+        if (tags.includes('hide')) return false;
         // Hide @se.com emails
         const email = (c.email || '').toLowerCase();
         return !email.endsWith('@se.com');
@@ -1380,10 +1356,10 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
 
   // Dynamic filter options for HubSpot columns
   const HUBSPOT_FILTER_SKIP = new Set(['id', '_select', '_delete', 'guessedCompany', 'guessedName', 'guessedFirstName', 'guessedLastName', 'effectiveCompany', 'matchedProspect', 'enrolledCount', 'isEnrolled', 'hs_sequences_is_enrolled', 'hs_sequences_actively_enrolled_count']);
-  const HUBSPOT_FILTER_LABELS = { company: 'Company', tier: 'Tier', decision_maker: 'Role', jobtitle: 'Title', city: 'City', state: 'State', country: 'Country', firstname: 'First Name', lastname: 'Last Name', email: 'Email', phone: 'Phone', sequenceStatus: 'Sequence', dans_tags: "Dan's Tags", dan_s_tags: "Dan's Tags" };
+  const HUBSPOT_FILTER_LABELS = { company: 'Company', tier: 'Tier', jobtitle: 'Title', city: 'City', state: 'State', country: 'Country', firstname: 'First Name', lastname: 'Last Name', email: 'Email', phone: 'Phone', sequenceStatus: 'Sequence', dans_tags: "Dan's Tags", dan_s_tags: "Dan's Tags" };
   const hsFilterOptions = useMemo(() => {
     const opts = {};
-    const allKeys = ['company', 'tier', 'decision_maker', 'jobtitle', 'city', 'state', 'country'];
+    const allKeys = ['company', 'tier', 'jobtitle', 'city', 'state', 'country'];
     // Also discover keys from data
     if (enrichedContacts.length > 0) {
       for (const key of Object.keys(enrichedContacts[0])) {
@@ -1429,7 +1405,7 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
     } else if (cardFilter === 'noEmail') {
       result = result.filter(c => !c.email);
     } else if (cardFilter === 'left') {
-      result = result.filter(c => (c.decision_maker || '').toLowerCase() === 'left');
+      result = result.filter(c => (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase().includes('left'));
     } else if (cardFilter === 'keyTarget') {
       result = result.filter(c => { const t = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase(); return t.includes('dan key target'); });
     } else if (cardFilter === 'missingName') {
@@ -1672,7 +1648,7 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
         </button>
         <button className={`${styles.summaryCard} ${cardFilter === 'left' ? styles.summaryCardActive : ''}`} onClick={() => setCardFilter(cardFilter === 'left' ? null : 'left')}>
           <div className={styles.summaryLabel}>Left Company</div>
-          <div className={styles.summaryValue}>{enrichedContacts.filter(c => (c.decision_maker || '').toLowerCase() === 'left').length}</div>
+          <div className={styles.summaryValue}>{enrichedContacts.filter(c => (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase().includes('left')).length}</div>
         </button>
         <button className={`${styles.summaryCard} ${cardFilter === 'missingName' ? styles.summaryCardActive : ''}`} onClick={() => setCardFilter(cardFilter === 'missingName' ? null : 'missingName')}>
           <div className={styles.summaryLabel}>Missing Name</div>
@@ -1851,28 +1827,6 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
                 return <span style={{ fontSize: 'var(--font-size-xs)', fontWeight: isRecent ? 600 : 400, color: isRecent ? 'var(--color-accent)' : 'var(--color-text-secondary)' }} title={fmtDateTime(c.lastmodifieddate)}>{relative}</span>;
               }},
               { key: 'dans_tags', label: "Dan's Tags", defaultWidth: 160, render: (c) => <TagsMultiSelect contact={c} field="dans_tags" value={c.dans_tags || c.dan_s_tags || c.dans_tag} options={dansTagOptions} onSave={handleInlineUpdate} /> },
-              { key: 'decision_maker', label: 'Role', defaultWidth: 130, render: (c) => {
-                const val = c.decision_maker || 'Unknown';
-                // Normalize legacy values
-                const normalized = (val === 'true' || val === 'Yes') ? 'Decision Maker' : (val === 'No' || val === 'false') ? 'Unknown' : val;
-                const colors = { 'Decision Maker': { bg: '#DCFCE7', color: '#166534' }, 'Influencer': { bg: '#DBEAFE', color: '#1E40AF' }, 'Left': { bg: '#FEF9C3', color: '#92400E' }, 'Other': { bg: '#F3E8FF', color: '#7C3AED' }, 'Hide': { bg: '#FEE2E2', color: '#991B1B' }, 'Unknown': { bg: '#F3F4F6', color: '#6B7280' } };
-                const style = colors[normalized] || colors['Unknown'];
-                return (
-                  <select
-                    style={{ padding: '2px 4px', borderRadius: '4px', border: 'none', fontSize: '0.7rem', fontWeight: 600, background: style.bg, color: style.color, cursor: 'pointer', fontFamily: 'inherit' }}
-                    value={normalized}
-                    onChange={(e) => { e.stopPropagation(); handleInlineUpdate(c.id, { decision_maker: e.target.value }); }}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <option value="Unknown">Unknown</option>
-                    <option value="Influencer">Influencer</option>
-                    <option value="Decision Maker">Decision Maker</option>
-                    <option value="Left">Left</option>
-                    <option value="Other">Other</option>
-                    <option value="Hide">Hide</option>
-                  </select>
-                );
-              }},
               { key: 'sequenceStatus', label: 'Sequence Status', defaultWidth: 120, render: (c) => c.isEnrolled ? <span className={styles.enrolledBadge}>In Sequence</span> : <span className={styles.notEnrolledBadge}>Not Enrolled</span> },
               { key: 'lastSent', label: 'Last Email Sent', defaultWidth: 120, render: (c) => <span className={styles.dateText}>{fmtDate(c.hs_email_last_send_date)}</span> },
               { key: 'lastReply', label: 'Last Reply', defaultWidth: 120, render: (c) => <span className={styles.dateText}>{fmtDate(c.hs_sales_email_last_replied)}</span> },

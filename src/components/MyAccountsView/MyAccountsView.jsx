@@ -731,9 +731,9 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
       const seen = new Set();
       for (const c of (cache?.contacts || [])) {
-        // Skip hidden contacts
-        const role = c.decision_maker || 'Unknown';
-        const isHidden = role === 'Hide';
+        // Skip hidden contacts (those with 'Hide' tag)
+        const contactTags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
+        const isHidden = contactTags.includes('hide');
         const lower = (c.company || '').toLowerCase();
         if (lower) {
           if (!seen.has(lower)) { seen.add(lower); list.push(lower); }
@@ -747,7 +747,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
             }
           }
         }
-        if (lower && !isHidden && (c.decision_maker === 'true' || c.decision_maker === 'Yes' || c.decision_maker === 'Decision Maker')) {
+        if (lower && !isHidden && contactTags.includes('decision maker')) {
           const name = [c.firstname, c.lastname].filter(Boolean).join(' ');
           if (!dmMap[lower]) dmMap[lower] = [];
           dmMap[lower].push(name || c.email || 'Unknown');
