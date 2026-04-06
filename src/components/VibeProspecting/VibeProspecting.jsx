@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import styles from './VibeProspecting.module.css';
 
 const INDUSTRY_OPTIONS = [
@@ -215,6 +215,99 @@ export function VibeProspecting({ prospects = [] }) {
     const updated = history.filter((_, i) => i !== index);
     setHistory(updated);
     saveHistory(updated);
+  }
+
+  // CSV Import
+  const fileInputRef = useRef(null);
+
+  function parseCSV(text) {
+    const lines = text.split(/\r?\n/);
+    if (lines.length < 2) return [];
+    // Parse header — handle quoted fields
+    function parseLine(line) {
+      const fields = [];
+      let current = '';
+      let inQuotes = false;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === '"') { inQuotes = !inQuotes; continue; }
+        if (ch === ',' && !inQuotes) { fields.push(current.trim()); current = ''; continue; }
+        current += ch;
+      }
+      fields.push(current.trim());
+      return fields;
+    }
+    const headers = parseLine(lines[0]).map(h => h.toLowerCase().replace(/[^a-z0-9_ ]/g, '').trim());
+    const rows = [];
+    for (let i = 1; i < lines.length; i++) {
+      if (!lines[i].trim()) continue;
+      const vals = parseLine(lines[i]);
+      const obj = {};
+      headers.forEach((h, j) => { obj[h] = vals[j] || ''; });
+      rows.push(obj);
+    }
+    return rows;
+  }
+
+  function mapZoomInfoRow(row) {
+    // ZoomInfo CSV column names → our prospect format
+    // Common ZoomInfo columns: First Name, Last Name, Job Title, Company Name, Email Address, Direct Phone Number, City, State/Province, Country, LinkedIn URL, etc.
+    const find = (...keys) => {
+      for (const k of keys) {
+        for (const [col, val] of Object.entries(row)) {
+          if (col.includes(k) && val) return val;
+        }
+      }
+      return '';
+    };
+    return {
+      first_name: find('first name', 'first_name', 'firstname'),
+      last_name: find('last name', 'last_name', 'lastname'),
+      name: [find('first name', 'first_name', 'firstname'), find('last name', 'last_name', 'lastname')].filter(Boolean).join(' ') || find('full name', 'contact name', 'name'),
+      title: find('job title', 'title', 'job_title'),
+      company: find('company name', 'company', 'organization'),
+      email: find('email address', 'email', 'e-mail'),
+      phone: find('direct phone', 'phone number', 'phone', 'mobile'),
+      city: find('city'),
+      state: find('state', 'province', 'region'),
+      country: find('country'),
+      linkedin_url: find('linkedin', 'linkedin url', 'linkedin contact profile url'),
+      company_domain: find('website', 'company url', 'domain'),
+    };
+  }
+
+  function handleCSVImport(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setError('');
+    setSuccess('');
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const rows = parseCSV(evt.target.result);
+        if (rows.length === 0) { setError('No data found in CSV file.'); return; }
+        const mapped = rows.map(mapZoomInfoRow).filter(r => r.name || r.first_name || r.last_name);
+
+        // Apply title exclude filters if set
+        const titlesExclude = (filters.titleExclude || '').split('\n').map(s => s.trim().toLowerCase()).filter(Boolean);
+        let filtered = mapped;
+        if (titlesExclude.length > 0) {
+          filtered = mapped.filter(r => {
+            const title = (r.title || '').toLowerCase();
+            return !titlesExclude.some(ex => title.includes(ex));
+          });
+        }
+
+        setResults(filtered);
+        setSelected(new Set());
+        setSuccess(`Imported ${filtered.length} contacts from ${file.name}${filtered.length < mapped.length ? ` (${mapped.length - filtered.length} excluded by title filter)` : ''}`);
+      } catch (err) {
+        setError('Failed to parse CSV: ' + err.message);
+      }
+    };
+    reader.readAsText(file);
+    // Reset file input so same file can be re-imported
+    e.target.value = '';
   }
 
   // Render helpers
@@ -499,11 +592,17 @@ export function VibeProspecting({ prospects = [] }) {
             <div className={styles.actions}>
               <button
                 className={styles.searchBtn}
-                onClick={handleSearch}
-                disabled={loading}
+                onClick={() => fileInputRef.current?.click()}
               >
-                {loading ? 'Searching...' : 'Search Prospects'}
+                Import ZoomInfo CSV
               </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv"
+                style={{ display: 'none' }}
+                onChange={handleCSVImport}
+              />
               <button className={styles.clearBtn} onClick={clearFilters}>
                 Clear Filters
               </button>
