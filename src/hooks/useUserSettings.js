@@ -8,6 +8,17 @@ export function useUserSettings(user) {
   const timerRef = useRef(null);
   const userIdRef = useRef(null);
 
+  // Flush any pending debounced writes immediately
+  const flushPending = useCallback(() => {
+    if (!userIdRef.current || Object.keys(pendingRef.current).length === 0) return;
+    clearTimeout(timerRef.current);
+    const toWrite = { ...pendingRef.current };
+    pendingRef.current = {};
+    saveUserSettings(userIdRef.current, toWrite).catch(err =>
+      console.error('Failed to flush user settings:', err)
+    );
+  }, []);
+
   useEffect(() => {
     if (!user) { setSettings({}); setLoaded(false); return; }
     userIdRef.current = user.uid;
@@ -19,12 +30,19 @@ export function useUserSettings(user) {
       setSettings(data || {});
       setLoaded(true);
     });
+
+    // Flush pending writes on page unload so hard refresh doesn't lose data
+    const handleUnload = () => flushPending();
+    window.addEventListener('beforeunload', handleUnload);
+
     return () => {
       unsub();
+      flushPending();
       userIdRef.current = null;
       clearTimeout(timerRef.current);
+      window.removeEventListener('beforeunload', handleUnload);
     };
-  }, [user]);
+  }, [user, flushPending]);
 
   // Optimistic update + debounced Firestore write.
   // Rapid calls (e.g. typing) coalesce into a single write after 800 ms of silence.

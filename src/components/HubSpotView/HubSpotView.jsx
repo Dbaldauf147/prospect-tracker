@@ -532,6 +532,16 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
   const toAlsoRef = useRef(null);
   const [showCompanySuggestions, setShowCompanySuggestions] = useState(false);
   const companyRef = useRef(null);
+  const [tagsDropdownOpen, setTagsDropdownOpen] = useState(false);
+  const [newTagInput, setNewTagInput] = useState('');
+  const tagsDropdownRef = useRef(null);
+
+  useEffect(() => {
+    if (!tagsDropdownOpen) return;
+    const h = e => { if (tagsDropdownRef.current && !tagsDropdownRef.current.contains(e.target)) setTagsDropdownOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [tagsDropdownOpen]);
 
   // All contact emails for CC suggestions
   const allEmails = useMemo(() => {
@@ -648,52 +658,71 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
               <label className={styles.modalLabel}>LinkedIn URL</label>
               <input className={styles.modalInput} value={fields.hs_linkedin_url} onChange={e => set('hs_linkedin_url', e.target.value)} placeholder="https://linkedin.com/in/..." />
             </div>
-            <div className={styles.modalFull}>
+            <div className={styles.modalFull} ref={tagsDropdownRef}>
               <label className={styles.modalLabel}>Dan's Tags</label>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', padding: '0.4rem', border: '1px solid var(--color-border)', borderRadius: '6px', minHeight: '36px' }}>
-                {(() => {
-                  const currentTags = (fields.dans_tags || '').split(';').map(s => s.trim()).filter(Boolean);
-                  const allTagOpts = [...new Set([...(tagOptions || []), ...currentTags])].filter(Boolean).sort();
-                  return allTagOpts.map(tag => {
-                    const isActive = currentTags.includes(tag);
-                    return (
-                      <button
-                        key={tag}
-                        type="button"
-                        onClick={() => {
-                          const next = isActive ? currentTags.filter(t => t !== tag) : [...currentTags, tag];
-                          set('dans_tags', next.join(';'));
-                        }}
-                        style={{
-                          padding: '0.2rem 0.55rem', borderRadius: '999px', fontSize: '0.72rem', fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit',
-                          border: isActive ? '1px solid var(--color-accent)' : '1px solid var(--color-border)',
-                          background: isActive ? 'var(--color-accent)' : 'var(--color-surface)',
-                          color: isActive ? '#fff' : 'var(--color-text-secondary)',
-                        }}
-                      >
-                        {tag}
-                      </button>
-                    );
-                  });
-                })()}
-                {(tagOptions || []).length === 0 && !(fields.dans_tags || '').trim() && <span style={{ fontSize: '0.72rem', color: '#9CA3AF' }}>No tags available</span>}
-                <input
-                  type="text"
-                  placeholder="+ New tag"
-                  onKeyDown={e => {
-                    if (e.key === 'Enter' && e.target.value.trim()) {
-                      e.preventDefault();
-                      const newTag = e.target.value.trim();
-                      const currentTags = (fields.dans_tags || '').split(';').map(s => s.trim()).filter(Boolean);
-                      if (!currentTags.includes(newTag)) {
-                        set('dans_tags', [...currentTags, newTag].join(';'));
-                      }
-                      e.target.value = '';
-                    }
-                  }}
-                  style={{ border: 'none', outline: 'none', fontSize: '0.72rem', fontFamily: 'inherit', color: 'var(--color-accent)', padding: '0.2rem 0.3rem', minWidth: '80px', flex: '1 1 80px', background: 'none' }}
-                />
-              </div>
+              {(() => {
+                const currentTags = (fields.dans_tags || '').split(';').map(s => s.trim()).filter(Boolean);
+                const allTagOpts = [...new Set([...(tagOptions || []), ...currentTags])].filter(Boolean).sort();
+                const summary = currentTags.length === 0 ? 'Select tags...' : currentTags.join(', ');
+                return (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setTagsDropdownOpen(p => !p)}
+                      style={{ width: '100%', padding: '0.4rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '0.78rem', fontFamily: 'inherit', background: '#fff', textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: currentTags.length === 0 ? '#94A3B8' : 'var(--color-text)', boxSizing: 'border-box' }}
+                    >
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{summary}</span>
+                      <span style={{ fontSize: '0.6rem', color: '#94A3B8', marginLeft: '0.5rem', flexShrink: 0 }}>{tagsDropdownOpen ? '\u25B2' : '\u25BC'}</span>
+                    </button>
+                    {tagsDropdownOpen && (
+                      <div style={{ marginTop: '2px', border: '1px solid var(--color-border)', borderRadius: '6px', background: '#fff', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', maxHeight: '220px', overflowY: 'auto' }}>
+                        <div style={{ padding: '0.35rem 0.5rem', borderBottom: '1px solid #F1F5F9' }}>
+                          <input
+                            type="text"
+                            placeholder="+ New tag (Enter to add)"
+                            value={newTagInput}
+                            onChange={e => setNewTagInput(e.target.value)}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter' && newTagInput.trim()) {
+                                e.preventDefault();
+                                const tag = newTagInput.trim();
+                                if (!currentTags.includes(tag)) {
+                                  set('dans_tags', [...currentTags, tag].join(';'));
+                                }
+                                setNewTagInput('');
+                              }
+                            }}
+                            style={{ width: '100%', padding: '0.3rem 0.4rem', border: '1px solid var(--color-border)', borderRadius: '4px', fontSize: '0.72rem', fontFamily: 'inherit', boxSizing: 'border-box', outline: 'none' }}
+                          />
+                        </div>
+                        {allTagOpts.map(tag => {
+                          const isActive = currentTags.includes(tag);
+                          return (
+                            <label key={tag} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '0.4rem 0.7rem', cursor: 'pointer', borderBottom: '1px solid #F1F5F9', background: isActive ? '#EFF6FF' : '#fff' }}
+                              onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = '#F8FAFC'; }}
+                              onMouseLeave={e => { e.currentTarget.style.background = isActive ? '#EFF6FF' : '#fff'; }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isActive}
+                                onChange={() => {
+                                  const next = isActive ? currentTags.filter(t => t !== tag) : [...currentTags, tag];
+                                  set('dans_tags', next.join(';'));
+                                }}
+                                style={{ accentColor: 'var(--color-accent)', width: '14px', height: '14px', cursor: 'pointer' }}
+                              />
+                              <span style={{ fontSize: '0.78rem', fontWeight: isActive ? 600 : 400, color: isActive ? 'var(--color-accent)' : '#374151' }}>{tag}</span>
+                            </label>
+                          );
+                        })}
+                        {allTagOpts.length === 0 && !newTagInput.trim() && (
+                          <div style={{ padding: '0.5rem 0.7rem', fontSize: '0.72rem', color: '#9CA3AF', fontStyle: 'italic' }}>No tags yet - type above to create one</div>
+                        )}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </div>
             <div className={styles.modalFull}>
               <label className={styles.modalLabel}>Notes</label>

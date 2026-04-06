@@ -175,8 +175,14 @@ const EMPTY = {
 
 // ── Inline HubSpot Contact Editor ──
 const ROLE_OPTIONS = ['Decision Maker', 'Influencer', 'Other', 'Left', 'Unknown'];
+const TAG_OPTIONS = ['ESG', 'Utilities', 'Procurement', 'Capital Planning', 'Climate Risk'];
 
-function ContactEditModal({ contact, onSave, onClose }) {
+function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS }) {
+  const rawTags = contact.dans_tags || contact.dan_s_tags || contact.dans_tag || '';
+  // Parse existing tags; track which known tags are checked separately from free-text extras
+  const parsedTags = rawTags.split(';').map(t => t.trim()).filter(Boolean);
+  const knownTagsLower = new Set(tagOptions.map(t => t.toLowerCase()));
+
   const [f, setF] = useState({
     firstname: contact.firstname || '',
     lastname: contact.lastname || '',
@@ -188,11 +194,41 @@ function ContactEditModal({ contact, onSave, onClose }) {
       const r = contact.decision_maker || 'Unknown';
       return (r === 'true' || r === 'Yes') ? 'Decision Maker' : (r === 'No' || r === 'false') ? 'Unknown' : (r || 'Unknown');
     })(),
-    dans_tags: contact.dans_tags || contact.dan_s_tags || contact.dans_tag || '',
     hs_linkedin_url: contact.hs_linkedin_url || contact.linkedin_url || '',
   });
+  // Checked state for the 5 known tags
+  const [checkedTags, setCheckedTags] = useState(() =>
+    new Set(parsedTags.filter(t => knownTagsLower.has(t.toLowerCase())).map(t => {
+      // Normalise to the canonical casing
+      return tagOptions.find(o => o.toLowerCase() === t.toLowerCase()) || t;
+    }))
+  );
+  // Any extra tags not in TAG_OPTIONS are kept verbatim
+  const extraTags = parsedTags.filter(t => !knownTagsLower.has(t.toLowerCase()));
+
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [tagsOpen, setTagsOpen] = useState(false);
+  const tagsRef = useRef(null);
+
+  useEffect(() => {
+    if (!tagsOpen) return;
+    const h = e => { if (tagsRef.current && !tagsRef.current.contains(e.target)) setTagsOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [tagsOpen]);
+
+  function toggleTag(tag) {
+    setCheckedTags(prev => {
+      const next = new Set(prev);
+      next.has(tag) ? next.delete(tag) : next.add(tag);
+      return next;
+    });
+  }
+
+  function buildTagsString() {
+    return [...checkedTags, ...extraTags].join(';');
+  }
 
   function set(key, val) { setF(prev => ({ ...prev, [key]: val })); }
 
@@ -200,10 +236,11 @@ function ContactEditModal({ contact, onSave, onClose }) {
     setSaving(true);
     setError(null);
     try {
+      const props = { ...f, dans_tags: buildTagsString() };
       const res = await fetch('/api/hubspot?action=update-contact', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contactId: contact.id || contact.vid, properties: f }),
+        body: JSON.stringify({ contactId: contact.id || contact.vid, properties: props }),
       });
       const json = await res.json();
       if (json.error) throw new Error(json.error);
@@ -212,11 +249,11 @@ function ContactEditModal({ contact, onSave, onClose }) {
         const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
         if (cache?.contacts) {
           const idx = cache.contacts.findIndex(c => String(c.id || c.vid) === String(contact.id || contact.vid));
-          if (idx !== -1) cache.contacts[idx] = { ...cache.contacts[idx], ...f };
+          if (idx !== -1) cache.contacts[idx] = { ...cache.contacts[idx], ...props };
           localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache));
         }
       } catch {}
-      onSave({ ...contact, ...f });
+      onSave({ ...contact, ...props });
     } catch (err) {
       setError(err.message || 'Save failed');
     } finally {
@@ -248,10 +285,44 @@ function ContactEditModal({ contact, onSave, onClose }) {
             </select>
           </div>
           <div><label style={labelStyle}>LinkedIn URL</label><input style={inputStyle} value={f.hs_linkedin_url} onChange={e => set('hs_linkedin_url', e.target.value)} /></div>
-          <div style={{ gridColumn: '1 / -1' }}>
-            <label style={labelStyle}>Tags (semicolon-separated)</label>
-            <input style={inputStyle} value={f.dans_tags} onChange={e => set('dans_tags', e.target.value)} placeholder="e.g. ESG;Utilities;Procurement" />
-            <div style={{ fontSize: '0.6rem', color: '#94A3B8', marginTop: '3px' }}>Use: ESG · Utilities · Procurement · Capital Planning · Climate Risk</div>
+          <div style={{ gridColumn: '1 / -1' }} ref={tagsRef}>
+            <label style={labelStyle}>Tags</label>
+            <button
+              type="button"
+              onClick={() => setTagsOpen(p => !p)}
+              style={{ width: '100%', padding: '0.35rem 0.5rem', border: '1px solid #E2E8F0', borderRadius: '6px', fontSize: '0.78rem', fontFamily: 'inherit', background: '#fff', textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: checkedTags.size === 0 ? '#94A3B8' : '#1E293B' }}
+            >
+              <span>
+                {checkedTags.size === 0
+                  ? 'Select tags…'
+                  : [...checkedTags].join(', ')}
+              </span>
+              <span style={{ fontSize: '0.6rem', color: '#94A3B8' }}>{tagsOpen ? '▲' : '▼'}</span>
+            </button>
+            {tagsOpen && (
+              <div style={{ marginTop: '2px', border: '1px solid #E2E8F0', borderRadius: '6px', background: '#fff', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
+                {tagOptions.map(tag => {
+                  const bucket = BUCKETS.find(b => b.tag === tag.toLowerCase());
+                  return (
+                    <label key={tag} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '0.45rem 0.7rem', cursor: 'pointer', borderBottom: '1px solid #F1F5F9', background: checkedTags.has(tag) ? (bucket?.headerBg || '#F0F9FF') : '#fff' }}
+                      onMouseEnter={e => { if (!checkedTags.has(tag)) e.currentTarget.style.background = '#F8FAFC'; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = checkedTags.has(tag) ? (bucket?.headerBg || '#F0F9FF') : '#fff'; }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checkedTags.has(tag)}
+                        onChange={() => toggleTag(tag)}
+                        style={{ accentColor: bucket?.accent || '#0078D4', width: '14px', height: '14px', cursor: 'pointer' }}
+                      />
+                      <span style={{ fontSize: '0.78rem', fontWeight: checkedTags.has(tag) ? 600 : 400, color: checkedTags.has(tag) ? (bucket?.headerColor || '#1E293B') : '#374151' }}>{tag}</span>
+                      {checkedTags.has(tag) && bucket && (
+                        <span style={{ marginLeft: 'auto', fontSize: '0.6rem', fontWeight: 700, color: bucket.headerColor, background: bucket.headerBg, padding: '1px 6px', borderRadius: '999px' }}>{bucket.label}</span>
+                      )}
+                    </label>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
         {error && <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', background: '#FEF2F2', borderRadius: '6px', fontSize: '0.75rem', color: '#DC2626' }}>{error}</div>}
@@ -289,6 +360,18 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
   const [localContacts, setLocalContacts] = useState(baseContacts);
   useEffect(() => { setLocalContacts(baseContacts); }, [baseContacts]);
   const companyContacts = localContacts;
+
+  // Collect all unique tags across all HubSpot contacts for the dropdown
+  const allTagOptions = useMemo(() => {
+    const tagSet = new Set();
+    for (const c of hubspotContacts) {
+      const raw = c.dans_tags || c.dan_s_tags || c.dans_tag || '';
+      raw.split(';').map(t => t.trim()).filter(Boolean).forEach(t => tagSet.add(t));
+    }
+    // Always include the 5 bucket tags
+    TAG_OPTIONS.forEach(t => tagSet.add(t));
+    return [...tagSet].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  }, [hubspotContacts]);
 
   const [contactView, setContactView] = useState('table'); // 'table' | 'orgchart'
   const [editingContact, setEditingContact] = useState(null);
@@ -668,6 +751,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
           contact={editingContact}
           onSave={handleContactSaved}
           onClose={() => setEditingContact(null)}
+          tagOptions={allTagOptions}
         />
       )}
     </div>
