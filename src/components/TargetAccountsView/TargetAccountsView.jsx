@@ -361,16 +361,70 @@ export function TargetAccountsView({ onDataLoaded }) {
       {status && <div className={styles.success}>{status}</div>}
 
       {!data && !loading && (
-        <div
-          className={`${styles.dropZone} ${dragOver ? styles.dropZoneActive : ''}`}
-          onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={handleDrop}
-          onClick={() => fileRef.current?.click()}
-        >
-          <div className={styles.dropTitle}>Drop your Excel or CSV file here</div>
-          <div className={styles.dropSub}>or click to browse — supports .xlsx, .xls, .csv</div>
-        </div>
+        <>
+          <div
+            className={`${styles.dropZone} ${dragOver ? styles.dropZoneActive : ''}`}
+            onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={handleDrop}
+            onClick={() => fileRef.current?.click()}
+          >
+            <div className={styles.dropTitle}>Drop your Excel or CSV file here</div>
+            <div className={styles.dropSub}>or click to browse — supports .xlsx, .xls, .csv</div>
+          </div>
+          <div style={{ marginTop: '1rem', padding: '1rem', background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px' }}>
+            <h3 style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--color-text)', marginTop: 0, marginBottom: '0.5rem' }}>Expected Format</h3>
+            <p style={{ fontSize: '0.78rem', color: 'var(--color-text-secondary)', margin: '0 0 0.5rem 0' }}>
+              Your Excel file should have columns matching these names (flexible matching — exact names not required):
+            </p>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.75rem' }}>
+                <thead>
+                  <tr style={{ background: '#F8FAFC' }}>
+                    <th style={{ padding: '0.4rem 0.6rem', textAlign: 'left', borderBottom: '1px solid var(--color-border)', fontWeight: 600, color: 'var(--color-text-secondary)' }}>Column</th>
+                    <th style={{ padding: '0.4rem 0.6rem', textAlign: 'left', borderBottom: '1px solid var(--color-border)', fontWeight: 600, color: 'var(--color-text-secondary)' }}>Required</th>
+                    <th style={{ padding: '0.4rem 0.6rem', textAlign: 'left', borderBottom: '1px solid var(--color-border)', fontWeight: 600, color: 'var(--color-text-secondary)' }}>Example Values</th>
+                    <th style={{ padding: '0.4rem 0.6rem', textAlign: 'left', borderBottom: '1px solid var(--color-border)', fontWeight: 600, color: 'var(--color-text-secondary)' }}>Matches</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    ['Account / Company Name', 'Yes', 'CBRE, Prologis, Simon Property Group', 'Account, Company, Name, Client'],
+                    ['CDM / Salesperson', 'Yes', 'Dan Baldauf', 'CDM, Salesperson, Sales Rep, Account Owner, Rep'],
+                    ['Tier', 'Yes', 'Tier 1, Tier 2, 1, 2', 'Tier, Account Tier, Target'],
+                  ].map(([col, req, example, matches], i) => (
+                    <tr key={i} style={{ borderBottom: '1px solid #F1F5F9' }}>
+                      <td style={{ padding: '0.35rem 0.6rem', fontWeight: 600, color: 'var(--color-text)' }}>{col}</td>
+                      <td style={{ padding: '0.35rem 0.6rem', color: req === 'Yes' ? '#DC2626' : 'var(--color-text-secondary)', fontWeight: req === 'Yes' ? 600 : 400 }}>{req}</td>
+                      <td style={{ padding: '0.35rem 0.6rem', color: 'var(--color-text-secondary)', fontStyle: 'italic' }}>{example}</td>
+                      <td style={{ padding: '0.35rem 0.6rem', color: '#6B7280', fontSize: '0.7rem' }}>{matches}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p style={{ fontSize: '0.72rem', color: '#9CA3AF', margin: '0.5rem 0 0 0' }}>
+              Additional columns are preserved and displayed. Multiple sheets are supported — each sheet is shown as a separate tab.
+            </p>
+            <button
+              onClick={() => {
+                const wb = XLSX.utils.book_new();
+                const wsData = [
+                  ['Account Name', 'CDM', 'Tier'],
+                  ['CBRE', 'Dan Baldauf', 'Tier 1'],
+                  ['Prologis', 'Dan Baldauf', 'Tier 1'],
+                  ['Simon Property Group', 'Dan Baldauf', 'Tier 2'],
+                ];
+                const ws = XLSX.utils.aoa_to_sheet(wsData);
+                XLSX.utils.book_append_sheet(wb, ws, 'Target Accounts');
+                XLSX.writeFile(wb, 'Target_Accounts_Template.xlsx');
+              }}
+              style={{ marginTop: '0.6rem', padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', borderRadius: '6px', background: 'var(--color-surface)', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-accent)' }}
+            >
+              Download Template (.xlsx)
+            </button>
+          </div>
+        </>
       )}
 
       {loading && <div className={styles.loading}>Processing file...</div>}
