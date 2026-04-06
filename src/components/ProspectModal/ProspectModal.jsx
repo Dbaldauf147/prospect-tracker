@@ -236,7 +236,8 @@ function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS }
     setSaving(true);
     setError(null);
     try {
-      const props = { ...f, dans_tags: buildTagsString() };
+      const { decision_maker, ...hubspotFields } = f;
+      const props = { ...hubspotFields, dans_tags: buildTagsString() };
       const res = await fetch('/api/hubspot?action=update-contact', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
