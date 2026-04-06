@@ -32,6 +32,7 @@ function getInitialFilters() {
   return {
     companyName: '',
     accountList: '',
+    cdm: '',
     industry: '',
     titleKeywords: '',
     titleExclude: '',
@@ -249,55 +250,86 @@ export function VibeProspecting({ prospects = [] }) {
         {formOpen && (
           <>
             <div className={styles.formGrid} style={{ marginTop: '0.75rem' }}>
-              <div className={styles.formGroupFull}>
-                <label className={styles.label}>Target Account List</label>
-                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
-                  {ACCOUNT_LIST_OPTIONS.map(opt => {
-                    const isActive = filters.accountList === opt.value;
-                    return (
-                      <button
-                        key={opt.value}
-                        type="button"
-                        onClick={() => {
-                          updateFilter('accountList', opt.value);
-                          if (opt.value) {
-                            const filtered = prospects.filter(p => {
-                              if (opt.value === 'tier1') return p.tier === 'Tier 1';
-                              if (opt.value === 'tier2') return p.tier === 'Tier 2';
-                              if (opt.value === 'client') return p.status === 'Client';
-                              if (opt.value === 'pipeline') return p.status === 'Qualifying' || p.status === 'Inside Sales';
-                              return true; // 'all'
-                            });
-                            const names = filtered.map(p => p.company).filter(Boolean).join(', ');
-                            updateFilter('companyName', names);
-                          } else {
-                            updateFilter('companyName', '');
-                          }
-                        }}
-                        style={{
-                          padding: '0.3rem 0.7rem', borderRadius: '999px', fontSize: '0.75rem', fontWeight: 600,
-                          cursor: 'pointer', fontFamily: 'inherit', transition: 'all 0.15s',
-                          border: isActive ? '1px solid var(--color-accent)' : '1px solid var(--color-border)',
-                          background: isActive ? 'var(--color-accent)' : 'var(--color-surface)',
-                          color: isActive ? '#fff' : 'var(--color-text-secondary)',
+              {(() => {
+                // Compute CDM options and filtered prospects
+                const cdmSet = new Set();
+                prospects.forEach(p => { if (p.cdm) cdmSet.add(p.cdm); });
+                const cdmOptions = [...cdmSet].sort();
+                const cdmFiltered = filters.cdm
+                  ? prospects.filter(p => p.cdm === filters.cdm)
+                  : prospects;
+
+                function applyListFilter(list, listValue) {
+                  if (listValue === 'tier1') return list.filter(p => p.tier === 'Tier 1');
+                  if (listValue === 'tier2') return list.filter(p => p.tier === 'Tier 2');
+                  if (listValue === 'client') return list.filter(p => p.status === 'Client');
+                  if (listValue === 'pipeline') return list.filter(p => p.status === 'Qualifying' || p.status === 'Inside Sales');
+                  return list;
+                }
+
+                function refreshCompanyNames(listValue, cdmValue) {
+                  let base = cdmValue ? prospects.filter(p => p.cdm === cdmValue) : prospects;
+                  if (listValue) {
+                    base = applyListFilter(base, listValue);
+                    const names = base.map(p => p.company).filter(Boolean).join(', ');
+                    updateFilter('companyName', names);
+                  } else {
+                    updateFilter('companyName', '');
+                  }
+                }
+
+                return (
+                  <>
+                    <div className={styles.formGroup}>
+                      <label className={styles.label}>CDM</label>
+                      <select
+                        className={styles.select}
+                        value={filters.cdm}
+                        onChange={e => {
+                          const val = e.target.value;
+                          updateFilter('cdm', val);
+                          refreshCompanyNames(filters.accountList, val);
                         }}
                       >
-                        {opt.label}
-                        {opt.value && (() => {
-                          const count = prospects.filter(p => {
-                            if (opt.value === 'tier1') return p.tier === 'Tier 1';
-                            if (opt.value === 'tier2') return p.tier === 'Tier 2';
-                            if (opt.value === 'client') return p.status === 'Client';
-                            if (opt.value === 'pipeline') return p.status === 'Qualifying' || p.status === 'Inside Sales';
-                            return true;
-                          }).length;
-                          return <span style={{ marginLeft: '0.3rem', opacity: 0.7 }}>({count})</span>;
-                        })()}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
+                        <option value="">All CDMs</option>
+                        {cdmOptions.map(c => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    </div>
+
+                    <div className={styles.formGroupFull}>
+                      <label className={styles.label}>Target Account List</label>
+                      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                        {ACCOUNT_LIST_OPTIONS.map(opt => {
+                          const isActive = filters.accountList === opt.value;
+                          return (
+                            <button
+                              key={opt.value}
+                              type="button"
+                              onClick={() => {
+                                updateFilter('accountList', opt.value);
+                                refreshCompanyNames(opt.value, filters.cdm);
+                              }}
+                              style={{
+                                padding: '0.3rem 0.7rem', borderRadius: '999px', fontSize: '0.75rem', fontWeight: 600,
+                                cursor: 'pointer', fontFamily: 'inherit', transition: 'all 0.15s',
+                                border: isActive ? '1px solid var(--color-accent)' : '1px solid var(--color-border)',
+                                background: isActive ? 'var(--color-accent)' : 'var(--color-surface)',
+                                color: isActive ? '#fff' : 'var(--color-text-secondary)',
+                              }}
+                            >
+                              {opt.label}
+                              {opt.value && (() => {
+                                const count = applyListFilter(cdmFiltered, opt.value).length;
+                                return <span style={{ marginLeft: '0.3rem', opacity: 0.7 }}>({count})</span>;
+                              })()}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </>
+                );
+              })()}
 
               <div className={styles.formGroup}>
                 <label className={styles.label}>Company Name</label>
