@@ -11,8 +11,10 @@
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const { filters, numberOfResults = 50 } = req.body;
-  if (!filters) return res.status(400).json({ error: 'Missing filters' });
+  // Accept filters either as req.body.filters or as req.body directly
+  const filters = req.body.filters || req.body;
+  const numberOfResults = filters.limit || req.body.numberOfResults || 50;
+  if (!filters || Object.keys(filters).length === 0) return res.status(400).json({ error: 'Missing filters' });
 
   // For now, store the search request in a simple format
   // and return a placeholder response indicating the search was queued.
