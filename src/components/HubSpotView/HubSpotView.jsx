@@ -322,19 +322,15 @@ function TagsMultiSelect({ contact, field, value, options, onSave }) {
     onSave(contact.id, { [field]: newVal });
   }
 
-  async function addNewTag() {
+  function addNewTag() {
     const tag = newTag.trim();
     if (!tag || selected.includes(tag)) return;
-    try {
-      const res = await fetch('/api/hubspot?action=add-tag-option', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tag }),
-      });
-      const json = await res.json();
-      if (json.error) throw new Error(json.error);
-    } catch (err) {
-      console.error('Failed to add tag option:', err);
+    // Only allow tags that are already valid HubSpot options
+    const knownLower = new Set(allOptions.map(o => o.toLowerCase()));
+    if (!knownLower.has(tag.toLowerCase())) {
+      alert('That tag is not a valid HubSpot option. Available tags: ' + allOptions.join(', '));
+      setNewTag('');
+      return;
     }
     const next = [...selected, tag];
     onSave(contact.id, { [field]: next.join(';') });
@@ -693,20 +689,15 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
                             placeholder="+ New tag (Enter to add)"
                             value={newTagInput}
                             onChange={e => setNewTagInput(e.target.value)}
-                            onKeyDown={async e => {
+                            onKeyDown={e => {
                               if (e.key === 'Enter' && newTagInput.trim()) {
                                 e.preventDefault();
                                 const tag = newTagInput.trim();
-                                try {
-                                  const res = await fetch('/api/hubspot?action=add-tag-option', {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ tag }),
-                                  });
-                                  const json = await res.json();
-                                  if (json.error) throw new Error(json.error);
-                                } catch (err) {
-                                  console.error('Failed to add tag option:', err);
+                                // Only allow tags that are valid HubSpot options
+                                const knownLower = new Set((tagOptions || []).map(o => (typeof o === 'string' ? o : o.label || o.value || '').toLowerCase()));
+                                if (!knownLower.has(tag.toLowerCase())) {
+                                  alert('That tag is not a valid HubSpot option. Available tags: ' + (tagOptions || []).join(', '));
+                                  return;
                                 }
                                 if (!currentTags.includes(tag)) {
                                   set('dans_tags', [...currentTags, tag].join(';'));
@@ -913,21 +904,11 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
         if (LOCAL_ONLY_PROPS.has(k)) localProps[k] = v;
         else hubspotProps[k] = v;
       }
-      // Auto-register any unknown tags before saving
+      // Filter out invalid tag values that aren't in HubSpot's allowed options
       if (hubspotProps.dans_tags) {
         const tags = hubspotProps.dans_tags.split(';').map(t => t.trim()).filter(Boolean);
         const knownLower = new Set((dansTagOptions || []).map(o => (typeof o === 'string' ? o : o.label || o.value || '').toLowerCase()));
-        for (const tag of tags) {
-          if (!knownLower.has(tag.toLowerCase())) {
-            try {
-              await fetch('/api/hubspot?action=add-tag-option', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ tag }),
-              });
-            } catch {}
-          }
-        }
+        hubspotProps.dans_tags = tags.filter(t => knownLower.has(t.toLowerCase())).join(';');
       }
       // Only call HubSpot API if there are real HubSpot properties to update
       if (Object.keys(hubspotProps).length > 0) {
@@ -1132,21 +1113,11 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
     try {
       // Separate notes from contact properties (HubSpot notes are a different object)
       const { notes, ...contactProps } = fields;
-      // Auto-register any unknown tags as HubSpot property options before saving
+      // Filter out invalid tag values that aren't in HubSpot's allowed options
       if (contactProps.dans_tags) {
         const tags = contactProps.dans_tags.split(';').map(t => t.trim()).filter(Boolean);
         const knownLower = new Set((dansTagOptions || []).map(o => (typeof o === 'string' ? o : o.label || o.value || '').toLowerCase()));
-        for (const tag of tags) {
-          if (!knownLower.has(tag.toLowerCase())) {
-            try {
-              await fetch('/api/hubspot?action=add-tag-option', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ tag }),
-              });
-            } catch {}
-          }
-        }
+        contactProps.dans_tags = tags.filter(t => knownLower.has(t.toLowerCase())).join(';');
       }
       const action = existingId ? 'update-contact' : 'create-contact';
       const reqBody = existingId
