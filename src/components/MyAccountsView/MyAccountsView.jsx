@@ -712,6 +712,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   // Build source maps: which companies exist in each data source
   const BUCKET_TAGS = ['esg', 'procurement', 'utilities', 'climate risk', 'capital planning'];
 
+  // Re-read HubSpot cache on every render to pick up tag changes
   const { hubspotCompanies, decisionMakerByCompany, contactCountByCompany, bucketsByCompany } = useMemo(() => {
     const list = [];
     const dmMap = {}; // company lowercase → [names]
@@ -737,7 +738,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
             }
           }
         }
-        if (lower && (c.decision_maker === 'true' || c.decision_maker === 'Yes' || c.decision_maker === 'Decision Maker')) {
+        if (lower && !isHidden && (c.decision_maker === 'true' || c.decision_maker === 'Yes' || c.decision_maker === 'Decision Maker')) {
           const name = [c.firstname, c.lastname].filter(Boolean).join(' ');
           if (!dmMap[lower]) dmMap[lower] = [];
           dmMap[lower].push(name || c.email || 'Unknown');
@@ -745,7 +746,8 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       }
     } catch {}
     return { hubspotCompanies: list, decisionMakerByCompany: dmMap, contactCountByCompany: countMap, bucketsByCompany: bucketMap };
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prospects]);
 
   const targetCompanies = useMemo(() => {
     const seen = new Set();
