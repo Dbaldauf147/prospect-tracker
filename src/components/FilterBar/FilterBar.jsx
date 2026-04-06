@@ -2,15 +2,6 @@ import { useState, useRef, useEffect } from 'react';
 import { FILTER_COLUMNS } from '../../hooks/useFilters';
 import styles from './FilterBar.module.css';
 
-const SAVED_FILTERS_KEY = 'prospect-saved-filters';
-
-function loadSavedFilters() {
-  try { return JSON.parse(localStorage.getItem(SAVED_FILTERS_KEY)) || []; } catch { return []; }
-}
-
-function saveSavedFilters(list) {
-  localStorage.setItem(SAVED_FILTERS_KEY, JSON.stringify(list));
-}
 
 function FilterDropdown({ label, options, selected, onToggle }) {
   const [open, setOpen] = useState(false);
@@ -73,9 +64,8 @@ function FilterDropdown({ label, options, selected, onToggle }) {
   );
 }
 
-function SavedFiltersMenu({ filters, searchTerm, onLoad }) {
+function SavedFiltersMenu({ filters, searchTerm, onLoad, saved, onUpdateSaved }) {
   const [open, setOpen] = useState(false);
-  const [saved, setSaved] = useState(loadSavedFilters);
   const [naming, setNaming] = useState(false);
   const [name, setName] = useState('');
   const ref = useRef(null);
@@ -93,17 +83,13 @@ function SavedFiltersMenu({ filters, searchTerm, onLoad }) {
     const label = name.trim();
     if (!label) return;
     const entry = { id: Date.now(), label, filters: { ...filters }, searchTerm };
-    const next = [entry, ...saved];
-    setSaved(next);
-    saveSavedFilters(next);
+    onUpdateSaved([entry, ...saved]);
     setName('');
     setNaming(false);
   }
 
   function handleDelete(id) {
-    const next = saved.filter(s => s.id !== id);
-    setSaved(next);
-    saveSavedFilters(next);
+    onUpdateSaved(saved.filter(s => s.id !== id));
   }
 
   function handleLoad(entry) {
@@ -171,6 +157,7 @@ export function FilterBar({
   view, setView,
   onAddNew,
   resultCount, totalCount,
+  savedFilters, onUpdateSavedFilters,
 }) {
   return (
     <div className={styles.bar}>
@@ -195,7 +182,7 @@ export function FilterBar({
         />
       ))}
 
-      <SavedFiltersMenu filters={filters} searchTerm={searchTerm} onLoad={onLoadSavedFilter} />
+      <SavedFiltersMenu filters={filters} searchTerm={searchTerm} onLoad={onLoadSavedFilter} saved={savedFilters || []} onUpdateSaved={onUpdateSavedFilters || (() => {})} />
 
       {activeFilterCount > 0 && (
         <button className={styles.clearBtn} onClick={clearFilters}>Clear all</button>

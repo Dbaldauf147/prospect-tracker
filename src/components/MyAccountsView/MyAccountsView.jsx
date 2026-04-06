@@ -210,16 +210,6 @@ function fuzzyHas(names, target) {
 
 // Target Accounts data is now passed as a prop from App.jsx
 
-const TARGET_MAP_KEY = 'my-accounts-target-map';
-function loadTargetMap() { try { return JSON.parse(localStorage.getItem(TARGET_MAP_KEY)) || {}; } catch { return {}; } }
-function saveTargetMap(m) { localStorage.setItem(TARGET_MAP_KEY, JSON.stringify(m)); }
-
-const DIVISIONS_MAP_KEY = 'my-accounts-divisions-map';
-const DIVISION_RULES_KEY = 'my-accounts-division-rules';
-function loadDivisionsMap() { try { return JSON.parse(localStorage.getItem(DIVISIONS_MAP_KEY)) || {}; } catch { return {}; } }
-function saveDivisionsMap(m) { localStorage.setItem(DIVISIONS_MAP_KEY, JSON.stringify(m)); }
-function loadDivisionRules() { try { return JSON.parse(localStorage.getItem(DIVISION_RULES_KEY)) || {}; } catch { return {}; } }
-function saveDivisionRules(r) { localStorage.setItem(DIVISION_RULES_KEY, JSON.stringify(r)); }
 
 function DivisionPicker({ parentId, divisions, allCompanies, onAdd, onRemove, rules, onSetRule, onRemoveRule }) {
   const [open, setOpen] = useState(false);
@@ -441,80 +431,69 @@ function TargetNamePicker({ values, companyId, targetOptions, onToggle }) {
   );
 }
 
-export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd, targetAccountsData }) {
+export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd, targetAccountsData, settings, updateSettings }) {
   const [search, setSearch] = useState('');
   const [filters, setFilters] = useState({});
   const [expandedBucket, setExpandedBucket] = useState(null);
   const [bucketFilter, setBucketFilter] = useState(null); // 'tier1' | 'tier2' | 'client' | 'pipeline' | null
-  const [hideMismatch, setHideMismatch] = useState(() => { try { return JSON.parse(localStorage.getItem('my-accounts-hide-mismatch')) || false; } catch { return false; } });
-  const [targetMap, setTargetMap] = useState(loadTargetMap);
-  const [divisionsMap, setDivisionsMap] = useState(loadDivisionsMap);
-  const [divisionRules, setDivisionRules] = useState(loadDivisionRules);
+  const hideMismatch = settings.hideMismatch ?? false;
+  const targetMap = settings.targetMap || {};
+  const divisionsMap = settings.divisionsMap || {};
+  const divisionRules = settings.divisionRules || {};
 
   function toggleTargetMapping(companyId, targetName) {
-    setTargetMap(prev => {
-      const next = { ...prev };
-      // Migrate old string format to array
-      const existing = Array.isArray(next[companyId]) ? next[companyId] : (next[companyId] ? [next[companyId]] : []);
-      if (existing.includes(targetName)) {
-        const updated = existing.filter(n => n !== targetName);
-        if (updated.length === 0) delete next[companyId];
-        else next[companyId] = updated;
-      } else {
-        next[companyId] = [...existing, targetName];
-      }
-      saveTargetMap(next);
-      return next;
-    });
+    const next = { ...targetMap };
+    const existing = Array.isArray(next[companyId]) ? next[companyId] : (next[companyId] ? [next[companyId]] : []);
+    if (existing.includes(targetName)) {
+      const updated = existing.filter(n => n !== targetName);
+      if (updated.length === 0) delete next[companyId];
+      else next[companyId] = updated;
+    } else {
+      next[companyId] = [...existing, targetName];
+    }
+    updateSettings({ targetMap: next });
   }
 
   function addDivision(parentId, childId, childCompany) {
-    setDivisionsMap(prev => {
-      const next = { ...prev };
-      const existing = next[parentId] || [];
-      if (!existing.find(d => d.id === childId)) {
-        next[parentId] = [...existing, { id: childId, company: childCompany }];
-      }
-      saveDivisionsMap(next);
-      return next;
-    });
+    const next = { ...divisionsMap };
+    const existing = next[parentId] || [];
+    if (!existing.find(d => d.id === childId)) {
+      next[parentId] = [...existing, { id: childId, company: childCompany }];
+    }
+    updateSettings({ divisionsMap: next });
+    return next;
   }
 
   function addDivisionRule(parentId, keyword) {
-    setDivisionRules(prev => {
-      const next = { ...prev };
-      const existing = next[parentId] || [];
-      if (!existing.includes(keyword)) next[parentId] = [...existing, keyword];
-      saveDivisionRules(next);
-      return next;
-    });
+    const nextRules = { ...divisionRules };
+    const existing = nextRules[parentId] || [];
+    if (!existing.includes(keyword)) nextRules[parentId] = [...existing, keyword];
     // Auto-add all matching companies as divisions
     const matches = prospects.filter(c => c.id !== parentId && c.company.toLowerCase().includes(keyword.toLowerCase()));
+    const nextDivisions = { ...divisionsMap };
     for (const c of matches) {
-      addDivision(parentId, c.id, c.company);
+      const divExisting = nextDivisions[parentId] || [];
+      if (!divExisting.find(d => d.id === c.id)) {
+        nextDivisions[parentId] = [...divExisting, { id: c.id, company: c.company }];
+      }
     }
+    updateSettings({ divisionRules: nextRules, divisionsMap: nextDivisions });
   }
 
   function removeDivisionRule(parentId, ruleIndex) {
-    setDivisionRules(prev => {
-      const next = { ...prev };
-      const existing = [...(next[parentId] || [])];
-      existing.splice(ruleIndex, 1);
-      if (existing.length === 0) delete next[parentId];
-      else next[parentId] = existing;
-      saveDivisionRules(next);
-      return next;
-    });
+    const next = { ...divisionRules };
+    const existing = [...(next[parentId] || [])];
+    existing.splice(ruleIndex, 1);
+    if (existing.length === 0) delete next[parentId];
+    else next[parentId] = existing;
+    updateSettings({ divisionRules: next });
   }
 
   function removeDivision(parentId, childId) {
-    setDivisionsMap(prev => {
-      const next = { ...prev };
-      next[parentId] = (next[parentId] || []).filter(d => d.id !== childId);
-      if (next[parentId].length === 0) delete next[parentId];
-      saveDivisionsMap(next);
-      return next;
-    });
+    const next = { ...divisionsMap };
+    next[parentId] = (next[parentId] || []).filter(d => d.id !== childId);
+    if (next[parentId].length === 0) delete next[parentId];
+    updateSettings({ divisionsMap: next });
   }
 
   // All companies for division picker (from all prospects, not just My Accounts)

@@ -3,6 +3,7 @@ import { useAuth } from './contexts/AuthContext';
 import { useProspects } from './hooks/useProspects';
 import { useSheetSync } from './hooks/useSheetSync';
 import { useFilters } from './hooks/useFilters';
+import { useUserSettings } from './hooks/useUserSettings';
 import { Sidebar } from './components/Sidebar';
 import { LoginPage } from './components/LoginPage';
 import { FilterBar } from './components/FilterBar/FilterBar';
@@ -25,6 +26,7 @@ import './App.css';
 function App() {
   const { user, loading: authLoading, authError, signInWithGoogle, logout } = useAuth();
   const { prospects, loading: dataLoading, addProspect, updateProspect, deleteProspect, replaceAll } = useProspects(user);
+  const { settings, updateSettings } = useUserSettings(user);
   useSheetSync(user);
   const {
     filtered, searchTerm, setSearchTerm,
@@ -88,13 +90,15 @@ function App() {
             onAddNew={handleAddNew}
             resultCount={filtered.length}
             totalCount={prospects.length}
+            savedFilters={settings.savedFilters || []}
+            onUpdateSavedFilters={f => updateSettings({ savedFilters: f })}
           />
         )}
         <div className="content">
           {dataLoading ? (
             <div className="loading">Loading prospects...</div>
           ) : view === 'drafts' ? (
-            <DraftEmailView prospects={prospects} />
+            <DraftEmailView prospects={prospects} settings={settings} updateSettings={updateSettings} />
           ) : view === 'vibe' ? (
             <VibeProspecting />
           ) : view === 'dedupe' ? (
@@ -108,7 +112,7 @@ function App() {
           ) : view === 'opps' ? (
             <OppsView />
           ) : view === 'hubspot' ? (
-            <HubSpotView prospects={prospects} />
+            <HubSpotView prospects={prospects} settings={settings} updateSettings={updateSettings} />
           ) : view === 'accounts' ? (
             <MyAccountsView
               prospects={prospects}
@@ -117,6 +121,8 @@ function App() {
               onDelete={deleteProspect}
               onAdd={addProspect}
               targetAccountsData={targetAccountsData}
+              settings={settings}
+              updateSettings={updateSettings}
             />
           ) : view === 'table' ? (
             <TableView
@@ -153,6 +159,11 @@ function App() {
             } catch { return []; }
           })()}
           onDeleteContact={() => setModal(m => m ? { ...m } : m)}
+          orgCharts={settings.orgCharts || {}}
+          onUpdateOrgChart={(key, data) => {
+            const next = { ...(settings.orgCharts || {}), [key]: data };
+            updateSettings({ orgCharts: next });
+          }}
         />
       )}
 

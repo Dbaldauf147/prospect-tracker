@@ -20,193 +20,142 @@ function companiesMatch(a, b) {
   return false;
 }
 
-// ── Org Chart Component ──
+// ── Org Chart — 5-Bucket View ──
 
 function getOrgKey(company) {
   return `orgchart-${(company || '').toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
 }
 
-function loadOrgData(company) {
-  try {
-    const raw = localStorage.getItem(getOrgKey(company));
-    return raw ? JSON.parse(raw) : {};
-  } catch { return {}; }
+const BUCKETS = [
+  { key: 'esg',             label: 'ESG Reporting',   tag: 'esg',             accent: '#059669', bg: '#ECFDF5', border: '#6EE7B7', headerBg: '#D1FAE5', headerColor: '#065F46' },
+  { key: 'utilities',      label: 'Utilities',        tag: 'utilities',       accent: '#2563EB', bg: '#EFF6FF', border: '#93C5FD', headerBg: '#DBEAFE', headerColor: '#1E3A8A' },
+  { key: 'procurement',    label: 'Procurement',      tag: 'procurement',     accent: '#7C3AED', bg: '#F5F3FF', border: '#C4B5FD', headerBg: '#EDE9FE', headerColor: '#4C1D95' },
+  { key: 'capitalplanning',label: 'Capital Planning', tag: 'capital planning',accent: '#D97706', bg: '#FFFBEB', border: '#FDE68A', headerBg: '#FEF3C7', headerColor: '#78350F' },
+  { key: 'compliance',     label: 'Compliance',       tag: 'climate risk',    accent: '#DC2626', bg: '#FEF2F2', border: '#FCA5A5', headerBg: '#FEE2E2', headerColor: '#7F1D1D' },
+];
+
+const ROLE_COLORS = {
+  'Decision Maker': { bg: '#DCFCE7', color: '#166534' },
+  'Influencer':     { bg: '#DBEAFE', color: '#1E40AF' },
+  'Left':           { bg: '#FEF9C3', color: '#92400E' },
+  'Other':          { bg: '#F3E8FF', color: '#7C3AED' },
+  'Unknown':        { bg: '#F3F4F6', color: '#6B7280' },
+};
+
+function getContactRole(c) {
+  const r = c.decision_maker || 'Unknown';
+  return (r === 'true' || r === 'Yes') ? 'Decision Maker' : (r === 'No' || r === 'false') ? 'Unknown' : (r || 'Unknown');
 }
 
-function saveOrgData(company, data) {
-  localStorage.setItem(getOrgKey(company), JSON.stringify(data));
+function getContactTags(c) {
+  const raw = c.dans_tags || c.dan_s_tags || c.dans_tag || '';
+  return raw.split(';').map(t => t.trim().toLowerCase()).filter(Boolean);
 }
 
-function OrgChart({ contacts, company, onDeleteContact, deletingContact }) {
-  const [orgData, setOrgData] = useState(() => loadOrgData(company));
-  const [dragId, setDragId] = useState(null);
-  const [dropTarget, setDropTarget] = useState(null);
-
-  function persist(next) { setOrgData(next); saveOrgData(company, next); }
-
-  const contactMap = useMemo(() => {
-    const m = new Map();
-    for (const c of contacts) {
-      const id = c.id || c.email || `${c.firstname}-${c.lastname}`;
-      m.set(id, { ...c, _id: id });
-    }
-    return m;
-  }, [contacts]);
-
-  function getChildren(parentId) {
-    const children = [];
-    for (const [id, c] of contactMap) {
-      const node = orgData[id];
-      if (parentId === null) {
-        if (!node?.parentId || !contactMap.has(node.parentId)) children.push(c);
-      } else {
-        if (node?.parentId === parentId) children.push(c);
-      }
-    }
-    const ROLE_RANK = { 'Decision Maker': 0, 'Influencer': 1, 'Other': 2, 'Left': 3, 'Unknown': 4 };
-    function roleOf(c) {
-      const r = c.decision_maker || 'Unknown';
-      return (r === 'true' || r === 'Yes') ? 'Decision Maker' : (r === 'No' || r === 'false') ? 'Unknown' : r;
-    }
-    children.sort((a, b) => (ROLE_RANK[roleOf(a)] ?? 5) - (ROLE_RANK[roleOf(b)] ?? 5));
-    return children;
-  }
-
-  function handleDrop(targetId) {
-    if (!dragId || dragId === targetId) { setDragId(null); setDropTarget(null); return; }
-    let check = targetId;
-    while (check) { if (check === dragId) { setDragId(null); setDropTarget(null); return; } check = orgData[check]?.parentId || null; }
-    persist({ ...orgData, [dragId]: { ...orgData[dragId], parentId: targetId } });
-    setDragId(null); setDropTarget(null);
-  }
-
-  function handleDropRoot(e) {
-    e.preventDefault();
-    if (!dragId) return;
-    const next = { ...orgData };
-    if (next[dragId]) delete next[dragId].parentId;
-    persist(next); setDragId(null); setDropTarget(null);
-  }
-
-  function removeParent(id) {
-    const next = { ...orgData };
-    if (next[id]) delete next[id].parentId;
-    persist(next);
-  }
-
-  const roleColors = {
-    'Decision Maker': { bg: '#DCFCE7', color: '#166534', border: '#86EFAC', accent: '#22C55E' },
-    'Influencer': { bg: '#DBEAFE', color: '#1E40AF', border: '#93C5FD', accent: '#3B82F6' },
-    'Left': { bg: '#FEF9C3', color: '#92400E', border: '#FDE68A', accent: '#F59E0B' },
-    'Other': { bg: '#F3E8FF', color: '#7C3AED', border: '#C4B5FD', accent: '#8B5CF6' },
-    'Unknown': { bg: '#F3F4F6', color: '#6B7280', border: '#D1D5DB', accent: '#9CA3AF' },
-  };
-
-  function getRoleInfo(c) {
-    const r = c.decision_maker || 'Unknown';
-    const role = (r === 'true' || r === 'Yes') ? 'Decision Maker' : (r === 'No' || r === 'false') ? 'Unknown' : r;
-    return { role, ...(roleColors[role] || roleColors['Unknown']) };
-  }
-
-  /* ── Tree Node (hierarchical box with connector lines) ── */
-  function TreeNode({ contact, isRoot }) {
-    const id = contact._id;
-    const name = [contact.firstname, contact.lastname].filter(Boolean).join(' ') || '—';
-    const { role, bg, color, border, accent } = getRoleInfo(contact);
-    const children = getChildren(id);
-    const isDragOver = dropTarget === id;
-
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-        {/* Vertical line from parent */}
-        {!isRoot && <div style={{ width: '2px', height: '20px', background: '#CBD5E1' }} />}
-
-        {/* Contact card */}
-        <div
-          draggable
-          onDragStart={e => { e.stopPropagation(); setDragId(id); e.dataTransfer.effectAllowed = 'move'; }}
-          onDragOver={e => { e.preventDefault(); e.stopPropagation(); setDropTarget(id); }}
-          onDragLeave={() => { if (dropTarget === id) setDropTarget(null); }}
-          onDrop={e => { e.preventDefault(); e.stopPropagation(); handleDrop(id); }}
-          style={{
-            width: '150px', padding: '0.5rem 0.55rem',
-            background: isDragOver ? '#EFF6FF' : '#fff',
-            border: `2px solid ${isDragOver ? '#3B82F6' : border}`,
-            borderRadius: '10px', cursor: 'grab', textAlign: 'center',
-            boxShadow: dragId === id ? '0 6px 16px rgba(0,0,0,0.18)' : '0 2px 6px rgba(0,0,0,0.06)',
-            opacity: dragId === id ? 0.4 : 1,
-            transition: 'all 0.15s ease', position: 'relative',
-            borderTop: `3px solid ${accent}`,
-          }}
-        >
-          <div style={{ position: 'absolute', top: '1px', right: '3px', display: 'flex', gap: '2px' }}>
-            {!isRoot && (
-              <button onClick={e => { e.stopPropagation(); removeParent(id); }} title="Move to top level"
-                style={{ background: 'none', border: 'none', color: '#CBD5E1', fontSize: '0.75rem', cursor: 'pointer', lineHeight: 1 }}
-                onMouseEnter={e => e.target.style.color = '#3B82F6'}
-                onMouseLeave={e => e.target.style.color = '#CBD5E1'}
-              >↑</button>
-            )}
-            {onDeleteContact && (
-              <button onClick={e => { e.stopPropagation(); onDeleteContact(contact); }} title="Delete contact"
-                disabled={deletingContact === (contact.id || contact.vid)}
-                style={{ background: 'none', border: 'none', color: '#CBD5E1', fontSize: '0.75rem', cursor: 'pointer', lineHeight: 1 }}
-                onMouseEnter={e => e.target.style.color = '#EF4444'}
-                onMouseLeave={e => e.target.style.color = '#CBD5E1'}
-              >{deletingContact === (contact.id || contact.vid) ? '…' : '×'}</button>
-            )}
-          </div>
-          <div style={{ fontWeight: 700, fontSize: '0.76rem', color: '#1E293B', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</div>
-          {contact.jobtitle && (
-            <div style={{ fontSize: '0.64rem', color: '#64748B', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: '1px' }}>{contact.jobtitle}</div>
-          )}
-          <div style={{ marginTop: '4px' }}>
-            <span style={{ display: 'inline-block', padding: '1px 7px', borderRadius: '999px', fontSize: '0.56rem', fontWeight: 700, background: bg, color, letterSpacing: '0.02em' }}>{role}</span>
-          </div>
-        </div>
-
-        {/* Children */}
-        {children.length > 0 && (
-          <>
-            {/* Vertical line down to horizontal bar */}
-            <div style={{ width: '2px', height: '20px', background: '#CBD5E1' }} />
-
-            {/* Horizontal bar spanning all children */}
-            {children.length > 1 && (
-              <div style={{ height: '2px', background: '#CBD5E1', alignSelf: 'stretch', marginLeft: `calc(50% / ${children.length})`, marginRight: `calc(50% / ${children.length})` }} />
-            )}
-
-            {/* Children row */}
-            <div style={{ display: 'flex', justifyContent: 'center', gap: '0.5rem' }}>
-              {children.map(child => (
-                <TreeNode key={child._id} contact={child} isRoot={false} />
-              ))}
-            </div>
-          </>
-        )}
-      </div>
-    );
-  }
-
-  const roots = getChildren(null);
-
+function OrgChart({ contacts, onDeleteContact, deletingContact }) {
   if (contacts.length === 0) {
     return <div style={{ fontSize: '0.78rem', color: '#9CA3AF', fontStyle: 'italic', padding: '1rem 0' }}>No contacts to display</div>;
   }
 
-  return (
-    <div
-      onDragOver={e => e.preventDefault()}
-      onDrop={handleDropRoot}
-      style={{ minHeight: '120px', padding: '0.75rem 0', overflowX: 'auto' }}
-    >
-      <div style={{ fontSize: '0.68rem', color: '#94A3B8', marginBottom: '0.75rem', textAlign: 'center' }}>
-        Drag contacts onto each other to build the hierarchy. Drag to empty space to move to top level.
+  // Assign each contact to buckets based on tags
+  const bucketContacts = {};
+  const untagged = [];
+  for (const bucket of BUCKETS) bucketContacts[bucket.key] = [];
+
+  for (const c of contacts) {
+    const tags = getContactTags(c);
+    let matched = false;
+    for (const bucket of BUCKETS) {
+      if (tags.some(t => t === bucket.tag)) {
+        bucketContacts[bucket.key].push(c);
+        matched = true;
+      }
+    }
+    if (!matched) untagged.push(c);
+  }
+
+  function ContactCard({ contact, bucketAccent }) {
+    const name = [contact.firstname, contact.lastname].filter(Boolean).join(' ') || '—';
+    const role = getContactRole(contact);
+    const roleStyle = ROLE_COLORS[role] || ROLE_COLORS['Unknown'];
+    const isDeleting = deletingContact === (contact.id || contact.vid);
+
+    return (
+      <div style={{
+        background: '#fff',
+        border: `1px solid #E2E8F0`,
+        borderLeft: `3px solid ${bucketAccent}`,
+        borderRadius: '6px',
+        padding: '0.45rem 0.55rem',
+        position: 'relative',
+      }}>
+        {onDeleteContact && (
+          <button
+            onClick={e => { e.stopPropagation(); onDeleteContact(contact); }}
+            disabled={isDeleting}
+            title="Delete contact"
+            style={{ position: 'absolute', top: '3px', right: '3px', background: 'none', border: 'none', color: '#CBD5E1', fontSize: '0.72rem', cursor: 'pointer', lineHeight: 1, padding: '1px 2px' }}
+            onMouseEnter={e => e.currentTarget.style.color = '#EF4444'}
+            onMouseLeave={e => e.currentTarget.style.color = '#CBD5E1'}
+          >{isDeleting ? '…' : '×'}</button>
+        )}
+        <div style={{ fontWeight: 700, fontSize: '0.74rem', color: '#1E293B', paddingRight: '14px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</div>
+        {contact.jobtitle && (
+          <div style={{ fontSize: '0.62rem', color: '#64748B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: '1px' }}>{contact.jobtitle}</div>
+        )}
+        <div style={{ marginTop: '4px', display: 'flex', flexWrap: 'wrap', gap: '2px', alignItems: 'center' }}>
+          <span style={{ display: 'inline-block', padding: '1px 6px', borderRadius: '999px', fontSize: '0.55rem', fontWeight: 700, background: roleStyle.bg, color: roleStyle.color, letterSpacing: '0.02em' }}>{role}</span>
+        </div>
       </div>
-      <div style={{ display: 'flex', justifyContent: 'center', gap: '1.5rem', minWidth: 'min-content' }}>
-        {roots.map(c => (
-          <TreeNode key={c._id} contact={c} isRoot={true} />
-        ))}
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', gap: '0.6rem', overflowX: 'auto', paddingBottom: '0.25rem', alignItems: 'flex-start' }}>
+      {BUCKETS.map(bucket => {
+        const items = bucketContacts[bucket.key];
+        return (
+          <div key={bucket.key} style={{ flex: '0 0 160px', minWidth: '160px', border: `1px solid ${bucket.border}`, borderRadius: '8px', overflow: 'hidden' }}>
+            {/* Bucket header */}
+            <div style={{ background: bucket.headerBg, padding: '0.35rem 0.55rem', borderBottom: `1px solid ${bucket.border}` }}>
+              <div style={{ fontSize: '0.65rem', fontWeight: 700, color: bucket.headerColor, textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {bucket.label}
+              </div>
+              <div style={{ fontSize: '0.6rem', color: bucket.accent, fontWeight: 600, marginTop: '1px' }}>
+                {items.length} contact{items.length !== 1 ? 's' : ''}
+              </div>
+            </div>
+            {/* Cards */}
+            <div style={{ padding: '0.35rem', display: 'flex', flexDirection: 'column', gap: '0.3rem', minHeight: '60px' }}>
+              {items.length === 0
+                ? <div style={{ fontSize: '0.62rem', color: '#CBD5E1', fontStyle: 'italic', textAlign: 'center', paddingTop: '0.5rem' }}>None</div>
+                : items.map(c => <ContactCard key={c.id || c.email} contact={c} bucketAccent={bucket.accent} />)
+              }
+            </div>
+          </div>
+        );
+      })}
+
+      {/* Untagged bucket — always shown so you can see what tags contacts have */}
+      <div style={{ flex: '0 0 160px', minWidth: '160px', border: '1px solid #E2E8F0', borderRadius: '8px', overflow: 'hidden' }}>
+        <div style={{ background: '#F8FAFC', padding: '0.35rem 0.55rem', borderBottom: '1px solid #E2E8F0' }}>
+          <div style={{ fontSize: '0.65rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Untagged</div>
+          <div style={{ fontSize: '0.6rem', color: '#94A3B8', fontWeight: 600, marginTop: '1px' }}>{untagged.length} contact{untagged.length !== 1 ? 's' : ''}</div>
+        </div>
+        <div style={{ padding: '0.35rem', display: 'flex', flexDirection: 'column', gap: '0.3rem', minHeight: '60px' }}>
+          {untagged.length === 0
+            ? <div style={{ fontSize: '0.62rem', color: '#CBD5E1', fontStyle: 'italic', textAlign: 'center', paddingTop: '0.5rem' }}>None</div>
+            : untagged.map(c => {
+                const rawTag = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').trim();
+                return (
+                  <div key={c.id || c.email}>
+                    <ContactCard contact={c} bucketAccent="#94A3B8" />
+                    {rawTag && <div style={{ fontSize: '0.55rem', color: '#94A3B8', marginTop: '2px', paddingLeft: '4px', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={rawTag}>tag: {rawTag}</div>}
+                  </div>
+                );
+              })
+          }
+        </div>
       </div>
     </div>
   );
@@ -218,7 +167,7 @@ const EMPTY = {
   hqRegion: '', frameworks: [], notes: '', website: '', emailDomain: '',
 };
 
-export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContacts = [], onDeleteContact }) {
+export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContacts = [], onDeleteContact, orgCharts = {}, onUpdateOrgChart = () => {} }) {
   const [fields, setFields] = useState(() => {
     if (prospect) return { ...EMPTY, ...prospect };
     return { ...EMPTY };
@@ -510,12 +459,12 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                   <button
                     onClick={() => setContactView('orgchart')}
                     style={{ padding: '0.2rem 0.6rem', border: 'none', borderRadius: '4px', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', background: contactView === 'orgchart' ? '#fff' : 'transparent', color: contactView === 'orgchart' ? '#1E293B' : '#94A3B8', boxShadow: contactView === 'orgchart' ? '0 1px 2px rgba(0,0,0,0.08)' : 'none' }}
-                  >Org Chart</button>
+                  >By Category</button>
                 </div>
               </div>
 
               {contactView === 'orgchart' ? (
-                <OrgChart contacts={companyContacts} company={fields.company} onDeleteContact={handleDeleteContact} deletingContact={deletingContact} />
+                <OrgChart contacts={companyContacts} onDeleteContact={handleDeleteContact} deletingContact={deletingContact} />
               ) : companyContacts.length > 0 ? (
                 <div style={{ maxHeight: '400px', overflowY: 'auto', border: '1px solid #E2E8F0', borderRadius: '6px' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.75rem' }}>
@@ -523,6 +472,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                       <tr style={{ background: '#F8FAFC', position: 'sticky', top: 0, zIndex: 1 }}>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Name</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Title</th>
+                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Category</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Email</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Phone</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Role</th>
@@ -543,6 +493,18 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                           <tr key={c.id || i} style={{ borderBottom: '1px solid #F1F5F9' }}>
                             <td style={{ padding: '0.35rem 0.5rem', fontWeight: 600, color: '#1E293B', whiteSpace: 'nowrap' }}>{name || '—'}</td>
                             <td style={{ padding: '0.35rem 0.5rem', color: '#475569', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.jobtitle || '—'}</td>
+                            <td style={{ padding: '0.35rem 0.5rem', maxWidth: '180px' }}>
+                              {(() => {
+                                const matched = BUCKETS.filter(b => getContactTags(c).includes(b.tag));
+                                if (matched.length === 0) {
+                                  const raw = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').trim();
+                                  return <span style={{ fontSize: '0.62rem', color: '#94A3B8', fontStyle: 'italic' }}>{raw || 'Untagged'}</span>;
+                                }
+                                return <span style={{ display: 'flex', flexWrap: 'wrap', gap: '2px' }}>
+                                  {matched.map(b => <span key={b.key} style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 700, background: b.headerBg, color: b.headerColor, whiteSpace: 'nowrap' }}>{b.label}</span>)}
+                                </span>;
+                              })()}
+                            </td>
                             <td style={{ padding: '0.35rem 0.5rem', color: '#475569', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.email || '—'}</td>
                             <td style={{ padding: '0.35rem 0.5rem', color: '#475569', whiteSpace: 'nowrap' }}>{c.phone || '—'}</td>
                             <td style={{ padding: '0.35rem 0.5rem' }}><span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.62rem', fontWeight: 700, background: rs.bg, color: rs.color }}>{role}</span></td>

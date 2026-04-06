@@ -500,20 +500,8 @@ function BulkUploadModal({ onUpload, onClose, uploading, progress }) {
   );
 }
 
-function loadCcMap() {
-  try { return JSON.parse(localStorage.getItem('prospect-cc-map') || '{}'); } catch { return {}; }
-}
-function saveCcMap(map) {
-  localStorage.setItem('prospect-cc-map', JSON.stringify(map));
-}
-function loadToAlsoMap() {
-  try { return JSON.parse(localStorage.getItem('prospect-to-also-map') || '{}'); } catch { return {}; }
-}
-function saveToAlsoMap(map) {
-  localStorage.setItem('prospect-to-also-map', JSON.stringify(map));
-}
 
-function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptions }) {
+function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptions, ccMap, toAlsoMap, onSaveCcMap, onSaveToAlsoMap }) {
   const isNew = !contact;
   const [fields, setFields] = useState({
     firstname: contact?.firstname || '',
@@ -526,20 +514,18 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
     dans_tags: contact?.dans_tags || contact?.dan_s_tags || contact?.dans_tag || '',
     notes: contact?.hs_note || contact?.notes || '',
   });
-  // CC emails stored locally per contact email
+  // CC emails per contact email
   const [ccEmails, setCcEmails] = useState(() => {
     if (!contact?.email) return [];
-    const map = loadCcMap();
-    return map[contact.email] || [];
+    return (ccMap || {})[contact.email] || [];
   });
   const [ccInput, setCcInput] = useState('');
   const [showCcSuggestions, setShowCcSuggestions] = useState(false);
   const ccRef = useRef(null);
-  // "To Also" emails stored locally per contact email
+  // "To Also" emails per contact email
   const [toAlsoEmails, setToAlsoEmails] = useState(() => {
     if (!contact?.email) return [];
-    const map = loadToAlsoMap();
-    return map[contact.email] || [];
+    return (toAlsoMap || {})[contact.email] || [];
   });
   const [toAlsoInput, setToAlsoInput] = useState('');
   const [showToAlsoSuggestions, setShowToAlsoSuggestions] = useState(false);
@@ -794,16 +780,14 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
           <button className={styles.modalSaveBtn} onClick={() => {
             const email = fields.email.trim();
             if (email) {
-              // Save CC mapping
-              const ccMap = loadCcMap();
-              if (ccEmails.length > 0) ccMap[email] = ccEmails;
-              else delete ccMap[email];
-              saveCcMap(ccMap);
-              // Save To Also mapping
-              const toMap = loadToAlsoMap();
-              if (toAlsoEmails.length > 0) toMap[email] = toAlsoEmails;
-              else delete toMap[email];
-              saveToAlsoMap(toMap);
+              const nextCcMap = { ...(ccMap || {}) };
+              if (ccEmails.length > 0) nextCcMap[email] = ccEmails;
+              else delete nextCcMap[email];
+              onSaveCcMap(nextCcMap);
+              const nextToAlsoMap = { ...(toAlsoMap || {}) };
+              if (toAlsoEmails.length > 0) nextToAlsoMap[email] = toAlsoEmails;
+              else delete nextToAlsoMap[email];
+              onSaveToAlsoMap(nextToAlsoMap);
             }
             onSave(fields, contact?.id);
           }} disabled={saving || !fields.email.trim()}>
@@ -815,7 +799,7 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
   );
 }
 
-export function HubSpotView({ prospects }) {
+export function HubSpotView({ prospects, settings, updateSettings }) {
   const { user } = useAuth();
   const [data, setData] = useState(loadCache);
   const [loading, setLoading] = useState(false);
@@ -835,15 +819,9 @@ export function HubSpotView({ prospects }) {
   const [cardFilter, setCardFilter] = useState(null);
   const [colFilters, setColFilters] = useState({});
   const [dansTagOptions, setDansTagOptions] = useState([]);
-  const [dismissedGuesses, setDismissedGuesses] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('hubspot-dismissed-guesses') || '{}'); } catch { return {}; }
-  });
+  const dismissedGuesses = settings?.dismissedGuesses || {};
   function dismissGuess(contactId, field) {
-    setDismissedGuesses(prev => {
-      const next = { ...prev, [`${contactId}_${field}`]: true };
-      localStorage.setItem('hubspot-dismissed-guesses', JSON.stringify(next));
-      return next;
-    });
+    updateSettings({ dismissedGuesses: { ...dismissedGuesses, [`${contactId}_${field}`]: true } });
   }
 
   // Build tier lookup from prospects (My Accounts data)
@@ -1856,9 +1834,7 @@ export function HubSpotView({ prospects }) {
           saving={saving}
           companyNames={(() => {
             const names = new Set();
-            // Add company names from Table View (prospects)
             (prospects || []).forEach(p => { if (p.company) names.add(p.company); });
-            // Also add from HubSpot contacts
             try {
               const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
               (cache?.contacts || []).forEach(c => { if (c.company) names.add(c.company); });
@@ -1866,6 +1842,10 @@ export function HubSpotView({ prospects }) {
             return [...names].sort();
           })()}
           tagOptions={dansTagOptions}
+          ccMap={settings?.ccMap || {}}
+          toAlsoMap={settings?.toAlsoMap || {}}
+          onSaveCcMap={m => updateSettings({ ccMap: m })}
+          onSaveToAlsoMap={m => updateSettings({ toAlsoMap: m })}
         />
       )}
 

@@ -121,17 +121,13 @@ function TagContactPicker({ allContacts, selectedContacts, onAdd, onRemove, onBu
   );
 }
 
-function PreviewTabs({ contacts, subject, body, personalizeForContact, draftCc }) {
+function PreviewTabs({ contacts, subject, body, personalizeForContact, draftCc, ccMap, toAlsoMap }) {
   const [activeIdx, setActiveIdx] = useState(0);
   const c = contacts[activeIdx] || contacts[0];
   if (!c) return null;
 
-  // Load To Also and CC maps
-  let toAlsoMap = {}, ccMap = {};
-  try { toAlsoMap = JSON.parse(localStorage.getItem('prospect-to-also-map') || '{}'); } catch {}
-  try { ccMap = JSON.parse(localStorage.getItem('prospect-cc-map') || '{}'); } catch {}
-  const toAlso = toAlsoMap[c.email] || [];
-  const contactCc = ccMap[c.email] || [];
+  const toAlso = (toAlsoMap || {})[c.email] || [];
+  const contactCc = (ccMap || {})[c.email] || [];
   const allCc = [...new Set([...contactCc, ...(draftCc || [])])];
 
   return (
@@ -168,7 +164,7 @@ function PreviewTabs({ contacts, subject, body, personalizeForContact, draftCc }
 
 const AUTOSAVE_KEY = 'prospect-draft-autosave';
 
-export function DraftEmailView({ prospects }) {
+export function DraftEmailView({ prospects, settings, updateSettings }) {
   // Restore auto-saved compose state
   const [subject, setSubject] = useState(() => {
     try { return JSON.parse(localStorage.getItem(AUTOSAVE_KEY))?.subject || ''; } catch { return ''; }
@@ -183,7 +179,11 @@ export function DraftEmailView({ prospects }) {
   const [showSearch, setShowSearch] = useState(false);
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState(null);
-  const [drafts, setDrafts] = useState([]);
+  const drafts = settings?.emailDrafts || [];
+  function setDrafts(updater) {
+    const next = typeof updater === 'function' ? updater(drafts) : updater;
+    updateSettings({ emailDrafts: next });
+  }
   const [draftQueue, setDraftQueue] = useState([]); // contacts waiting to be opened
   const [draftsSent, setDraftsSent] = useState(0);
   const [outlookConnected, setOutlookConnected] = useState(false);
@@ -196,7 +196,12 @@ export function DraftEmailView({ prospects }) {
   const [draftCcInput, setDraftCcInput] = useState('');
   const [showDraftCcSuggestions, setShowDraftCcSuggestions] = useState(false);
   const DEFAULT_SIGNATURE = '<table cellpadding="0" cellspacing="0" border="0" style="font-family: Arial, sans-serif; font-size: 7.5pt; color: #5F5F5F; line-height: 1.5;"><tbody><tr><td style="vertical-align: top;"><table cellpadding="0" cellspacing="0" border="0" style="font-family: Arial, sans-serif; font-size: 7.5pt; color: #5F5F5F;"><tbody><tr><td colspan="3" style="font-family: Arial, sans-serif; padding-bottom: 2px;"><strong style="color: #82C168; font-size: 10pt; font-family: Arial, sans-serif;">Dan Baldauf</strong></td></tr><tr><td style="vertical-align: top; padding-right: 24px; font-family: Arial, sans-serif;">Senior Manager<br>Schneider Electric Advisory<br>Services</td><td style="vertical-align: top; padding-right: 24px; white-space: nowrap; font-family: Arial, sans-serif;">C&nbsp; +1 (917) 787 1701<br>E&nbsp; <a href="mailto:daniel.baldauf@se.com" style="color: #0000EE; text-decoration: underline; font-size: 7.5pt; font-family: Arial, sans-serif;">daniel.baldauf@se.com</a></td><td style="vertical-align: top; white-space: nowrap; text-align: right; font-family: Arial, sans-serif;">1216 Broadway<br>New York, NY<br>10001 USA</td></tr><tr><td colspan="3" style="padding-top: 8px; font-family: Arial, sans-serif; font-size: 9pt;">Here is a <a href="https://outlook.office.com/bookwithme/user/466302b21b9e46f08ce1a412c14e5573%40se.com/meetingtype/SVRwCe7HMUGxuT6WGxi68g2?anonymous&amp;ismsaljsauthenabled" style="color: #0000EE; text-decoration: underline; font-size: 9pt; font-family: Arial, sans-serif;">link</a> to schedule a meeting on my calendar</td></tr></tbody></table></td></tr></tbody></table>';
-  const [signature, setSignature] = useState(() => localStorage.getItem('prospect-email-signature') || DEFAULT_SIGNATURE);
+  const [signature, setSignature] = useState(() => DEFAULT_SIGNATURE);
+  // Sync signature from Firestore when settings load
+  useEffect(() => {
+    if (settings?.emailSignature) setSignature(settings.emailSignature);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings?.emailSignature]);
   const [showSignatureEditor, setShowSignatureEditor] = useState(false);
   const draftCcRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -236,13 +241,6 @@ export function DraftEmailView({ prospects }) {
     } catch {}
   }, []);
 
-  // Load saved drafts from localStorage
-  useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem('prospect-email-drafts') || '[]');
-      setDrafts(saved);
-    } catch {}
-  }, []);
 
   // Check if Outlook is connected (encrypted token storage)
   useEffect(() => {
@@ -383,8 +381,7 @@ export function DraftEmailView({ prospects }) {
     };
     const updated = [draft, ...drafts];
     setDrafts(updated);
-    localStorage.setItem('prospect-email-drafts', JSON.stringify(updated));
-    setResult({ type: 'success', message: 'Draft saved locally' });
+    setResult({ type: 'success', message: 'Draft saved' });
     setTimeout(() => setResult(null), 3000);
   }
 
@@ -396,9 +393,7 @@ export function DraftEmailView({ prospects }) {
   }
 
   function deleteDraft(id) {
-    const updated = drafts.filter(d => d.id !== id);
-    setDrafts(updated);
-    localStorage.setItem('prospect-email-drafts', JSON.stringify(updated));
+    setDrafts(drafts.filter(d => d.id !== id));
   }
 
   async function createOutlookDrafts() {
@@ -422,10 +417,8 @@ export function DraftEmailView({ prospects }) {
     setResult(null);
 
     // Load CC and To Also mappings
-    let ccMap = {};
-    let toAlsoMap = {};
-    try { ccMap = JSON.parse(localStorage.getItem('prospect-cc-map') || '{}'); } catch {}
-    try { toAlsoMap = JSON.parse(localStorage.getItem('prospect-to-also-map') || '{}'); } catch {}
+    const ccMap = settings?.ccMap || {};
+    const toAlsoMap = settings?.toAlsoMap || {};
 
     // Build personalized drafts for each contact
     const drafts = selectedContacts.map(c => {
@@ -484,8 +477,7 @@ export function DraftEmailView({ prospects }) {
   }
 
   function personalizeForContact(text, c) {
-    let toAlsoMap = {};
-    try { toAlsoMap = JSON.parse(localStorage.getItem('prospect-to-also-map') || '{}'); } catch {}
+    const toAlsoMap = settings?.toAlsoMap || {};
     const hasToAlso = (toAlsoMap[c.email] || []).length > 0;
     return text
       .replace(/\{firstName\}/gi, hasToAlso ? 'Team' : (c.firstName || c.name.split(' ')[0] || ''))
@@ -577,11 +569,8 @@ export function DraftEmailView({ prospects }) {
   function generateEmlFiles() {
     if (selectedContacts.length === 0 || !subject.trim()) return;
 
-    // Load CC and To Also mappings
-    let ccMap = {};
-    let toAlsoMap = {};
-    try { ccMap = JSON.parse(localStorage.getItem('prospect-cc-map') || '{}'); } catch {}
-    try { toAlsoMap = JSON.parse(localStorage.getItem('prospect-to-also-map') || '{}'); } catch {}
+    const ccMap = settings?.ccMap || {};
+    const toAlsoMap = settings?.toAlsoMap || {};
 
     selectedContacts.forEach((c, i) => {
       const pBodyHtml = personalizeForContact(body, c);
@@ -861,7 +850,7 @@ export function DraftEmailView({ prospects }) {
                   onBlur={e => {
                     const html = e.currentTarget.innerHTML;
                     setSignature(html);
-                    localStorage.setItem('prospect-email-signature', html);
+                    updateSettings({ emailSignature: html });
                   }}
                   dangerouslySetInnerHTML={{ __html: signature }}
                   style={{ minHeight: '80px', padding: '0.6rem 0.75rem', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '0.85rem', lineHeight: 1.5, color: 'var(--color-text)', outline: 'none', background: '#FAFAFA' }}
@@ -893,7 +882,7 @@ export function DraftEmailView({ prospects }) {
 
           {/* Preview — all contacts with tabs */}
           {selectedContacts.length > 0 && (subject.trim() || body.trim()) && (
-            <PreviewTabs contacts={selectedContacts} subject={subject} body={body} personalizeForContact={personalizeForContact} draftCc={draftCc} />
+            <PreviewTabs contacts={selectedContacts} subject={subject} body={body} personalizeForContact={personalizeForContact} draftCc={draftCc} ccMap={settings?.ccMap || {}} toAlsoMap={settings?.toAlsoMap || {}} />
           )}
         </div>
 
