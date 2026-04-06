@@ -138,7 +138,7 @@ const ACCOUNT_COLUMNS = [
   { key: 'cdm', label: 'CDM', defaultWidth: 120 },
   { key: 'notes', label: 'Notes', defaultWidth: 200 },
   { key: 'contactCount', label: 'Contacts', defaultWidth: 80, render: (row) => row.contactCount > 0 ? <span style={{ fontWeight: 700, color: '#0891B2' }}>{row.contactCount}</span> : <span style={{ color: 'var(--color-text-muted)' }}>0</span> },
-  { key: 'bucketCount', label: 'Buckets', defaultWidth: 70, render: (row) => {
+  { key: 'bucketCount', label: 'Stakeholders', defaultWidth: 90, render: (row) => {
     const count = row.bucketCount || 0;
     const color = count === 5 ? '#059669' : count >= 3 ? '#D97706' : count > 0 ? '#DC2626' : 'var(--color-text-muted)';
     return <span style={{ fontWeight: 700, color }}>{count}/5</span>;
