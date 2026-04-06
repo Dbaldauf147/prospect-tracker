@@ -1,9 +1,20 @@
 import { useState, useRef, useEffect } from 'react';
-import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, FRAMEWORKS } from '../../data/enums';
+import { FILTER_COLUMNS } from '../../hooks/useFilters';
 import styles from './FilterBar.module.css';
+
+const SAVED_FILTERS_KEY = 'prospect-saved-filters';
+
+function loadSavedFilters() {
+  try { return JSON.parse(localStorage.getItem(SAVED_FILTERS_KEY)) || []; } catch { return []; }
+}
+
+function saveSavedFilters(list) {
+  localStorage.setItem(SAVED_FILTERS_KEY, JSON.stringify(list));
+}
 
 function FilterDropdown({ label, options, selected, onToggle }) {
   const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
   const ref = useRef(null);
 
   useEffect(() => {
@@ -16,12 +27,15 @@ function FilterDropdown({ label, options, selected, onToggle }) {
   }, [open]);
 
   const count = selected.length;
+  const filtered = search.trim()
+    ? options.filter(o => o.toLowerCase().includes(search.toLowerCase()))
+    : options;
 
   return (
     <div className={styles.filterGroup} ref={ref}>
       <button
         className={count > 0 ? styles.filterBtnActive : styles.filterBtn}
-        onClick={() => setOpen(p => !p)}
+        onClick={() => { setOpen(p => !p); setSearch(''); }}
       >
         {label}
         {count > 0 && <span className={styles.filterCount}>{count}</span>}
@@ -29,7 +43,20 @@ function FilterDropdown({ label, options, selected, onToggle }) {
       </button>
       {open && (
         <div className={styles.dropdown}>
-          {options.map(opt => (
+          {options.length > 8 && (
+            <input
+              className={styles.dropdownSearch}
+              type="text"
+              placeholder="Search..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              autoFocus
+            />
+          )}
+          {filtered.length === 0 && (
+            <div className={styles.dropdownEmpty}>No matches</div>
+          )}
+          {filtered.map(opt => (
             <label key={opt} className={styles.dropdownItem}>
               <input
                 className={styles.dropdownCheck}
@@ -46,9 +73,101 @@ function FilterDropdown({ label, options, selected, onToggle }) {
   );
 }
 
+function SavedFiltersMenu({ filters, searchTerm, onLoad }) {
+  const [open, setOpen] = useState(false);
+  const [saved, setSaved] = useState(loadSavedFilters);
+  const [naming, setNaming] = useState(false);
+  const [name, setName] = useState('');
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleClick(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [open]);
+
+  function handleSave() {
+    const label = name.trim();
+    if (!label) return;
+    const entry = { id: Date.now(), label, filters: { ...filters }, searchTerm };
+    const next = [entry, ...saved];
+    setSaved(next);
+    saveSavedFilters(next);
+    setName('');
+    setNaming(false);
+  }
+
+  function handleDelete(id) {
+    const next = saved.filter(s => s.id !== id);
+    setSaved(next);
+    saveSavedFilters(next);
+  }
+
+  function handleLoad(entry) {
+    onLoad(entry.filters, entry.searchTerm || '');
+    setOpen(false);
+  }
+
+  // Count active filters to decide if save is meaningful
+  const hasFilters = Object.values(filters).some(arr => arr.length > 0) || searchTerm.trim();
+
+  return (
+    <div className={styles.filterGroup} ref={ref}>
+      <button
+        className={styles.savedFiltersBtn}
+        onClick={() => { setOpen(p => !p); setNaming(false); }}
+      >
+        Saved Filters
+        {saved.length > 0 && <span className={styles.filterCount}>{saved.length}</span>}
+      </button>
+      {open && (
+        <div className={styles.savedDropdown}>
+          {hasFilters && !naming && (
+            <button className={styles.saveCurrentBtn} onClick={() => setNaming(true)}>
+              Save current filters
+            </button>
+          )}
+          {naming && (
+            <div className={styles.saveNameRow}>
+              <input
+                className={styles.saveNameInput}
+                type="text"
+                placeholder="Filter name..."
+                value={name}
+                onChange={e => setName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleSave(); if (e.key === 'Escape') setNaming(false); }}
+                autoFocus
+              />
+              <button className={styles.saveNameBtn} onClick={handleSave}>Save</button>
+            </div>
+          )}
+          {saved.length === 0 && !naming && (
+            <div className={styles.savedEmpty}>No saved filters yet</div>
+          )}
+          {saved.map(entry => (
+            <div key={entry.id} className={styles.savedItem}>
+              <button className={styles.savedItemName} onClick={() => handleLoad(entry)}>
+                {entry.label}
+              </button>
+              <span className={styles.savedItemMeta}>
+                {Object.values(entry.filters).reduce((s, a) => s + a.length, 0)} filters
+              </span>
+              <button className={styles.savedItemDelete} onClick={() => handleDelete(entry.id)}>&times;</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function FilterBar({
   searchTerm, setSearchTerm,
-  filters, toggleFilter, clearFilters, activeFilterCount,
+  filters, filterOptions, toggleFilter, clearFilters, activeFilterCount,
+  onLoadSavedFilter,
   view, setView,
   onAddNew,
   resultCount, totalCount,
@@ -66,11 +185,17 @@ export function FilterBar({
         />
       </div>
 
-      <FilterDropdown label="Status" options={STATUSES} selected={filters.status} onToggle={v => toggleFilter('status', v)} />
-      <FilterDropdown label="Type" options={TYPES} selected={filters.type} onToggle={v => toggleFilter('type', v)} />
-      <FilterDropdown label="Tier" options={TIERS} selected={filters.tier} onToggle={v => toggleFilter('tier', v)} />
-      <FilterDropdown label="Geography" options={GEOGRAPHIES} selected={filters.geography} onToggle={v => toggleFilter('geography', v)} />
-      <FilterDropdown label="Frameworks" options={FRAMEWORKS} selected={filters.frameworks} onToggle={v => toggleFilter('frameworks', v)} />
+      {FILTER_COLUMNS.map(col => (
+        <FilterDropdown
+          key={col.key}
+          label={col.label}
+          options={filterOptions[col.key] || []}
+          selected={filters[col.key] || []}
+          onToggle={v => toggleFilter(col.key, v)}
+        />
+      ))}
+
+      <SavedFiltersMenu filters={filters} searchTerm={searchTerm} onLoad={onLoadSavedFilter} />
 
       {activeFilterCount > 0 && (
         <button className={styles.clearBtn} onClick={clearFilters}>Clear all</button>

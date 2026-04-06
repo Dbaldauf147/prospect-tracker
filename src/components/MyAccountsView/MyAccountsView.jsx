@@ -1,4 +1,5 @@
-import { useState, useMemo, useRef, useEffect } from 'react';
+import { useState, useMemo, useRef, useEffect, useLayoutEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Badge } from '../common/Badge';
 import { DataTable } from '../common/DataTable';
 import { statusColor, formatAum } from '../../utils/formatters';
@@ -136,6 +137,7 @@ const ACCOUNT_COLUMNS = [
   { key: 'hqRegion', label: 'HQ Region', defaultWidth: 110 },
   { key: 'cdm', label: 'CDM', defaultWidth: 120 },
   { key: 'notes', label: 'Notes', defaultWidth: 200 },
+  { key: 'contactCount', label: 'Contacts', defaultWidth: 80, render: (row) => row.contactCount > 0 ? <span style={{ fontWeight: 700, color: '#0891B2' }}>{row.contactCount}</span> : <span style={{ color: 'var(--color-text-muted)' }}>0</span> },
   { key: 'activityCount', label: 'Activity (30d)', defaultWidth: 85, render: (row) => row.activityCount > 0 ? <span style={{ fontWeight: 700, color: 'var(--color-accent)' }}>{row.activityCount}</span> : <span style={{ color: 'var(--color-text-muted)' }}>0</span> },
   { key: 'oppsCount', label: 'Active Opps', defaultWidth: 85, render: (row) => row.oppsCount > 0 ? <span style={{ fontWeight: 700, color: '#7C3AED' }}>{row.oppsCount}</span> : <span style={{ color: 'var(--color-text-muted)' }}>0</span> },
   { key: 'totalOpps', label: 'Total Opps', defaultWidth: 80, render: (row) => row.totalOpps > 0 ? <span style={{ fontWeight: 700, color: 'var(--color-text-secondary)' }}>{row.totalOpps}</span> : <span style={{ color: 'var(--color-text-muted)' }}>0</span> },
@@ -147,6 +149,16 @@ const ACCOUNT_COLUMNS = [
     : <span style={{ color: 'var(--color-danger)', fontWeight: 600, fontSize: '0.75rem' }}>Not Found</span>
   },
   { key: 'targetName', label: 'Target Accounts Name', defaultWidth: 200, render: null /* set in columns memo */ },
+  { key: 'divisions', label: 'Divisions', defaultWidth: 200, render: null /* set in columns memo */ },
+  { key: 'otherReps', label: 'Other Reps', defaultWidth: 260, render: (row) => {
+    if (!row.otherReps || row.otherReps.length === 0) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>—</span>;
+    return <span style={{ display: 'flex', gap: '3px', flexWrap: 'nowrap', overflow: 'hidden' }}>
+      {row.otherReps.map((r, i) => <span key={i} style={{
+        padding: '2px 6px', borderRadius: '4px', fontSize: '0.65rem',
+        background: '#FEF9C3', color: '#92400E', lineHeight: 1.3, whiteSpace: 'nowrap', flexShrink: 0,
+      }}><strong>{r.rep}</strong> — {r.company}</span>)}
+    </span>;
+  }},
   { key: 'sources', label: 'Sources', defaultWidth: 160, render: (row) => {
     const parts = (row.sources || '').split(', ').filter(Boolean);
     return <span style={{ display: 'flex', gap: '3px', flexWrap: 'wrap' }}>
@@ -194,99 +206,312 @@ const TARGET_MAP_KEY = 'my-accounts-target-map';
 function loadTargetMap() { try { return JSON.parse(localStorage.getItem(TARGET_MAP_KEY)) || {}; } catch { return {}; } }
 function saveTargetMap(m) { localStorage.setItem(TARGET_MAP_KEY, JSON.stringify(m)); }
 
-function TargetNamePicker({ value, companyId, targetOptions, onPick, isDuplicate }) {
-  const [editing, setEditing] = useState(false);
+const DIVISIONS_MAP_KEY = 'my-accounts-divisions-map';
+const DIVISION_RULES_KEY = 'my-accounts-division-rules';
+function loadDivisionsMap() { try { return JSON.parse(localStorage.getItem(DIVISIONS_MAP_KEY)) || {}; } catch { return {}; } }
+function saveDivisionsMap(m) { localStorage.setItem(DIVISIONS_MAP_KEY, JSON.stringify(m)); }
+function loadDivisionRules() { try { return JSON.parse(localStorage.getItem(DIVISION_RULES_KEY)) || {}; } catch { return {}; } }
+function saveDivisionRules(r) { localStorage.setItem(DIVISION_RULES_KEY, JSON.stringify(r)); }
+
+function DivisionPicker({ parentId, divisions, allCompanies, onAdd, onRemove, rules, onSetRule, onRemoveRule }) {
+  const [open, setOpen] = useState(false);
   const [inputText, setInputText] = useState('');
-  const ref = useRef(null);
-  const inputRef = useRef(null);
+  const [dropPos, setDropPos] = useState({ top: 0, left: 0 });
+  const [showRuleInput, setShowRuleInput] = useState(false);
+  const [ruleText, setRuleText] = useState('');
+  const anchorRef = useRef(null);
+  const dropRef = useRef(null);
 
   useEffect(() => {
-    if (!editing) return;
-    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setEditing(false); };
+    if (!open) return;
+    const h = (e) => {
+      if (anchorRef.current?.contains(e.target)) return;
+      if (dropRef.current?.contains(e.target)) return;
+      setOpen(false);
+    };
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
-  }, [editing]);
+  }, [open]);
 
-  function startEditing() {
-    setInputText(value || '');
-    setEditing(true);
-  }
+  useLayoutEffect(() => {
+    if (!open || !anchorRef.current) return;
+    const rect = anchorRef.current.getBoundingClientRect();
+    setDropPos({ top: rect.bottom + 2, left: rect.left });
+  }, [open, inputText]);
 
+  const parentRules = rules || [];
+  const divisionIds = new Set(divisions.map(d => d.id));
   const filtered = inputText.trim()
-    ? targetOptions.filter(t => t.toLowerCase().includes(inputText.toLowerCase()))
-    : targetOptions;
+    ? allCompanies.filter(c => c.id !== parentId && c.company.toLowerCase().includes(inputText.toLowerCase()))
+    : [];
 
-  if (!editing) {
-    return (
-      <span
-        style={{ fontSize: '0.75rem', color: value ? (isDuplicate ? '#EF4444' : 'var(--color-text)') : 'var(--color-accent)', cursor: 'pointer', padding: '1px 3px', borderRadius: '4px', fontWeight: isDuplicate ? 600 : 400, background: isDuplicate ? '#FEF2F2' : 'transparent' }}
-        onClick={startEditing}
-        title={isDuplicate ? 'Duplicate — this target account is mapped to multiple companies' : ''}
-      >
-        {isDuplicate && '⚠ '}{value || '— Click to map —'}
-      </span>
-    );
-  }
+  const count = divisions.length;
 
   return (
-    <div style={{ position: 'relative' }} ref={ref}>
-      <input
-        ref={inputRef}
-        style={{ width: '100%', padding: '0.25rem 0.4rem', border: '1px solid var(--color-accent)', borderRadius: '4px', fontSize: '0.75rem', fontFamily: 'inherit' }}
-        type="text"
-        placeholder="Type to search..."
-        value={inputText}
-        onChange={e => setInputText(e.target.value)}
-        onKeyDown={e => {
-          if (e.key === 'Escape') setEditing(false);
-          if (e.key === 'Enter' && filtered.length === 1) { onPick(companyId, filtered[0]); setEditing(false); }
-        }}
-        autoFocus
-        onClick={e => e.stopPropagation()}
-      />
-      <div style={{ position: 'absolute', top: 'calc(100% + 2px)', left: 0, background: '#fff', border: '1px solid var(--color-border)', borderRadius: '8px', boxShadow: '0 4px 16px rgba(0,0,0,0.1)', padding: '0.3rem', minWidth: '250px', maxHeight: '220px', overflowY: 'auto', zIndex: 50 }}>
-        {value && (
-          <div
-            style={{ padding: '0.25rem 0.4rem', fontSize: '0.7rem', color: 'var(--color-danger)', cursor: 'pointer', borderRadius: '4px' }}
-            onClick={() => { onPick(companyId, ''); setEditing(false); }}
-            onMouseOver={e => e.currentTarget.style.background = 'var(--color-danger-light)'}
-            onMouseOut={e => e.currentTarget.style.background = ''}
-          >
-            ✕ Clear mapping
+    <span ref={anchorRef}>
+      <button
+        onClick={(e) => { e.stopPropagation(); setInputText(''); setOpen(p => !p); }}
+        style={{ fontSize: '0.72rem', cursor: 'pointer', background: count > 0 ? '#F0FDF4' : 'none', border: count > 0 ? '1px solid #BBF7D0' : '1px solid transparent', padding: '2px 8px', borderRadius: '4px', fontFamily: 'inherit', fontWeight: 500, color: count > 0 ? '#166534' : 'var(--color-accent)', whiteSpace: 'nowrap' }}
+      >
+        {count > 0 ? `${count} Division${count !== 1 ? 's' : ''}` : '+ Add'}
+      </button>
+      {open && createPortal(
+        <div
+          ref={dropRef}
+          style={{ position: 'fixed', top: dropPos.top, left: dropPos.left, background: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px', boxShadow: '0 4px 16px rgba(0,0,0,0.12)', padding: '0.3rem', minWidth: '300px', maxHeight: '350px', zIndex: 9999, display: 'flex', flexDirection: 'column' }}
+        >
+          <input
+            style={{ width: '100%', padding: '0.3rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: '4px', fontSize: '0.75rem', fontFamily: 'inherit', marginBottom: '0.25rem', boxSizing: 'border-box' }}
+            type="text"
+            placeholder="Search companies to add..."
+            value={inputText}
+            onChange={e => setInputText(e.target.value)}
+            autoFocus
+            onClick={e => e.stopPropagation()}
+            onKeyDown={e => { if (e.key === 'Escape') setOpen(false); }}
+          />
+          {/* Auto-map rules */}
+          {parentRules.length > 0 && (
+            <div style={{ padding: '0.2rem 0.4rem', marginBottom: '0.25rem' }}>
+              <div style={{ fontSize: '0.62rem', fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.2rem' }}>Auto-Map Rules</div>
+              {parentRules.map((rule, ri) => (
+                <div key={ri} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', padding: '0.15rem 0.3rem', background: '#EFF6FF', borderRadius: '4px', marginBottom: '0.15rem', fontSize: '0.68rem' }}>
+                  <span style={{ color: '#1D4ED8', fontWeight: 600 }}>Contains "{rule}"</span>
+                  <span style={{ color: '#94a3b8', fontSize: '0.6rem' }}>({allCompanies.filter(c => c.id !== parentId && c.company.toLowerCase().includes(rule.toLowerCase())).length} matches)</span>
+                  <button onClick={e => { e.stopPropagation(); onRemoveRule(parentId, ri); }} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '0.8rem', lineHeight: 1 }} onMouseEnter={e => e.target.style.color = '#EF4444'} onMouseLeave={e => e.target.style.color = '#94a3b8'}>&times;</button>
+                </div>
+              ))}
+            </div>
+          )}
+          {!showRuleInput ? (
+            <button onClick={e => { e.stopPropagation(); setShowRuleInput(true); setRuleText(''); }} style={{ display: 'block', width: '100%', padding: '0.3rem', border: '1px dashed #CBD5E1', borderRadius: '4px', background: 'none', fontSize: '0.68rem', color: '#3B7DDD', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600, marginBottom: '0.3rem' }}>
+              + Auto-map by keyword
+            </button>
+          ) : (
+            <div style={{ display: 'flex', gap: '0.25rem', marginBottom: '0.3rem', padding: '0 0.1rem' }}>
+              <input
+                type="text" value={ruleText} onChange={e => setRuleText(e.target.value)} placeholder='e.g. "Schneider"'
+                style={{ flex: 1, padding: '0.25rem 0.4rem', border: '1px solid #CBD5E1', borderRadius: '4px', fontSize: '0.7rem', fontFamily: 'inherit' }}
+                autoFocus onClick={e => e.stopPropagation()}
+                onKeyDown={e => { if (e.key === 'Enter' && ruleText.trim()) { onSetRule(parentId, ruleText.trim()); setRuleText(''); setShowRuleInput(false); } if (e.key === 'Escape') setShowRuleInput(false); }}
+              />
+              <button onClick={e => { e.stopPropagation(); if (ruleText.trim()) { onSetRule(parentId, ruleText.trim()); setRuleText(''); setShowRuleInput(false); } }} disabled={!ruleText.trim()} style={{ padding: '0.25rem 0.5rem', border: 'none', borderRadius: '4px', background: ruleText.trim() ? '#3B7DDD' : '#E2E8F0', color: '#fff', fontSize: '0.68rem', fontWeight: 600, cursor: ruleText.trim() ? 'pointer' : 'default', fontFamily: 'inherit' }}>Add</button>
+              <button onClick={e => { e.stopPropagation(); setShowRuleInput(false); }} style={{ padding: '0.25rem 0.4rem', border: '1px solid #CBD5E1', borderRadius: '4px', background: '#fff', fontSize: '0.68rem', cursor: 'pointer', fontFamily: 'inherit', color: '#64748B' }}>Cancel</button>
+            </div>
+          )}
+          <div style={{ overflowY: 'auto', maxHeight: '280px' }}>
+            {divisions.length > 0 && (
+              <div style={{ padding: '0.2rem 0.4rem', fontSize: '0.62rem', fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em', marginTop: '0.2rem' }}>Current Divisions</div>
+            )}
+            {divisions.map(d => (
+              <label key={d.id} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.3rem 0.5rem', fontSize: '0.72rem', cursor: 'pointer', borderRadius: '4px', color: '#166534' }}
+                onMouseOver={e => e.currentTarget.style.background = '#f1f5f9'}
+                onMouseOut={e => e.currentTarget.style.background = ''}
+              >
+                <input type="checkbox" checked onChange={() => onRemove(parentId, d.id)} style={{ accentColor: '#22C55E' }} onClick={e => e.stopPropagation()} />
+                <span style={{ fontWeight: 500 }}>{d.company}</span>
+              </label>
+            ))}
+            {inputText.trim() && filtered.length > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.2rem 0.4rem', marginTop: '0.3rem', borderTop: divisions.length > 0 ? '1px solid #f1f5f9' : 'none', paddingTop: '0.4rem' }}>
+                <span style={{ fontSize: '0.62rem', fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Search Results ({filtered.length})</span>
+                {filtered.some(c => !divisionIds.has(c.id)) && (
+                  <button
+                    onClick={e => { e.stopPropagation(); filtered.slice(0, 30).forEach(c => { if (!divisionIds.has(c.id)) onAdd(parentId, c.id, c.company); }); }}
+                    style={{ fontSize: '0.62rem', fontWeight: 600, color: '#3B7DDD', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', padding: '0.1rem 0.3rem' }}
+                  >Select All</button>
+                )}
+              </div>
+            )}
+            {inputText.trim() && filtered.slice(0, 30).map(c => (
+              <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.3rem 0.5rem', fontSize: '0.72rem', cursor: 'pointer', borderRadius: '4px', color: '#1e293b' }}
+                onMouseOver={e => e.currentTarget.style.background = '#f1f5f9'}
+                onMouseOut={e => e.currentTarget.style.background = ''}
+              >
+                <input type="checkbox" checked={divisionIds.has(c.id)} onChange={() => divisionIds.has(c.id) ? onRemove(parentId, c.id) : onAdd(parentId, c.id, c.company)} style={{ accentColor: '#22C55E' }} onClick={e => e.stopPropagation()} />
+                <span style={{ fontWeight: 500 }}>{c.company}</span>
+                {c.status && <span style={{ fontSize: '0.62rem', color: '#94a3b8' }}>{c.status}</span>}
+              </label>
+            ))}
+            {inputText.trim() && filtered.length === 0 && <div style={{ padding: '0.4rem', fontSize: '0.7rem', color: '#94a3b8', textAlign: 'center' }}>No matches</div>}
+            {!inputText.trim() && divisions.length === 0 && <div style={{ padding: '0.4rem', fontSize: '0.7rem', color: '#94a3b8', textAlign: 'center' }}>Type to search companies</div>}
           </div>
-        )}
-        {filtered.map(t => (
-          <div
-            key={t}
-            style={{ padding: '0.25rem 0.4rem', fontSize: '0.72rem', cursor: 'pointer', borderRadius: '4px', fontWeight: t === value ? 600 : 400, color: t === value ? 'var(--color-accent)' : 'var(--color-text)' }}
-            onClick={() => { onPick(companyId, t); setEditing(false); }}
-            onMouseOver={e => e.currentTarget.style.background = 'var(--color-accent-light)'}
-            onMouseOut={e => e.currentTarget.style.background = ''}
-          >
-            {t}
+        </div>,
+        document.body
+      )}
+    </span>
+  );
+}
+
+function TargetNamePicker({ values, companyId, targetOptions, onToggle }) {
+  const [open, setOpen] = useState(false);
+  const [inputText, setInputText] = useState('');
+  const [dropPos, setDropPos] = useState({ top: 0, left: 0 });
+  const anchorRef = useRef(null);
+  const dropRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const h = (e) => {
+      if (anchorRef.current?.contains(e.target)) return;
+      if (dropRef.current?.contains(e.target)) return;
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [open]);
+
+  useLayoutEffect(() => {
+    if (!open || !anchorRef.current) return;
+    const rect = anchorRef.current.getBoundingClientRect();
+    setDropPos({ top: rect.bottom + 2, left: rect.left });
+  }, [open, inputText]);
+
+  const selectedSet = new Set(values);
+  const filtered = inputText.trim()
+    ? targetOptions.filter(t => t.toLowerCase().includes(inputText.toLowerCase()))
+    : [];
+
+  const count = values.length;
+
+  return (
+    <span ref={anchorRef}>
+      <button
+        onClick={(e) => { e.stopPropagation(); setInputText(''); setOpen(p => !p); }}
+        style={{ fontSize: '0.72rem', cursor: 'pointer', background: count > 0 ? '#EBF2FC' : 'none', border: count > 0 ? '1px solid #BFDBFE' : '1px solid transparent', padding: '2px 8px', borderRadius: '4px', fontFamily: 'inherit', fontWeight: 500, color: count > 0 ? '#1E40AF' : 'var(--color-accent)', textAlign: 'left', lineHeight: 1.3 }}
+      >
+        {count > 0 ? values.join(', ') : '— Click to map —'}
+      </button>
+      {open && createPortal(
+        <div
+          ref={dropRef}
+          style={{ position: 'fixed', top: dropPos.top, left: dropPos.left, background: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px', boxShadow: '0 4px 16px rgba(0,0,0,0.12)', padding: '0.3rem', minWidth: '300px', maxHeight: '350px', zIndex: 9999, display: 'flex', flexDirection: 'column' }}
+        >
+          <input
+            style={{ width: '100%', padding: '0.3rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: '4px', fontSize: '0.75rem', fontFamily: 'inherit', marginBottom: '0.25rem', boxSizing: 'border-box' }}
+            type="text"
+            placeholder="Search target accounts..."
+            value={inputText}
+            onChange={e => setInputText(e.target.value)}
+            autoFocus
+            onClick={e => e.stopPropagation()}
+            onKeyDown={e => { if (e.key === 'Escape') setOpen(false); }}
+          />
+          <div style={{ overflowY: 'auto', maxHeight: '280px' }}>
+            {values.length > 0 && (
+              <div style={{ padding: '0.2rem 0.4rem', fontSize: '0.62rem', fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em', marginTop: '0.2rem' }}>Mapped Target Accounts</div>
+            )}
+            {values.map(v => (
+              <label key={v} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.3rem 0.5rem', fontSize: '0.72rem', cursor: 'pointer', borderRadius: '4px', color: '#1E40AF' }}
+                onMouseOver={e => e.currentTarget.style.background = '#f1f5f9'}
+                onMouseOut={e => e.currentTarget.style.background = ''}
+              >
+                <input type="checkbox" checked onChange={() => onToggle(companyId, v)} style={{ accentColor: '#3B82F6' }} onClick={e => e.stopPropagation()} />
+                <span style={{ fontWeight: 500 }}>{v}</span>
+              </label>
+            ))}
+            {inputText.trim() && filtered.length > 0 && (
+              <div style={{ padding: '0.2rem 0.4rem', fontSize: '0.62rem', fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em', marginTop: '0.3rem', borderTop: values.length > 0 ? '1px solid #f1f5f9' : 'none', paddingTop: '0.4rem' }}>Search Results</div>
+            )}
+            {inputText.trim() && filtered.map(t => (
+              <label key={t} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.3rem 0.5rem', fontSize: '0.72rem', cursor: 'pointer', borderRadius: '4px', color: '#1e293b' }}
+                onMouseOver={e => e.currentTarget.style.background = '#f1f5f9'}
+                onMouseOut={e => e.currentTarget.style.background = ''}
+              >
+                <input type="checkbox" checked={selectedSet.has(t)} onChange={() => onToggle(companyId, t)} style={{ accentColor: '#3B82F6' }} onClick={e => e.stopPropagation()} />
+                <span style={{ fontWeight: 500 }}>{t}</span>
+              </label>
+            ))}
+            {inputText.trim() && filtered.length === 0 && <div style={{ padding: '0.4rem', fontSize: '0.7rem', color: '#94a3b8', textAlign: 'center' }}>No matches</div>}
+            {!inputText.trim() && values.length === 0 && <div style={{ padding: '0.4rem', fontSize: '0.7rem', color: '#94a3b8', textAlign: 'center' }}>Type to search target accounts</div>}
           </div>
-        ))}
-        {filtered.length === 0 && <div style={{ padding: '0.4rem', fontSize: '0.7rem', color: 'var(--color-text-muted)', textAlign: 'center' }}>No matches</div>}
-      </div>
-    </div>
+        </div>,
+        document.body
+      )}
+    </span>
   );
 }
 
 export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd, targetAccountsData }) {
   const [search, setSearch] = useState('');
-  const [filters, setFilters] = useState({ myTier: [], status: [], type: [], geography: [] });
+  const [filters, setFilters] = useState({});
   const [expandedBucket, setExpandedBucket] = useState(null);
+  const [bucketFilter, setBucketFilter] = useState(null); // 'tier1' | 'tier2' | 'client' | 'pipeline' | null
+  const [hideMismatch, setHideMismatch] = useState(() => { try { return JSON.parse(localStorage.getItem('my-accounts-hide-mismatch')) || false; } catch { return false; } });
   const [targetMap, setTargetMap] = useState(loadTargetMap);
+  const [divisionsMap, setDivisionsMap] = useState(loadDivisionsMap);
+  const [divisionRules, setDivisionRules] = useState(loadDivisionRules);
 
-  function setTargetMapping(companyId, targetName) {
+  function toggleTargetMapping(companyId, targetName) {
     setTargetMap(prev => {
       const next = { ...prev };
-      if (targetName) next[companyId] = targetName;
-      else delete next[companyId];
+      // Migrate old string format to array
+      const existing = Array.isArray(next[companyId]) ? next[companyId] : (next[companyId] ? [next[companyId]] : []);
+      if (existing.includes(targetName)) {
+        const updated = existing.filter(n => n !== targetName);
+        if (updated.length === 0) delete next[companyId];
+        else next[companyId] = updated;
+      } else {
+        next[companyId] = [...existing, targetName];
+      }
       saveTargetMap(next);
       return next;
     });
   }
+
+  function addDivision(parentId, childId, childCompany) {
+    setDivisionsMap(prev => {
+      const next = { ...prev };
+      const existing = next[parentId] || [];
+      if (!existing.find(d => d.id === childId)) {
+        next[parentId] = [...existing, { id: childId, company: childCompany }];
+      }
+      saveDivisionsMap(next);
+      return next;
+    });
+  }
+
+  function addDivisionRule(parentId, keyword) {
+    setDivisionRules(prev => {
+      const next = { ...prev };
+      const existing = next[parentId] || [];
+      if (!existing.includes(keyword)) next[parentId] = [...existing, keyword];
+      saveDivisionRules(next);
+      return next;
+    });
+    // Auto-add all matching companies as divisions
+    const matches = prospects.filter(c => c.id !== parentId && c.company.toLowerCase().includes(keyword.toLowerCase()));
+    for (const c of matches) {
+      addDivision(parentId, c.id, c.company);
+    }
+  }
+
+  function removeDivisionRule(parentId, ruleIndex) {
+    setDivisionRules(prev => {
+      const next = { ...prev };
+      const existing = [...(next[parentId] || [])];
+      existing.splice(ruleIndex, 1);
+      if (existing.length === 0) delete next[parentId];
+      else next[parentId] = existing;
+      saveDivisionRules(next);
+      return next;
+    });
+  }
+
+  function removeDivision(parentId, childId) {
+    setDivisionsMap(prev => {
+      const next = { ...prev };
+      next[parentId] = (next[parentId] || []).filter(d => d.id !== childId);
+      if (next[parentId].length === 0) delete next[parentId];
+      saveDivisionsMap(next);
+      return next;
+    });
+  }
+
+  // All companies for division picker (from all prospects, not just My Accounts)
+  const allCompaniesForDivisions = useMemo(() => {
+    return prospects.map(p => ({ id: p.id, company: p.company, status: p.status })).sort((a, b) => (a.company || '').localeCompare(b.company || ''));
+  }, [prospects]);
 
   function toggleFilter(key, value) {
     setFilters(prev => {
@@ -296,8 +521,9 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   }
 
   function clearFilters() {
-    setFilters({ myTier: [], status: [], type: [], geography: [] });
+    setFilters({});
     setSearch('');
+    setBucketFilter(null);
   }
 
   const activeFilterCount = Object.values(filters).reduce((s, a) => s + a.length, 0);
@@ -344,6 +570,39 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     }
     console.log(`Target Accounts: found ${accounts.length} Dan Baldauf Tier 1/2 accounts`);
     return accounts;
+  }, [targetAccountsData]);
+
+  // All Target Accounts with their salesperson (for cross-rep detection)
+  const allTargetReps = useMemo(() => {
+    const data = targetAccountsData;
+    if (!data?.sheets) return [];
+    const results = [];
+
+    function findCol(r, keywords) {
+      for (const key of Object.keys(r)) {
+        const lower = key.toLowerCase();
+        for (const kw of keywords) {
+          if (lower.includes(kw.toLowerCase())) return (r[key] || '').trim();
+        }
+      }
+      return '';
+    }
+
+    for (const sheetName of data.sheetNames || []) {
+      const sheet = data.sheets[sheetName];
+      if (!sheet?.records) continue;
+      for (const r of sheet.records) {
+        const company = findCol(r, ['Account', 'Company', 'Account Name', 'Client', 'Name']);
+        if (!company) continue;
+        let rep = findCol(r, ['CDM', 'Salesperson', 'Sales Rep', 'Account Owner', 'Owner', 'Rep', 'Assigned', 'Team Member']);
+        if (!rep) continue;
+        const repLower = rep.toLowerCase();
+        // Skip Dan's own entries
+        if (repLower.includes('baldauf') || repLower.includes('dan b')) continue;
+        results.push({ company: company.trim(), rep: rep.trim() });
+      }
+    }
+    return results;
   }, [targetAccountsData]);
 
   // Load activity cache and count per company
@@ -454,23 +713,27 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   }, [oppsRecords]);
 
   // Build source maps: which companies exist in each data source
-  const { hubspotCompanies, decisionMakerByCompany } = useMemo(() => {
+  const { hubspotCompanies, decisionMakerByCompany, contactCountByCompany } = useMemo(() => {
     const list = [];
-    const dmMap = {}; // company lowercase → { found: boolean, name: string }
+    const dmMap = {}; // company lowercase → [names]
+    const countMap = {}; // company lowercase → count
     try {
       const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
       const seen = new Set();
       for (const c of (cache?.contacts || [])) {
         const lower = (c.company || '').toLowerCase();
-        if (lower && !seen.has(lower)) { seen.add(lower); list.push(lower); }
-        if (lower && (c.decision_maker === 'true' || c.decision_maker === 'Yes')) {
+        if (lower) {
+          if (!seen.has(lower)) { seen.add(lower); list.push(lower); }
+          countMap[lower] = (countMap[lower] || 0) + 1;
+        }
+        if (lower && (c.decision_maker === 'true' || c.decision_maker === 'Yes' || c.decision_maker === 'Decision Maker')) {
           const name = [c.firstname, c.lastname].filter(Boolean).join(' ');
           if (!dmMap[lower]) dmMap[lower] = [];
           dmMap[lower].push(name || c.email || 'Unknown');
         }
       }
     } catch {}
-    return { hubspotCompanies: list, decisionMakerByCompany: dmMap };
+    return { hubspotCompanies: list, decisionMakerByCompany: dmMap, contactCountByCompany: countMap };
   }, []);
 
   const targetCompanies = useMemo(() => {
@@ -485,11 +748,16 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
 
     const skippedCdm = [];
     for (const p of prospects) {
-      // Use Firestore tier if it's a valid Tier 1/2, otherwise fall back to map/target accounts
-      let tier = (p.tier === 'Tier 1' || p.tier === 'Tier 2') ? p.tier : findTier(p.company);
-      if (!tier) {
-        for (const t of targetAccounts) {
-          if (companiesMatch(p.company, t.company)) { tier = t.tier; break; }
+      // Use Firestore tier if explicitly set (including '-' for no tier), otherwise fall back to map/target accounts
+      let tier;
+      if (p.tier === 'Tier 1' || p.tier === 'Tier 2' || p.tier === '-' || p.tier === '') {
+        tier = p.tier || '-';
+      } else {
+        tier = findTier(p.company);
+        if (!tier) {
+          for (const t of targetAccounts) {
+            if (companiesMatch(p.company, t.company)) { tier = t.tier; break; }
+          }
         }
       }
       if (!tier) continue;
@@ -500,31 +768,51 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         continue;
       }
       const companyLower = (p.company || '').toLowerCase();
-      const activityCount = activityByCompany[companyLower] || 0;
-      const oppsCount = activeOppsByAccount[companyLower] || 0;
-      const totalOpps = totalOppsByAccount[companyLower] || 0;
+      // Aggregate across parent company + all divisions
+      const divisionNames = (divisionsMap[p.id] || []).map(d => (d.company || '').toLowerCase());
+      const allCompanyNames = [companyLower, ...divisionNames];
+
+      let activityCount = 0;
+      for (const name of allCompanyNames) {
+        activityCount += activityByCompany[name] || 0;
+      }
+      let oppsCount = 0;
+      let totalOpps = 0;
+      for (const name of allCompanyNames) {
+        oppsCount += activeOppsByAccount[name] || 0;
+        totalOpps += totalOppsByAccount[name] || 0;
+      }
       const sources = [];
       sources.push('Google Sheets');
       if (fuzzyHas(hubspotCompanies, p.company)) sources.push('HubSpot');
-      // Find matching Target Accounts name and tier — manual override first
-      let targetName = targetMap[p.id] || '';
+      // Find matching Target Accounts names and tier — manual override first
+      // Migrate old string format to array
+      const rawMap = targetMap[p.id];
+      let targetNames = Array.isArray(rawMap) ? rawMap : (rawMap ? [rawMap] : []);
       let targetTier = '';
-      if (targetName) {
-        const matched = targetAccounts.find(t => t.company === targetName);
+      if (targetNames.length > 0) {
+        const matched = targetAccounts.find(t => targetNames.includes(t.company));
         if (matched) targetTier = matched.tier;
       } else {
         for (const t of targetAccounts) {
-          if (companiesMatch(p.company, t.company)) { targetName = t.company; targetTier = t.tier; break; }
+          if (companiesMatch(p.company, t.company)) { targetNames = [t.company]; targetTier = t.tier; break; }
         }
       }
-      if (targetName) sources.push('Target List');
+      if (targetNames.length > 0) sources.push('Target List');
       const tierMismatch = targetTier && targetTier !== tier;
-      // Check for decision maker — fuzzy match company name against dmMap keys
+      // Check for decision maker — fuzzy match across parent + divisions
       let dmNames = null;
       for (const [dmCompany, names] of Object.entries(decisionMakerByCompany)) {
-        if (companiesMatch(companyLower, dmCompany)) { dmNames = names; break; }
+        if (allCompanyNames.some(name => companiesMatch(name, dmCompany))) { dmNames = names; break; }
       }
-      const entry = { ...p, myTier: tier, activityCount, oppsCount, totalOpps, sources: sources.join(', '), dmFound: !!dmNames, dmNames: dmNames ? dmNames.join(', ') : '', cdmMismatch: !isBaldauf, targetName, targetTier, tierMismatch };
+      // Find similar accounts assigned to other salespeople
+      const otherReps = allTargetReps.filter(t => companiesMatch(p.company, t.company));
+      // Count HubSpot contacts across parent + all divisions (fuzzy match)
+      let contactCount = 0;
+      for (const [co, count] of Object.entries(contactCountByCompany)) {
+        if (allCompanyNames.some(name => companiesMatch(name, co))) { contactCount += count; }
+      }
+      const entry = { ...p, myTier: tier, activityCount, oppsCount, totalOpps, sources: sources.join(', '), dmFound: !!dmNames, dmNames: dmNames ? dmNames.join(', ') : '', cdmMismatch: !isBaldauf, targetNames, targetTier, tierMismatch, otherReps, contactCount };
       if (tier === 'Tier 1') t1.push(entry);
       else t2.push(entry);
       const s = p.status || 'Unknown';
@@ -536,24 +824,46 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     if (skippedCdm.length > 0) console.log('My Accounts: skipped (CDM not Baldauf):', skippedCdm);
     console.log(`My Accounts: ${t1.length} Tier 1, ${t2.length} Tier 2`);
     return { tier1: t1, tier2: t2, allAccounts: [...t1, ...t2], statusCounts: counts };
-  }, [prospects, targetMap, targetAccounts, activityByCompany, activeOppsByAccount, totalOppsByAccount, hubspotCompanies, targetCompanies, decisionMakerByCompany]);
+  }, [prospects, targetMap, targetAccounts, allTargetReps, activityByCompany, activeOppsByAccount, totalOppsByAccount, hubspotCompanies, targetCompanies, decisionMakerByCompany, contactCountByCompany, divisionsMap]);
 
   const clientCount = statusCounts['Client'] || 0;
   const qualifyingCount = (statusCounts['Qualifying'] || 0) + (statusCounts['Inside Sales'] || 0);
 
-  // Filter options derived from data
-  const filterOptions = useMemo(() => ({
-    myTier: [...new Set(allAccounts.map(a => a.myTier).filter(Boolean))].sort(),
-    status: [...new Set(allAccounts.map(a => a.status).filter(Boolean))].sort(),
-    type: [...new Set(allAccounts.map(a => a.type).filter(Boolean))].sort(),
-    geography: [...new Set(allAccounts.map(a => a.geography).filter(Boolean))].sort(),
-  }), [allAccounts]);
+  // Dynamic filter options — any visible column with ≤30 unique string values gets a filter
+  const SKIP_FILTER_KEYS = new Set(['company', 'notes', 'dmNames', 'targetName', 'otherReps', 'sources', 'divisions', '_hide', 'id', 'createdAt', 'updatedAt', 'assetTypes', 'frameworks']);
+  const filterOptions = useMemo(() => {
+    const opts = {};
+    for (const col of ACCOUNT_COLUMNS) {
+      if (SKIP_FILTER_KEYS.has(col.key)) continue;
+      const vals = new Set();
+      let tooMany = false;
+      for (const a of allAccounts) {
+        let v = a[col.key];
+        if (v == null || v === '' || v === '—') continue;
+        if (typeof v === 'object') continue; // skip arrays/objects
+        v = String(v).trim();
+        if (!v) continue;
+        vals.add(v);
+        if (vals.size > 30) { tooMany = true; break; }
+      }
+      if (!tooMany && vals.size >= 2) {
+        opts[col.key] = [...vals].sort();
+      }
+    }
+    return opts;
+  }, [allAccounts]);
 
-  // Apply filters and search
+  // Apply filters, bucket filter, and search
   const filteredAccounts = useMemo(() => {
     let result = allAccounts;
+    // Bucket filter
+    if (bucketFilter === 'tier1') result = result.filter(a => a.myTier === 'Tier 1');
+    else if (bucketFilter === 'tier2') result = result.filter(a => a.myTier === 'Tier 2');
+    else if (bucketFilter === 'client') result = result.filter(a => a.status === 'Client');
+    else if (bucketFilter === 'pipeline') result = result.filter(a => a.status === 'Qualifying' || a.status === 'Inside Sales');
+    else if (bucketFilter === 'noTarget') result = result.filter(a => !a.targetNames || a.targetNames.length === 0);
     for (const [key, values] of Object.entries(filters)) {
-      if (values.length > 0) result = result.filter(a => values.includes(a[key]));
+      if (values.length > 0) result = result.filter(a => values.includes(String(a[key] ?? '')));
     }
     if (search.trim()) {
       const term = search.toLowerCase();
@@ -563,27 +873,42 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       );
     }
     return result;
-  }, [allAccounts, filters, search]);
+  }, [allAccounts, filters, search, bucketFilter]);
 
   // All company names from Target Accounts file (not just Dan Baldauf's)
   const allTargetNames = useMemo(() => {
     if (!targetAccountsData?.sheets) return [];
     const names = new Set();
+    const companyKeywords = ['account name', 'account', 'company name', 'company', 'client name', 'client'];
     for (const sheetName of targetAccountsData.sheetNames || []) {
       const sheet = targetAccountsData.sheets[sheetName];
-      if (!sheet?.records) continue;
-      for (const r of sheet.records) {
-        // Find company/account column
-        for (const key of Object.keys(r)) {
-          const lower = key.toLowerCase();
-          if (lower.includes('account') || lower.includes('company') || lower.includes('name')) {
-            const val = (r[key] || '').trim();
-            if (val && val.length > 1) names.add(val);
-            break;
+      if (!sheet?.records || !sheet.records.length) continue;
+      // Find the best company column from headers
+      const headers = sheet.headers || Object.keys(sheet.records[0]).filter(k => k !== '_id');
+      let companyCol = null;
+      for (const kw of companyKeywords) {
+        for (const h of headers) {
+          if (h.toLowerCase().trim() === kw) { companyCol = h; break; }
+        }
+        if (companyCol) break;
+      }
+      // Fallback: partial match
+      if (!companyCol) {
+        for (const kw of companyKeywords) {
+          for (const h of headers) {
+            if (h.toLowerCase().includes(kw)) { companyCol = h; break; }
           }
+          if (companyCol) break;
         }
       }
+      if (!companyCol) continue;
+      console.log(`Target Accounts allTargetNames: using column "${companyCol}" from sheet "${sheetName}"`);
+      for (const r of sheet.records) {
+        const val = (r[companyCol] || '').trim();
+        if (val && val.length > 1) names.add(val);
+      }
     }
+    console.log(`Target Accounts allTargetNames: ${names.size} unique names`);
     return [...names].sort();
   }, [targetAccountsData]);
 
@@ -591,8 +916,9 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   const duplicateTargetNames = useMemo(() => {
     const counts = {};
     for (const a of allAccounts) {
-      const tn = a.targetName;
-      if (tn) counts[tn] = (counts[tn] || 0) + 1;
+      for (const tn of (a.targetNames || [])) {
+        if (tn) counts[tn] = (counts[tn] || 0) + 1;
+      }
     }
     const dupes = new Set();
     for (const [name, count] of Object.entries(counts)) {
@@ -616,7 +942,10 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         )};
       }
       if (col.key === 'targetName') {
-        return { ...col, render: (row) => <TargetNamePicker value={row.targetName} companyId={row.id} targetOptions={allTargetNames} onPick={setTargetMapping} isDuplicate={!!row.targetName && duplicateTargetNames.has(row.targetName)} /> };
+        return { ...col, render: (row) => <TargetNamePicker values={row.targetNames || []} companyId={row.id} targetOptions={allTargetNames} onToggle={toggleTargetMapping} /> };
+      }
+      if (col.key === 'divisions') {
+        return { ...col, render: (row) => <DivisionPicker parentId={row.id} divisions={divisionsMap[row.id] || []} allCompanies={allCompaniesForDivisions} onAdd={addDivision} onRemove={removeDivision} rules={divisionRules[row.id] || []} onSetRule={addDivisionRule} onRemoveRule={removeDivisionRule} /> };
       }
       if (col.key === 'status') {
         return { ...col, render: (row) => <InlineCell row={row} field="status" value={row.status} onUpdate={onUpdate} options={STATUSES} /> };
@@ -661,7 +990,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         return { ...col, render: (row) => <InlineCell row={row} field="emailDomain" value={row.emailDomain} onUpdate={onUpdate} /> };
       }
       // Skip computed columns — they stay read-only
-      if (['myTier', 'activityCount', 'oppsCount', 'totalOpps', 'dmFound', 'sources', 'targetName', '_hide'].includes(col.key)) {
+      if (['myTier', 'activityCount', 'oppsCount', 'totalOpps', 'contactCount', 'dmFound', 'sources', 'targetName', 'otherReps', 'divisions', '_hide'].includes(col.key)) {
         return col;
       }
       // Make any remaining columns editable as text
@@ -678,7 +1007,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       render: (row) => <button className={styles.deleteBtn} onClick={(e) => { e.stopPropagation(); if (confirm(`Remove "${row.company}" from the database?`)) onDelete(row.id); }} title="Remove">&#x2715;</button>,
     });
     return mapped;
-  }, [onSelect, onUpdate, allTargetNames, duplicateTargetNames]);
+  }, [onSelect, onUpdate, allTargetNames, divisionsMap, allCompaniesForDivisions]);
 
   return (
     <div className={styles.wrapper}>
@@ -690,18 +1019,21 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
           value={search}
           onChange={e => setSearch(e.target.value)}
         />
-        <FilterDrop label="Tier" options={filterOptions.myTier} selected={filters.myTier} onToggle={v => toggleFilter('myTier', v)} />
-        <FilterDrop label="Status" options={filterOptions.status} selected={filters.status} onToggle={v => toggleFilter('status', v)} />
-        <FilterDrop label="Type" options={filterOptions.type} selected={filters.type} onToggle={v => toggleFilter('type', v)} />
-        <FilterDrop label="Geography" options={filterOptions.geography} selected={filters.geography} onToggle={v => toggleFilter('geography', v)} />
-        {activeFilterCount > 0 && <button className={styles.clearBtn} onClick={clearFilters}>Clear all</button>}
+        {Object.entries(filterOptions).map(([key, options]) => {
+          const col = ACCOUNT_COLUMNS.find(c => c.key === key);
+          return <FilterDrop key={key} label={col?.label || key} options={options} selected={filters[key] || []} onToggle={v => toggleFilter(key, v)} />;
+        })}
+        {bucketFilter && <span style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem', borderRadius: '999px', background: '#EBF2FC', color: '#3B7DDD', fontWeight: 600 }}>Showing: {bucketFilter === 'tier1' ? 'Tier 1' : bucketFilter === 'tier2' ? 'Tier 2' : bucketFilter === 'client' ? 'Clients' : bucketFilter === 'noTarget' ? 'No Target Mapped' : 'In Pipeline'}</span>}
+        {(activeFilterCount > 0 || bucketFilter) && <button className={styles.clearBtn} onClick={clearFilters}>Clear all</button>}
         <span className={styles.resultCount}>{filteredAccounts.length} of {allAccounts.length}</span>
       </div>
       {targetAccounts.length > 0 && (() => {
         const targetNames = targetAccounts.map(t => (t.company || '').toLowerCase());
         const myNames = allAccounts.map(a => (a.company || '').toLowerCase());
-        const onlyMyAccounts = allAccounts.filter(a => !fuzzyHas(targetNames, a.company));
-        const onlyTarget = targetAccounts.filter(t => !fuzzyHas(myNames, t.company));
+        // Also consider manual target name mappings as "matched"
+        const mappedTargetNames = new Set(allAccounts.flatMap(a => (a.targetNames || []).map(n => n.toLowerCase())));
+        const onlyMyAccounts = allAccounts.filter(a => (!a.targetNames || a.targetNames.length === 0) && !fuzzyHas(targetNames, a.company));
+        const onlyTarget = targetAccounts.filter(t => !fuzzyHas(myNames, t.company) && !mappedTargetNames.has((t.company || '').toLowerCase()));
         console.log('Target accounts loaded:', targetAccounts.map(t => t.company));
         console.log('My accounts loaded:', allAccounts.map(a => a.company));
         console.log('On Target but NOT My Accounts:', onlyTarget.map(t => t.company));
@@ -764,39 +1096,45 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       <div className={styles.summary}>
         {(() => {
           const myNames = allAccounts.map(a => (a.company || '').toLowerCase());
-          const t1Missing = targetAccounts.filter(t => t.tier === 'Tier 1' && !fuzzyHas(myNames, t.company)).length;
-          const t2Missing = targetAccounts.filter(t => t.tier === 'Tier 2' && !fuzzyHas(myNames, t.company)).length;
+          const mappedNames = new Set(allAccounts.flatMap(a => (a.targetNames || []).map(n => n.toLowerCase())));
+          const t1Missing = targetAccounts.filter(t => t.tier === 'Tier 1' && !fuzzyHas(myNames, t.company) && !mappedNames.has((t.company || '').toLowerCase())).length;
+          const t2Missing = targetAccounts.filter(t => t.tier === 'Tier 2' && !fuzzyHas(myNames, t.company) && !mappedNames.has((t.company || '').toLowerCase())).length;
           return <>
-            <button className={`${styles.summaryCard} ${expandedBucket === 'tier1' ? styles.summaryCardActive : ''}`} style={{ borderLeftColor: '#DC2626' }} onClick={() => setExpandedBucket(expandedBucket === 'tier1' ? null : 'tier1')}>
+            <button className={`${styles.summaryCard} ${bucketFilter === 'tier1' ? styles.summaryCardActive : ''}`} style={{ borderLeftColor: '#DC2626' }} onClick={() => { setBucketFilter(bucketFilter === 'tier1' ? null : 'tier1'); setExpandedBucket(expandedBucket === 'tier1' ? null : 'tier1'); }}>
               <div className={styles.summaryLabel}>Tier 1</div>
               <div className={styles.summaryValue}>{tier1.length}</div>
               {t1Missing > 0 && <div className={styles.summaryBreakdown} style={{ color: '#DC2626' }}>{t1Missing} not in list</div>}
             </button>
-            <button className={`${styles.summaryCard} ${expandedBucket === 'tier2' ? styles.summaryCardActive : ''}`} style={{ borderLeftColor: '#3B82F6' }} onClick={() => setExpandedBucket(expandedBucket === 'tier2' ? null : 'tier2')}>
+            <button className={`${styles.summaryCard} ${bucketFilter === 'tier2' ? styles.summaryCardActive : ''}`} style={{ borderLeftColor: '#3B82F6' }} onClick={() => { setBucketFilter(bucketFilter === 'tier2' ? null : 'tier2'); setExpandedBucket(expandedBucket === 'tier2' ? null : 'tier2'); }}>
               <div className={styles.summaryLabel}>Tier 2</div>
               <div className={styles.summaryValue}>{tier2.length}</div>
               {t2Missing > 0 && <div className={styles.summaryBreakdown} style={{ color: '#3B82F6' }}>{t2Missing} not in list</div>}
             </button>
           </>;
         })()}
-        <div className={styles.summaryCard} style={{ borderLeftColor: '#3B7DDD' }}>
+        <button className={`${styles.summaryCard} ${bucketFilter === null ? '' : ''}`} style={{ borderLeftColor: '#3B7DDD', cursor: 'pointer' }} onClick={() => setBucketFilter(null)}>
           <div className={styles.summaryLabel}>Total</div>
           <div className={styles.summaryValue}>{tier1.length + tier2.length}</div>
-        </div>
-        <div className={styles.summaryCard} style={{ borderLeftColor: '#10B981' }}>
+        </button>
+        <button className={`${styles.summaryCard} ${bucketFilter === 'client' ? styles.summaryCardActive : ''}`} style={{ borderLeftColor: '#10B981', cursor: 'pointer' }} onClick={() => setBucketFilter(bucketFilter === 'client' ? null : 'client')}>
           <div className={styles.summaryLabel}>Clients</div>
           <div className={styles.summaryValue}>{clientCount}</div>
-        </div>
-        <div className={styles.summaryCard} style={{ borderLeftColor: '#F59E0B' }}>
+        </button>
+        <button className={`${styles.summaryCard} ${bucketFilter === 'pipeline' ? styles.summaryCardActive : ''}`} style={{ borderLeftColor: '#F59E0B', cursor: 'pointer' }} onClick={() => setBucketFilter(bucketFilter === 'pipeline' ? null : 'pipeline')}>
           <div className={styles.summaryLabel}>In Pipeline</div>
           <div className={styles.summaryValue}>{qualifyingCount}</div>
-        </div>
+        </button>
+        <button className={`${styles.summaryCard} ${bucketFilter === 'noTarget' ? styles.summaryCardActive : ''}`} style={{ borderLeftColor: '#9CA3AF', cursor: 'pointer' }} onClick={() => setBucketFilter(bucketFilter === 'noTarget' ? null : 'noTarget')}>
+          <div className={styles.summaryLabel}>No Target Mapped</div>
+          <div className={styles.summaryValue}>{allAccounts.filter(a => !a.targetNames || a.targetNames.length === 0).length}</div>
+        </button>
       </div>
       {expandedBucket && (() => {
         const myNames = allAccounts.map(a => (a.company || '').toLowerCase());
+        const mappedNames = new Set(allAccounts.flatMap(a => (a.targetNames || []).map(n => n.toLowerCase())));
         const tierLabel = expandedBucket === 'tier1' ? 'Tier 1' : 'Tier 2';
         const notInMyAccounts = targetAccounts
-          .filter(t => t.tier === tierLabel && !fuzzyHas(myNames, t.company));
+          .filter(t => t.tier === tierLabel && !fuzzyHas(myNames, t.company) && !mappedNames.has((t.company || '').toLowerCase()));
         if (notInMyAccounts.length === 0) return (
           <div className={styles.bucketList}>
             <div className={styles.bucketHeader}>

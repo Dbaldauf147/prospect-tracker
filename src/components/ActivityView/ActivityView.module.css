@@ -1,0 +1,233 @@
+.wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.25rem 0.5rem;
+}
+
+.title {
+  font-size: var(--font-size-xl);
+  font-weight: 700;
+  color: var(--color-text);
+  margin: 0;
+}
+
+.lastSync {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.syncBtn {
+  padding: 0.45rem 0.85rem;
+  background: var(--color-accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  font-family: inherit;
+}
+
+.syncBtn:hover { background: var(--color-accent-hover); }
+.syncBtn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.error {
+  margin: 0 1.25rem 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--color-danger-light);
+  color: var(--color-danger);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+}
+
+.summary {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0 1.25rem 0.5rem;
+}
+
+.summaryCard {
+  flex: 1;
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  padding: 0.6rem 0.85rem;
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--color-border-light);
+  border-left: 4px solid var(--color-accent);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition: box-shadow 0.15s;
+}
+
+.summaryCard:hover { box-shadow: var(--shadow-md); }
+
+.summaryCardActive {
+  border-color: var(--color-accent);
+  border-left-color: var(--color-accent);
+  background: var(--color-accent-light);
+}
+
+.summaryLabel {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.summaryValue {
+  font-size: var(--font-size-2xl);
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.filterRow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0 1.25rem 0.5rem;
+}
+
+.searchInput {
+  width: 100%;
+  max-width: 320px;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-family: inherit;
+  color: var(--color-text);
+  background: var(--color-bg);
+}
+
+.searchInput:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.resultCount {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.loading {
+  padding: 3rem;
+  text-align: center;
+  color: var(--color-text-muted);
+}
+
+.progressBar {
+  padding: 0.5rem 1.25rem;
+  font-size: var(--font-size-xs);
+  color: var(--color-accent);
+  font-weight: 600;
+  background: var(--color-accent-light);
+  border-radius: var(--radius-md);
+  margin: 0 1.25rem 0.5rem;
+}
+
+/* Activity type badges */
+.typeBadge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.typeEmail {
+  composes: typeBadge;
+  background: #EBF2FC;
+  color: #3B7DDD;
+}
+
+.typeCall {
+  composes: typeBadge;
+  background: #ECFDF5;
+  color: #059669;
+}
+
+.typeMeeting {
+  composes: typeBadge;
+  background: #EDE9FE;
+  color: #7C3AED;
+}
+
+.directionBadge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 0.62rem;
+  font-weight: 500;
+  background: var(--color-surface-alt);
+  color: var(--color-text-muted);
+}
+
+.subject {
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.contactText {
+  font-size: var(--font-size-xs);
+  color: var(--color-accent);
+}
+
+.dateText {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.metaText {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.duration {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  font-weight: 500;
+}
+
+.contactLink {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--color-accent);
+  cursor: pointer;
+  text-decoration: none;
+}
+.contactLink:hover {
+  text-decoration: underline;
+}
+
+.popupOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 300;
+}
+
+.popupCard {
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 1.25rem;
+  width: 380px;
+  max-width: 92vw;
+}

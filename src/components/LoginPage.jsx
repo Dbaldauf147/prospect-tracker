@@ -1,6 +1,6 @@
 import styles from './LoginPage.module.css';
 
-export function LoginPage({ onSignIn }) {
+export function LoginPage({ onSignIn, error }) {
   return (
     <div className={styles.page}>
       <div className={styles.card}>
@@ -10,6 +10,7 @@ export function LoginPage({ onSignIn }) {
           <span className={styles.googleIcon}>G</span>
           Sign in with Google
         </button>
+        {error && <p className={styles.error}>{error}</p>}
       </div>
     </div>
   );

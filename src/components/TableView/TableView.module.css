@@ -1,3 +1,95 @@
+.outerWrap {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+
+.tableToolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border-light);
+  flex-shrink: 0;
+}
+
+.colToggleWrap {
+  position: relative;
+}
+
+.colToggleBtn {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.3rem 0.6rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  font-family: inherit;
+  color: var(--color-text-secondary);
+  transition: border-color 0.15s;
+}
+
+.colToggleBtn:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.colToggleDropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 0.4rem;
+  min-width: 180px;
+  max-height: 320px;
+  overflow-y: auto;
+  z-index: 50;
+}
+
+.colToggleItem {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.5rem;
+  font-size: var(--font-size-xs);
+  color: var(--color-text);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.colToggleItem:hover {
+  background: var(--color-surface-alt);
+}
+
+.colToggleItem input {
+  accent-color: var(--color-accent);
+}
+
+.colToggleItem input:disabled {
+  opacity: 0.4;
+}
+
+.resetWidthsBtn {
+  background: none;
+  border: none;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  font-family: inherit;
+  padding: 0.3rem 0.5rem;
+}
+
+.resetWidthsBtn:hover {
+  color: var(--color-accent);
+}
+
 .wrapper {
   flex: 1;
   overflow: auto;
@@ -6,13 +98,18 @@
 
 .table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   font-size: var(--font-size-sm);
 }
 
-.table th {
+.table thead {
   position: sticky;
   top: 0;
+  z-index: 10;
+}
+
+.table th {
   background: var(--color-surface-alt);
   border-bottom: 2px solid var(--color-border);
   padding: 0.5rem 0.6rem;
@@ -25,7 +122,27 @@
   white-space: nowrap;
   cursor: pointer;
   user-select: none;
+  position: sticky;
+  top: 0;
   z-index: 10;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.06);
+}
+
+.resizeHandle {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.15s;
+  z-index: 20;
+}
+
+.resizeHandle:hover,
+.resizeHandle:active {
+  background: var(--color-accent);
 }
 
 .table th:hover {
@@ -41,10 +158,16 @@
   padding: 0.45rem 0.6rem;
   border-bottom: 1px solid var(--color-border-light);
   vertical-align: middle;
-  max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  position: relative;
+}
+
+.inlineInput,
+.inlineSelect {
+  position: relative;
+  z-index: 20;
 }
 
 .table tr:hover td {
@@ -110,6 +233,61 @@
   cursor: text;
 }
 
+.tagsCellWrap {
+  position: relative;
+}
+
+.tagsSummary {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-xs);
+  color: var(--color-accent);
+  cursor: pointer;
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+}
+
+.tagsSummary:hover {
+  background: var(--color-accent-light);
+}
+
+.tagsDropdown {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 0.4rem;
+  min-width: 200px;
+  max-height: 260px;
+  overflow-y: auto;
+  z-index: 50;
+}
+
+.tagsDropdownItem {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.4rem;
+  font-size: var(--font-size-xs);
+  color: var(--color-text);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.tagsDropdownItem:hover {
+  background: var(--color-surface-alt);
+}
+
+.tagsDropdownItem input {
+  accent-color: var(--color-accent);
+}
+
 .tagsCell {
   display: flex;
   gap: 3px;
@@ -167,4 +345,26 @@
 
 .websiteLink:hover {
   text-decoration: underline;
+}
+
+@keyframes savedFade {
+  0% { opacity: 1; transform: translateY(0); }
+  70% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(-4px); }
+}
+
+.savedBadge {
+  position: absolute;
+  top: -14px;
+  left: 0;
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: #059669;
+  background: #DCFCE7;
+  padding: 0px 5px;
+  border-radius: 3px;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: savedFade 1.5s ease-out forwards;
+  z-index: 10;
 }

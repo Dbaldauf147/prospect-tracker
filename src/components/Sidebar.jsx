@@ -1,6 +1,6 @@
 import styles from './Sidebar.module.css';
 
-export function Sidebar({ view, setView, user, onLogout }) {
+export function Sidebar({ view, setView, user, onLogout, onSync }) {
   const initials = user?.displayName
     ? user.displayName.split(' ').map(n => n[0]).join('').toUpperCase()
     : user?.email?.[0]?.toUpperCase() || '?';
@@ -14,6 +14,13 @@ export function Sidebar({ view, setView, user, onLogout }) {
 
       <nav className={styles.nav}>
         <button
+          className={view === 'accounts' ? styles.navItemActive : styles.navItem}
+          onClick={() => setView('accounts')}
+        >
+          <span className={styles.navIcon}>&#9733;</span>
+          My Accounts
+        </button>
+        <button
           className={view === 'table' ? styles.navItemActive : styles.navItem}
           onClick={() => setView('table')}
         >
@@ -21,11 +28,67 @@ export function Sidebar({ view, setView, user, onLogout }) {
           Table View
         </button>
         <button
-          className={view === 'kanban' ? styles.navItemActive : styles.navItem}
-          onClick={() => setView('kanban')}
+          className={view === 'targets' ? styles.navItemActive : styles.navItem}
+          onClick={() => setView('targets')}
         >
-          <span className={styles.navIcon}>&#9634;</span>
-          Pipeline View
+          <span className={styles.navIcon}>&#9872;</span>
+          Target Accounts
+        </button>
+        <button
+          className={view === 'opps' ? styles.navItemActive : styles.navItem}
+          onClick={() => setView('opps')}
+        >
+          <span className={styles.navIcon}>&#36;</span>
+          Opps
+        </button>
+        <button
+          className={view === 'activity' ? styles.navItemActive : styles.navItem}
+          onClick={() => setView('activity')}
+        >
+          <span className={styles.navIcon}>&#9202;</span>
+          Activity
+        </button>
+        <button
+          className={view === 'hubspot' ? styles.navItemActive : styles.navItem}
+          onClick={() => setView('hubspot')}
+        >
+          <span className={styles.navIcon}>&#9993;</span>
+          HubSpot Contacts
+        </button>
+        <button
+          className={view === 'drafts' ? styles.navItemActive : styles.navItem}
+          onClick={() => setView('drafts')}
+        >
+          <span className={styles.navIcon}>&#9999;</span>
+          Draft Emails
+        </button>
+        <button
+          className={view === 'vibe' ? styles.navItemActive : styles.navItem}
+          onClick={() => setView('vibe')}
+        >
+          <span className={styles.navIcon}>&#128269;</span>
+          Vibe Prospecting
+        </button>
+        <button
+          className={view === 'dedupe' ? styles.navItemActive : styles.navItem}
+          onClick={() => setView('dedupe')}
+        >
+          <span className={styles.navIcon}>&#x2702;</span>
+          Deduplication
+        </button>
+        <button
+          className={styles.navItem}
+          onClick={onSync}
+        >
+          <span className={styles.navIcon}>&#8635;</span>
+          Sync Google Sheets
+        </button>
+        <button
+          className={view === 'privacy' ? styles.navItemActive : styles.navItem}
+          onClick={() => setView('privacy')}
+        >
+          <span className={styles.navIcon}>&#128274;</span>
+          Privacy & Security
         </button>
       </nav>
 

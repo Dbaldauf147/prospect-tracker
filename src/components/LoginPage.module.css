@@ -53,3 +53,11 @@
 .googleIcon {
   font-size: 1.2rem;
 }
+
+.error {
+  margin-top: 1rem;
+  color: #EF4444;
+  font-size: 0.8rem;
+  text-align: left;
+  word-break: break-word;
+}
