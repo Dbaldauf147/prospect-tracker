@@ -395,6 +395,30 @@ export default async function handler(req, res) {
       });
     }
 
+    if (action === 'add-tag-option' && req.method === 'POST') {
+      const { tag } = req.body;
+      if (!tag) return res.status(400).json({ error: 'tag is required' });
+      // Get current property options
+      const prop = await hubspotFetch('/crm/v3/properties/contacts/dans_tags', token);
+      const existing = (prop.options || []).map(o => ({ label: o.label, value: o.value, displayOrder: o.displayOrder, hidden: o.hidden }));
+      // Check if already exists
+      if (existing.some(o => o.label.toLowerCase() === tag.toLowerCase())) {
+        return res.json({ success: true, message: 'Tag already exists' });
+      }
+      // Add new option
+      const newOption = { label: tag, value: tag, displayOrder: existing.length, hidden: false };
+      const updateRes = await fetch(`${BASE}/crm/v3/properties/contacts/dans_tags`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ options: [...existing, newOption] }),
+      });
+      if (!updateRes.ok) {
+        const text = await updateRes.text();
+        throw new Error(`Failed to add tag option: ${text.slice(0, 300)}`);
+      }
+      return res.json({ success: true, tag });
+    }
+
     if (action === 'delete-contact' && req.method === 'POST') {
       const { contactId } = req.body;
       if (!contactId) {

@@ -322,9 +322,20 @@ function TagsMultiSelect({ contact, field, value, options, onSave }) {
     onSave(contact.id, { [field]: newVal });
   }
 
-  function addNewTag() {
+  async function addNewTag() {
     const tag = newTag.trim();
     if (!tag || selected.includes(tag)) return;
+    try {
+      const res = await fetch('/api/hubspot?action=add-tag-option', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tag }),
+      });
+      const json = await res.json();
+      if (json.error) throw new Error(json.error);
+    } catch (err) {
+      console.error('Failed to add tag option:', err);
+    }
     const next = [...selected, tag];
     onSave(contact.id, { [field]: next.join(';') });
     setNewTag('');
@@ -682,10 +693,21 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
                             placeholder="+ New tag (Enter to add)"
                             value={newTagInput}
                             onChange={e => setNewTagInput(e.target.value)}
-                            onKeyDown={e => {
+                            onKeyDown={async e => {
                               if (e.key === 'Enter' && newTagInput.trim()) {
                                 e.preventDefault();
                                 const tag = newTagInput.trim();
+                                try {
+                                  const res = await fetch('/api/hubspot?action=add-tag-option', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ tag }),
+                                  });
+                                  const json = await res.json();
+                                  if (json.error) throw new Error(json.error);
+                                } catch (err) {
+                                  console.error('Failed to add tag option:', err);
+                                }
                                 if (!currentTags.includes(tag)) {
                                   set('dans_tags', [...currentTags, tag].join(';'));
                                 }
