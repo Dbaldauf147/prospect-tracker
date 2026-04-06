@@ -34,6 +34,7 @@ function getInitialFilters() {
     accountList: '',
     industry: '',
     titleKeywords: '',
+    titleExclude: '',
     departments: [],
     levels: [],
     companySizes: [],
@@ -48,7 +49,8 @@ function filtersToLabel(f) {
   const parts = [];
   if (f.companyName) parts.push(f.companyName);
   if (f.industry) parts.push(f.industry);
-  if (f.titleKeywords) parts.push(`"${f.titleKeywords}"`);
+  if (f.titleKeywords) parts.push(`Include: "${f.titleKeywords.split('\n')[0]}${f.titleKeywords.split('\n').length > 1 ? '...' : ''}"`);
+  if (f.titleExclude) parts.push(`Exclude: "${f.titleExclude.split('\n')[0]}..."`);
   if (f.departments.length) parts.push(`Dept: ${f.departments.join(', ')}`);
   if (f.levels.length) parts.push(`Level: ${f.levels.join(', ')}`);
   return parts.length ? parts.join(' | ') : 'All filters';
@@ -323,13 +325,26 @@ export function VibeProspecting({ prospects = [] }) {
               </div>
 
               <div className={styles.formGroup}>
-                <label className={styles.label}>Job Title Keywords</label>
-                <input
+                <label className={styles.label}>Titles to Include</label>
+                <textarea
                   className={styles.input}
-                  type="text"
-                  placeholder='e.g. "VP Sustainability", "Director ESG"'
+                  placeholder={'One per line, e.g.:\nVP Sustainability\nDirector ESG\nHead of Energy'}
                   value={filters.titleKeywords}
                   onChange={e => updateFilter('titleKeywords', e.target.value)}
+                  rows={4}
+                  style={{ resize: 'vertical', minHeight: '60px', lineHeight: '1.5' }}
+                />
+              </div>
+
+              <div className={styles.formGroup}>
+                <label className={styles.label}>Titles to Exclude</label>
+                <textarea
+                  className={styles.input}
+                  placeholder={'One per line, e.g.:\nIntern\nAssistant\nJunior'}
+                  value={filters.titleExclude}
+                  onChange={e => updateFilter('titleExclude', e.target.value)}
+                  rows={4}
+                  style={{ resize: 'vertical', minHeight: '60px', lineHeight: '1.5' }}
                 />
               </div>
 
