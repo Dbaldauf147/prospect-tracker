@@ -880,6 +880,14 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
           .filter(Boolean).join(' ').toLowerCase().includes(term)
       );
     }
+    // Sort "Lost", "Not Sold", "Closed" statuses to bottom
+    const closedStatuses = new Set(['Lost', 'Not Sold', 'Closed', 'Lost - Not Sold']);
+    result.sort((a, b) => {
+      const aLost = closedStatuses.has(a.status) ? 1 : 0;
+      const bLost = closedStatuses.has(b.status) ? 1 : 0;
+      if (aLost !== bLost) return aLost - bLost;
+      return 0; // preserve existing order within groups
+    });
     return result;
   }, [allAccounts, filters, search, bucketFilter]);
 
