@@ -913,6 +913,22 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
         if (LOCAL_ONLY_PROPS.has(k)) localProps[k] = v;
         else hubspotProps[k] = v;
       }
+      // Auto-register any unknown tags before saving
+      if (hubspotProps.dans_tags) {
+        const tags = hubspotProps.dans_tags.split(';').map(t => t.trim()).filter(Boolean);
+        const knownLower = new Set((dansTagOptions || []).map(o => (typeof o === 'string' ? o : o.label || o.value || '').toLowerCase()));
+        for (const tag of tags) {
+          if (!knownLower.has(tag.toLowerCase())) {
+            try {
+              await fetch('/api/hubspot?action=add-tag-option', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tag }),
+              });
+            } catch {}
+          }
+        }
+      }
       // Only call HubSpot API if there are real HubSpot properties to update
       if (Object.keys(hubspotProps).length > 0) {
         const res = await fetch('/api/hubspot?action=update-contact', {
@@ -1116,6 +1132,22 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
     try {
       // Separate notes from contact properties (HubSpot notes are a different object)
       const { notes, ...contactProps } = fields;
+      // Auto-register any unknown tags as HubSpot property options before saving
+      if (contactProps.dans_tags) {
+        const tags = contactProps.dans_tags.split(';').map(t => t.trim()).filter(Boolean);
+        const knownLower = new Set((dansTagOptions || []).map(o => (typeof o === 'string' ? o : o.label || o.value || '').toLowerCase()));
+        for (const tag of tags) {
+          if (!knownLower.has(tag.toLowerCase())) {
+            try {
+              await fetch('/api/hubspot?action=add-tag-option', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tag }),
+              });
+            } catch {}
+          }
+        }
+      }
       const action = existingId ? 'update-contact' : 'create-contact';
       const reqBody = existingId
         ? { contactId: existingId, properties: contactProps }
