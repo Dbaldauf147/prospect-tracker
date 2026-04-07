@@ -1,30 +1,9 @@
 /**
- * Determines if companies are North America HQ'd.
- * Uses company name analysis + HubSpot contact country data.
+ * Looks up company HQ location using HubSpot contact data.
  * POST /api/hq-lookup
  * Body: { companies: ["CBRE", "Prologis", ...] }
+ * Returns: { results: { "CBRE": { region: "North America", location: "Dallas, Texas, United States" }, ... } }
  */
-
-// Keywords in company names that indicate non-NA offices/entities
-const INTL_NAME_PATTERNS = [
-  'australia', 'uk office', 'uk life', 'uk logistics',
-  'paris', 'dubai', 'brazil', 'german', 'india office',
-  'europe', 'london', 'japan', 'china', 'singapore',
-  'hong kong', 'korea', 'emea', 'apac', 'asia',
-  'befimmo', 'alstria', 'edyn', 'center parcs',
-  'selenta', 'livensa', 'ic campus', 'hibernia',
-  'leela hotels',
-];
-
-// Known Canadian-HQ'd companies (still North America)
-const CANADIAN_HQ = new Set([
-  'brookfield asset management', 'brookfield', 'cadillac fairview',
-  'oxford properties', 'allied properties reit', 'dream industrial',
-  'artis real estate investment trust', 'addenda capital',
-  'cibc', 'manulife', 'sun life', 'colliers', 'tricon residential',
-  'boardwalk real estate', 'bosa properties', 'avison young',
-  'dream unlimited', 'ivanhoé cambridge', 'axium infrastructure',
-]);
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -32,35 +11,63 @@ export default async function handler(req, res) {
   const { companies } = req.body;
   if (!companies?.length) return res.status(400).json({ error: 'companies array is required' });
 
-  const results = {};
+  const token = process.env.HUBSPOT_ACCESS_TOKEN;
+  if (!token) return res.status(500).json({ error: 'HubSpot token not configured' });
 
+  // Fetch contacts with location data
+  let contacts = [];
+  try {
+    let after;
+    while (true) {
+      const params = new URLSearchParams({ limit: '100', properties: 'company,city,state,country' });
+      if (after) params.set('after', after);
+      const hubRes = await fetch(`https://api.hubapi.com/crm/v3/objects/contacts?${params}`, {
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      });
+      if (!hubRes.ok) break;
+      const data = await hubRes.json();
+      contacts.push(...(data.results || []).map(c => c.properties));
+      if (data.paging?.next?.after) { after = data.paging.next.after; } else break;
+      if (contacts.length > 5000) break;
+    }
+  } catch {}
+
+  // Build company → most common location
+  const companyLocations = {};
+  for (const c of contacts) {
+    const co = (c.company || '').trim();
+    if (!co) continue;
+    const coLower = co.toLowerCase();
+    const city = (c.city || '').trim();
+    const state = (c.state || '').trim();
+    const country = (c.country || '').trim();
+    if (!city && !state && !country) continue;
+
+    const locationKey = [city, state, country].filter(Boolean).join(', ');
+    if (!companyLocations[coLower]) companyLocations[coLower] = {};
+    companyLocations[coLower][locationKey] = (companyLocations[coLower][locationKey] || 0) + 1;
+  }
+
+  // For each company, pick the most common location
+  const results = {};
   for (const company of companies) {
     const lower = company.toLowerCase().trim();
 
-    // Check for international office patterns in the name
-    let isIntl = false;
-    for (const pattern of INTL_NAME_PATTERNS) {
-      if (lower.includes(pattern)) { isIntl = true; break; }
+    // Try exact match, then partial
+    let locCounts = companyLocations[lower];
+    if (!locCounts) {
+      for (const [key, val] of Object.entries(companyLocations)) {
+        if (key.includes(lower) || lower.includes(key)) { locCounts = val; break; }
+      }
     }
 
-    if (isIntl) {
-      results[company] = { region: 'Outside North America', location: '' };
-      continue;
+    if (locCounts && Object.keys(locCounts).length > 0) {
+      // Pick the location with the most contacts
+      const best = Object.entries(locCounts).sort((a, b) => b[1] - a[1])[0][0];
+      results[company] = { region: '', location: best };
+    } else {
+      results[company] = { region: '', location: '' };
     }
-
-    // Check if Canadian HQ (still North America)
-    let isCanadian = false;
-    for (const ca of CANADIAN_HQ) {
-      if (lower.includes(ca) || ca.includes(lower)) { isCanadian = true; break; }
-    }
-
-    if (isCanadian) {
-      results[company] = { region: 'North America', location: 'Canada' };
-      continue;
-    }
-
-    // Default: North America (user's account list is US real estate/finance focused)
-    results[company] = { region: 'North America', location: 'United States' };
   }
 
   return res.json({ results });

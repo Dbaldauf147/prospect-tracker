@@ -135,7 +135,7 @@ const ACCOUNT_COLUMNS = [
   { key: 'numberOfSites', label: 'Sites', defaultWidth: 70, render: (row) => row.numberOfSites != null ? row.numberOfSites.toLocaleString() : '—' },
   { key: 'frameworks', label: 'Frameworks', defaultWidth: 140, render: (row) => (row.frameworks || []).join(', ') || '—' },
   { key: 'hqRegion', label: 'HQ Region', defaultWidth: 130 },
-  { key: 'naRegion', label: 'NA/Intl', defaultWidth: 100, render: null },
+  { key: 'naRegion', label: 'HQ Location', defaultWidth: 180, render: null },
   { key: 'cdm', label: 'CDM', defaultWidth: 120 },
   { key: 'notes', label: 'Notes', defaultWidth: 200 },
   { key: 'contactCount', label: 'Contacts', defaultWidth: 80, render: (row) => row.contactCount > 0 ? <span style={{ fontWeight: 700, color: '#0891B2' }}>{row.contactCount}</span> : <span style={{ color: 'var(--color-text-muted)' }}>0</span> },
@@ -351,7 +351,7 @@ function DivisionPicker({ parentId, divisions, allCompanies, onAdd, onRemove, ru
   );
 }
 
-function TargetNamePicker({ values, companyId, targetOptions, onToggle }) {
+function TargetNamePicker({ values, companyId, targetOptions, onToggle, duplicates }) {
   const [open, setOpen] = useState(false);
   const [inputText, setInputText] = useState('');
   const [dropPos, setDropPos] = useState({ top: 0, left: 0 });
@@ -381,14 +381,16 @@ function TargetNamePicker({ values, companyId, targetOptions, onToggle }) {
     : [];
 
   const count = values.length;
+  const hasDupe = duplicates && values.some(v => duplicates.has(v));
 
   return (
     <span ref={anchorRef}>
       <button
         onClick={(e) => { e.stopPropagation(); setInputText(''); setOpen(p => !p); }}
-        title={count > 1 ? values.join('\n') : ''}
-        style={{ fontSize: '0.72rem', cursor: 'pointer', background: count > 0 ? '#EBF2FC' : 'none', border: count > 0 ? '1px solid #BFDBFE' : '1px solid transparent', padding: '2px 8px', borderRadius: '4px', fontFamily: 'inherit', fontWeight: 500, color: count > 0 ? '#1E40AF' : 'var(--color-accent)', textAlign: 'left', lineHeight: 1.3 }}
+        title={hasDupe ? `⚠ Duplicate mapping: ${values.filter(v => duplicates.has(v)).join(', ')}` : (count > 1 ? values.join('\n') : '')}
+        style={{ fontSize: '0.72rem', cursor: 'pointer', background: hasDupe ? '#FEF3C7' : count > 0 ? '#EBF2FC' : 'none', border: hasDupe ? '1px solid #F59E0B' : count > 0 ? '1px solid #BFDBFE' : '1px solid transparent', padding: '2px 8px', borderRadius: '4px', fontFamily: 'inherit', fontWeight: 500, color: hasDupe ? '#92400E' : count > 0 ? '#1E40AF' : 'var(--color-accent)', textAlign: 'left', lineHeight: 1.3 }}
       >
+        {hasDupe && <span style={{ marginRight: '0.25rem' }}>&#9888;</span>}
         {count === 0 ? '— Click to map —' : count === 1 ? values[0] : `${values[0]} +${count - 1} more`}
       </button>
       {open && createPortal(
@@ -472,9 +474,10 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       if (json.error) throw new Error(json.error);
       const next = { ...hqRegionMap };
       for (const [company, info] of Object.entries(json.results || {})) {
-        if (info.region && info.region !== 'Unknown') {
-          const p = prospects.find(pr => pr.company === company);
-          if (p) next[p.id] = info.region;
+        const p = prospects.find(pr => pr.company === company);
+        if (p) {
+          // Store location string (city, state, country) instead of just region
+          next[p.id] = info.location || info.region || '';
         }
       }
       updateSettings({ hqRegionMap: next });
@@ -870,7 +873,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         }
       }
       if (targetNames.length > 0) sources.push('Target List');
-      const tierMismatch = targetTier && targetTier !== tier;
+      const tierMismatch = targetTier && targetTier !== tier && !p.ignoreTierMismatch;
       // Check for decision maker — fuzzy match across parent + divisions
       let dmNames = null;
       for (const [dmCompany, names] of Object.entries(decisionMakerByCompany)) {
@@ -1024,12 +1027,12 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         return { ...col, render: (row) => (
           <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
             <InlineCell row={row} field="tier" value={row.myTier} onUpdate={onUpdate} options={TIERS} />
-            {row.tierMismatch && <span style={{ color: '#F59E0B', fontSize: '0.6rem', fontWeight: 600 }} title={`Target Accounts says ${row.targetTier}`}>&#9888; {row.targetTier}</span>}
+            {row.tierMismatch && <span style={{ color: '#F59E0B', fontSize: '0.6rem', fontWeight: 600, cursor: 'pointer' }} title={`Target Accounts says ${row.targetTier} — click to dismiss`} onClick={(e) => { e.stopPropagation(); onUpdate(row.id, { ignoreTierMismatch: true }); }}>&#9888; {row.targetTier}</span>}
           </span>
         )};
       }
       if (col.key === 'targetName') {
-        return { ...col, render: (row) => <TargetNamePicker values={row.targetNames || []} companyId={row.id} targetOptions={allTargetNames} onToggle={toggleTargetMapping} /> };
+        return { ...col, render: (row) => <TargetNamePicker values={row.targetNames || []} companyId={row.id} targetOptions={allTargetNames} onToggle={toggleTargetMapping} duplicates={duplicateTargetNames} /> };
       }
       if (col.key === 'divisions') {
         return { ...col, render: (row) => <DivisionPicker parentId={row.id} divisions={divisionsMap[row.id] || []} allCompanies={allCompaniesForDivisions} onAdd={addDivision} onRemove={removeDivision} rules={divisionRules[row.id] || []} onSetRule={addDivisionRule} onRemoveRule={removeDivisionRule} /> };
@@ -1060,29 +1063,20 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       }
       if (col.key === 'naRegion') {
         return { ...col, render: (row) => {
-          // Don't show if HQ Region is already filled in
           if (row.hqRegion) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.65rem' }}>—</span>;
           const val = hqRegionMap[row.id] || '';
-          const isNA = val === 'North America';
-          const isOutside = val === 'Outside North America';
           return (
-            <select
-              value={val}
-              onChange={e => {
-                const next = { ...hqRegionMap, [row.id]: e.target.value };
-                updateSettings({ hqRegionMap: next });
+            <span
+              style={{ fontSize: '0.72rem', color: val ? 'var(--color-text)' : 'var(--color-text-muted)', cursor: 'text' }}
+              onClick={e => {
+                e.stopPropagation();
+                const newVal = prompt('HQ Location (City, State, Country):', val);
+                if (newVal !== null) {
+                  const next = { ...hqRegionMap, [row.id]: newVal.trim() };
+                  updateSettings({ hqRegionMap: next });
+                }
               }}
-              onClick={e => e.stopPropagation()}
-              style={{
-                padding: '2px 4px', borderRadius: '4px', border: 'none', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
-                background: isNA ? '#DCFCE7' : isOutside ? '#FEF3C7' : '#F3F4F6',
-                color: isNA ? '#166534' : isOutside ? '#78350F' : '#6B7280',
-              }}
-            >
-              <option value="">—</option>
-              <option value="North America">North America</option>
-              <option value="Outside North America">Outside North America</option>
-            </select>
+            >{val || 'Click to set'}</span>
           );
         }};
       }
@@ -1122,7 +1116,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       render: (row) => <button className={styles.deleteBtn} onClick={(e) => { e.stopPropagation(); if (confirm(`Remove "${row.company}" from the database?`)) onDelete(row.id); }} title="Remove">&#x2715;</button>,
     });
     return mapped;
-  }, [onSelect, onUpdate, allTargetNames, divisionsMap, allCompaniesForDivisions]);
+  }, [onSelect, onUpdate, allTargetNames, divisionsMap, allCompaniesForDivisions, duplicateTargetNames]);
 
   return (
     <div className={styles.wrapper}>
@@ -1145,7 +1139,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
           disabled={hqLookupRunning}
           style={{ padding: '0.25rem 0.6rem', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: hqLookupRunning ? 'wait' : 'pointer', fontFamily: 'inherit', color: 'var(--color-accent)', whiteSpace: 'nowrap' }}
         >
-          {hqLookupRunning ? 'Looking up HQs...' : 'Auto-detect NA/Intl'}
+          {hqLookupRunning ? 'Looking up HQs...' : 'Auto-detect HQ Location'}
         </button>
         <span className={styles.resultCount}>{filteredAccounts.length} of {allAccounts.length}</span>
       </div>
@@ -1289,6 +1283,10 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
           columns={columns}
           rows={filteredAccounts}
           alwaysVisible={['company']}
+          rowStyle={(row) => {
+            const s = row.status;
+            return (s === 'Lost - Not Sold' || s === 'Hold Off' || s === 'Old Client') ? { opacity: 0.45 } : undefined;
+          }}
           emptyMessage="No matching accounts found"
         />
       </div>
