@@ -71,7 +71,6 @@ function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact })
 
   function ContactCard({ contact, bucketAccent }) {
     const name = [contact.firstname, contact.lastname].filter(Boolean).join(' ') || '—';
-    const tags = getContactTags(contact);
     const isDeleting = deletingContact === (contact.id || contact.vid);
 
     return (
@@ -102,14 +101,6 @@ function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact })
         <div style={{ fontWeight: 700, fontSize: '0.74rem', color: '#1E293B', paddingRight: '14px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</div>
         {contact.jobtitle && (
           <div style={{ fontSize: '0.62rem', color: '#64748B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: '1px' }}>{contact.jobtitle}</div>
-        )}
-        {tags.length > 0 && (
-          <div style={{ marginTop: '4px', display: 'flex', flexWrap: 'wrap', gap: '2px', alignItems: 'center' }}>
-            {tags.map(t => {
-              const bucket = BUCKETS.find(b => b.tag === t);
-              return <span key={t} style={{ display: 'inline-block', padding: '1px 6px', borderRadius: '999px', fontSize: '0.5rem', fontWeight: 700, background: bucket?.headerBg || '#F3F4F6', color: bucket?.headerColor || '#6B7280', letterSpacing: '0.02em' }}>{bucket?.label || t}</span>;
-            })}
-          </div>
         )}
       </div>
     );
