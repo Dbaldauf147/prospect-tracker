@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 
-const CHECK_INTERVAL = 60 * 1000; // check every 60 seconds
+const CHECK_INTERVAL = 30 * 1000; // check every 30 seconds
 
 export function UpdateBanner() {
   const [updateAvailable, setUpdateAvailable] = useState(false);
@@ -10,7 +10,7 @@ export function UpdateBanner() {
 
     async function checkForUpdate() {
       try {
-        const res = await fetch('/', { cache: 'no-cache' });
+        const res = await fetch('/?_cb=' + Date.now(), { cache: 'no-store' });
         const html = await res.text();
         // Extract the main JS bundle hash from the HTML
         const match = html.match(/assets\/index-([a-zA-Z0-9_-]+)\.js/);
