@@ -585,7 +585,41 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
 
             <div>
               <label className={styles.label}>Email Domains</label>
-              <textarea className={styles.input} value={fields.emailDomain} onChange={e => set('emailDomain', e.target.value)} placeholder={'One per line, e.g.:\nfirstname.lastname@domain.com\nfirst.last@subsidiary.com'} rows={2} style={{ resize: 'vertical', minHeight: '40px', lineHeight: '1.5' }} />
+              {(() => {
+                const domains = (fields.emailDomain || '').split(/[\n;,]+/).map(s => s.trim()).filter(Boolean);
+                return (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', padding: '0.4rem', border: '1px solid var(--color-border)', borderRadius: '6px', minHeight: '36px', alignItems: 'center' }}>
+                    {domains.map((d, i) => (
+                      <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem', padding: '0.15rem 0.5rem', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '999px', fontSize: '0.72rem', color: '#1E40AF' }}>
+                        {d}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const next = domains.filter((_, j) => j !== i);
+                            set('emailDomain', next.join('\n'));
+                          }}
+                          style={{ background: 'none', border: 'none', color: '#93C5FD', fontSize: '0.8rem', cursor: 'pointer', padding: '0 2px', lineHeight: 1 }}
+                        >&times;</button>
+                      </span>
+                    ))}
+                    <input
+                      type="text"
+                      placeholder={domains.length === 0 ? 'firstname.lastname@domain.com' : '+ Add domain'}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' && e.target.value.trim()) {
+                          e.preventDefault();
+                          const val = e.target.value.trim();
+                          if (!domains.includes(val)) {
+                            set('emailDomain', [...domains, val].join('\n'));
+                          }
+                          e.target.value = '';
+                        }
+                      }}
+                      style={{ border: 'none', outline: 'none', fontSize: '0.78rem', fontFamily: 'inherit', color: 'var(--color-text)', padding: '0.15rem 0', minWidth: '140px', flex: '1 1 140px', background: 'none' }}
+                    />
+                  </div>
+                );
+              })()}
             </div>
 
             <div className={styles.fieldFull}>
