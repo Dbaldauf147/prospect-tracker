@@ -485,9 +485,9 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     }
   }
 
-  // Auto-detect HQ region for new accounts that don't have one set
+  // Auto-detect HQ region for new accounts that don't have one set and don't have hqRegion
   useEffect(() => {
-    const missing = prospects.filter(p => p.company && !hqRegionMap[p.id]);
+    const missing = prospects.filter(p => p.company && !hqRegionMap[p.id] && !p.hqRegion);
     if (missing.length > 0 && !hqLookupRunning) {
       bulkLookupHqRegion(true);
     }
@@ -1056,6 +1056,8 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       }
       if (col.key === 'naRegion') {
         return { ...col, render: (row) => {
+          // Don't show if HQ Region is already filled in
+          if (row.hqRegion) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.65rem' }}>—</span>;
           const val = hqRegionMap[row.id] || '';
           const isNA = val === 'North America';
           const isOutside = val === 'Outside North America';
