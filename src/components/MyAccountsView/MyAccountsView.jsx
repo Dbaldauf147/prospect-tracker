@@ -134,7 +134,8 @@ const ACCOUNT_COLUMNS = [
   { key: 'peAum', label: 'PE AUM', defaultWidth: 90, render: (row) => formatAum(row.peAum) },
   { key: 'numberOfSites', label: 'Sites', defaultWidth: 70, render: (row) => row.numberOfSites != null ? row.numberOfSites.toLocaleString() : '—' },
   { key: 'frameworks', label: 'Frameworks', defaultWidth: 140, render: (row) => (row.frameworks || []).join(', ') || '—' },
-  { key: 'hqRegion', label: 'HQ Region', defaultWidth: 110 },
+  { key: 'hqRegion', label: 'HQ Region', defaultWidth: 130 },
+  { key: 'naRegion', label: 'NA/Intl', defaultWidth: 100, render: null },
   { key: 'cdm', label: 'CDM', defaultWidth: 120 },
   { key: 'notes', label: 'Notes', defaultWidth: 200 },
   { key: 'contactCount', label: 'Contacts', defaultWidth: 80, render: (row) => row.contactCount > 0 ? <span style={{ fontWeight: 700, color: '#0891B2' }}>{row.contactCount}</span> : <span style={{ color: 'var(--color-text-muted)' }}>0</span> },
@@ -445,10 +446,40 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   const [filters, setFilters] = useState({});
   const [expandedBucket, setExpandedBucket] = useState(null);
   const [bucketFilter, setBucketFilter] = useState(null); // 'tier1' | 'tier2' | 'client' | 'pipeline' | null
+  const [hqLookupRunning, setHqLookupRunning] = useState(false);
   const hideMismatch = settings.hideMismatch ?? false;
   const targetMap = settings.targetMap || {};
+  const hqRegionMap = settings.hqRegionMap || {};
   const divisionsMap = settings.divisionsMap || {};
   const divisionRules = settings.divisionRules || {};
+
+  async function bulkLookupHqRegion() {
+    const companies = prospects.map(p => p.company).filter(Boolean);
+    if (companies.length === 0) return;
+    setHqLookupRunning(true);
+    try {
+      const res = await fetch('/api/hq-lookup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ companies }),
+      });
+      const json = await res.json();
+      if (json.error) throw new Error(json.error);
+      const next = { ...hqRegionMap };
+      for (const [company, info] of Object.entries(json.results || {})) {
+        if (info.region && info.region !== 'Unknown') {
+          // Find matching prospect ID
+          const p = prospects.find(pr => pr.company === company);
+          if (p) next[p.id] = info.region;
+        }
+      }
+      updateSettings({ hqRegionMap: next });
+    } catch (err) {
+      alert('HQ lookup failed: ' + err.message);
+    } finally {
+      setHqLookupRunning(false);
+    }
+  }
 
   function toggleTargetMapping(companyId, targetName) {
     const next = { ...targetMap };
@@ -708,7 +739,9 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     for (const r of oppsRecords) {
       const account = (r['Account'] || '').toLowerCase();
       const stage = r['Stage'] || '';
+      const openYear = (r['Open Year'] || '').trim();
       if (!account || closedStages.has(stage)) continue;
+      if (!/^\d{4}$/.test(openYear)) continue;
       total[account] = (total[account] || 0) + 1;
       const callIn = (r['Call In'] || '').trim();
       if (callIn && callIn !== '-') {
@@ -1009,6 +1042,32 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       if (col.key === 'hqRegion') {
         return { ...col, render: (row) => <InlineCell row={row} field="hqRegion" value={row.hqRegion} onUpdate={onUpdate} /> };
       }
+      if (col.key === 'naRegion') {
+        return { ...col, render: (row) => {
+          const val = hqRegionMap[row.id] || '';
+          const isNA = val === 'North America';
+          const isOutside = val === 'Outside North America';
+          return (
+            <select
+              value={val}
+              onChange={e => {
+                const next = { ...hqRegionMap, [row.id]: e.target.value };
+                updateSettings({ hqRegionMap: next });
+              }}
+              onClick={e => e.stopPropagation()}
+              style={{
+                padding: '2px 4px', borderRadius: '4px', border: 'none', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+                background: isNA ? '#DCFCE7' : isOutside ? '#FEF3C7' : '#F3F4F6',
+                color: isNA ? '#166534' : isOutside ? '#78350F' : '#6B7280',
+              }}
+            >
+              <option value="">—</option>
+              <option value="North America">North America</option>
+              <option value="Outside North America">Outside North America</option>
+            </select>
+          );
+        }};
+      }
       if (col.key === 'cdm') {
         return { ...col, render: (row) => <InlineCell row={row} field="cdm" value={row.cdm} onUpdate={onUpdate} /> };
       }
@@ -1028,7 +1087,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         return { ...col, render: (row) => <InlineCell row={row} field="emailDomain" value={row.emailDomain} onUpdate={onUpdate} /> };
       }
       // Skip computed columns — they stay read-only
-      if (['myTier', 'activityCount', 'oppsCount', 'contactCount', 'bucketCount', 'dmFound', 'sources', 'targetName', 'otherReps', 'divisions', '_hide'].includes(col.key)) {
+      if (['myTier', 'activityCount', 'oppsCount', 'contactCount', 'bucketCount', 'naRegion', 'dmFound', 'sources', 'targetName', 'otherReps', 'divisions', '_hide'].includes(col.key)) {
         return col;
       }
       // Make any remaining columns editable as text
@@ -1063,6 +1122,13 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         })}
         {bucketFilter && <span style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem', borderRadius: '999px', background: '#EBF2FC', color: '#3B7DDD', fontWeight: 600 }}>Showing: {bucketFilter === 'tier1' ? 'Tier 1' : bucketFilter === 'tier2' ? 'Tier 2' : bucketFilter === 'client' ? 'Clients' : bucketFilter === 'noTarget' ? 'No Target Mapped' : 'In Pipeline'}</span>}
         {(activeFilterCount > 0 || bucketFilter) && <button className={styles.clearBtn} onClick={clearFilters}>Clear all</button>}
+        <button
+          onClick={bulkLookupHqRegion}
+          disabled={hqLookupRunning}
+          style={{ padding: '0.25rem 0.6rem', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: hqLookupRunning ? 'wait' : 'pointer', fontFamily: 'inherit', color: 'var(--color-accent)', whiteSpace: 'nowrap' }}
+        >
+          {hqLookupRunning ? 'Looking up HQs...' : 'Auto-detect NA/Intl'}
+        </button>
         <span className={styles.resultCount}>{filteredAccounts.length} of {allAccounts.length}</span>
       </div>
       {targetAccounts.length > 0 && (() => {
