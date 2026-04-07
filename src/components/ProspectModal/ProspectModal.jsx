@@ -71,15 +71,16 @@ function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact })
 
   function ContactCard({ contact, bucketAccent }) {
     const name = [contact.firstname, contact.lastname].filter(Boolean).join(' ') || '—';
+    const isDM = contactHasTag(contact, 'decision maker');
     const isDeleting = deletingContact === (contact.id || contact.vid);
 
     return (
       <div
         onClick={() => onEditContact && onEditContact(contact)}
         style={{
-          background: '#fff',
-          border: `1px solid #E2E8F0`,
-          borderLeft: `3px solid ${bucketAccent}`,
+          background: isDM ? '#FEFCE8' : '#fff',
+          border: isDM ? '2px solid #F59E0B' : '1px solid #E2E8F0',
+          borderLeft: `3px solid ${isDM ? '#F59E0B' : bucketAccent}`,
           borderRadius: '6px',
           padding: '0.45rem 0.55rem',
           position: 'relative',
@@ -98,7 +99,10 @@ function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact })
             onMouseLeave={e => e.currentTarget.style.color = '#CBD5E1'}
           >{isDeleting ? '…' : '×'}</button>
         )}
-        <div style={{ fontWeight: 700, fontSize: '0.74rem', color: '#1E293B', paddingRight: '14px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</div>
+        <div style={{ fontWeight: 700, fontSize: '0.74rem', color: '#1E293B', paddingRight: '14px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+          {name}
+          {isDM && <span style={{ fontSize: '0.5rem', fontWeight: 700, color: '#92400E', background: '#FDE68A', padding: '0px 4px', borderRadius: '3px', flexShrink: 0 }}>DM</span>}
+        </div>
         {contact.jobtitle && (
           <div style={{ fontSize: '0.62rem', color: '#64748B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: '1px' }}>{contact.jobtitle}</div>
         )}
@@ -653,9 +657,13 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                       {companyContacts.map((c, i) => {
                         const name = [c.firstname, c.lastname].filter(Boolean).join(' ');
                         const linkedinUrl = c.hs_linkedin_url || c.linkedin_url || c.hs_linkedinid;
+                        const isDM = contactHasTag(c, 'decision maker');
                         return (
-                          <tr key={c.id || i} onClick={() => setEditingContact(c)} style={{ borderBottom: '1px solid #F1F5F9', cursor: 'pointer' }} onMouseEnter={e => e.currentTarget.style.background = '#F8FAFC'} onMouseLeave={e => e.currentTarget.style.background = ''}>
-                            <td style={{ padding: '0.35rem 0.5rem', fontWeight: 600, color: '#1E293B', whiteSpace: 'nowrap' }}>{name || '—'}</td>
+                          <tr key={c.id || i} onClick={() => setEditingContact(c)} style={{ borderBottom: '1px solid #F1F5F9', cursor: 'pointer', background: isDM ? '#FEFCE8' : '', borderLeft: isDM ? '3px solid #F59E0B' : '' }} onMouseEnter={e => e.currentTarget.style.background = isDM ? '#FEF9C3' : '#F8FAFC'} onMouseLeave={e => e.currentTarget.style.background = isDM ? '#FEFCE8' : ''}>
+                            <td style={{ padding: '0.35rem 0.5rem', fontWeight: 600, color: '#1E293B', whiteSpace: 'nowrap' }}>
+                              {name || '—'}
+                              {isDM && <span style={{ marginLeft: '0.3rem', fontSize: '0.55rem', fontWeight: 700, color: '#92400E', background: '#FDE68A', padding: '0px 5px', borderRadius: '3px' }}>DM</span>}
+                            </td>
                             <td style={{ padding: '0.35rem 0.5rem', color: '#475569', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.jobtitle || '—'}</td>
                             <td style={{ padding: '0.35rem 0.5rem', maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.68rem', color: '#475569' }}>
                               {(c.dans_tags || c.dan_s_tags || c.dans_tag || '—')}
