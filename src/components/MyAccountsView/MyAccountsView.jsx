@@ -672,9 +672,13 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       } catch {}
       for (const p of prospects) {
         if (p.emailDomain) {
-          const atIdx = p.emailDomain.lastIndexOf('@');
-          const domain = atIdx >= 0 ? p.emailDomain.slice(atIdx + 1).toLowerCase() : p.emailDomain.toLowerCase();
-          if (domain && p.company) domainMap.set(domain, p.company.toLowerCase());
+          // Support multiple email domains separated by newlines, semicolons, or commas
+          const entries = p.emailDomain.split(/[\n;,]+/).map(s => s.trim()).filter(Boolean);
+          for (const entry of entries) {
+            const atIdx = entry.lastIndexOf('@');
+            const domain = atIdx >= 0 ? entry.slice(atIdx + 1).toLowerCase() : entry.toLowerCase();
+            if (domain && p.company) domainMap.set(domain, p.company.toLowerCase());
+          }
         }
         if (p.website) {
           const d = p.website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '').toLowerCase();

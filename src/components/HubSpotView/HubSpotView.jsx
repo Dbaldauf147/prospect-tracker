@@ -1243,9 +1243,12 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
     // From Table View prospects
     for (const p of prospects) {
       if (p.emailDomain) {
-        const atIdx = p.emailDomain.lastIndexOf('@');
-        const domain = atIdx >= 0 ? p.emailDomain.slice(atIdx + 1).toLowerCase() : p.emailDomain.toLowerCase();
-        if (domain && p.company && !map.has(domain)) map.set(domain, p.company);
+        const entries = p.emailDomain.split(/[\n;,]+/).map(s => s.trim()).filter(Boolean);
+        for (const entry of entries) {
+          const atIdx = entry.lastIndexOf('@');
+          const domain = atIdx >= 0 ? entry.slice(atIdx + 1).toLowerCase() : entry.toLowerCase();
+          if (domain && p.company && !map.has(domain)) map.set(domain, p.company);
+        }
       }
       if (p.website) {
         const webDomain = p.website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '').toLowerCase();

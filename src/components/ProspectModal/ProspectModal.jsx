@@ -584,8 +584,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
             </div>
 
             <div>
-              <label className={styles.label}>Email Domain</label>
-              <input className={styles.input} value={fields.emailDomain} onChange={e => set('emailDomain', e.target.value)} placeholder="firstname.lastname@domain.com" />
+              <label className={styles.label}>Email Domains</label>
+              <textarea className={styles.input} value={fields.emailDomain} onChange={e => set('emailDomain', e.target.value)} placeholder={'One per line, e.g.:\nfirstname.lastname@domain.com\nfirst.last@subsidiary.com'} rows={2} style={{ resize: 'vertical', minHeight: '40px', lineHeight: '1.5' }} />
             </div>
 
             <div className={styles.fieldFull}>
