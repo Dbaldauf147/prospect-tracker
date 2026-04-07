@@ -453,8 +453,13 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   const divisionsMap = settings.divisionsMap || {};
   const divisionRules = settings.divisionRules || {};
 
-  async function bulkLookupHqRegion() {
-    const companies = prospects.map(p => p.company).filter(Boolean);
+  async function bulkLookupHqRegion(onlyMissing = false) {
+    let companies;
+    if (onlyMissing) {
+      companies = prospects.filter(p => p.company && !hqRegionMap[p.id]).map(p => p.company);
+    } else {
+      companies = prospects.map(p => p.company).filter(Boolean);
+    }
     if (companies.length === 0) return;
     setHqLookupRunning(true);
     try {
@@ -468,18 +473,25 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       const next = { ...hqRegionMap };
       for (const [company, info] of Object.entries(json.results || {})) {
         if (info.region && info.region !== 'Unknown') {
-          // Find matching prospect ID
           const p = prospects.find(pr => pr.company === company);
           if (p) next[p.id] = info.region;
         }
       }
       updateSettings({ hqRegionMap: next });
     } catch (err) {
-      alert('HQ lookup failed: ' + err.message);
+      console.error('HQ lookup failed:', err);
     } finally {
       setHqLookupRunning(false);
     }
   }
+
+  // Auto-detect HQ region for new accounts that don't have one set
+  useEffect(() => {
+    const missing = prospects.filter(p => p.company && !hqRegionMap[p.id]);
+    if (missing.length > 0 && !hqLookupRunning) {
+      bulkLookupHqRegion(true);
+    }
+  }, [prospects.length]);
 
   function toggleTargetMapping(companyId, targetName) {
     const next = { ...targetMap };
