@@ -913,23 +913,30 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
 
   // Dynamic filter options — any visible column with ≤30 unique string values gets a filter
   const SKIP_FILTER_KEYS = new Set(['company', 'notes', 'dmNames', 'targetName', 'otherReps', 'sources', 'divisions', '_hide', 'id', 'createdAt', 'updatedAt', 'assetTypes', 'frameworks']);
+  const BLANK_LABEL = '(Blank)';
   const filterOptions = useMemo(() => {
     const opts = {};
     for (const col of ACCOUNT_COLUMNS) {
       if (SKIP_FILTER_KEYS.has(col.key)) continue;
       const vals = new Set();
+      let hasBlank = false;
       let tooMany = false;
       for (const a of allAccounts) {
         let v = a[col.key];
-        if (v == null || v === '' || v === '—') continue;
-        if (typeof v === 'object') continue; // skip arrays/objects
+        if (v == null || v === '' || v === '—' || (typeof v === 'string' && !v.trim())) {
+          hasBlank = true;
+          continue;
+        }
+        if (typeof v === 'object') continue;
         v = String(v).trim();
-        if (!v) continue;
+        if (!v) { hasBlank = true; continue; }
         vals.add(v);
         if (vals.size > 30) { tooMany = true; break; }
       }
       if (!tooMany && vals.size >= 2) {
-        opts[col.key] = [...vals].sort();
+        const sorted = [...vals].sort();
+        if (hasBlank) sorted.push(BLANK_LABEL);
+        opts[col.key] = sorted;
       }
     }
     return opts;
@@ -945,7 +952,17 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     else if (bucketFilter === 'pipeline') result = result.filter(a => a.status === 'Qualifying' || a.status === 'Inside Sales');
     else if (bucketFilter === 'noTarget') result = result.filter(a => !a.targetNames || a.targetNames.length === 0);
     for (const [key, values] of Object.entries(filters)) {
-      if (values.length > 0) result = result.filter(a => values.includes(String(a[key] ?? '')));
+      if (values.length > 0) {
+        const wantsBlank = values.includes(BLANK_LABEL);
+        const nonBlankValues = values.filter(v => v !== BLANK_LABEL);
+        result = result.filter(a => {
+          const val = String(a[key] ?? '').trim();
+          const isEmpty = !val || val === '—';
+          if (wantsBlank && isEmpty) return true;
+          if (nonBlankValues.length > 0 && nonBlankValues.includes(val)) return true;
+          return false;
+        });
+      }
     }
     if (search.trim()) {
       const term = search.toLowerCase();
