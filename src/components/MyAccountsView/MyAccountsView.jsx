@@ -853,14 +853,15 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     }
 
     // Build suggested status per account
+    // Sold deals always take priority → Client
     const suggested = {};
     for (const [account, stages] of Object.entries(stagesByAccount)) {
       if (stages.sold > 0) {
         suggested[account] = 'Client';
-      } else if (stages.notSold > 0 && stages.active === 0) {
-        suggested[account] = 'Lost - Not Sold';
       } else if (stages.active > 0) {
         suggested[account] = 'Qualifying';
+      } else if (stages.notSold > 0) {
+        suggested[account] = 'Lost - Not Sold';
       }
     }
 
