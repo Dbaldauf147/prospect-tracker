@@ -4,6 +4,29 @@ import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
+function loadOppsFromIndexedDB() {
+  return new Promise(resolve => {
+    try {
+      const req = indexedDB.open('prospect-tracker-db', 3);
+      req.onupgradeneeded = () => {
+        const d = req.result;
+        if (!d.objectStoreNames.contains('target-accounts')) d.createObjectStore('target-accounts');
+        if (!d.objectStoreNames.contains('opps-cache')) d.createObjectStore('opps-cache');
+        if (!d.objectStoreNames.contains('clients-cache')) d.createObjectStore('clients-cache');
+      };
+      req.onsuccess = () => {
+        const d = req.result;
+        const tx = d.transaction('opps-cache', 'readonly');
+        const store = tx.objectStore('opps-cache');
+        const getReq = store.get('data');
+        getReq.onsuccess = () => resolve(getReq.result?.records || []);
+        getReq.onerror = () => resolve([]);
+      };
+      req.onerror = () => resolve([]);
+    } catch { resolve([]); }
+  });
+}
+
 function getWeekKey(date) {
   const d = new Date(date);
   const day = d.getDay();
@@ -26,9 +49,10 @@ function companiesMatch(a, b) {
 export function ProgressView({ prospects, settings }) {
   const { user } = useAuth();
   const [history, setHistory] = useState([]);
+  const [oppsRecordsState, setOppsRecordsState] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // Load history from Firestore
+  // Load history from Firestore + opps data
   useEffect(() => {
     if (!user?.uid) return;
     (async () => {
@@ -39,6 +63,28 @@ export function ProgressView({ prospects, settings }) {
           setHistory(snap.data().weeks || []);
         }
       } catch (err) { console.error('Failed to load progress:', err); }
+
+      // Load opps from Firestore first, then IndexedDB, then localStorage
+      let records = [];
+      try {
+        const oppsRef = doc(db, 'oppsData', user.uid);
+        const oppsSnap = await getDoc(oppsRef);
+        if (oppsSnap.exists()) {
+          const raw = oppsSnap.data();
+          const parsed = raw.json ? JSON.parse(raw.json) : raw;
+          records = parsed?.records || [];
+        }
+      } catch {}
+      if (records.length === 0) {
+        records = await loadOppsFromIndexedDB();
+      }
+      if (records.length === 0) {
+        try {
+          const cache = JSON.parse(localStorage.getItem('opps-cache'));
+          records = cache?.records || [];
+        } catch {}
+      }
+      setOppsRecordsState(records);
       setLoading(false);
     })();
   }, [user]);
@@ -62,13 +108,8 @@ export function ProgressView({ prospects, settings }) {
       if (co) contactCompanies.add(co);
     }
 
-    // Load opps for "connected" metric
-    let oppsRecords = [];
-    try {
-      const cache = JSON.parse(localStorage.getItem('opps-cache'));
-      oppsRecords = cache?.records || [];
-    } catch {}
-    // Also try IndexedDB data that might have been loaded
+    // Use opps data loaded from Firestore/IndexedDB/localStorage
+    const oppsRecords = oppsRecordsState;
     const oppsCompanies = new Set();
     for (const r of oppsRecords) {
       const account = (r['Account'] || '').toLowerCase();
@@ -115,7 +156,7 @@ export function ProgressView({ prospects, settings }) {
       t1InactivePct: t1Total > 0 ? Math.round((t1Inactive / t1Total) * 100) : 0,
       t2InactivePct: t2Total > 0 ? Math.round((t2Inactive / t2Total) * 100) : 0,
     };
-  }, [prospects, settings]);
+  }, [prospects, settings, oppsRecordsState]);
 
   // Save current week snapshot
   async function saveSnapshot() {
