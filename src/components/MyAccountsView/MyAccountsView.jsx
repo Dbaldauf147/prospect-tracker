@@ -466,24 +466,28 @@ function TargetNamePicker({ values, companyId, targetOptions, onToggle, duplicat
 function StatusMismatchWarning({ row, onUpdate }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
+  const dropRef = useRef(null);
   useEffect(() => {
     if (!open) return;
-    const h = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const h = e => { if (ref.current && !ref.current.contains(e.target) && dropRef.current && !dropRef.current.contains(e.target)) setOpen(false); };
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, [open]);
   return (
-    <span style={{ position: 'relative' }} ref={ref}>
+    <span ref={ref}>
       <span
         style={{ color: '#F59E0B', fontSize: '0.55rem', fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}
-        title={`Opps data suggests: ${row.suggestedStatus}`}
         onClick={e => { e.stopPropagation(); setOpen(p => !p); }}
       >&#9888; {row.suggestedStatus}</span>
-      {open && (
+      {open && createPortal(
         <div
+          ref={dropRef}
           onClick={e => e.stopPropagation()}
           style={{
-            position: 'absolute', top: '100%', left: 0, zIndex: 50, marginTop: '4px',
+            position: 'fixed',
+            top: ref.current ? ref.current.getBoundingClientRect().bottom + 4 : 100,
+            left: ref.current ? ref.current.getBoundingClientRect().left : 100,
+            zIndex: 10000,
             background: '#fff', border: '1px solid var(--color-border)', borderRadius: '8px',
             boxShadow: '0 4px 12px rgba(0,0,0,0.15)', padding: '0.6rem 0.8rem', minWidth: '220px',
           }}
@@ -511,7 +515,8 @@ function StatusMismatchWarning({ row, onUpdate }) {
               }}
             >Ignore</button>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </span>
   );
