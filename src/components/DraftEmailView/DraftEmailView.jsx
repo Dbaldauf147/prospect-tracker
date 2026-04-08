@@ -596,7 +596,8 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
         .replace(/<ol>/gi, (m) => m.includes('style') ? m : '<ol style="margin:0;padding-left:1.5em;">');
       // Insert line breaks after closing tags — Outlook's MIME parser can misrender very long single-line HTML
       htmlContent = htmlContent.replace(/<\/p>/gi, '</p>\n').replace(/<\/li>/gi, '</li>\n').replace(/<\/ul>/gi, '</ul>\n').replace(/<\/ol>/gi, '</ol>\n');
-      htmlContent = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">\n<head>\n<!--[if gte mso 9]><xml><w:WordDocument><w:DontHyphenate/><w:DoNotHyphenateCaps/></w:WordDocument></xml><![endif]-->\n<style>\nbody,p,li,td{font-family:Aptos,Calibri,Arial,sans-serif;font-size:12pt;}\nul,ol{margin:0;padding-left:1.5em;}\n</style>\n</head>\n<body style="font-family:Aptos,Calibri,Arial,sans-serif;font-size:12pt;margin:0;padding:0;">\n${htmlContent}${signature ? '\n<br>\n' + signature : ''}\n</body>\n</html>`;
+      const sigBlock = signature ? `\n<br>\n<div>\n${signature}\n</div>` : '';
+      htmlContent = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">\n<head>\n<!--[if gte mso 9]><xml><w:WordDocument><w:DontHyphenate/><w:DoNotHyphenateCaps/></w:WordDocument></xml><![endif]-->\n<style>\nul,ol{margin:0;padding-left:1.5em;}\n</style>\n</head>\n<body style="margin:0;padding:0;">\n<div style="font-family:Aptos,Calibri,Arial,sans-serif;font-size:12pt;">\n${htmlContent}\n</div>${sigBlock}\n</body>\n</html>`;
 
       let eml;
       if (attachments.length > 0) {
