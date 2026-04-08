@@ -1026,7 +1026,16 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
           }
         }
       }
-      if (!tier) continue;
+      // If no tier, check if the company has active opps — if so, include as Tier 2
+      if (!tier) {
+        const companyLower = (p.company || '').toLowerCase();
+        let hasActiveOpp = false;
+        for (const [oppsCompany] of Object.entries(suggestedStatusByAccount)) {
+          if (companiesMatch(companyLower, oppsCompany)) { hasActiveOpp = true; break; }
+        }
+        if (!hasActiveOpp) continue;
+        tier = 'Tier 2';
+      }
       const cdm = (p.cdm || '').toLowerCase().trim();
       const isBaldauf = cdm.includes('baldauf');
       if (!isBaldauf) {
