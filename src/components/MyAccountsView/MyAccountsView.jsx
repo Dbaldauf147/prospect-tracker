@@ -833,11 +833,12 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
 
       // Track stage breakdown for status suggestion
       if (!stagesByAccount[account]) stagesByAccount[account] = { sold: 0, notSold: 0, active: 0 };
+      const invalidStages = new Set(['#N/A', '#REF!', '#VALUE!', '#ERROR!', 'N/A', 'n/a', '-', '']);
       if (stage === 'Sold') {
         stagesByAccount[account].sold++;
       } else if (stage === 'Not Sold' || stage === 'Lost') {
         stagesByAccount[account].notSold++;
-      } else if (stage && !closedStages.has(stage)) {
+      } else if (stage && !closedStages.has(stage) && !invalidStages.has(stage)) {
         stagesByAccount[account].active++;
       }
 
