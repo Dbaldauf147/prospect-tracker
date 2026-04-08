@@ -507,7 +507,7 @@ function StatusMismatchWarning({ row, onUpdate }) {
               }}
             >Convert</button>
             <button
-              onClick={() => { onUpdate(row.id, { ignoreStatusMismatch: true }); setOpen(false); }}
+              onClick={() => { onUpdate(row.id, { dismissedSuggestedStatus: row.suggestedStatus }); setOpen(false); }}
               style={{
                 flex: 1, padding: '0.35rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px',
                 background: 'var(--color-surface)', color: 'var(--color-text-secondary)', fontSize: '0.72rem', fontWeight: 600,
@@ -1106,7 +1106,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         }
         if (found) break;
       }
-      const statusMismatch = suggestedStatus !== p.status && p.status && !p.ignoreStatusMismatch;
+      const statusMismatch = suggestedStatus !== p.status && p.status && p.dismissedSuggestedStatus !== suggestedStatus;
       const entry = { ...p, myTier: tier, activityCount, oppsCount, totalOpps, sources: sources.join(', '), dmFound: !!dmNames, dmNames: dmNames ? dmNames.join(', ') : '', cdmMismatch: !isBaldauf, targetNames, targetTier, tierMismatch, otherReps, contactCount, bucketCount, suggestedStatus, statusMismatch };
       if (tier === 'Tier 1') t1.push(entry);
       else t2.push(entry);
