@@ -904,10 +904,10 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
         if (LOCAL_ONLY_PROPS.has(k)) localProps[k] = v;
         else hubspotProps[k] = v;
       }
-      // Filter out invalid tag values that aren't in HubSpot's allowed options
-      if (hubspotProps.dans_tags) {
+      // Filter out invalid tag values — but only if we have the valid options loaded
+      if (hubspotProps.dans_tags && dansTagOptions && dansTagOptions.length > 0) {
         const tags = hubspotProps.dans_tags.split(';').map(t => t.trim()).filter(Boolean);
-        const knownLower = new Set((dansTagOptions || []).map(o => (typeof o === 'string' ? o : o.label || o.value || '').toLowerCase()));
+        const knownLower = new Set(dansTagOptions.map(o => (typeof o === 'string' ? o : o.label || o.value || '').toLowerCase()));
         hubspotProps.dans_tags = tags.filter(t => knownLower.has(t.toLowerCase())).join(';');
       }
       // Only call HubSpot API if there are real HubSpot properties to update
@@ -1113,10 +1113,10 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
     try {
       // Separate notes from contact properties (HubSpot notes are a different object)
       const { notes, ...contactProps } = fields;
-      // Filter out invalid tag values that aren't in HubSpot's allowed options
-      if (contactProps.dans_tags) {
+      // Filter out invalid tag values — but only if we have the valid options loaded
+      if (contactProps.dans_tags && dansTagOptions && dansTagOptions.length > 0) {
         const tags = contactProps.dans_tags.split(';').map(t => t.trim()).filter(Boolean);
-        const knownLower = new Set((dansTagOptions || []).map(o => (typeof o === 'string' ? o : o.label || o.value || '').toLowerCase()));
+        const knownLower = new Set(dansTagOptions.map(o => (typeof o === 'string' ? o : o.label || o.value || '').toLowerCase()));
         contactProps.dans_tags = tags.filter(t => knownLower.has(t.toLowerCase())).join(';');
       }
       const action = existingId ? 'update-contact' : 'create-contact';
