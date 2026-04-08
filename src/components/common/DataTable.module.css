@@ -192,7 +192,9 @@
 
 .sortArrow {
   margin-left: 4px;
-  font-size: 0.6rem;
+  font-size: 0.65rem;
+  color: var(--color-accent);
+  font-weight: 700;
 }
 
 .table td {
