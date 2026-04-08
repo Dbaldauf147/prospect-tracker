@@ -834,9 +834,10 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       // Track stage breakdown for status suggestion
       if (!stagesByAccount[account]) stagesByAccount[account] = { sold: 0, notSold: 0, active: 0 };
       const invalidStages = new Set(['#N/A', '#REF!', '#VALUE!', '#ERROR!', 'N/A', 'n/a', '-', '']);
-      if (stage === 'Sold') {
+      const stageLower = stage.toLowerCase();
+      if (stageLower === 'sold' || stageLower === 'won' || stageLower === 'closed won' || stageLower === 'sold - won') {
         stagesByAccount[account].sold++;
-      } else if (stage === 'Not Sold' || stage === 'Lost') {
+      } else if (stageLower === 'not sold' || stageLower === 'lost' || stageLower === 'closed lost' || stageLower === 'lost - not sold') {
         stagesByAccount[account].notSold++;
       } else if (stage && !closedStages.has(stage) && !invalidStages.has(stage)) {
         stagesByAccount[account].active++;
