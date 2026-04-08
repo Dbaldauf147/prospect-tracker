@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect } from 'react';
-import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
+import { onAuthStateChanged, signInWithPopup, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db, googleProvider } from '../firebase';
 import { logAction } from '../utils/auditLog';
@@ -69,6 +69,26 @@ export function AuthProvider({ children }) {
     }
   }
 
+  async function signInWithEmail(email, password) {
+    try {
+      setAuthError(null);
+      const result = await signInWithEmailAndPassword(auth, email, password);
+      await logAction(result.user, 'login', { method: 'email' });
+    } catch (err) {
+      if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') {
+        // Try creating the account
+        try {
+          const result = await createUserWithEmailAndPassword(auth, email, password);
+          await logAction(result.user, 'signup', { method: 'email' });
+        } catch (signupErr) {
+          setAuthError(signupErr.message || 'Sign-up failed');
+        }
+      } else {
+        setAuthError(err.message || 'Sign-in failed');
+      }
+    }
+  }
+
   async function logout() {
     await logAction(user, 'logout');
     await signOut(auth);
@@ -82,7 +102,7 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, authError, role, isAdmin, requireAdmin, signInWithGoogle, logout }}>
+    <AuthContext.Provider value={{ user, loading, authError, role, isAdmin, requireAdmin, signInWithGoogle, signInWithEmail, logout }}>
       {children}
     </AuthContext.Provider>
   );
