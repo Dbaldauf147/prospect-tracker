@@ -28,6 +28,11 @@ service cloud.firestore {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
 
+    // Email campaigns: users can only read/write their own data
+    match /emailCampaigns/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
     // Default deny all other access
     match /{document=**} {
       allow read, write: if false;
