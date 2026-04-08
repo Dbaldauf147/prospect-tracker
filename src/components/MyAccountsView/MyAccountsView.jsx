@@ -837,7 +837,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         stagesByAccount[account].sold++;
       } else if (stage === 'Not Sold' || stage === 'Lost') {
         stagesByAccount[account].notSold++;
-      } else if (!closedStages.has(stage)) {
+      } else if (stage && !closedStages.has(stage)) {
         stagesByAccount[account].active++;
       }
 
@@ -862,6 +862,13 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         suggested[account] = 'Qualifying';
       } else if (stages.notSold > 0) {
         suggested[account] = 'Lost - Not Sold';
+      }
+    }
+
+    // Debug: log Hellman & Friedman opps data
+    for (const [account, stages] of Object.entries(stagesByAccount)) {
+      if (account.includes('hellman')) {
+        console.log(`Opps debug "${account}":`, stages, '→ suggested:', suggested[account]);
       }
     }
 
