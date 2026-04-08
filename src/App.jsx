@@ -16,11 +16,13 @@ import { SyncPanel } from './components/SyncPanel';
 import { MyAccountsView } from './components/MyAccountsView/MyAccountsView';
 import { HubSpotView } from './components/HubSpotView/HubSpotView';
 import { OppsView } from './components/OppsView/OppsView';
+import { ClientsView } from './components/ClientsView/ClientsView';
 import { ActivityView } from './components/ActivityView/ActivityView';
 import { TargetAccountsView, loadTargetAccountsFromDB } from './components/TargetAccountsView/TargetAccountsView';
 import { DedupeView } from './components/DedupeView/DedupeView';
 import { DraftEmailView } from './components/DraftEmailView/DraftEmailView';
 import { VibeProspecting } from './components/VibeProspecting/VibeProspecting';
+import { EmailCampaignView } from './components/EmailCampaignView/EmailCampaignView';
 import './App.css';
 
 function App() {
@@ -63,13 +65,14 @@ function App() {
     setModal({ prospect, isNew: false });
   }
 
-  async function handleModalSave(data) {
+  async function handleModalSave(data, { close = true } = {}) {
     if (modal.isNew) {
       await addProspect(data);
+      setModal(null);
     } else {
       await updateProspect(modal.prospect.id, data);
+      if (close) setModal(null);
     }
-    setModal(null);
   }
 
   return (
@@ -100,6 +103,8 @@ function App() {
             <div className="loading">Loading prospects...</div>
           ) : view === 'drafts' ? (
             <DraftEmailView prospects={prospects} settings={settings} updateSettings={updateSettings} />
+          ) : view === 'campaigns' ? (
+            <EmailCampaignView />
           ) : view === 'vibe' ? (
             <VibeProspecting prospects={prospects} />
           ) : view === 'dedupe' ? (
@@ -110,6 +115,8 @@ function App() {
             <ActivityView prospects={prospects} />
           ) : view === 'targets' ? (
             <TargetAccountsView onDataLoaded={setTargetAccountsData} />
+          ) : view === 'clients' ? (
+            <ClientsView />
           ) : view === 'opps' ? (
             <OppsView />
           ) : view === 'hubspot' ? (

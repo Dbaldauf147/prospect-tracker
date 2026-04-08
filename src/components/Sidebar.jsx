@@ -42,6 +42,13 @@ export function Sidebar({ view, setView, user, onLogout, onSync }) {
           Opps
         </button>
         <button
+          className={view === 'clients' ? styles.navItemActive : styles.navItem}
+          onClick={() => setView('clients')}
+        >
+          <span className={styles.navIcon}>&#9878;</span>
+          Clients
+        </button>
+        <button
           className={view === 'activity' ? styles.navItemActive : styles.navItem}
           onClick={() => setView('activity')}
         >
@@ -61,6 +68,13 @@ export function Sidebar({ view, setView, user, onLogout, onSync }) {
         >
           <span className={styles.navIcon}>&#9999;</span>
           Draft Emails
+        </button>
+        <button
+          className={view === 'campaigns' ? styles.navItemActive : styles.navItem}
+          onClick={() => setView('campaigns')}
+        >
+          <span className={styles.navIcon}>&#128200;</span>
+          Email Campaigns
         </button>
         <button
           className={view === 'vibe' ? styles.navItemActive : styles.navItem}
