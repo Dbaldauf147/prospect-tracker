@@ -23,6 +23,11 @@ service cloud.firestore {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
 
+    // Opps data: users can only read/write their own data
+    match /oppsData/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
     // Default deny all other access
     match /{document=**} {
       allow read, write: if false;

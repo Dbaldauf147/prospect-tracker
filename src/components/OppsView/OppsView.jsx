@@ -1,11 +1,14 @@
 import { useState, useEffect, useMemo } from 'react';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { db } from '../../firebase';
+import { useAuth } from '../../contexts/AuthContext';
 import { DataTable } from '../common/DataTable';
 import styles from './OppsView.module.css';
 
 const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1ee0OREqA25jzDaR6xRDSrj_ZIZDymQjf1k2Z2_ajVKw/gviz/tq?tqx=out:csv&gid=0';
 const DB_NAME = 'prospect-tracker-db';
 const DB_STORE = 'opps-cache';
-const DB_VERSION = 2; // bump version to add new store
+const DB_VERSION = 3; // bump version to add clients-cache store
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -14,6 +17,7 @@ function openDB() {
       const db = req.result;
       if (!db.objectStoreNames.contains('target-accounts')) db.createObjectStore('target-accounts');
       if (!db.objectStoreNames.contains(DB_STORE)) db.createObjectStore(DB_STORE);
+      if (!db.objectStoreNames.contains('clients-cache')) db.createObjectStore('clients-cache');
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -82,7 +86,27 @@ function loadCacheLegacy() {
   try { return JSON.parse(localStorage.getItem('opps-cache')); } catch { return null; }
 }
 
+async function loadFromFirestore(userId) {
+  try {
+    const ref = doc(db, 'oppsData', userId);
+    const snap = await getDoc(ref);
+    if (snap.exists()) {
+      const raw = snap.data();
+      if (raw.json) return JSON.parse(raw.json);
+    }
+  } catch (err) { console.error('Failed to load opps from Firestore:', err); }
+  return null;
+}
+
+async function saveToFirestore(userId, data) {
+  try {
+    const ref = doc(db, 'oppsData', userId);
+    await setDoc(ref, { json: JSON.stringify(data), updatedAt: new Date().toISOString() });
+  } catch (err) { console.error('Failed to save opps to Firestore:', err); }
+}
+
 export function OppsView() {
+  const { user } = useAuth();
   const [data, setData] = useState(loadCacheLegacy);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -117,6 +141,7 @@ export function OppsView() {
       const result = { headers, records, fetchedAt: new Date().toISOString() };
       setData(result);
       saveCacheAsync(result);
+      if (user?.uid) saveToFirestore(user.uid, result);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -124,12 +149,23 @@ export function OppsView() {
     }
   }
 
-  // Load from IndexedDB on mount
+  // Load from Firestore (then IndexedDB fallback) on mount
   useEffect(() => {
-    loadCacheAsync().then(cached => {
+    (async () => {
+      // Try Firestore first
+      if (user?.uid) {
+        const firestoreData = await loadFromFirestore(user.uid);
+        if (firestoreData) {
+          setData(firestoreData);
+          saveCacheAsync(firestoreData); // also cache locally
+          return;
+        }
+      }
+      // Fall back to IndexedDB
+      const cached = await loadCacheAsync();
       if (cached) setData(cached);
-    });
-  }, []);
+    })();
+  }, [user]);
 
   // Read frequency and paused state from sync settings
   function getOppsSettings() {
