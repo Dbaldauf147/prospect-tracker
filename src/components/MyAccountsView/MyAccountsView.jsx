@@ -513,6 +513,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   const [expandedBucket, setExpandedBucket] = useState(null);
   const [bucketFilter, setBucketFilter] = useState(null); // 'tier1' | 'tier2' | 'client' | 'pipeline' | null
   const [hqLookupRunning, setHqLookupRunning] = useState(false);
+  const [hideInactive, setHideInactive] = useState(true);
   const hideMismatch = settings.hideMismatch ?? false;
   const targetMap = settings.targetMap || {};
   const hqRegionMap = settings.hqRegionMap || {};
@@ -1032,8 +1033,11 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   }, [allAccounts]);
 
   // Apply filters, bucket filter, and search
+  const INACTIVE_STATUSES = new Set(['Old Client', 'Hold Off', 'Lost - Not Sold']);
   const filteredAccounts = useMemo(() => {
     let result = allAccounts;
+    // Hide inactive statuses by default
+    if (hideInactive) result = result.filter(a => !INACTIVE_STATUSES.has(a.status));
     // Bucket filter
     if (bucketFilter === 'tier1') result = result.filter(a => a.myTier === 'Tier 1');
     else if (bucketFilter === 'tier2') result = result.filter(a => a.myTier === 'Tier 2');
@@ -1061,7 +1065,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       );
     }
     return result;
-  }, [allAccounts, filters, search, bucketFilter]);
+  }, [allAccounts, filters, search, bucketFilter, hideInactive]);
 
   // All company names from Target Accounts file (not just Dan Baldauf's)
   const allTargetNames = useMemo(() => {
@@ -1231,6 +1235,17 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
           return <FilterDrop key={key} label={col?.label || key} options={options} selected={filters[key] || []} onToggle={v => toggleFilter(key, v)} />;
         })}
         {bucketFilter && <span style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem', borderRadius: '999px', background: '#EBF2FC', color: '#3B7DDD', fontWeight: 600 }}>Showing: {bucketFilter === 'tier1' ? 'Tier 1' : bucketFilter === 'tier2' ? 'Tier 2' : bucketFilter === 'client' ? 'Clients' : bucketFilter === 'noTarget' ? 'No Target Mapped' : 'In Pipeline'}</span>}
+        <button
+          onClick={() => setHideInactive(v => !v)}
+          style={{
+            padding: '0.25rem 0.6rem', borderRadius: '6px', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
+            border: hideInactive ? '1px solid var(--color-accent)' : '1px solid var(--color-border)',
+            background: hideInactive ? 'var(--color-accent)' : 'var(--color-surface)',
+            color: hideInactive ? '#fff' : 'var(--color-text-secondary)',
+          }}
+        >
+          {hideInactive ? 'Hiding Inactive' : 'Showing All'}
+        </button>
         {(activeFilterCount > 0 || bucketFilter) && <button className={styles.clearBtn} onClick={clearFilters}>Clear all</button>}
         <button
           onClick={bulkLookupHqRegion}
