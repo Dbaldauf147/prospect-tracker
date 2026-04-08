@@ -817,7 +817,21 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   // Build source maps: which companies exist in each data source
   const BUCKET_TAGS = ['esg', 'procurement', 'utilities', 'climate risk', 'capital planning'];
 
-  // Re-read HubSpot cache on every render to pick up tag changes
+  // Refresh HubSpot cache in background when My Accounts loads
+  const [cacheVersion, setCacheVersion] = useState(0);
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch('/api/hubspot?action=contacts');
+        const json = await res.json();
+        if (json.contacts) {
+          localStorage.setItem('hubspot-sync-cache', JSON.stringify({ ...json, syncedAt: new Date().toISOString() }));
+          setCacheVersion(v => v + 1);
+        }
+      } catch {}
+    })();
+  }, []);
+
   const { hubspotCompanies, decisionMakerByCompany, contactCountByCompany, bucketsByCompany } = useMemo(() => {
     const list = [];
     const dmMap = {}; // company lowercase → [names]
@@ -852,7 +866,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     } catch {}
     return { hubspotCompanies: list, decisionMakerByCompany: dmMap, contactCountByCompany: countMap, bucketsByCompany: bucketMap };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prospects]);
+  }, [prospects, cacheVersion]);
 
   const targetCompanies = useMemo(() => {
     const seen = new Set();
