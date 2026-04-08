@@ -443,6 +443,50 @@ function TargetNamePicker({ values, companyId, targetOptions, onToggle, duplicat
   );
 }
 
+function TierMismatchWarning({ row, onDismiss }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const h = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [open]);
+  return (
+    <span style={{ position: 'relative' }} ref={ref}>
+      <span
+        style={{ color: '#F59E0B', fontSize: '0.6rem', fontWeight: 600, cursor: 'pointer' }}
+        title={`Target Accounts says ${row.targetTier}`}
+        onClick={e => { e.stopPropagation(); setOpen(p => !p); }}
+      >&#9888; {row.targetTier}</span>
+      {open && (
+        <div
+          onClick={e => e.stopPropagation()}
+          style={{
+            position: 'absolute', top: '100%', left: 0, zIndex: 50, marginTop: '4px',
+            background: '#fff', border: '1px solid var(--color-border)', borderRadius: '8px',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.15)', padding: '0.6rem 0.8rem', minWidth: '200px',
+          }}
+        >
+          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text)', marginBottom: '0.3rem' }}>Tier Mismatch</div>
+          <div style={{ fontSize: '0.7rem', color: 'var(--color-text-secondary)', marginBottom: '0.5rem' }}>
+            Your tier: <strong>{row.myTier}</strong><br/>
+            Target Accounts says: <strong>{row.targetTier}</strong>
+          </div>
+          <button
+            onClick={() => { onDismiss(); setOpen(false); }}
+            style={{
+              width: '100%', padding: '0.35rem 0.6rem', border: 'none', borderRadius: '6px',
+              background: 'var(--color-accent)', color: '#fff', fontSize: '0.72rem', fontWeight: 600,
+              cursor: 'pointer', fontFamily: 'inherit',
+            }}
+          >Dismiss</button>
+        </div>
+      )}
+    </span>
+  );
+}
+
 export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd, targetAccountsData, settings, updateSettings }) {
   const [search, setSearch] = useState('');
   const [filters, setFilters] = useState({});
@@ -1044,7 +1088,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         return { ...col, render: (row) => (
           <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
             <InlineCell row={row} field="tier" value={row.myTier} onUpdate={onUpdate} options={TIERS} />
-            {row.tierMismatch && <span style={{ color: '#F59E0B', fontSize: '0.6rem', fontWeight: 600, cursor: 'pointer' }} title={`Target Accounts says ${row.targetTier} — click to dismiss`} onClick={(e) => { e.stopPropagation(); onUpdate(row.id, { ignoreTierMismatch: true }); }}>&#9888; {row.targetTier}</span>}
+            {row.tierMismatch && <TierMismatchWarning row={row} onDismiss={() => onUpdate(row.id, { ignoreTierMismatch: true })} />}
           </span>
         )};
       }
