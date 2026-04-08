@@ -163,6 +163,15 @@ export function ProgressView({ prospects, settings }) {
     };
   }, [prospects, settings, oppsRecordsState]);
 
+  // Auto-save snapshot if current week hasn't been saved yet
+  useEffect(() => {
+    if (!user?.uid || loading || !currentSnapshot.t1Total) return;
+    const alreadySaved = history.find(h => h.week === currentSnapshot.week);
+    if (!alreadySaved) {
+      saveSnapshot();
+    }
+  }, [user, loading, currentSnapshot.week, history.length]);
+
   // Save current week snapshot
   async function saveSnapshot() {
     if (!user?.uid) return;
