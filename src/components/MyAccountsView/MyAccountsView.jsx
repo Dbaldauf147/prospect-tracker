@@ -128,6 +128,26 @@ const ACCOUNT_COLUMNS = [
   { key: 'myTier', label: 'Tier', defaultWidth: 130, render: null /* set in columns memo */ },
   { key: 'status', label: 'Status', defaultWidth: 130, render: (row) => row.status ? <Badge label={row.status} color={statusColor(row.status)} /> : '—' },
   { key: 'type', label: 'Type', defaultWidth: 160 },
+  { key: 'type2', label: 'Type 2', defaultWidth: 110, render: (row) => {
+    const TYPE2_MAP = {
+      'Owner Operator': 'Real Estate',
+      'Asset Management Firm': 'Real Estate',
+      'Facility Manager': 'Real Estate',
+      'Developer': 'Real Estate',
+      'Private Equity': 'Private Equity',
+      'Portfolio Company': 'Private Equity',
+      'Other': 'Other',
+      'Partner': 'Other',
+    };
+    const val = TYPE2_MAP[row.type] || '';
+    const colors = {
+      'Real Estate': { bg: '#DBEAFE', color: '#1E40AF' },
+      'Private Equity': { bg: '#F3E8FF', color: '#7C3AED' },
+      'Other': { bg: '#F3F4F6', color: '#6B7280' },
+    };
+    const s = colors[val] || colors['Other'];
+    return val ? <span style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: 600, background: s.bg, color: s.color }}>{val}</span> : <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
+  }},
   { key: 'geography', label: 'Geography', defaultWidth: 100 },
   { key: 'publicPrivate', label: 'Pub/Priv', defaultWidth: 80 },
   { key: 'reAum', label: 'RE AUM', defaultWidth: 90, render: (row) => formatAum(row.reAum) },
@@ -1166,7 +1186,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         return { ...col, render: (row) => <InlineCell row={row} field="emailDomain" value={row.emailDomain} onUpdate={onUpdate} /> };
       }
       // Skip computed columns — they stay read-only
-      if (['myTier', 'activityCount', 'oppsCount', 'contactCount', 'bucketCount', 'naRegion', 'dmFound', 'sources', 'targetName', 'otherReps', 'divisions', '_hide'].includes(col.key)) {
+      if (['myTier', 'activityCount', 'oppsCount', 'contactCount', 'bucketCount', 'naRegion', 'type2', 'dmFound', 'sources', 'targetName', 'otherReps', 'divisions', '_hide'].includes(col.key)) {
         return col;
       }
       // Make any remaining columns editable as text
