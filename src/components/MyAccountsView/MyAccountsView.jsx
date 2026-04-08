@@ -819,16 +819,30 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     })();
   }, []);
 
-  const { activeOppsByAccount, totalOppsByAccount } = useMemo(() => {
+  const { activeOppsByAccount, totalOppsByAccount, suggestedStatusByAccount } = useMemo(() => {
     const active = {};
     const total = {};
-    if (oppsRecords.length === 0) return { activeOppsByAccount: active, totalOppsByAccount: total };
+    const stagesByAccount = {}; // account → { sold: N, notSold: N, other: N }
+    if (oppsRecords.length === 0) return { activeOppsByAccount: active, totalOppsByAccount: total, suggestedStatusByAccount: {} };
     const closedStages = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
     for (const r of oppsRecords) {
       const account = (r['Account'] || '').toLowerCase();
-      const stage = r['Stage'] || '';
+      const stage = (r['Stage'] || '').trim();
+      if (!account) continue;
+
+      // Track stage breakdown for status suggestion
+      if (!stagesByAccount[account]) stagesByAccount[account] = { sold: 0, notSold: 0, active: 0 };
+      if (stage === 'Sold') {
+        stagesByAccount[account].sold++;
+      } else if (stage === 'Not Sold' || stage === 'Lost') {
+        stagesByAccount[account].notSold++;
+      } else if (!closedStages.has(stage)) {
+        stagesByAccount[account].active++;
+      }
+
+      // Existing active/total logic
+      if (closedStages.has(stage)) continue;
       const openYear = (r['Open Year'] || '').trim();
-      if (!account || closedStages.has(stage)) continue;
       if (!/^\d{4}$/.test(openYear)) continue;
       total[account] = (total[account] || 0) + 1;
       const callIn = (r['Call In'] || '').trim();
@@ -836,7 +850,20 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         active[account] = (active[account] || 0) + 1;
       }
     }
-    return { activeOppsByAccount: active, totalOppsByAccount: total };
+
+    // Build suggested status per account
+    const suggested = {};
+    for (const [account, stages] of Object.entries(stagesByAccount)) {
+      if (stages.sold > 0) {
+        suggested[account] = 'Client';
+      } else if (stages.notSold > 0 && stages.active === 0) {
+        suggested[account] = 'Lost - Not Sold';
+      } else if (stages.active > 0) {
+        suggested[account] = 'Qualifying';
+      }
+    }
+
+    return { activeOppsByAccount: active, totalOppsByAccount: total, suggestedStatusByAccount: suggested };
   }, [oppsRecords]);
 
   // Build source maps: which companies exist in each data source
@@ -984,7 +1011,13 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         }
       }
       const bucketCount = bucketsSeen.size;
-      const entry = { ...p, myTier: tier, activityCount, oppsCount, totalOpps, sources: sources.join(', '), dmFound: !!dmNames, dmNames: dmNames ? dmNames.join(', ') : '', cdmMismatch: !isBaldauf, targetNames, targetTier, tierMismatch, otherReps, contactCount, bucketCount };
+      // Suggested status based on opps data
+      let suggestedStatus = 'Inside Sales'; // default: no opps
+      for (const name of allCompanyNames) {
+        if (suggestedStatusByAccount[name]) { suggestedStatus = suggestedStatusByAccount[name]; break; }
+      }
+      const statusMismatch = suggestedStatus !== p.status && p.status;
+      const entry = { ...p, myTier: tier, activityCount, oppsCount, totalOpps, sources: sources.join(', '), dmFound: !!dmNames, dmNames: dmNames ? dmNames.join(', ') : '', cdmMismatch: !isBaldauf, targetNames, targetTier, tierMismatch, otherReps, contactCount, bucketCount, suggestedStatus, statusMismatch };
       if (tier === 'Tier 1') t1.push(entry);
       else t2.push(entry);
       const s = p.status || 'Unknown';
@@ -996,7 +1029,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     if (skippedCdm.length > 0) console.log('My Accounts: skipped (CDM not Baldauf):', skippedCdm);
     console.log(`My Accounts: ${t1.length} Tier 1, ${t2.length} Tier 2`);
     return { tier1: t1, tier2: t2, allAccounts: [...t1, ...t2], statusCounts: counts };
-  }, [prospects, targetMap, targetAccounts, allTargetReps, activityByCompany, activeOppsByAccount, totalOppsByAccount, hubspotCompanies, targetCompanies, decisionMakerByCompany, contactCountByCompany, bucketsByCompany, divisionsMap]);
+  }, [prospects, targetMap, targetAccounts, allTargetReps, activityByCompany, activeOppsByAccount, totalOppsByAccount, suggestedStatusByAccount, hubspotCompanies, targetCompanies, decisionMakerByCompany, contactCountByCompany, bucketsByCompany, divisionsMap]);
 
   const clientCount = statusCounts['Client'] || 0;
   const qualifyingCount = (statusCounts['Qualifying'] || 0) + (statusCounts['Inside Sales'] || 0);
@@ -1140,7 +1173,18 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         return { ...col, render: (row) => <DivisionPicker parentId={row.id} divisions={divisionsMap[row.id] || []} allCompanies={allCompaniesForDivisions} onAdd={addDivision} onRemove={removeDivision} rules={divisionRules[row.id] || []} onSetRule={addDivisionRule} onRemoveRule={removeDivisionRule} /> };
       }
       if (col.key === 'status') {
-        return { ...col, render: (row) => <InlineCell row={row} field="status" value={row.status} onUpdate={onUpdate} options={STATUSES} /> };
+        return { ...col, render: (row) => (
+          <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+            <InlineCell row={row} field="status" value={row.status} onUpdate={onUpdate} options={STATUSES} />
+            {row.statusMismatch && (
+              <span
+                style={{ color: '#F59E0B', fontSize: '0.55rem', fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                title={`Opps data suggests: ${row.suggestedStatus}\nClick to apply`}
+                onClick={e => { e.stopPropagation(); onUpdate(row.id, { status: row.suggestedStatus }); }}
+              >&#9888; {row.suggestedStatus}</span>
+            )}
+          </span>
+        )};
       }
       if (col.key === 'type') {
         return { ...col, render: (row) => <InlineCell row={row} field="type" value={row.type} onUpdate={onUpdate} options={TYPES} /> };
