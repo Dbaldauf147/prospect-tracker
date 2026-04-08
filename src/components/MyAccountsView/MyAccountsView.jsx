@@ -1264,7 +1264,8 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         return { ...col, render: (row) => <DivisionPicker parentId={row.id} divisions={divisionsMap[row.id] || []} allCompanies={allCompaniesForDivisions} onAdd={addDivision} onRemove={removeDivision} rules={divisionRules[row.id] || []} onSetRule={addDivisionRule} onRemoveRule={removeDivisionRule} /> };
       }
       if (col.key === 'status') {
-        return { ...col, render: (row) => (
+        const mismatchCount = filteredAccounts.filter(a => a.statusMismatch).length;
+        return { ...col, label: mismatchCount > 0 ? `Status ⚠ ${mismatchCount}` : 'Status', render: (row) => (
           <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
             <InlineCell row={row} field="status" value={row.status} onUpdate={onUpdate} options={STATUSES} />
             {row.statusMismatch && <StatusMismatchWarning row={row} onUpdate={onUpdate} />}
