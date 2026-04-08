@@ -1395,9 +1395,9 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
             </button>
           </>;
         })()}
-        <button className={`${styles.summaryCard} ${bucketFilter === null ? '' : ''}`} style={{ borderLeftColor: '#3B7DDD', cursor: 'pointer' }} onClick={() => setBucketFilter(null)}>
-          <div className={styles.summaryLabel}>Total</div>
-          <div className={styles.summaryValue}>{tier1.length + tier2.length}</div>
+        <button className={`${styles.summaryCard} ${!hideInactive ? styles.summaryCardActive : ''}`} style={{ borderLeftColor: hideInactive ? '#9CA3AF' : '#EF4444', cursor: 'pointer' }} onClick={() => setHideInactive(v => !v)}>
+          <div className={styles.summaryLabel}>{hideInactive ? 'Inactive Hidden' : 'Showing Inactive'}</div>
+          <div className={styles.summaryValue}>{allAccounts.filter(a => INACTIVE_STATUSES.has(a.status)).length}</div>
         </button>
         <button className={`${styles.summaryCard} ${bucketFilter === 'client' ? styles.summaryCardActive : ''}`} style={{ borderLeftColor: '#10B981', cursor: 'pointer' }} onClick={() => setBucketFilter(bucketFilter === 'client' ? null : 'client')}>
           <div className={styles.summaryLabel}>Clients</div>
