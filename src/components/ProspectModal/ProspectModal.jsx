@@ -241,6 +241,7 @@ function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS }
           const idx = cache.contacts.findIndex(c => String(c.id || c.vid) === String(contact.id || contact.vid));
           if (idx !== -1) cache.contacts[idx] = { ...cache.contacts[idx], ...props };
           localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache));
+          window.dispatchEvent(new Event('hubspot-cache-updated'));
         }
       } catch {}
       onSave({ ...contact, ...props });
@@ -421,7 +422,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
       delete data.id;
       delete data.createdAt;
       delete data.updatedAt;
-      onSave(data);
+      onSave(data, { close: false });
       setShowSaved(true);
       setTimeout(() => setShowSaved(false), 1500);
     }, 600);

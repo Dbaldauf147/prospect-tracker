@@ -856,6 +856,13 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     })();
   }, []);
 
+  // Listen for localStorage changes (e.g. contact edits from ProspectModal)
+  useEffect(() => {
+    const handler = () => setCacheVersion(v => v + 1);
+    window.addEventListener('hubspot-cache-updated', handler);
+    return () => window.removeEventListener('hubspot-cache-updated', handler);
+  }, []);
+
   const { hubspotCompanies, decisionMakerByCompany, contactCountByCompany, bucketsByCompany } = useMemo(() => {
     const list = [];
     const dmMap = {}; // company lowercase → [names]
