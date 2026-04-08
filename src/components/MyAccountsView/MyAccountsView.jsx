@@ -560,6 +560,10 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     }
   }, [prospects.length]);
 
+  function clearHqLocations() {
+    updateSettings({ hqRegionMap: {} });
+  }
+
   function toggleTargetMapping(companyId, targetName) {
     const next = { ...targetMap };
     const existing = Array.isArray(next[companyId]) ? next[companyId] : (next[companyId] ? [next[companyId]] : []);
@@ -1228,6 +1232,14 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         >
           {hqLookupRunning ? 'Looking up HQs...' : 'Auto-detect HQ Location'}
         </button>
+        {Object.keys(hqRegionMap).length > 0 && (
+          <button
+            onClick={clearHqLocations}
+            style={{ padding: '0.25rem 0.6rem', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: '#DC2626', whiteSpace: 'nowrap' }}
+          >
+            Clear HQ Data
+          </button>
+        )}
         <span className={styles.resultCount}>{filteredAccounts.length} of {allAccounts.length}</span>
       </div>
       {targetAccounts.length > 0 && (() => {
