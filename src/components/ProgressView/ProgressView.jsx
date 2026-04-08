@@ -137,6 +137,19 @@ export function ProgressView({ prospects, settings }) {
       return false;
     }
 
+    // Debug: log T1 opp matching
+    console.log(`Progress: ${oppsRecords.length} opps records loaded, ${oppsCompanies.size} unique opp companies`);
+    for (const p of t1) {
+      const matched = hasOpp(p.company);
+      if (p.company.toLowerCase().includes('blue owl') || matched) {
+        console.log(`Progress T1: "${p.company}" hasOpp=${matched}`);
+      }
+    }
+    // Check if Blue Owl is in opps
+    for (const co of oppsCompanies) {
+      if (co.includes('blue owl')) console.log(`Progress opps has: "${co}"`);
+    }
+
     const inactiveStatuses = new Set(['Lost - Not Sold', 'Hold Off', 'Old Client']);
 
     const t1Total = t1.length;
