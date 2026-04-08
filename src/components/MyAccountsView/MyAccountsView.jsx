@@ -794,11 +794,12 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     // Try IndexedDB first, then localStorage fallback
     (async () => {
       try {
-        const req = indexedDB.open('prospect-tracker-db', 2);
+        const req = indexedDB.open('prospect-tracker-db', 3);
         req.onupgradeneeded = () => {
           const db = req.result;
           if (!db.objectStoreNames.contains('target-accounts')) db.createObjectStore('target-accounts');
           if (!db.objectStoreNames.contains('opps-cache')) db.createObjectStore('opps-cache');
+          if (!db.objectStoreNames.contains('clients-cache')) db.createObjectStore('clients-cache');
         };
         req.onsuccess = () => {
           const db = req.result;
