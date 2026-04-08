@@ -22,6 +22,7 @@ export const TYPES = [
   'Asset Management Firm',
   'Owner Operator',
   'Private Equity',
+  'Portfolio Company',
   'Developer',
   'Facility Manager',
   'Other',
