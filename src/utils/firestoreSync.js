@@ -3,77 +3,17 @@ import { db } from '../firebase';
 
 const PROSPECTS_COL = 'prospects';
 
-// Get the collection path — per-user if userId provided, shared fallback
-function prospectsCol(userId) {
-  if (userId) return collection(db, 'users', userId, 'prospects');
-  return collection(db, PROSPECTS_COL);
-}
-
-function prospectDoc(userId, id) {
-  if (userId) return doc(db, 'users', userId, 'prospects', id);
-  return doc(db, PROSPECTS_COL, id);
-}
-
-let _userId = null;
-export function setProspectsUserId(uid) { _userId = uid; }
-
-export function subscribeToProspects(onChange, userId) {
-  const uid = userId || _userId;
-  if (uid) {
-    // Check if user has their own prospects collection
-    let usedShared = false;
-    let sharedUnsub = null;
-
-    const userUnsub = onSnapshot(prospectsCol(uid), (snap) => {
-      const prospects = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      if (prospects.length > 0) {
-        // User has their own data — use it
-        if (sharedUnsub) { sharedUnsub(); sharedUnsub = null; }
-        onChange(prospects);
-      } else if (!usedShared) {
-        // No user-specific data yet — fall back to shared and auto-migrate
-        usedShared = true;
-        sharedUnsub = onSnapshot(collection(db, PROSPECTS_COL), async (sharedSnap) => {
-          const shared = sharedSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-          if (shared.length > 0) {
-            onChange(shared);
-            // Migrate shared data to user-specific collection
-            console.log(`Migrating ${shared.length} prospects to user collection...`);
-            try {
-              for (let i = 0; i < shared.length; i += 400) {
-                const batch = writeBatch(db);
-                shared.slice(i, i + 400).forEach(p => {
-                  const { id, ...data } = p;
-                  batch.set(doc(prospectsCol(uid), id), data);
-                });
-                await batch.commit();
-              }
-              console.log('Migration complete — prospects now stored per-user');
-            } catch (err) {
-              console.error('Migration failed:', err);
-            }
-          }
-        });
-      }
-    }, (err) => {
-      console.error('Firestore prospects subscription error:', err);
-    });
-
-    return () => {
-      userUnsub();
-      if (sharedUnsub) sharedUnsub();
-    };
-  }
+export function subscribeToProspects(onChange) {
   return onSnapshot(collection(db, PROSPECTS_COL), (snap) => {
-    onChange(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    const prospects = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    onChange(prospects);
   }, (err) => {
     console.error('Firestore prospects subscription error:', err);
   });
 }
 
 export async function addProspect(prospect) {
-  const col = _userId ? prospectsCol(_userId) : collection(db, PROSPECTS_COL);
-  const ref = doc(col);
+  const ref = doc(collection(db, PROSPECTS_COL));
   await setDoc(ref, {
     ...prospect,
     createdAt: serverTimestamp(),
@@ -83,7 +23,7 @@ export async function addProspect(prospect) {
 }
 
 export async function updateProspect(id, updates) {
-  const ref = _userId ? prospectDoc(_userId, id) : doc(db, PROSPECTS_COL, id);
+  const ref = doc(db, PROSPECTS_COL, id);
   await updateDoc(ref, {
     ...updates,
     updatedAt: serverTimestamp(),
@@ -91,8 +31,7 @@ export async function updateProspect(id, updates) {
 }
 
 export async function deleteProspect(id) {
-  const ref = _userId ? prospectDoc(_userId, id) : doc(db, PROSPECTS_COL, id);
-  await deleteDoc(ref);
+  await deleteDoc(doc(db, PROSPECTS_COL, id));
 }
 
 function waitFrame() {
@@ -113,7 +52,7 @@ export async function replaceAllProspects(existingIds, newProspects, onProgress)
   // Delete existing in batches
   for (let i = 0; i < existingIds.length; i += 400) {
     const batch = writeBatch(db);
-    existingIds.slice(i, i + 400).forEach(id => batch.delete(_userId ? prospectDoc(_userId, id) : doc(db, PROSPECTS_COL, id)));
+    existingIds.slice(i, i + 400).forEach(id => batch.delete(doc(db, PROSPECTS_COL, id)));
     await batch.commit();
     completed += Math.min(400, existingIds.length - i);
     await report('Clearing old data');
@@ -122,8 +61,7 @@ export async function replaceAllProspects(existingIds, newProspects, onProgress)
   for (let i = 0; i < newProspects.length; i += 400) {
     const batch = writeBatch(db);
     newProspects.slice(i, i + 400).forEach(p => {
-      const col = _userId ? prospectsCol(_userId) : collection(db, PROSPECTS_COL);
-      const ref = doc(col);
+      const ref = doc(collection(db, PROSPECTS_COL));
       batch.set(ref, { ...p, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
     });
     await batch.commit();
@@ -135,13 +73,12 @@ export async function replaceAllProspects(existingIds, newProspects, onProgress)
 
 export async function seedProspects(prospects) {
   // Check if collection already has data
-  const col = _userId ? prospectsCol(_userId) : collection(db, PROSPECTS_COL);
-  const snap = await getDocs(col);
+  const snap = await getDocs(collection(db, PROSPECTS_COL));
   if (snap.size > 0) return false; // already seeded
 
   const batch = writeBatch(db);
   for (const prospect of prospects) {
-    const ref = doc(col);
+    const ref = doc(collection(db, PROSPECTS_COL));
     batch.set(ref, {
       ...prospect,
       createdAt: serverTimestamp(),
