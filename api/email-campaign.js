@@ -49,28 +49,28 @@ export default async function handler(req, res) {
     const sentEmails = matching.filter(e => e.hs_email_direction === 'EMAIL' || e.hs_email_direction === 'FORWARDED_EMAIL');
     const replyEmails = matching.filter(e => e.hs_email_direction === 'INCOMING_EMAIL');
 
-    // Group sent emails — each unique send (by timestamp) is one "email send"
-    // Multiple recipients in the same email = one send
-    const sends = [];
-    const seenTimestamps = new Set();
+    // Group sent emails — deduplicate by recipient(s)
+    // If the same person is emailed multiple times, keep only the most recent
+    const sendsByRecipients = {};
     for (const e of sentEmails) {
-      const ts = e.hs_timestamp || e.id;
       const toRaw = (e.hs_email_to_email || '').toLowerCase().trim();
       const recipients = toRaw ? toRaw.split(';').map(a => a.trim()).filter(Boolean) : [];
-      // Group by timestamp (emails sent at same time to multiple people = one send)
-      const key = `${ts}_${recipients.sort().join(',')}`;
-      if (seenTimestamps.has(key)) continue;
-      seenTimestamps.add(key);
-      sends.push({
-        id: e.id,
-        timestamp: e.hs_timestamp,
-        recipients,
-        recipientNames: [e.hs_email_to_firstname, e.hs_email_to_lastname].filter(Boolean).join(' ') || recipients[0] || '—',
-        replied: false,
-        replyDate: null,
-        repliedBy: null,
-      });
+      if (recipients.length === 0) continue;
+      const key = recipients.sort().join(',');
+      // Keep most recent send per unique recipient set
+      if (!sendsByRecipients[key] || (e.hs_timestamp && e.hs_timestamp > sendsByRecipients[key].timestamp)) {
+        sendsByRecipients[key] = {
+          id: e.id,
+          timestamp: e.hs_timestamp,
+          recipients,
+          recipientNames: [e.hs_email_to_firstname, e.hs_email_to_lastname].filter(Boolean).join(' ') || recipients[0] || '—',
+          replied: false,
+          replyDate: null,
+          repliedBy: null,
+        };
+      }
     }
+    const sends = Object.values(sendsByRecipients);
 
     // Check which sends got a reply (any recipient replying counts)
     const allRecipientEmails = new Set();
