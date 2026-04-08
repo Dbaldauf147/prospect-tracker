@@ -1034,7 +1034,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
           if (count > 0 && companiesMatch(companyLower, oppsCompany)) { hasActiveOpp = true; break; }
         }
         if (!hasActiveOpp) continue;
-        tier = 'Tier 2';
+        tier = 'Tier 3';
       }
       const cdm = (p.cdm || '').toLowerCase().trim();
       const isBaldauf = cdm.includes('baldauf');
@@ -1118,7 +1118,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       const statusMismatch = suggestedStatus !== p.status && p.status && p.dismissedSuggestedStatus !== suggestedStatus;
       const entry = { ...p, myTier: tier, activityCount, oppsCount, totalOpps, sources: sources.join(', '), dmFound: !!dmNames, dmNames: dmNames ? dmNames.join(', ') : '', cdmMismatch: !isBaldauf, targetNames, targetTier, tierMismatch, otherReps, contactCount, bucketCount, suggestedStatus, statusMismatch };
       if (tier === 'Tier 1') t1.push(entry);
-      else t2.push(entry);
+      else t2.push(entry); // Tier 2 and Tier 3 both go in t2 array
       const s = p.status || 'Unknown';
       counts[s] = (counts[s] || 0) + 1;
     }

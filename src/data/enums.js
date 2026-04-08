@@ -61,4 +61,4 @@ export const FRAMEWORKS = [
   'NZAM',
 ];
 
-export const TIERS = ['Tier 1', 'Tier 2'];
+export const TIERS = ['Tier 1', 'Tier 2', 'Tier 3'];
