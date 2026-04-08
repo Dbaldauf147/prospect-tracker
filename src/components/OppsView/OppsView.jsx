@@ -5,7 +5,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { DataTable } from '../common/DataTable';
 import styles from './OppsView.module.css';
 
-const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1ee0OREqA25jzDaR6xRDSrj_ZIZDymQjf1k2Z2_ajVKw/gviz/tq?tqx=out:csv&gid=0';
+const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1ee0OREqA25jzDaR6xRDSrj_ZIZDymQjf1k2Z2_ajVKw/export?format=csv&gid=0';
 const DB_NAME = 'prospect-tracker-db';
 const DB_STORE = 'opps-cache';
 const DB_VERSION = 3; // bump version to add clients-cache store
