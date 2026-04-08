@@ -19,24 +19,50 @@ export function setProspectsUserId(uid) { _userId = uid; }
 
 export function subscribeToProspects(onChange, userId) {
   const uid = userId || _userId;
-  // Try user-specific collection first
   if (uid) {
-    return onSnapshot(prospectsCol(uid), (snap) => {
+    // Check if user has their own prospects collection
+    let usedShared = false;
+    let sharedUnsub = null;
+
+    const userUnsub = onSnapshot(prospectsCol(uid), (snap) => {
       const prospects = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      // If user has their own data, use it. Otherwise fall back to shared.
       if (prospects.length > 0) {
+        // User has their own data — use it
+        if (sharedUnsub) { sharedUnsub(); sharedUnsub = null; }
         onChange(prospects);
-      } else {
-        // Fall back to shared collection for migration
-        const unsub2 = onSnapshot(collection(db, PROSPECTS_COL), (sharedSnap) => {
-          onChange(sharedSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+      } else if (!usedShared) {
+        // No user-specific data yet — fall back to shared and auto-migrate
+        usedShared = true;
+        sharedUnsub = onSnapshot(collection(db, PROSPECTS_COL), async (sharedSnap) => {
+          const shared = sharedSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+          if (shared.length > 0) {
+            onChange(shared);
+            // Migrate shared data to user-specific collection
+            console.log(`Migrating ${shared.length} prospects to user collection...`);
+            try {
+              for (let i = 0; i < shared.length; i += 400) {
+                const batch = writeBatch(db);
+                shared.slice(i, i + 400).forEach(p => {
+                  const { id, ...data } = p;
+                  batch.set(doc(prospectsCol(uid), id), data);
+                });
+                await batch.commit();
+              }
+              console.log('Migration complete — prospects now stored per-user');
+            } catch (err) {
+              console.error('Migration failed:', err);
+            }
+          }
         });
-        // Store for cleanup — but we can't easily return two unsubs
-        // So just subscribe to shared as fallback
       }
     }, (err) => {
       console.error('Firestore prospects subscription error:', err);
     });
+
+    return () => {
+      userUnsub();
+      if (sharedUnsub) sharedUnsub();
+    };
   }
   return onSnapshot(collection(db, PROSPECTS_COL), (snap) => {
     onChange(snap.docs.map(d => ({ id: d.id, ...d.data() })));
