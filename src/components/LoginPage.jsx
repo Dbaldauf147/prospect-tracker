@@ -1,16 +1,21 @@
 import { useState } from 'react';
 import styles from './LoginPage.module.css';
 
-export function LoginPage({ onSignIn, onSignInWithEmail, error }) {
+export function LoginPage({ onSignIn, onSignInWithEmail, onCreateAccount, error }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [isCreateMode, setIsCreateMode] = useState(false);
 
-  async function handleEmailSignIn(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
     if (!email.trim() || !password) return;
     setSubmitting(true);
-    await onSignInWithEmail(email.trim(), password);
+    if (isCreateMode) {
+      await onCreateAccount(email.trim(), password);
+    } else {
+      await onSignInWithEmail(email.trim(), password);
+    }
     setSubmitting(false);
   }
 
@@ -18,9 +23,9 @@ export function LoginPage({ onSignIn, onSignInWithEmail, error }) {
     <div className={styles.page}>
       <div className={styles.card}>
         <h1 className={styles.title}>Prospect Tracker</h1>
-        <p className={styles.subtitle}>Sign in to manage your sales pipeline</p>
+        <p className={styles.subtitle}>{isCreateMode ? 'Create your account' : 'Sign in to manage your sales pipeline'}</p>
 
-        <form onSubmit={handleEmailSignIn} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1rem' }}>
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1rem' }}>
           <input
             type="email"
             placeholder="Email"
@@ -40,14 +45,23 @@ export function LoginPage({ onSignIn, onSignInWithEmail, error }) {
             disabled={submitting || !email.trim() || !password}
             style={{
               padding: '0.55rem 1rem', border: 'none', borderRadius: '6px',
-              background: '#1A2332', color: '#fff', fontSize: '0.85rem',
+              background: isCreateMode ? '#10B981' : '#1A2332', color: '#fff', fontSize: '0.85rem',
               fontWeight: 600, fontFamily: 'inherit', cursor: submitting ? 'wait' : 'pointer',
               opacity: (!email.trim() || !password) ? 0.5 : 1,
             }}
           >
-            {submitting ? 'Signing in...' : 'Sign In'}
+            {submitting ? (isCreateMode ? 'Creating...' : 'Signing in...') : (isCreateMode ? 'Create Account' : 'Sign In')}
           </button>
         </form>
+
+        <div style={{ textAlign: 'center', marginBottom: '1rem' }}>
+          <button
+            onClick={() => setIsCreateMode(m => !m)}
+            style={{ background: 'none', border: 'none', color: '#3B7DDD', fontSize: '0.78rem', cursor: 'pointer', fontFamily: 'inherit', textDecoration: 'underline' }}
+          >
+            {isCreateMode ? 'Already have an account? Sign in' : "Don't have an account? Create one"}
+          </button>
+        </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
           <div style={{ flex: 1, height: '1px', background: '#D1D5DB' }} />

@@ -75,17 +75,17 @@ export function AuthProvider({ children }) {
       const result = await signInWithEmailAndPassword(auth, email, password);
       await logAction(result.user, 'login', { method: 'email' });
     } catch (err) {
-      if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') {
-        // Try creating the account
-        try {
-          const result = await createUserWithEmailAndPassword(auth, email, password);
-          await logAction(result.user, 'signup', { method: 'email' });
-        } catch (signupErr) {
-          setAuthError(signupErr.message || 'Sign-up failed');
-        }
-      } else {
-        setAuthError(err.message || 'Sign-in failed');
-      }
+      setAuthError(err.code === 'auth/invalid-credential' ? 'Invalid email or password' : err.message || 'Sign-in failed');
+    }
+  }
+
+  async function createAccount(email, password) {
+    try {
+      setAuthError(null);
+      const result = await createUserWithEmailAndPassword(auth, email, password);
+      await logAction(result.user, 'signup', { method: 'email' });
+    } catch (err) {
+      setAuthError(err.code === 'auth/email-already-in-use' ? 'Account already exists — try signing in' : err.message || 'Sign-up failed');
     }
   }
 
@@ -102,7 +102,7 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, authError, role, isAdmin, requireAdmin, signInWithGoogle, signInWithEmail, logout }}>
+    <AuthContext.Provider value={{ user, loading, authError, role, isAdmin, requireAdmin, signInWithGoogle, signInWithEmail, createAccount, logout }}>
       {children}
     </AuthContext.Provider>
   );

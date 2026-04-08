@@ -26,7 +26,7 @@ import { EmailCampaignView } from './components/EmailCampaignView/EmailCampaignV
 import './App.css';
 
 function App() {
-  const { user, loading: authLoading, authError, signInWithGoogle, signInWithEmail, logout } = useAuth();
+  const { user, loading: authLoading, authError, signInWithGoogle, signInWithEmail, createAccount, logout } = useAuth();
   const { prospects, loading: dataLoading, addProspect, updateProspect, deleteProspect, replaceAll } = useProspects(user);
   const { settings, updateSettings } = useUserSettings(user);
   useSheetSync(user);
@@ -54,7 +54,7 @@ function App() {
   }
 
   if (!user) {
-    return <LoginPage onSignIn={signInWithGoogle} onSignInWithEmail={signInWithEmail} error={authError} />;
+    return <LoginPage onSignIn={signInWithGoogle} onSignInWithEmail={signInWithEmail} onCreateAccount={createAccount} error={authError} />;
   }
 
   function handleAddNew() {
