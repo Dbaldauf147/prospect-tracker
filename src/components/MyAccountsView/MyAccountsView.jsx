@@ -868,7 +868,10 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     // Debug: log Hellman & Friedman opps data
     for (const [account, stages] of Object.entries(stagesByAccount)) {
       if (account.includes('hellman')) {
-        console.log(`Opps debug "${account}":`, stages, '→ suggested:', suggested[account]);
+        console.log(`Opps debug "${account}": sold=${stages.sold}, notSold=${stages.notSold}, active=${stages.active} → suggested: ${suggested[account]}`);
+        // Log the actual opp records for this account
+        const hfOpps = oppsRecords.filter(r => (r['Account'] || '').toLowerCase().includes('hellman'));
+        hfOpps.forEach(r => console.log(`  Opp: Stage="${r['Stage']}", Account="${r['Account']}"`));
       }
     }
 
