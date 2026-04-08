@@ -472,12 +472,12 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       });
       const json = await res.json();
       if (json.error) throw new Error(json.error);
-      const next = { ...hqRegionMap };
+      // Start fresh when doing full lookup (not onlyMissing)
+      const next = onlyMissing ? { ...hqRegionMap } : {};
       for (const [company, info] of Object.entries(json.results || {})) {
         const p = prospects.find(pr => pr.company === company);
-        if (p) {
-          // Store location string (city, state, country) instead of just region
-          next[p.id] = info.location || info.region || '';
+        if (p && info.location) {
+          next[p.id] = info.location;
         }
       }
       updateSettings({ hqRegionMap: next });
