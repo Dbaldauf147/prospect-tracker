@@ -866,14 +866,17 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       }
     }
 
-    // Debug: log specific accounts
+    // Debug: log all accounts containing pnc
     for (const [account, stages] of Object.entries(stagesByAccount)) {
-      if (account.includes('hellman') || account.includes('pnc')) {
+      if (account.includes('pnc') || account.includes('hellman')) {
         console.log(`Opps debug "${account}": sold=${stages.sold}, notSold=${stages.notSold}, active=${stages.active} → suggested: ${suggested[account]}`);
         const opps = oppsRecords.filter(r => (r['Account'] || '').toLowerCase() === account);
         opps.forEach(r => console.log(`  Opp: Stage="${r['Stage']}", Account="${r['Account']}"`));
       }
     }
+    // Also log all unique account names that contain 'pnc'
+    const pncAccounts = oppsRecords.filter(r => (r['Account'] || '').toLowerCase().includes('pnc'));
+    if (pncAccounts.length > 0) console.log('All PNC opps:', pncAccounts.map(r => `"${r['Account']}" Stage="${r['Stage']}"`));
 
     return { activeOppsByAccount: active, totalOppsByAccount: total, suggestedStatusByAccount: suggested };
   }, [oppsRecords]);
