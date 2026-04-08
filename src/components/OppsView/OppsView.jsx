@@ -132,6 +132,8 @@ export function OppsView() {
           const h = headers[j];
           if (!h) continue;
           const val = (row[j] || '').trim();
+          // For duplicate headers, keep the first non-empty value
+          if (record[h] !== undefined && record[h] !== '' && record[h] !== '-' && record[h] !== '#N/A') continue;
           record[h] = val;
           if (val && val !== '-' && val !== '#N/A') hasData = true;
         }
