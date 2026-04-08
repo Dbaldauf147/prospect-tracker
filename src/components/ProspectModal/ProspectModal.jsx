@@ -576,7 +576,11 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
 
             <div>
               <label className={styles.label}>HQ Region</label>
-              <input className={styles.input} value={fields.hqRegion} onChange={e => set('hqRegion', e.target.value)} />
+              <select className={styles.input} value={fields.hqRegion} onChange={e => set('hqRegion', e.target.value)}>
+                <option value="">—</option>
+                <option value="North America">North America</option>
+                <option value="Outside of North America">Outside of North America</option>
+              </select>
             </div>
 
             <div>
