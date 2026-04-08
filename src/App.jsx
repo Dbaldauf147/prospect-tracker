@@ -23,6 +23,7 @@ import { DedupeView } from './components/DedupeView/DedupeView';
 import { DraftEmailView } from './components/DraftEmailView/DraftEmailView';
 import { VibeProspecting } from './components/VibeProspecting/VibeProspecting';
 import { EmailCampaignView } from './components/EmailCampaignView/EmailCampaignView';
+import { ProgressView } from './components/ProgressView/ProgressView';
 import './App.css';
 
 function App() {
@@ -103,6 +104,8 @@ function App() {
             <div className="loading">Loading prospects...</div>
           ) : view === 'drafts' ? (
             <DraftEmailView prospects={prospects} settings={settings} updateSettings={updateSettings} />
+          ) : view === 'progress' ? (
+            <ProgressView prospects={prospects} settings={settings} />
           ) : view === 'campaigns' ? (
             <EmailCampaignView />
           ) : view === 'vibe' ? (

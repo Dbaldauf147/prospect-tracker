@@ -70,10 +70,17 @@ export function Sidebar({ view, setView, user, onLogout, onSync }) {
           Draft Emails
         </button>
         <button
+          className={view === 'progress' ? styles.navItemActive : styles.navItem}
+          onClick={() => setView('progress')}
+        >
+          <span className={styles.navIcon}>&#128200;</span>
+          Progress
+        </button>
+        <button
           className={view === 'campaigns' ? styles.navItemActive : styles.navItem}
           onClick={() => setView('campaigns')}
         >
-          <span className={styles.navIcon}>&#128200;</span>
+          <span className={styles.navIcon}>&#128231;</span>
           Email Campaigns
         </button>
         <button
