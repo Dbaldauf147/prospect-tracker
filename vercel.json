@@ -10,7 +10,7 @@
       "headers": [
         {
           "key": "Content-Security-Policy",
-          "value": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: https:; connect-src 'self' https://*.hubapi.com https://*.firebaseio.com https://*.googleapis.com https://docs.google.com https://api.assemblyai.com https://tikwm.com https://login.microsoftonline.com https://*.tiktok.com https://api.anthropic.com https://world.openfoodfacts.org; frame-src 'self' https://login.microsoftonline.com; font-src 'self' data: https://fonts.gstatic.com;"
+          "value": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: https:; connect-src 'self' https://*.hubapi.com https://*.firebaseio.com https://*.googleapis.com https://*.googleusercontent.com https://docs.google.com https://api.assemblyai.com https://tikwm.com https://login.microsoftonline.com https://*.tiktok.com https://api.anthropic.com https://world.openfoodfacts.org; frame-src 'self' https://login.microsoftonline.com; font-src 'self' data: https://fonts.gstatic.com;"
         },
         {
           "key": "X-Frame-Options",
