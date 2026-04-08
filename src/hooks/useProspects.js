@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { subscribeToProspects, addProspect as addDoc, updateProspect as updateDoc, deleteProspect as deleteDoc, seedProspects, replaceAllProspects } from '../utils/firestoreSync';
+import { subscribeToProspects, addProspect as addDoc, updateProspect as updateDoc, deleteProspect as deleteDoc, seedProspects, replaceAllProspects, setProspectsUserId } from '../utils/firestoreSync';
 import seedData from '../data/seedProspects';
 
 export function useProspects(user) {
@@ -11,7 +11,8 @@ export function useProspects(user) {
   const unsubRef = useRef(null);
 
   useEffect(() => {
-    if (!user) { setProspects([]); setLoading(false); return; }
+    if (!user) { setProspects([]); setLoading(false); setProspectsUserId(null); return; }
+    setProspectsUserId(user.uid);
 
     async function init() {
       try {
