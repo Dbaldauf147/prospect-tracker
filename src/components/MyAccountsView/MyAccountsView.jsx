@@ -463,6 +463,60 @@ function TargetNamePicker({ values, companyId, targetOptions, onToggle, duplicat
   );
 }
 
+function StatusMismatchWarning({ row, onUpdate }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const h = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [open]);
+  return (
+    <span style={{ position: 'relative' }} ref={ref}>
+      <span
+        style={{ color: '#F59E0B', fontSize: '0.55rem', fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}
+        title={`Opps data suggests: ${row.suggestedStatus}`}
+        onClick={e => { e.stopPropagation(); setOpen(p => !p); }}
+      >&#9888; {row.suggestedStatus}</span>
+      {open && (
+        <div
+          onClick={e => e.stopPropagation()}
+          style={{
+            position: 'absolute', top: '100%', left: 0, zIndex: 50, marginTop: '4px',
+            background: '#fff', border: '1px solid var(--color-border)', borderRadius: '8px',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.15)', padding: '0.6rem 0.8rem', minWidth: '220px',
+          }}
+        >
+          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text)', marginBottom: '0.3rem' }}>Status Suggestion</div>
+          <div style={{ fontSize: '0.7rem', color: 'var(--color-text-secondary)', marginBottom: '0.5rem' }}>
+            Current: <strong>{row.status}</strong><br/>
+            Opps suggests: <strong>{row.suggestedStatus}</strong>
+          </div>
+          <div style={{ display: 'flex', gap: '0.4rem' }}>
+            <button
+              onClick={() => { onUpdate(row.id, { status: row.suggestedStatus }); setOpen(false); }}
+              style={{
+                flex: 1, padding: '0.35rem 0.6rem', border: 'none', borderRadius: '6px',
+                background: 'var(--color-accent)', color: '#fff', fontSize: '0.72rem', fontWeight: 600,
+                cursor: 'pointer', fontFamily: 'inherit',
+              }}
+            >Convert</button>
+            <button
+              onClick={() => { onUpdate(row.id, { ignoreStatusMismatch: true }); setOpen(false); }}
+              style={{
+                flex: 1, padding: '0.35rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px',
+                background: 'var(--color-surface)', color: 'var(--color-text-secondary)', fontSize: '0.72rem', fontWeight: 600,
+                cursor: 'pointer', fontFamily: 'inherit',
+              }}
+            >Ignore</button>
+          </div>
+        </div>
+      )}
+    </span>
+  );
+}
+
 function TierMismatchWarning({ row, onDismiss }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
@@ -1047,7 +1101,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         }
         if (found) break;
       }
-      const statusMismatch = suggestedStatus !== p.status && p.status;
+      const statusMismatch = suggestedStatus !== p.status && p.status && !p.ignoreStatusMismatch;
       const entry = { ...p, myTier: tier, activityCount, oppsCount, totalOpps, sources: sources.join(', '), dmFound: !!dmNames, dmNames: dmNames ? dmNames.join(', ') : '', cdmMismatch: !isBaldauf, targetNames, targetTier, tierMismatch, otherReps, contactCount, bucketCount, suggestedStatus, statusMismatch };
       if (tier === 'Tier 1') t1.push(entry);
       else t2.push(entry);
@@ -1208,13 +1262,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         return { ...col, render: (row) => (
           <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
             <InlineCell row={row} field="status" value={row.status} onUpdate={onUpdate} options={STATUSES} />
-            {row.statusMismatch && (
-              <span
-                style={{ color: '#F59E0B', fontSize: '0.55rem', fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}
-                title={`Opps data suggests: ${row.suggestedStatus}\nClick to apply`}
-                onClick={e => { e.stopPropagation(); onUpdate(row.id, { status: row.suggestedStatus }); }}
-              >&#9888; {row.suggestedStatus}</span>
-            )}
+            {row.statusMismatch && <StatusMismatchWarning row={row} onUpdate={onUpdate} />}
           </span>
         )};
       }
