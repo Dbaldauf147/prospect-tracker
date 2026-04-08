@@ -92,8 +92,13 @@ export function ProgressView({ prospects, settings }) {
   // Compute current week's snapshot
   const currentSnapshot = useMemo(() => {
     const targetMap = settings?.targetMap || {};
-    const t1 = prospects.filter(p => p.tier === 'Tier 1');
-    const t2 = prospects.filter(p => p.tier === 'Tier 2');
+    // Only count Baldauf's accounts (same filter as My Accounts)
+    const myProspects = prospects.filter(p => {
+      const cdm = (p.cdm || '').toLowerCase().trim();
+      return cdm.includes('baldauf') || cdm.includes('dan b');
+    });
+    const t1 = myProspects.filter(p => p.tier === 'Tier 1');
+    const t2 = myProspects.filter(p => p.tier === 'Tier 2');
 
     // Load HubSpot cache for contact data
     let hubspotContacts = [];
