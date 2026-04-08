@@ -82,6 +82,23 @@ export function EmailCampaignView() {
     setSaving(false);
   }
 
+  function removeContact(index) {
+    if (!results) return;
+    const updated = results.contacts.filter((_, i) => i !== index);
+    const totalSends = updated.length;
+    const totalReplied = updated.filter(c => c.replied).length;
+    const responseRate = totalSends > 0 ? parseFloat(((totalReplied / totalSends) * 100).toFixed(1)) : 0;
+    setResults({
+      ...results,
+      contacts: updated,
+      sent: totalSends,
+      replies: totalReplied,
+      uniqueRecipients: totalSends,
+      uniqueRepliers: totalReplied,
+      responseRate,
+    });
+  }
+
   function deleteCampaign(index) {
     const updated = savedCampaigns.filter((_, i) => i !== index);
     saveCampaigns(updated);
@@ -190,6 +207,7 @@ export function EmailCampaignView() {
                     <th style={{ padding: '0.45rem 0.6rem', textAlign: 'left', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid var(--color-border)' }}>Status</th>
                     <th style={{ padding: '0.45rem 0.6rem', textAlign: 'left', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid var(--color-border)' }}>Replied By</th>
                     <th style={{ padding: '0.45rem 0.6rem', textAlign: 'left', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid var(--color-border)' }}>Reply Date</th>
+                    <th style={{ padding: '0.45rem 0.6rem', textAlign: 'center', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.68rem', borderBottom: '1px solid var(--color-border)', width: '36px' }}></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -208,6 +226,15 @@ export function EmailCampaignView() {
                       </td>
                       <td style={{ padding: '0.4rem 0.6rem', color: 'var(--color-text-secondary)', fontWeight: c.replied ? 600 : 400 }}>{c.repliedBy || '—'}</td>
                       <td style={{ padding: '0.4rem 0.6rem', color: 'var(--color-text-secondary)' }}>{c.replied ? fmtDate(c.replyDate) : '—'}</td>
+                      <td style={{ padding: '0.4rem 0.3rem', textAlign: 'center' }}>
+                        <button
+                          onClick={() => removeContact(i)}
+                          style={{ background: 'none', border: 'none', color: '#CBD5E1', fontSize: '0.85rem', cursor: 'pointer', padding: '0 2px', lineHeight: 1 }}
+                          onMouseEnter={e => e.target.style.color = '#EF4444'}
+                          onMouseLeave={e => e.target.style.color = '#CBD5E1'}
+                          title="Remove from list"
+                        >&times;</button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
