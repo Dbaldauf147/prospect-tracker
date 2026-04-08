@@ -833,7 +833,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
 
       // Track stage breakdown for status suggestion
       if (!stagesByAccount[account]) stagesByAccount[account] = { sold: 0, notSold: 0, active: 0 };
-      const invalidStages = new Set(['#N/A', '#REF!', '#VALUE!', '#ERROR!', 'N/A', 'n/a', '-', '']);
+      const invalidStages = new Set(['#N/A', '#REF!', '#VALUE!', '#ERROR!', 'N/A', 'n/a', '-', '', 'Not Started', 'not started']);
       const stageLower = stage.toLowerCase();
       if (stageLower === 'sold' || stageLower === 'won' || stageLower === 'closed won' || stageLower === 'sold - won') {
         stagesByAccount[account].sold++;
@@ -875,9 +875,9 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         opps.forEach(r => console.log(`  Opp: Stage="${r['Stage']}", Account="${r['Account']}"`));
       }
     }
-    // Also log all unique account names that contain 'pnc'
-    const pncAccounts = oppsRecords.filter(r => (r['Account'] || '').toLowerCase().includes('pnc'));
-    if (pncAccounts.length > 0) console.log('All PNC opps:', pncAccounts.map(r => `"${r['Account']}" Stage="${r['Stage']}"`));
+    // Log all opps with Sold stage to find PNC's sold deal
+    const soldOpps = oppsRecords.filter(r => (r['Stage'] || '').toLowerCase().includes('sold') || (r['Stage'] || '').toLowerCase().includes('won'));
+    console.log('All Sold/Won opps:', soldOpps.map(r => `"${r['Account']}" Stage="${r['Stage']}"`));
 
     return { activeOppsByAccount: active, totalOppsByAccount: total, suggestedStatusByAccount: suggested };
   }, [oppsRecords]);
