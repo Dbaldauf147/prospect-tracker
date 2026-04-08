@@ -1,5 +1,6 @@
 /**
  * Search HubSpot emails by subject line and calculate campaign metrics.
+ * Groups multi-recipient emails as single sends.
  * POST /api/email-campaign
  * Body: { subject: "Your subject line" }
  */
@@ -24,11 +25,7 @@ export default async function handler(req, res) {
     const properties = 'hs_email_subject,hs_email_status,hs_email_direction,hs_timestamp,hs_email_to_email,hs_email_from_email,hs_email_to_firstname,hs_email_to_lastname,hs_email_from_firstname,hs_email_from_lastname';
 
     while (true) {
-      const params = new URLSearchParams({
-        limit: '100',
-        properties,
-        sort: '-hs_timestamp',
-      });
+      const params = new URLSearchParams({ limit: '100', properties, sort: '-hs_timestamp' });
       if (after) params.set('after', after);
 
       const response = await fetch(`${BASE}/crm/v3/objects/emails?${params}`, {
@@ -40,80 +37,84 @@ export default async function handler(req, res) {
       }
 
       const data = await response.json();
-      const emails = (data.results || []).map(e => ({ id: e.id, ...e.properties }));
-      allEmails.push(...emails);
-
-      if (data.paging?.next?.after) {
-        after = data.paging.next.after;
-      } else break;
-
-      // Safety limit
+      allEmails.push(...(data.results || []).map(e => ({ id: e.id, ...e.properties })));
+      if (data.paging?.next?.after) { after = data.paging.next.after; } else break;
       if (allEmails.length > 10000) break;
     }
 
     // Filter emails matching the subject
-    const matching = allEmails.filter(e => {
-      const s = (e.hs_email_subject || '').toLowerCase();
-      return s.includes(subjectLower);
-    });
+    const matching = allEmails.filter(e => (e.hs_email_subject || '').toLowerCase().includes(subjectLower));
 
-    // Separate sent (outbound) vs received (inbound/replies)
-    const sent = matching.filter(e => e.hs_email_direction === 'EMAIL' || e.hs_email_direction === 'FORWARDED_EMAIL');
-    const replies = matching.filter(e => e.hs_email_direction === 'INCOMING_EMAIL');
+    // Separate sent vs replies
+    const sentEmails = matching.filter(e => e.hs_email_direction === 'EMAIL' || e.hs_email_direction === 'FORWARDED_EMAIL');
+    const replyEmails = matching.filter(e => e.hs_email_direction === 'INCOMING_EMAIL');
 
-    // Unique recipients from sent emails
-    const recipients = new Set();
-    for (const e of sent) {
-      const to = (e.hs_email_to_email || '').toLowerCase().trim();
-      if (to) to.split(';').forEach(addr => recipients.add(addr.trim()));
+    // Group sent emails — each unique send (by timestamp) is one "email send"
+    // Multiple recipients in the same email = one send
+    const sends = [];
+    const seenTimestamps = new Set();
+    for (const e of sentEmails) {
+      const ts = e.hs_timestamp || e.id;
+      const toRaw = (e.hs_email_to_email || '').toLowerCase().trim();
+      const recipients = toRaw ? toRaw.split(';').map(a => a.trim()).filter(Boolean) : [];
+      // Group by timestamp (emails sent at same time to multiple people = one send)
+      const key = `${ts}_${recipients.sort().join(',')}`;
+      if (seenTimestamps.has(key)) continue;
+      seenTimestamps.add(key);
+      sends.push({
+        id: e.id,
+        timestamp: e.hs_timestamp,
+        recipients,
+        recipientNames: [e.hs_email_to_firstname, e.hs_email_to_lastname].filter(Boolean).join(' ') || recipients[0] || '—',
+        replied: false,
+        replyDate: null,
+        repliedBy: null,
+      });
     }
 
-    // Unique repliers
-    const repliers = new Set();
-    for (const e of replies) {
-      const from = (e.hs_email_from_email || '').toLowerCase().trim();
-      if (from) repliers.add(from);
-    }
+    // Check which sends got a reply (any recipient replying counts)
+    const allRecipientEmails = new Set();
+    for (const s of sends) s.recipients.forEach(r => allRecipientEmails.add(r));
 
-    // Build contact-level detail
-    const contactMap = {};
-    for (const e of sent) {
-      const to = (e.hs_email_to_email || '').toLowerCase().trim();
-      const toAddrs = to ? to.split(';').map(a => a.trim()) : [];
-      for (const addr of toAddrs) {
-        if (!contactMap[addr]) {
-          contactMap[addr] = {
-            email: addr,
-            name: [e.hs_email_to_firstname, e.hs_email_to_lastname].filter(Boolean).join(' ') || addr,
-            sentDate: e.hs_timestamp,
-            replied: false,
-            replyDate: null,
-          };
+    for (const reply of replyEmails) {
+      const from = (reply.hs_email_from_email || '').toLowerCase().trim();
+      if (!from) continue;
+      // Find the send this reply belongs to
+      for (const s of sends) {
+        if (s.recipients.includes(from) && !s.replied) {
+          s.replied = true;
+          s.replyDate = reply.hs_timestamp;
+          s.repliedBy = [reply.hs_email_from_firstname, reply.hs_email_from_lastname].filter(Boolean).join(' ') || from;
+          break;
         }
       }
     }
-    for (const e of replies) {
-      const from = (e.hs_email_from_email || '').toLowerCase().trim();
-      if (contactMap[from]) {
-        contactMap[from].replied = true;
-        contactMap[from].replyDate = e.hs_timestamp;
-      }
-    }
 
-    const contacts = Object.values(contactMap).sort((a, b) => {
+    const totalSends = sends.length;
+    const totalReplied = sends.filter(s => s.replied).length;
+    const responseRate = totalSends > 0 ? ((totalReplied / totalSends) * 100).toFixed(1) : '0.0';
+
+    // Build contact-level detail for the table
+    const contacts = sends.map(s => ({
+      email: s.recipients.join('; '),
+      name: s.recipientNames,
+      sentDate: s.timestamp,
+      replied: s.replied,
+      replyDate: s.replyDate,
+      repliedBy: s.repliedBy,
+      recipientCount: s.recipients.length,
+    })).sort((a, b) => {
       if (a.replied !== b.replied) return a.replied ? -1 : 1;
       return (a.sentDate || '').localeCompare(b.sentDate || '');
     });
 
-    const responseRate = recipients.size > 0 ? ((repliers.size / recipients.size) * 100).toFixed(1) : '0.0';
-
     return res.json({
       subject,
       totalEmails: matching.length,
-      sent: sent.length,
-      replies: replies.length,
-      uniqueRecipients: recipients.size,
-      uniqueRepliers: repliers.size,
+      sent: totalSends,
+      replies: totalReplied,
+      uniqueRecipients: totalSends,
+      uniqueRepliers: totalReplied,
       responseRate: parseFloat(responseRate),
       contacts,
     });
