@@ -866,13 +866,12 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       }
     }
 
-    // Debug: log Hellman & Friedman opps data
+    // Debug: log specific accounts
     for (const [account, stages] of Object.entries(stagesByAccount)) {
-      if (account.includes('hellman')) {
+      if (account.includes('hellman') || account.includes('pnc')) {
         console.log(`Opps debug "${account}": sold=${stages.sold}, notSold=${stages.notSold}, active=${stages.active} → suggested: ${suggested[account]}`);
-        // Log the actual opp records for this account
-        const hfOpps = oppsRecords.filter(r => (r['Account'] || '').toLowerCase().includes('hellman'));
-        hfOpps.forEach(r => console.log(`  Opp: Stage="${r['Stage']}", Account="${r['Account']}"`));
+        const opps = oppsRecords.filter(r => (r['Account'] || '').toLowerCase() === account);
+        opps.forEach(r => console.log(`  Opp: Stage="${r['Stage']}", Account="${r['Account']}"`));
       }
     }
 
@@ -983,8 +982,16 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       let oppsCount = 0;
       let totalOpps = 0;
       for (const name of allCompanyNames) {
+        // Exact match
         oppsCount += activeOppsByAccount[name] || 0;
         totalOpps += totalOppsByAccount[name] || 0;
+        // Fuzzy match for opps
+        for (const [oppsCompany, count] of Object.entries(activeOppsByAccount)) {
+          if (oppsCompany !== name && companiesMatch(name, oppsCompany)) { oppsCount += count; break; }
+        }
+        for (const [oppsCompany, count] of Object.entries(totalOppsByAccount)) {
+          if (oppsCompany !== name && companiesMatch(name, oppsCompany)) { totalOpps += count; break; }
+        }
       }
       const sources = [];
       sources.push('Google Sheets');
@@ -1024,10 +1031,17 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         }
       }
       const bucketCount = bucketsSeen.size;
-      // Suggested status based on opps data
+      // Suggested status based on opps data (fuzzy match company names)
       let suggestedStatus = 'Inside Sales'; // default: no opps
       for (const name of allCompanyNames) {
+        // Try exact match first
         if (suggestedStatusByAccount[name]) { suggestedStatus = suggestedStatusByAccount[name]; break; }
+        // Try fuzzy match
+        let found = false;
+        for (const [oppsCompany, status] of Object.entries(suggestedStatusByAccount)) {
+          if (companiesMatch(name, oppsCompany)) { suggestedStatus = status; found = true; break; }
+        }
+        if (found) break;
       }
       const statusMismatch = suggestedStatus !== p.status && p.status;
       const entry = { ...p, myTier: tier, activityCount, oppsCount, totalOpps, sources: sources.join(', '), dmFound: !!dmNames, dmNames: dmNames ? dmNames.join(', ') : '', cdmMismatch: !isBaldauf, targetNames, targetTier, tierMismatch, otherReps, contactCount, bucketCount, suggestedStatus, statusMismatch };
