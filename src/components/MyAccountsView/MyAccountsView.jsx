@@ -965,11 +965,12 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     })();
   }, []);
 
-  const { activeOppsByAccount, totalOppsByAccount, suggestedStatusByAccount } = useMemo(() => {
+  const { activeOppsByAccount, totalOppsByAccount, openOppsByAccount, suggestedStatusByAccount } = useMemo(() => {
     const active = {};
     const total = {};
-    const stagesByAccount = {}; // account → { sold: N, notSold: N, other: N }
-    if (oppsRecords.length === 0) return { activeOppsByAccount: active, totalOppsByAccount: total, suggestedStatusByAccount: {} };
+    const open = {}; // non-closed, non-invalid opps (for Tier 3 inclusion)
+    const stagesByAccount = {};
+    if (oppsRecords.length === 0) return { activeOppsByAccount: active, totalOppsByAccount: total, openOppsByAccount: open, suggestedStatusByAccount: {} };
     const closedStages = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
     for (const r of oppsRecords) {
       const account = (r['Account'] || '').toLowerCase();
@@ -993,6 +994,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         total[account] = (total[account] || 0) + 1;
       }
       if (!closedStages.has(stage) && !invalidStages.has(stage)) {
+        open[account] = (open[account] || 0) + 1;
         const callIn = (r['Call In'] || '').trim();
         if (callIn && callIn !== '-' && callIn !== '0') {
           active[account] = (active[account] || 0) + 1;
@@ -1025,7 +1027,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     const soldOpps = oppsRecords.filter(r => (r['Stage'] || '').toLowerCase().includes('sold') || (r['Stage'] || '').toLowerCase().includes('won'));
     console.log('All Sold/Won opps:', soldOpps.map(r => `"${r['Account']}" Stage="${r['Stage']}"`));
 
-    return { activeOppsByAccount: active, totalOppsByAccount: total, suggestedStatusByAccount: suggested };
+    return { activeOppsByAccount: active, totalOppsByAccount: total, openOppsByAccount: open, suggestedStatusByAccount: suggested };
   }, [oppsRecords]);
 
   // Auto-create prospects for opps companies not already in Table View
@@ -1139,11 +1141,11 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
           }
         }
       }
-      // If no tier, check if the company has any open opps — if so, include as Tier 3
+      // If no tier, check if the company has open (non-closed) opps — if so, include as Tier 3
       if (!tier) {
         const companyLower = (p.company || '').toLowerCase();
         let hasOpenOpp = false;
-        for (const [oppsCompany, count] of Object.entries(totalOppsByAccount)) {
+        for (const [oppsCompany, count] of Object.entries(openOppsByAccount)) {
           if (count > 0 && companiesMatch(companyLower, oppsCompany)) { hasOpenOpp = true; break; }
         }
         if (!hasOpenOpp) continue;
