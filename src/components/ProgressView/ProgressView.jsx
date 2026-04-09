@@ -114,11 +114,14 @@ export function ProgressView({ prospects, settings }) {
     }
 
     // Use opps data loaded from Firestore/IndexedDB/localStorage
+    // Only count accounts with valid opps (not #N/A, blank, etc.)
     const oppsRecords = oppsRecordsState;
+    const invalidStages = new Set(['#N/A', '#REF!', '#VALUE!', '#ERROR!', 'N/A', 'n/a', '-', '']);
     const oppsCompanies = new Set();
     for (const r of oppsRecords) {
       const account = (r['Account'] || '').toLowerCase();
-      if (account) oppsCompanies.add(account);
+      const stage = (r['Stage'] || '').trim();
+      if (account && !invalidStages.has(stage)) oppsCompanies.add(account);
     }
 
     function hasContact(company) {
