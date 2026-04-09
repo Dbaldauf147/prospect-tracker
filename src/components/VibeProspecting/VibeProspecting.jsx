@@ -871,19 +871,24 @@ export function VibeProspecting({ prospects = [], onUpdate }) {
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
             <button
               onClick={() => {
-                const sorted = prospects.filter(p => p.company).sort((a, b) => (a.company || '').localeCompare(b.company || ''));
+                const myAccounts = prospects.filter(p => {
+                  if (!p.company) return false;
+                  const cdm = (p.cdm || '').toLowerCase();
+                  if (!cdm.includes('baldauf') && !cdm.includes('dan b')) return false;
+                  return p.tier === 'Tier 1' || p.tier === 'Tier 2' || p.tier === 'Tier 3';
+                }).sort((a, b) => (a.company || '').localeCompare(b.company || ''));
                 const wsData = [
                   ["Dan's Account Name", 'Zoom Company Name', 'Website', 'Zoom Company ID'],
-                  ...sorted.map(p => [p.company, p.zoomCompanyName || '', p.website || '', p.zoomCompanyId || '']),
+                  ...myAccounts.map(p => [p.company, p.zoomCompanyName || '', p.website || '', p.zoomCompanyId || '']),
                 ];
                 const ws = XLSX.utils.aoa_to_sheet(wsData);
                 ws['!cols'] = [{ wch: 35 }, { wch: 35 }, { wch: 30 }, { wch: 20 }];
                 const wb = XLSX.utils.book_new();
-                XLSX.utils.book_append_sheet(wb, ws, 'Zoom Company Upload');
-                XLSX.writeFile(wb, 'Zoom_Company_Upload_Template.xlsx');
+                XLSX.utils.book_append_sheet(wb, ws, 'My Company Data');
+                XLSX.writeFile(wb, 'My_Company_Data.xlsx');
               }}
               style={{ padding: '0.35rem 0.7rem', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', background: 'var(--color-surface)', color: 'var(--color-accent)' }}
-            >Download Template</button>
+            >Download My Company Data</button>
             <button
               onClick={() => companyFileRef.current?.click()}
               style={{ padding: '0.35rem 0.7rem', border: 'none', borderRadius: '6px', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', background: 'var(--color-accent)', color: '#fff' }}
