@@ -1328,7 +1328,8 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         return { ...col, render: (row) => <InlineCell row={row} field="numberOfSites" value={row.numberOfSites} onUpdate={onUpdate} type="number" /> };
       }
       if (col.key === 'hqRegion') {
-        return { ...col, render: (row) => <InlineCell row={row} field="hqRegion" value={row.hqRegion} onUpdate={onUpdate} options={['North America', 'Outside of North America']} /> };
+        const missingCount = filteredAccounts.filter(a => !a.hqRegion).length;
+        return { ...col, label: missingCount > 0 ? `HQ Region ⚠ ${missingCount}` : 'HQ Region', render: (row) => <InlineCell row={row} field="hqRegion" value={row.hqRegion} onUpdate={onUpdate} options={['North America', 'Outside of North America']} /> };
       }
       if (col.key === 'naRegion') {
         return { ...col, render: (row) => {
