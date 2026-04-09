@@ -881,11 +881,14 @@ export function VibeProspecting({ prospects = [], onUpdate }) {
                   ["Dan's Account Name", 'Zoom Company Name', 'Website', 'Zoom Company ID'],
                   ...myAccounts.map(p => [p.company, p.zoomCompanyName || '', p.website || '', p.zoomCompanyId || '']),
                 ];
-                const ws = XLSX.utils.aoa_to_sheet(wsData);
-                ws['!cols'] = [{ wch: 35 }, { wch: 35 }, { wch: 30 }, { wch: 20 }];
-                const wb = XLSX.utils.book_new();
-                XLSX.utils.book_append_sheet(wb, ws, 'My Company Data');
-                XLSX.writeFile(wb, 'My_Company_Data.xlsx');
+                const csv = wsData.map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+                const blob = new Blob([csv], { type: 'text/csv' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'My_Company_Data.csv';
+                a.click();
+                URL.revokeObjectURL(url);
               }}
               style={{ padding: '0.35rem 0.7rem', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', background: 'var(--color-surface)', color: 'var(--color-accent)' }}
             >Download My Company Data</button>
