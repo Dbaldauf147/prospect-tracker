@@ -191,18 +191,47 @@ export function ProgressView({ prospects, settings }) {
       return false;
     }
 
+    // Build DM companies set — companies with at least one contact tagged as Decision Maker
+    const dmCompanies = new Set();
+    for (const c of hubspotContacts) {
+      const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
+      if (tags.includes('decision maker')) {
+        const co = (c.company || '').toLowerCase();
+        if (co) dmCompanies.add(co);
+      }
+    }
+
+    function hasDM(company) {
+      const lower = (company || '').toLowerCase();
+      for (const co of dmCompanies) {
+        if (companiesMatch(lower, co)) return true;
+      }
+      // Also check first-word match for parent companies
+      const firstWord = lower.split(/\s/)[0];
+      if (firstWord.length >= 4) {
+        for (const co of dmCompanies) {
+          if (co.startsWith(firstWord)) return true;
+        }
+      }
+      return false;
+    }
+
     const inactiveStatuses = new Set(['Lost - Not Sold', 'Hold Off', 'Old Client']);
 
     const t1Total = t1.length;
     const t2Total = t2.length;
     const t1WithContactsList = t1.filter(p => hasContact(p.company));
     const t2WithContactsList = t2.filter(p => hasContact(p.company));
+    const t1WithDMList = t1.filter(p => hasDM(p.company));
+    const t2WithDMList = t2.filter(p => hasDM(p.company));
     const t1ConnectedList = t1.filter(p => hasOpp(p.company));
     const t2ConnectedList = t2.filter(p => hasOpp(p.company));
     const t1InactiveList = t1.filter(p => inactiveStatuses.has(p.status));
     const t2InactiveList = t2.filter(p => inactiveStatuses.has(p.status));
     const t1WithContacts = t1WithContactsList.length;
     const t2WithContacts = t2WithContactsList.length;
+    const t1WithDM = t1WithDMList.length;
+    const t2WithDM = t2WithDMList.length;
     const t1Connected = t1ConnectedList.length;
     const t2Connected = t2ConnectedList.length;
     const t1Inactive = t1InactiveList.length;
@@ -211,6 +240,8 @@ export function ProgressView({ prospects, settings }) {
     // Also build "not" lists
     const t1NoContacts = t1.filter(p => !hasContact(p.company));
     const t2NoContacts = t2.filter(p => !hasContact(p.company));
+    const t1NoDM = t1.filter(p => !hasDM(p.company));
+    const t2NoDM = t2.filter(p => !hasDM(p.company));
     const t1NotConnected = t1.filter(p => !hasOpp(p.company));
     const t2NotConnected = t2.filter(p => !hasOpp(p.company));
 
@@ -218,10 +249,13 @@ export function ProgressView({ prospects, settings }) {
       week: getWeekKey(new Date()),
       t1Total, t2Total,
       t1WithContacts, t2WithContacts,
+      t1WithDM, t2WithDM,
       t1Connected, t2Connected,
       t1Inactive, t2Inactive,
       t1ContactPct: t1Total > 0 ? Math.round((t1WithContacts / t1Total) * 100) : 0,
       t2ContactPct: t2Total > 0 ? Math.round((t2WithContacts / t2Total) * 100) : 0,
+      t1DMPct: t1Total > 0 ? Math.round((t1WithDM / t1Total) * 100) : 0,
+      t2DMPct: t2Total > 0 ? Math.round((t2WithDM / t2Total) * 100) : 0,
       t1ConnectedPct: t1Total > 0 ? Math.round((t1Connected / t1Total) * 100) : 0,
       t2ConnectedPct: t2Total > 0 ? Math.round((t2Connected / t2Total) * 100) : 0,
       t1InactivePct: t1Total > 0 ? Math.round((t1Inactive / t1Total) * 100) : 0,
@@ -232,6 +266,10 @@ export function ProgressView({ prospects, settings }) {
         t1NoContacts: t1NoContacts.map(p => p.company),
         t2WithContacts: t2WithContactsList.map(p => p.company),
         t2NoContacts: t2NoContacts.map(p => p.company),
+        t1WithDM: t1WithDMList.map(p => p.company),
+        t1NoDM: t1NoDM.map(p => p.company),
+        t2WithDM: t2WithDMList.map(p => p.company),
+        t2NoDM: t2NoDM.map(p => p.company),
         t1Connected: t1ConnectedList.map(p => p.company),
         t1NotConnected: t1NotConnected.map(p => p.company),
         t2Connected: t2ConnectedList.map(p => p.company),
@@ -310,6 +348,9 @@ export function ProgressView({ prospects, settings }) {
           { key: 'contacts', label: 'Accounts with Contacts', color: '#3B82F6', t1: currentSnapshot.t1WithContacts, t2: currentSnapshot.t2WithContacts, t1Pct: currentSnapshot.t1ContactPct, t2Pct: currentSnapshot.t2ContactPct,
             t1Yes: currentSnapshot.details?.t1WithContacts || [], t1No: currentSnapshot.details?.t1NoContacts || [],
             t2Yes: currentSnapshot.details?.t2WithContacts || [], t2No: currentSnapshot.details?.t2NoContacts || [] },
+          { key: 'dm', label: 'Decision Maker Identified', color: '#7C3AED', t1: currentSnapshot.t1WithDM || 0, t2: currentSnapshot.t2WithDM || 0, t1Pct: currentSnapshot.t1DMPct || 0, t2Pct: currentSnapshot.t2DMPct || 0,
+            t1Yes: currentSnapshot.details?.t1WithDM || [], t1No: currentSnapshot.details?.t1NoDM || [],
+            t2Yes: currentSnapshot.details?.t2WithDM || [], t2No: currentSnapshot.details?.t2NoDM || [] },
           { key: 'connected', label: 'Connected (Had Opp)', color: '#10B981', t1: currentSnapshot.t1Connected, t2: currentSnapshot.t2Connected, t1Pct: currentSnapshot.t1ConnectedPct, t2Pct: currentSnapshot.t2ConnectedPct,
             t1Yes: currentSnapshot.details?.t1Connected || [], t1No: currentSnapshot.details?.t1NotConnected || [],
             t2Yes: currentSnapshot.details?.t2Connected || [], t2No: currentSnapshot.details?.t2NotConnected || [] },
@@ -319,7 +360,7 @@ export function ProgressView({ prospects, settings }) {
         ];
         return (
           <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.5rem' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem', flex: expandedCard ? '0 0 50%' : '1' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.75rem', flex: expandedCard ? '0 0 55%' : '1' }}>
               {cards.map(card => (
                 <div key={card.key} onClick={() => setExpandedCard(expandedCard === card.key ? null : card.key)}
                   style={{ padding: '0.75rem', background: expandedCard === card.key ? '#F0F9FF' : 'var(--color-surface)', border: expandedCard === card.key ? '2px solid ' + card.color : '1px solid var(--color-border)', borderRadius: '8px', borderLeft: `3px solid ${card.color}`, cursor: 'pointer' }}>
@@ -388,7 +429,23 @@ export function ProgressView({ prospects, settings }) {
             </ResponsiveContainer>
           </div>
 
-          {/* Chart 2: Connected (Had Opp) */}
+          {/* Chart 2: Decision Maker Identified */}
+          <div style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', padding: '1rem' }}>
+            <h3 style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-text)', margin: '0 0 0.75rem 0' }}>% of Accounts with Decision Maker Identified</h3>
+            <ResponsiveContainer width="100%" height={250}>
+              <LineChart data={chartData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+                <XAxis dataKey="weekLabel" fontSize={11} tick={{ fill: '#64748B' }} />
+                <YAxis domain={[0, 100]} tickFormatter={v => `${v}%`} fontSize={11} tick={{ fill: '#64748B' }} />
+                <Tooltip formatter={v => `${v}%`} />
+                <Legend />
+                <Line type="monotone" dataKey="t1DMPct" name="Tier 1" stroke="#DC2626" strokeWidth={2} dot={{ r: 4 }} />
+                <Line type="monotone" dataKey="t2DMPct" name="Tier 2" stroke="#3B82F6" strokeWidth={2} dot={{ r: 4 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Chart 3: Connected (Had Opp) */}
           <div style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', padding: '1rem' }}>
             <h3 style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-text)', margin: '0 0 0.75rem 0' }}>% of Accounts Connected (Had Opportunity)</h3>
             <ResponsiveContainer width="100%" height={250}>
