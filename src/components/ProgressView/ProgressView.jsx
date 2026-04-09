@@ -51,6 +51,7 @@ export function ProgressView({ prospects, settings }) {
   const [history, setHistory] = useState([]);
   const [oppsRecordsState, setOppsRecordsState] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [expandedCard, setExpandedCard] = useState(null);
 
   // Load history from Firestore + opps data
   useEffect(() => {
@@ -194,12 +195,24 @@ export function ProgressView({ prospects, settings }) {
 
     const t1Total = t1.length;
     const t2Total = t2.length;
-    const t1WithContacts = t1.filter(p => hasContact(p.company)).length;
-    const t2WithContacts = t2.filter(p => hasContact(p.company)).length;
-    const t1Connected = t1.filter(p => hasOpp(p.company)).length;
-    const t2Connected = t2.filter(p => hasOpp(p.company)).length;
-    const t1Inactive = t1.filter(p => inactiveStatuses.has(p.status)).length;
-    const t2Inactive = t2.filter(p => inactiveStatuses.has(p.status)).length;
+    const t1WithContactsList = t1.filter(p => hasContact(p.company));
+    const t2WithContactsList = t2.filter(p => hasContact(p.company));
+    const t1ConnectedList = t1.filter(p => hasOpp(p.company));
+    const t2ConnectedList = t2.filter(p => hasOpp(p.company));
+    const t1InactiveList = t1.filter(p => inactiveStatuses.has(p.status));
+    const t2InactiveList = t2.filter(p => inactiveStatuses.has(p.status));
+    const t1WithContacts = t1WithContactsList.length;
+    const t2WithContacts = t2WithContactsList.length;
+    const t1Connected = t1ConnectedList.length;
+    const t2Connected = t2ConnectedList.length;
+    const t1Inactive = t1InactiveList.length;
+    const t2Inactive = t2InactiveList.length;
+
+    // Also build "not" lists
+    const t1NoContacts = t1.filter(p => !hasContact(p.company));
+    const t2NoContacts = t2.filter(p => !hasContact(p.company));
+    const t1NotConnected = t1.filter(p => !hasOpp(p.company));
+    const t2NotConnected = t2.filter(p => !hasOpp(p.company));
 
     return {
       week: getWeekKey(new Date()),
@@ -213,6 +226,19 @@ export function ProgressView({ prospects, settings }) {
       t2ConnectedPct: t2Total > 0 ? Math.round((t2Connected / t2Total) * 100) : 0,
       t1InactivePct: t1Total > 0 ? Math.round((t1Inactive / t1Total) * 100) : 0,
       t2InactivePct: t2Total > 0 ? Math.round((t2Inactive / t2Total) * 100) : 0,
+      // Detail lists for drill-down
+      details: {
+        t1WithContacts: t1WithContactsList.map(p => p.company),
+        t1NoContacts: t1NoContacts.map(p => p.company),
+        t2WithContacts: t2WithContactsList.map(p => p.company),
+        t2NoContacts: t2NoContacts.map(p => p.company),
+        t1Connected: t1ConnectedList.map(p => p.company),
+        t1NotConnected: t1NotConnected.map(p => p.company),
+        t2Connected: t2ConnectedList.map(p => p.company),
+        t2NotConnected: t2NotConnected.map(p => p.company),
+        t1Inactive: t1InactiveList.map(p => ({ company: p.company, status: p.status })),
+        t2Inactive: t2InactiveList.map(p => ({ company: p.company, status: p.status })),
+      },
     };
   }, [prospects, settings, oppsRecordsState]);
 
@@ -279,29 +305,69 @@ export function ProgressView({ prospects, settings }) {
       </div>
 
       {/* Current stats */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem', marginBottom: '1.5rem' }}>
-        <div style={{ padding: '0.75rem', background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', borderLeft: '3px solid #3B82F6' }}>
-          <div style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Accounts with Contacts</div>
-          <div style={{ display: 'flex', gap: '1rem', marginTop: '0.3rem' }}>
-            <div><span style={{ fontSize: '1.2rem', fontWeight: 700, color: '#DC2626' }}>{currentSnapshot.t1ContactPct}%</span> <span style={{ fontSize: '0.65rem', color: 'var(--color-text-secondary)' }}>T1 ({currentSnapshot.t1WithContacts}/{currentSnapshot.t1Total})</span></div>
-            <div><span style={{ fontSize: '1.2rem', fontWeight: 700, color: '#3B82F6' }}>{currentSnapshot.t2ContactPct}%</span> <span style={{ fontSize: '0.65rem', color: 'var(--color-text-secondary)' }}>T2 ({currentSnapshot.t2WithContacts}/{currentSnapshot.t2Total})</span></div>
+      {(() => {
+        const cards = [
+          { key: 'contacts', label: 'Accounts with Contacts', color: '#3B82F6', t1: currentSnapshot.t1WithContacts, t2: currentSnapshot.t2WithContacts, t1Pct: currentSnapshot.t1ContactPct, t2Pct: currentSnapshot.t2ContactPct,
+            t1Yes: currentSnapshot.details?.t1WithContacts || [], t1No: currentSnapshot.details?.t1NoContacts || [],
+            t2Yes: currentSnapshot.details?.t2WithContacts || [], t2No: currentSnapshot.details?.t2NoContacts || [] },
+          { key: 'connected', label: 'Connected (Had Opp)', color: '#10B981', t1: currentSnapshot.t1Connected, t2: currentSnapshot.t2Connected, t1Pct: currentSnapshot.t1ConnectedPct, t2Pct: currentSnapshot.t2ConnectedPct,
+            t1Yes: currentSnapshot.details?.t1Connected || [], t1No: currentSnapshot.details?.t1NotConnected || [],
+            t2Yes: currentSnapshot.details?.t2Connected || [], t2No: currentSnapshot.details?.t2NotConnected || [] },
+          { key: 'inactive', label: 'Inactive (Lost/Hold/Old)', color: '#F59E0B', t1: currentSnapshot.t1Inactive, t2: currentSnapshot.t2Inactive, t1Pct: currentSnapshot.t1InactivePct, t2Pct: currentSnapshot.t2InactivePct,
+            t1Yes: (currentSnapshot.details?.t1Inactive || []).map(x => typeof x === 'string' ? x : `${x.company} (${x.status})`),
+            t1No: [], t2Yes: (currentSnapshot.details?.t2Inactive || []).map(x => typeof x === 'string' ? x : `${x.company} (${x.status})`), t2No: [] },
+        ];
+        return (
+          <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.5rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem', flex: expandedCard ? '0 0 50%' : '1' }}>
+              {cards.map(card => (
+                <div key={card.key} onClick={() => setExpandedCard(expandedCard === card.key ? null : card.key)}
+                  style={{ padding: '0.75rem', background: expandedCard === card.key ? '#F0F9FF' : 'var(--color-surface)', border: expandedCard === card.key ? '2px solid ' + card.color : '1px solid var(--color-border)', borderRadius: '8px', borderLeft: `3px solid ${card.color}`, cursor: 'pointer' }}>
+                  <div style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{card.label}</div>
+                  <div style={{ display: 'flex', gap: '1rem', marginTop: '0.3rem' }}>
+                    <div><span style={{ fontSize: '1.2rem', fontWeight: 700, color: '#DC2626' }}>{card.t1Pct}%</span> <span style={{ fontSize: '0.65rem', color: 'var(--color-text-secondary)' }}>T1 ({card.t1}/{currentSnapshot.t1Total})</span></div>
+                    <div><span style={{ fontSize: '1.2rem', fontWeight: 700, color: '#3B82F6' }}>{card.t2Pct}%</span> <span style={{ fontSize: '0.65rem', color: 'var(--color-text-secondary)' }}>T2 ({card.t2}/{currentSnapshot.t2Total})</span></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {expandedCard && (() => {
+              const card = cards.find(c => c.key === expandedCard);
+              if (!card) return null;
+              return (
+                <div style={{ flex: '0 0 50%', border: '1px solid var(--color-border)', borderRadius: '8px', padding: '0.75rem', maxHeight: '300px', overflowY: 'auto' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                    <h4 style={{ margin: 0, fontSize: '0.8rem', fontWeight: 700, color: 'var(--color-text)' }}>{card.label}</h4>
+                    <button onClick={e => { e.stopPropagation(); setExpandedCard(null); }} style={{ background: 'none', border: 'none', color: '#94A3B8', fontSize: '1rem', cursor: 'pointer' }}>&times;</button>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                    <div>
+                      <div style={{ fontSize: '0.65rem', fontWeight: 600, color: '#DC2626', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Tier 1 — Yes ({card.t1Yes.length})</div>
+                      {card.t1Yes.map((c, i) => <div key={i} style={{ fontSize: '0.72rem', color: 'var(--color-text)', padding: '1px 0' }}>{c}</div>)}
+                      {card.key !== 'inactive' && card.t1No.length > 0 && (
+                        <>
+                          <div style={{ fontSize: '0.65rem', fontWeight: 600, color: '#9CA3AF', textTransform: 'uppercase', marginTop: '0.5rem', marginBottom: '0.3rem' }}>Tier 1 — No ({card.t1No.length})</div>
+                          {card.t1No.map((c, i) => <div key={i} style={{ fontSize: '0.72rem', color: '#9CA3AF', padding: '1px 0' }}>{c}</div>)}
+                        </>
+                      )}
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '0.65rem', fontWeight: 600, color: '#3B82F6', textTransform: 'uppercase', marginBottom: '0.3rem' }}>Tier 2 — Yes ({card.t2Yes.length})</div>
+                      {card.t2Yes.map((c, i) => <div key={i} style={{ fontSize: '0.72rem', color: 'var(--color-text)', padding: '1px 0' }}>{c}</div>)}
+                      {card.key !== 'inactive' && card.t2No.length > 0 && (
+                        <>
+                          <div style={{ fontSize: '0.65rem', fontWeight: 600, color: '#9CA3AF', textTransform: 'uppercase', marginTop: '0.5rem', marginBottom: '0.3rem' }}>Tier 2 — No ({card.t2No.length})</div>
+                          {card.t2No.map((c, i) => <div key={i} style={{ fontSize: '0.72rem', color: '#9CA3AF', padding: '1px 0' }}>{c}</div>)}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
-        </div>
-        <div style={{ padding: '0.75rem', background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', borderLeft: '3px solid #10B981' }}>
-          <div style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Connected (Had Opp)</div>
-          <div style={{ display: 'flex', gap: '1rem', marginTop: '0.3rem' }}>
-            <div><span style={{ fontSize: '1.2rem', fontWeight: 700, color: '#DC2626' }}>{currentSnapshot.t1ConnectedPct}%</span> <span style={{ fontSize: '0.65rem', color: 'var(--color-text-secondary)' }}>T1 ({currentSnapshot.t1Connected}/{currentSnapshot.t1Total})</span></div>
-            <div><span style={{ fontSize: '1.2rem', fontWeight: 700, color: '#3B82F6' }}>{currentSnapshot.t2ConnectedPct}%</span> <span style={{ fontSize: '0.65rem', color: 'var(--color-text-secondary)' }}>T2 ({currentSnapshot.t2Connected}/{currentSnapshot.t2Total})</span></div>
-          </div>
-        </div>
-        <div style={{ padding: '0.75rem', background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', borderLeft: '3px solid #F59E0B' }}>
-          <div style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Inactive (Lost/Hold/Old)</div>
-          <div style={{ display: 'flex', gap: '1rem', marginTop: '0.3rem' }}>
-            <div><span style={{ fontSize: '1.2rem', fontWeight: 700, color: '#DC2626' }}>{currentSnapshot.t1InactivePct}%</span> <span style={{ fontSize: '0.65rem', color: 'var(--color-text-secondary)' }}>T1 ({currentSnapshot.t1Inactive}/{currentSnapshot.t1Total})</span></div>
-            <div><span style={{ fontSize: '1.2rem', fontWeight: 700, color: '#3B82F6' }}>{currentSnapshot.t2InactivePct}%</span> <span style={{ fontSize: '0.65rem', color: 'var(--color-text-secondary)' }}>T2 ({currentSnapshot.t2Inactive}/{currentSnapshot.t2Total})</span></div>
-          </div>
-        </div>
-      </div>
+        );
+      })()}
 
       {/* Charts */}
       {chartData.length > 0 && (
