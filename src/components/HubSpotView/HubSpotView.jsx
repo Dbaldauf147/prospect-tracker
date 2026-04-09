@@ -893,7 +893,8 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
 
   // Inline cell save — updates HubSpot and local cache
   const FIELD_MAP = {};
-  const LOCAL_ONLY_PROPS = new Set([]);
+  const LOCAL_ONLY_PROPS = new Set(['_zoomCompanyName', '_zoomCompanyId', '_linkedinProfile', '_zoomWebsite', '_emailDomain']);
+  const contactLocalFields = settings?.contactLocalFields || {};
 
   const handleInlineUpdate = useCallback(async (contactId, properties) => {
     try {
@@ -919,6 +920,12 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
         });
         const json = await res.json();
         if (json.error) throw new Error(json.error);
+      }
+      // Save local-only fields to Firestore settings
+      if (Object.keys(localProps).length > 0) {
+        const next = { ...contactLocalFields };
+        next[contactId] = { ...(next[contactId] || {}), ...localProps };
+        updateSettings({ contactLocalFields: next });
       }
       // Update local cache for all properties (including local-only)
       setData(prev => {
@@ -1293,6 +1300,9 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
         return !email.endsWith('@se.com');
       })
       .map(c => {
+        // Merge local-only fields from Firestore settings
+        const localFields = contactLocalFields[c.id] || {};
+        c = { ...c, ...localFields };
         const companyKey = (c.company || '').toLowerCase();
         const prospect = prospectMap.get(companyKey);
 
@@ -1830,6 +1840,16 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
                 return <span style={{ fontSize: 'var(--font-size-xs)', fontWeight: isRecent ? 600 : 400, color: isRecent ? 'var(--color-accent)' : 'var(--color-text-secondary)' }} title={fmtDateTime(c.lastmodifieddate)}>{relative}</span>;
               }},
               { key: 'dans_tags', label: "Dan's Tags", defaultWidth: 160, render: (c) => <TagsMultiSelect contact={c} field="dans_tags" value={c.dans_tags || c.dan_s_tags || c.dans_tag} options={dansTagOptions} onSave={handleInlineUpdate} /> },
+              { key: '_zoomCompanyName', label: 'Zoom Company', defaultWidth: 160, render: (c) => <HubSpotInlineCell contact={c} field="_zoomCompanyName" value={c._zoomCompanyName} onSave={handleInlineUpdate} /> },
+              { key: '_zoomCompanyId', label: 'Zoom Company ID', defaultWidth: 120, render: (c) => <HubSpotInlineCell contact={c} field="_zoomCompanyId" value={c._zoomCompanyId} onSave={handleInlineUpdate} /> },
+              { key: '_linkedinProfile', label: 'LinkedIn Profile', defaultWidth: 160, render: (c) => {
+                const url = c._linkedinProfile || c.hs_linkedin_url || c.linkedin_url || '';
+                if (!url) return <HubSpotInlineCell contact={c} field="_linkedinProfile" value="" onSave={handleInlineUpdate} />;
+                const href = url.startsWith('http') ? url : `https://${url}`;
+                return <a href={href} target="_blank" rel="noopener noreferrer" style={{ color: '#0A66C2', fontSize: 'var(--font-size-xs)', fontWeight: 600, textDecoration: 'none' }}>View</a>;
+              }},
+              { key: '_zoomWebsite', label: 'Zoom Website', defaultWidth: 150, render: (c) => <HubSpotInlineCell contact={c} field="_zoomWebsite" value={c._zoomWebsite} onSave={handleInlineUpdate} /> },
+              { key: '_emailDomain', label: 'Email Domain', defaultWidth: 150, render: (c) => <HubSpotInlineCell contact={c} field="_emailDomain" value={c._emailDomain} onSave={handleInlineUpdate} /> },
               { key: 'sequenceStatus', label: 'Sequence Status', defaultWidth: 120, render: (c) => c.isEnrolled ? <span className={styles.enrolledBadge}>In Sequence</span> : <span className={styles.notEnrolledBadge}>Not Enrolled</span> },
               { key: 'lastSent', label: 'Last Email Sent', defaultWidth: 120, render: (c) => <span className={styles.dateText}>{fmtDate(c.hs_email_last_send_date)}</span> },
               { key: 'lastReply', label: 'Last Reply', defaultWidth: 120, render: (c) => <span className={styles.dateText}>{fmtDate(c.hs_sales_email_last_replied)}</span> },
