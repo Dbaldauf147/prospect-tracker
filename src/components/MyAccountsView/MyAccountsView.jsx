@@ -4,6 +4,7 @@ import { Badge } from '../common/Badge';
 import { DataTable } from '../common/DataTable';
 import { statusColor, formatAum } from '../../utils/formatters';
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE } from '../../data/enums';
+import * as XLSX from 'xlsx';
 import styles from './MyAccountsView.module.css';
 
 function InlineCell({ row, field, value, onUpdate, type, options }) {
@@ -570,6 +571,21 @@ function TierMismatchWarning({ row, onDismiss }) {
   );
 }
 
+function parseXlsx(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const wb = XLSX.read(e.target.result, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        resolve(XLSX.utils.sheet_to_json(ws));
+      } catch (err) { reject(err); }
+    };
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsArrayBuffer(file);
+  });
+}
+
 export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd, targetAccountsData, settings, updateSettings }) {
   const [search, setSearch] = useState('');
   const [filters, setFilters] = useState({});
@@ -626,6 +642,51 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
 
   function clearHqLocations() {
     updateSettings({ hqRegionMap: {} });
+  }
+
+  const zoomFileRef = useRef(null);
+  async function handleZoomImport(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const rows = await parseXlsx(file);
+      // Find the zoom company name and ID columns (flexible header matching)
+      const findCol = (row, keywords) => {
+        for (const key of Object.keys(row)) {
+          const lower = key.toLowerCase();
+          for (const kw of keywords) {
+            if (lower.includes(kw)) return key;
+          }
+        }
+        return null;
+      };
+      const sample = rows[0] || {};
+      const zoomNameCol = findCol(sample, ['zoom', 'company name', 'zooom']);
+      const zoomIdCol = findCol(sample, ['zoom company id', 'zoom id', 'company id']);
+      if (!zoomNameCol) { alert('Could not find Zoom Company Name column'); return; }
+
+      let matched = 0;
+      for (const row of rows) {
+        const zoomName = (row[zoomNameCol] || '').trim();
+        const zoomId = zoomIdCol ? String(row[zoomIdCol] || '').trim() : '';
+        if (!zoomName) continue;
+        // Find matching prospect
+        const prospect = prospects.find(p => companiesMatch(p.company, zoomName));
+        if (prospect) {
+          const updates = {};
+          if (zoomName && !prospect.zoomCompanyName) updates.zoomCompanyName = zoomName;
+          if (zoomId && !prospect.zoomCompanyId) updates.zoomCompanyId = zoomId;
+          if (Object.keys(updates).length > 0) {
+            onUpdate(prospect.id, updates);
+            matched++;
+          }
+        }
+      }
+      alert(`Zoom import complete: ${matched} accounts updated`);
+    } catch (err) {
+      alert('Import failed: ' + err.message);
+    }
+    e.target.value = '';
   }
 
   function toggleTargetMapping(companyId, targetName) {
@@ -1431,6 +1492,11 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
             Clear HQ Data
           </button>
         )}
+        <button
+          onClick={() => zoomFileRef.current?.click()}
+          style={{ padding: '0.25rem 0.6rem', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-accent)', whiteSpace: 'nowrap' }}
+        >Import Zoom Mapping</button>
+        <input ref={zoomFileRef} type="file" accept=".xlsx,.xls,.csv" style={{ display: 'none' }} onChange={handleZoomImport} />
         <span className={styles.resultCount}>{filteredAccounts.length} of {allAccounts.length}</span>
       </div>
       {targetAccounts.length > 0 && (() => {
