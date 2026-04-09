@@ -64,17 +64,53 @@ export function ProgressView({ prospects, settings }) {
         }
       } catch (err) { console.error('Failed to load progress:', err); }
 
-      // Load opps from Firestore first, then IndexedDB, then localStorage
+      // Load opps: try Google Sheet directly, then Firestore, then IndexedDB, then localStorage
       let records = [];
       try {
-        const oppsRef = doc(db, 'oppsData', user.uid);
-        const oppsSnap = await getDoc(oppsRef);
-        if (oppsSnap.exists()) {
-          const raw = oppsSnap.data();
-          const parsed = raw.json ? JSON.parse(raw.json) : raw;
-          records = parsed?.records || [];
+        const sheetRes = await fetch('https://docs.google.com/spreadsheets/d/1ee0OREqA25jzDaR6xRDSrj_ZIZDymQjf1k2Z2_ajVKw/export?format=csv&gid=0');
+        if (sheetRes.ok) {
+          const csvText = await sheetRes.text();
+          const lines = csvText.split('\n');
+          if (lines.length > 1) {
+            // Parse CSV
+            function parseLine(line) {
+              const fields = []; let current = ''; let inQ = false;
+              for (let i = 0; i < line.length; i++) {
+                const ch = line[i];
+                if (ch === '"') { inQ = !inQ; continue; }
+                if (ch === ',' && !inQ) { fields.push(current.trim()); current = ''; continue; }
+                current += ch;
+              }
+              fields.push(current.trim());
+              return fields;
+            }
+            const headers = parseLine(lines[0]);
+            for (let i = 1; i < lines.length; i++) {
+              if (!lines[i].trim()) continue;
+              const vals = parseLine(lines[i]);
+              const obj = {};
+              let hasData = false;
+              headers.forEach((h, j) => {
+                obj[h] = vals[j] || '';
+                if (obj[h] && obj[h] !== '-' && obj[h] !== '#N/A') hasData = true;
+              });
+              // Use first Stage column (skip duplicate)
+              if (hasData && obj['Account']) records.push(obj);
+            }
+          }
         }
       } catch {}
+      if (records.length === 0) {
+        try {
+          const oppsRef = doc(db, 'oppsData', user.uid);
+          const oppsSnap = await getDoc(oppsRef);
+          if (oppsSnap.exists()) {
+            const raw = oppsSnap.data();
+            const parsed = raw.json ? JSON.parse(raw.json) : raw;
+            records = parsed?.records || [];
+          }
+        } catch {}
+      }
       if (records.length === 0) {
         records = await loadOppsFromIndexedDB();
       }
@@ -84,6 +120,7 @@ export function ProgressView({ prospects, settings }) {
           records = cache?.records || [];
         } catch {}
       }
+      console.log(`Progress: loaded ${records.length} opps records`);
       setOppsRecordsState(records);
       setLoading(false);
     })();
