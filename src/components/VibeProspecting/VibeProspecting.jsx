@@ -170,7 +170,9 @@ export function VibeProspecting({ prospects = [], onUpdate }) {
     }
   }
 
-  // Push to HubSpot
+  const [uploadReport, setUploadReport] = useState(null);
+
+  // Push to HubSpot with deduplication
   async function handlePushToHubSpot() {
     if (selected.size === 0) {
       setError('Select at least one prospect to push to HubSpot.');
@@ -179,30 +181,75 @@ export function VibeProspecting({ prospects = [], onUpdate }) {
     setError('');
     setSuccess('');
     setPushing(true);
+    setUploadReport(null);
     try {
-      const contacts = results.filter((_, i) => selected.has(i)).map(r => ({
-        firstName: r.first_name || r.firstName || '',
-        lastName: r.last_name || r.lastName || '',
-        email: r.email || '',
-        phone: r.phone_number || r.phone || '',
-        title: r.title || r.job_title || '',
-        company: r.company || r.organization_name || r.company_name || '',
-        linkedinUrl: r.linkedin_url || r.linkedinUrl || '',
-        city: r.city || '',
-        state: r.state || '',
-        country: r.country || '',
-      }));
-      const res = await fetch('/api/hubspot?action=push-contacts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contacts }),
-      });
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || `Push failed (${res.status})`);
+      // Fetch existing HubSpot contacts for dedup
+      let existingEmails = new Set();
+      let existingNames = new Set();
+      try {
+        const hubRes = await fetch('/api/hubspot?action=contacts');
+        const hubData = await hubRes.json();
+        for (const c of (hubData.contacts || [])) {
+          if (c.email) existingEmails.add(c.email.toLowerCase().trim());
+          const name = [c.firstname, c.lastname].filter(Boolean).join(' ').toLowerCase().trim();
+          if (name) existingNames.add(name);
+        }
+      } catch {}
+
+      const selectedContacts = results.filter((_, i) => selected.has(i));
+      const toCreate = [];
+      const skipped = [];
+
+      for (const r of selectedContacts) {
+        const email = (r.email || '').toLowerCase().trim();
+        const name = [r.first_name || r.firstName || '', r.last_name || r.lastName || ''].filter(Boolean).join(' ').toLowerCase().trim();
+
+        if (email && existingEmails.has(email)) {
+          skipped.push({ name: name || email, email, reason: 'Duplicate email' });
+        } else if (name && existingNames.has(name)) {
+          skipped.push({ name, email, reason: 'Duplicate name' });
+        } else {
+          toCreate.push({
+            firstName: r.first_name || r.firstName || '',
+            lastName: r.last_name || r.lastName || '',
+            email: r.email || '',
+            phone: r.phone_number || r.phone || '',
+            title: r.title || r.job_title || '',
+            company: r.company || r.organization_name || r.company_name || '',
+            linkedinUrl: r.linkedin_url || r.linkedinUrl || '',
+            city: r.city || '',
+            state: r.state || '',
+            country: r.country || '',
+          });
+          if (email) existingEmails.add(email); // prevent dupes within batch
+          if (name) existingNames.add(name);
+        }
       }
-      const data = await res.json();
-      setSuccess(`Successfully pushed ${data.created || contacts.length} contact(s) to HubSpot.`);
+
+      let created = 0;
+      const failed = [];
+      if (toCreate.length > 0) {
+        const res = await fetch('/api/hubspot?action=push-contacts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contacts: toCreate }),
+        });
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || `Push failed (${res.status})`);
+        }
+        const data = await res.json();
+        created = data.created || toCreate.length;
+        if (data.errors) {
+          for (const err of data.errors) {
+            failed.push({ name: err.contact || '', email: err.email || '', reason: err.message || 'API error' });
+          }
+        }
+      }
+
+      const report = { created, skipped, failed, total: selectedContacts.length };
+      setUploadReport(report);
+      setSuccess(`Pushed ${created} contact(s) to HubSpot. ${skipped.length} duplicates skipped. ${failed.length} failed.`);
       setSelected(new Set());
     } catch (err) {
       setError(err.message);
@@ -495,6 +542,39 @@ export function VibeProspecting({ prospects = [], onUpdate }) {
 
       {error && <div className={styles.error}>{error}</div>}
       {success && <div className={styles.success}>{success}</div>}
+
+      {/* Upload Report */}
+      {uploadReport && (uploadReport.skipped.length > 0 || uploadReport.failed.length > 0) && (
+        <div style={{ margin: '0.5rem 0 1rem', padding: '0.75rem', border: '1px solid var(--color-border)', borderRadius: '8px', background: 'var(--color-surface)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+            <h4 style={{ margin: 0, fontSize: '0.8rem', fontWeight: 700, color: 'var(--color-text)' }}>
+              Upload Report: {uploadReport.created} created, {uploadReport.skipped.length} skipped, {uploadReport.failed.length} failed
+            </h4>
+            <button
+              onClick={() => {
+                const rows = [['Name', 'Email', 'Reason']];
+                for (const s of uploadReport.skipped) rows.push([s.name, s.email, s.reason]);
+                for (const f of uploadReport.failed) rows.push([f.name, f.email, f.reason]);
+                const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+                const blob = new Blob([csv], { type: 'text/csv' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = 'upload_report.csv'; a.click();
+                URL.revokeObjectURL(url);
+              }}
+              style={{ padding: '0.25rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', background: 'var(--color-surface)', color: 'var(--color-accent)' }}
+            >Download Report CSV</button>
+          </div>
+          <div style={{ maxHeight: '200px', overflowY: 'auto', fontSize: '0.72rem' }}>
+            {uploadReport.skipped.map((s, i) => (
+              <div key={`s${i}`} style={{ padding: '2px 0', color: '#F59E0B' }}>⚠ {s.name} ({s.email}) — {s.reason}</div>
+            ))}
+            {uploadReport.failed.map((f, i) => (
+              <div key={`f${i}`} style={{ padding: '2px 0', color: '#DC2626' }}>✗ {f.name} ({f.email}) — {f.reason}</div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Search Criteria Form */}
       <div className={styles.formSection}>
