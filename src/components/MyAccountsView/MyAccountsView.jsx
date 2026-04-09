@@ -1030,12 +1030,12 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     return { activeOppsByAccount: active, totalOppsByAccount: total, openOppsByAccount: open, suggestedStatusByAccount: suggested };
   }, [oppsRecords]);
 
-  // Auto-create prospects for opps companies not already in Table View
+  // Auto-create prospects for opps companies with OPEN opps not already in Table View
   useEffect(() => {
-    if (!onAdd || Object.keys(totalOppsByAccount).length === 0 || prospects.length === 0) return;
+    if (!onAdd || Object.keys(openOppsByAccount).length === 0 || prospects.length === 0) return;
     const existingLower = new Set(prospects.map(p => (p.company || '').toLowerCase()));
     const missing = [];
-    for (const oppsCompany of Object.keys(totalOppsByAccount)) {
+    for (const oppsCompany of Object.keys(openOppsByAccount)) {
       if (!oppsCompany) continue;
       let found = false;
       for (const existing of existingLower) {
@@ -1054,7 +1054,28 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         onAdd({ company, status: 'Inside Sales', tier: '', type: '', geography: '', publicPrivate: '', assetTypes: [], peAum: null, reAum: null, numberOfSites: null, rank: '', hqRegion: '', frameworks: [], notes: '', website: '', emailDomain: '', cdm: 'Dan Baldauf' });
       }
     }
-  }, [totalOppsByAccount, prospects.length]);
+  }, [openOppsByAccount, prospects.length]);
+
+  // Clean up auto-created prospects that no longer have open opps and have no tier
+  useEffect(() => {
+    if (!onDelete || Object.keys(openOppsByAccount).length === 0 || prospects.length === 0) return;
+    for (const p of prospects) {
+      // Only clean up accounts with no tier set (auto-created Tier 3 candidates)
+      if (p.tier) continue;
+      const companyLower = (p.company || '').toLowerCase();
+      let hasOpenOpp = false;
+      for (const [oppsCompany, count] of Object.entries(openOppsByAccount)) {
+        if (count > 0 && companiesMatch(companyLower, oppsCompany)) { hasOpenOpp = true; break; }
+      }
+      if (!hasOpenOpp) {
+        // Check if it has any data worth keeping (contacts, notes, etc.)
+        if (!p.notes && !p.website && !p.emailDomain && !p.zoomCompanyName) {
+          console.log(`Cleaning up auto-created prospect: ${p.company}`);
+          onDelete(p.id);
+        }
+      }
+    }
+  }, [openOppsByAccount, prospects.length]);
 
   // Build source maps: which companies exist in each data source
   const BUCKET_TAGS = ['esg', 'procurement', 'utilities', 'climate risk', 'capital planning'];
