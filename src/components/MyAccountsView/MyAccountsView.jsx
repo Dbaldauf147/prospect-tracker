@@ -892,7 +892,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
 
       // Track stage breakdown for status suggestion
       if (!stagesByAccount[account]) stagesByAccount[account] = { sold: 0, notSold: 0, active: 0 };
-      const invalidStages = new Set(['#N/A', '#REF!', '#VALUE!', '#ERROR!', 'N/A', 'n/a', '-', '', 'Not Started', 'not started']);
+      const invalidStages = new Set(['#N/A', '#REF!', '#VALUE!', '#ERROR!', 'N/A', 'n/a', '-', '']);
       const stageLower = stage.toLowerCase();
       if (stageLower === 'sold' || stageLower === 'won' || stageLower === 'closed won' || stageLower === 'sold - won') {
         stagesByAccount[account].sold++;
@@ -903,12 +903,10 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       }
 
       // Existing active/total logic
-      if (closedStages.has(stage)) continue;
-      const openYear = (r['Open Year'] || '').trim();
-      if (!/^\d{4}$/.test(openYear)) continue;
+      if (closedStages.has(stage) || invalidStages.has(stage)) continue;
       total[account] = (total[account] || 0) + 1;
       const callIn = (r['Call In'] || '').trim();
-      if (callIn && callIn !== '-') {
+      if (callIn && callIn !== '-' && callIn !== '0') {
         active[account] = (active[account] || 0) + 1;
       }
     }
@@ -1026,14 +1024,14 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
           }
         }
       }
-      // If no tier, check if the company has active opps (with Call In) — if so, include as Tier 2
+      // If no tier, check if the company has any open opps — if so, include as Tier 3
       if (!tier) {
         const companyLower = (p.company || '').toLowerCase();
-        let hasActiveOpp = false;
-        for (const [oppsCompany, count] of Object.entries(activeOppsByAccount)) {
-          if (count > 0 && companiesMatch(companyLower, oppsCompany)) { hasActiveOpp = true; break; }
+        let hasOpenOpp = false;
+        for (const [oppsCompany, count] of Object.entries(totalOppsByAccount)) {
+          if (count > 0 && companiesMatch(companyLower, oppsCompany)) { hasOpenOpp = true; break; }
         }
-        if (!hasActiveOpp) continue;
+        if (!hasOpenOpp) continue;
         tier = 'Tier 3';
       }
       const cdm = (p.cdm || '').toLowerCase().trim();
