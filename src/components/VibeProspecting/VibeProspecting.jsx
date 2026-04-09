@@ -242,35 +242,54 @@ export function VibeProspecting({ prospects = [] }) {
     e.target.value = '';
   }
 
-  // Zoom Contact Upload
+  // Zoom Contact Upload — maps ZoomInfo CSV to HubSpot contact fields
   function handleContactUpload(e) {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (evt) => {
       try {
-        const wb = XLSX.read(evt.target.result, { type: 'array' });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        const rows = XLSX.utils.sheet_to_json(ws);
+        // Handle both CSV and XLSX
+        let rows;
+        if (file.name.endsWith('.csv')) {
+          const text = new TextDecoder().decode(evt.target.result);
+          const parsed = parseCSV(text);
+          if (parsed.length < 2) { setError('No data found'); return; }
+          const headers = parsed[0].map(h => h.trim());
+          rows = [];
+          for (let i = 1; i < parsed.length; i++) {
+            const obj = {};
+            headers.forEach((h, j) => { obj[h] = (parsed[i][j] || '').trim(); });
+            rows.push(obj);
+          }
+        } else {
+          const wb = XLSX.read(evt.target.result, { type: 'array' });
+          const ws = wb.Sheets[wb.SheetNames[0]];
+          rows = XLSX.utils.sheet_to_json(ws);
+        }
         if (rows.length === 0) { setError('No data found'); return; }
         const headers = Object.keys(rows[0]);
-        // Map to results format for the table
-        const mapped = rows.map(r => {
-          const find = (...keys) => { for (const k of keys) { for (const [col, val] of Object.entries(r)) { if (col.toLowerCase().includes(k) && val) return String(val); } } return ''; };
-          return {
-            first_name: find('first name', 'first_name', 'firstname'),
-            last_name: find('last name', 'last_name', 'lastname'),
-            name: [find('first name', 'first_name', 'firstname'), find('last name', 'last_name', 'lastname')].filter(Boolean).join(' ') || find('full name', 'contact name', 'name'),
-            title: find('job title', 'title', 'job_title'),
-            company: find('company name', 'company', 'organization'),
-            email: find('email address', 'email', 'e-mail'),
-            phone: find('direct phone', 'phone number', 'phone', 'mobile'),
-            city: find('city'),
-            state: find('state', 'province', 'region'),
-            country: find('country'),
-            linkedin_url: find('linkedin', 'linkedin url'),
-          };
-        }).filter(r => r.name || r.first_name || r.email);
+
+        // ZoomInfo → HubSpot field mapping
+        const mapped = rows.map(r => ({
+          first_name: r['First Name'] || '',
+          last_name: r['Last Name'] || '',
+          name: [r['First Name'], r['Last Name']].filter(Boolean).join(' '),
+          title: r['Job Title'] || '',
+          company: r['Company Name'] || '',
+          email: r['Email Address'] || '',
+          phone: r['Direct Phone Number'] || r['Mobile phone'] || '',
+          city: r['Person City'] || '',
+          state: r['Person State'] || '',
+          country: r['Country'] || '',
+          linkedin_url: r['LinkedIn Contact Profile URL'] || '',
+          // Extra ZoomInfo fields for reference
+          zoomContactId: r['ZoomInfo Contact ID'] || '',
+          zoomCompanyId: r['ZoomInfo Company ID'] || '',
+          managementLevel: r['Management Level'] || '',
+          department: r['Department'] || '',
+          website: r['Website'] || '',
+        })).filter(r => r.email || r.name);
 
         setContactUploadResult({ rows: mapped, headers, fileName: file.name });
         setResults(mapped);
@@ -810,9 +829,12 @@ export function VibeProspecting({ prospects = [] }) {
         {/* Zoom Contact Upload */}
         <div style={{ border: '1px solid var(--color-border)', borderRadius: '8px', padding: '1rem' }}>
           <h3 style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--color-text)', margin: '0 0 0.5rem 0' }}>Zoom Contact Upload</h3>
-          <p style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)', margin: '0 0 0.75rem 0' }}>
-            Upload a ZoomInfo contact export. Contacts will appear in the results table below where you can review and push to HubSpot.
+          <p style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)', margin: '0 0 0.5rem 0' }}>
+            Upload a ZoomInfo contact export (.csv or .xlsx). Contacts load into the table above for review, then push to HubSpot.
           </p>
+          <div style={{ fontSize: '0.65rem', color: '#9CA3AF', marginBottom: '0.75rem' }}>
+            Maps: First Name, Last Name, Job Title, Company Name, Email Address, Direct Phone Number, LinkedIn Contact Profile URL, City, State, Country
+          </div>
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
             <button
               onClick={() => contactFileRef.current?.click()}
