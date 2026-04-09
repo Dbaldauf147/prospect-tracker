@@ -227,24 +227,34 @@ function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS }
     setError(null);
     try {
       const props = { ...f, dans_tags: buildTagsString() };
-      const res = await fetch('/api/hubspot?action=update-contact', {
+      const isNew = !contact.id && !contact.vid;
+      const action = isNew ? 'create-contact' : 'update-contact';
+      const body = isNew
+        ? { properties: props }
+        : { contactId: contact.id || contact.vid, properties: props };
+      const res = await fetch(`/api/hubspot?action=${action}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contactId: contact.id || contact.vid, properties: props }),
+        body: JSON.stringify(body),
       });
       const json = await res.json();
       if (json.error) throw new Error(json.error);
-      // Update localStorage cache so changes show immediately
+      const savedContact = isNew ? { id: json.id, ...props } : { ...contact, ...props };
+      // Update localStorage cache
       try {
         const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
         if (cache?.contacts) {
-          const idx = cache.contacts.findIndex(c => String(c.id || c.vid) === String(contact.id || contact.vid));
-          if (idx !== -1) cache.contacts[idx] = { ...cache.contacts[idx], ...props };
+          if (isNew) {
+            cache.contacts.push(savedContact);
+          } else {
+            const idx = cache.contacts.findIndex(c => String(c.id || c.vid) === String(contact.id || contact.vid));
+            if (idx !== -1) cache.contacts[idx] = { ...cache.contacts[idx], ...props };
+          }
           localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache));
           window.dispatchEvent(new Event('hubspot-cache-updated'));
         }
       } catch {}
-      onSave({ ...contact, ...props });
+      onSave(savedContact);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (err) {
@@ -261,7 +271,7 @@ function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS }
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={e => { e.stopPropagation(); onClose(); }}>
       <div style={{ background: '#fff', borderRadius: '12px', padding: '1.5rem', width: '480px', maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-          <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: '#1E293B' }}>Edit HubSpot Contact</h3>
+          <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: '#1E293B' }}>{(!contact.id && !contact.vid) ? 'New HubSpot Contact' : 'Edit HubSpot Contact'}</h3>
           <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '1.2rem', color: '#94A3B8', cursor: 'pointer', lineHeight: 1 }}>×</button>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
@@ -316,7 +326,7 @@ function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS }
         <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1.25rem' }}>
           <button onClick={onClose} style={{ padding: '0.5rem 1rem', border: '1px solid #E2E8F0', borderRadius: '6px', background: '#fff', fontSize: '0.8rem', fontFamily: 'inherit', cursor: 'pointer', color: '#64748B' }}>Cancel</button>
           <button onClick={handleSave} disabled={saving || saved} style={{ padding: '0.5rem 1rem', border: 'none', borderRadius: '6px', background: saved ? '#059669' : '#0078D4', color: '#fff', fontSize: '0.8rem', fontFamily: 'inherit', cursor: saving ? 'wait' : 'pointer', fontWeight: 600, transition: 'background 0.2s' }}>
-            {saving ? 'Saving…' : saved ? '✓ Saved!' : 'Save to HubSpot'}
+            {saving ? 'Saving…' : saved ? '✓ Saved!' : (!contact.id && !contact.vid) ? 'Create in HubSpot' : 'Save to HubSpot'}
           </button>
         </div>
       </div>
@@ -356,11 +366,18 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
 
   const [contactView, setContactView] = useState('table'); // 'table' | 'orgchart'
   const [editingContact, setEditingContact] = useState(null);
+  const [addingContact, setAddingContact] = useState(false);
   const [showSaved, setShowSaved] = useState(false);
   const [deletingContact, setDeletingContact] = useState(null);
 
   function handleContactSaved(updated) {
-    setLocalContacts(prev => prev.map(c => (String(c.id || c.vid) === String(updated.id || updated.vid) ? { ...c, ...updated } : c)));
+    if (addingContact) {
+      // New contact — add to local list
+      setLocalContacts(prev => [...prev, updated]);
+      setAddingContact(false);
+    } else {
+      setLocalContacts(prev => prev.map(c => (String(c.id || c.vid) === String(updated.id || updated.vid) ? { ...c, ...updated } : c)));
+    }
     setEditingContact(null);
   }
 
@@ -673,6 +690,10 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                     style={{ padding: '0.2rem 0.6rem', border: 'none', borderRadius: '4px', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', background: contactView === 'orgchart' ? '#fff' : 'transparent', color: contactView === 'orgchart' ? '#1E293B' : '#94A3B8', boxShadow: contactView === 'orgchart' ? '0 1px 2px rgba(0,0,0,0.08)' : 'none' }}
                   >By Category</button>
                 </div>
+                <button
+                  onClick={() => { setAddingContact(true); setEditingContact({ company: fields.company, firstname: '', lastname: '', email: '', phone: '', jobtitle: '', hs_linkedin_url: '', dans_tags: '' }); }}
+                  style={{ marginLeft: 'auto', padding: '0.2rem 0.6rem', border: 'none', borderRadius: '4px', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', background: 'var(--color-accent)', color: '#fff' }}
+                >+ Add Contact</button>
               </div>
 
               {contactView === 'orgchart' ? (
@@ -767,7 +788,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
         <ContactEditModal
           contact={editingContact}
           onSave={handleContactSaved}
-          onClose={() => setEditingContact(null)}
+          onClose={() => { setEditingContact(null); setAddingContact(false); }}
           tagOptions={allTagOptions}
         />
       )}
