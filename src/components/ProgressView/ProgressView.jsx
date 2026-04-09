@@ -92,8 +92,11 @@ export function ProgressView({ prospects, settings }) {
               const obj = {};
               let hasData = false;
               headers.forEach((h, j) => {
-                obj[h] = vals[j] || '';
-                if (obj[h] && obj[h] !== '-' && obj[h] !== '#N/A') hasData = true;
+                const val = (vals[j] || '').trim();
+                // For duplicate headers, keep the first non-empty value
+                if (obj[h] !== undefined && obj[h] !== '' && obj[h] !== '-' && obj[h] !== '#N/A') return;
+                obj[h] = val;
+                if (val && val !== '-' && val !== '#N/A') hasData = true;
               });
               // Use first Stage column (skip duplicate)
               if (hasData && obj['Account']) records.push(obj);
