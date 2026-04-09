@@ -109,7 +109,7 @@ function App() {
           ) : view === 'campaigns' ? (
             <EmailCampaignView />
           ) : view === 'vibe' ? (
-            <VibeProspecting prospects={prospects} />
+            <VibeProspecting prospects={prospects} onUpdate={updateProspect} />
           ) : view === 'dedupe' ? (
             <DedupeView />
           ) : view === 'privacy' ? (

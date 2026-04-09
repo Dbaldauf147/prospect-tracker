@@ -89,7 +89,25 @@ function saveTitlePresets(presets) {
   localStorage.setItem(TITLE_PRESETS_KEY, JSON.stringify(presets));
 }
 
-export function VibeProspecting({ prospects = [] }) {
+function companiesMatch(a, b) {
+  const na = (a || '').toLowerCase().trim();
+  const nb = (b || '').toLowerCase().trim();
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  const longer = na.length >= nb.length ? na : nb;
+  const shorter = na.length >= nb.length ? nb : na;
+  if (shorter.length >= 4 && shorter.length >= longer.length * 0.6 && longer.includes(shorter)) return true;
+  const strip = s => s.replace(/\b(inc|llc|ltd|corp|co|lp)\b\.?/gi, '').replace(/[^a-z0-9 ]/g, '').trim();
+  const sa = strip(na);
+  const sb = strip(nb);
+  if (sa === sb) return true;
+  const sLonger = sa.length >= sb.length ? sa : sb;
+  const sShorter = sa.length >= sb.length ? sb : sa;
+  if (sShorter.length >= 4 && sShorter.length >= sLonger.length * 0.6 && sLonger.includes(sShorter)) return true;
+  return false;
+}
+
+export function VibeProspecting({ prospects = [], onUpdate }) {
   const [filters, setFilters] = useState(getInitialFilters);
   const [results, setResults] = useState([]);
   const [selected, setSelected] = useState(new Set());
@@ -222,20 +240,70 @@ export function VibeProspecting({ prospects = [] }) {
     saveHistory(updated);
   }
 
-  // Zoom Company Upload
+  // Zoom Company Upload — overwrites Zoom data in prospects
   function handleCompanyUpload(e) {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file || !onUpdate) return;
+    setError('');
     const reader = new FileReader();
     reader.onload = (evt) => {
       try {
-        const wb = XLSX.read(evt.target.result, { type: 'array' });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        const rows = XLSX.utils.sheet_to_json(ws);
+        let rows;
+        if (file.name.endsWith('.csv')) {
+          const text = new TextDecoder().decode(evt.target.result);
+          const parsed = parseCSV(text);
+          if (parsed.length < 2) { setError('No data found'); return; }
+          const headers = parsed[0].map(h => h.trim());
+          rows = [];
+          for (let i = 1; i < parsed.length; i++) {
+            const obj = {};
+            headers.forEach((h, j) => { obj[h] = (parsed[i][j] || '').trim(); });
+            rows.push(obj);
+          }
+        } else {
+          const wb = XLSX.read(evt.target.result, { type: 'array' });
+          const ws = wb.Sheets[wb.SheetNames[0]];
+          rows = XLSX.utils.sheet_to_json(ws);
+        }
         if (rows.length === 0) { setError('No data found'); return; }
         const headers = Object.keys(rows[0]);
-        setCompanyUploadResult({ rows, headers, fileName: file.name });
-        setSuccess(`Company file loaded: ${rows.length} rows, ${headers.length} columns`);
+
+        // Find columns flexibly
+        const findCol = (keywords) => {
+          for (const h of headers) {
+            const lower = h.toLowerCase();
+            for (const kw of keywords) { if (lower.includes(kw)) return h; }
+          }
+          return null;
+        };
+        const accountCol = findCol(["dan's account", 'account name', 'account', 'my account']);
+        const zoomNameCol = findCol(['zoom company name', 'zooom company name', 'zoom name']);
+        const zoomIdCol = findCol(['zoom company id', 'zoom id', 'company id']);
+        const websiteCol = findCol(['website', 'url', 'domain']);
+
+        let matched = 0;
+        for (const row of rows) {
+          const accountName = accountCol ? (row[accountCol] || '').trim() : '';
+          const zoomName = zoomNameCol ? (row[zoomNameCol] || '').trim() : '';
+          const zoomId = zoomIdCol ? String(row[zoomIdCol] || '').trim() : '';
+          const website = websiteCol ? (row[websiteCol] || '').trim() : '';
+          const matchName = accountName || zoomName;
+          if (!matchName) continue;
+
+          const prospect = prospects.find(p => companiesMatch(p.company, matchName));
+          if (prospect) {
+            const updates = {};
+            if (zoomName) updates.zoomCompanyName = zoomName;
+            if (zoomId) updates.zoomCompanyId = zoomId;
+            if (website && !prospect.website) updates.website = website;
+            if (Object.keys(updates).length > 0) {
+              onUpdate(prospect.id, updates);
+              matched++;
+            }
+          }
+        }
+        setCompanyUploadResult({ rows, headers, fileName: file.name, matched });
+        setSuccess(`Zoom company import complete: ${matched} accounts updated from ${file.name}`);
       } catch (err) { setError('Failed to parse file: ' + err.message); }
     };
     reader.readAsArrayBuffer(file);
@@ -803,8 +871,11 @@ export function VibeProspecting({ prospects = [] }) {
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
             <button
               onClick={() => {
-                const companies = prospects.filter(p => p.company).map(p => p.company).sort();
-                const wsData = [["Dan's Account Name", 'Zoom Company Name', 'Website', 'Zoom Company ID'], ...companies.map(c => [c, '', '', ''])];
+                const sorted = prospects.filter(p => p.company).sort((a, b) => (a.company || '').localeCompare(b.company || ''));
+                const wsData = [
+                  ["Dan's Account Name", 'Zoom Company Name', 'Website', 'Zoom Company ID'],
+                  ...sorted.map(p => [p.company, p.zoomCompanyName || '', p.website || '', p.zoomCompanyId || '']),
+                ];
                 const ws = XLSX.utils.aoa_to_sheet(wsData);
                 ws['!cols'] = [{ wch: 35 }, { wch: 35 }, { wch: 30 }, { wch: 20 }];
                 const wb = XLSX.utils.book_new();
