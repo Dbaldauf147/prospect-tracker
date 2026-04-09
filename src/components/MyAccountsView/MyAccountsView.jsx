@@ -156,6 +156,10 @@ const ACCOUNT_COLUMNS = [
   { key: 'frameworks', label: 'Frameworks', defaultWidth: 140, render: (row) => (row.frameworks || []).join(', ') || '—' },
   { key: 'hqRegion', label: 'HQ Region', defaultWidth: 130 },
   { key: 'naRegion', label: 'HQ Location', defaultWidth: 180, render: null },
+  { key: 'bfoCompanyId', label: 'BFO Company ID', defaultWidth: 120 },
+  { key: 'bfoCompanyName', label: 'BFO Company Name', defaultWidth: 180 },
+  { key: 'zoomCompanyId', label: 'Zoom Company ID', defaultWidth: 120 },
+  { key: 'zoomCompanyName', label: 'Zoom Company Name', defaultWidth: 180 },
   { key: 'cdm', label: 'CDM', defaultWidth: 120 },
   { key: 'notes', label: 'Notes', defaultWidth: 200 },
   { key: 'contactCount', label: 'Contacts', defaultWidth: 80, render: (row) => row.contactCount > 0 ? <span style={{ fontWeight: 700, color: '#0891B2' }}>{row.contactCount}</span> : <span style={{ color: 'var(--color-text-muted)' }}>0</span> },
@@ -1344,6 +1348,18 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
             >{val || 'Click to set'}</span>
           );
         }};
+      }
+      if (col.key === 'bfoCompanyId') {
+        return { ...col, render: (row) => <InlineCell row={row} field="bfoCompanyId" value={row.bfoCompanyId} onUpdate={onUpdate} /> };
+      }
+      if (col.key === 'bfoCompanyName') {
+        return { ...col, render: (row) => <InlineCell row={row} field="bfoCompanyName" value={row.bfoCompanyName} onUpdate={onUpdate} /> };
+      }
+      if (col.key === 'zoomCompanyId') {
+        return { ...col, render: (row) => <InlineCell row={row} field="zoomCompanyId" value={row.zoomCompanyId} onUpdate={onUpdate} /> };
+      }
+      if (col.key === 'zoomCompanyName') {
+        return { ...col, render: (row) => <InlineCell row={row} field="zoomCompanyName" value={row.zoomCompanyName} onUpdate={onUpdate} /> };
       }
       if (col.key === 'cdm') {
         return { ...col, render: (row) => <InlineCell row={row} field="cdm" value={row.cdm} onUpdate={onUpdate} /> };
