@@ -177,12 +177,16 @@ export function ProgressView({ prospects, settings }) {
 
     // Match the Opps column logic: account has opps if totalOppsByAccount > 0 (fuzzy match)
     function hasOpp(company) {
-      const lower = (company || '').toLowerCase();
+      const lower = (company || '').toLowerCase().trim();
       // Exact match
       if (totalOppsByAccount[lower] > 0) return true;
-      // Fuzzy match
+      // Fuzzy match + parent company match (e.g. "Brookfield Asset Management" matches "Brookfield (X)")
+      const firstWord = lower.split(/\s/)[0];
       for (const [oppsCompany, count] of Object.entries(totalOppsByAccount)) {
-        if (count > 0 && companiesMatch(lower, oppsCompany)) return true;
+        if (count <= 0) continue;
+        if (companiesMatch(lower, oppsCompany)) return true;
+        // Check if they share the same parent name (first word match + one starts with the other's first word)
+        if (firstWord.length >= 4 && oppsCompany.startsWith(firstWord)) return true;
       }
       return false;
     }
