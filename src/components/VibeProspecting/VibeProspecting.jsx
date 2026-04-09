@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
+import * as XLSX from 'xlsx';
 import styles from './VibeProspecting.module.css';
 
 const INDUSTRY_OPTIONS = [
@@ -603,6 +604,24 @@ export function VibeProspecting({ prospects = [] }) {
                 style={{ display: 'none' }}
                 onChange={handleCSVImport}
               />
+              <button
+                className={styles.clearBtn}
+                onClick={() => {
+                  const companies = prospects.filter(p => p.company).map(p => p.company).sort();
+                  const wsData = [
+                    ["Dan's Account Name", 'Zoom Company Name', 'Website', 'Zoom Company ID'],
+                    ...companies.map(c => [c, '', '', '']),
+                  ];
+                  const ws = XLSX.utils.aoa_to_sheet(wsData);
+                  // Set column widths
+                  ws['!cols'] = [{ wch: 35 }, { wch: 35 }, { wch: 30 }, { wch: 20 }];
+                  const wb = XLSX.utils.book_new();
+                  XLSX.utils.book_append_sheet(wb, ws, 'Zoom Company Upload');
+                  XLSX.writeFile(wb, 'Zoom_Company_Upload_Template.xlsx');
+                }}
+              >
+                Download Zoom Template
+              </button>
               <button className={styles.clearBtn} onClick={clearFilters}>
                 Clear Filters
               </button>
