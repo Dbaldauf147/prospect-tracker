@@ -939,6 +939,32 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     return { activeOppsByAccount: active, totalOppsByAccount: total, suggestedStatusByAccount: suggested };
   }, [oppsRecords]);
 
+  // Auto-create prospects for opps companies not already in Table View
+  useEffect(() => {
+    if (!onAdd || Object.keys(totalOppsByAccount).length === 0 || prospects.length === 0) return;
+    const existingLower = new Set(prospects.map(p => (p.company || '').toLowerCase()));
+    const missing = [];
+    for (const oppsCompany of Object.keys(totalOppsByAccount)) {
+      if (!oppsCompany) continue;
+      let found = false;
+      for (const existing of existingLower) {
+        if (companiesMatch(existing, oppsCompany)) { found = true; break; }
+      }
+      if (!found) {
+        // Find the original cased name from opps records
+        const original = oppsRecords.find(r => (r['Account'] || '').toLowerCase() === oppsCompany);
+        const name = original ? original['Account'] : oppsCompany;
+        missing.push(name);
+      }
+    }
+    if (missing.length > 0) {
+      console.log(`Auto-creating ${missing.length} prospects from opps:`, missing);
+      for (const company of missing) {
+        onAdd({ company, status: 'Inside Sales', tier: '', type: '', geography: '', publicPrivate: '', assetTypes: [], peAum: null, reAum: null, numberOfSites: null, rank: '', hqRegion: '', frameworks: [], notes: '', website: '', emailDomain: '', cdm: 'Dan Baldauf' });
+      }
+    }
+  }, [totalOppsByAccount, prospects.length]);
+
   // Build source maps: which companies exist in each data source
   const BUCKET_TAGS = ['esg', 'procurement', 'utilities', 'climate risk', 'capital planning'];
 
