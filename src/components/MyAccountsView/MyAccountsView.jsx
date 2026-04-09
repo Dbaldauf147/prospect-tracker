@@ -988,12 +988,15 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         stagesByAccount[account].active++;
       }
 
-      // Existing active/total logic
-      if (closedStages.has(stage) || invalidStages.has(stage)) continue;
-      total[account] = (total[account] || 0) + 1;
-      const callIn = (r['Call In'] || '').trim();
-      if (callIn && callIn !== '-' && callIn !== '0') {
-        active[account] = (active[account] || 0) + 1;
+      // Count all opps (including closed) in total, only open in active
+      if (!invalidStages.has(stage)) {
+        total[account] = (total[account] || 0) + 1;
+      }
+      if (!closedStages.has(stage) && !invalidStages.has(stage)) {
+        const callIn = (r['Call In'] || '').trim();
+        if (callIn && callIn !== '-' && callIn !== '0') {
+          active[account] = (active[account] || 0) + 1;
+        }
       }
     }
 
