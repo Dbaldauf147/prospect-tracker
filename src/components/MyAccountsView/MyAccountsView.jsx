@@ -645,48 +645,69 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   }
 
   const zoomFileRef = useRef(null);
-  async function handleZoomImport(e) {
+  const [zoomImportPreview, setZoomImportPreview] = useState(null); // { rows, headers, mapping }
+
+  const ZOOM_FIELDS = [
+    { key: 'zoomCompanyName', label: 'Zoom Company Name', keywords: ['zoom', 'company name', 'zooom'] },
+    { key: 'zoomCompanyId', label: 'Zoom Company ID', keywords: ['zoom company id', 'zoom id', 'company id'] },
+    { key: 'matchCompany', label: 'Match to Account Name', keywords: ["dan's account", 'account name', 'account', 'company'] },
+    { key: 'website', label: 'Website', keywords: ['website', 'url', 'domain'] },
+  ];
+
+  async function handleZoomFileSelect(e) {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
       const rows = await parseXlsx(file);
-      // Find the zoom company name and ID columns (flexible header matching)
-      const findCol = (row, keywords) => {
-        for (const key of Object.keys(row)) {
-          const lower = key.toLowerCase();
-          for (const kw of keywords) {
-            if (lower.includes(kw)) return key;
+      if (rows.length === 0) { alert('No data found'); return; }
+      const headers = Object.keys(rows[0]);
+      // Auto-detect mapping
+      const mapping = {};
+      for (const field of ZOOM_FIELDS) {
+        let best = '';
+        for (const h of headers) {
+          const lower = h.toLowerCase();
+          for (const kw of field.keywords) {
+            if (lower.includes(kw)) { best = h; break; }
           }
+          if (best) break;
         }
-        return null;
-      };
-      const sample = rows[0] || {};
-      const zoomNameCol = findCol(sample, ['zoom', 'company name', 'zooom']);
-      const zoomIdCol = findCol(sample, ['zoom company id', 'zoom id', 'company id']);
-      if (!zoomNameCol) { alert('Could not find Zoom Company Name column'); return; }
-
-      let matched = 0;
-      for (const row of rows) {
-        const zoomName = (row[zoomNameCol] || '').trim();
-        const zoomId = zoomIdCol ? String(row[zoomIdCol] || '').trim() : '';
-        if (!zoomName) continue;
-        // Find matching prospect
-        const prospect = prospects.find(p => companiesMatch(p.company, zoomName));
-        if (prospect) {
-          const updates = {};
-          if (zoomName && !prospect.zoomCompanyName) updates.zoomCompanyName = zoomName;
-          if (zoomId && !prospect.zoomCompanyId) updates.zoomCompanyId = zoomId;
-          if (Object.keys(updates).length > 0) {
-            onUpdate(prospect.id, updates);
-            matched++;
-          }
-        }
+        mapping[field.key] = best;
       }
-      alert(`Zoom import complete: ${matched} accounts updated`);
+      setZoomImportPreview({ rows, headers, mapping });
     } catch (err) {
-      alert('Import failed: ' + err.message);
+      alert('Failed to read file: ' + err.message);
     }
     e.target.value = '';
+  }
+
+  function executeZoomImport() {
+    if (!zoomImportPreview) return;
+    const { rows, mapping } = zoomImportPreview;
+    const nameCol = mapping.zoomCompanyName;
+    const idCol = mapping.zoomCompanyId;
+    const matchCol = mapping.matchCompany;
+    if (!nameCol && !matchCol) { alert('Please map at least a company name column'); return; }
+
+    let matched = 0;
+    for (const row of rows) {
+      const zoomName = nameCol ? (row[nameCol] || '').trim() : '';
+      const zoomId = idCol ? String(row[idCol] || '').trim() : '';
+      const matchName = matchCol ? (row[matchCol] || '').trim() : zoomName;
+      if (!matchName) continue;
+      const prospect = prospects.find(p => companiesMatch(p.company, matchName));
+      if (prospect) {
+        const updates = {};
+        if (zoomName) updates.zoomCompanyName = zoomName;
+        if (zoomId) updates.zoomCompanyId = zoomId;
+        if (Object.keys(updates).length > 0) {
+          onUpdate(prospect.id, updates);
+          matched++;
+        }
+      }
+    }
+    setZoomImportPreview(null);
+    alert(`Zoom import complete: ${matched} accounts updated`);
   }
 
   function toggleTargetMapping(companyId, targetName) {
@@ -1496,7 +1517,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
           onClick={() => zoomFileRef.current?.click()}
           style={{ padding: '0.25rem 0.6rem', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-accent)', whiteSpace: 'nowrap' }}
         >Import Zoom Mapping</button>
-        <input ref={zoomFileRef} type="file" accept=".xlsx,.xls,.csv" style={{ display: 'none' }} onChange={handleZoomImport} />
+        <input ref={zoomFileRef} type="file" accept=".xlsx,.xls,.csv" style={{ display: 'none' }} onChange={handleZoomFileSelect} />
         <span className={styles.resultCount}>{filteredAccounts.length} of {allAccounts.length}</span>
       </div>
       {targetAccounts.length > 0 && (() => {
@@ -1650,6 +1671,51 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
           emptyMessage="No matching accounts found"
         />
       </div>
+
+      {/* Zoom Import Column Mapping Modal */}
+      {zoomImportPreview && createPortal(
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setZoomImportPreview(null)}>
+          <div style={{ background: '#fff', borderRadius: '12px', padding: '1.5rem', width: '520px', maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: 'var(--color-text)' }}>Column Mapping</h3>
+              <button onClick={() => setZoomImportPreview(null)} style={{ background: 'none', border: 'none', fontSize: '1.2rem', color: '#94A3B8', cursor: 'pointer' }}>&times;</button>
+            </div>
+            <p style={{ fontSize: '0.78rem', color: 'var(--color-text-secondary)', margin: '0 0 1rem 0' }}>
+              {zoomImportPreview.rows.length} rows found. Map your file columns to the fields below:
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', marginBottom: '1.25rem' }}>
+              {ZOOM_FIELDS.map(field => {
+                const detected = zoomImportPreview.mapping[field.key];
+                return (
+                  <div key={field.key} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                    <div style={{ width: '160px', fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text)' }}>{field.label}</div>
+                    <span style={{ color: '#94A3B8', fontSize: '0.75rem' }}>&rarr;</span>
+                    <select
+                      value={detected}
+                      onChange={e => setZoomImportPreview(prev => ({
+                        ...prev,
+                        mapping: { ...prev.mapping, [field.key]: e.target.value },
+                      }))}
+                      style={{ flex: 1, padding: '0.35rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '0.78rem', fontFamily: 'inherit', background: detected ? '#DCFCE7' : '#FEF2F2', color: detected ? '#166534' : '#DC2626' }}
+                    >
+                      <option value="">— Not mapped —</option>
+                      {zoomImportPreview.headers.map(h => (
+                        <option key={h} value={h}>{h}</option>
+                      ))}
+                    </select>
+                    {detected && <span style={{ color: '#10B981', fontSize: '0.7rem', fontWeight: 600 }}>&#10003;</span>}
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+              <button onClick={() => setZoomImportPreview(null)} style={{ padding: '0.5rem 1rem', border: '1px solid var(--color-border)', borderRadius: '6px', background: '#fff', fontSize: '0.8rem', fontFamily: 'inherit', cursor: 'pointer', color: 'var(--color-text-secondary)' }}>Cancel</button>
+              <button onClick={executeZoomImport} style={{ padding: '0.5rem 1rem', border: 'none', borderRadius: '6px', background: 'var(--color-accent)', color: '#fff', fontSize: '0.8rem', fontFamily: 'inherit', cursor: 'pointer', fontWeight: 600 }}>Import</button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   );
 }
