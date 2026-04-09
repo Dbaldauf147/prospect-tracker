@@ -152,14 +152,16 @@ export function ProgressView({ prospects, settings }) {
     }
 
     // Use opps data loaded from Firestore/IndexedDB/localStorage
-    // Only count accounts with valid opps (not #N/A, blank, etc.)
+    // Build totalOppsByAccount the same way as My Accounts
     const oppsRecords = oppsRecordsState;
     const invalidStages = new Set(['#N/A', '#REF!', '#VALUE!', '#ERROR!', 'N/A', 'n/a', '-', '']);
-    const oppsCompanies = new Set();
+    const closedStages = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
+    const totalOppsByAccount = {};
     for (const r of oppsRecords) {
       const account = (r['Account'] || '').toLowerCase();
       const stage = (r['Stage'] || '').trim();
-      if (account && !invalidStages.has(stage)) oppsCompanies.add(account);
+      if (!account || invalidStages.has(stage)) continue;
+      totalOppsByAccount[account] = (totalOppsByAccount[account] || 0) + 1;
     }
 
     function hasContact(company) {
@@ -170,25 +172,16 @@ export function ProgressView({ prospects, settings }) {
       return false;
     }
 
+    // Match the Opps column logic: account has opps if totalOppsByAccount > 0 (fuzzy match)
     function hasOpp(company) {
       const lower = (company || '').toLowerCase();
-      for (const co of oppsCompanies) {
-        if (companiesMatch(lower, co)) return true;
+      // Exact match
+      if (totalOppsByAccount[lower] > 0) return true;
+      // Fuzzy match
+      for (const [oppsCompany, count] of Object.entries(totalOppsByAccount)) {
+        if (count > 0 && companiesMatch(lower, oppsCompany)) return true;
       }
       return false;
-    }
-
-    // Debug: log T1 opp matching
-    console.log(`Progress: ${oppsRecords.length} opps records loaded, ${oppsCompanies.size} unique opp companies`);
-    for (const p of t1) {
-      const matched = hasOpp(p.company);
-      if (p.company.toLowerCase().includes('blue owl') || matched) {
-        console.log(`Progress T1: "${p.company}" hasOpp=${matched}`);
-      }
-    }
-    // Check if Blue Owl is in opps
-    for (const co of oppsCompanies) {
-      if (co.includes('blue owl')) console.log(`Progress opps has: "${co}"`);
     }
 
     const inactiveStatuses = new Set(['Lost - Not Sold', 'Hold Off', 'Old Client']);
