@@ -102,6 +102,10 @@ export function VibeProspecting({ prospects = [] }) {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [titlePresets, setTitlePresets] = useState(loadTitlePresets);
   const [presetName, setPresetName] = useState('');
+  const companyFileRef = useRef(null);
+  const contactFileRef = useRef(null);
+  const [companyUploadResult, setCompanyUploadResult] = useState(null);
+  const [contactUploadResult, setContactUploadResult] = useState(null);
 
   const updateFilter = useCallback((key, value) => {
     setFilters(prev => ({ ...prev, [key]: value }));
@@ -216,6 +220,66 @@ export function VibeProspecting({ prospects = [] }) {
     const updated = history.filter((_, i) => i !== index);
     setHistory(updated);
     saveHistory(updated);
+  }
+
+  // Zoom Company Upload
+  function handleCompanyUpload(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const wb = XLSX.read(evt.target.result, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(ws);
+        if (rows.length === 0) { setError('No data found'); return; }
+        const headers = Object.keys(rows[0]);
+        setCompanyUploadResult({ rows, headers, fileName: file.name });
+        setSuccess(`Company file loaded: ${rows.length} rows, ${headers.length} columns`);
+      } catch (err) { setError('Failed to parse file: ' + err.message); }
+    };
+    reader.readAsArrayBuffer(file);
+    e.target.value = '';
+  }
+
+  // Zoom Contact Upload
+  function handleContactUpload(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const wb = XLSX.read(evt.target.result, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(ws);
+        if (rows.length === 0) { setError('No data found'); return; }
+        const headers = Object.keys(rows[0]);
+        // Map to results format for the table
+        const mapped = rows.map(r => {
+          const find = (...keys) => { for (const k of keys) { for (const [col, val] of Object.entries(r)) { if (col.toLowerCase().includes(k) && val) return String(val); } } return ''; };
+          return {
+            first_name: find('first name', 'first_name', 'firstname'),
+            last_name: find('last name', 'last_name', 'lastname'),
+            name: [find('first name', 'first_name', 'firstname'), find('last name', 'last_name', 'lastname')].filter(Boolean).join(' ') || find('full name', 'contact name', 'name'),
+            title: find('job title', 'title', 'job_title'),
+            company: find('company name', 'company', 'organization'),
+            email: find('email address', 'email', 'e-mail'),
+            phone: find('direct phone', 'phone number', 'phone', 'mobile'),
+            city: find('city'),
+            state: find('state', 'province', 'region'),
+            country: find('country'),
+            linkedin_url: find('linkedin', 'linkedin url'),
+          };
+        }).filter(r => r.name || r.first_name || r.email);
+
+        setContactUploadResult({ rows: mapped, headers, fileName: file.name });
+        setResults(mapped);
+        setSelected(new Set());
+        setSuccess(`Contact file loaded: ${mapped.length} contacts from ${file.name}`);
+      } catch (err) { setError('Failed to parse file: ' + err.message); }
+    };
+    reader.readAsArrayBuffer(file);
+    e.target.value = '';
   }
 
   // CSV Import
@@ -604,24 +668,6 @@ export function VibeProspecting({ prospects = [] }) {
                 style={{ display: 'none' }}
                 onChange={handleCSVImport}
               />
-              <button
-                className={styles.clearBtn}
-                onClick={() => {
-                  const companies = prospects.filter(p => p.company).map(p => p.company).sort();
-                  const wsData = [
-                    ["Dan's Account Name", 'Zoom Company Name', 'Website', 'Zoom Company ID'],
-                    ...companies.map(c => [c, '', '', '']),
-                  ];
-                  const ws = XLSX.utils.aoa_to_sheet(wsData);
-                  // Set column widths
-                  ws['!cols'] = [{ wch: 35 }, { wch: 35 }, { wch: 30 }, { wch: 20 }];
-                  const wb = XLSX.utils.book_new();
-                  XLSX.utils.book_append_sheet(wb, ws, 'Zoom Company Upload');
-                  XLSX.writeFile(wb, 'Zoom_Company_Upload_Template.xlsx');
-                }}
-              >
-                Download Zoom Template
-              </button>
               <button className={styles.clearBtn} onClick={clearFilters}>
                 Clear Filters
               </button>
@@ -726,6 +772,61 @@ export function VibeProspecting({ prospects = [] }) {
           Configure your search criteria above and click "Search Prospects" to find leads.
         </div>
       )}
+
+      {/* Zoom Upload Sections */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginTop: '1.5rem' }}>
+        {/* Zoom Company Upload */}
+        <div style={{ border: '1px solid var(--color-border)', borderRadius: '8px', padding: '1rem' }}>
+          <h3 style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--color-text)', margin: '0 0 0.5rem 0' }}>Zoom Company Upload</h3>
+          <p style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)', margin: '0 0 0.75rem 0' }}>
+            Upload a ZoomInfo company export to map Zoom Company Names and IDs to your accounts. Use "Import Zoom Mapping" on the My Accounts page to apply.
+          </p>
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <button
+              onClick={() => {
+                const companies = prospects.filter(p => p.company).map(p => p.company).sort();
+                const wsData = [["Dan's Account Name", 'Zoom Company Name', 'Website', 'Zoom Company ID'], ...companies.map(c => [c, '', '', ''])];
+                const ws = XLSX.utils.aoa_to_sheet(wsData);
+                ws['!cols'] = [{ wch: 35 }, { wch: 35 }, { wch: 30 }, { wch: 20 }];
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, 'Zoom Company Upload');
+                XLSX.writeFile(wb, 'Zoom_Company_Upload_Template.xlsx');
+              }}
+              style={{ padding: '0.35rem 0.7rem', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', background: 'var(--color-surface)', color: 'var(--color-accent)' }}
+            >Download Template</button>
+            <button
+              onClick={() => companyFileRef.current?.click()}
+              style={{ padding: '0.35rem 0.7rem', border: 'none', borderRadius: '6px', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', background: 'var(--color-accent)', color: '#fff' }}
+            >Upload Company File</button>
+            <input ref={companyFileRef} type="file" accept=".xlsx,.xls,.csv" style={{ display: 'none' }} onChange={handleCompanyUpload} />
+          </div>
+          {companyUploadResult && (
+            <div style={{ marginTop: '0.5rem', fontSize: '0.72rem', color: '#10B981', fontWeight: 600 }}>
+              ✓ {companyUploadResult.fileName}: {companyUploadResult.rows.length} rows, columns: {companyUploadResult.headers.slice(0, 5).join(', ')}{companyUploadResult.headers.length > 5 ? '...' : ''}
+            </div>
+          )}
+        </div>
+
+        {/* Zoom Contact Upload */}
+        <div style={{ border: '1px solid var(--color-border)', borderRadius: '8px', padding: '1rem' }}>
+          <h3 style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--color-text)', margin: '0 0 0.5rem 0' }}>Zoom Contact Upload</h3>
+          <p style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)', margin: '0 0 0.75rem 0' }}>
+            Upload a ZoomInfo contact export. Contacts will appear in the results table below where you can review and push to HubSpot.
+          </p>
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <button
+              onClick={() => contactFileRef.current?.click()}
+              style={{ padding: '0.35rem 0.7rem', border: 'none', borderRadius: '6px', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', background: 'var(--color-accent)', color: '#fff' }}
+            >Upload Contact File</button>
+            <input ref={contactFileRef} type="file" accept=".xlsx,.xls,.csv" style={{ display: 'none' }} onChange={handleContactUpload} />
+          </div>
+          {contactUploadResult && (
+            <div style={{ marginTop: '0.5rem', fontSize: '0.72rem', color: '#10B981', fontWeight: 600 }}>
+              ✓ {contactUploadResult.fileName}: {contactUploadResult.rows.length} contacts loaded — review in table above, then push to HubSpot
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Search History */}
       {history.length > 0 && (
