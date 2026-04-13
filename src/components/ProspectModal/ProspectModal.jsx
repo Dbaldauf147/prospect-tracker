@@ -901,7 +901,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                       {hiddenCount} hidden service{hiddenCount !== 1 ? 's' : ''}
                     </div>
                   )}
-                  <div style={{ marginTop: '0.5rem', columnCount: 5, columnGap: '0.4rem', maxHeight: '500px', overflowY: 'auto', padding: '0.15rem' }}>
+                  <div style={{ marginTop: '0.5rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '0.4rem', maxHeight: '500px', overflowY: 'auto', padding: '0.15rem' }}>
                   {SERVICE_CATEGORIES.map(cat => {
                     const svc = fields.servicesExplored || {};
                     const visibleItems = servicesEditMode ? cat.items : cat.items.filter(item => !hiddenServices.has(item));
