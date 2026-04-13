@@ -930,8 +930,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                               'Quoting': { bg: '#FEF9C3', color: '#854D0E' },
                               'Quoted': { bg: '#DBEAFE', color: '#1E40AF' },
                               'Proposed': { bg: '#DBEAFE', color: '#1E40AF' },
-                              'Lead': { bg: '#F5F3FF', color: '#7C3AED' },
-                              'Not Started': { bg: '#F5F3FF', color: '#7C3AED' },
+                              'Lead': { bg: '#FEF9C3', color: '#854D0E' },
+                              'Not Started': { bg: '#FEF9C3', color: '#854D0E' },
                               'Not Sold': { bg: '#FEE2E2', color: '#991B1B' },
                               'N/A': { bg: '#F1F5F9', color: '#94A3B8' },
                             };
