@@ -445,7 +445,7 @@ const ALL_SERVICE_ITEMS_LOWER = new Set(
   SERVICE_CATEGORIES.flatMap(cat => cat.items.map(i => i.toLowerCase()))
 );
 
-export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContacts = [], onDeleteContact, orgCharts = {}, onUpdateOrgChart = () => {} }) {
+export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContacts = [], onDeleteContact, orgCharts = {}, onUpdateOrgChart = () => {}, settings = {}, updateSettings = () => {} }) {
   const [fields, setFields] = useState(() => {
     if (prospect) return { ...EMPTY, ...prospect };
     return { ...EMPTY };
@@ -481,6 +481,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
   const [showSaved, setShowSaved] = useState(false);
   const [deletingContact, setDeletingContact] = useState(null);
   const [servicesOpen, setServicesOpen] = useState(false);
+  const [servicesEditMode, setServicesEditMode] = useState(false);
+  const [editingServiceName, setEditingServiceName] = useState(null); // { original, value }
   const [competitorsOpen, setCompetitorsOpen] = useState(false);
   const [newCompetitor, setNewCompetitor] = useState('');
   const [oppsCache, setOppsCache] = useState(null);
@@ -853,15 +855,14 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                 <span style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', transform: servicesOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>&#9660;</span>
                 {(() => {
                   const svc = fields.servicesExplored || {};
-                  const totalItems = SERVICE_CATEGORIES.reduce((sum, cat) => sum + cat.items.length, 0);
+                  const hidden = new Set(settings.hiddenServices || []);
+                  const totalItems = SERVICE_CATEGORIES.reduce((sum, cat) => sum + cat.items.filter(i => !hidden.has(i)).length, 0);
                   const exploredItems = new Set();
-                  // Count manually set items
                   for (const [item, val] of Object.entries(svc)) {
-                    if (val && val !== '-') exploredItems.add(item);
+                    if (val && val !== '-' && !hidden.has(item)) exploredItems.add(item);
                   }
-                  // Count opp-matched items
                   for (const item of scopeMatchedServices.keys()) {
-                    exploredItems.add(item);
+                    if (!hidden.has(item)) exploredItems.add(item);
                   }
                   const pct = totalItems > 0 ? Math.round((exploredItems.size / totalItems) * 100) : 0;
                   return (
@@ -870,26 +871,55 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                     </span>
                   );
                 })()}
+                <button
+                  onClick={(e) => { e.stopPropagation(); setServicesEditMode(m => !m); }}
+                  style={{ marginLeft: 'auto', padding: '0.15rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: '4px', background: servicesEditMode ? '#FEF3C7' : 'var(--color-surface)', fontSize: '0.62rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: servicesEditMode ? '#92400E' : 'var(--color-text-muted)' }}
+                >{servicesEditMode ? 'Done Editing' : 'Edit Services'}</button>
               </div>
-              {servicesOpen && (
-                <div style={{ marginTop: '0.75rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.5rem', maxHeight: '500px', overflowY: 'auto', padding: '0.25rem' }}>
+              {servicesOpen && (() => {
+                const serviceRenames = settings.serviceRenames || {};
+                const hiddenServices = new Set(settings.hiddenServices || []);
+                const hiddenCount = hiddenServices.size;
+                const getDisplayName = (item) => serviceRenames[item] || item;
+
+                function renameService(original, newName) {
+                  const next = { ...(settings.serviceRenames || {}) };
+                  if (newName === original || !newName.trim()) delete next[original];
+                  else next[original] = newName.trim();
+                  updateSettings({ serviceRenames: next });
+                }
+                function toggleHideService(item) {
+                  const current = settings.hiddenServices || [];
+                  const next = current.includes(item) ? current.filter(s => s !== item) : [...current, item];
+                  updateSettings({ hiddenServices: next });
+                }
+
+                return (
+                <div>
+                  {servicesEditMode && hiddenCount > 0 && (
+                    <div style={{ marginTop: '0.5rem', marginBottom: '0.25rem', fontSize: '0.68rem', color: '#64748B' }}>
+                      {hiddenCount} hidden service{hiddenCount !== 1 ? 's' : ''}
+                    </div>
+                  )}
+                  <div style={{ marginTop: '0.75rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.5rem', maxHeight: '500px', overflowY: 'auto', padding: '0.25rem' }}>
                   {SERVICE_CATEGORIES.map(cat => {
                     const svc = fields.servicesExplored || {};
+                    const visibleItems = servicesEditMode ? cat.items : cat.items.filter(item => !hiddenServices.has(item));
+                    if (visibleItems.length === 0) return null;
                     return (
                       <div key={cat.name} style={{ border: '1px solid var(--color-border)', borderRadius: '6px', overflow: 'hidden', fontSize: '0.72rem' }}>
                         <div style={{ padding: '0.35rem 0.5rem', background: '#EFF6FF', borderBottom: '1px solid var(--color-border)', fontWeight: 700, fontSize: '0.7rem', color: '#1E40AF' }}>
                           {cat.name}
                         </div>
                         <div style={{ padding: '0.15rem 0' }}>
-                          {cat.items.map(item => {
+                          {visibleItems.map(item => {
+                            const isHidden = hiddenServices.has(item);
                             const manualStatus = svc[item] || '-';
                             const oppStage = scopeMatchedServices.get(item);
-                            // Derive effective status: manual override wins, otherwise use opp stage directly
                             let effectiveStatus = manualStatus;
                             if (manualStatus === '-' && oppStage) {
                               effectiveStatus = oppStage;
                             }
-                            // Color mapping
                             const statusColors = {
                               'Sold': { bg: '#DCFCE7', color: '#166534' },
                               'Renewal': { bg: '#DCFCE7', color: '#166534' },
@@ -906,6 +936,37 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                               'N/A': { bg: '#F1F5F9', color: '#94A3B8' },
                             };
                             const colors = statusColors[effectiveStatus] || {};
+
+                            if (servicesEditMode) {
+                              return (
+                                <div key={item} style={{ display: 'flex', alignItems: 'center', padding: '0.15rem 0.45rem', gap: '0.3rem', opacity: isHidden ? 0.4 : 1 }}>
+                                  {editingServiceName?.original === item ? (
+                                    <input
+                                      autoFocus
+                                      defaultValue={getDisplayName(item)}
+                                      onBlur={(e) => { renameService(item, e.target.value); setEditingServiceName(null); }}
+                                      onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); if (e.key === 'Escape') setEditingServiceName(null); }}
+                                      style={{ flex: 1, fontSize: '0.68rem', padding: '1px 4px', border: '1px solid var(--color-accent)', borderRadius: '3px', fontFamily: 'inherit', outline: 'none' }}
+                                    />
+                                  ) : (
+                                    <span
+                                      onClick={() => setEditingServiceName({ original: item })}
+                                      style={{ flex: 1, fontSize: '0.68rem', cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: isHidden ? 'line-through' : 'none' }}
+                                      title="Click to rename"
+                                    >
+                                      {getDisplayName(item)}
+                                      {serviceRenames[item] && <span style={{ fontSize: '0.55rem', color: '#94A3B8', marginLeft: '0.2rem' }}>({item})</span>}
+                                    </span>
+                                  )}
+                                  <button
+                                    onClick={() => toggleHideService(item)}
+                                    style={{ background: 'none', border: 'none', fontSize: '0.65rem', cursor: 'pointer', padding: '0 3px', color: isHidden ? '#22C55E' : '#94A3B8', fontFamily: 'inherit', fontWeight: 600 }}
+                                    title={isHidden ? 'Show' : 'Hide'}
+                                  >{isHidden ? 'Show' : 'Hide'}</button>
+                                </div>
+                              );
+                            }
+
                             return (
                               <div
                                 key={item}
@@ -917,7 +978,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                 }}
                               >
                                 <span style={{ flex: 1, fontSize: '0.68rem', color: colors.color || 'var(--color-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item}>
-                                  {item}
+                                  {getDisplayName(item)}
                                 </span>
                                 <select
                                   value={effectiveStatus}
@@ -941,8 +1002,10 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                       </div>
                     );
                   })}
+                  </div>
                 </div>
-              )}
+                );
+              })()}
             </div>
           )}
 

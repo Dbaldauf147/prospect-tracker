@@ -178,6 +178,8 @@ function App() {
             const next = { ...(settings.orgCharts || {}), [key]: data };
             updateSettings({ orgCharts: next });
           }}
+          settings={settings}
+          updateSettings={updateSettings}
         />
       )}
 
