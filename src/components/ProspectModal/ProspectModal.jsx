@@ -825,7 +825,6 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                               >
                                 <span style={{ flex: 1, fontSize: '0.68rem', color: colors.color || 'var(--color-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item}>
                                   {item}
-                                  {oppStage && <span style={{ marginLeft: '0.2rem', fontSize: '0.55rem', fontWeight: 700, color: '#92400E', background: '#FDE68A', padding: '0 4px', borderRadius: '3px' }}>{oppStage}</span>}
                                 </span>
                                 <select
                                   value={effectiveStatus}
