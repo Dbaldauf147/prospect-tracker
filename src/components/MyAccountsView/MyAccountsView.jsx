@@ -1061,8 +1061,11 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   }
 
   // Auto-create prospects for opps companies with OPEN opps not already in Table View
+  const autoCreateRanRef = useRef(false);
   useEffect(() => {
+    if (autoCreateRanRef.current) return; // Only run once per session
     if (!onAdd || Object.keys(openOppsByAccount).length === 0 || prospects.length === 0) return;
+    autoCreateRanRef.current = true;
     const existingLower = new Set(prospects.map(p => (p.company || '').toLowerCase()));
     const missing = [];
     for (const oppsCompany of Object.keys(openOppsByAccount)) {
