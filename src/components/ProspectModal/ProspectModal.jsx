@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES } from '../../data/enums';
 import styles from './ProspectModal.module.css';
 
@@ -384,13 +385,18 @@ function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS }
 
 function MultiSelectDropdown({ options, selected, onToggle }) {
   const [open, setOpen] = useState(false);
-  const [dropUp, setDropUp] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 0, up: false });
   const ref = useRef(null);
+  const dropRef = useRef(null);
   const [filter, setFilter] = useState('');
 
   useEffect(() => {
     if (!open) return;
-    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) { setOpen(false); setFilter(''); } };
+    const h = (e) => {
+      if (ref.current?.contains(e.target)) return;
+      if (dropRef.current?.contains(e.target)) return;
+      setOpen(false); setFilter('');
+    };
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, [open]);
@@ -399,13 +405,19 @@ function MultiSelectDropdown({ options, selected, onToggle }) {
     if (!open || !ref.current) return;
     const rect = ref.current.getBoundingClientRect();
     const spaceBelow = window.innerHeight - rect.bottom;
-    setDropUp(spaceBelow < 220);
-  }, [open]);
+    const up = spaceBelow < 240;
+    setPos({
+      top: up ? rect.top - 2 : rect.bottom + 2,
+      left: rect.left,
+      width: rect.width,
+      up,
+    });
+  }, [open, filter]);
 
   const filtered = filter.trim() ? options.filter(o => o.toLowerCase().includes(filter.toLowerCase())) : options;
 
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
+    <div ref={ref}>
       <div
         onClick={() => { setOpen(o => !o); setFilter(''); }}
         style={{
@@ -427,12 +439,16 @@ function MultiSelectDropdown({ options, selected, onToggle }) {
         ))}
         <span style={{ marginLeft: 'auto', fontSize: '0.6rem', color: 'var(--color-text-muted)' }}>{open ? '\u25B2' : '\u25BC'}</span>
       </div>
-      {open && (
-        <div style={{
-          position: 'absolute', [dropUp ? 'bottom' : 'top']: '100%', left: 0, right: 0, zIndex: 50,
-          background: '#fff', border: '1px solid var(--color-border)', borderRadius: '6px',
-          boxShadow: '0 4px 12px rgba(0,0,0,0.15)', maxHeight: '220px', display: 'flex', flexDirection: 'column',
-          [dropUp ? 'marginBottom' : 'marginTop']: '2px',
+      {open && createPortal(
+        <div ref={dropRef} style={{
+          position: 'fixed',
+          top: pos.up ? undefined : pos.top,
+          bottom: pos.up ? (window.innerHeight - pos.top) : undefined,
+          left: pos.left,
+          width: Math.max(pos.width, 280),
+          zIndex: 10001,
+          background: '#fff', border: '1px solid #E2E8F0', borderRadius: '6px',
+          boxShadow: '0 4px 16px rgba(0,0,0,0.15)', maxHeight: '240px', display: 'flex', flexDirection: 'column',
         }}>
           {options.length > 10 && (
             <input
@@ -442,7 +458,7 @@ function MultiSelectDropdown({ options, selected, onToggle }) {
               onChange={e => setFilter(e.target.value)}
               onClick={e => e.stopPropagation()}
               autoFocus
-              style={{ margin: '0.3rem', padding: '0.25rem 0.4rem', border: '1px solid var(--color-border)', borderRadius: '4px', fontSize: '0.7rem', fontFamily: 'inherit', outline: 'none' }}
+              style={{ margin: '0.3rem', padding: '0.3rem 0.5rem', border: '1px solid #E2E8F0', borderRadius: '4px', fontSize: '0.72rem', fontFamily: 'inherit', outline: 'none' }}
             />
           )}
           <div style={{ overflowY: 'auto', flex: 1 }}>
@@ -451,7 +467,7 @@ function MultiSelectDropdown({ options, selected, onToggle }) {
                 key={opt}
                 style={{
                   display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.3rem 0.6rem',
-                  fontSize: '0.72rem', cursor: 'pointer', color: 'var(--color-text)',
+                  fontSize: '0.72rem', cursor: 'pointer', color: '#1E293B',
                 }}
                 onMouseOver={e => e.currentTarget.style.background = '#F1F5F9'}
                 onMouseOut={e => e.currentTarget.style.background = ''}
@@ -462,7 +478,8 @@ function MultiSelectDropdown({ options, selected, onToggle }) {
             ))}
             {filtered.length === 0 && <div style={{ padding: '0.4rem 0.6rem', fontSize: '0.7rem', color: '#94A3B8' }}>No matches</div>}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
