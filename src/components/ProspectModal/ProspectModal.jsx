@@ -922,7 +922,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                             }
                             const statusColors = {
                               'Sold': { bg: '#DCFCE7', color: '#166534' },
-                              'Renewal': { bg: '#DCFCE7', color: '#166534' },
+                              'Renewal': { bg: '#F1F5F9', color: '#94A3B8' },
                               'Verbal': { bg: '#DCFCE7', color: '#166534' },
                               'In Progress': { bg: '#FEF9C3', color: '#854D0E' },
                               'Exploring': { bg: '#FEF9C3', color: '#854D0E' },
