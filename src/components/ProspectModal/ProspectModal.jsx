@@ -816,12 +816,20 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                 <span style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', transform: servicesOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>&#9660;</span>
                 {(() => {
                   const svc = fields.servicesExplored || {};
-                  const activeCount = Object.values(svc).filter(v => v && v !== '-').length;
-                  const scopeCount = scopeMatchedServices.size; // Map size works the same
+                  const totalItems = SERVICE_CATEGORIES.reduce((sum, cat) => sum + cat.items.length, 0);
+                  const exploredItems = new Set();
+                  // Count manually set items
+                  for (const [item, val] of Object.entries(svc)) {
+                    if (val && val !== '-') exploredItems.add(item);
+                  }
+                  // Count opp-matched items
+                  for (const item of scopeMatchedServices.keys()) {
+                    exploredItems.add(item);
+                  }
+                  const pct = totalItems > 0 ? Math.round((exploredItems.size / totalItems) * 100) : 0;
                   return (
-                    <span style={{ fontSize: '0.68rem', color: '#64748B' }}>
-                      {activeCount > 0 ? `${activeCount} set` : ''}
-                      {scopeCount > 0 ? `${activeCount > 0 ? ', ' : ''}${scopeCount} from opps` : ''}
+                    <span style={{ fontSize: '0.68rem', color: '#64748B', fontWeight: 600 }}>
+                      {exploredItems.size}/{totalItems} ({pct}%)
                     </span>
                   );
                 })()}
