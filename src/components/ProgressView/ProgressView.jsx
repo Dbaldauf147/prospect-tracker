@@ -52,6 +52,7 @@ export function ProgressView({ prospects, settings }) {
   const [oppsRecordsState, setOppsRecordsState] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expandedCard, setExpandedCard] = useState(null);
+  const [editingWeek, setEditingWeek] = useState(null);
 
   // Load history from Firestore + opps data
   useEffect(() => {
@@ -496,7 +497,44 @@ export function ProgressView({ prospects, settings }) {
                 <tbody>
                   {[...history].reverse().map((h, i) => (
                     <tr key={h.week} style={{ borderBottom: '1px solid var(--color-border-light)' }}>
-                      <td style={{ padding: '0.4rem 0.6rem', fontWeight: 600, color: 'var(--color-text)' }}>{fmtWeek(h.week)}</td>
+                      <td style={{ padding: '0.4rem 0.6rem', fontWeight: 600, color: 'var(--color-text)' }}>
+                        {editingWeek === h.week ? (
+                          <input
+                            type="date"
+                            defaultValue={h.week}
+                            autoFocus
+                            style={{ fontSize: '0.75rem', fontWeight: 600, border: '1px solid var(--color-border)', borderRadius: '4px', padding: '2px 4px', background: 'var(--color-surface)', color: 'var(--color-text)' }}
+                            onBlur={(e) => {
+                              const newDate = e.target.value;
+                              setEditingWeek(null);
+                              if (!newDate || newDate === h.week) return;
+                              const newWeek = getWeekKey(newDate);
+                              if (newWeek === h.week) return;
+                              if (history.find(x => x.week === newWeek)) {
+                                alert('A snapshot for that week already exists.');
+                                return;
+                              }
+                              const updated = history.map(x => x.week === h.week ? { ...x, week: newWeek } : x)
+                                .sort((a, b) => a.week.localeCompare(b.week));
+                              setHistory(updated);
+                              const ref = doc(db, 'progressHistory', user.uid);
+                              setDoc(ref, { weeks: updated, updatedAt: new Date().toISOString() });
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') e.target.blur();
+                              if (e.key === 'Escape') setEditingWeek(null);
+                            }}
+                          />
+                        ) : (
+                          <span
+                            style={{ cursor: 'pointer', borderBottom: '1px dashed var(--color-border)' }}
+                            onClick={() => setEditingWeek(h.week)}
+                            title="Click to change week"
+                          >
+                            {fmtWeek(h.week)}
+                          </span>
+                        )}
+                      </td>
                       <td style={{ padding: '0.4rem 0.6rem', textAlign: 'center' }}>{h.t1ContactPct}%</td>
                       <td style={{ padding: '0.4rem 0.6rem', textAlign: 'center' }}>{h.t2ContactPct}%</td>
                       <td style={{ padding: '0.4rem 0.6rem', textAlign: 'center' }}>{h.t1ConnectedPct}%</td>

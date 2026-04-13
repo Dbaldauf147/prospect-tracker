@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS } from '../../data/enums';
+import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES } from '../../data/enums';
 import styles from './ProspectModal.module.css';
 
 function companiesMatch(a, b) {
@@ -164,7 +164,7 @@ function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact })
 const EMPTY = {
   company: '', cdm: '', status: 'Inside Sales', type: '', geography: '', publicPrivate: '',
   assetTypes: [], peAum: null, reAum: null, numberOfSites: null, rank: '', tier: 'Tier 2',
-  hqRegion: '', frameworks: [], notes: '', website: '', emailDomain: '',
+  hqRegion: '', frameworks: [], notes: '', website: '', emailDomain: '', servicesExplored: {},
 };
 
 // ── Inline HubSpot Contact Editor ──
@@ -334,6 +334,11 @@ function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS }
   );
 }
 
+// Build a flat set of all known service item names (lowercased) for scope matching
+const ALL_SERVICE_ITEMS_LOWER = new Set(
+  SERVICE_CATEGORIES.flatMap(cat => cat.items.map(i => i.toLowerCase()))
+);
+
 export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContacts = [], onDeleteContact, orgCharts = {}, onUpdateOrgChart = () => {} }) {
   const [fields, setFields] = useState(() => {
     if (prospect) return { ...EMPTY, ...prospect };
@@ -369,6 +374,43 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
   const [addingContact, setAddingContact] = useState(false);
   const [showSaved, setShowSaved] = useState(false);
   const [deletingContact, setDeletingContact] = useState(null);
+  const [servicesOpen, setServicesOpen] = useState(false);
+
+  // Load opps scope values matching this company from caches
+  const oppsScopes = useMemo(() => {
+    if (isNew || !fields.company) return [];
+    try {
+      const cache = JSON.parse(localStorage.getItem('opps-cache'));
+      if (cache?.records) {
+        return cache.records
+          .filter(r => companiesMatch(r.Account, fields.company))
+          .map(r => (r.Scope || '').trim())
+          .filter(Boolean);
+      }
+    } catch {}
+    return [];
+  }, [fields.company, isNew]);
+
+  // Build a set of scope values from opps that match known service items
+  const scopeMatchedServices = useMemo(() => {
+    const matched = new Set();
+    for (const scope of oppsScopes) {
+      // Scope can contain multiple items separated by commas or semicolons
+      const parts = scope.split(/[;,/]+/).map(s => s.trim()).filter(Boolean);
+      for (const part of parts) {
+        const lower = part.toLowerCase();
+        // Check exact match against service items
+        for (const cat of SERVICE_CATEGORIES) {
+          for (const item of cat.items) {
+            if (item.toLowerCase() === lower || item.toLowerCase().includes(lower) || lower.includes(item.toLowerCase())) {
+              matched.add(item);
+            }
+          }
+        }
+      }
+    }
+    return matched;
+  }, [oppsScopes]);
 
   function handleContactSaved(updated) {
     if (addingContact) {
@@ -673,6 +715,82 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
               <textarea className={styles.textarea} value={fields.notes} onChange={e => set('notes', e.target.value)} rows={3} />
             </div>
           </div>
+
+          {/* Services Explored */}
+          {!isNew && (
+            <div style={{ marginTop: '1rem', borderTop: '1px solid var(--color-border-light)', paddingTop: '0.75rem' }}>
+              <div
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', userSelect: 'none' }}
+                onClick={() => setServicesOpen(o => !o)}
+              >
+                <label className={styles.label} style={{ margin: 0, cursor: 'pointer' }}>
+                  Services Explored
+                </label>
+                <span style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', transform: servicesOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>&#9660;</span>
+                {(() => {
+                  const svc = fields.servicesExplored || {};
+                  const activeCount = Object.values(svc).filter(v => v && v !== '-').length;
+                  const scopeCount = scopeMatchedServices.size;
+                  return (
+                    <span style={{ fontSize: '0.68rem', color: '#64748B' }}>
+                      {activeCount > 0 ? `${activeCount} set` : ''}
+                      {scopeCount > 0 ? `${activeCount > 0 ? ', ' : ''}${scopeCount} from opps` : ''}
+                    </span>
+                  );
+                })()}
+              </div>
+              {servicesOpen && (
+                <div style={{ marginTop: '0.75rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.5rem', maxHeight: '500px', overflowY: 'auto', padding: '0.25rem' }}>
+                  {SERVICE_CATEGORIES.map(cat => {
+                    const svc = fields.servicesExplored || {};
+                    return (
+                      <div key={cat.name} style={{ border: '1px solid var(--color-border)', borderRadius: '6px', overflow: 'hidden', fontSize: '0.72rem' }}>
+                        <div style={{ padding: '0.35rem 0.5rem', background: '#EFF6FF', borderBottom: '1px solid var(--color-border)', fontWeight: 700, fontSize: '0.7rem', color: '#1E40AF' }}>
+                          {cat.name}
+                        </div>
+                        <div style={{ padding: '0.15rem 0' }}>
+                          {cat.items.map(item => {
+                            const currentStatus = svc[item] || '-';
+                            const fromOpps = scopeMatchedServices.has(item);
+                            return (
+                              <div
+                                key={item}
+                                style={{
+                                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                  padding: '0.15rem 0.45rem', gap: '0.3rem',
+                                  background: fromOpps && currentStatus === '-' ? '#FEF9C3' : currentStatus !== '-' ? '#F0FDF4' : 'transparent',
+                                }}
+                              >
+                                <span style={{ flex: 1, fontSize: '0.68rem', color: 'var(--color-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item}>
+                                  {item}
+                                  {fromOpps && <span style={{ marginLeft: '0.2rem', fontSize: '0.55rem', fontWeight: 700, color: '#92400E', background: '#FDE68A', padding: '0 4px', borderRadius: '3px' }}>OPP</span>}
+                                </span>
+                                <select
+                                  value={currentStatus}
+                                  onChange={e => {
+                                    const next = { ...(fields.servicesExplored || {}), [item]: e.target.value };
+                                    if (e.target.value === '-') delete next[item];
+                                    set('servicesExplored', next);
+                                  }}
+                                  style={{
+                                    fontSize: '0.62rem', padding: '1px 2px', border: '1px solid var(--color-border)',
+                                    borderRadius: '3px', background: 'var(--color-surface)', color: 'var(--color-text)',
+                                    cursor: 'pointer', minWidth: '65px', fontFamily: 'inherit',
+                                  }}
+                                >
+                                  {SERVICE_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                                </select>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
 
           {!isNew && (
             <div style={{ marginTop: '1rem', borderTop: '1px solid var(--color-border-light)', paddingTop: '0.75rem' }}>
