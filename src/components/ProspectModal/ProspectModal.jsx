@@ -187,7 +187,7 @@ function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact })
 const EMPTY = {
   company: '', cdm: '', status: 'Inside Sales', type: '', geography: '', publicPrivate: '',
   assetTypes: [], peAum: null, reAum: null, numberOfSites: null, rank: '', tier: 'Tier 2',
-  hqRegion: '', frameworks: [], notes: '', website: '', emailDomain: '', servicesExplored: {},
+  hqRegion: '', frameworks: [], notes: '', website: '', emailDomain: '', servicesExplored: {}, competitors: {},
 };
 
 // ── Inline HubSpot Contact Editor ──
@@ -458,6 +458,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
   const [showSaved, setShowSaved] = useState(false);
   const [deletingContact, setDeletingContact] = useState(null);
   const [servicesOpen, setServicesOpen] = useState(false);
+  const [competitorsOpen, setCompetitorsOpen] = useState(false);
+  const [newCompetitor, setNewCompetitor] = useState('');
   const [oppsCache, setOppsCache] = useState(null);
 
   // Load opps data from IndexedDB (primary) or localStorage (legacy fallback)
@@ -894,6 +896,92 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                       </div>
                     );
                   })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Competitors */}
+          {!isNew && (
+            <div style={{ marginTop: '1rem', borderTop: '1px solid var(--color-border-light)', paddingTop: '0.75rem' }}>
+              <div
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', userSelect: 'none' }}
+                onClick={() => setCompetitorsOpen(o => !o)}
+              >
+                <label className={styles.label} style={{ margin: 0, cursor: 'pointer' }}>
+                  Competitors
+                </label>
+                <span style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', transform: competitorsOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>&#9660;</span>
+                {(() => {
+                  const comp = fields.competitors || {};
+                  const count = Object.keys(comp).length;
+                  return count > 0 ? <span style={{ fontSize: '0.68rem', color: '#64748B' }}>{count} competitor{count !== 1 ? 's' : ''}</span> : null;
+                })()}
+              </div>
+              {competitorsOpen && (
+                <div style={{ marginTop: '0.5rem' }}>
+                  <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.5rem' }}>
+                    <input
+                      type="text"
+                      placeholder="Add competitor name..."
+                      value={newCompetitor}
+                      onChange={e => setNewCompetitor(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' && newCompetitor.trim()) {
+                          e.preventDefault();
+                          const name = newCompetitor.trim();
+                          if (!(fields.competitors || {})[name]) {
+                            set('competitors', { ...(fields.competitors || {}), [name]: [] });
+                          }
+                          setNewCompetitor('');
+                        }
+                      }}
+                      style={{ flex: 1, padding: '0.35rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '0.75rem', fontFamily: 'inherit', color: 'var(--color-text)', background: 'var(--color-bg)' }}
+                    />
+                    <button
+                      onClick={() => {
+                        if (newCompetitor.trim()) {
+                          const name = newCompetitor.trim();
+                          if (!(fields.competitors || {})[name]) {
+                            set('competitors', { ...(fields.competitors || {}), [name]: [] });
+                          }
+                          setNewCompetitor('');
+                        }
+                      }}
+                      style={{ padding: '0.35rem 0.7rem', border: 'none', borderRadius: '6px', background: 'var(--color-accent)', color: '#fff', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+                    >Add</button>
+                  </div>
+                  {Object.entries(fields.competitors || {}).map(([compName, services]) => (
+                    <div key={compName} style={{ border: '1px solid var(--color-border)', borderRadius: '6px', marginBottom: '0.4rem', overflow: 'hidden' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.35rem 0.5rem', background: '#FEF2F2', borderBottom: '1px solid var(--color-border)' }}>
+                        <span style={{ fontWeight: 700, fontSize: '0.75rem', color: '#991B1B' }}>{compName}</span>
+                        <button
+                          onClick={() => {
+                            const next = { ...(fields.competitors || {}) };
+                            delete next[compName];
+                            set('competitors', next);
+                          }}
+                          style={{ background: 'none', border: 'none', color: '#FCA5A5', fontSize: '0.85rem', cursor: 'pointer', padding: '0 4px', lineHeight: 1 }}
+                          onMouseEnter={e => e.target.style.color = '#EF4444'}
+                          onMouseLeave={e => e.target.style.color = '#FCA5A5'}
+                        >&times;</button>
+                      </div>
+                      <div style={{ padding: '0.35rem 0.5rem' }}>
+                        <MultiSelectDropdown
+                          options={SERVICE_CATEGORIES.flatMap(cat => cat.items)}
+                          selected={services}
+                          onToggle={(svc) => {
+                            const current = services || [];
+                            const next = current.includes(svc) ? current.filter(s => s !== svc) : [...current, svc];
+                            set('competitors', { ...(fields.competitors || {}), [compName]: next });
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                  {Object.keys(fields.competitors || {}).length === 0 && (
+                    <div style={{ fontSize: '0.75rem', color: '#9CA3AF', fontStyle: 'italic', padding: '0.25rem 0' }}>No competitors added yet</div>
+                  )}
                 </div>
               )}
             </div>
