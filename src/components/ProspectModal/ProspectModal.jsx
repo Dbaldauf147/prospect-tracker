@@ -25,6 +25,29 @@ function loadOppsFromIndexedDB() {
   });
 }
 
+function loadClientsFromIndexedDB() {
+  return new Promise(resolve => {
+    try {
+      const req = indexedDB.open('prospect-tracker-db', 3);
+      req.onupgradeneeded = () => {
+        const d = req.result;
+        if (!d.objectStoreNames.contains('target-accounts')) d.createObjectStore('target-accounts');
+        if (!d.objectStoreNames.contains('opps-cache')) d.createObjectStore('opps-cache');
+        if (!d.objectStoreNames.contains('clients-cache')) d.createObjectStore('clients-cache');
+      };
+      req.onsuccess = () => {
+        const d = req.result;
+        const tx = d.transaction('clients-cache', 'readonly');
+        const store = tx.objectStore('clients-cache');
+        const getReq = store.get('data');
+        getReq.onsuccess = () => resolve(getReq.result || null);
+        getReq.onerror = () => resolve(null);
+      };
+      req.onerror = () => resolve(null);
+    } catch { resolve(null); }
+  });
+}
+
 function companiesMatch(a, b) {
   const na = (a || '').toLowerCase().trim();
   const nb = (b || '').toLowerCase().trim();
@@ -461,21 +484,28 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
   const [competitorsOpen, setCompetitorsOpen] = useState(false);
   const [newCompetitor, setNewCompetitor] = useState('');
   const [oppsCache, setOppsCache] = useState(null);
+  const [clientManager, setClientManager] = useState(null);
 
   // Load opps data from IndexedDB (primary) or localStorage (legacy fallback)
+  // Also load clients data to find Client Manager
   useEffect(() => {
     if (isNew) return;
     (async () => {
       const idbData = await loadOppsFromIndexedDB();
       if (idbData?.records) {
         setOppsCache(idbData.records);
-        return;
+      } else {
+        try {
+          const cache = JSON.parse(localStorage.getItem('opps-cache'));
+          if (cache?.records) setOppsCache(cache.records);
+        } catch {}
       }
-      // Legacy localStorage fallback
-      try {
-        const cache = JSON.parse(localStorage.getItem('opps-cache'));
-        if (cache?.records) setOppsCache(cache.records);
-      } catch {}
+      // Load clients and find CM
+      const clientsData = await loadClientsFromIndexedDB();
+      if (clientsData?.records && fields.company) {
+        const match = clientsData.records.find(r => companiesMatch(r.Client || r.client, fields.company));
+        if (match) setClientManager(match.CM || match.cm || null);
+      }
     })();
   }, [isNew]);
 
@@ -712,6 +742,13 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
             <div>
               <label className={styles.label}>CDM</label>
               <input className={styles.input} value={fields.cdm} onChange={e => set('cdm', e.target.value)} />
+            </div>
+
+            <div>
+              <label className={styles.label}>Client Manager</label>
+              <div className={styles.input} style={{ background: clientManager ? '#F0FDF4' : 'var(--color-bg)', color: clientManager ? '#166534' : 'var(--color-text-muted)', fontWeight: clientManager ? 600 : 400, cursor: 'default' }}>
+                {clientManager || '—'}
+              </div>
             </div>
 
             <div>
