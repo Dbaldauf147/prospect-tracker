@@ -1000,7 +1000,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         } catch {}
       }
     })();
-  }, []);
+  }, [user?.uid]);
 
   const { activeOppsByAccount, totalOppsByAccount, openOppsByAccount, suggestedStatusByAccount } = useMemo(() => {
     const active = {};
@@ -1084,11 +1084,9 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   }
 
   // Auto-create prospects for opps companies with OPEN opps not already in Table View
-  const autoCreateRanRef = useRef(false);
+  const autoCreateRanRef = useRef(new Set()); // track which companies we've already created
   useEffect(() => {
-    if (autoCreateRanRef.current) return; // Only run once per session
     if (!onAdd || Object.keys(openOppsByAccount).length === 0 || prospects.length === 0) return;
-    autoCreateRanRef.current = true;
     const existingLower = new Set(prospects.map(p => (p.company || '').toLowerCase()));
     const missing = [];
     for (const oppsCompany of Object.keys(openOppsByAccount)) {
@@ -1099,17 +1097,18 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       for (const existing of existingLower) {
         if (companiesMatch(existing, oppsCompany)) { found = true; break; }
       }
-      if (!found) {
+      if (!found && !autoCreateRanRef.current.has(oppsCompany)) {
         // Find the original cased name from opps records
         const original = oppsRecords.find(r => (r['Account'] || '').toLowerCase() === oppsCompany);
         const name = original ? original['Account'] : oppsCompany;
-        missing.push(name);
+        missing.push({ key: oppsCompany, name });
       }
     }
     if (missing.length > 0) {
-      console.log(`Auto-creating ${missing.length} prospects from opps:`, missing);
-      for (const company of missing) {
-        onAdd({ company, status: 'Inside Sales', tier: '', type: '', geography: '', publicPrivate: '', assetTypes: [], peAum: null, reAum: null, numberOfSites: null, rank: '', hqRegion: '', frameworks: [], notes: '', website: '', emailDomain: '', cdm: 'Dan Baldauf' });
+      console.log(`Auto-creating ${missing.length} prospects from opps:`, missing.map(m => m.name));
+      for (const { key, name } of missing) {
+        autoCreateRanRef.current.add(key);
+        onAdd({ company: name, status: 'Inside Sales', tier: '', type: '', geography: '', publicPrivate: '', assetTypes: [], peAum: null, reAum: null, numberOfSites: null, rank: '', hqRegion: '', frameworks: [], notes: '', website: '', emailDomain: '', cdm: 'Dan Baldauf' });
       }
     }
   }, [openOppsByAccount, prospects.length]);
