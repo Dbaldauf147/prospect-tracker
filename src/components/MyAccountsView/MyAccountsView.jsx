@@ -1100,7 +1100,14 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     if (!onAdd || Object.keys(openOppsByAccount).length === 0 || prospects.length === 0) return;
     const existingLower = new Set(prospects.map(p => (p.company || '').toLowerCase()));
     const missing = [];
-    console.log('Auto-create check: openOpps accounts:', Object.keys(openOppsByAccount).length, 'prospects:', prospects.length, 'dismissed:', dismissedCompanies.length);
+    console.log('Auto-create check: openOpps accounts:', Object.keys(openOppsByAccount).length, 'prospects:', prospects.length, 'dismissed:', dismissedCompanies.length, 'oppsRecords:', oppsRecords.length);
+    // Debug: check for Apollo specifically
+    const apolloOpps = oppsRecords.filter(r => (r['Account'] || '').toLowerCase().includes('apollo'));
+    console.log('Apollo opps in loaded data:', apolloOpps.length, apolloOpps.map(r => ({ account: r['Account'], stage: r['Stage'] })));
+    const apolloOpen = Object.keys(openOppsByAccount).filter(k => k.includes('apollo'));
+    console.log('Apollo in openOppsByAccount:', apolloOpen);
+    const apolloProspect = prospects.filter(p => (p.company || '').toLowerCase().includes('apollo'));
+    console.log('Apollo in prospects:', apolloProspect.map(p => ({ company: p.company, cdm: p.cdm, tier: p.tier })));
     for (const oppsCompany of Object.keys(openOppsByAccount)) {
       if (!oppsCompany) continue;
       // Skip dismissed companies
