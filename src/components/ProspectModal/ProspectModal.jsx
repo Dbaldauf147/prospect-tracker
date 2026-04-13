@@ -376,41 +376,45 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
   const [deletingContact, setDeletingContact] = useState(null);
   const [servicesOpen, setServicesOpen] = useState(false);
 
-  // Load opps scope values matching this company from caches
-  const oppsScopes = useMemo(() => {
+  // Load opps scope+stage pairs matching this company from caches
+  const oppsRecords = useMemo(() => {
     if (isNew || !fields.company) return [];
     try {
       const cache = JSON.parse(localStorage.getItem('opps-cache'));
       if (cache?.records) {
         return cache.records
           .filter(r => companiesMatch(r.Account, fields.company))
-          .map(r => (r.Scope || '').trim())
-          .filter(Boolean);
+          .filter(r => (r.Scope || '').trim())
+          .map(r => ({ scope: (r.Scope || '').trim(), stage: (r.Stage || '').trim() }));
       }
     } catch {}
     return [];
   }, [fields.company, isNew]);
 
-  // Build a set of scope values from opps that match known service items
+  // Map service items to their opp stage (priority: Sold > active stages > Not Sold)
   const scopeMatchedServices = useMemo(() => {
-    const matched = new Set();
-    for (const scope of oppsScopes) {
-      // Scope can contain multiple items separated by commas or semicolons
+    const stagePriority = { 'Sold': 4, 'Verbal': 3, 'Quoted': 3, 'Quoting': 2, 'Qualifying': 2, 'Lead': 1, 'Not Started': 1, 'Not Sold': 0 };
+    const matched = new Map(); // item -> stage
+    for (const { scope, stage } of oppsRecords) {
       const parts = scope.split(/[;,/]+/).map(s => s.trim()).filter(Boolean);
       for (const part of parts) {
         const lower = part.toLowerCase();
-        // Check exact match against service items
         for (const cat of SERVICE_CATEGORIES) {
           for (const item of cat.items) {
             if (item.toLowerCase() === lower || item.toLowerCase().includes(lower) || lower.includes(item.toLowerCase())) {
-              matched.add(item);
+              const existing = matched.get(item);
+              const existingPri = existing ? (stagePriority[existing] ?? 1) : -1;
+              const newPri = stagePriority[stage] ?? 1;
+              if (newPri > existingPri) {
+                matched.set(item, stage);
+              }
             }
           }
         }
       }
     }
     return matched;
-  }, [oppsScopes]);
+  }, [oppsRecords]);
 
   function handleContactSaved(updated) {
     if (addingContact) {
@@ -730,7 +734,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                 {(() => {
                   const svc = fields.servicesExplored || {};
                   const activeCount = Object.values(svc).filter(v => v && v !== '-').length;
-                  const scopeCount = scopeMatchedServices.size;
+                  const scopeCount = scopeMatchedServices.size; // Map size works the same
                   return (
                     <span style={{ fontSize: '0.68rem', color: '#64748B' }}>
                       {activeCount > 0 ? `${activeCount} set` : ''}
@@ -750,23 +754,42 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                         </div>
                         <div style={{ padding: '0.15rem 0' }}>
                           {cat.items.map(item => {
-                            const currentStatus = svc[item] || '-';
-                            const fromOpps = scopeMatchedServices.has(item);
+                            const manualStatus = svc[item] || '-';
+                            const oppStage = scopeMatchedServices.get(item);
+                            // Derive effective status: manual override wins, otherwise derive from opp stage
+                            let effectiveStatus = manualStatus;
+                            if (manualStatus === '-' && oppStage) {
+                              if (oppStage === 'Sold') effectiveStatus = 'Sold';
+                              else if (oppStage === 'Not Sold') effectiveStatus = 'Not Sold';
+                              else effectiveStatus = 'In Progress';
+                            }
+                            // Color mapping
+                            const statusColors = {
+                              'Sold': { bg: '#DCFCE7', color: '#166534' },
+                              'Renewal': { bg: '#DCFCE7', color: '#166534' },
+                              'In Progress': { bg: '#FEF9C3', color: '#854D0E' },
+                              'Exploring': { bg: '#FEF9C3', color: '#854D0E' },
+                              'Proposed': { bg: '#DBEAFE', color: '#1E40AF' },
+                              'Not Sold': { bg: '#FEE2E2', color: '#991B1B' },
+                              'N/A': { bg: '#F1F5F9', color: '#94A3B8' },
+                            };
+                            const colors = statusColors[effectiveStatus] || {};
                             return (
                               <div
                                 key={item}
                                 style={{
                                   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                                   padding: '0.15rem 0.45rem', gap: '0.3rem',
-                                  background: fromOpps && currentStatus === '-' ? '#FEF9C3' : currentStatus !== '-' ? '#F0FDF4' : 'transparent',
+                                  background: colors.bg || 'transparent',
+                                  opacity: effectiveStatus === 'N/A' ? 0.5 : 1,
                                 }}
                               >
-                                <span style={{ flex: 1, fontSize: '0.68rem', color: 'var(--color-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item}>
+                                <span style={{ flex: 1, fontSize: '0.68rem', color: colors.color || 'var(--color-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item}>
                                   {item}
-                                  {fromOpps && <span style={{ marginLeft: '0.2rem', fontSize: '0.55rem', fontWeight: 700, color: '#92400E', background: '#FDE68A', padding: '0 4px', borderRadius: '3px' }}>OPP</span>}
+                                  {oppStage && <span style={{ marginLeft: '0.2rem', fontSize: '0.55rem', fontWeight: 700, color: '#92400E', background: '#FDE68A', padding: '0 4px', borderRadius: '3px' }}>{oppStage}</span>}
                                 </span>
                                 <select
-                                  value={currentStatus}
+                                  value={manualStatus}
                                   onChange={e => {
                                     const next = { ...(fields.servicesExplored || {}), [item]: e.target.value };
                                     if (e.target.value === '-') delete next[item];
@@ -774,8 +797,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                   }}
                                   style={{
                                     fontSize: '0.62rem', padding: '1px 2px', border: '1px solid var(--color-border)',
-                                    borderRadius: '3px', background: 'var(--color-surface)', color: 'var(--color-text)',
-                                    cursor: 'pointer', minWidth: '65px', fontFamily: 'inherit',
+                                    borderRadius: '3px', background: colors.bg || 'var(--color-surface)', color: colors.color || 'var(--color-text)',
+                                    cursor: 'pointer', minWidth: '65px', fontFamily: 'inherit', fontWeight: 600,
                                   }}
                                 >
                                   {SERVICE_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
