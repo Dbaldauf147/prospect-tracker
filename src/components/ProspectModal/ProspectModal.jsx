@@ -882,6 +882,12 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                 const hiddenCount = hiddenServices.size;
                 const getDisplayName = (item) => serviceRenames[item] || item;
 
+                // Use custom categories if saved, otherwise default
+                const categories = settings.customServiceCategories || SERVICE_CATEGORIES.map(c => ({ name: c.name, items: [...c.items] }));
+
+                function saveCategories(next) {
+                  updateSettings({ customServiceCategories: next });
+                }
                 function renameService(original, newName) {
                   const next = { ...(settings.serviceRenames || {}) };
                   if (newName === original || !newName.trim()) delete next[original];
@@ -893,6 +899,33 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                   const next = current.includes(item) ? current.filter(s => s !== item) : [...current, item];
                   updateSettings({ hiddenServices: next });
                 }
+                function renameCategoryBox(oldName, newName) {
+                  if (!newName.trim() || newName === oldName) return;
+                  const next = categories.map(c => c.name === oldName ? { ...c, name: newName.trim() } : c);
+                  saveCategories(next);
+                }
+                function deleteCategoryBox(catName) {
+                  if (!confirm(`Delete "${catName}" box? Its services will be hidden.`)) return;
+                  const cat = categories.find(c => c.name === catName);
+                  const next = categories.filter(c => c.name !== catName);
+                  // Hide all items from the deleted category
+                  if (cat) {
+                    const hidden = [...(settings.hiddenServices || [])];
+                    for (const item of cat.items) { if (!hidden.includes(item)) hidden.push(item); }
+                    updateSettings({ hiddenServices: hidden, customServiceCategories: next });
+                    return;
+                  }
+                  saveCategories(next);
+                }
+                function moveService(item, fromCat, toCat) {
+                  if (fromCat === toCat) return;
+                  const next = categories.map(c => {
+                    if (c.name === fromCat) return { ...c, items: c.items.filter(i => i !== item) };
+                    if (c.name === toCat) return { ...c, items: [...c.items, item] };
+                    return c;
+                  });
+                  saveCategories(next);
+                }
 
                 return (
                 <div>
@@ -902,14 +935,36 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                     </div>
                   )}
                   <div style={{ marginTop: '0.5rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '0.4rem', maxHeight: '500px', overflowY: 'auto', padding: '0.15rem' }}>
-                  {SERVICE_CATEGORIES.map(cat => {
+                  {categories.map(cat => {
                     const svc = fields.servicesExplored || {};
                     const visibleItems = servicesEditMode ? cat.items : cat.items.filter(item => !hiddenServices.has(item));
-                    if (visibleItems.length === 0) return null;
+                    if (visibleItems.length === 0 && !servicesEditMode) return null;
                     return (
                       <div key={cat.name} style={{ breakInside: 'avoid', border: '1px solid var(--color-border)', borderRadius: '5px', overflow: 'hidden', fontSize: '0.72rem', marginBottom: '0.4rem' }}>
-                        <div style={{ padding: '0.2rem 0.4rem', background: '#EFF6FF', borderBottom: '1px solid var(--color-border)', fontWeight: 700, fontSize: '0.65rem', color: '#1E40AF' }}>
-                          {cat.name}
+                        <div style={{ padding: '0.2rem 0.4rem', background: '#EFF6FF', borderBottom: '1px solid var(--color-border)', fontWeight: 700, fontSize: '0.65rem', color: '#1E40AF', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                          {servicesEditMode && editingServiceName?.catName === cat.name ? (
+                            <input
+                              autoFocus
+                              defaultValue={cat.name}
+                              onBlur={(e) => { renameCategoryBox(cat.name, e.target.value); setEditingServiceName(null); }}
+                              onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); if (e.key === 'Escape') setEditingServiceName(null); }}
+                              style={{ flex: 1, fontSize: '0.65rem', fontWeight: 700, padding: '0 2px', border: '1px solid var(--color-accent)', borderRadius: '3px', fontFamily: 'inherit', outline: 'none', background: '#fff' }}
+                              onClick={e => e.stopPropagation()}
+                            />
+                          ) : (
+                            <span style={{ flex: 1, cursor: servicesEditMode ? 'pointer' : 'default' }} onClick={() => servicesEditMode && setEditingServiceName({ catName: cat.name })} title={servicesEditMode ? 'Click to rename' : ''}>
+                              {cat.name}
+                            </span>
+                          )}
+                          {servicesEditMode && (
+                            <button
+                              onClick={() => deleteCategoryBox(cat.name)}
+                              style={{ background: 'none', border: 'none', color: '#FCA5A5', fontSize: '0.8rem', cursor: 'pointer', padding: '0 2px', lineHeight: 1 }}
+                              onMouseEnter={e => e.target.style.color = '#EF4444'}
+                              onMouseLeave={e => e.target.style.color = '#FCA5A5'}
+                              title="Delete box"
+                            >&times;</button>
+                          )}
                         </div>
                         <div style={{ padding: '0.1rem 0' }}>
                           {visibleItems.map(item => {
@@ -939,7 +994,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
 
                             if (servicesEditMode) {
                               return (
-                                <div key={item} style={{ display: 'flex', alignItems: 'center', padding: '0.15rem 0.45rem', gap: '0.3rem', opacity: isHidden ? 0.4 : 1 }}>
+                                <div key={item} style={{ display: 'flex', alignItems: 'center', padding: '0.1rem 0.35rem', gap: '0.25rem', opacity: isHidden ? 0.4 : 1 }}>
                                   {editingServiceName?.original === item ? (
                                     <input
                                       autoFocus
@@ -955,14 +1010,21 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                       title="Click to rename"
                                     >
                                       {getDisplayName(item)}
-                                      {serviceRenames[item] && <span style={{ fontSize: '0.55rem', color: '#94A3B8', marginLeft: '0.2rem' }}>({item})</span>}
                                     </span>
                                   )}
+                                  <select
+                                    value={cat.name}
+                                    onChange={e => moveService(item, cat.name, e.target.value)}
+                                    title="Move to another box"
+                                    style={{ fontSize: '0.55rem', padding: '0 1px', border: '1px solid var(--color-border)', borderRadius: '3px', background: 'var(--color-surface)', color: '#64748B', cursor: 'pointer', maxWidth: '55px', fontFamily: 'inherit' }}
+                                  >
+                                    {categories.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
+                                  </select>
                                   <button
                                     onClick={() => toggleHideService(item)}
-                                    style={{ background: 'none', border: 'none', fontSize: '0.65rem', cursor: 'pointer', padding: '0 3px', color: isHidden ? '#22C55E' : '#94A3B8', fontFamily: 'inherit', fontWeight: 600 }}
+                                    style={{ background: 'none', border: 'none', fontSize: '0.6rem', cursor: 'pointer', padding: '0 2px', color: isHidden ? '#22C55E' : '#94A3B8', fontFamily: 'inherit', fontWeight: 600 }}
                                     title={isHidden ? 'Show' : 'Hide'}
-                                  >{isHidden ? 'Show' : 'Hide'}</button>
+                                  >{isHidden ? '↩' : '✕'}</button>
                                 </div>
                               );
                             }
