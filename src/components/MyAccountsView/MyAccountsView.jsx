@@ -1,5 +1,8 @@
 import { useState, useMemo, useRef, useEffect, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../../firebase';
+import { useAuth } from '../../contexts/AuthContext';
 import { Badge } from '../common/Badge';
 import { DataTable } from '../common/DataTable';
 import { statusColor, formatAum } from '../../utils/formatters';
@@ -601,6 +604,7 @@ function parseXlsx(file) {
 }
 
 export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd, targetAccountsData, settings, updateSettings }) {
+  const { user } = useAuth();
   const [search, setSearch] = useState('');
   const [filters, setFilters] = useState({});
   const [expandedBucket, setExpandedBucket] = useState(null);
@@ -947,35 +951,54 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     return counts;
   }, [prospects]);
 
-  // Load opps cache and count active opps per account
+  // Load opps cache: Firestore first, then IndexedDB, then localStorage
   const [oppsRecords, setOppsRecords] = useState([]);
   useEffect(() => {
-    // Try IndexedDB first, then localStorage fallback
     (async () => {
-      try {
-        const req = indexedDB.open('prospect-tracker-db', 3);
-        req.onupgradeneeded = () => {
-          const db = req.result;
-          if (!db.objectStoreNames.contains('target-accounts')) db.createObjectStore('target-accounts');
-          if (!db.objectStoreNames.contains('opps-cache')) db.createObjectStore('opps-cache');
-          if (!db.objectStoreNames.contains('clients-cache')) db.createObjectStore('clients-cache');
-        };
-        req.onsuccess = () => {
-          const db = req.result;
-          const tx = db.transaction('opps-cache', 'readonly');
-          const store = tx.objectStore('opps-cache');
-          const getReq = store.get('data');
-          getReq.onsuccess = () => {
-            const data = getReq.result;
-            if (data?.records) setOppsRecords(data.records);
+      let loaded = false;
+      // Try Firestore first (most up to date)
+      if (user?.uid) {
+        try {
+          const ref = doc(db, 'oppsData', user.uid);
+          const snap = await getDoc(ref);
+          if (snap.exists()) {
+            const raw = snap.data();
+            if (raw.json) {
+              const parsed = JSON.parse(raw.json);
+              if (parsed?.records) { setOppsRecords(parsed.records); loaded = true; }
+            }
+          }
+        } catch (err) { console.error('MyAccounts: Failed to load opps from Firestore:', err); }
+      }
+      // Fallback to IndexedDB
+      if (!loaded) {
+        try {
+          const req = indexedDB.open('prospect-tracker-db', 3);
+          req.onupgradeneeded = () => {
+            const idb = req.result;
+            if (!idb.objectStoreNames.contains('target-accounts')) idb.createObjectStore('target-accounts');
+            if (!idb.objectStoreNames.contains('opps-cache')) idb.createObjectStore('opps-cache');
+            if (!idb.objectStoreNames.contains('clients-cache')) idb.createObjectStore('clients-cache');
           };
-        };
-      } catch {}
-      // Fallback to localStorage
-      try {
-        const cache = JSON.parse(localStorage.getItem('opps-cache'));
-        if (cache?.records && oppsRecords.length === 0) setOppsRecords(cache.records);
-      } catch {}
+          req.onsuccess = () => {
+            const idb = req.result;
+            const tx = idb.transaction('opps-cache', 'readonly');
+            const store = tx.objectStore('opps-cache');
+            const getReq = store.get('data');
+            getReq.onsuccess = () => {
+              const data = getReq.result;
+              if (data?.records) setOppsRecords(data.records);
+            };
+          };
+        } catch {}
+      }
+      // Last resort: localStorage
+      if (!loaded) {
+        try {
+          const cache = JSON.parse(localStorage.getItem('opps-cache'));
+          if (cache?.records) setOppsRecords(cache.records);
+        } catch {}
+      }
     })();
   }, []);
 
