@@ -901,17 +901,17 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                       {hiddenCount} hidden service{hiddenCount !== 1 ? 's' : ''}
                     </div>
                   )}
-                  <div style={{ marginTop: '0.75rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.5rem', maxHeight: '500px', overflowY: 'auto', padding: '0.25rem' }}>
+                  <div style={{ marginTop: '0.5rem', columnCount: 5, columnGap: '0.4rem', maxHeight: '500px', overflowY: 'auto', padding: '0.15rem' }}>
                   {SERVICE_CATEGORIES.map(cat => {
                     const svc = fields.servicesExplored || {};
                     const visibleItems = servicesEditMode ? cat.items : cat.items.filter(item => !hiddenServices.has(item));
                     if (visibleItems.length === 0) return null;
                     return (
-                      <div key={cat.name} style={{ border: '1px solid var(--color-border)', borderRadius: '6px', overflow: 'hidden', fontSize: '0.72rem' }}>
-                        <div style={{ padding: '0.35rem 0.5rem', background: '#EFF6FF', borderBottom: '1px solid var(--color-border)', fontWeight: 700, fontSize: '0.7rem', color: '#1E40AF' }}>
+                      <div key={cat.name} style={{ breakInside: 'avoid', border: '1px solid var(--color-border)', borderRadius: '5px', overflow: 'hidden', fontSize: '0.72rem', marginBottom: '0.4rem' }}>
+                        <div style={{ padding: '0.2rem 0.4rem', background: '#EFF6FF', borderBottom: '1px solid var(--color-border)', fontWeight: 700, fontSize: '0.65rem', color: '#1E40AF' }}>
                           {cat.name}
                         </div>
-                        <div style={{ padding: '0.15rem 0' }}>
+                        <div style={{ padding: '0.1rem 0' }}>
                           {visibleItems.map(item => {
                             const isHidden = hiddenServices.has(item);
                             const manualStatus = svc[item] || '-';
@@ -972,7 +972,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                 key={item}
                                 style={{
                                   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                                  padding: '0.15rem 0.45rem', gap: '0.3rem',
+                                  padding: '0.1rem 0.35rem', gap: '0.25rem',
                                   background: colors.bg || 'transparent',
                                   opacity: effectiveStatus === 'N/A' ? 0.5 : 1,
                                 }}
