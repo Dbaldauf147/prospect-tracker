@@ -210,7 +210,7 @@ function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact })
 const EMPTY = {
   company: '', cdm: '', status: 'Inside Sales', type: '', geography: '', publicPrivate: '',
   assetTypes: [], peAum: null, reAum: null, numberOfSites: null, rank: '', tier: 'Tier 2',
-  hqRegion: '', frameworks: [], notes: '', website: '', emailDomain: '', servicesExplored: {}, competitors: {}, portfolioCompanies: [],
+  hqRegion: '', frameworks: [], notes: '', website: '', emailDomain: '', servicesExplored: {}, serviceNotes: {}, competitors: {}, portfolioCompanies: [],
 };
 
 // ── Inline HubSpot Contact Editor ──
@@ -482,7 +482,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
   const [deletingContact, setDeletingContact] = useState(null);
   const [servicesOpen, setServicesOpen] = useState(false);
   const [servicesEditMode, setServicesEditMode] = useState(false);
-  const [editingServiceName, setEditingServiceName] = useState(null); // { original, value }
+  const [editingServiceName, setEditingServiceName] = useState(null);
+  const [expandedServiceNote, setExpandedServiceNote] = useState(null);
   const [competitorsOpen, setCompetitorsOpen] = useState(false);
   const [newCompetitor, setNewCompetitor] = useState('');
   const [oppsCache, setOppsCache] = useState(null);
@@ -1029,34 +1030,60 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                               );
                             }
 
+                            const noteKey = item;
+                            const noteVal = (fields.serviceNotes || {})[noteKey] || '';
+                            const hasNote = !!noteVal;
+                            const isNoteOpen = expandedServiceNote === noteKey;
                             return (
-                              <div
-                                key={item}
-                                style={{
-                                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                                  padding: '0.1rem 0.35rem', gap: '0.25rem',
-                                  background: colors.bg || 'transparent',
-                                  opacity: effectiveStatus === 'N/A' ? 0.5 : 1,
-                                }}
-                              >
-                                <span style={{ flex: 1, fontSize: '0.68rem', color: colors.color || 'var(--color-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item}>
-                                  {getDisplayName(item)}
-                                </span>
-                                <select
-                                  value={effectiveStatus}
-                                  onChange={e => {
-                                    const next = { ...(fields.servicesExplored || {}), [item]: e.target.value };
-                                    if (e.target.value === '-') delete next[item];
-                                    set('servicesExplored', next);
-                                  }}
+                              <div key={item}>
+                                <div
                                   style={{
-                                    fontSize: '0.62rem', padding: '1px 2px', border: '1px solid var(--color-border)',
-                                    borderRadius: '3px', background: colors.bg || 'var(--color-surface)', color: colors.color || 'var(--color-text)',
-                                    cursor: 'pointer', minWidth: '65px', fontFamily: 'inherit', fontWeight: 600,
+                                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                    padding: '0.1rem 0.35rem', gap: '0.25rem',
+                                    background: colors.bg || 'transparent',
+                                    opacity: effectiveStatus === 'N/A' ? 0.5 : 1,
                                   }}
                                 >
-                                  {SERVICE_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-                                </select>
+                                  <span
+                                    onClick={() => setExpandedServiceNote(isNoteOpen ? null : noteKey)}
+                                    style={{ fontSize: '0.6rem', cursor: 'pointer', color: hasNote ? '#F59E0B' : '#CBD5E1', padding: '0 1px', lineHeight: 1, flexShrink: 0 }}
+                                    title={hasNote ? noteVal : 'Add note'}
+                                  >{hasNote ? '\u270E' : '\u270E'}</span>
+                                  <span style={{ flex: 1, fontSize: '0.68rem', color: colors.color || 'var(--color-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item}>
+                                    {getDisplayName(item)}
+                                  </span>
+                                  <select
+                                    value={effectiveStatus}
+                                    onChange={e => {
+                                      const next = { ...(fields.servicesExplored || {}), [item]: e.target.value };
+                                      if (e.target.value === '-') delete next[item];
+                                      set('servicesExplored', next);
+                                    }}
+                                    style={{
+                                      fontSize: '0.62rem', padding: '1px 2px', border: '1px solid var(--color-border)',
+                                      borderRadius: '3px', background: colors.bg || 'var(--color-surface)', color: colors.color || 'var(--color-text)',
+                                      cursor: 'pointer', minWidth: '65px', fontFamily: 'inherit', fontWeight: 600,
+                                    }}
+                                  >
+                                    {SERVICE_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                                  </select>
+                                </div>
+                                {isNoteOpen && (
+                                  <div style={{ padding: '0.15rem 0.35rem 0.25rem 1.2rem' }}>
+                                    <textarea
+                                      autoFocus
+                                      value={noteVal}
+                                      onChange={e => {
+                                        const next = { ...(fields.serviceNotes || {}), [noteKey]: e.target.value };
+                                        if (!e.target.value) delete next[noteKey];
+                                        set('serviceNotes', next);
+                                      }}
+                                      placeholder="Add a note..."
+                                      rows={2}
+                                      style={{ width: '100%', fontSize: '0.65rem', padding: '0.2rem 0.3rem', border: '1px solid var(--color-border)', borderRadius: '4px', fontFamily: 'inherit', resize: 'vertical', lineHeight: 1.3, color: 'var(--color-text)', background: 'var(--color-bg)' }}
+                                    />
+                                  </div>
+                                )}
                               </div>
                             );
                           })}
