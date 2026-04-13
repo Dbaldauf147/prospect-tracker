@@ -225,7 +225,7 @@ function companiesMatch(a, b) {
   const shorter = na.length >= nb.length ? nb : na;
   if (shorter.length >= 4 && shorter.length >= longer.length * 0.6 && longer.includes(shorter)) return true;
   // Strip common suffixes and compare
-  const strip = s => s.replace(/\b(inc|llc|ltd|corp|co|lp|group|partners|management|capital|holdings|investment[s]?|advisors?|real estate|realty|properties|infrastructure)\b\.?/gi, '').replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+  const strip = s => s.replace(/\b(inc|llc|ltd|corp|co|lp)\b\.?/gi, '').replace(/[^a-z0-9 ]/g, '').trim();
   const sa = strip(na);
   const sb = strip(nb);
   if (sa === sb) return true;
@@ -233,10 +233,6 @@ function companiesMatch(a, b) {
   const sLonger = sa.length >= sb.length ? sa : sb;
   const sShorter = sa.length >= sb.length ? sb : sa;
   if (sShorter.length >= 4 && sShorter.length >= sLonger.length * 0.6 && sLonger.includes(sShorter)) return true;
-  // First-word match — catches "Antin" vs "Antin Infrastructure Partners"
-  const firstA = sa.split(' ')[0];
-  const firstB = sb.split(' ')[0];
-  if (firstA.length >= 4 && firstA === firstB) return true;
   return false;
 }
 
