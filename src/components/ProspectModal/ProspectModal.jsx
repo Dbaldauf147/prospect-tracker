@@ -1,6 +1,29 @@
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES } from '../../data/enums';
 import styles from './ProspectModal.module.css';
+
+function loadOppsFromIndexedDB() {
+  return new Promise(resolve => {
+    try {
+      const req = indexedDB.open('prospect-tracker-db', 3);
+      req.onupgradeneeded = () => {
+        const d = req.result;
+        if (!d.objectStoreNames.contains('target-accounts')) d.createObjectStore('target-accounts');
+        if (!d.objectStoreNames.contains('opps-cache')) d.createObjectStore('opps-cache');
+        if (!d.objectStoreNames.contains('clients-cache')) d.createObjectStore('clients-cache');
+      };
+      req.onsuccess = () => {
+        const d = req.result;
+        const tx = d.transaction('opps-cache', 'readonly');
+        const store = tx.objectStore('opps-cache');
+        const getReq = store.get('data');
+        getReq.onsuccess = () => resolve(getReq.result || null);
+        getReq.onerror = () => resolve(null);
+      };
+      req.onerror = () => resolve(null);
+    } catch { resolve(null); }
+  });
+}
 
 function companiesMatch(a, b) {
   const na = (a || '').toLowerCase().trim();
@@ -375,21 +398,33 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
   const [showSaved, setShowSaved] = useState(false);
   const [deletingContact, setDeletingContact] = useState(null);
   const [servicesOpen, setServicesOpen] = useState(false);
+  const [oppsCache, setOppsCache] = useState(null);
 
-  // Load opps scope+stage pairs matching this company from caches
-  const oppsRecords = useMemo(() => {
-    if (isNew || !fields.company) return [];
-    try {
-      const cache = JSON.parse(localStorage.getItem('opps-cache'));
-      if (cache?.records) {
-        return cache.records
-          .filter(r => companiesMatch(r.Account, fields.company))
-          .filter(r => (r.Scope || '').trim())
-          .map(r => ({ scope: (r.Scope || '').trim(), stage: (r.Stage || '').trim() }));
+  // Load opps data from IndexedDB (primary) or localStorage (legacy fallback)
+  useEffect(() => {
+    if (isNew) return;
+    (async () => {
+      const idbData = await loadOppsFromIndexedDB();
+      if (idbData?.records) {
+        setOppsCache(idbData.records);
+        return;
       }
-    } catch {}
-    return [];
-  }, [fields.company, isNew]);
+      // Legacy localStorage fallback
+      try {
+        const cache = JSON.parse(localStorage.getItem('opps-cache'));
+        if (cache?.records) setOppsCache(cache.records);
+      } catch {}
+    })();
+  }, [isNew]);
+
+  // Load opps scope+stage pairs matching this company
+  const oppsRecords = useMemo(() => {
+    if (isNew || !fields.company || !oppsCache) return [];
+    return oppsCache
+      .filter(r => companiesMatch(r.Account, fields.company))
+      .filter(r => (r.Scope || '').trim())
+      .map(r => ({ scope: (r.Scope || '').trim(), stage: (r.Stage || '').trim() }));
+  }, [fields.company, isNew, oppsCache]);
 
   // Map service items to their opp stage (priority: Sold > active stages > Not Sold)
   const scopeMatchedServices = useMemo(() => {
