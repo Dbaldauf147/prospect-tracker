@@ -357,6 +357,66 @@ function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS }
   );
 }
 
+function MultiSelectDropdown({ options, selected, onToggle }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [open]);
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <div
+        onClick={() => setOpen(o => !o)}
+        style={{
+          display: 'flex', flexWrap: 'wrap', gap: '0.3rem', padding: '0.35rem 0.5rem',
+          border: '1px solid var(--color-border)', borderRadius: '6px', minHeight: '36px',
+          alignItems: 'center', cursor: 'pointer', background: 'var(--color-bg)',
+        }}
+      >
+        {selected.length === 0 && <span style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>Select...</span>}
+        {selected.map(v => (
+          <span key={v} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem', padding: '0.1rem 0.5rem', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '999px', fontSize: '0.7rem', color: '#1E40AF', fontWeight: 500 }}>
+            {v}
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onToggle(v); }}
+              style={{ background: 'none', border: 'none', color: '#93C5FD', fontSize: '0.8rem', cursor: 'pointer', padding: '0 2px', lineHeight: 1 }}
+            >&times;</button>
+          </span>
+        ))}
+        <span style={{ marginLeft: 'auto', fontSize: '0.6rem', color: 'var(--color-text-muted)' }}>{open ? '\u25B2' : '\u25BC'}</span>
+      </div>
+      {open && (
+        <div style={{
+          position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
+          background: '#fff', border: '1px solid var(--color-border)', borderRadius: '6px',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.1)', maxHeight: '200px', overflowY: 'auto', marginTop: '2px',
+        }}>
+          {options.map(opt => (
+            <label
+              key={opt}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.35rem 0.6rem',
+                fontSize: '0.75rem', cursor: 'pointer', color: 'var(--color-text)',
+              }}
+              onMouseOver={e => e.currentTarget.style.background = '#F1F5F9'}
+              onMouseOut={e => e.currentTarget.style.background = ''}
+            >
+              <input type="checkbox" checked={selected.includes(opt)} onChange={() => onToggle(opt)} style={{ accentColor: '#3B82F6' }} />
+              {opt}
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Build a flat set of all known service item names (lowercased) for scope matching
 const ALL_SERVICE_ITEMS_LOWER = new Set(
   SERVICE_CATEGORIES.flatMap(cat => cat.items.map(i => i.toLowerCase()))
@@ -727,26 +787,12 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
 
             <div className={styles.fieldFull}>
               <label className={styles.label}>Asset Types</label>
-              <div className={styles.checkGroup}>
-                {ASSET_TYPES.map(at => (
-                  <label key={at} className={styles.checkItem}>
-                    <input className={styles.checkBox} type="checkbox" checked={(fields.assetTypes || []).includes(at)} onChange={() => toggleArrayField('assetTypes', at)} />
-                    {at}
-                  </label>
-                ))}
-              </div>
+              <MultiSelectDropdown options={ASSET_TYPES} selected={fields.assetTypes || []} onToggle={(val) => toggleArrayField('assetTypes', val)} />
             </div>
 
             <div className={styles.fieldFull}>
               <label className={styles.label}>Frameworks</label>
-              <div className={styles.checkGroup}>
-                {FRAMEWORKS.map(fw => (
-                  <label key={fw} className={styles.checkItem}>
-                    <input className={styles.checkBox} type="checkbox" checked={(fields.frameworks || []).includes(fw)} onChange={() => toggleArrayField('frameworks', fw)} />
-                    {fw}
-                  </label>
-                ))}
-              </div>
+              <MultiSelectDropdown options={FRAMEWORKS} selected={fields.frameworks || []} onToggle={(val) => toggleArrayField('frameworks', val)} />
             </div>
 
             <div className={styles.fieldFull}>
