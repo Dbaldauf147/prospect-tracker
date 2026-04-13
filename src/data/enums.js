@@ -199,4 +199,4 @@ export const SERVICE_CATEGORIES = [
   },
 ];
 
-export const SERVICE_STATUSES = ['-', 'Exploring', 'Proposed', 'Sold', 'Renewal', 'In Progress', 'N/A'];
+export const SERVICE_STATUSES = ['-', 'Exploring', 'Proposed', 'Qualifying', 'Quoting', 'Quoted', 'Verbal', 'Sold', 'Not Sold', 'Renewal', 'In Progress', 'N/A'];

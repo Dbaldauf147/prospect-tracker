@@ -791,20 +791,24 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                           {cat.items.map(item => {
                             const manualStatus = svc[item] || '-';
                             const oppStage = scopeMatchedServices.get(item);
-                            // Derive effective status: manual override wins, otherwise derive from opp stage
+                            // Derive effective status: manual override wins, otherwise use opp stage directly
                             let effectiveStatus = manualStatus;
                             if (manualStatus === '-' && oppStage) {
-                              if (oppStage === 'Sold') effectiveStatus = 'Sold';
-                              else if (oppStage === 'Not Sold') effectiveStatus = 'Not Sold';
-                              else effectiveStatus = 'In Progress';
+                              effectiveStatus = oppStage;
                             }
                             // Color mapping
                             const statusColors = {
                               'Sold': { bg: '#DCFCE7', color: '#166534' },
                               'Renewal': { bg: '#DCFCE7', color: '#166534' },
+                              'Verbal': { bg: '#DCFCE7', color: '#166534' },
                               'In Progress': { bg: '#FEF9C3', color: '#854D0E' },
                               'Exploring': { bg: '#FEF9C3', color: '#854D0E' },
+                              'Qualifying': { bg: '#FEF9C3', color: '#854D0E' },
+                              'Quoting': { bg: '#FEF9C3', color: '#854D0E' },
+                              'Quoted': { bg: '#DBEAFE', color: '#1E40AF' },
                               'Proposed': { bg: '#DBEAFE', color: '#1E40AF' },
+                              'Lead': { bg: '#F5F3FF', color: '#7C3AED' },
+                              'Not Started': { bg: '#F5F3FF', color: '#7C3AED' },
                               'Not Sold': { bg: '#FEE2E2', color: '#991B1B' },
                               'N/A': { bg: '#F1F5F9', color: '#94A3B8' },
                             };
@@ -824,7 +828,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                   {oppStage && <span style={{ marginLeft: '0.2rem', fontSize: '0.55rem', fontWeight: 700, color: '#92400E', background: '#FDE68A', padding: '0 4px', borderRadius: '3px' }}>{oppStage}</span>}
                                 </span>
                                 <select
-                                  value={manualStatus}
+                                  value={effectiveStatus}
                                   onChange={e => {
                                     const next = { ...(fields.servicesExplored || {}), [item]: e.target.value };
                                     if (e.target.value === '-') delete next[item];
