@@ -1277,11 +1277,11 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       counts[s] = (counts[s] || 0) + 1;
     }
 
-    t1.sort((a, b) => (a.company || '').localeCompare(b.company || ''));
-    t2.sort((a, b) => (a.company || '').localeCompare(b.company || ''));
+    const all = [...t1, ...t2];
+    all.sort((a, b) => (a.company || '').localeCompare(b.company || ''));
     if (skippedCdm.length > 0) console.log('My Accounts: skipped (CDM not Baldauf):', skippedCdm);
     console.log(`My Accounts: ${t1.length} Tier 1, ${t2.length} Tier 2`);
-    return { tier1: t1, tier2: t2, allAccounts: [...t1, ...t2], statusCounts: counts };
+    return { tier1: t1, tier2: t2, allAccounts: all, statusCounts: counts };
   }, [prospects, targetMap, targetAccounts, allTargetReps, activityByCompany, activeOppsByAccount, totalOppsByAccount, suggestedStatusByAccount, hubspotCompanies, targetCompanies, decisionMakerByCompany, contactCountByCompany, bucketsByCompany, divisionsMap]);
 
   const clientCount = statusCounts['Client'] || 0;
