@@ -1069,6 +1069,17 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
 
   // Dismissed companies — companies the user manually deleted that should not be auto-recreated
   const dismissedCompanies = settings.dismissedCompanies || [];
+  const [showDismissed, setShowDismissed] = useState(false);
+
+  function undismissCompany(companyName) {
+    const current = settings.dismissedCompanies || [];
+    updateSettings({ dismissedCompanies: current.filter(d => d !== companyName) });
+  }
+
+  // Log for debugging
+  useEffect(() => {
+    if (dismissedCompanies.length > 0) console.log('Dismissed companies:', dismissedCompanies);
+  }, [dismissedCompanies.length]);
 
   function dismissCompany(companyName) {
     const lower = (companyName || '').toLowerCase().trim();
@@ -1089,10 +1100,11 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     if (!onAdd || Object.keys(openOppsByAccount).length === 0 || prospects.length === 0) return;
     const existingLower = new Set(prospects.map(p => (p.company || '').toLowerCase()));
     const missing = [];
+    console.log('Auto-create check: openOpps accounts:', Object.keys(openOppsByAccount).length, 'prospects:', prospects.length, 'dismissed:', dismissedCompanies.length);
     for (const oppsCompany of Object.keys(openOppsByAccount)) {
       if (!oppsCompany) continue;
       // Skip dismissed companies
-      if (isDismissed(oppsCompany)) continue;
+      if (isDismissed(oppsCompany)) { console.log('  Skipping dismissed:', oppsCompany); continue; }
       let found = false;
       for (const existing of existingLower) {
         if (companiesMatch(existing, oppsCompany)) { found = true; break; }
@@ -1714,6 +1726,34 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
           <div className={styles.summaryValue}>{allAccounts.filter(a => !a.targetNames || a.targetNames.length === 0).length}</div>
         </button>
       </div>
+      {dismissedCompanies.length > 0 && (
+        <div style={{ padding: '0 1.25rem 0.4rem' }}>
+          <button
+            onClick={() => setShowDismissed(o => !o)}
+            style={{ fontSize: '0.65rem', color: '#94A3B8', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', textDecoration: 'underline' }}
+          >{showDismissed ? 'Hide' : 'Show'} {dismissedCompanies.length} dismissed compan{dismissedCompanies.length === 1 ? 'y' : 'ies'}</button>
+          {showDismissed && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', marginTop: '0.3rem' }}>
+              {dismissedCompanies.map(name => (
+                <span key={name} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem', padding: '0.1rem 0.5rem', background: '#F1F5F9', border: '1px solid #E2E8F0', borderRadius: '999px', fontSize: '0.65rem', color: '#64748B' }}>
+                  {name}
+                  <button
+                    onClick={() => undismissCompany(name)}
+                    title="Restore"
+                    style={{ background: 'none', border: 'none', color: '#94A3B8', fontSize: '0.75rem', cursor: 'pointer', padding: '0 2px', lineHeight: 1 }}
+                    onMouseEnter={e => e.target.style.color = '#22C55E'}
+                    onMouseLeave={e => e.target.style.color = '#94A3B8'}
+                  >&times;</button>
+                </span>
+              ))}
+              <button
+                onClick={() => { if (confirm('Clear all dismissed companies? They may be auto-recreated on next load.')) updateSettings({ dismissedCompanies: [] }); }}
+                style={{ fontSize: '0.62rem', color: '#EF4444', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', textDecoration: 'underline' }}
+              >Clear all</button>
+            </div>
+          )}
+        </div>
+      )}
       {expandedBucket && (() => {
         const myNames = allAccounts.map(a => (a.company || '').toLowerCase());
         const mappedNames = new Set(allAccounts.flatMap(a => (a.targetNames || []).map(n => n.toLowerCase())));
