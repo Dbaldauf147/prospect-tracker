@@ -187,7 +187,7 @@ function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact })
 const EMPTY = {
   company: '', cdm: '', status: 'Inside Sales', type: '', geography: '', publicPrivate: '',
   assetTypes: [], peAum: null, reAum: null, numberOfSites: null, rank: '', tier: 'Tier 2',
-  hqRegion: '', frameworks: [], notes: '', website: '', emailDomain: '', servicesExplored: {}, competitors: {},
+  hqRegion: '', frameworks: [], notes: '', website: '', emailDomain: '', servicesExplored: {}, competitors: {}, portfolioCompanies: [],
 };
 
 // ── Inline HubSpot Contact Editor ──
@@ -665,7 +665,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
         </div>
         <div className={styles.body}>
           <div className={styles.grid}>
-            <div className={styles.fieldFull}>
+            <div style={{ gridColumn: 'span 2' }}>
               <label className={styles.label}>Company</label>
               <input className={styles.input} value={fields.company} onChange={e => set('company', e.target.value)} placeholder="Company name" />
             </div>
@@ -748,7 +748,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
               <input className={styles.input} value={fields.website} onChange={e => set('website', e.target.value)} placeholder="www.example.com" />
             </div>
 
-            <div>
+            <div style={{ gridColumn: 'span 2' }}>
               <label className={styles.label}>Email Domains</label>
               {(() => {
                 const domains = (fields.emailDomain || '').split(/[\n;,]+/).map(s => s.trim()).filter(Boolean);
@@ -787,19 +787,19 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
               })()}
             </div>
 
-            <div className={styles.fieldFull}>
+            <div style={{ gridColumn: 'span 2' }}>
               <label className={styles.label}>Asset Types</label>
               <MultiSelectDropdown options={ASSET_TYPES} selected={fields.assetTypes || []} onToggle={(val) => toggleArrayField('assetTypes', val)} />
             </div>
 
-            <div className={styles.fieldFull}>
+            <div style={{ gridColumn: 'span 2' }}>
               <label className={styles.label}>Frameworks</label>
               <MultiSelectDropdown options={FRAMEWORKS} selected={fields.frameworks || []} onToggle={(val) => toggleArrayField('frameworks', val)} />
             </div>
 
             <div className={styles.fieldFull}>
               <label className={styles.label}>Notes</label>
-              <textarea className={styles.textarea} value={fields.notes} onChange={e => set('notes', e.target.value)} rows={3} />
+              <textarea className={styles.textarea} value={fields.notes} onChange={e => set('notes', e.target.value)} rows={2} />
             </div>
           </div>
 
