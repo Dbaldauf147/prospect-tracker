@@ -1267,7 +1267,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   }, [prospects, targetMap, targetAccounts, allTargetReps, activityByCompany, activeOppsByAccount, totalOppsByAccount, suggestedStatusByAccount, hubspotCompanies, targetCompanies, decisionMakerByCompany, contactCountByCompany, bucketsByCompany, divisionsMap]);
 
   const clientCount = statusCounts['Client'] || 0;
-  const qualifyingCount = (statusCounts['Qualifying'] || 0) + (statusCounts['Inside Sales'] || 0);
+  const tier3Count = allAccounts.filter(a => a.myTier === 'Tier 3').length;
 
   // Dynamic filter options — any visible column with ≤30 unique string values gets a filter
   const SKIP_FILTER_KEYS = new Set(['company', 'notes', 'dmNames', 'targetName', 'otherReps', 'sources', 'divisions', '_hide', 'id', 'createdAt', 'updatedAt', 'assetTypes', 'frameworks']);
@@ -1311,7 +1311,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     if (bucketFilter === 'tier1') result = result.filter(a => a.myTier === 'Tier 1');
     else if (bucketFilter === 'tier2') result = result.filter(a => a.myTier === 'Tier 2');
     else if (bucketFilter === 'client') result = result.filter(a => a.status === 'Client');
-    else if (bucketFilter === 'pipeline') result = result.filter(a => a.status === 'Qualifying' || a.status === 'Inside Sales');
+    else if (bucketFilter === 'pipeline') result = result.filter(a => a.myTier === 'Tier 3');
     else if (bucketFilter === 'noTarget') result = result.filter(a => !a.targetNames || a.targetNames.length === 0);
     for (const [key, values] of Object.entries(filters)) {
       if (values.length > 0) {
@@ -1522,7 +1522,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
           const col = ACCOUNT_COLUMNS.find(c => c.key === key);
           return <FilterDrop key={key} label={col?.label || key} options={options} selected={filters[key] || []} onToggle={v => toggleFilter(key, v)} />;
         })}
-        {bucketFilter && <span style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem', borderRadius: '999px', background: '#EBF2FC', color: '#3B7DDD', fontWeight: 600 }}>Showing: {bucketFilter === 'tier1' ? 'Tier 1' : bucketFilter === 'tier2' ? 'Tier 2' : bucketFilter === 'client' ? 'Clients' : bucketFilter === 'noTarget' ? 'No Target Mapped' : 'In Pipeline'}</span>}
+        {bucketFilter && <span style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem', borderRadius: '999px', background: '#EBF2FC', color: '#3B7DDD', fontWeight: 600 }}>Showing: {bucketFilter === 'tier1' ? 'Tier 1' : bucketFilter === 'tier2' ? 'Tier 2' : bucketFilter === 'client' ? 'Clients' : bucketFilter === 'noTarget' ? 'No Target Mapped' : 'Tier 3'}</span>}
         {(activeFilterCount > 0 || bucketFilter) && <button className={styles.clearBtn} onClick={clearFilters}>Clear all</button>}
         <button
           onClick={bulkLookupHqRegion}
@@ -1644,8 +1644,8 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
           <div className={styles.summaryValue}>{clientCount}</div>
         </button>
         <button className={`${styles.summaryCard} ${bucketFilter === 'pipeline' ? styles.summaryCardActive : ''}`} style={{ borderLeftColor: '#F59E0B', cursor: 'pointer' }} onClick={() => setBucketFilter(bucketFilter === 'pipeline' ? null : 'pipeline')}>
-          <div className={styles.summaryLabel}>In Pipeline</div>
-          <div className={styles.summaryValue}>{qualifyingCount}</div>
+          <div className={styles.summaryLabel}>Tier 3</div>
+          <div className={styles.summaryValue}>{tier3Count}</div>
         </button>
         <button className={`${styles.summaryCard} ${bucketFilter === 'noTarget' ? styles.summaryCardActive : ''}`} style={{ borderLeftColor: '#9CA3AF', cursor: 'pointer' }} onClick={() => setBucketFilter(bucketFilter === 'noTarget' ? null : 'noTarget')}>
           <div className={styles.summaryLabel}>No Target Mapped</div>
