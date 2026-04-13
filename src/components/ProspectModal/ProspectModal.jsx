@@ -1091,6 +1091,19 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                       </div>
                     );
                   })}
+                  {servicesEditMode && (
+                    <div
+                      onClick={() => {
+                        const name = prompt('New box name:');
+                        if (!name?.trim()) return;
+                        if (categories.some(c => c.name === name.trim())) { alert('A box with that name already exists.'); return; }
+                        saveCategories([...categories, { name: name.trim(), items: [] }]);
+                      }}
+                      style={{ breakInside: 'avoid', border: '2px dashed var(--color-border)', borderRadius: '5px', padding: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--color-text-muted)', fontSize: '0.72rem', fontWeight: 600, marginBottom: '0.4rem' }}
+                      onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--color-accent)'; e.currentTarget.style.color = 'var(--color-accent)'; }}
+                      onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--color-border)'; e.currentTarget.style.color = 'var(--color-text-muted)'; }}
+                    >+ Add Box</div>
+                  )}
                   </div>
                 </div>
                 );
