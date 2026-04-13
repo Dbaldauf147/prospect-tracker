@@ -1223,10 +1223,10 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       let totalOpps = 0;
       for (const name of allCompanyNames) {
         // Exact match
-        oppsCount += activeOppsByAccount[name] || 0;
+        oppsCount += openOppsByAccount[name] || 0;
         totalOpps += totalOppsByAccount[name] || 0;
         // Fuzzy match for opps
-        for (const [oppsCompany, count] of Object.entries(activeOppsByAccount)) {
+        for (const [oppsCompany, count] of Object.entries(openOppsByAccount)) {
           if (oppsCompany !== name && companiesMatch(name, oppsCompany)) { oppsCount += count; break; }
         }
         for (const [oppsCompany, count] of Object.entries(totalOppsByAccount)) {
