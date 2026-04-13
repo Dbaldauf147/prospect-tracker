@@ -384,19 +384,30 @@ function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS }
 
 function MultiSelectDropdown({ options, selected, onToggle }) {
   const [open, setOpen] = useState(false);
+  const [dropUp, setDropUp] = useState(false);
   const ref = useRef(null);
+  const [filter, setFilter] = useState('');
 
   useEffect(() => {
     if (!open) return;
-    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) { setOpen(false); setFilter(''); } };
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, [open]);
 
+  useEffect(() => {
+    if (!open || !ref.current) return;
+    const rect = ref.current.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom;
+    setDropUp(spaceBelow < 220);
+  }, [open]);
+
+  const filtered = filter.trim() ? options.filter(o => o.toLowerCase().includes(filter.toLowerCase())) : options;
+
   return (
     <div ref={ref} style={{ position: 'relative' }}>
       <div
-        onClick={() => setOpen(o => !o)}
+        onClick={() => { setOpen(o => !o); setFilter(''); }}
         style={{
           display: 'flex', flexWrap: 'wrap', gap: '0.3rem', padding: '0.35rem 0.5rem',
           border: '1px solid var(--color-border)', borderRadius: '6px', minHeight: '36px',
@@ -418,24 +429,39 @@ function MultiSelectDropdown({ options, selected, onToggle }) {
       </div>
       {open && (
         <div style={{
-          position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
+          position: 'absolute', [dropUp ? 'bottom' : 'top']: '100%', left: 0, right: 0, zIndex: 50,
           background: '#fff', border: '1px solid var(--color-border)', borderRadius: '6px',
-          boxShadow: '0 4px 12px rgba(0,0,0,0.1)', maxHeight: '200px', overflowY: 'auto', marginTop: '2px',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.15)', maxHeight: '220px', display: 'flex', flexDirection: 'column',
+          [dropUp ? 'marginBottom' : 'marginTop']: '2px',
         }}>
-          {options.map(opt => (
-            <label
-              key={opt}
-              style={{
-                display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.35rem 0.6rem',
-                fontSize: '0.75rem', cursor: 'pointer', color: 'var(--color-text)',
-              }}
-              onMouseOver={e => e.currentTarget.style.background = '#F1F5F9'}
-              onMouseOut={e => e.currentTarget.style.background = ''}
-            >
-              <input type="checkbox" checked={selected.includes(opt)} onChange={() => onToggle(opt)} style={{ accentColor: '#3B82F6' }} />
-              {opt}
-            </label>
-          ))}
+          {options.length > 10 && (
+            <input
+              type="text"
+              placeholder="Search..."
+              value={filter}
+              onChange={e => setFilter(e.target.value)}
+              onClick={e => e.stopPropagation()}
+              autoFocus
+              style={{ margin: '0.3rem', padding: '0.25rem 0.4rem', border: '1px solid var(--color-border)', borderRadius: '4px', fontSize: '0.7rem', fontFamily: 'inherit', outline: 'none' }}
+            />
+          )}
+          <div style={{ overflowY: 'auto', flex: 1 }}>
+            {filtered.map(opt => (
+              <label
+                key={opt}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.3rem 0.6rem',
+                  fontSize: '0.72rem', cursor: 'pointer', color: 'var(--color-text)',
+                }}
+                onMouseOver={e => e.currentTarget.style.background = '#F1F5F9'}
+                onMouseOut={e => e.currentTarget.style.background = ''}
+              >
+                <input type="checkbox" checked={selected.includes(opt)} onChange={() => onToggle(opt)} style={{ accentColor: '#3B82F6' }} />
+                {opt}
+              </label>
+            ))}
+            {filtered.length === 0 && <div style={{ padding: '0.4rem 0.6rem', fontSize: '0.7rem', color: '#94A3B8' }}>No matches</div>}
+          </div>
         </div>
       )}
     </div>
