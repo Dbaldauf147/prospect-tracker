@@ -376,7 +376,7 @@ function DivisionPicker({ parentId, divisions, allCompanies, onAdd, onRemove, ru
   );
 }
 
-function TargetNamePicker({ values, companyId, targetOptions, onToggle, duplicates }) {
+function TargetNamePicker({ values, companyId, companyName, targetOptions, onToggle, duplicates }) {
   const [open, setOpen] = useState(false);
   const [inputText, setInputText] = useState('');
   const [dropPos, setDropPos] = useState({ top: 0, left: 0 });
@@ -423,7 +423,10 @@ function TargetNamePicker({ values, companyId, targetOptions, onToggle, duplicat
     <span ref={anchorRef}>
       <button
         onClick={(e) => { e.stopPropagation(); setInputText(''); setOpen(p => !p); }}
-        title={hasDupe ? `⚠ Duplicate mapping: ${values.filter(v => duplicates.has(v)).join(', ')}` : (count > 1 ? values.join('\n') : '')}
+        title={hasDupe ? values.filter(v => duplicates.has(v)).map(v => {
+          const others = (duplicates.get(v) || []).filter(c => c !== companyName);
+          return `"${v}" also mapped to: ${others.join(', ')}`;
+        }).join('\n') : (count > 1 ? values.join('\n') : '')}
         style={{ fontSize: '0.72rem', cursor: 'pointer', background: hasDupe ? '#FEF3C7' : count > 0 ? '#EBF2FC' : 'none', border: hasDupe ? '1px solid #F59E0B' : count > 0 ? '1px solid #BFDBFE' : '1px solid transparent', padding: '2px 8px', borderRadius: '4px', fontFamily: 'inherit', fontWeight: 500, color: hasDupe ? '#92400E' : count > 0 ? '#1E40AF' : 'var(--color-accent)', textAlign: 'left', lineHeight: 1.3 }}
       >
         {hasDupe && <span style={{ marginRight: '0.25rem' }}>&#9888;</span>}
@@ -1404,17 +1407,20 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     return [...names].sort();
   }, [targetAccountsData]);
 
-  // Detect duplicate target account name mappings
+  // Detect duplicate target account name mappings — map of targetName -> [company names]
   const duplicateTargetNames = useMemo(() => {
-    const counts = {};
+    const byTarget = {};
     for (const a of allAccounts) {
       for (const tn of (a.targetNames || [])) {
-        if (tn) counts[tn] = (counts[tn] || 0) + 1;
+        if (tn) {
+          if (!byTarget[tn]) byTarget[tn] = [];
+          byTarget[tn].push(a.company);
+        }
       }
     }
-    const dupes = new Set();
-    for (const [name, count] of Object.entries(counts)) {
-      if (count > 1) dupes.add(name);
+    const dupes = new Map();
+    for (const [name, companies] of Object.entries(byTarget)) {
+      if (companies.length > 1) dupes.set(name, companies);
     }
     return dupes;
   }, [allAccounts]);
@@ -1434,7 +1440,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         )};
       }
       if (col.key === 'targetName') {
-        return { ...col, render: (row) => <TargetNamePicker values={row.targetNames || []} companyId={row.id} targetOptions={allTargetNames} onToggle={toggleTargetMapping} duplicates={duplicateTargetNames} /> };
+        return { ...col, render: (row) => <TargetNamePicker values={row.targetNames || []} companyId={row.id} companyName={row.company} targetOptions={allTargetNames} onToggle={toggleTargetMapping} duplicates={duplicateTargetNames} /> };
       }
       if (col.key === 'divisions') {
         return { ...col, render: (row) => <DivisionPicker parentId={row.id} divisions={divisionsMap[row.id] || []} allCompanies={allCompaniesForDivisions} onAdd={addDivision} onRemove={removeDivision} rules={divisionRules[row.id] || []} onSetRule={addDivisionRule} onRemoveRule={removeDivisionRule} /> };
