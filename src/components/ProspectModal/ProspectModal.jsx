@@ -230,6 +230,7 @@ function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS }
     jobtitle: contact.jobtitle || '',
     company: contact.company || '',
     hs_linkedin_url: contact.hs_linkedin_url || contact.linkedin_url || '',
+    notes: contact.notes || contact.hs_content_membership_notes || contact.message || '',
   });
   // Checked state for the 5 known tags
   const [checkedTags, setCheckedTags] = useState(() =>
@@ -323,11 +324,12 @@ function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS }
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
           <div><label style={labelStyle}>First Name</label><input style={inputStyle} value={f.firstname} onChange={e => set('firstname', e.target.value)} /></div>
           <div><label style={labelStyle}>Last Name</label><input style={inputStyle} value={f.lastname} onChange={e => set('lastname', e.target.value)} /></div>
-          <div><label style={labelStyle}>Email</label><input style={inputStyle} type="email" value={f.email} onChange={e => set('email', e.target.value)} /></div>
+          <div><label style={labelStyle}>Email <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(optional)</span></label><input style={inputStyle} type="email" value={f.email} onChange={e => set('email', e.target.value)} /></div>
           <div><label style={labelStyle}>Phone</label><input style={inputStyle} value={f.phone} onChange={e => set('phone', e.target.value)} /></div>
           <div style={{ gridColumn: '1 / -1' }}><label style={labelStyle}>Job Title</label><input style={inputStyle} value={f.jobtitle} onChange={e => set('jobtitle', e.target.value)} /></div>
           <div style={{ gridColumn: '1 / -1' }}><label style={labelStyle}>Company</label><input style={inputStyle} value={f.company} onChange={e => set('company', e.target.value)} /></div>
           <div style={{ gridColumn: '1 / -1' }}><label style={labelStyle}>LinkedIn URL</label><input style={inputStyle} value={f.hs_linkedin_url} onChange={e => set('hs_linkedin_url', e.target.value)} /></div>
+          <div style={{ gridColumn: '1 / -1' }}><label style={labelStyle}>Notes</label><textarea style={{ ...inputStyle, resize: 'vertical', minHeight: '50px', lineHeight: 1.4 }} value={f.notes} onChange={e => set('notes', e.target.value)} rows={2} placeholder="Add notes about this contact..." /></div>
           <div style={{ gridColumn: '1 / -1' }} ref={tagsRef}>
             <label style={labelStyle}>Tags</label>
             <button
