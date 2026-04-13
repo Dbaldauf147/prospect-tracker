@@ -225,7 +225,7 @@ function companiesMatch(a, b) {
   const shorter = na.length >= nb.length ? nb : na;
   if (shorter.length >= 4 && shorter.length >= longer.length * 0.6 && longer.includes(shorter)) return true;
   // Strip common suffixes and compare
-  const strip = s => s.replace(/\b(inc|llc|ltd|corp|co|lp)\b\.?/gi, '').replace(/[^a-z0-9 ]/g, '').trim();
+  const strip = s => s.replace(/\b(inc|llc|ltd|corp|co|lp|group|partners|management|capital|holdings|investment[s]?|advisors?|real estate|realty|properties|infrastructure)\b\.?/gi, '').replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
   const sa = strip(na);
   const sb = strip(nb);
   if (sa === sb) return true;
@@ -233,6 +233,10 @@ function companiesMatch(a, b) {
   const sLonger = sa.length >= sb.length ? sa : sb;
   const sShorter = sa.length >= sb.length ? sb : sa;
   if (sShorter.length >= 4 && sShorter.length >= sLonger.length * 0.6 && sLonger.includes(sShorter)) return true;
+  // First-word match — catches "Antin" vs "Antin Infrastructure Partners"
+  const firstA = sa.split(' ')[0];
+  const firstB = sb.split(' ')[0];
+  if (firstA.length >= 4 && firstA === firstB) return true;
   return false;
 }
 
@@ -1030,6 +1034,22 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     return { activeOppsByAccount: active, totalOppsByAccount: total, openOppsByAccount: open, suggestedStatusByAccount: suggested };
   }, [oppsRecords]);
 
+  // Dismissed companies — companies the user manually deleted that should not be auto-recreated
+  const dismissedCompanies = settings.dismissedCompanies || [];
+
+  function dismissCompany(companyName) {
+    const lower = (companyName || '').toLowerCase().trim();
+    if (!lower) return;
+    const current = settings.dismissedCompanies || [];
+    if (current.some(d => d.toLowerCase() === lower)) return;
+    updateSettings({ dismissedCompanies: [...current, companyName] });
+  }
+
+  function isDismissed(companyName) {
+    const lower = (companyName || '').toLowerCase().trim();
+    return dismissedCompanies.some(d => companiesMatch(d, lower));
+  }
+
   // Auto-create prospects for opps companies with OPEN opps not already in Table View
   useEffect(() => {
     if (!onAdd || Object.keys(openOppsByAccount).length === 0 || prospects.length === 0) return;
@@ -1037,6 +1057,8 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     const missing = [];
     for (const oppsCompany of Object.keys(openOppsByAccount)) {
       if (!oppsCompany) continue;
+      // Skip dismissed companies
+      if (isDismissed(oppsCompany)) continue;
       let found = false;
       for (const existing of existingLower) {
         if (companiesMatch(existing, oppsCompany)) { found = true; break; }
@@ -1503,7 +1525,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       key: '_hide',
       label: '',
       defaultWidth: 40,
-      render: (row) => <button className={styles.deleteBtn} onClick={(e) => { e.stopPropagation(); if (confirm(`Remove "${row.company}" from the database?`)) onDelete(row.id); }} title="Remove">&#x2715;</button>,
+      render: (row) => <button className={styles.deleteBtn} onClick={(e) => { e.stopPropagation(); if (confirm(`Remove "${row.company}" from the database?`)) { dismissCompany(row.company); onDelete(row.id); } }} title="Remove">&#x2715;</button>,
     });
     return mapped;
   }, [onSelect, onUpdate, allTargetNames, divisionsMap, allCompaniesForDivisions, duplicateTargetNames]);
