@@ -726,8 +726,8 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     const existing = Array.isArray(next[companyId]) ? next[companyId] : (next[companyId] ? [next[companyId]] : []);
     if (existing.includes(targetName)) {
       const updated = existing.filter(n => n !== targetName);
-      if (updated.length === 0) delete next[companyId];
-      else next[companyId] = updated;
+      // Store empty array (not undefined) so fuzzy fallback doesn't re-match
+      next[companyId] = updated;
     } else {
       next[companyId] = [...existing, targetName];
     }
@@ -1236,12 +1236,14 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       // Find matching Target Accounts names and tier — manual override first
       // Migrate old string format to array
       const rawMap = targetMap[p.id];
+      const hasExplicitMapping = rawMap !== undefined; // explicit empty array means user cleared it
       let targetNames = Array.isArray(rawMap) ? rawMap : (rawMap ? [rawMap] : []);
       let targetTier = '';
       if (targetNames.length > 0) {
         const matched = targetAccounts.find(t => targetNames.includes(t.company));
         if (matched) targetTier = matched.tier;
-      } else {
+      } else if (!hasExplicitMapping) {
+        // Only fuzzy-match if user never explicitly set/cleared the mapping
         for (const t of targetAccounts) {
           if (companiesMatch(p.company, t.company)) { targetNames = [t.company]; targetTier = t.tier; break; }
         }
