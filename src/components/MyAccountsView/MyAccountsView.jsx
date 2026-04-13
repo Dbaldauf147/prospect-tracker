@@ -397,7 +397,18 @@ function TargetNamePicker({ values, companyId, targetOptions, onToggle, duplicat
   useLayoutEffect(() => {
     if (!open || !anchorRef.current) return;
     const rect = anchorRef.current.getBoundingClientRect();
-    setDropPos({ top: rect.bottom + 2, left: rect.left });
+    const dropHeight = 350;
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    let top;
+    if (spaceBelow >= dropHeight || spaceBelow >= spaceAbove) {
+      top = rect.bottom + 2;
+    } else {
+      top = rect.top - Math.min(dropHeight, spaceAbove) - 2;
+    }
+    let left = rect.left;
+    if (left + 300 > window.innerWidth) left = window.innerWidth - 310;
+    setDropPos({ top, left });
   }, [open, inputText]);
 
   const selectedSet = new Set(values);
