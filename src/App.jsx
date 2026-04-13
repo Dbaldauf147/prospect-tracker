@@ -24,6 +24,7 @@ import { DraftEmailView } from './components/DraftEmailView/DraftEmailView';
 import { VibeProspecting } from './components/VibeProspecting/VibeProspecting';
 import { EmailCampaignView } from './components/EmailCampaignView/EmailCampaignView';
 import { ProgressView } from './components/ProgressView/ProgressView';
+import { RAClientsView } from './components/RAClientsView/RAClientsView';
 import './App.css';
 
 function App() {
@@ -118,6 +119,8 @@ function App() {
             <ActivityView prospects={prospects} />
           ) : view === 'targets' ? (
             <TargetAccountsView onDataLoaded={setTargetAccountsData} />
+          ) : view === 'raclients' ? (
+            <RAClientsView />
           ) : view === 'clients' ? (
             <ClientsView />
           ) : view === 'opps' ? (
