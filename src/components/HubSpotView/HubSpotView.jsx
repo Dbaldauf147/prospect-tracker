@@ -508,13 +508,15 @@ function BulkUploadModal({ onUpload, onClose, uploading, progress }) {
 }
 
 
-function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptions, ccMap, toAlsoMap, onSaveCcMap, onSaveToAlsoMap, contactOldEmails = {}, onSaveOldEmails, companyDomainsMap = {} }) {
+function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptions, ccMap, toAlsoMap, onSaveCcMap, onSaveToAlsoMap, contactOldEmails = {}, onSaveOldEmails, companyDomainsMap = {}, contactNicknames = {}, onSaveNickname }) {
   const isNew = !contact;
   const cid = contact?.id || contact?.vid;
   const savedOldEmails = (cid && contactOldEmails[cid]) || '';
+  const savedNickname = (cid && contactNicknames[cid]) || '';
   const [fields, setFields] = useState({
     firstname: contact?.firstname || '',
     lastname: contact?.lastname || '',
+    nickname: savedNickname,
     email: contact?.email || '',
     phone: contact?.phone || '',
     company: contact?.company || '',
@@ -640,6 +642,10 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
             <div>
               <label className={styles.modalLabel}>Last Name</label>
               <input className={styles.modalInput} value={fields.lastname} onChange={e => set('lastname', e.target.value)} />
+            </div>
+            <div className={styles.modalFull}>
+              <label className={styles.modalLabel}>Nickname <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(optional)</span></label>
+              <input className={styles.modalInput} value={fields.nickname} onChange={e => set('nickname', e.target.value)} placeholder="e.g. Bob (for Robert), etc." />
             </div>
             <div className={styles.modalFull}>
               <label className={styles.modalLabel}>Email <span style={{ fontWeight: 400, textTransform: 'none', color: '#DC2626' }}>*</span></label>
@@ -892,12 +898,15 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
               else delete nextToAlsoMap[email];
               onSaveToAlsoMap(nextToAlsoMap);
             }
-            // Save Old Emails to Firestore settings
+            // Save Old Emails and Nickname to Firestore settings
             if (cid && onSaveOldEmails) {
               onSaveOldEmails(cid, fields.oldEmails || '');
             }
-            // Strip local-only field before HubSpot save
-            const { oldEmails, ...hsFields } = fields;
+            if (cid && onSaveNickname) {
+              onSaveNickname(cid, fields.nickname || '');
+            }
+            // Strip local-only fields before HubSpot save
+            const { oldEmails, nickname, ...hsFields } = fields;
             onSave(hsFields, contact?.id);
           }} disabled={saving || !fields.email.trim()}>
             {saving ? 'Saving...' : isNew ? 'Create in HubSpot' : 'Update in HubSpot'}
@@ -1969,6 +1978,14 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
             }
             return map;
           })()}
+          contactNicknames={settings?.contactNicknames || {}}
+          onSaveNickname={(contactId, nickname) => {
+            const current = settings?.contactNicknames || {};
+            const next = { ...current };
+            if (nickname && nickname.trim()) next[contactId] = nickname;
+            else delete next[contactId];
+            updateSettings({ contactNicknames: next });
+          }}
         />
       )}
 

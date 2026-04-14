@@ -217,7 +217,7 @@ const EMPTY = {
 // ── Inline HubSpot Contact Editor ──
 const TAG_OPTIONS = ['ESG', 'Procurement', 'Private Equity', 'Real Estate', 'Capital Planning', 'Dan Key Target', 'Test', 'EU'];
 
-const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, emailDomains = [] }) {
+const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactNicknames = {}, onSaveNickname, emailDomains = [] }) {
   const rawTags = contact.dans_tags || contact.dan_s_tags || contact.dans_tag || '';
   // Parse existing tags; track which known tags are checked separately from free-text extras
   const parsedTags = rawTags.split(';').map(t => t.trim()).filter(Boolean);
@@ -226,6 +226,7 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
   const cid = contact.id || contact.vid;
   const savedNote = (cid && contactNotes[cid]) || contact.notes || contact.hs_content_membership_notes || contact.message || '';
   const savedOldEmails = (cid && contactOldEmails[cid]) || '';
+  const savedNickname = (cid && contactNicknames[cid]) || '';
 
   const [f, setF] = useState({
     firstname: contact.firstname || '',
@@ -238,6 +239,7 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
     city: contact.city || '',
     state: contact.state || '',
     country: contact.country || '',
+    nickname: savedNickname,
     notes: savedNote,
     oldEmails: savedOldEmails,
   });
@@ -283,10 +285,11 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
     setError(null);
     try {
       const allProps = { ...f, dans_tags: buildTagsString() };
-      // HubSpot doesn't have 'notes' or 'oldEmails' properties — save separately
-      const { notes, oldEmails, ...hsProps } = allProps;
+      // HubSpot doesn't have 'notes', 'oldEmails', or 'nickname' properties — save separately
+      const { notes, oldEmails, nickname, ...hsProps } = allProps;
       const noteValue = notes || '';
       const oldEmailsValue = oldEmails || '';
+      const nicknameValue = nickname || '';
       const isNew = !contact.id && !contact.vid;
       const action = isNew ? 'create-contact' : 'update-contact';
       const body = isNew
@@ -328,6 +331,9 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
       if (savedCid && onSaveOldEmails) {
         onSaveOldEmails(savedCid, oldEmailsValue);
       }
+      if (savedCid && onSaveNickname) {
+        onSaveNickname(savedCid, nicknameValue);
+      }
       onSave(savedContact);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -351,6 +357,7 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
           <div><label style={labelStyle}>First Name</label><input style={inputStyle} value={f.firstname} onChange={e => set('firstname', e.target.value)} /></div>
           <div><label style={labelStyle}>Last Name</label><input style={inputStyle} value={f.lastname} onChange={e => set('lastname', e.target.value)} /></div>
+          <div style={{ gridColumn: '1 / -1' }}><label style={labelStyle}>Nickname <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(optional)</span></label><input style={inputStyle} value={f.nickname} onChange={e => set('nickname', e.target.value)} placeholder="e.g. Bob (for Robert), etc." /></div>
           <div style={{ gridColumn: '1 / -1' }}>
             <label style={labelStyle}>Email <span style={{ fontWeight: 400, textTransform: 'none', color: '#DC2626' }}>*</span></label>
             <input style={inputStyle} type="email" value={f.email} onChange={e => set('email', e.target.value)} />
@@ -453,7 +460,7 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
   const prevId = prev.contact.id || prev.contact.vid;
   const nextId = next.contact.id || next.contact.vid;
   const domainsEqual = (prev.emailDomains || []).join('|') === (next.emailDomains || []).join('|');
-  return prevId === nextId && prev.onSave === next.onSave && prev.onClose === next.onClose && prev.tagOptions === next.tagOptions && prev.onSaveNote === next.onSaveNote && prev.onSaveOldEmails === next.onSaveOldEmails && domainsEqual;
+  return prevId === nextId && prev.onSave === next.onSave && prev.onClose === next.onClose && prev.tagOptions === next.tagOptions && prev.onSaveNote === next.onSaveNote && prev.onSaveOldEmails === next.onSaveOldEmails && prev.onSaveNickname === next.onSaveNickname && domainsEqual;
 });
 
 function MultiSelectDropdown({ options, selected, onToggle }) {
@@ -691,6 +698,14 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
     else delete next[contactId];
     updateSettings({ contactOldEmails: next });
   }, [settings.contactOldEmails, updateSettings]);
+
+  const handleSaveContactNickname = useCallback((contactId, nickname) => {
+    const current = settings.contactNicknames || {};
+    const next = { ...current };
+    if (nickname && nickname.trim()) next[contactId] = nickname;
+    else delete next[contactId];
+    updateSettings({ contactNicknames: next });
+  }, [settings.contactNicknames, updateSettings]);
 
   const handleCloseContactEdit = useCallback(() => {
     setEditingContact(null);
@@ -1463,6 +1478,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
           onSaveNote={handleSaveContactNote}
           contactOldEmails={settings.contactOldEmails || {}}
           onSaveOldEmails={handleSaveContactOldEmails}
+          contactNicknames={settings.contactNicknames || {}}
+          onSaveNickname={handleSaveContactNickname}
           emailDomains={(fields.emailDomain || '').split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)}
         />
       )}
