@@ -1084,15 +1084,11 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     const existingLower = new Set(prospects.map(p => (p.company || '').toLowerCase()));
     const missing = [];
     console.log('Auto-create check: openOpps accounts:', Object.keys(openOppsByAccount).length, 'prospects:', prospects.length, 'dismissed:', dismissedCompanies.length);
-    // Debug Bain
-    const bainOpps = oppsRecords.filter(r => (r['Account'] || '').toLowerCase().includes('bain'));
-    console.log('Bain opps:', bainOpps.length, bainOpps.map(r => ({ account: r['Account'], stage: r['Stage'] })));
-    const bainOpen = Object.keys(openOppsByAccount).filter(k => k.includes('bain'));
-    console.log('Bain in openOppsByAccount:', bainOpen);
-    const bainProspect = prospects.filter(p => (p.company || '').toLowerCase().includes('bain'));
-    console.log('Bain in prospects:', bainProspect.map(p => ({ company: p.company, cdm: p.cdm, tier: p.tier })));
-    const bainDismissed = dismissedCompanies.filter(d => d.toLowerCase().includes('bain'));
-    console.log('Bain in dismissed:', bainDismissed);
+    // Debug Carlyle Other Reps
+    const carlyleReps = allTargetReps.filter(t => t.company.toLowerCase().includes('carlyle'));
+    console.log('Carlyle entries in allTargetReps:', carlyleReps);
+    const cristyReps = allTargetReps.filter(t => t.rep.toLowerCase().includes('cristy') || t.rep.toLowerCase().includes('house'));
+    console.log('Cristy House entries in allTargetReps:', cristyReps.slice(0, 10));
     for (const oppsCompany of Object.keys(openOppsByAccount)) {
       if (!oppsCompany) continue;
       // Skip dismissed companies
