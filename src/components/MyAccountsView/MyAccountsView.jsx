@@ -1202,6 +1202,8 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
 
     const skippedCdm = [];
     for (const p of prospects) {
+      // Skip dismissed companies
+      if (isDismissed(p.company)) continue;
       // Use Firestore tier if explicitly set (including '-' for no tier), otherwise fall back to map/target accounts
       let tier;
       if (p.tier === 'Tier 1' || p.tier === 'Tier 2' || p.tier === '-' || p.tier === '') {
