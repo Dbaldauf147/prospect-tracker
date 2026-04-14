@@ -1074,7 +1074,8 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
 
   function isDismissed(companyName) {
     const lower = (companyName || '').toLowerCase().trim();
-    return dismissedCompanies.some(d => companiesMatch(d, lower));
+    if (!lower) return false;
+    return dismissedCompanies.some(d => (d || '').toLowerCase().trim() === lower);
   }
 
   // Auto-create prospects for opps companies with OPEN opps not already in Table View
@@ -1086,9 +1087,9 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     console.log('Auto-create check: openOpps accounts:', Object.keys(openOppsByAccount).length, 'prospects:', prospects.length, 'dismissed:', dismissedCompanies.length);
     // Debug Carlyle Other Reps
     const carlyleReps = allTargetReps.filter(t => t.company.toLowerCase().includes('carlyle'));
-    console.log('Carlyle entries in allTargetReps:', carlyleReps);
+    console.log('Carlyle entries (raw):', JSON.stringify(carlyleReps));
     const cristyReps = allTargetReps.filter(t => t.rep.toLowerCase().includes('cristy') || t.rep.toLowerCase().includes('house'));
-    console.log('Cristy House entries in allTargetReps:', cristyReps.slice(0, 10));
+    console.log('Cristy entries (raw):', JSON.stringify(cristyReps));
     for (const oppsCompany of Object.keys(openOppsByAccount)) {
       if (!oppsCompany) continue;
       // Skip dismissed companies
