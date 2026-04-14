@@ -235,6 +235,9 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
     jobtitle: contact.jobtitle || '',
     company: contact.company || '',
     hs_linkedin_url: contact.hs_linkedin_url || contact.linkedin_url || '',
+    city: contact.city || '',
+    state: contact.state || '',
+    country: contact.country || '',
     notes: savedNote,
     oldEmails: savedOldEmails,
   });
@@ -353,6 +356,9 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
           <div style={{ gridColumn: '1 / -1' }}><label style={labelStyle}>Job Title</label><input style={inputStyle} value={f.jobtitle} onChange={e => set('jobtitle', e.target.value)} /></div>
           <div style={{ gridColumn: '1 / -1' }}><label style={labelStyle}>Company</label><input style={inputStyle} value={f.company} onChange={e => set('company', e.target.value)} /></div>
           <div style={{ gridColumn: '1 / -1' }}><label style={labelStyle}>LinkedIn URL</label><input style={inputStyle} value={f.hs_linkedin_url} onChange={e => set('hs_linkedin_url', e.target.value)} /></div>
+          <div><label style={labelStyle}>City</label><input style={inputStyle} value={f.city} onChange={e => set('city', e.target.value)} /></div>
+          <div><label style={labelStyle}>State</label><input style={inputStyle} value={f.state} onChange={e => set('state', e.target.value)} /></div>
+          <div style={{ gridColumn: '1 / -1' }}><label style={labelStyle}>Country</label><input style={inputStyle} value={f.country} onChange={e => set('country', e.target.value)} /></div>
           <div style={{ gridColumn: '1 / -1' }}><label style={labelStyle}>Old Emails <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(comma-separated, inactive)</span></label><input style={inputStyle} value={f.oldEmails} onChange={e => set('oldEmails', e.target.value)} placeholder="old.email@company.com, another@old.com" /></div>
           <div style={{ gridColumn: '1 / -1' }}><label style={labelStyle}>Notes</label><textarea style={{ ...inputStyle, resize: 'vertical', minHeight: '50px', lineHeight: 1.4 }} value={f.notes} onChange={e => set('notes', e.target.value)} rows={2} placeholder="Add notes about this contact..." /></div>
           <div style={{ gridColumn: '1 / -1' }} ref={tagsRef}>

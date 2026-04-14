@@ -520,6 +520,9 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
     company: contact?.company || '',
     jobtitle: contact?.jobtitle || '',
     hs_linkedin_url: contact?.hs_linkedin_url || contact?.linkedin_url || contact?.hs_linkedinid || '',
+    city: contact?.city || '',
+    state: contact?.state || '',
+    country: contact?.country || '',
     dans_tags: contact?.dans_tags || contact?.dan_s_tags || contact?.dans_tag || '',
     notes: contact?.hs_note || contact?.notes || '',
     oldEmails: savedOldEmails,
@@ -667,6 +670,18 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
             <div className={styles.modalFull}>
               <label className={styles.modalLabel}>LinkedIn URL</label>
               <input className={styles.modalInput} value={fields.hs_linkedin_url} onChange={e => set('hs_linkedin_url', e.target.value)} placeholder="https://linkedin.com/in/..." />
+            </div>
+            <div>
+              <label className={styles.modalLabel}>City</label>
+              <input className={styles.modalInput} value={fields.city} onChange={e => set('city', e.target.value)} />
+            </div>
+            <div>
+              <label className={styles.modalLabel}>State</label>
+              <input className={styles.modalInput} value={fields.state} onChange={e => set('state', e.target.value)} />
+            </div>
+            <div className={styles.modalFull}>
+              <label className={styles.modalLabel}>Country</label>
+              <input className={styles.modalInput} value={fields.country} onChange={e => set('country', e.target.value)} />
             </div>
             <div className={styles.modalFull} ref={tagsDropdownRef}>
               <label className={styles.modalLabel}>Dan's Tags</label>
