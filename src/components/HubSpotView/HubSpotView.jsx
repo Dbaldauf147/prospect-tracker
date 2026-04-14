@@ -551,6 +551,37 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
   const [tagsDropdownOpen, setTagsDropdownOpen] = useState(false);
   const [newTagInput, setNewTagInput] = useState('');
   const tagsDropdownRef = useRef(null);
+  const [tagsSaveStatus, setTagsSaveStatus] = useState('');
+
+  async function persistTagsString(tagsStr) {
+    const cid = contact?.id || contact?.vid;
+    if (!cid) return; // new contact — will be saved when user clicks Save
+    setTagsSaveStatus('Saving tag…');
+    try {
+      const res = await fetch(`/api/hubspot?action=update-contact`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contactId: cid, properties: { dans_tags: tagsStr } }),
+      });
+      const json = await res.json();
+      if (!res.ok || json.error) throw new Error(json?.message || json?.error || `HubSpot ${res.status}`);
+      try {
+        const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
+        if (cache?.contacts) {
+          const idx = cache.contacts.findIndex(c => String(c.id || c.vid) === String(cid));
+          if (idx !== -1) cache.contacts[idx] = { ...cache.contacts[idx], dans_tags: tagsStr };
+          try { localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache)); } catch {}
+          window.dispatchEvent(new Event('hubspot-cache-updated'));
+        }
+      } catch {}
+      setTagsSaveStatus('Saved ✓');
+      setTimeout(() => setTagsSaveStatus(''), 1500);
+    } catch (err) {
+      console.error('[HubSpot ContactModal] Tag autosave failed:', err);
+      setTagsSaveStatus('Save failed: ' + (err?.message || err));
+      setTimeout(() => setTagsSaveStatus(''), 4000);
+    }
+  }
 
   useEffect(() => {
     if (!tagsDropdownOpen) return;
@@ -734,7 +765,12 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
               </datalist>
             </div>
             <div className={styles.modalSpan2} ref={tagsDropdownRef}>
-              <label className={styles.modalLabel}>Dan's Tags</label>
+              <label className={styles.modalLabel} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <span>Dan's Tags</span>
+                {tagsSaveStatus && (
+                  <span style={{ fontSize: '0.6rem', fontWeight: 600, textTransform: 'none', letterSpacing: 0, color: tagsSaveStatus.startsWith('Saved') ? '#10B981' : tagsSaveStatus.startsWith('Sav') ? '#64748B' : '#DC2626' }}>{tagsSaveStatus}</span>
+                )}
+              </label>
               {(() => {
                 const currentTags = (fields.dans_tags || '').split(';').map(s => s.trim()).filter(Boolean);
                 const allTagOpts = [...new Set([...(tagOptions || []), ...currentTags])].filter(Boolean).sort();
@@ -768,7 +804,9 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
                                   return;
                                 }
                                 if (!currentTags.includes(tag)) {
-                                  set('dans_tags', [...currentTags, tag].join(';'));
+                                  const nextStr = [...currentTags, tag].join(';');
+                                  set('dans_tags', nextStr);
+                                  persistTagsString(nextStr);
                                 }
                                 setNewTagInput('');
                               }
@@ -788,7 +826,9 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
                                 checked={isActive}
                                 onChange={() => {
                                   const next = isActive ? currentTags.filter(t => t !== tag) : [...currentTags, tag];
-                                  set('dans_tags', next.join(';'));
+                                  const nextStr = next.join(';');
+                                  set('dans_tags', nextStr);
+                                  persistTagsString(nextStr);
                                 }}
                                 style={{ accentColor: 'var(--color-accent)', width: '14px', height: '14px', cursor: 'pointer' }}
                               />

@@ -268,16 +268,56 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
     return () => document.removeEventListener('mousedown', h);
   }, [tagsOpen]);
 
+  const [tagsSaveStatus, setTagsSaveStatus] = useState('');
+
+  function buildTagsStringFrom(set) {
+    return [...set, ...extraTags].join(';');
+  }
+
+  function buildTagsString() {
+    return buildTagsStringFrom(checkedTags);
+  }
+
+  async function persistTags(nextSet) {
+    const cid = contact.id || contact.vid;
+    if (!cid) return; // new contact — save will include tags on create
+    const tagsStr = buildTagsStringFrom(nextSet);
+    setTagsSaveStatus('Saving tag…');
+    try {
+      const res = await fetch(`/api/hubspot?action=update-contact`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contactId: cid, properties: { dans_tags: tagsStr } }),
+      });
+      const json = await res.json();
+      if (!res.ok || json.error) throw new Error(json?.message || json?.error || `HubSpot ${res.status}`);
+      // Update local cache so the main view reflects the change immediately
+      try {
+        const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
+        if (cache?.contacts) {
+          const idx = cache.contacts.findIndex(c => String(c.id || c.vid) === String(cid));
+          if (idx !== -1) cache.contacts[idx] = { ...cache.contacts[idx], dans_tags: tagsStr };
+          try { localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache)); } catch {}
+          window.dispatchEvent(new Event('hubspot-cache-updated'));
+        }
+      } catch {}
+      onSave({ ...contact, dans_tags: tagsStr });
+      setTagsSaveStatus('Saved ✓');
+      setTimeout(() => setTagsSaveStatus(''), 1500);
+    } catch (err) {
+      console.error('[ContactEditModal] Tag autosave failed:', err);
+      setTagsSaveStatus('Save failed: ' + (err?.message || err));
+      setTimeout(() => setTagsSaveStatus(''), 4000);
+    }
+  }
+
   function toggleTag(tag) {
     setCheckedTags(prev => {
       const next = new Set(prev);
       next.has(tag) ? next.delete(tag) : next.add(tag);
+      persistTags(next);
       return next;
     });
-  }
-
-  function buildTagsString() {
-    return [...checkedTags, ...extraTags].join(';');
   }
 
   function set(key, val) { setF(prev => ({ ...prev, [key]: val })); }
@@ -432,7 +472,12 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
           <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>Old Emails <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(comma-separated, inactive)</span></label><input style={inputStyle} value={f.oldEmails} onChange={e => set('oldEmails', e.target.value)} placeholder="old.email@company.com" /></div>
           <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>Notes</label><textarea style={{ ...inputStyle, resize: 'vertical', minHeight: '50px', lineHeight: 1.4 }} value={f.notes} onChange={e => set('notes', e.target.value)} rows={2} placeholder="Add notes about this contact..." /></div>
           <div style={{ gridColumn: 'span 2' }} ref={tagsRef}>
-            <label style={labelStyle}>Tags</label>
+            <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <span>Tags</span>
+              {tagsSaveStatus && (
+                <span style={{ fontSize: '0.6rem', fontWeight: 600, textTransform: 'none', letterSpacing: 0, color: tagsSaveStatus.startsWith('Saved') ? '#10B981' : tagsSaveStatus.startsWith('Sav') ? '#64748B' : '#DC2626' }}>{tagsSaveStatus}</span>
+              )}
+            </label>
             <button
               type="button"
               onClick={() => setTagsOpen(p => !p)}
