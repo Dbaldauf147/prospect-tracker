@@ -274,12 +274,14 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
     setSaving(true);
     setError(null);
     try {
-      const props = { ...f, dans_tags: buildTagsString() };
+      const allProps = { ...f, dans_tags: buildTagsString() };
+      // HubSpot doesn't have a 'notes' property — keep it local only
+      const { notes, ...hsProps } = allProps;
       const isNew = !contact.id && !contact.vid;
       const action = isNew ? 'create-contact' : 'update-contact';
       const body = isNew
-        ? { properties: props }
-        : { contactId: contact.id || contact.vid, properties: props };
+        ? { properties: hsProps }
+        : { contactId: contact.id || contact.vid, properties: hsProps };
       const res = await fetch(`/api/hubspot?action=${action}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -287,7 +289,8 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
       });
       const json = await res.json();
       if (json.error) throw new Error(json.error);
-      const savedContact = isNew ? { id: json.id, ...props } : { ...contact, ...props };
+      // Include notes in the saved contact (stored locally)
+      const savedContact = isNew ? { id: json.id, ...allProps } : { ...contact, ...allProps };
       // Update localStorage cache
       try {
         const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
@@ -296,7 +299,7 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
             cache.contacts.push(savedContact);
           } else {
             const idx = cache.contacts.findIndex(c => String(c.id || c.vid) === String(contact.id || contact.vid));
-            if (idx !== -1) cache.contacts[idx] = { ...cache.contacts[idx], ...props };
+            if (idx !== -1) cache.contacts[idx] = { ...cache.contacts[idx], ...allProps };
           }
           localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache));
           window.dispatchEvent(new Event('hubspot-cache-updated'));
@@ -1288,6 +1291,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Category</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Email</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Phone</th>
+                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>City</th>
+                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Country</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>LinkedIn</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Notes</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'center', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0', width: '40px' }}></th>
@@ -1319,6 +1324,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                             </td>
                             <td style={{ padding: '0.35rem 0.5rem', color: '#475569', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.email || '—'}</td>
                             <td style={{ padding: '0.35rem 0.5rem', color: '#475569', whiteSpace: 'nowrap' }}>{c.phone || '—'}</td>
+                            <td style={{ padding: '0.35rem 0.5rem', color: '#475569', whiteSpace: 'nowrap', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.city || '—'}</td>
+                            <td style={{ padding: '0.35rem 0.5rem', color: '#475569', whiteSpace: 'nowrap', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.country || '—'}</td>
                             <td style={{ padding: '0.35rem 0.5rem' }}>
                               {linkedinUrl ? <a href={linkedinUrl.startsWith('http') ? linkedinUrl : `https://linkedin.com/in/${linkedinUrl}`} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ color: '#0A66C2', fontSize: '0.7rem', fontWeight: 600, textDecoration: 'none' }}>View</a> : <span style={{ color: '#CBD5E1' }}>—</span>}
                             </td>
