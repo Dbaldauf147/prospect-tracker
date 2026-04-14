@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx';
 import { DataTable } from '../common/DataTable';
 import { logAction } from '../../utils/auditLog';
 import { useAuth } from '../../contexts/AuthContext';
+import { COUNTRIES } from '../../data/enums';
 import styles from './HubSpotView.module.css';
 
 // NOTE: The HubSpot sync cache is intentionally stored as plain (unencrypted)
@@ -727,7 +728,10 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
             </div>
             <div className={styles.modalFull}>
               <label className={styles.modalLabel}>Country</label>
-              <input className={styles.modalInput} value={fields.country} onChange={e => set('country', e.target.value)} />
+              <input className={styles.modalInput} list="country-list-hs" value={fields.country} onChange={e => set('country', e.target.value)} placeholder="Start typing..." />
+              <datalist id="country-list-hs">
+                {COUNTRIES.map(c => <option key={c} value={c} />)}
+              </datalist>
             </div>
             <div className={styles.modalFull} ref={tagsDropdownRef}>
               <label className={styles.modalLabel}>Dan's Tags</label>

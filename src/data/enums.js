@@ -63,6 +63,20 @@ export const FRAMEWORKS = [
 
 export const TIERS = ['Tier 1', 'Tier 2', 'Tier 3'];
 
+export const COUNTRIES = [
+  'United States', 'Canada', 'Mexico',
+  'United Kingdom', 'Ireland', 'France', 'Germany', 'Spain', 'Italy', 'Portugal', 'Netherlands', 'Belgium', 'Luxembourg',
+  'Switzerland', 'Austria', 'Denmark', 'Sweden', 'Norway', 'Finland', 'Iceland',
+  'Poland', 'Czech Republic', 'Slovakia', 'Hungary', 'Romania', 'Bulgaria', 'Greece', 'Croatia', 'Slovenia',
+  'Estonia', 'Latvia', 'Lithuania',
+  'Russia', 'Ukraine', 'Turkey', 'Israel',
+  'United Arab Emirates', 'Saudi Arabia', 'Qatar', 'Kuwait', 'Bahrain', 'Oman',
+  'South Africa', 'Egypt', 'Nigeria', 'Kenya', 'Morocco',
+  'China', 'Hong Kong', 'Taiwan', 'Japan', 'South Korea', 'India', 'Singapore', 'Malaysia', 'Thailand', 'Vietnam', 'Indonesia', 'Philippines',
+  'Australia', 'New Zealand',
+  'Brazil', 'Argentina', 'Chile', 'Colombia', 'Peru',
+];
+
 export const SERVICE_CATEGORIES = [
   {
     name: 'DATA',

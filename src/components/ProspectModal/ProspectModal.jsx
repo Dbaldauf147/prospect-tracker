@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback, memo } from 'react';
 import { createPortal } from 'react-dom';
-import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES } from '../../data/enums';
+import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES, COUNTRIES } from '../../data/enums';
 import styles from './ProspectModal.module.css';
 
 function loadOppsFromIndexedDB() {
@@ -400,7 +400,13 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
           <div style={{ gridColumn: '1 / -1' }}><label style={labelStyle}>LinkedIn URL</label><input style={inputStyle} value={f.hs_linkedin_url} onChange={e => set('hs_linkedin_url', e.target.value)} /></div>
           <div><label style={labelStyle}>City</label><input style={inputStyle} value={f.city} onChange={e => set('city', e.target.value)} /></div>
           <div><label style={labelStyle}>State</label><input style={inputStyle} value={f.state} onChange={e => set('state', e.target.value)} /></div>
-          <div style={{ gridColumn: '1 / -1' }}><label style={labelStyle}>Country</label><input style={inputStyle} value={f.country} onChange={e => set('country', e.target.value)} /></div>
+          <div style={{ gridColumn: '1 / -1' }}>
+            <label style={labelStyle}>Country</label>
+            <input style={inputStyle} list="country-list" value={f.country} onChange={e => set('country', e.target.value)} placeholder="Start typing..." />
+            <datalist id="country-list">
+              {COUNTRIES.map(c => <option key={c} value={c} />)}
+            </datalist>
+          </div>
           <div style={{ gridColumn: '1 / -1' }}><label style={labelStyle}>Old Emails <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(comma-separated, inactive)</span></label><input style={inputStyle} value={f.oldEmails} onChange={e => set('oldEmails', e.target.value)} placeholder="old.email@company.com, another@old.com" /></div>
           <div style={{ gridColumn: '1 / -1' }}><label style={labelStyle}>Notes</label><textarea style={{ ...inputStyle, resize: 'vertical', minHeight: '50px', lineHeight: 1.4 }} value={f.notes} onChange={e => set('notes', e.target.value)} rows={2} placeholder="Add notes about this contact..." /></div>
           <div style={{ gridColumn: '1 / -1' }} ref={tagsRef}>
