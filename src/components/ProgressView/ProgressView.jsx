@@ -2,7 +2,56 @@ import { useState, useEffect, useMemo } from 'react';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from 'recharts';
+import { LineChart, Line, BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from 'recharts';
+
+function ProgressChart({ title, data, series, isPct, viewType }) {
+  const yProps = isPct
+    ? { domain: [0, 100], tickFormatter: v => `${v}%` }
+    : { allowDecimals: false };
+  const tooltipFmt = isPct ? (v => `${v}%`) : undefined;
+  const stacked = viewType === 'stackedBar' || viewType === 'stackedArea';
+  return (
+    <div style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', padding: '1rem' }}>
+      <h3 style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-text)', margin: '0 0 0.75rem 0' }}>{title}</h3>
+      <ResponsiveContainer width="100%" height={250}>
+        {viewType === 'bar' || viewType === 'stackedBar' ? (
+          <BarChart data={data}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+            <XAxis dataKey="weekLabel" fontSize={11} tick={{ fill: '#64748B' }} />
+            <YAxis fontSize={11} tick={{ fill: '#64748B' }} {...yProps} />
+            <Tooltip formatter={tooltipFmt} />
+            <Legend />
+            {series.map(s => (
+              <Bar key={s.key} dataKey={s.key} name={s.name} fill={s.color} stackId={stacked ? 'a' : undefined} />
+            ))}
+          </BarChart>
+        ) : viewType === 'area' || viewType === 'stackedArea' ? (
+          <AreaChart data={data}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+            <XAxis dataKey="weekLabel" fontSize={11} tick={{ fill: '#64748B' }} />
+            <YAxis fontSize={11} tick={{ fill: '#64748B' }} {...yProps} />
+            <Tooltip formatter={tooltipFmt} />
+            <Legend />
+            {series.map(s => (
+              <Area key={s.key} type="monotone" dataKey={s.key} name={s.name} stroke={s.color} fill={s.color} fillOpacity={0.3} stackId={stacked ? 'a' : undefined} />
+            ))}
+          </AreaChart>
+        ) : (
+          <LineChart data={data}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+            <XAxis dataKey="weekLabel" fontSize={11} tick={{ fill: '#64748B' }} />
+            <YAxis fontSize={11} tick={{ fill: '#64748B' }} {...yProps} />
+            <Tooltip formatter={tooltipFmt} />
+            <Legend />
+            {series.map(s => (
+              <Line key={s.key} type="monotone" dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2} dot={{ r: 4 }} />
+            ))}
+          </LineChart>
+        )}
+      </ResponsiveContainer>
+    </div>
+  );
+}
 
 function loadOppsFromIndexedDB() {
   return new Promise(resolve => {
@@ -64,6 +113,7 @@ export function ProgressView({ prospects, settings }) {
   const [expandedCard, setExpandedCard] = useState(null);
   const [editingWeek, setEditingWeek] = useState(null);
   const [saveStatus, setSaveStatus] = useState('');
+  const [chartView, setChartView] = useState('line');
 
   // Load history from Firestore + opps data
   useEffect(() => {
@@ -461,102 +511,91 @@ export function ProgressView({ prospects, settings }) {
         );
       })()}
 
+      {/* Chart view toggle */}
+      {chartData.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+          <span style={{ fontSize: '0.7rem', color: 'var(--color-text-secondary)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>View:</span>
+          {[
+            { key: 'line', label: 'Line' },
+            { key: 'bar', label: 'Bar' },
+            { key: 'stackedBar', label: 'Stacked Bar' },
+            { key: 'area', label: 'Area' },
+            { key: 'stackedArea', label: 'Stacked Area' },
+          ].map(opt => (
+            <button
+              key={opt.key}
+              onClick={() => setChartView(opt.key)}
+              style={{
+                padding: '0.25rem 0.6rem',
+                border: '1px solid var(--color-border)',
+                borderRadius: '6px',
+                background: chartView === opt.key ? 'var(--color-accent)' : 'var(--color-surface)',
+                color: chartView === opt.key ? '#fff' : 'var(--color-text)',
+                fontSize: '0.72rem',
+                fontWeight: 600,
+                fontFamily: 'inherit',
+                cursor: 'pointer',
+              }}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Charts */}
       {chartData.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-          {/* Chart 1: Accounts with Contacts */}
-          <div style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', padding: '1rem' }}>
-            <h3 style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-text)', margin: '0 0 0.75rem 0' }}>% of Accounts with HubSpot Contacts</h3>
-            <ResponsiveContainer width="100%" height={250}>
-              <LineChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
-                <XAxis dataKey="weekLabel" fontSize={11} tick={{ fill: '#64748B' }} />
-                <YAxis domain={[0, 100]} tickFormatter={v => `${v}%`} fontSize={11} tick={{ fill: '#64748B' }} />
-                <Tooltip formatter={v => `${v}%`} />
-                <Legend />
-                <Line type="monotone" dataKey="t1ContactPct" name="Tier 1" stroke="#DC2626" strokeWidth={2} dot={{ r: 4 }} />
-                <Line type="monotone" dataKey="t2ContactPct" name="Tier 2" stroke="#3B82F6" strokeWidth={2} dot={{ r: 4 }} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-
-          {/* Chart 2: Decision Maker Identified */}
-          <div style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', padding: '1rem' }}>
-            <h3 style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-text)', margin: '0 0 0.75rem 0' }}>% of Accounts with Decision Maker Identified</h3>
-            <ResponsiveContainer width="100%" height={250}>
-              <LineChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
-                <XAxis dataKey="weekLabel" fontSize={11} tick={{ fill: '#64748B' }} />
-                <YAxis domain={[0, 100]} tickFormatter={v => `${v}%`} fontSize={11} tick={{ fill: '#64748B' }} />
-                <Tooltip formatter={v => `${v}%`} />
-                <Legend />
-                <Line type="monotone" dataKey="t1DMPct" name="Tier 1" stroke="#DC2626" strokeWidth={2} dot={{ r: 4 }} />
-                <Line type="monotone" dataKey="t2DMPct" name="Tier 2" stroke="#3B82F6" strokeWidth={2} dot={{ r: 4 }} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-
-          {/* Chart 3: Connected (Had Opp) */}
-          <div style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', padding: '1rem' }}>
-            <h3 style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-text)', margin: '0 0 0.75rem 0' }}>% of Accounts Connected (Had Opportunity)</h3>
-            <ResponsiveContainer width="100%" height={250}>
-              <LineChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
-                <XAxis dataKey="weekLabel" fontSize={11} tick={{ fill: '#64748B' }} />
-                <YAxis domain={[0, 100]} tickFormatter={v => `${v}%`} fontSize={11} tick={{ fill: '#64748B' }} />
-                <Tooltip formatter={v => `${v}%`} />
-                <Legend />
-                <Line type="monotone" dataKey="t1ConnectedPct" name="Tier 1" stroke="#DC2626" strokeWidth={2} dot={{ r: 4 }} />
-                <Line type="monotone" dataKey="t2ConnectedPct" name="Tier 2" stroke="#3B82F6" strokeWidth={2} dot={{ r: 4 }} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-
-          {/* Chart 3: Inactive */}
-          <div style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', padding: '1rem' }}>
-            <h3 style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-text)', margin: '0 0 0.75rem 0' }}>% of Accounts Inactive (Lost / Hold Off / Old Client)</h3>
-            <ResponsiveContainer width="100%" height={250}>
-              <LineChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
-                <XAxis dataKey="weekLabel" fontSize={11} tick={{ fill: '#64748B' }} />
-                <YAxis domain={[0, 100]} tickFormatter={v => `${v}%`} fontSize={11} tick={{ fill: '#64748B' }} />
-                <Tooltip formatter={v => `${v}%`} />
-                <Legend />
-                <Line type="monotone" dataKey="t1InactivePct" name="Tier 1" stroke="#DC2626" strokeWidth={2} dot={{ r: 4 }} />
-                <Line type="monotone" dataKey="t2InactivePct" name="Tier 2" stroke="#3B82F6" strokeWidth={2} dot={{ r: 4 }} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-
-          {/* Chart 4: Tier Counts */}
-          <div style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', padding: '1rem' }}>
-            <h3 style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-text)', margin: '0 0 0.75rem 0' }}>My Accounts by Tier</h3>
-            <ResponsiveContainer width="100%" height={250}>
-              <BarChart data={[
-                { tier: 'Tier 1', count: currentSnapshot.t1Total || 0, fill: '#DC2626' },
-                { tier: 'Tier 2', count: currentSnapshot.t2Total || 0, fill: '#3B82F6' },
-                { tier: 'Tier 3', count: currentSnapshot.t3Total || 0, fill: '#F59E0B' },
-              ]}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
-                <XAxis dataKey="tier" fontSize={12} tick={{ fill: '#64748B' }} />
-                <YAxis fontSize={11} tick={{ fill: '#64748B' }} allowDecimals={false} />
-                <Tooltip />
-                <Bar dataKey="count" name="Accounts">
-                  {[{ fill: '#DC2626' }, { fill: '#3B82F6' }, { fill: '#F59E0B' }].map((entry, i) => (
-                    <Cell key={i} fill={entry.fill} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+          <ProgressChart
+            title="% of Accounts with HubSpot Contacts"
+            data={chartData}
+            series={[{ key: 't1ContactPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2ContactPct', name: 'Tier 2', color: '#3B82F6' }]}
+            isPct
+            viewType={chartView}
+          />
+          <ProgressChart
+            title="% of Accounts with Decision Maker Identified"
+            data={chartData}
+            series={[{ key: 't1DMPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2DMPct', name: 'Tier 2', color: '#3B82F6' }]}
+            isPct
+            viewType={chartView}
+          />
+          <ProgressChart
+            title="% of Accounts Connected (Had Opportunity)"
+            data={chartData}
+            series={[{ key: 't1ConnectedPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2ConnectedPct', name: 'Tier 2', color: '#3B82F6' }]}
+            isPct
+            viewType={chartView}
+          />
+          <ProgressChart
+            title="% of Accounts Inactive (Lost / Hold Off / Old Client)"
+            data={chartData}
+            series={[{ key: 't1InactivePct', name: 'Tier 1', color: '#DC2626' }, { key: 't2InactivePct', name: 'Tier 2', color: '#3B82F6' }]}
+            isPct
+            viewType={chartView}
+          />
+          <ProgressChart
+            title="My Accounts by Tier"
+            data={chartData}
+            series={[
+              { key: 't1Total', name: 'Tier 1', color: '#DC2626' },
+              { key: 't2Total', name: 'Tier 2', color: '#3B82F6' },
+              { key: 't3Total', name: 'Tier 3', color: '#F59E0B' },
+            ]}
+            viewType={chartView}
+          />
 
           {/* History table */}
           {chartData.length > 0 && (
             <div style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', overflow: 'hidden' }}>
+              <h3 style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-text)', margin: 0, padding: '0.75rem 1rem', borderBottom: '1px solid var(--color-border)' }}>Weekly History</h3>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.75rem' }}>
                 <thead>
                   <tr style={{ background: 'var(--color-surface-alt)' }}>
                     <th style={{ padding: '0.45rem 0.6rem', textAlign: 'left', fontWeight: 600, color: 'var(--color-text-secondary)', fontSize: '0.68rem', textTransform: 'uppercase', borderBottom: '1px solid var(--color-border)' }}>Week</th>
+                    <th style={{ padding: '0.45rem 0.6rem', textAlign: 'center', fontWeight: 600, color: '#DC2626', fontSize: '0.68rem', borderBottom: '1px solid var(--color-border)' }}>T1</th>
+                    <th style={{ padding: '0.45rem 0.6rem', textAlign: 'center', fontWeight: 600, color: '#3B82F6', fontSize: '0.68rem', borderBottom: '1px solid var(--color-border)' }}>T2</th>
+                    <th style={{ padding: '0.45rem 0.6rem', textAlign: 'center', fontWeight: 600, color: '#F59E0B', fontSize: '0.68rem', borderBottom: '1px solid var(--color-border)' }}>T3</th>
                     <th style={{ padding: '0.45rem 0.6rem', textAlign: 'center', fontWeight: 600, color: '#DC2626', fontSize: '0.68rem', borderBottom: '1px solid var(--color-border)' }}>T1 Contacts</th>
                     <th style={{ padding: '0.45rem 0.6rem', textAlign: 'center', fontWeight: 600, color: '#3B82F6', fontSize: '0.68rem', borderBottom: '1px solid var(--color-border)' }}>T2 Contacts</th>
                     <th style={{ padding: '0.45rem 0.6rem', textAlign: 'center', fontWeight: 600, color: '#DC2626', fontSize: '0.68rem', borderBottom: '1px solid var(--color-border)' }}>T1 Connected</th>
@@ -624,6 +663,9 @@ export function ProgressView({ prospects, settings }) {
                           </span>
                         )}
                       </td>
+                      <td style={{ padding: '0.4rem 0.6rem', textAlign: 'center', fontWeight: 600, color: '#DC2626' }}>{h.t1Total ?? '—'}</td>
+                      <td style={{ padding: '0.4rem 0.6rem', textAlign: 'center', fontWeight: 600, color: '#3B82F6' }}>{h.t2Total ?? '—'}</td>
+                      <td style={{ padding: '0.4rem 0.6rem', textAlign: 'center', fontWeight: 600, color: '#F59E0B' }}>{h.t3Total ?? '—'}</td>
                       <td style={{ padding: '0.4rem 0.6rem', textAlign: 'center' }}>{h.t1ContactPct}%</td>
                       <td style={{ padding: '0.4rem 0.6rem', textAlign: 'center' }}>{h.t2ContactPct}%</td>
                       <td style={{ padding: '0.4rem 0.6rem', textAlign: 'center' }}>{h.t1ConnectedPct}%</td>

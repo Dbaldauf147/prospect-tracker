@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useRef, useCallback, memo } from 'react';
 import { createPortal } from 'react-dom';
 import * as XLSX from 'xlsx';
+import raClientsData from '../../data/raClients.json';
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES, COUNTRIES } from '../../data/enums';
 import styles from './ProspectModal.module.css';
 
@@ -291,18 +292,38 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
       const noteValue = notes || '';
       const oldEmailsValue = oldEmails || '';
       const nicknameValue = nickname || '';
-      const isNew = !contact.id && !contact.vid;
-      const action = isNew ? 'create-contact' : 'update-contact';
-      const body = isNew
+      let isNew = !contact.id && !contact.vid;
+      let action = isNew ? 'create-contact' : 'update-contact';
+      let body = isNew
         ? { properties: hsProps }
         : { contactId: contact.id || contact.vid, properties: hsProps };
-      const res = await fetch(`/api/hubspot?action=${action}`, {
+      let res = await fetch(`/api/hubspot?action=${action}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-      const json = await res.json();
-      if (json.error) throw new Error(json.error);
+      let json = await res.json();
+      // If create failed because the contact already exists, retry as an update using the existing HubSpot id
+      if (isNew && !res.ok) {
+        const msg = json?.message || json?.error || '';
+        const existingIdMatch = String(msg).match(/Existing ID[:\s]+(\d+)/i);
+        if (existingIdMatch) {
+          const existingId = existingIdMatch[1];
+          action = 'update-contact';
+          body = { contactId: existingId, properties: hsProps };
+          res = await fetch(`/api/hubspot?action=${action}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          json = await res.json();
+          if (res.ok) {
+            isNew = false;
+            contact.id = existingId; // so downstream savedContact carries it
+          }
+        }
+      }
+      if (!res.ok || json.error) throw new Error(json?.message || json?.error || `HubSpot ${res.status}`);
       // Include notes in the saved contact (stored locally)
       const savedContact = isNew ? { id: json.id, ...allProps } : { ...contact, ...allProps };
       // Update localStorage cache (exclude notes/oldEmails — those live in Firestore settings)
@@ -350,16 +371,17 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={e => { e.stopPropagation(); onClose(); }}>
-      <div style={{ background: '#fff', borderRadius: '12px', padding: '1.5rem', width: '480px', maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }} onClick={e => e.stopPropagation()}>
+      <div style={{ background: '#fff', borderRadius: '12px', padding: '1.5rem', width: '880px', maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
           <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: '#1E293B' }}>{(!contact.id && !contact.vid) ? 'New HubSpot Contact' : 'Edit HubSpot Contact'}</h3>
           <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '1.2rem', color: '#94A3B8', cursor: 'pointer', lineHeight: 1 }}>×</button>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.75rem' }}>
           <div><label style={labelStyle}>First Name</label><input style={inputStyle} value={f.firstname} onChange={e => set('firstname', e.target.value)} /></div>
           <div><label style={labelStyle}>Last Name</label><input style={inputStyle} value={f.lastname} onChange={e => set('lastname', e.target.value)} /></div>
-          <div style={{ gridColumn: '1 / -1' }}><label style={labelStyle}>Nickname <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(optional)</span></label><input style={inputStyle} value={f.nickname} onChange={e => set('nickname', e.target.value)} placeholder="e.g. Bob (for Robert), etc." /></div>
-          <div style={{ gridColumn: '1 / -1' }}>
+          <div><label style={labelStyle}>Phone</label><input style={inputStyle} value={f.phone} onChange={e => set('phone', e.target.value)} /></div>
+          <div><label style={labelStyle}>Nickname <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(opt.)</span></label><input style={inputStyle} value={f.nickname} onChange={e => set('nickname', e.target.value)} placeholder="e.g. Bob" /></div>
+          <div style={{ gridColumn: 'span 2' }}>
             <label style={labelStyle}>Email <span style={{ fontWeight: 400, textTransform: 'none', color: '#DC2626' }}>*</span></label>
             <input style={inputStyle} type="email" value={f.email} onChange={e => set('email', e.target.value)} />
             {(() => {
@@ -395,22 +417,21 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
               );
             })()}
           </div>
-          <div><label style={labelStyle}>Phone</label><input style={inputStyle} value={f.phone} onChange={e => set('phone', e.target.value)} /></div>
-          <div style={{ gridColumn: '1 / -1' }}><label style={labelStyle}>Job Title</label><input style={inputStyle} value={f.jobtitle} onChange={e => set('jobtitle', e.target.value)} /></div>
-          <div style={{ gridColumn: '1 / -1' }}><label style={labelStyle}>Company</label><input style={inputStyle} value={f.company} onChange={e => set('company', e.target.value)} /></div>
-          <div style={{ gridColumn: '1 / -1' }}><label style={labelStyle}>LinkedIn URL</label><input style={inputStyle} value={f.hs_linkedin_url} onChange={e => set('hs_linkedin_url', e.target.value)} /></div>
+          <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>Job Title</label><input style={inputStyle} value={f.jobtitle} onChange={e => set('jobtitle', e.target.value)} /></div>
+          <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>Company</label><input style={inputStyle} value={f.company} onChange={e => set('company', e.target.value)} /></div>
+          <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>LinkedIn URL</label><input style={inputStyle} value={f.hs_linkedin_url} onChange={e => set('hs_linkedin_url', e.target.value)} /></div>
           <div><label style={labelStyle}>City</label><input style={inputStyle} value={f.city} onChange={e => set('city', e.target.value)} /></div>
           <div><label style={labelStyle}>State</label><input style={inputStyle} value={f.state} onChange={e => set('state', e.target.value)} /></div>
-          <div style={{ gridColumn: '1 / -1' }}>
+          <div style={{ gridColumn: 'span 2' }}>
             <label style={labelStyle}>Country</label>
             <input style={inputStyle} list="country-list" value={f.country} onChange={e => set('country', e.target.value)} placeholder="Start typing..." />
             <datalist id="country-list">
               {COUNTRIES.map(c => <option key={c} value={c} />)}
             </datalist>
           </div>
-          <div style={{ gridColumn: '1 / -1' }}><label style={labelStyle}>Old Emails <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(comma-separated, inactive)</span></label><input style={inputStyle} value={f.oldEmails} onChange={e => set('oldEmails', e.target.value)} placeholder="old.email@company.com, another@old.com" /></div>
-          <div style={{ gridColumn: '1 / -1' }}><label style={labelStyle}>Notes</label><textarea style={{ ...inputStyle, resize: 'vertical', minHeight: '50px', lineHeight: 1.4 }} value={f.notes} onChange={e => set('notes', e.target.value)} rows={2} placeholder="Add notes about this contact..." /></div>
-          <div style={{ gridColumn: '1 / -1' }} ref={tagsRef}>
+          <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>Old Emails <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(comma-separated, inactive)</span></label><input style={inputStyle} value={f.oldEmails} onChange={e => set('oldEmails', e.target.value)} placeholder="old.email@company.com" /></div>
+          <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>Notes</label><textarea style={{ ...inputStyle, resize: 'vertical', minHeight: '50px', lineHeight: 1.4 }} value={f.notes} onChange={e => set('notes', e.target.value)} rows={2} placeholder="Add notes about this contact..." /></div>
+          <div style={{ gridColumn: 'span 2' }} ref={tagsRef}>
             <label style={labelStyle}>Tags</label>
             <button
               type="button"
@@ -623,6 +644,10 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
   const [pastePortfolio, setPastePortfolio] = useState('');
   const [researchingPortfolio, setResearchingPortfolio] = useState(false);
   const [portfolioResearchError, setPortfolioResearchError] = useState(null);
+  const [portfolioColWidths, setPortfolioColWidths] = useState({
+    num: 30, company: 180, industry: 110, geography: 120, hqCity: 130, hqCountry: 90, energy: 110, raClient: 200,
+  });
+  const [raClientPickerOpen, setRaClientPickerOpen] = useState(null); // row index
   const [newCompetitor, setNewCompetitor] = useState('');
   const [oppsCache, setOppsCache] = useState(null);
   const [clientManager, setClientManager] = useState(null);

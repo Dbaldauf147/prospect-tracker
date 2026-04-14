@@ -470,8 +470,10 @@
   background: var(--color-surface);
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-lg);
-  width: 500px;
+  width: 880px;
   max-width: 95vw;
+  max-height: 90vh;
+  overflow-y: auto;
 }
 
 .modalHeader {
@@ -504,12 +506,16 @@
 
 .modalGrid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(4, 1fr);
   gap: 0.6rem 0.75rem;
 }
 
 .modalFull {
   grid-column: 1 / -1;
+}
+
+.modalSpan2 {
+  grid-column: span 2;
 }
 
 .modalLabel {

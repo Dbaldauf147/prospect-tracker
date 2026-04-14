@@ -644,11 +644,11 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
               <label className={styles.modalLabel}>Last Name</label>
               <input className={styles.modalInput} value={fields.lastname} onChange={e => set('lastname', e.target.value)} />
             </div>
-            <div className={styles.modalFull}>
-              <label className={styles.modalLabel}>Nickname <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(optional)</span></label>
-              <input className={styles.modalInput} value={fields.nickname} onChange={e => set('nickname', e.target.value)} placeholder="e.g. Bob (for Robert), etc." />
+            <div className={styles.modalSpan2}>
+              <label className={styles.modalLabel}>Nickname <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(opt.)</span></label>
+              <input className={styles.modalInput} value={fields.nickname} onChange={e => set('nickname', e.target.value)} placeholder="e.g. Bob" />
             </div>
-            <div className={styles.modalFull}>
+            <div className={styles.modalSpan2}>
               <label className={styles.modalLabel}>Email <span style={{ fontWeight: 400, textTransform: 'none', color: '#DC2626' }}>*</span></label>
               <input className={styles.modalInput} type="email" value={fields.email} onChange={e => set('email', e.target.value)} />
               {isNew && (() => {
@@ -696,7 +696,7 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
               <label className={styles.modalLabel}>Phone</label>
               <input className={styles.modalInput} value={fields.phone} onChange={e => set('phone', e.target.value)} />
             </div>
-            <div style={{ position: 'relative' }} ref={companyRef}>
+            <div style={{ position: 'relative' }} className={styles.modalSpan2} ref={companyRef}>
               <label className={styles.modalLabel}>Company</label>
               <input className={styles.modalInput} value={fields.company} onChange={e => { set('company', e.target.value); setShowCompanySuggestions(true); }} onFocus={() => setShowCompanySuggestions(true)} />
               {showCompanySuggestions && companySuggestions.length > 0 && (
@@ -710,11 +710,11 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
                 </div>
               )}
             </div>
-            <div className={styles.modalFull}>
+            <div className={styles.modalSpan2}>
               <label className={styles.modalLabel}>Job Title</label>
               <input className={styles.modalInput} value={fields.jobtitle} onChange={e => set('jobtitle', e.target.value)} />
             </div>
-            <div className={styles.modalFull}>
+            <div className={styles.modalSpan2}>
               <label className={styles.modalLabel}>LinkedIn URL</label>
               <input className={styles.modalInput} value={fields.hs_linkedin_url} onChange={e => set('hs_linkedin_url', e.target.value)} placeholder="https://linkedin.com/in/..." />
             </div>
@@ -726,14 +726,14 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
               <label className={styles.modalLabel}>State</label>
               <input className={styles.modalInput} value={fields.state} onChange={e => set('state', e.target.value)} />
             </div>
-            <div className={styles.modalFull}>
+            <div className={styles.modalSpan2}>
               <label className={styles.modalLabel}>Country</label>
               <input className={styles.modalInput} list="country-list-hs" value={fields.country} onChange={e => set('country', e.target.value)} placeholder="Start typing..." />
               <datalist id="country-list-hs">
                 {COUNTRIES.map(c => <option key={c} value={c} />)}
               </datalist>
             </div>
-            <div className={styles.modalFull} ref={tagsDropdownRef}>
+            <div className={styles.modalSpan2} ref={tagsDropdownRef}>
               <label className={styles.modalLabel}>Dan's Tags</label>
               {(() => {
                 const currentTags = (fields.dans_tags || '').split(';').map(s => s.trim()).filter(Boolean);
@@ -805,16 +805,16 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
                 );
               })()}
             </div>
-            <div className={styles.modalFull}>
+            <div className={styles.modalSpan2}>
               <label className={styles.modalLabel}>Old Emails <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(comma-separated, inactive)</span></label>
-              <input className={styles.modalInput} value={fields.oldEmails} onChange={e => set('oldEmails', e.target.value)} placeholder="old.email@company.com, another@old.com" />
+              <input className={styles.modalInput} value={fields.oldEmails} onChange={e => set('oldEmails', e.target.value)} placeholder="old.email@company.com" />
             </div>
             <div className={styles.modalFull}>
               <label className={styles.modalLabel}>Notes</label>
               <textarea className={styles.modalInput} value={fields.notes} onChange={e => set('notes', e.target.value)} placeholder="Add notes about this contact..." rows={3} style={{ resize: 'vertical', minHeight: '60px', lineHeight: '1.5' }} />
             </div>
-            <div className={styles.modalFull}>
-              <label className={styles.modalLabel}>CC Emails (auto-CC when drafting to this contact)</label>
+            <div className={styles.modalSpan2}>
+              <label className={styles.modalLabel}>CC Emails (auto-CC when drafting)</label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem', padding: '0.35rem', border: '1px solid var(--color-border)', borderRadius: '6px', minHeight: '36px', alignItems: 'center' }}>
                 {ccEmails.map(email => (
                   <span key={email} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem', padding: '0.15rem 0.45rem', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '999px', fontSize: '0.7rem', color: '#1E40AF' }}>
@@ -850,8 +850,8 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
                 </div>
               </div>
             </div>
-            <div className={styles.modalFull}>
-              <label className={styles.modalLabel}>To Also (auto-add to To field when drafting)</label>
+            <div className={styles.modalSpan2}>
+              <label className={styles.modalLabel}>To Also (auto-add to To field)</label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem', padding: '0.35rem', border: '1px solid var(--color-border)', borderRadius: '6px', minHeight: '36px', alignItems: 'center' }}>
                 {toAlsoEmails.map(email => (
                   <span key={email} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem', padding: '0.15rem 0.45rem', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: '999px', fontSize: '0.7rem', color: '#92400E' }}>
@@ -1207,19 +1207,36 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
         const knownLower = new Set(dansTagOptions.map(o => (typeof o === 'string' ? o : o.label || o.value || '').toLowerCase()));
         contactProps.dans_tags = tags.filter(t => knownLower.has(t.toLowerCase())).join(';');
       }
-      const action = existingId ? 'update-contact' : 'create-contact';
-      const reqBody = existingId
+      let action = existingId ? 'update-contact' : 'create-contact';
+      let reqBody = existingId
         ? { contactId: existingId, properties: contactProps }
         : { properties: contactProps };
-      const res = await fetch(`/api/hubspot?action=${action}`, {
+      let res = await fetch(`/api/hubspot?action=${action}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(reqBody),
       });
-      const json = await res.json();
-      if (json.error) throw new Error(json.error);
+      let json = await res.json();
+      // If create failed because HubSpot already has this email, retry as update using the returned id
+      let resolvedId = existingId;
+      if (!existingId && !res.ok) {
+        const msg = json?.message || json?.error || '';
+        const existingIdMatch = String(msg).match(/Existing ID[:\s]+(\d+)/i);
+        if (existingIdMatch) {
+          resolvedId = existingIdMatch[1];
+          action = 'update-contact';
+          reqBody = { contactId: resolvedId, properties: contactProps };
+          res = await fetch(`/api/hubspot?action=${action}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(reqBody),
+          });
+          json = await res.json();
+        }
+      }
+      if (!res.ok || json.error) throw new Error(json?.message || json?.error || `HubSpot ${res.status}`);
       // If there are notes, create a HubSpot note (engagement) attached to the contact
-      const contactId = existingId || json.id;
+      const contactId = resolvedId || json.id;
       if (notes?.trim() && contactId) {
         try {
           await fetch(`/api/hubspot?action=create-note`, {
@@ -1230,8 +1247,8 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
         } catch {}
       }
       setEditContact(undefined);
-      setPushStatus({ type: 'success', message: existingId ? 'Contact updated in HubSpot' : 'Contact created in HubSpot' });
-      logAction(user, existingId ? 'contact_updated' : 'contact_created', { contactId, properties: contactProps });
+      setPushStatus({ type: 'success', message: resolvedId ? 'Contact updated in HubSpot' : 'Contact created in HubSpot' });
+      logAction(user, resolvedId ? 'contact_updated' : 'contact_created', { contactId, properties: contactProps });
       syncFromHubSpot();
     } catch (err) {
       setPushStatus({ type: 'error', message: err.message });

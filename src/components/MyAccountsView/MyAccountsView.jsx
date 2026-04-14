@@ -1318,9 +1318,11 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       for (const [dmCompany, names] of Object.entries(decisionMakerByCompany)) {
         if (allCompanyNames.some(name => companiesMatch(name, dmCompany))) { dmNames = names; break; }
       }
-      // Find similar accounts assigned to other salespeople (check parent + all divisions + target account names)
-      const searchNames = [...allCompanyNames, ...(targetNames || []).map(n => (n || '').toLowerCase())];
-      const otherReps = allTargetReps.filter(t => searchNames.some(name => otherRepMatch(name, t.company)));
+      // Find accounts assigned to other salespeople — exact match on this row's mapped Target Account name(s) only
+      const targetNameSet = new Set((targetNames || []).map(n => (n || '').toLowerCase().trim()).filter(Boolean));
+      const otherReps = targetNameSet.size === 0
+        ? []
+        : allTargetReps.filter(t => targetNameSet.has((t.company || '').toLowerCase().trim()));
       // Count HubSpot contacts across parent + all divisions (fuzzy match)
       let contactCount = 0;
       const bucketsSeen = new Set();
