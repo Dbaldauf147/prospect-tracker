@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from 'recharts';
 
 function loadOppsFromIndexedDB() {
   return new Promise(resolve => {
@@ -28,11 +28,20 @@ function loadOppsFromIndexedDB() {
 }
 
 function getWeekKey(date) {
-  const d = new Date(date);
-  const day = d.getDay();
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1); // Monday
-  const monday = new Date(d.setDate(diff));
-  return monday.toISOString().slice(0, 10);
+  let d;
+  if (typeof date === 'string') {
+    const [y, m, day] = date.split('-').map(Number);
+    d = new Date(y, m - 1, day);
+  } else {
+    d = new Date(date);
+  }
+  const dow = d.getDay();
+  const diff = d.getDate() - dow + (dow === 0 ? -6 : 1); // Monday
+  d.setDate(diff);
+  const yy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
 }
 
 function companiesMatch(a, b) {
@@ -49,10 +58,12 @@ function companiesMatch(a, b) {
 export function ProgressView({ prospects, settings }) {
   const { user } = useAuth();
   const [history, setHistory] = useState([]);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   const [oppsRecordsState, setOppsRecordsState] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expandedCard, setExpandedCard] = useState(null);
   const [editingWeek, setEditingWeek] = useState(null);
+  const [saveStatus, setSaveStatus] = useState('');
 
   // Load history from Firestore + opps data
   useEffect(() => {
@@ -62,9 +73,17 @@ export function ProgressView({ prospects, settings }) {
         const ref = doc(db, 'progressHistory', user.uid);
         const snap = await getDoc(ref);
         if (snap.exists()) {
-          setHistory(snap.data().weeks || []);
+          const weeks = snap.data().weeks || [];
+          console.log('[ProgressView] Firestore progressHistory loaded:', weeks.length, 'weeks:', weeks.map(w => w.week));
+          setHistory(weeks);
+          setHistoryLoaded(true);
+        } else {
+          console.log('[ProgressView] Firestore progressHistory doc does NOT exist for user', user.uid);
+          setHistoryLoaded(true);
         }
-      } catch (err) { console.error('Failed to load progress:', err); }
+      } catch (err) {
+        console.error('[ProgressView] Failed to load progress — auto-save disabled to avoid overwrite:', err);
+      }
 
       // Load opps: try Google Sheet directly, then Firestore, then IndexedDB, then localStorage
       let records = [];
@@ -141,6 +160,7 @@ export function ProgressView({ prospects, settings }) {
     });
     const t1 = myProspects.filter(p => p.tier === 'Tier 1');
     const t2 = myProspects.filter(p => p.tier === 'Tier 2');
+    const t3 = myProspects.filter(p => p.tier === 'Tier 3');
 
     // Load HubSpot cache for contact data
     let hubspotContacts = [];
@@ -248,7 +268,8 @@ export function ProgressView({ prospects, settings }) {
 
     return {
       week: getWeekKey(new Date()),
-      t1Total, t2Total,
+      t1Total, t2Total, t3Total: t3.length,
+      tierCounts: { t1: t1.length, t2: t2.length, t3: t3.length },
       t1WithContacts, t2WithContacts,
       t1WithDM, t2WithDM,
       t1Connected, t2Connected,
@@ -283,26 +304,48 @@ export function ProgressView({ prospects, settings }) {
 
   // Auto-save snapshot if current week hasn't been saved yet
   useEffect(() => {
-    if (!user?.uid || loading || !currentSnapshot.t1Total) return;
+    if (!user?.uid || loading || !historyLoaded || !currentSnapshot.t1Total) return;
     const alreadySaved = history.find(h => h.week === currentSnapshot.week);
     if (!alreadySaved) {
       saveSnapshot();
     }
-  }, [user, loading, currentSnapshot.week, history.length]);
+  }, [user, loading, historyLoaded, currentSnapshot.week, history.length]);
 
-  // Save current week snapshot
+  // Save current week snapshot — re-reads Firestore first to avoid overwriting
+  // entries saved from another device or missed by a failed load.
   async function saveSnapshot() {
-    if (!user?.uid) return;
-    const existing = history.findIndex(h => h.week === currentSnapshot.week);
-    const updated = existing >= 0
-      ? history.map((h, i) => i === existing ? currentSnapshot : h)
-      : [...history, currentSnapshot];
-    updated.sort((a, b) => a.week.localeCompare(b.week));
-    setHistory(updated);
+    if (!user?.uid) {
+      console.warn('[ProgressView] saveSnapshot: no user uid, bailing');
+      setSaveStatus('Not signed in');
+      setTimeout(() => setSaveStatus(''), 3000);
+      return;
+    }
+    console.log('[ProgressView] saveSnapshot: starting for week', currentSnapshot.week);
+    setSaveStatus('Saving…');
     try {
       const ref = doc(db, 'progressHistory', user.uid);
-      await setDoc(ref, { weeks: updated, updatedAt: new Date().toISOString() });
-    } catch (err) { console.error('Failed to save progress:', err); }
+      const snap = await getDoc(ref);
+      const remoteWeeks = snap.exists() ? (snap.data().weeks || []) : [];
+      const merged = [...remoteWeeks];
+      for (const h of history) {
+        if (!merged.find(m => m.week === h.week)) merged.push(h);
+      }
+      const idx = merged.findIndex(h => h.week === currentSnapshot.week);
+      // Strip undefined values (Firestore rejects them)
+      const clean = JSON.parse(JSON.stringify(currentSnapshot));
+      if (idx >= 0) merged[idx] = clean;
+      else merged.push(clean);
+      merged.sort((a, b) => a.week.localeCompare(b.week));
+      setHistory(merged);
+      await setDoc(ref, { weeks: merged, updatedAt: new Date().toISOString() });
+      console.log('[ProgressView] saveSnapshot: saved', merged.length, 'weeks');
+      setSaveStatus(`Saved ✓ (${merged.length} week${merged.length === 1 ? '' : 's'})`);
+      setTimeout(() => setSaveStatus(''), 3000);
+    } catch (err) {
+      console.error('[ProgressView] Failed to save progress:', err);
+      setSaveStatus('Save failed: ' + (err?.message || err));
+      setTimeout(() => setSaveStatus(''), 5000);
+    }
   }
 
   const chartData = useMemo(() => {
@@ -331,16 +374,23 @@ export function ProgressView({ prospects, settings }) {
     <div style={{ padding: '1.5rem', maxWidth: '1100px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
         <h2 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--color-text)', margin: 0 }}>Weekly Progress</h2>
-        <button
-          onClick={saveSnapshot}
-          style={{
-            padding: '0.4rem 0.8rem', border: 'none', borderRadius: '6px',
-            background: 'var(--color-accent)', color: '#fff', fontSize: '0.8rem',
-            fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
-          }}
-        >
-          Save This Week's Snapshot
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+          {saveStatus && (
+            <span style={{ fontSize: '0.75rem', color: saveStatus.startsWith('Saved') ? '#10B981' : saveStatus.startsWith('Sav') ? 'var(--color-text-secondary)' : '#DC2626', fontWeight: 600 }}>
+              {saveStatus}
+            </span>
+          )}
+          <button
+            onClick={saveSnapshot}
+            style={{
+              padding: '0.4rem 0.8rem', border: 'none', borderRadius: '6px',
+              background: 'var(--color-accent)', color: '#fff', fontSize: '0.8rem',
+              fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+            }}
+          >
+            Save This Week's Snapshot
+          </button>
+        </div>
       </div>
 
       {/* Current stats */}
@@ -478,8 +528,30 @@ export function ProgressView({ prospects, settings }) {
             </ResponsiveContainer>
           </div>
 
+          {/* Chart 4: Tier Counts */}
+          <div style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', padding: '1rem' }}>
+            <h3 style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-text)', margin: '0 0 0.75rem 0' }}>My Accounts by Tier</h3>
+            <ResponsiveContainer width="100%" height={250}>
+              <BarChart data={[
+                { tier: 'Tier 1', count: currentSnapshot.t1Total || 0, fill: '#DC2626' },
+                { tier: 'Tier 2', count: currentSnapshot.t2Total || 0, fill: '#3B82F6' },
+                { tier: 'Tier 3', count: currentSnapshot.t3Total || 0, fill: '#F59E0B' },
+              ]}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+                <XAxis dataKey="tier" fontSize={12} tick={{ fill: '#64748B' }} />
+                <YAxis fontSize={11} tick={{ fill: '#64748B' }} allowDecimals={false} />
+                <Tooltip />
+                <Bar dataKey="count" name="Accounts">
+                  {[{ fill: '#DC2626' }, { fill: '#3B82F6' }, { fill: '#F59E0B' }].map((entry, i) => (
+                    <Cell key={i} fill={entry.fill} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
           {/* History table */}
-          {history.length > 0 && (
+          {chartData.length > 0 && (
             <div style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', overflow: 'hidden' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.75rem' }}>
                 <thead>
@@ -495,7 +567,7 @@ export function ProgressView({ prospects, settings }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {[...history].reverse().map((h, i) => (
+                  {[...chartData].reverse().map((h, i) => (
                     <tr key={h.week} style={{ borderBottom: '1px solid var(--color-border-light)' }}>
                       <td style={{ padding: '0.4rem 0.6rem', fontWeight: 600, color: 'var(--color-text)' }}>
                         {editingWeek === h.week ? (
@@ -504,7 +576,7 @@ export function ProgressView({ prospects, settings }) {
                             defaultValue={h.week}
                             autoFocus
                             style={{ fontSize: '0.75rem', fontWeight: 600, border: '1px solid var(--color-border)', borderRadius: '4px', padding: '2px 4px', background: 'var(--color-surface)', color: 'var(--color-text)' }}
-                            onBlur={(e) => {
+                            onBlur={async (e) => {
                               const newDate = e.target.value;
                               setEditingWeek(null);
                               if (!newDate || newDate === h.week) return;
@@ -514,11 +586,28 @@ export function ProgressView({ prospects, settings }) {
                                 alert('A snapshot for that week already exists.');
                                 return;
                               }
-                              const updated = history.map(x => x.week === h.week ? { ...x, week: newWeek } : x)
-                                .sort((a, b) => a.week.localeCompare(b.week));
+                              const inHistory = history.find(x => x.week === h.week);
+                              let updated;
+                              if (inHistory) {
+                                updated = history.map(x => x.week === h.week ? { ...x, week: newWeek } : x);
+                              } else {
+                                // Editing the not-yet-saved current-week row: create a new history entry
+                                const clean = JSON.parse(JSON.stringify(currentSnapshot));
+                                updated = [...history, { ...clean, week: newWeek }];
+                              }
+                              updated.sort((a, b) => a.week.localeCompare(b.week));
                               setHistory(updated);
-                              const ref = doc(db, 'progressHistory', user.uid);
-                              setDoc(ref, { weeks: updated, updatedAt: new Date().toISOString() });
+                              setSaveStatus('Saving…');
+                              try {
+                                const ref = doc(db, 'progressHistory', user.uid);
+                                await setDoc(ref, { weeks: updated, updatedAt: new Date().toISOString() });
+                                setSaveStatus('Saved ✓');
+                                setTimeout(() => setSaveStatus(''), 3000);
+                              } catch (err) {
+                                console.error('[ProgressView] Failed to save week edit:', err);
+                                setSaveStatus('Save failed: ' + (err?.message || err));
+                                setTimeout(() => setSaveStatus(''), 5000);
+                              }
                             }}
                             onKeyDown={(e) => {
                               if (e.key === 'Enter') e.target.blur();
