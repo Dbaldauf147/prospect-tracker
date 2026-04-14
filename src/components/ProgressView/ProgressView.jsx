@@ -481,7 +481,7 @@ export function ProgressView({ prospects, settings }) {
   if (loading) return <div style={{ padding: '2rem', color: 'var(--color-text-muted)' }}>Loading...</div>;
 
   return (
-    <div style={{ padding: '1.5rem', maxWidth: '1100px' }}>
+    <div style={{ padding: '1.5rem', maxWidth: '1800px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
         <h2 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--color-text)', margin: 0 }}>Weekly Progress</h2>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
