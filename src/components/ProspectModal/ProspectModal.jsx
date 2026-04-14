@@ -217,11 +217,14 @@ const EMPTY = {
 // ── Inline HubSpot Contact Editor ──
 const TAG_OPTIONS = ['ESG', 'Procurement', 'Private Equity', 'Real Estate', 'Capital Planning', 'Dan Key Target', 'Test', 'EU'];
 
-const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS }) {
+const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote }) {
   const rawTags = contact.dans_tags || contact.dan_s_tags || contact.dans_tag || '';
   // Parse existing tags; track which known tags are checked separately from free-text extras
   const parsedTags = rawTags.split(';').map(t => t.trim()).filter(Boolean);
   const knownTagsLower = new Set(tagOptions.map(t => t.toLowerCase()));
+
+  const cid = contact.id || contact.vid;
+  const savedNote = (cid && contactNotes[cid]) || contact.notes || contact.hs_content_membership_notes || contact.message || '';
 
   const [f, setF] = useState({
     firstname: contact.firstname || '',
@@ -231,7 +234,7 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
     jobtitle: contact.jobtitle || '',
     company: contact.company || '',
     hs_linkedin_url: contact.hs_linkedin_url || contact.linkedin_url || '',
-    notes: contact.notes || contact.hs_content_membership_notes || contact.message || '',
+    notes: savedNote,
   });
   // Checked state for the 5 known tags
   const [checkedTags, setCheckedTags] = useState(() =>
@@ -275,8 +278,9 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
     setError(null);
     try {
       const allProps = { ...f, dans_tags: buildTagsString() };
-      // HubSpot doesn't have a 'notes' property — keep it local only
+      // HubSpot doesn't have a 'notes' property — save separately via onSaveNote
       const { notes, ...hsProps } = allProps;
+      const noteValue = notes || '';
       const isNew = !contact.id && !contact.vid;
       const action = isNew ? 'create-contact' : 'update-contact';
       const body = isNew
@@ -305,6 +309,11 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
           window.dispatchEvent(new Event('hubspot-cache-updated'));
         }
       } catch {}
+      // Save note to Firestore settings (cross-device)
+      const savedCid = savedContact.id || savedContact.vid;
+      if (savedCid && onSaveNote) {
+        onSaveNote(savedCid, noteValue);
+      }
       onSave(savedContact);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -385,10 +394,9 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
     </div>
   );
 }, (prev, next) => {
-  // Only re-render if the contact ID changes or onSave/onClose/tagOptions change
   const prevId = prev.contact.id || prev.contact.vid;
   const nextId = next.contact.id || next.contact.vid;
-  return prevId === nextId && prev.onSave === next.onSave && prev.onClose === next.onClose && prev.tagOptions === next.tagOptions;
+  return prevId === nextId && prev.onSave === next.onSave && prev.onClose === next.onClose && prev.tagOptions === next.tagOptions && prev.onSaveNote === next.onSaveNote;
 });
 
 function MultiSelectDropdown({ options, selected, onToggle }) {
@@ -610,6 +618,14 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
     setAddingContact(false);
     setEditingContact(null);
   }, []);
+
+  const handleSaveContactNote = useCallback((contactId, note) => {
+    const current = settings.contactNotes || {};
+    const next = { ...current };
+    if (note && note.trim()) next[contactId] = note;
+    else delete next[contactId];
+    updateSettings({ contactNotes: next });
+  }, [settings.contactNotes, updateSettings]);
 
   const handleCloseContactEdit = useCallback(() => {
     setEditingContact(null);
@@ -1329,7 +1345,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                             <td style={{ padding: '0.35rem 0.5rem' }}>
                               {linkedinUrl ? <a href={linkedinUrl.startsWith('http') ? linkedinUrl : `https://linkedin.com/in/${linkedinUrl}`} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ color: '#0A66C2', fontSize: '0.7rem', fontWeight: 600, textDecoration: 'none' }}>View</a> : <span style={{ color: '#CBD5E1' }}>—</span>}
                             </td>
-                            <td style={{ padding: '0.35rem 0.5rem', color: '#475569', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.68rem' }}>{c.notes || c.hs_content_membership_notes || c.message || '—'}</td>
+                            <td style={{ padding: '0.35rem 0.5rem', color: '#475569', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.68rem' }}>{(settings.contactNotes || {})[c.id || c.vid] || c.notes || c.hs_content_membership_notes || c.message || '—'}</td>
                             <td style={{ padding: '0.35rem 0.3rem', textAlign: 'center' }}>
                               <button
                                 onClick={e => { e.stopPropagation(); handleDeleteContact(c); }}
@@ -1378,6 +1394,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
           onSave={handleContactSaved}
           onClose={handleCloseContactEdit}
           tagOptions={allTagOptions}
+          contactNotes={settings.contactNotes || {}}
+          onSaveNote={handleSaveContactNote}
         />
       )}
     </div>
