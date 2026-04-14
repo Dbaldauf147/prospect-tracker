@@ -371,8 +371,10 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
               if (domains.length === 0) return null;
               const suggestions = [];
               for (const d of domains) {
-                const domain = d.replace(/^@/, '').trim();
-                if (!domain) continue;
+                let domain = d.replace(/^@/, '').trim();
+                // If a full email was provided, extract only the domain part
+                if (domain.includes('@')) domain = domain.split('@').pop();
+                if (!domain || !domain.includes('.')) continue;
                 if (first && last) {
                   suggestions.push(`${first}.${last}@${domain}`);
                   suggestions.push(`${first}${last}@${domain}`);
