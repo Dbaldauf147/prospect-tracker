@@ -1477,16 +1477,26 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
         if (!HUBSPOT_FILTER_SKIP.has(key) && !allKeys.includes(key)) allKeys.push(key);
       }
     }
+    const SEMICOLON_SPLIT_KEYS = new Set(['dans_tags', 'dan_s_tags', 'dans_tag']);
     for (const key of allKeys) {
       if (HUBSPOT_FILTER_SKIP.has(key)) continue;
       const vals = new Set();
       let tooMany = false;
+      const splitSemi = SEMICOLON_SPLIT_KEYS.has(key);
       for (const c of enrichedContacts) {
         let v = c[key];
         if (v == null || v === '' || v === '—' || typeof v === 'object') continue;
         v = String(v).trim();
         if (!v) continue;
-        vals.add(v);
+        if (splitSemi) {
+          const parts = v.split(';').map(p => p.trim()).filter(Boolean);
+          for (const p of parts) {
+            vals.add(p);
+            if (vals.size > 50) { tooMany = true; break; }
+          }
+        } else {
+          vals.add(v);
+        }
         if (vals.size > 50) { tooMany = true; break; }
       }
       if (!tooMany && vals.size >= 2) opts[key] = [...vals].sort();
@@ -1528,8 +1538,18 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
     }
 
     // Apply column filters
+    const SEMICOLON_FILTER_KEYS = new Set(['dans_tags', 'dan_s_tags', 'dans_tag']);
     for (const [key, values] of Object.entries(colFilters)) {
-      if (values.length > 0) result = result.filter(c => values.includes(String(c[key] ?? '')));
+      if (values.length === 0) continue;
+      if (SEMICOLON_FILTER_KEYS.has(key)) {
+        result = result.filter(c => {
+          const raw = String(c[key] ?? '');
+          const parts = raw.split(';').map(p => p.trim()).filter(Boolean);
+          return values.some(v => parts.includes(v));
+        });
+      } else {
+        result = result.filter(c => values.includes(String(c[key] ?? '')));
+      }
     }
 
     // Apply text search
