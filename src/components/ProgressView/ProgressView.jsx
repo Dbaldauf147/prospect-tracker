@@ -34,15 +34,36 @@ function EditableCell({ value, onCommit, color, suffix = '', bold = false }) {
   );
 }
 
-function ProgressChart({ title, data, series, isPct, viewType }) {
+const CHART_VIEW_OPTIONS = [
+  { key: 'line', label: 'Line' },
+  { key: 'stackedLine', label: 'Stacked Line' },
+  { key: 'bar', label: 'Bar' },
+  { key: 'stackedBar', label: 'Stacked Bar' },
+  { key: 'area', label: 'Area' },
+  { key: 'stackedArea', label: 'Stacked Area' },
+];
+
+function ProgressChart({ title, data, series, isPct, defaultView = 'line' }) {
+  const [viewType, setViewType] = useState(defaultView);
   const yProps = isPct
     ? { domain: [0, 100], tickFormatter: v => `${v}%` }
     : { allowDecimals: false };
   const tooltipFmt = isPct ? (v => `${v}%`) : undefined;
-  const stacked = viewType === 'stackedBar' || viewType === 'stackedArea';
+  const stacked = viewType === 'stackedBar' || viewType === 'stackedArea' || viewType === 'stackedLine';
   return (
     <div style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', padding: '1rem' }}>
-      <h3 style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-text)', margin: '0 0 0.75rem 0' }}>{title}</h3>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', marginBottom: '0.75rem' }}>
+        <h3 style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-text)', margin: 0 }}>{title}</h3>
+        <select
+          value={viewType}
+          onChange={e => setViewType(e.target.value)}
+          style={{ fontSize: '0.7rem', padding: '0.2rem 0.4rem', border: '1px solid var(--color-border)', borderRadius: '5px', background: 'var(--color-surface)', color: 'var(--color-text)', fontFamily: 'inherit', cursor: 'pointer' }}
+        >
+          {CHART_VIEW_OPTIONS.map(opt => (
+            <option key={opt.key} value={opt.key}>{opt.label}</option>
+          ))}
+        </select>
+      </div>
       <ResponsiveContainer width="100%" height={250}>
         {viewType === 'bar' || viewType === 'stackedBar' ? (
           <BarChart data={data}>
@@ -64,6 +85,17 @@ function ProgressChart({ title, data, series, isPct, viewType }) {
             <Legend />
             {series.map(s => (
               <Area key={s.key} type="monotone" dataKey={s.key} name={s.name} stroke={s.color} fill={s.color} fillOpacity={0.3} stackId={stacked ? 'a' : undefined} />
+            ))}
+          </AreaChart>
+        ) : viewType === 'stackedLine' ? (
+          <AreaChart data={data}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+            <XAxis dataKey="weekLabel" fontSize={11} tick={{ fill: '#64748B' }} />
+            <YAxis fontSize={11} tick={{ fill: '#64748B' }} {...yProps} />
+            <Tooltip formatter={tooltipFmt} />
+            <Legend />
+            {series.map(s => (
+              <Area key={s.key} type="monotone" dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2} fill="none" stackId="a" dot={{ r: 3, fill: s.color }} activeDot={{ r: 5 }} />
             ))}
           </AreaChart>
         ) : (
@@ -143,7 +175,6 @@ export function ProgressView({ prospects, settings }) {
   const [expandedCard, setExpandedCard] = useState(null);
   const [editingWeek, setEditingWeek] = useState(null);
   const [saveStatus, setSaveStatus] = useState('');
-  const [chartView, setChartView] = useState('line');
 
   // Load history from Firestore + opps data
   useEffect(() => {
@@ -571,38 +602,6 @@ export function ProgressView({ prospects, settings }) {
         );
       })()}
 
-      {/* Chart view toggle */}
-      {chartData.length > 0 && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-          <span style={{ fontSize: '0.7rem', color: 'var(--color-text-secondary)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>View:</span>
-          {[
-            { key: 'line', label: 'Line' },
-            { key: 'bar', label: 'Bar' },
-            { key: 'stackedBar', label: 'Stacked Bar' },
-            { key: 'area', label: 'Area' },
-            { key: 'stackedArea', label: 'Stacked Area' },
-          ].map(opt => (
-            <button
-              key={opt.key}
-              onClick={() => setChartView(opt.key)}
-              style={{
-                padding: '0.25rem 0.6rem',
-                border: '1px solid var(--color-border)',
-                borderRadius: '6px',
-                background: chartView === opt.key ? 'var(--color-accent)' : 'var(--color-surface)',
-                color: chartView === opt.key ? '#fff' : 'var(--color-text)',
-                fontSize: '0.72rem',
-                fontWeight: 600,
-                fontFamily: 'inherit',
-                cursor: 'pointer',
-              }}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-      )}
-
       {/* Charts */}
       {chartData.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -612,28 +611,24 @@ export function ProgressView({ prospects, settings }) {
               data={chartData}
               series={[{ key: 't1ContactPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2ContactPct', name: 'Tier 2', color: '#3B82F6' }]}
               isPct
-              viewType={chartView}
             />
             <ProgressChart
               title="% of Accounts with Decision Maker Identified"
               data={chartData}
               series={[{ key: 't1DMPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2DMPct', name: 'Tier 2', color: '#3B82F6' }]}
               isPct
-              viewType={chartView}
             />
             <ProgressChart
               title="% of Accounts Connected (Had Opportunity)"
               data={chartData}
               series={[{ key: 't1ConnectedPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2ConnectedPct', name: 'Tier 2', color: '#3B82F6' }]}
               isPct
-              viewType={chartView}
             />
             <ProgressChart
               title="% of Accounts Inactive (Lost / Hold Off / Old Client)"
               data={chartData}
               series={[{ key: 't1InactivePct', name: 'Tier 1', color: '#DC2626' }, { key: 't2InactivePct', name: 'Tier 2', color: '#3B82F6' }]}
               isPct
-              viewType={chartView}
             />
             <ProgressChart
               title="My Accounts by Tier"
@@ -643,7 +638,6 @@ export function ProgressView({ prospects, settings }) {
                 { key: 't2Total', name: 'Tier 2', color: '#3B82F6' },
                 { key: 't3Total', name: 'Tier 3', color: '#F59E0B' },
               ]}
-              viewType={chartView}
             />
           </div>
 
