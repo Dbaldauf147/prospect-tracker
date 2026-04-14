@@ -298,17 +298,22 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
       if (json.error) throw new Error(json.error);
       // Include notes in the saved contact (stored locally)
       const savedContact = isNew ? { id: json.id, ...allProps } : { ...contact, ...allProps };
-      // Update localStorage cache
+      // Update localStorage cache (exclude notes/oldEmails — those live in Firestore settings)
       try {
         const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
         if (cache?.contacts) {
+          const cacheProps = { ...hsProps };
           if (isNew) {
-            cache.contacts.push(savedContact);
+            cache.contacts.push({ id: savedContact.id, ...cacheProps });
           } else {
             const idx = cache.contacts.findIndex(c => String(c.id || c.vid) === String(contact.id || contact.vid));
-            if (idx !== -1) cache.contacts[idx] = { ...cache.contacts[idx], ...allProps };
+            if (idx !== -1) cache.contacts[idx] = { ...cache.contacts[idx], ...cacheProps };
           }
-          localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache));
+          try {
+            localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache));
+          } catch (qerr) {
+            console.warn('HubSpot cache write skipped (quota):', qerr.message);
+          }
           window.dispatchEvent(new Event('hubspot-cache-updated'));
         }
       } catch {}

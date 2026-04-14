@@ -1155,7 +1155,22 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         const res = await fetch('/api/hubspot?action=contacts');
         const json = await res.json();
         if (json.contacts) {
-          localStorage.setItem('hubspot-sync-cache', JSON.stringify({ ...json, syncedAt: new Date().toISOString() }));
+          // Slim each contact to essential fields to fit under localStorage quota
+          const slimContacts = json.contacts.map(c => ({
+            id: c.id, vid: c.vid, firstname: c.firstname, lastname: c.lastname,
+            email: c.email, phone: c.phone, jobtitle: c.jobtitle, company: c.company,
+            hs_linkedin_url: c.hs_linkedin_url, linkedin_url: c.linkedin_url, hs_linkedinid: c.hs_linkedinid,
+            city: c.city, state: c.state, country: c.country,
+            dans_tags: c.dans_tags, dan_s_tags: c.dan_s_tags, dans_tag: c.dans_tag,
+            decision_maker: c.decision_maker, role: c.role,
+            hs_sequences_is_enrolled: c.hs_sequences_is_enrolled,
+            notes_last_contacted: c.notes_last_contacted,
+          }));
+          try {
+            localStorage.setItem('hubspot-sync-cache', JSON.stringify({ ...json, contacts: slimContacts, syncedAt: new Date().toISOString() }));
+          } catch (err) {
+            console.warn('HubSpot cache too large for localStorage, skipping cache write:', err.message);
+          }
           setCacheVersion(v => v + 1);
         }
       } catch {}
