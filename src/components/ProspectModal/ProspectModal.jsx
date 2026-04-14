@@ -618,6 +618,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
   const [editingServiceName, setEditingServiceName] = useState(null);
   const [expandedServiceNote, setExpandedServiceNote] = useState(null);
   const [competitorsOpen, setCompetitorsOpen] = useState(false);
+  const [portfolioOpen, setPortfolioOpen] = useState(false);
+  const [pastePortfolio, setPastePortfolio] = useState('');
   const [newCompetitor, setNewCompetitor] = useState('');
   const [oppsCache, setOppsCache] = useState(null);
   const [clientManager, setClientManager] = useState(null);
@@ -1357,6 +1359,145 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                   )}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Portfolio Companies */}
+          {!isNew && (
+            <div style={{ marginTop: '1rem', borderTop: '1px solid var(--color-border-light)', paddingTop: '0.75rem' }}>
+              <div
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', userSelect: 'none' }}
+                onClick={() => setPortfolioOpen(o => !o)}
+              >
+                <label className={styles.label} style={{ margin: 0, cursor: 'pointer' }}>
+                  Portfolio Companies
+                </label>
+                <span style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', transform: portfolioOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>&#9660;</span>
+                {(() => {
+                  const n = (fields.portfolioCompanies || []).length;
+                  return n > 0 ? <span style={{ fontSize: '0.68rem', color: '#64748B' }}>{n} {n === 1 ? 'company' : 'companies'}</span> : null;
+                })()}
+              </div>
+              {portfolioOpen && (() => {
+                const rows = fields.portfolioCompanies || [];
+                function updateRow(idx, patch) {
+                  const next = rows.map((r, i) => i === idx ? { ...r, ...patch } : r);
+                  set('portfolioCompanies', next);
+                }
+                function deleteRow(idx) {
+                  set('portfolioCompanies', rows.filter((_, i) => i !== idx));
+                }
+                function addRow() {
+                  set('portfolioCompanies', [...rows, { companyName: '', industry: '', geography: '', hqCity: '', hqCountry: '', energyGwh: '' }]);
+                }
+                function parsePaste() {
+                  const text = pastePortfolio.trim();
+                  if (!text) return;
+                  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+                  const parsed = [];
+                  for (const line of lines) {
+                    const parts = line.split('\t').length > 1 ? line.split('\t') : line.split(/\s{2,}|,/);
+                    // Skip header row
+                    if (parts[0] && /^(#|number|no\.?)$/i.test(parts[0].trim())) continue;
+                    // If first col is a number, shift
+                    const startIdx = /^\d+$/.test((parts[0] || '').trim()) ? 1 : 0;
+                    const [companyName = '', industry = '', geography = '', hqCity = '', hqCountry = '', energyGwh = ''] = parts.slice(startIdx).map(p => p.trim());
+                    if (companyName) parsed.push({ companyName, industry, geography, hqCity, hqCountry, energyGwh });
+                  }
+                  if (parsed.length > 0) {
+                    set('portfolioCompanies', [...rows, ...parsed]);
+                    setPastePortfolio('');
+                  }
+                }
+                const totalEnergy = rows.reduce((sum, r) => sum + (Number(r.energyGwh) || 0), 0);
+                return (
+                  <div style={{ marginTop: '0.5rem' }}>
+                    <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.5rem', alignItems: 'flex-start' }}>
+                      <textarea
+                        value={pastePortfolio}
+                        onChange={e => setPastePortfolio(e.target.value)}
+                        placeholder="Paste table here (tab or comma separated)..."
+                        rows={2}
+                        style={{ flex: 1, fontSize: '0.7rem', padding: '0.3rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: '5px', fontFamily: 'inherit', resize: 'vertical', minHeight: '36px', lineHeight: 1.3 }}
+                      />
+                      <button
+                        onClick={parsePaste}
+                        disabled={!pastePortfolio.trim()}
+                        style={{ padding: '0.3rem 0.7rem', border: 'none', borderRadius: '5px', background: pastePortfolio.trim() ? 'var(--color-accent)' : '#CBD5E1', color: '#fff', fontSize: '0.7rem', fontWeight: 600, cursor: pastePortfolio.trim() ? 'pointer' : 'not-allowed', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+                      >Parse Paste</button>
+                      <button
+                        onClick={addRow}
+                        style={{ padding: '0.3rem 0.7rem', border: '1px solid var(--color-border)', borderRadius: '5px', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-accent)' }}
+                      >+ Add Row</button>
+                    </div>
+                    {rows.length > 0 && (
+                      <div style={{ border: '1px solid var(--color-border)', borderRadius: '6px', overflow: 'hidden' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.7rem' }}>
+                          <thead>
+                            <tr style={{ background: '#F8FAFC' }}>
+                              <th style={{ padding: '0.3rem 0.4rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.62rem', textTransform: 'uppercase', borderBottom: '1px solid var(--color-border)', width: '30px' }}>#</th>
+                              <th style={{ padding: '0.3rem 0.4rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.62rem', textTransform: 'uppercase', borderBottom: '1px solid var(--color-border)' }}>Company</th>
+                              <th style={{ padding: '0.3rem 0.4rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.62rem', textTransform: 'uppercase', borderBottom: '1px solid var(--color-border)' }}>Industry</th>
+                              <th style={{ padding: '0.3rem 0.4rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.62rem', textTransform: 'uppercase', borderBottom: '1px solid var(--color-border)' }}>Geography</th>
+                              <th style={{ padding: '0.3rem 0.4rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.62rem', textTransform: 'uppercase', borderBottom: '1px solid var(--color-border)' }}>HQ City</th>
+                              <th style={{ padding: '0.3rem 0.4rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.62rem', textTransform: 'uppercase', borderBottom: '1px solid var(--color-border)' }}>HQ Country</th>
+                              <th style={{ padding: '0.3rem 0.4rem', textAlign: 'right', fontWeight: 600, color: '#64748B', fontSize: '0.62rem', textTransform: 'uppercase', borderBottom: '1px solid var(--color-border)' }}>Est. Energy (GWh/yr)</th>
+                              <th style={{ padding: '0.3rem 0.3rem', width: '28px', borderBottom: '1px solid var(--color-border)' }}></th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {rows.map((r, i) => (
+                              <tr key={i} style={{ borderBottom: '1px solid #F1F5F9' }}>
+                                <td style={{ padding: '0.2rem 0.4rem', color: '#94A3B8', fontWeight: 600 }}>{i + 1}</td>
+                                {['companyName', 'industry', 'geography', 'hqCity', 'hqCountry'].map(field => (
+                                  <td key={field} style={{ padding: '0.15rem 0.25rem' }}>
+                                    <input
+                                      value={r[field] || ''}
+                                      onChange={e => updateRow(i, { [field]: e.target.value })}
+                                      style={{ width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: 'var(--color-text)' }}
+                                      onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; e.target.style.background = '#fff'; }}
+                                      onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
+                                    />
+                                  </td>
+                                ))}
+                                <td style={{ padding: '0.15rem 0.25rem', textAlign: 'right' }}>
+                                  <input
+                                    type="number"
+                                    value={r.energyGwh || ''}
+                                    onChange={e => updateRow(i, { energyGwh: e.target.value })}
+                                    style={{ width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: 'var(--color-text)', textAlign: 'right' }}
+                                    onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; e.target.style.background = '#fff'; }}
+                                    onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
+                                  />
+                                </td>
+                                <td style={{ padding: '0.15rem 0.25rem', textAlign: 'center' }}>
+                                  <button
+                                    onClick={() => deleteRow(i)}
+                                    title="Remove"
+                                    style={{ background: 'none', border: 'none', color: '#CBD5E1', fontSize: '0.8rem', cursor: 'pointer', padding: '0 3px', lineHeight: 1, fontFamily: 'inherit' }}
+                                    onMouseEnter={e => e.target.style.color = '#EF4444'}
+                                    onMouseLeave={e => e.target.style.color = '#CBD5E1'}
+                                  >&times;</button>
+                                </td>
+                              </tr>
+                            ))}
+                            {totalEnergy > 0 && (
+                              <tr style={{ background: '#F8FAFC', fontWeight: 700 }}>
+                                <td colSpan={6} style={{ padding: '0.3rem 0.4rem', textAlign: 'right', fontSize: '0.65rem', color: '#64748B', textTransform: 'uppercase' }}>Total Est. Energy</td>
+                                <td style={{ padding: '0.3rem 0.4rem', textAlign: 'right' }}>{totalEnergy.toLocaleString()}</td>
+                                <td></td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                    {rows.length === 0 && (
+                      <div style={{ fontSize: '0.75rem', color: '#9CA3AF', fontStyle: 'italic', padding: '0.25rem 0' }}>No portfolio companies yet — paste a table above or add rows manually</div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           )}
 
