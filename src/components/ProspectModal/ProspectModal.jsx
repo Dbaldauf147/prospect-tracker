@@ -1473,6 +1473,28 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                   const safeName = (fields.company || 'company').replace(/[^a-z0-9]+/gi, '_');
                   XLSX.writeFile(wb, `${safeName}_portfolio_template.xlsx`);
                 }
+                function downloadCurrent() {
+                  if (rows.length === 0) {
+                    alert('No portfolio companies to download.');
+                    return;
+                  }
+                  const exportRows = rows.map(r => ({
+                    'Company Name': r.companyName || '',
+                    'Industry': r.industry || '',
+                    'Geography': r.geography || '',
+                    'HQ City': r.hqCity || '',
+                    'HQ Country': r.hqCountry || '',
+                    'Est. Energy (GWh/yr)': r.energyGwh === '' || r.energyGwh == null ? '' : Number(r.energyGwh) || r.energyGwh,
+                  }));
+                  const ws = XLSX.utils.json_to_sheet(exportRows, {
+                    header: ['Company Name', 'Industry', 'Geography', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)'],
+                  });
+                  ws['!cols'] = [{ wch: 30 }, { wch: 18 }, { wch: 18 }, { wch: 20 }, { wch: 16 }, { wch: 20 }];
+                  const wb = XLSX.utils.book_new();
+                  XLSX.utils.book_append_sheet(wb, ws, 'Portfolio Companies');
+                  const safeName = (fields.company || 'company').replace(/[^a-z0-9]+/gi, '_');
+                  XLSX.writeFile(wb, `${safeName}_portfolio_companies.xlsx`);
+                }
                 async function handleUpload(e) {
                   const file = e.target.files?.[0];
                   if (!file) return;
@@ -1582,6 +1604,12 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                         onClick={downloadTemplate}
                         style={{ padding: '0.3rem 0.7rem', border: '1px solid var(--color-border)', borderRadius: '5px', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text)' }}
                       >↓ Download Excel Template</button>
+                      <button
+                        onClick={downloadCurrent}
+                        disabled={rows.length === 0}
+                        title={rows.length === 0 ? 'No data to download' : `Download ${rows.length} row${rows.length === 1 ? '' : 's'}`}
+                        style={{ padding: '0.3rem 0.7rem', border: '1px solid var(--color-border)', borderRadius: '5px', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: rows.length === 0 ? 'not-allowed' : 'pointer', fontFamily: 'inherit', color: rows.length === 0 ? 'var(--color-text-muted)' : 'var(--color-accent)', opacity: rows.length === 0 ? 0.6 : 1 }}
+                      >↓ Download Current Data</button>
                       <label style={{ padding: '0.3rem 0.7rem', border: '1px solid var(--color-border)', borderRadius: '5px', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text)' }}>
                         ↑ Upload Excel
                         <input type="file" accept=".xlsx,.xls,.csv" onChange={handleUpload} style={{ display: 'none' }} />
