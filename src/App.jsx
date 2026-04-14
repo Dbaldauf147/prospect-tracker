@@ -81,6 +81,24 @@ function App() {
   const [showSync, setShowSync] = useState(false);
   const [migrating, setMigrating] = useState(false);
   const [migrateResult, setMigrateResult] = useState(null);
+  const [hubspotContacts, setHubspotContacts] = useState(() => {
+    try {
+      const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
+      return cache?.contacts || [];
+    } catch { return []; }
+  });
+
+  // Refresh hubspot contacts when cache updates
+  useEffect(() => {
+    const handler = () => {
+      try {
+        const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
+        setHubspotContacts(cache?.contacts || []);
+      } catch {}
+    };
+    window.addEventListener('hubspot-cache-updated', handler);
+    return () => window.removeEventListener('hubspot-cache-updated', handler);
+  }, []);
 
   async function migrateClientsServices() {
     if (migrating) return;
@@ -251,13 +269,13 @@ function App() {
           isNew={modal.isNew}
           onSave={handleModalSave}
           onClose={() => setModal(null)}
-          hubspotContacts={(() => {
+          hubspotContacts={hubspotContacts}
+          onDeleteContact={() => {
             try {
               const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
-              return cache?.contacts || [];
-            } catch { return []; }
-          })()}
-          onDeleteContact={() => setModal(m => m ? { ...m } : m)}
+              setHubspotContacts(cache?.contacts || []);
+            } catch {}
+          }}
           orgCharts={settings.orgCharts || {}}
           onUpdateOrgChart={(key, data) => {
             const next = { ...(settings.orgCharts || {}), [key]: data };
