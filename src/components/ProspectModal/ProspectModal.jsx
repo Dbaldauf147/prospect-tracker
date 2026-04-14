@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES } from '../../data/enums';
 import styles from './ProspectModal.module.css';
@@ -217,7 +217,7 @@ const EMPTY = {
 // ── Inline HubSpot Contact Editor ──
 const TAG_OPTIONS = ['ESG', 'Procurement', 'Private Equity', 'Real Estate', 'Capital Planning', 'Dan Key Target', 'Test', 'EU'];
 
-function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS }) {
+const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS }) {
   const rawTags = contact.dans_tags || contact.dan_s_tags || contact.dans_tag || '';
   // Parse existing tags; track which known tags are checked separately from free-text extras
   const parsedTags = rawTags.split(';').map(t => t.trim()).filter(Boolean);
@@ -381,7 +381,12 @@ function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS }
       </div>
     </div>
   );
-}
+}, (prev, next) => {
+  // Only re-render if the contact ID changes or onSave/onClose/tagOptions change
+  const prevId = prev.contact.id || prev.contact.vid;
+  const nextId = next.contact.id || next.contact.vid;
+  return prevId === nextId && prev.onSave === next.onSave && prev.onClose === next.onClose && prev.tagOptions === next.tagOptions;
+});
 
 function MultiSelectDropdown({ options, selected, onToggle }) {
   const [open, setOpen] = useState(false);
@@ -591,16 +596,22 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
     return matched;
   }, [oppsRecords]);
 
-  function handleContactSaved(updated) {
-    if (addingContact) {
-      // New contact — add to local list
-      setLocalContacts(prev => [...prev, updated]);
-      setAddingContact(false);
-    } else {
-      setLocalContacts(prev => prev.map(c => (String(c.id || c.vid) === String(updated.id || updated.vid) ? { ...c, ...updated } : c)));
-    }
+  const handleContactSaved = useCallback((updated) => {
+    setLocalContacts(prev => {
+      const existing = prev.find(c => String(c.id || c.vid) === String(updated.id || updated.vid));
+      if (existing) {
+        return prev.map(c => (String(c.id || c.vid) === String(updated.id || updated.vid) ? { ...c, ...updated } : c));
+      }
+      return [...prev, updated];
+    });
+    setAddingContact(false);
     setEditingContact(null);
-  }
+  }, []);
+
+  const handleCloseContactEdit = useCallback(() => {
+    setEditingContact(null);
+    setAddingContact(false);
+  }, []);
 
   async function handleDeleteContact(contact) {
     const name = [contact.firstname, contact.lastname].filter(Boolean).join(' ') || 'this contact';
@@ -1358,7 +1369,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
         <ContactEditModal
           contact={editingContact}
           onSave={handleContactSaved}
-          onClose={() => { setEditingContact(null); setAddingContact(false); }}
+          onClose={handleCloseContactEdit}
           tagOptions={allTagOptions}
         />
       )}
