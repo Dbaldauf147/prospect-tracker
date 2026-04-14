@@ -243,6 +243,20 @@ function fuzzyHas(names, target) {
   return false;
 }
 
+// More permissive matcher for flagging Other Reps overlaps — matches on first-word
+// e.g. "Carlyle" on someone else's list should flag "Carlyle Group" on yours
+function otherRepMatch(a, b) {
+  if (companiesMatch(a, b)) return true;
+  const na = (a || '').toLowerCase().trim();
+  const nb = (b || '').toLowerCase().trim();
+  if (!na || !nb) return false;
+  const firstA = na.split(/[^a-z0-9]+/)[0] || '';
+  const firstB = nb.split(/[^a-z0-9]+/)[0] || '';
+  // Require 5+ chars in first word and they must match exactly
+  if (firstA.length >= 5 && firstA === firstB) return true;
+  return false;
+}
+
 // Target Accounts data is now passed as a prop from App.jsx
 
 
@@ -1085,11 +1099,6 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     const existingLower = new Set(prospects.map(p => (p.company || '').toLowerCase()));
     const missing = [];
     console.log('Auto-create check: openOpps accounts:', Object.keys(openOppsByAccount).length, 'prospects:', prospects.length, 'dismissed:', dismissedCompanies.length);
-    // Debug Carlyle Other Reps
-    const carlyleReps = allTargetReps.filter(t => t.company.toLowerCase().includes('carlyle'));
-    console.log('Carlyle entries (raw):', JSON.stringify(carlyleReps));
-    const cristyReps = allTargetReps.filter(t => t.rep.toLowerCase().includes('cristy') || t.rep.toLowerCase().includes('house'));
-    console.log('Cristy entries (raw):', JSON.stringify(cristyReps));
     for (const oppsCompany of Object.keys(openOppsByAccount)) {
       if (!oppsCompany) continue;
       // Skip dismissed companies
@@ -1295,7 +1304,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         if (allCompanyNames.some(name => companiesMatch(name, dmCompany))) { dmNames = names; break; }
       }
       // Find similar accounts assigned to other salespeople (check parent + all divisions)
-      const otherReps = allTargetReps.filter(t => allCompanyNames.some(name => companiesMatch(name, t.company)));
+      const otherReps = allTargetReps.filter(t => allCompanyNames.some(name => otherRepMatch(name, t.company)));
       // Count HubSpot contacts across parent + all divisions (fuzzy match)
       let contactCount = 0;
       const bucketsSeen = new Set();
