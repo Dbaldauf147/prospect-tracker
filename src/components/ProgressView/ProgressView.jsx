@@ -4,6 +4,36 @@ import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { LineChart, Line, BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from 'recharts';
 
+function EditableCell({ value, onCommit, color, suffix = '', bold = false }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const display = value == null || value === '' ? '—' : `${value}${suffix}`;
+  const tdStyle = { padding: '0.4rem 0.6rem', textAlign: 'center', fontWeight: bold ? 600 : 400, color: color || 'inherit', cursor: 'pointer' };
+  if (editing) {
+    return (
+      <td style={{ ...tdStyle, padding: '0.25rem 0.4rem' }}>
+        <input
+          type="number"
+          autoFocus
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onBlur={() => { setEditing(false); onCommit(draft); }}
+          onKeyDown={e => {
+            if (e.key === 'Enter') e.target.blur();
+            if (e.key === 'Escape') setEditing(false);
+          }}
+          style={{ width: '100%', padding: '2px 4px', fontSize: '0.75rem', fontWeight: bold ? 600 : 400, color: color || 'inherit', border: '1px solid var(--color-border)', borderRadius: '4px', background: 'var(--color-surface)', textAlign: 'center', fontFamily: 'inherit' }}
+        />
+      </td>
+    );
+  }
+  return (
+    <td style={tdStyle} title="Click to edit" onClick={() => { setDraft(value == null ? '' : String(value)); setEditing(true); }}>
+      {display}
+    </td>
+  );
+}
+
 function ProgressChart({ title, data, series, isPct, viewType }) {
   const yProps = isPct
     ? { domain: [0, 100], tickFormatter: v => `${v}%` }
@@ -398,6 +428,36 @@ export function ProgressView({ prospects, settings }) {
     }
   }
 
+  // Edit a single numeric field on a historical week (or promote the current-week row into history)
+  async function updateWeekField(weekKey, field, rawValue) {
+    if (!user?.uid) return;
+    const parsed = rawValue === '' || rawValue == null ? null : Number(rawValue);
+    if (rawValue !== '' && Number.isNaN(parsed)) return;
+    const inHistory = history.find(h => h.week === weekKey);
+    const existingValue = inHistory ? inHistory[field] : currentSnapshot[field];
+    if (parsed === existingValue) return;
+    let updated;
+    if (inHistory) {
+      updated = history.map(h => h.week === weekKey ? { ...h, [field]: parsed } : h);
+    } else {
+      const clean = JSON.parse(JSON.stringify(currentSnapshot));
+      updated = [...history, { ...clean, week: weekKey, [field]: parsed }];
+    }
+    updated.sort((a, b) => a.week.localeCompare(b.week));
+    setHistory(updated);
+    setSaveStatus('Saving…');
+    try {
+      const ref = doc(db, 'progressHistory', user.uid);
+      await setDoc(ref, { weeks: updated, updatedAt: new Date().toISOString() });
+      setSaveStatus('Saved ✓');
+      setTimeout(() => setSaveStatus(''), 2000);
+    } catch (err) {
+      console.error('[ProgressView] Failed to save cell edit:', err);
+      setSaveStatus('Save failed: ' + (err?.message || err));
+      setTimeout(() => setSaveStatus(''), 5000);
+    }
+  }
+
   const chartData = useMemo(() => {
     const data = [...history];
     // Add current week if not already saved
@@ -546,44 +606,46 @@ export function ProgressView({ prospects, settings }) {
       {/* Charts */}
       {chartData.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-          <ProgressChart
-            title="% of Accounts with HubSpot Contacts"
-            data={chartData}
-            series={[{ key: 't1ContactPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2ContactPct', name: 'Tier 2', color: '#3B82F6' }]}
-            isPct
-            viewType={chartView}
-          />
-          <ProgressChart
-            title="% of Accounts with Decision Maker Identified"
-            data={chartData}
-            series={[{ key: 't1DMPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2DMPct', name: 'Tier 2', color: '#3B82F6' }]}
-            isPct
-            viewType={chartView}
-          />
-          <ProgressChart
-            title="% of Accounts Connected (Had Opportunity)"
-            data={chartData}
-            series={[{ key: 't1ConnectedPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2ConnectedPct', name: 'Tier 2', color: '#3B82F6' }]}
-            isPct
-            viewType={chartView}
-          />
-          <ProgressChart
-            title="% of Accounts Inactive (Lost / Hold Off / Old Client)"
-            data={chartData}
-            series={[{ key: 't1InactivePct', name: 'Tier 1', color: '#DC2626' }, { key: 't2InactivePct', name: 'Tier 2', color: '#3B82F6' }]}
-            isPct
-            viewType={chartView}
-          />
-          <ProgressChart
-            title="My Accounts by Tier"
-            data={chartData}
-            series={[
-              { key: 't1Total', name: 'Tier 1', color: '#DC2626' },
-              { key: 't2Total', name: 'Tier 2', color: '#3B82F6' },
-              { key: 't3Total', name: 'Tier 3', color: '#F59E0B' },
-            ]}
-            viewType={chartView}
-          />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
+            <ProgressChart
+              title="% of Accounts with HubSpot Contacts"
+              data={chartData}
+              series={[{ key: 't1ContactPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2ContactPct', name: 'Tier 2', color: '#3B82F6' }]}
+              isPct
+              viewType={chartView}
+            />
+            <ProgressChart
+              title="% of Accounts with Decision Maker Identified"
+              data={chartData}
+              series={[{ key: 't1DMPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2DMPct', name: 'Tier 2', color: '#3B82F6' }]}
+              isPct
+              viewType={chartView}
+            />
+            <ProgressChart
+              title="% of Accounts Connected (Had Opportunity)"
+              data={chartData}
+              series={[{ key: 't1ConnectedPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2ConnectedPct', name: 'Tier 2', color: '#3B82F6' }]}
+              isPct
+              viewType={chartView}
+            />
+            <ProgressChart
+              title="% of Accounts Inactive (Lost / Hold Off / Old Client)"
+              data={chartData}
+              series={[{ key: 't1InactivePct', name: 'Tier 1', color: '#DC2626' }, { key: 't2InactivePct', name: 'Tier 2', color: '#3B82F6' }]}
+              isPct
+              viewType={chartView}
+            />
+            <ProgressChart
+              title="My Accounts by Tier"
+              data={chartData}
+              series={[
+                { key: 't1Total', name: 'Tier 1', color: '#DC2626' },
+                { key: 't2Total', name: 'Tier 2', color: '#3B82F6' },
+                { key: 't3Total', name: 'Tier 3', color: '#F59E0B' },
+              ]}
+              viewType={chartView}
+            />
+          </div>
 
           {/* History table */}
           {chartData.length > 0 && (
@@ -663,15 +725,15 @@ export function ProgressView({ prospects, settings }) {
                           </span>
                         )}
                       </td>
-                      <td style={{ padding: '0.4rem 0.6rem', textAlign: 'center', fontWeight: 600, color: '#DC2626' }}>{h.t1Total ?? '—'}</td>
-                      <td style={{ padding: '0.4rem 0.6rem', textAlign: 'center', fontWeight: 600, color: '#3B82F6' }}>{h.t2Total ?? '—'}</td>
-                      <td style={{ padding: '0.4rem 0.6rem', textAlign: 'center', fontWeight: 600, color: '#F59E0B' }}>{h.t3Total ?? '—'}</td>
-                      <td style={{ padding: '0.4rem 0.6rem', textAlign: 'center' }}>{h.t1ContactPct}%</td>
-                      <td style={{ padding: '0.4rem 0.6rem', textAlign: 'center' }}>{h.t2ContactPct}%</td>
-                      <td style={{ padding: '0.4rem 0.6rem', textAlign: 'center' }}>{h.t1ConnectedPct}%</td>
-                      <td style={{ padding: '0.4rem 0.6rem', textAlign: 'center' }}>{h.t2ConnectedPct}%</td>
-                      <td style={{ padding: '0.4rem 0.6rem', textAlign: 'center' }}>{h.t1InactivePct}%</td>
-                      <td style={{ padding: '0.4rem 0.6rem', textAlign: 'center' }}>{h.t2InactivePct}%</td>
+                      <EditableCell value={h.t1Total} onCommit={v => updateWeekField(h.week, 't1Total', v)} color="#DC2626" bold />
+                      <EditableCell value={h.t2Total} onCommit={v => updateWeekField(h.week, 't2Total', v)} color="#3B82F6" bold />
+                      <EditableCell value={h.t3Total} onCommit={v => updateWeekField(h.week, 't3Total', v)} color="#F59E0B" bold />
+                      <EditableCell value={h.t1ContactPct} onCommit={v => updateWeekField(h.week, 't1ContactPct', v)} suffix="%" />
+                      <EditableCell value={h.t2ContactPct} onCommit={v => updateWeekField(h.week, 't2ContactPct', v)} suffix="%" />
+                      <EditableCell value={h.t1ConnectedPct} onCommit={v => updateWeekField(h.week, 't1ConnectedPct', v)} suffix="%" />
+                      <EditableCell value={h.t2ConnectedPct} onCommit={v => updateWeekField(h.week, 't2ConnectedPct', v)} suffix="%" />
+                      <EditableCell value={h.t1InactivePct} onCommit={v => updateWeekField(h.week, 't1InactivePct', v)} suffix="%" />
+                      <EditableCell value={h.t2InactivePct} onCommit={v => updateWeekField(h.week, 't2InactivePct', v)} suffix="%" />
                       <td style={{ padding: '0.4rem 0.3rem', textAlign: 'center' }}>
                         <button
                           onClick={() => {
