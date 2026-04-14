@@ -1512,6 +1512,46 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                   e.target.value = '';
                 }
                 const totalEnergy = rows.reduce((sum, r) => sum + (Number(r.energyGwh) || 0), 0);
+
+                // RA Client matching helpers
+                function findRaSuggestions(companyName) {
+                  const lower = (companyName || '').toLowerCase().trim();
+                  if (!lower) return [];
+                  const scored = [];
+                  for (const ra of raClientsData) {
+                    const name = (ra['MDM Name'] || '').toLowerCase();
+                    if (!name) continue;
+                    if (name === lower) { scored.push({ name: ra['MDM Name'], score: 100 }); continue; }
+                    if (name.includes(lower) || lower.includes(name)) { scored.push({ name: ra['MDM Name'], score: 80 }); continue; }
+                    // First word match
+                    const firstLower = lower.split(/[^a-z0-9]+/)[0];
+                    const firstName = name.split(/[^a-z0-9]+/)[0];
+                    if (firstLower && firstLower.length >= 4 && firstLower === firstName) {
+                      scored.push({ name: ra['MDM Name'], score: 60 });
+                    }
+                  }
+                  scored.sort((a, b) => b.score - a.score);
+                  return scored.slice(0, 6).map(s => s.name);
+                }
+
+                function startResize(colKey, e) {
+                  e.preventDefault();
+                  const startX = e.clientX;
+                  const startW = portfolioColWidths[colKey] || 100;
+                  function onMove(ev) {
+                    const delta = ev.clientX - startX;
+                    setPortfolioColWidths(prev => ({ ...prev, [colKey]: Math.max(40, startW + delta) }));
+                  }
+                  function onUp() {
+                    document.removeEventListener('mousemove', onMove);
+                    document.removeEventListener('mouseup', onUp);
+                  }
+                  document.addEventListener('mousemove', onMove);
+                  document.addEventListener('mouseup', onUp);
+                }
+
+                const resizeHandleStyle = { position: 'absolute', right: 0, top: 0, bottom: 0, width: '5px', cursor: 'col-resize', userSelect: 'none' };
+                const thBase = { padding: '0.3rem 0.4rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.62rem', textTransform: 'uppercase', borderBottom: '1px solid var(--color-border)', position: 'relative', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
                 return (
                   <div style={{ marginTop: '0.5rem' }}>
                     <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.5rem', alignItems: 'flex-start' }}>
@@ -1551,22 +1591,38 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                       )}
                     </div>
                     {rows.length > 0 && (
-                      <div style={{ border: '1px solid var(--color-border)', borderRadius: '6px', overflow: 'hidden' }}>
-                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.7rem' }}>
+                      <div style={{ border: '1px solid var(--color-border)', borderRadius: '6px', overflow: 'auto' }}>
+                        <table style={{ borderCollapse: 'collapse', fontSize: '0.7rem', tableLayout: 'fixed', width: 'auto' }}>
+                          <colgroup>
+                            <col style={{ width: portfolioColWidths.num + 'px' }} />
+                            <col style={{ width: portfolioColWidths.company + 'px' }} />
+                            <col style={{ width: portfolioColWidths.industry + 'px' }} />
+                            <col style={{ width: portfolioColWidths.geography + 'px' }} />
+                            <col style={{ width: portfolioColWidths.hqCity + 'px' }} />
+                            <col style={{ width: portfolioColWidths.hqCountry + 'px' }} />
+                            <col style={{ width: portfolioColWidths.energy + 'px' }} />
+                            <col style={{ width: portfolioColWidths.raClient + 'px' }} />
+                            <col style={{ width: '28px' }} />
+                          </colgroup>
                           <thead>
                             <tr style={{ background: '#F8FAFC' }}>
-                              <th style={{ padding: '0.3rem 0.4rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.62rem', textTransform: 'uppercase', borderBottom: '1px solid var(--color-border)', width: '30px' }}>#</th>
-                              <th style={{ padding: '0.3rem 0.4rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.62rem', textTransform: 'uppercase', borderBottom: '1px solid var(--color-border)' }}>Company</th>
-                              <th style={{ padding: '0.3rem 0.4rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.62rem', textTransform: 'uppercase', borderBottom: '1px solid var(--color-border)' }}>Industry</th>
-                              <th style={{ padding: '0.3rem 0.4rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.62rem', textTransform: 'uppercase', borderBottom: '1px solid var(--color-border)' }}>Geography</th>
-                              <th style={{ padding: '0.3rem 0.4rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.62rem', textTransform: 'uppercase', borderBottom: '1px solid var(--color-border)' }}>HQ City</th>
-                              <th style={{ padding: '0.3rem 0.4rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.62rem', textTransform: 'uppercase', borderBottom: '1px solid var(--color-border)' }}>HQ Country</th>
-                              <th style={{ padding: '0.3rem 0.4rem', textAlign: 'right', fontWeight: 600, color: '#64748B', fontSize: '0.62rem', textTransform: 'uppercase', borderBottom: '1px solid var(--color-border)' }}>Est. Energy (GWh/yr)</th>
-                              <th style={{ padding: '0.3rem 0.3rem', width: '28px', borderBottom: '1px solid var(--color-border)' }}></th>
+                              <th style={thBase}>#<span style={resizeHandleStyle} onMouseDown={e => startResize('num', e)} /></th>
+                              <th style={thBase}>Company<span style={resizeHandleStyle} onMouseDown={e => startResize('company', e)} /></th>
+                              <th style={thBase}>Industry<span style={resizeHandleStyle} onMouseDown={e => startResize('industry', e)} /></th>
+                              <th style={thBase}>Geography<span style={resizeHandleStyle} onMouseDown={e => startResize('geography', e)} /></th>
+                              <th style={thBase}>HQ City<span style={resizeHandleStyle} onMouseDown={e => startResize('hqCity', e)} /></th>
+                              <th style={thBase}>HQ Country<span style={resizeHandleStyle} onMouseDown={e => startResize('hqCountry', e)} /></th>
+                              <th style={{ ...thBase, textAlign: 'right' }}>Est. Energy (GWh/yr)<span style={resizeHandleStyle} onMouseDown={e => startResize('energy', e)} /></th>
+                              <th style={thBase}>RA Client Match<span style={resizeHandleStyle} onMouseDown={e => startResize('raClient', e)} /></th>
+                              <th style={{ padding: '0.3rem 0.3rem', borderBottom: '1px solid var(--color-border)' }}></th>
                             </tr>
                           </thead>
                           <tbody>
-                            {rows.map((r, i) => (
+                            {rows.map((r, i) => {
+                              const suggestions = findRaSuggestions(r.companyName);
+                              const isMatched = !!r.raClientMatch;
+                              const pickerOpen = raClientPickerOpen === i;
+                              return (
                               <tr key={i} style={{ borderBottom: '1px solid #F1F5F9' }}>
                                 <td style={{ padding: '0.2rem 0.4rem', color: '#94A3B8', fontWeight: 600 }}>{i + 1}</td>
                                 {['companyName', 'industry', 'geography', 'hqCity', 'hqCountry'].map(field => (
@@ -1590,6 +1646,40 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                     onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
                                   />
                                 </td>
+                                <td style={{ padding: '0.15rem 0.25rem', position: 'relative' }}>
+                                  <button
+                                    onClick={() => setRaClientPickerOpen(pickerOpen ? null : i)}
+                                    style={{ width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.68rem', fontFamily: 'inherit', background: isMatched ? '#DCFCE7' : 'transparent', color: isMatched ? '#166534' : (suggestions.length > 0 ? '#F59E0B' : '#CBD5E1'), cursor: 'pointer', textAlign: 'left', fontWeight: isMatched ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                    onMouseEnter={e => e.currentTarget.style.border = '1px solid var(--color-accent)'}
+                                    onMouseLeave={e => e.currentTarget.style.border = '1px solid transparent'}
+                                  >
+                                    {isMatched ? `✓ ${r.raClientMatch}` : (suggestions.length > 0 ? `${suggestions.length} suggestion${suggestions.length === 1 ? '' : 's'} ▾` : '— Click to map —')}
+                                  </button>
+                                  {pickerOpen && (
+                                    <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 100, background: '#fff', border: '1px solid var(--color-border)', borderRadius: '5px', boxShadow: '0 4px 12px rgba(0,0,0,0.12)', minWidth: '220px', maxHeight: '240px', overflowY: 'auto', marginTop: '2px' }}>
+                                      {r.raClientMatch && (
+                                        <button
+                                          onClick={() => { updateRow(i, { raClientMatch: '' }); setRaClientPickerOpen(null); }}
+                                          style={{ display: 'block', width: '100%', padding: '0.35rem 0.6rem', border: 'none', background: 'none', textAlign: 'left', fontSize: '0.68rem', cursor: 'pointer', fontFamily: 'inherit', color: '#DC2626', borderBottom: '1px solid #F1F5F9' }}
+                                          onMouseEnter={e => e.currentTarget.style.background = '#FEF2F2'}
+                                          onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                                        >× Clear mapping</button>
+                                      )}
+                                      {suggestions.length === 0 && !r.raClientMatch && (
+                                        <div style={{ padding: '0.4rem 0.6rem', fontSize: '0.68rem', color: '#94A3B8', fontStyle: 'italic' }}>No matches found</div>
+                                      )}
+                                      {suggestions.map(s => (
+                                        <button
+                                          key={s}
+                                          onClick={() => { updateRow(i, { raClientMatch: s }); setRaClientPickerOpen(null); }}
+                                          style={{ display: 'block', width: '100%', padding: '0.35rem 0.6rem', border: 'none', background: r.raClientMatch === s ? '#DCFCE7' : 'none', textAlign: 'left', fontSize: '0.7rem', cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text)' }}
+                                          onMouseEnter={e => e.currentTarget.style.background = '#EFF6FF'}
+                                          onMouseLeave={e => e.currentTarget.style.background = r.raClientMatch === s ? '#DCFCE7' : 'none'}
+                                        >{s}</button>
+                                      ))}
+                                    </div>
+                                  )}
+                                </td>
                                 <td style={{ padding: '0.15rem 0.25rem', textAlign: 'center' }}>
                                   <button
                                     onClick={() => deleteRow(i)}
@@ -1600,12 +1690,13 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                   >&times;</button>
                                 </td>
                               </tr>
-                            ))}
+                              );
+                            })}
                             {totalEnergy > 0 && (
                               <tr style={{ background: '#F8FAFC', fontWeight: 700 }}>
                                 <td colSpan={6} style={{ padding: '0.3rem 0.4rem', textAlign: 'right', fontSize: '0.65rem', color: '#64748B', textTransform: 'uppercase' }}>Total Est. Energy</td>
                                 <td style={{ padding: '0.3rem 0.4rem', textAlign: 'right' }}>{totalEnergy.toLocaleString()}</td>
-                                <td></td>
+                                <td colSpan={2}></td>
                               </tr>
                             )}
                           </tbody>
