@@ -252,8 +252,8 @@ function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS }
   useEffect(() => {
     if (!tagsOpen) return;
     const h = e => { if (tagsRef.current && !tagsRef.current.contains(e.target)) setTagsOpen(false); };
-    document.addEventListener('click', h);
-    return () => document.removeEventListener('click', h);
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
   }, [tagsOpen]);
 
   function toggleTag(tag) {

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from './contexts/AuthContext';
 import { useProspects } from './hooks/useProspects';
 import { useSheetSync } from './hooks/useSheetSync';
@@ -27,6 +27,8 @@ import { ProgressView } from './components/ProgressView/ProgressView';
 import { RAClientsView } from './components/RAClientsView/RAClientsView';
 import { SERVICE_CATEGORIES } from './data/enums';
 import './App.css';
+
+const EMPTY_OBJ = Object.freeze({});
 
 // CSV column name -> enum service item name mapping for mismatched names
 const CSV_TO_ENUM = {
@@ -170,15 +172,27 @@ function App() {
     setModal({ prospect, isNew: false });
   }
 
-  async function handleModalSave(data, { close = true } = {}) {
-    if (modal.isNew) {
+  const handleModalSave = useCallback(async (data, { close = true } = {}) => {
+    if (modal?.isNew) {
       await addProspect(data);
       setModal(null);
-    } else {
+    } else if (modal) {
       await updateProspect(modal.prospect.id, data);
       if (close) setModal(null);
     }
-  }
+  }, [modal, addProspect, updateProspect]);
+
+  const handleModalClose = useCallback(() => setModal(null), []);
+  const handleDeleteContactPropagate = useCallback(() => {
+    try {
+      const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
+      setHubspotContacts(cache?.contacts || []);
+    } catch {}
+  }, []);
+  const handleUpdateOrgChart = useCallback((key, data) => {
+    const next = { ...(settings.orgCharts || {}), [key]: data };
+    updateSettings({ orgCharts: next });
+  }, [settings.orgCharts, updateSettings]);
 
   return (
     <div className="layout">
@@ -268,19 +282,11 @@ function App() {
           prospect={modal.prospect}
           isNew={modal.isNew}
           onSave={handleModalSave}
-          onClose={() => setModal(null)}
+          onClose={handleModalClose}
           hubspotContacts={hubspotContacts}
-          onDeleteContact={() => {
-            try {
-              const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
-              setHubspotContacts(cache?.contacts || []);
-            } catch {}
-          }}
-          orgCharts={settings.orgCharts || {}}
-          onUpdateOrgChart={(key, data) => {
-            const next = { ...(settings.orgCharts || {}), [key]: data };
-            updateSettings({ orgCharts: next });
-          }}
+          onDeleteContact={handleDeleteContactPropagate}
+          orgCharts={settings.orgCharts || EMPTY_OBJ}
+          onUpdateOrgChart={handleUpdateOrgChart}
           settings={settings}
           updateSettings={updateSettings}
         />
