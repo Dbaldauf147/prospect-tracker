@@ -508,8 +508,10 @@ function BulkUploadModal({ onUpload, onClose, uploading, progress }) {
 }
 
 
-function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptions, ccMap, toAlsoMap, onSaveCcMap, onSaveToAlsoMap }) {
+function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptions, ccMap, toAlsoMap, onSaveCcMap, onSaveToAlsoMap, contactOldEmails = {}, onSaveOldEmails }) {
   const isNew = !contact;
+  const cid = contact?.id || contact?.vid;
+  const savedOldEmails = (cid && contactOldEmails[cid]) || '';
   const [fields, setFields] = useState({
     firstname: contact?.firstname || '',
     lastname: contact?.lastname || '',
@@ -520,6 +522,7 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
     hs_linkedin_url: contact?.hs_linkedin_url || contact?.linkedin_url || contact?.hs_linkedinid || '',
     dans_tags: contact?.dans_tags || contact?.dan_s_tags || contact?.dans_tag || '',
     notes: contact?.hs_note || contact?.notes || '',
+    oldEmails: savedOldEmails,
   });
   // CC emails per contact email
   const [ccEmails, setCcEmails] = useState(() => {
@@ -738,6 +741,10 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
               })()}
             </div>
             <div className={styles.modalFull}>
+              <label className={styles.modalLabel}>Old Emails <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(comma-separated, inactive)</span></label>
+              <input className={styles.modalInput} value={fields.oldEmails} onChange={e => set('oldEmails', e.target.value)} placeholder="old.email@company.com, another@old.com" />
+            </div>
+            <div className={styles.modalFull}>
               <label className={styles.modalLabel}>Notes</label>
               <textarea className={styles.modalInput} value={fields.notes} onChange={e => set('notes', e.target.value)} placeholder="Add notes about this contact..." rows={3} style={{ resize: 'vertical', minHeight: '60px', lineHeight: '1.5' }} />
             </div>
@@ -831,7 +838,13 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
               else delete nextToAlsoMap[email];
               onSaveToAlsoMap(nextToAlsoMap);
             }
-            onSave(fields, contact?.id);
+            // Save Old Emails to Firestore settings
+            if (cid && onSaveOldEmails) {
+              onSaveOldEmails(cid, fields.oldEmails || '');
+            }
+            // Strip local-only field before HubSpot save
+            const { oldEmails, ...hsFields } = fields;
+            onSave(hsFields, contact?.id);
           }} disabled={saving || !fields.email.trim()}>
             {saving ? 'Saving...' : isNew ? 'Create in HubSpot' : 'Update in HubSpot'}
           </button>
@@ -1885,6 +1898,14 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
           toAlsoMap={settings?.toAlsoMap || {}}
           onSaveCcMap={m => updateSettings({ ccMap: m })}
           onSaveToAlsoMap={m => updateSettings({ toAlsoMap: m })}
+          contactOldEmails={settings?.contactOldEmails || {}}
+          onSaveOldEmails={(contactId, oldEmails) => {
+            const current = settings?.contactOldEmails || {};
+            const next = { ...current };
+            if (oldEmails && oldEmails.trim()) next[contactId] = oldEmails;
+            else delete next[contactId];
+            updateSettings({ contactOldEmails: next });
+          }}
         />
       )}
 
