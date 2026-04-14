@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback, memo } from 'react';
 import { createPortal } from 'react-dom';
+import * as XLSX from 'xlsx';
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES, COUNTRIES } from '../../data/enums';
 import styles from './ProspectModal.module.css';
 
@@ -620,6 +621,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
   const [competitorsOpen, setCompetitorsOpen] = useState(false);
   const [portfolioOpen, setPortfolioOpen] = useState(false);
   const [pastePortfolio, setPastePortfolio] = useState('');
+  const [researchingPortfolio, setResearchingPortfolio] = useState(false);
+  const [portfolioResearchError, setPortfolioResearchError] = useState(null);
   const [newCompetitor, setNewCompetitor] = useState('');
   const [oppsCache, setOppsCache] = useState(null);
   const [clientManager, setClientManager] = useState(null);
@@ -1409,6 +1412,80 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                     setPastePortfolio('');
                   }
                 }
+                async function researchWithClaude() {
+                  if (researchingPortfolio || !fields.company) return;
+                  const replace = rows.length > 0
+                    ? confirm(`This will research "${fields.company}" and ADD new companies to the existing ${rows.length}. Click OK to add, Cancel to abort. (To replace all, clear the table first.)`)
+                    : true;
+                  if (!replace) return;
+                  setResearchingPortfolio(true);
+                  setPortfolioResearchError(null);
+                  try {
+                    const res = await fetch('/api/research-portfolio', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ company: fields.company }),
+                    });
+                    const json = await res.json();
+                    if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+                    if (!json.companies || json.companies.length === 0) throw new Error('No companies returned');
+                    set('portfolioCompanies', [...rows, ...json.companies]);
+                  } catch (err) {
+                    setPortfolioResearchError(err.message || 'Research failed');
+                  }
+                  setResearchingPortfolio(false);
+                }
+                function downloadTemplate() {
+                  const templateRows = [
+                    { 'Company Name': 'Example Company', 'Industry': 'Technology', 'Geography': 'North America', 'HQ City': 'Austin, TX', 'HQ Country': 'USA', 'Est. Energy (GWh/yr)': 25 },
+                  ];
+                  const ws = XLSX.utils.json_to_sheet(templateRows, {
+                    header: ['Company Name', 'Industry', 'Geography', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)'],
+                  });
+                  ws['!cols'] = [{ wch: 30 }, { wch: 18 }, { wch: 18 }, { wch: 20 }, { wch: 16 }, { wch: 20 }];
+                  const wb = XLSX.utils.book_new();
+                  XLSX.utils.book_append_sheet(wb, ws, 'Portfolio Companies');
+                  const safeName = (fields.company || 'company').replace(/[^a-z0-9]+/gi, '_');
+                  XLSX.writeFile(wb, `${safeName}_portfolio_template.xlsx`);
+                }
+                async function handleUpload(e) {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  try {
+                    const buf = await file.arrayBuffer();
+                    const wb = XLSX.read(buf);
+                    const sheet = wb.Sheets[wb.SheetNames[0]];
+                    const data = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+                    const parsed = data
+                      .map(r => {
+                        const findKey = (keywords) => {
+                          const keys = Object.keys(r);
+                          for (const kw of keywords) {
+                            const k = keys.find(key => key.toLowerCase().replace(/[^a-z0-9]/g, '').includes(kw));
+                            if (k) return r[k];
+                          }
+                          return '';
+                        };
+                        return {
+                          companyName: String(findKey(['companyname', 'company']) || '').trim(),
+                          industry: String(findKey(['industry']) || '').trim(),
+                          geography: String(findKey(['geography', 'region']) || '').trim(),
+                          hqCity: String(findKey(['hqcity', 'city']) || '').trim(),
+                          hqCountry: String(findKey(['hqcountry', 'country']) || '').trim(),
+                          energyGwh: String(findKey(['energy', 'gwh']) || '').trim(),
+                        };
+                      })
+                      .filter(r => r.companyName);
+                    if (parsed.length > 0) {
+                      set('portfolioCompanies', [...rows, ...parsed]);
+                    } else {
+                      alert('No valid rows found in the uploaded file.');
+                    }
+                  } catch (err) {
+                    alert('Failed to parse file: ' + (err.message || 'Unknown error'));
+                  }
+                  e.target.value = '';
+                }
                 const totalEnergy = rows.reduce((sum, r) => sum + (Number(r.energyGwh) || 0), 0);
                 return (
                   <div style={{ marginTop: '0.5rem' }}>
@@ -1429,6 +1506,24 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                         onClick={addRow}
                         style={{ padding: '0.3rem 0.7rem', border: '1px solid var(--color-border)', borderRadius: '5px', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-accent)' }}
                       >+ Add Row</button>
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', marginBottom: '0.5rem', alignItems: 'center' }}>
+                      <button
+                        onClick={researchWithClaude}
+                        disabled={researchingPortfolio}
+                        style={{ padding: '0.3rem 0.7rem', border: 'none', borderRadius: '5px', background: researchingPortfolio ? '#94A3B8' : '#7C3AED', color: '#fff', fontSize: '0.7rem', fontWeight: 600, cursor: researchingPortfolio ? 'wait' : 'pointer', fontFamily: 'inherit' }}
+                      >{researchingPortfolio ? 'Researching... (up to 60s)' : '✨ Research with Claude'}</button>
+                      <button
+                        onClick={downloadTemplate}
+                        style={{ padding: '0.3rem 0.7rem', border: '1px solid var(--color-border)', borderRadius: '5px', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text)' }}
+                      >↓ Download Excel Template</button>
+                      <label style={{ padding: '0.3rem 0.7rem', border: '1px solid var(--color-border)', borderRadius: '5px', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text)' }}>
+                        ↑ Upload Excel
+                        <input type="file" accept=".xlsx,.xls,.csv" onChange={handleUpload} style={{ display: 'none' }} />
+                      </label>
+                      {portfolioResearchError && (
+                        <span style={{ fontSize: '0.68rem', color: '#DC2626', fontWeight: 600 }}>{portfolioResearchError}</span>
+                      )}
                     </div>
                     {rows.length > 0 && (
                       <div style={{ border: '1px solid var(--color-border)', borderRadius: '6px', overflow: 'hidden' }}>
