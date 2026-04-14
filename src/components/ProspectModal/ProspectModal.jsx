@@ -217,7 +217,7 @@ const EMPTY = {
 // ── Inline HubSpot Contact Editor ──
 const TAG_OPTIONS = ['ESG', 'Procurement', 'Private Equity', 'Real Estate', 'Capital Planning', 'Dan Key Target', 'Test', 'EU'];
 
-const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails }) {
+const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, emailDomains = [] }) {
   const rawTags = contact.dans_tags || contact.dan_s_tags || contact.dans_tag || '';
   // Parse existing tags; track which known tags are checked separately from free-text extras
   const parsedTags = rawTags.split(';').map(t => t.trim()).filter(Boolean);
@@ -351,7 +351,40 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
           <div><label style={labelStyle}>First Name</label><input style={inputStyle} value={f.firstname} onChange={e => set('firstname', e.target.value)} /></div>
           <div><label style={labelStyle}>Last Name</label><input style={inputStyle} value={f.lastname} onChange={e => set('lastname', e.target.value)} /></div>
-          <div><label style={labelStyle}>Email <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(optional)</span></label><input style={inputStyle} type="email" value={f.email} onChange={e => set('email', e.target.value)} /></div>
+          <div style={{ gridColumn: '1 / -1' }}>
+            <label style={labelStyle}>Email <span style={{ fontWeight: 400, textTransform: 'none', color: '#DC2626' }}>*</span></label>
+            <input style={inputStyle} type="email" value={f.email} onChange={e => set('email', e.target.value)} />
+            {(() => {
+              const isNewContact = !contact.id && !contact.vid;
+              if (!isNewContact) return null;
+              const first = (f.firstname || '').toLowerCase().trim().replace(/[^a-z]/g, '');
+              const last = (f.lastname || '').toLowerCase().trim().replace(/[^a-z]/g, '');
+              if (!first && !last) return null;
+              const domains = (emailDomains || []).filter(Boolean);
+              if (domains.length === 0) return null;
+              const suggestions = [];
+              for (const d of domains) {
+                const domain = d.replace(/^@/, '').trim();
+                if (!domain) continue;
+                if (first && last) {
+                  suggestions.push(`${first}.${last}@${domain}`);
+                  suggestions.push(`${first}${last}@${domain}`);
+                  suggestions.push(`${first[0]}${last}@${domain}`);
+                }
+                if (first) suggestions.push(`${first}@${domain}`);
+              }
+              const unique = [...new Set(suggestions)];
+              if (unique.length === 0) return null;
+              return (
+                <div style={{ marginTop: '0.25rem', display: 'flex', flexWrap: 'wrap', gap: '0.25rem' }}>
+                  <span style={{ fontSize: '0.65rem', color: '#64748B', alignSelf: 'center' }}>Suggest:</span>
+                  {unique.map(s => (
+                    <button key={s} type="button" onClick={() => set('email', s)} style={{ fontSize: '0.68rem', padding: '0.15rem 0.45rem', border: '1px solid #BFDBFE', borderRadius: '999px', background: '#EFF6FF', color: '#1E40AF', cursor: 'pointer', fontFamily: 'inherit' }}>{s}</button>
+                  ))}
+                </div>
+              );
+            })()}
+          </div>
           <div><label style={labelStyle}>Phone</label><input style={inputStyle} value={f.phone} onChange={e => set('phone', e.target.value)} /></div>
           <div style={{ gridColumn: '1 / -1' }}><label style={labelStyle}>Job Title</label><input style={inputStyle} value={f.jobtitle} onChange={e => set('jobtitle', e.target.value)} /></div>
           <div style={{ gridColumn: '1 / -1' }}><label style={labelStyle}>Company</label><input style={inputStyle} value={f.company} onChange={e => set('company', e.target.value)} /></div>
@@ -404,8 +437,13 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
         {error && <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', background: '#FEF2F2', borderRadius: '6px', fontSize: '0.75rem', color: '#DC2626' }}>{error}</div>}
         <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1.25rem' }}>
           <button onClick={onClose} style={{ padding: '0.5rem 1rem', border: '1px solid #E2E8F0', borderRadius: '6px', background: '#fff', fontSize: '0.8rem', fontFamily: 'inherit', cursor: 'pointer', color: '#64748B' }}>Cancel</button>
-          <button onClick={handleSave} disabled={saving || saved} style={{ padding: '0.5rem 1rem', border: 'none', borderRadius: '6px', background: saved ? '#059669' : '#0078D4', color: '#fff', fontSize: '0.8rem', fontFamily: 'inherit', cursor: saving ? 'wait' : 'pointer', fontWeight: 600, transition: 'background 0.2s' }}>
-            {saving ? 'Saving…' : saved ? '✓ Saved!' : (!contact.id && !contact.vid) ? 'Create in HubSpot' : 'Save to HubSpot'}
+          <button
+            onClick={handleSave}
+            disabled={saving || saved || !f.email.trim()}
+            title={!f.email.trim() ? 'Email is required' : ''}
+            style={{ padding: '0.5rem 1rem', border: 'none', borderRadius: '6px', background: saved ? '#059669' : (!f.email.trim() ? '#94A3B8' : '#0078D4'), color: '#fff', fontSize: '0.8rem', fontFamily: 'inherit', cursor: (!f.email.trim() || saving) ? 'not-allowed' : 'pointer', fontWeight: 600, transition: 'background 0.2s', opacity: (!f.email.trim() && !saved) ? 0.6 : 1 }}
+          >
+            {saving ? 'Saving…' : saved ? '✓ Saved!' : !f.email.trim() ? 'Email required' : (!contact.id && !contact.vid) ? 'Create in HubSpot' : 'Save to HubSpot'}
           </button>
         </div>
       </div>
@@ -414,7 +452,8 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
 }, (prev, next) => {
   const prevId = prev.contact.id || prev.contact.vid;
   const nextId = next.contact.id || next.contact.vid;
-  return prevId === nextId && prev.onSave === next.onSave && prev.onClose === next.onClose && prev.tagOptions === next.tagOptions && prev.onSaveNote === next.onSaveNote && prev.onSaveOldEmails === next.onSaveOldEmails;
+  const domainsEqual = (prev.emailDomains || []).join('|') === (next.emailDomains || []).join('|');
+  return prevId === nextId && prev.onSave === next.onSave && prev.onClose === next.onClose && prev.tagOptions === next.tagOptions && prev.onSaveNote === next.onSaveNote && prev.onSaveOldEmails === next.onSaveOldEmails && domainsEqual;
 });
 
 function MultiSelectDropdown({ options, selected, onToggle }) {
@@ -1424,6 +1463,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
           onSaveNote={handleSaveContactNote}
           contactOldEmails={settings.contactOldEmails || {}}
           onSaveOldEmails={handleSaveContactOldEmails}
+          emailDomains={(fields.emailDomain || '').split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)}
         />
       )}
     </div>

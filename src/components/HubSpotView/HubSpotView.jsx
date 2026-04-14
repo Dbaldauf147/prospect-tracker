@@ -508,7 +508,7 @@ function BulkUploadModal({ onUpload, onClose, uploading, progress }) {
 }
 
 
-function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptions, ccMap, toAlsoMap, onSaveCcMap, onSaveToAlsoMap, contactOldEmails = {}, onSaveOldEmails }) {
+function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptions, ccMap, toAlsoMap, onSaveCcMap, onSaveToAlsoMap, contactOldEmails = {}, onSaveOldEmails, companyDomainsMap = {} }) {
   const isNew = !contact;
   const cid = contact?.id || contact?.vid;
   const savedOldEmails = (cid && contactOldEmails[cid]) || '';
@@ -642,8 +642,47 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
               <input className={styles.modalInput} value={fields.lastname} onChange={e => set('lastname', e.target.value)} />
             </div>
             <div className={styles.modalFull}>
-              <label className={styles.modalLabel}>Email *</label>
+              <label className={styles.modalLabel}>Email <span style={{ fontWeight: 400, textTransform: 'none', color: '#DC2626' }}>*</span></label>
               <input className={styles.modalInput} type="email" value={fields.email} onChange={e => set('email', e.target.value)} />
+              {isNew && (() => {
+                const first = (fields.firstname || '').toLowerCase().trim().replace(/[^a-z]/g, '');
+                const last = (fields.lastname || '').toLowerCase().trim().replace(/[^a-z]/g, '');
+                if (!first && !last) return null;
+                const companyLower = (fields.company || '').toLowerCase().trim();
+                if (!companyLower) return null;
+                let domains = companyDomainsMap[companyLower] || [];
+                if (domains.length === 0) {
+                  // Try fuzzy match
+                  for (const key of Object.keys(companyDomainsMap)) {
+                    if (key.includes(companyLower) || companyLower.includes(key)) {
+                      domains = companyDomainsMap[key];
+                      break;
+                    }
+                  }
+                }
+                if (!domains || domains.length === 0) return null;
+                const suggestions = [];
+                for (const d of domains) {
+                  const domain = d.replace(/^@/, '').trim();
+                  if (!domain) continue;
+                  if (first && last) {
+                    suggestions.push(`${first}.${last}@${domain}`);
+                    suggestions.push(`${first}${last}@${domain}`);
+                    suggestions.push(`${first[0]}${last}@${domain}`);
+                  }
+                  if (first) suggestions.push(`${first}@${domain}`);
+                }
+                const unique = [...new Set(suggestions)];
+                if (unique.length === 0) return null;
+                return (
+                  <div style={{ marginTop: '0.3rem', display: 'flex', flexWrap: 'wrap', gap: '0.25rem' }}>
+                    <span style={{ fontSize: '0.65rem', color: '#64748B', alignSelf: 'center' }}>Suggest:</span>
+                    {unique.map(s => (
+                      <button key={s} type="button" onClick={() => set('email', s)} style={{ fontSize: '0.68rem', padding: '0.15rem 0.45rem', border: '1px solid #BFDBFE', borderRadius: '999px', background: '#EFF6FF', color: '#1E40AF', cursor: 'pointer', fontFamily: 'inherit' }}>{s}</button>
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
             <div>
               <label className={styles.modalLabel}>Phone</label>
@@ -1921,6 +1960,15 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
             else delete next[contactId];
             updateSettings({ contactOldEmails: next });
           }}
+          companyDomainsMap={(() => {
+            const map = {};
+            for (const p of prospects || []) {
+              if (!p.company || !p.emailDomain) continue;
+              const domains = p.emailDomain.split(/[\n;,]+/).map(s => s.trim()).filter(Boolean);
+              if (domains.length > 0) map[p.company.toLowerCase()] = domains;
+            }
+            return map;
+          })()}
         />
       )}
 
