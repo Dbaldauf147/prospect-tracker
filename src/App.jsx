@@ -156,22 +156,6 @@ function App() {
     });
   }, [user]);
 
-  if (authLoading) {
-    return <div className="loading">Loading...</div>;
-  }
-
-  if (!user) {
-    return <LoginPage onSignIn={signInWithGoogle} onSignInWithEmail={signInWithEmail} onCreateAccount={createAccount} error={authError} />;
-  }
-
-  function handleAddNew() {
-    setModal({ prospect: null, isNew: true });
-  }
-
-  function handleSelect(prospect) {
-    setModal({ prospect, isNew: false });
-  }
-
   const handleModalSave = useCallback(async (data, { close = true } = {}) => {
     if (modal?.isNew) {
       await addProspect(data);
@@ -193,6 +177,22 @@ function App() {
     const next = { ...(settings.orgCharts || {}), [key]: data };
     updateSettings({ orgCharts: next });
   }, [settings.orgCharts, updateSettings]);
+
+  if (authLoading) {
+    return <div className="loading">Loading...</div>;
+  }
+
+  if (!user) {
+    return <LoginPage onSignIn={signInWithGoogle} onSignInWithEmail={signInWithEmail} onCreateAccount={createAccount} error={authError} />;
+  }
+
+  function handleAddNew() {
+    setModal({ prospect: null, isNew: true });
+  }
+
+  function handleSelect(prospect) {
+    setModal({ prospect, isNew: false });
+  }
 
   return (
     <div className="layout">
