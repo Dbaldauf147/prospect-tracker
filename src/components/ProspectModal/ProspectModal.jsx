@@ -2163,10 +2163,9 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                   const maxS = rows.reduce((m, r) => Math.max(m, Number(r.siteCount) || 0), 0);
                   const years = rows.map(r => Number(r.acquisitionYear)).filter(y => y > 0);
                   const yearRange = years.length > 0 ? { min: Math.min(...years), max: Math.max(...years) } : null;
-                  const headers = ['#', 'Company Name', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Rank Score', 'Industry', 'Fit Tier', 'PC Description', 'Acquisition Year', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM'];
-                  const colWidths = [6, 32, 20, 16, 20, 16, 12, 22, 12, 48, 14, 36, 26, 22, 26, 10, 22];
+                  const headers = ['#', 'Company Name', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Rank Score', 'Industry', 'PC Description', 'Acquisition Year', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM'];
+                  const colWidths = [6, 32, 20, 16, 20, 16, 12, 22, 48, 14, 36, 26, 22, 26, 10, 22];
                   const data = rows.map((r, idx) => {
-                    const tier = industryTier(r.industry) || '';
                     const score = computePortfolioFitScore(r, maxE, maxS, yearRange);
                     const energy = r.energyGwh === '' || r.energyGwh == null ? null : (Number(r.energyGwh) || r.energyGwh);
                     const sites = r.siteCount === '' || r.siteCount == null ? null : (Number(r.siteCount) || r.siteCount);
@@ -2182,7 +2181,6 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                       sites,
                       score,
                       r.industry || '',
-                      tier,
                       r.pcDescription || '',
                       acqYear,
                       r.notes || '',
@@ -2261,19 +2259,10 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                           right: { style: 'thin', color: { argb: SE_BORDER } },
                         };
                         cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: false };
-                        // Fit Tier: color-code and override font
-                        if (i === 8 && v) {
-                          const tier = String(v);
-                          const fill = TIER_FILL[tier];
-                          const fg = TIER_FG[tier];
-                          if (fill) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill } };
-                          if (fg) cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: fg } };
-                          cell.alignment = { vertical: 'middle', horizontal: 'left' };
-                        }
                         // Number formats
                         if (i === 0) cell.numFmt = '0';
                         if (i === 4 || i === 5) cell.numFmt = '#,##0';
-                        if (i === 6 || i === 10) cell.numFmt = '0';
+                        if (i === 6 || i === 9) cell.numFmt = '0';
                       });
                       row.height = 18;
                     });
@@ -2655,7 +2644,6 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                             <col style={{ width: portfolioColWidths.siteCount + 'px' }} />
                             <col style={{ width: portfolioColWidths.rank + 'px' }} />
                             <col style={{ width: portfolioColWidths.industry + 'px' }} />
-                            <col style={{ width: portfolioColWidths.fitTier + 'px' }} />
                             <col style={{ width: portfolioColWidths.pcDescription + 'px' }} />
                             <col style={{ width: portfolioColWidths.acquisitionYear + 'px' }} />
                             <col style={{ width: portfolioColWidths.notes + 'px' }} />
@@ -2682,7 +2670,6 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                 Rank{portfolioSortByRank ? ' ▼' : ''}<span style={resizeHandleStyle} onMouseDown={e => startResize('rank', e)} />
                               </th>
                               <th style={thBase}>Industry<span style={resizeHandleStyle} onMouseDown={e => startResize('industry', e)} /></th>
-                              <th style={thBase}>Fit Tier<span style={resizeHandleStyle} onMouseDown={e => startResize('fitTier', e)} /></th>
                               <th style={thBase}>PC Description<span style={resizeHandleStyle} onMouseDown={e => startResize('pcDescription', e)} /></th>
                               <th style={{ ...thBase }}>Acquisition Year<span style={resizeHandleStyle} onMouseDown={e => startResize('acquisitionYear', e)} /></th>
                               <th style={thBase}>Notes<span style={resizeHandleStyle} onMouseDown={e => startResize('notes', e)} /></th>
@@ -2767,22 +2754,6 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                         onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; e.target.style.background = '#fff'; }}
                                         onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
                                       />
-                                    </td>
-                                  );
-                                })()}
-                                {(() => {
-                                  const sector = industrySector(r.industry);
-                                  const score = sectorScoreFor(sector);
-                                  const tier = sectorTier(sector);
-                                  const colors = tier ? TIER_COLORS[tier] : { bg: 'transparent', color: '#94A3B8', border: 'var(--color-border)' };
-                                  return (
-                                    <td style={{ padding: '0.15rem 0.3rem' }}>
-                                      <span
-                                        title={sector ? `${sector} (score ${score} / 10) — derived from Industry: "${r.industry}"` : 'No sector inferred from Industry'}
-                                        style={{ display: 'inline-block', padding: '0.1rem 0.5rem', borderRadius: 10, fontSize: '0.68rem', fontWeight: 700, background: colors.bg, color: colors.color, border: `1px solid ${colors.border}` }}
-                                      >
-                                        {sector ? `${tier} · ${score}` : '—'}
-                                      </span>
                                     </td>
                                   );
                                 })()}
@@ -3044,7 +3015,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                 <td colSpan={4} style={{ padding: '0.3rem 0.4rem', fontSize: '0.65rem', color: '#64748B', textTransform: 'uppercase' }}>Totals</td>
                                 <td style={{ padding: '0.3rem 0.4rem' }}>{totalEnergy > 0 ? totalEnergy.toLocaleString() : ''}</td>
                                 <td style={{ padding: '0.3rem 0.4rem' }}>{totalSites > 0 ? totalSites.toLocaleString() : ''}</td>
-                                <td colSpan={12}></td>
+                                <td colSpan={11}></td>
                               </tr>
                             )}
                           </tbody>
