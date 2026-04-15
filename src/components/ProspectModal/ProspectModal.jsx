@@ -2053,40 +2053,143 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                   const safeName = (fields.company || 'company').replace(/[^a-z0-9]+/gi, '_');
                   XLSX.writeFile(wb, `${safeName}_portfolio_template.xlsx`);
                 }
-                function downloadCurrent() {
+                async function downloadCurrent() {
                   if (rows.length === 0) {
                     alert('No portfolio companies to download.');
                     return;
                   }
                   const maxE = rows.reduce((m, r) => Math.max(m, Number(r.energyGwh) || 0), 0);
                   const maxS = rows.reduce((m, r) => Math.max(m, Number(r.siteCount) || 0), 0);
-                  const exportRows = rows.map(r => {
+                  const headers = ['Company Name', 'Industry', 'Geography', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Fit Tier', 'Rank Score', 'RA Client Match', 'Client Manager', 'Target Account', 'Guess Sales Rep'];
+                  const colWidths = [32, 22, 18, 20, 16, 20, 16, 12, 12, 26, 22, 26, 22];
+                  const data = rows.map(r => {
                     const tier = industryTier(r.industry) || '';
                     const score = computePortfolioFitScore(r, maxE, maxS);
-                    return {
-                      'Company Name': r.companyName || '',
-                      'Industry': r.industry || '',
-                      'Geography': r.geography || '',
-                      'HQ City': r.hqCity || '',
-                      'HQ Country': r.hqCountry || '',
-                      'Est. Energy (GWh/yr)': r.energyGwh === '' || r.energyGwh == null ? '' : Number(r.energyGwh) || r.energyGwh,
-                      'Est. Site Count': r.siteCount === '' || r.siteCount == null ? '' : Number(r.siteCount) || r.siteCount,
-                      'Fit Tier': tier,
-                      'Rank Score': score,
-                      'RA Client Match': r.raClientMatch || '',
-                      'Client Manager': (r.clientManager || '').trim() || cmForRaClient(r.raClientMatch),
-                      'Target Account': r.targetAccount || '',
-                      'Guess Sales Rep': repForTarget(r.targetAccount),
-                    };
+                    const energy = r.energyGwh === '' || r.energyGwh == null ? null : (Number(r.energyGwh) || r.energyGwh);
+                    const sites = r.siteCount === '' || r.siteCount == null ? null : (Number(r.siteCount) || r.siteCount);
+                    const clientMgr = (r.clientManager || '').trim() || cmForRaClient(r.raClientMatch);
+                    return [
+                      r.companyName || '',
+                      r.industry || '',
+                      r.geography || '',
+                      r.hqCity || '',
+                      r.hqCountry || '',
+                      energy,
+                      sites,
+                      tier,
+                      score,
+                      r.raClientMatch || '',
+                      clientMgr,
+                      r.targetAccount || '',
+                      repForTarget(r.targetAccount),
+                    ];
                   });
-                  const ws = XLSX.utils.json_to_sheet(exportRows, {
-                    header: ['Company Name', 'Industry', 'Geography', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Fit Tier', 'Rank Score', 'RA Client Match', 'Client Manager', 'Target Account', 'Guess Sales Rep'],
-                  });
-                  ws['!cols'] = [{ wch: 30 }, { wch: 18 }, { wch: 18 }, { wch: 20 }, { wch: 16 }, { wch: 20 }, { wch: 16 }, { wch: 10 }, { wch: 12 }, { wch: 24 }, { wch: 20 }, { wch: 24 }, { wch: 22 }];
-                  const wb = XLSX.utils.book_new();
-                  XLSX.utils.book_append_sheet(wb, ws, 'Portfolio Companies');
-                  const safeName = (fields.company || 'company').replace(/[^a-z0-9]+/gi, '_');
-                  XLSX.writeFile(wb, `${safeName}_portfolio_companies.xlsx`);
+
+                  // Schneider Electric brand palette
+                  const SE_GREEN = 'FF3DCD58';       // Life is On green (title band)
+                  const SE_GREEN_DARK = 'FF009530';  // Header band
+                  const SE_TEXT_DARK = 'FF1E293B';
+                  const SE_ZEBRA = 'FFF6F9F4';
+                  const SE_BORDER = 'FFD4DDE1';
+                  const TIER_FILL = { High: 'FFDCFCE7', Medium: 'FFFEF9C3', Low: 'FFF1F5F9' };
+                  const TIER_FG = { High: 'FF166534', Medium: 'FF854D0E', Low: 'FF475569' };
+
+                  try {
+                    const { Workbook } = await import('exceljs');
+                    const wb = new Workbook();
+                    wb.creator = 'Schneider Electric · Prospect Tracker';
+                    wb.created = new Date();
+                    const ws = wb.addWorksheet('Portfolio Companies', {
+                      properties: { tabColor: { argb: SE_GREEN } },
+                      views: [{ state: 'frozen', ySplit: 3 }],
+                    });
+                    ws.columns = colWidths.map(w => ({ width: w }));
+
+                    // Row 1: Title band
+                    ws.mergeCells(1, 1, 1, headers.length);
+                    const titleCell = ws.getCell(1, 1);
+                    titleCell.value = 'Schneider Electric';
+                    titleCell.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
+                    titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN } };
+                    titleCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+                    ws.getRow(1).height = 30;
+
+                    // Row 2: Subtitle
+                    ws.mergeCells(2, 1, 2, headers.length);
+                    const subCell = ws.getCell(2, 1);
+                    const today = new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+                    subCell.value = `Portfolio Companies  ·  ${fields.company || 'Company'}  ·  Exported ${today}`;
+                    subCell.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: 'FF64748B' } };
+                    subCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+                    ws.getRow(2).height = 20;
+
+                    // Row 3: Column headers
+                    const headerRow = ws.getRow(3);
+                    headers.forEach((h, i) => {
+                      const cell = headerRow.getCell(i + 1);
+                      cell.value = h;
+                      cell.font = { name: 'Nunito Sans', bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
+                      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+                      cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+                      cell.border = {
+                        top: { style: 'thin', color: { argb: SE_BORDER } },
+                        bottom: { style: 'thin', color: { argb: SE_BORDER } },
+                        left: { style: 'thin', color: { argb: SE_BORDER } },
+                        right: { style: 'thin', color: { argb: SE_BORDER } },
+                      };
+                    });
+                    headerRow.height = 30;
+
+                    // Data rows
+                    data.forEach((vals, idx) => {
+                      const row = ws.getRow(4 + idx);
+                      vals.forEach((v, i) => {
+                        const cell = row.getCell(i + 1);
+                        cell.value = v === '' || v == null ? null : v;
+                        cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+                        cell.border = {
+                          bottom: { style: 'thin', color: { argb: SE_BORDER } },
+                          left: { style: 'thin', color: { argb: SE_BORDER } },
+                          right: { style: 'thin', color: { argb: SE_BORDER } },
+                        };
+                        const isNumeric = i === 5 || i === 6 || i === 8;
+                        cell.alignment = { vertical: 'middle', horizontal: isNumeric ? 'right' : 'left', wrapText: false };
+                        if (idx % 2 === 1) {
+                          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_ZEBRA } };
+                        }
+                        // Fit Tier: color-code and override font
+                        if (i === 7 && v) {
+                          const tier = String(v);
+                          const fill = TIER_FILL[tier];
+                          const fg = TIER_FG[tier];
+                          if (fill) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill } };
+                          if (fg) cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: fg } };
+                          cell.alignment = { vertical: 'middle', horizontal: 'center' };
+                        }
+                        // Number formats
+                        if (i === 5 || i === 6) cell.numFmt = '#,##0';
+                        if (i === 8) cell.numFmt = '0';
+                      });
+                      row.height = 18;
+                    });
+
+                    // Auto-filter on the header row so users can sort/filter immediately
+                    ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: headers.length } };
+
+                    const buf = await wb.xlsx.writeBuffer();
+                    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    const safeName = (fields.company || 'company').replace(/[^a-z0-9]+/gi, '_');
+                    a.href = url;
+                    a.download = `${safeName}_portfolio_companies.xlsx`;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    setTimeout(() => URL.revokeObjectURL(url), 1000);
+                  } catch (err) {
+                    alert('Failed to build Excel: ' + (err?.message || err));
+                  }
                 }
                 async function handleUpload(e) {
                   const file = e.target.files?.[0];
