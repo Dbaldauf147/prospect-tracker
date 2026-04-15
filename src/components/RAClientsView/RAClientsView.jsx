@@ -1,33 +1,55 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { DataTable } from '../common/DataTable';
-import { loadEffectiveRaClients, saveRaClientsOverride, clearRaClientsOverride } from '../../utils/raClientsStore';
+import { loadEffectiveRaClients, saveRaClientsOverride, clearRaClientsOverride, raClientName } from '../../utils/raClientsStore';
 import styles from './RAClientsView.module.css';
 
-const COLUMNS = [
-  { key: 'MDM Name', label: 'MDM Name', defaultWidth: 220, sticky: true },
-  { key: 'Client Added', label: 'Client Added', defaultWidth: 110 },
-  { key: 'First Activity', label: 'First Activity', defaultWidth: 110 },
-  { key: 'Recent Activity', label: 'Recent Activity', defaultWidth: 120 },
-  { key: 'Years with Access', label: 'Years w/ Access', defaultWidth: 100 },
-  { key: 'RA Completeness', label: 'RA Completeness', defaultWidth: 115 },
-  { key: 'Users', label: 'Users', defaultWidth: 70 },
-  { key: 'Sites', label: 'Sites', defaultWidth: 70 },
-  { key: 'IDM Portfolio', label: 'IDM Portfolio', defaultWidth: 100 },
-  { key: 'Projects', label: 'Projects', defaultWidth: 80 },
-  { key: 'AV Apps', label: 'AV Apps', defaultWidth: 75 },
-  { key: 'Surveys', label: 'Surveys', defaultWidth: 80 },
-  { key: 'Corporate HQ', label: 'Corporate HQ', defaultWidth: 120 },
-  { key: 'Global Footprint', label: 'Global Footprint', defaultWidth: 110 },
-  { key: 'Average Site Cost', label: 'Avg Site Cost', defaultWidth: 120,
+// Column definitions used only when the uploaded/bundled data already has these keys.
+// Anything else we encounter gets rendered with a sensible default width.
+const KNOWN_COLUMN_META = {
+  'MDM Name': { label: 'MDM Name', defaultWidth: 220, sticky: true },
+  'Client Name': { label: 'Client Name', defaultWidth: 240, sticky: true },
+  'CM': { label: 'CM', defaultWidth: 160 },
+  'Client Added': { label: 'Client Added', defaultWidth: 110 },
+  'First Activity': { label: 'First Activity', defaultWidth: 110 },
+  'Recent Activity': { label: 'Recent Activity', defaultWidth: 120 },
+  'Years with Access': { label: 'Years w/ Access', defaultWidth: 100 },
+  'RA Completeness': { label: 'RA Completeness', defaultWidth: 115 },
+  'Users': { label: 'Users', defaultWidth: 70 },
+  'Sites': { label: 'Sites', defaultWidth: 70 },
+  'IDM Portfolio': { label: 'IDM Portfolio', defaultWidth: 100 },
+  'Projects': { label: 'Projects', defaultWidth: 80 },
+  'AV Apps': { label: 'AV Apps', defaultWidth: 75 },
+  'Surveys': { label: 'Surveys', defaultWidth: 80 },
+  'Corporate HQ': { label: 'Corporate HQ', defaultWidth: 120 },
+  'Global Footprint': { label: 'Global Footprint', defaultWidth: 110 },
+  'Average Site Cost': { label: 'Avg Site Cost', defaultWidth: 120,
     render: (row) => {
       const v = row['Average Site Cost'];
       if (v == null || v === '' || v === '-') return '—';
       return '$' + Number(v).toLocaleString();
     },
   },
-  { key: 'Client Management Team', label: 'Client Mgmt Team', defaultWidth: 180 },
-];
+  'Client Management Team': { label: 'Client Mgmt Team', defaultWidth: 180 },
+};
+
+function buildColumns(data) {
+  const keys = new Set();
+  for (const row of data) for (const k of Object.keys(row)) if (k !== 'id') keys.add(k);
+  // Put the name column first, then CM, then the rest of known cols, then any extras
+  const ordered = [];
+  if (keys.has('Client Name')) ordered.push('Client Name');
+  if (keys.has('MDM Name') && !ordered.includes('MDM Name')) ordered.push('MDM Name');
+  if (keys.has('CM')) ordered.push('CM');
+  for (const k of Object.keys(KNOWN_COLUMN_META)) {
+    if (keys.has(k) && !ordered.includes(k)) ordered.push(k);
+  }
+  for (const k of keys) if (!ordered.includes(k)) ordered.push(k);
+  return ordered.map(k => {
+    const meta = KNOWN_COLUMN_META[k] || { label: k, defaultWidth: 140 };
+    return { key: k, ...meta };
+  });
+}
 
 export function RAClientsView() {
   const [{ data, source }, setStore] = useState(() => loadEffectiveRaClients());
@@ -35,7 +57,6 @@ export function RAClientsView() {
   const [uploadError, setUploadError] = useState(null);
   const fileInputRef = useRef(null);
 
-  // Keep data fresh if another tab writes to the override key
   useEffect(() => {
     function onStorage(e) {
       if (e.key === 'ra-clients-override') setStore(loadEffectiveRaClients());
@@ -45,6 +66,11 @@ export function RAClientsView() {
   }, []);
 
   const rows = useMemo(() => data.map((r, i) => ({ ...r, id: i })), [data]);
+  const columns = useMemo(() => buildColumns(rows), [rows]);
+  const alwaysVisible = useMemo(() => {
+    const first = columns[0];
+    return first ? [first.key] : [];
+  }, [columns]);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return rows;
@@ -66,9 +92,17 @@ export function RAClientsView() {
       if (!sheet) throw new Error('Workbook has no sheets');
       const parsed = XLSX.utils.sheet_to_json(sheet, { defval: '' });
       if (!Array.isArray(parsed) || parsed.length === 0) throw new Error('No rows parsed');
-      const hasMdmName = parsed.some(r => Object.keys(r).some(k => k.trim().toLowerCase() === 'mdm name'));
-      if (!hasMdmName) throw new Error('No "MDM Name" column found — required for matching on Portfolio Companies.');
-      saveRaClientsOverride(parsed);
+      // Must have a usable name column
+      const first = parsed[0] || {};
+      const hasName = Object.keys(first).some(k => {
+        const lk = k.trim().toLowerCase();
+        return lk === 'client name' || lk === 'mdm name';
+      });
+      if (!hasName) throw new Error('No "Client Name" (or "MDM Name") column found — required for matching on Portfolio Companies.');
+      // Drop fully-empty rows
+      const cleaned = parsed.filter(r => raClientName(r));
+      if (cleaned.length === 0) throw new Error('All rows are missing a client name.');
+      saveRaClientsOverride(cleaned);
       setStore(loadEffectiveRaClients());
     } catch (err) {
       const msg = err?.name === 'QuotaExceededError'
@@ -104,7 +138,7 @@ export function RAClientsView() {
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            title="Replace the RA Clients table by uploading a new Excel file. Must include an 'MDM Name' column."
+            title="Replace the RA Clients table by uploading a new Excel file. Must include a 'Client Name' or 'MDM Name' column; include a 'CM' column to auto-fill Client Manager on Portfolio Companies."
             style={{ padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit' }}
           >
             Upload Excel
@@ -138,9 +172,9 @@ export function RAClientsView() {
       </div>
       <DataTable
         tableId="ra-clients"
-        columns={COLUMNS}
+        columns={columns}
         rows={filtered}
-        alwaysVisible={['MDM Name']}
+        alwaysVisible={alwaysVisible}
         emptyMessage="No matching RA clients found"
       />
     </div>

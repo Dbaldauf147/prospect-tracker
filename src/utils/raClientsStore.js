@@ -35,3 +35,15 @@ export function hasRaClientsOverride() {
     return false;
   }
 }
+
+// Canonical accessors — accept either the legacy "MDM Name" or the new "Client Name" header.
+export function raClientName(row) {
+  if (!row) return '';
+  return String(row['Client Name'] || row['MDM Name'] || '').trim();
+}
+
+// CM (Client Manager) accessor — accepts a few common header variants.
+export function raClientCm(row) {
+  if (!row) return '';
+  return String(row['CM'] || row['Client Manager'] || row['Client Management Team'] || row['Client Mgmt Team'] || '').trim();
+}

@@ -5,7 +5,7 @@ import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
 import { asBlob as htmlToDocxBlob } from 'html-docx-js-typescript';
 import mammoth from 'mammoth/mammoth.browser';
-import { loadEffectiveRaClients } from '../../utils/raClientsStore';
+import { loadEffectiveRaClients, raClientName, raClientCm } from '../../utils/raClientsStore';
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES, COUNTRIES } from '../../data/enums';
 import styles from './ProspectModal.module.css';
 
@@ -2212,11 +2212,23 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
 
                 // RA Client matching helpers — read the effective list (user override or bundled default)
                 const raClientsData = loadEffectiveRaClients().data;
+                // Map lowercase name -> CM, for auto-filling Client Manager when an RA Client Match is set.
+                const raNameToCm = (() => {
+                  const m = new Map();
+                  for (const ra of raClientsData) {
+                    const name = raClientName(ra);
+                    if (!name) continue;
+                    const cm = raClientCm(ra);
+                    if (cm && !m.has(name.toLowerCase())) m.set(name.toLowerCase(), cm);
+                  }
+                  return m;
+                })();
+                function cmForRaClient(name) { return raNameToCm.get((name || '').toLowerCase()) || ''; }
                 const allRaClientNames = (() => {
                   const seen = new Set();
                   const names = [];
                   for (const ra of raClientsData) {
-                    const name = ra['MDM Name'];
+                    const name = raClientName(ra);
                     if (!name || seen.has(name)) continue;
                     seen.add(name);
                     names.push(name);
@@ -2241,15 +2253,16 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                   if (!lower) return [];
                   const scored = [];
                   for (const ra of raClientsData) {
-                    const name = (ra['MDM Name'] || '').toLowerCase();
+                    const display = raClientName(ra);
+                    const name = display.toLowerCase();
                     if (!name) continue;
-                    if (name === lower) { scored.push({ name: ra['MDM Name'], score: 100 }); continue; }
-                    if (name.includes(lower) || lower.includes(name)) { scored.push({ name: ra['MDM Name'], score: 80 }); continue; }
+                    if (name === lower) { scored.push({ name: display, score: 100 }); continue; }
+                    if (name.includes(lower) || lower.includes(name)) { scored.push({ name: display, score: 80 }); continue; }
                     // First word match
                     const firstLower = lower.split(/[^a-z0-9]+/)[0];
                     const firstName = name.split(/[^a-z0-9]+/)[0];
                     if (firstLower && firstLower.length >= 4 && firstLower === firstName) {
-                      scored.push({ name: ra['MDM Name'], score: 60 });
+                      scored.push({ name: display, score: 60 });
                     }
                   }
                   scored.sort((a, b) => b.score - a.score);
@@ -2490,7 +2503,13 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                         {displayList.map(s => (
                                           <button
                                             key={s}
-                                            onClick={() => { updateRow(i, { raClientMatch: s }); setRaClientPickerOpen(null); }}
+                                            onClick={() => {
+                                              const patch = { raClientMatch: s };
+                                              const autoCm = cmForRaClient(s);
+                                              if (autoCm && !(r.clientManager || '').trim()) patch.clientManager = autoCm;
+                                              updateRow(i, patch);
+                                              setRaClientPickerOpen(null);
+                                            }}
                                             style={{ display: 'block', width: '100%', padding: '0.35rem 0.6rem', border: 'none', background: r.raClientMatch === s ? '#DCFCE7' : 'none', textAlign: 'left', fontSize: '0.7rem', cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text)' }}
                                             onMouseEnter={e => e.currentTarget.style.background = '#EFF6FF'}
                                             onMouseLeave={e => e.currentTarget.style.background = r.raClientMatch === s ? '#DCFCE7' : 'none'}
