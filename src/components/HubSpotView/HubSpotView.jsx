@@ -130,7 +130,31 @@ function loadCache() {
 }
 
 function saveCache(data) {
-  localStorage.setItem(CACHE_KEY, JSON.stringify(data));
+  try {
+    localStorage.setItem(CACHE_KEY, JSON.stringify(data));
+  } catch (err) {
+    // Over-quota — retry with a slimmed contact list (drop heavy optional fields) to fit.
+    try {
+      const slimContactKeys = new Set([
+        'id', 'vid', 'firstname', 'lastname', 'email', 'phone', 'company', 'jobtitle',
+        'hs_linkedin_url', 'linkedin_url', 'city', 'state', 'country',
+        'dans_tags', 'dan_s_tags', 'dans_tag', 'createdate', 'lastmodifieddate',
+        'hs_object_id', '_localOnly', 'notes',
+      ]);
+      const slim = {
+        ...data,
+        contacts: Array.isArray(data?.contacts) ? data.contacts.map(c => {
+          const out = {};
+          for (const k of Object.keys(c)) if (slimContactKeys.has(k)) out[k] = c[k];
+          return out;
+        }) : data?.contacts,
+      };
+      localStorage.setItem(CACHE_KEY, JSON.stringify(slim));
+      console.warn('HubSpot cache saved in slim mode (over quota with full fields)');
+    } catch (err2) {
+      console.error('HubSpot cache write failed (quota exceeded, even slim version too large):', err2?.message || err2);
+    }
+  }
 }
 
 function fmtDate(dateStr) {
@@ -148,10 +172,10 @@ function fmtDateTime(dateStr) {
     d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 }
 
-const TEMPLATE_HEADERS = ['First Name', 'Last Name', 'Email', 'Phone', 'Company', 'Job Title', 'LinkedIn URL', 'City', 'State', 'Country', 'Notes'];
+const TEMPLATE_HEADERS = ['First Name', 'Last Name', 'Email', 'Phone', 'Company', 'Job Title', 'LinkedIn URL', 'City', 'State', 'Country', "Dan's Tags", 'Notes'];
 
 function downloadTemplate() {
-  const csvContent = TEMPLATE_HEADERS.join(',') + '\nJohn,Smith,john@company.com,555-1234,Acme Corp,VP Sales,https://linkedin.com/in/johnsmith,New York,NY,United States,Met at conference\nJane,Doe,jane@other.com,555-5678,Other Inc,Director,,Chicago,IL,United States,Referred by John';
+  const csvContent = TEMPLATE_HEADERS.join(',') + '\nJohn,Smith,john@company.com,555-1234,Acme Corp,VP Sales,https://linkedin.com/in/johnsmith,New York,NY,United States,ESG;Decision Maker,Met at conference\nJane,Doe,jane@other.com,555-5678,Other Inc,Director,,Chicago,IL,United States,Procurement,Referred by John';
   const blob = new Blob([csvContent], { type: 'text/csv' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -172,6 +196,7 @@ const HEADER_ALIASES = {
   'city': 'city',
   'state': 'state', 'state/region': 'state', 'province': 'state', 'region': 'state',
   'country': 'country', 'country/region': 'country',
+  "dan's tags": 'dans_tags', 'dans tags': 'dans_tags', 'dan_s_tags': 'dans_tags', 'dans_tags': 'dans_tags', 'dans_tag': 'dans_tags', 'tags': 'dans_tags', 'tag': 'dans_tags',
   'notes': 'notes', 'note': 'notes', 'comments': 'notes', 'comment': 'notes', 'description': 'notes',
 };
 
@@ -212,8 +237,8 @@ function parseContactRows(lines, hasHeader) {
   }
 
   const mapping = {};
-  const ALL_FIELDS = ['firstname', 'lastname', 'email', 'phone', 'company', 'jobtitle', 'hs_linkedin_url', 'city', 'state', 'country'];
-  const FIELD_LABELS = { firstname: 'First Name', lastname: 'Last Name', email: 'Email', phone: 'Phone', company: 'Company', jobtitle: 'Job Title', hs_linkedin_url: 'LinkedIn URL', city: 'City', state: 'State', country: 'Country' };
+  const ALL_FIELDS = ['firstname', 'lastname', 'email', 'phone', 'company', 'jobtitle', 'hs_linkedin_url', 'city', 'state', 'country', 'dans_tags', 'notes'];
+  const FIELD_LABELS = { firstname: 'First Name', lastname: 'Last Name', email: 'Email', phone: 'Phone', company: 'Company', jobtitle: 'Job Title', hs_linkedin_url: 'LinkedIn URL', city: 'City', state: 'State', country: 'Country', dans_tags: "Dan's Tags", notes: 'Notes' };
   for (const field of ALL_FIELDS) {
     if (colMap && colMap[field] != null) {
       mapping[field] = { mapped: true, header: firstLineTrimmed[colMap[field]], col: colMap[field] };
@@ -264,6 +289,8 @@ function parseContactRows(lines, hasHeader) {
         city: colMap.city != null ? (trimmed[colMap.city] || '') : '',
         state: colMap.state != null ? (trimmed[colMap.state] || '') : '',
         country: colMap.country != null ? (trimmed[colMap.country] || '') : '',
+        dans_tags: colMap.dans_tags != null ? (trimmed[colMap.dans_tags] || '') : '',
+        notes: colMap.notes != null ? (trimmed[colMap.notes] || '') : '',
       });
     } else {
       // No header — try to detect email column by finding @ symbol
@@ -1142,25 +1169,45 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
     setBulkUploading(true);
     setPushStatus(null);
     setBulkErrors([]);
-    setBulkProgress({ done: 0, total: contacts.length, created: 0, updated: 0, errors: 0 });
+    // Split out contacts without an email — HubSpot can't store them, but we'll save them locally so the user doesn't lose the data.
+    const withEmail = [];
+    const withoutEmail = [];
+    for (const c of contacts) {
+      if ((c.email || '').trim()) withEmail.push(c);
+      else withoutEmail.push(c);
+    }
+    let localSaved = 0;
+    if (withoutEmail.length > 0) {
+      try {
+        const cacheRaw = localStorage.getItem('hubspot-sync-cache');
+        const cache = cacheRaw ? JSON.parse(cacheRaw) : { contacts: [] };
+        if (!Array.isArray(cache.contacts)) cache.contacts = [];
+        for (const c of withoutEmail) {
+          const { notes, ...props } = c;
+          const localId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+          cache.contacts.push({ id: localId, _localOnly: true, ...props });
+          localSaved++;
+        }
+        try { localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache)); } catch (qerr) { console.warn('Cache write skipped (quota):', qerr.message); }
+        window.dispatchEvent(new Event('hubspot-cache-updated'));
+      } catch (err) {
+        console.error('Failed to save emailless contacts locally:', err);
+      }
+    }
+    setBulkProgress({ done: 0, total: withEmail.length, created: 0, updated: 0, errors: 0 });
     let totalCreated = 0, totalUpdated = 0, totalErrors = 0;
     const allErrors = [];
     const BATCH_SIZE = 10;
     try {
-      for (let i = 0; i < contacts.length; i += BATCH_SIZE) {
-        const batch = contacts.slice(i, i + BATCH_SIZE);
+      for (let i = 0; i < withEmail.length; i += BATCH_SIZE) {
+        const batch = withEmail.slice(i, i + BATCH_SIZE);
         try {
-          // Strip notes from contact properties before sending to HubSpot
-          const notesMap = {};
-          const cleanBatch = batch.map(c => {
-            const { notes, ...props } = c;
-            if (notes?.trim()) notesMap[c.email] = notes.trim();
-            return props;
-          });
+          // Send contacts with notes intact — the API creates the note server-side after a successful create/update,
+          // which it can do because it already has the contact id from HubSpot's response.
           const res = await fetch('/api/hubspot?action=push-contacts', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ contacts: cleanBatch }),
+            body: JSON.stringify({ contacts: batch }),
           });
           const json = await res.json();
           if (json.error) {
@@ -1178,32 +1225,20 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
                 allErrors.push(entry);
               });
             }
-            // Create notes for successfully uploaded contacts
-            if (json.results && Object.keys(notesMap).length > 0) {
-              for (const r of json.results || []) {
-                const contactEmail = r.email || '';
-                const noteText = notesMap[contactEmail];
-                if (noteText && r.id) {
-                  fetch(`/api/hubspot?action=create-note`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ contactId: r.id, body: noteText }),
-                  }).catch(() => {});
-                }
-              }
-            }
           }
         } catch (err) {
           totalErrors += batch.length;
           const msg = err.message || 'Network error';
           batch.forEach(c => allErrors.push({ ...c, reason: msg, category: categorizeError(msg) }));
         }
-        const done = Math.min(i + BATCH_SIZE, contacts.length);
-        setBulkProgress({ done, total: contacts.length, created: totalCreated, updated: totalUpdated, errors: totalErrors });
+        const done = Math.min(i + BATCH_SIZE, withEmail.length);
+        setBulkProgress({ done, total: withEmail.length, created: totalCreated, updated: totalUpdated, errors: totalErrors });
       }
       setBulkErrors(allErrors);
       if (allErrors.length === 0) setShowBulkUpload(false);
-      setPushStatus({ type: allErrors.length > 0 ? 'error' : 'success', message: `Bulk upload complete: ${totalCreated} created, ${totalUpdated} updated, ${totalErrors} errors out of ${contacts.length}` });
+      const parts = [`${totalCreated} created`, `${totalUpdated} updated`, `${totalErrors} errors out of ${withEmail.length} with email`];
+      if (localSaved > 0) parts.push(`${localSaved} saved locally (no email)`);
+      setPushStatus({ type: allErrors.length > 0 ? 'error' : 'success', message: `Bulk upload complete: ${parts.join(', ')}` });
 
       // Auto-email the error report if there are failures
       if (allErrors.length > 0) {
@@ -1304,6 +1339,14 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
       const res = await fetch('/api/hubspot?action=full-sync');
       const json = await res.json();
       if (json.error) throw new Error(json.error);
+      // Preserve local-only contacts (created from bulk upload rows without email) across syncs
+      try {
+        const existing = JSON.parse(localStorage.getItem(CACHE_KEY));
+        const localOnly = (existing?.contacts || []).filter(c => c._localOnly);
+        if (localOnly.length > 0 && Array.isArray(json.contacts)) {
+          json.contacts = [...json.contacts, ...localOnly];
+        }
+      } catch {}
       setData(json);
       saveCache(json);
     } catch (err) {
@@ -1855,10 +1898,22 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
             <input
               className={styles.searchInput}
               type="text"
-              placeholder="Search contacts..."
+              placeholder="Search contacts or company..."
               value={search}
               onChange={e => setSearch(e.target.value)}
+              list="hubspot-company-suggestions"
+              autoComplete="off"
             />
+            <datalist id="hubspot-company-suggestions">
+              {(() => {
+                const names = new Set();
+                for (const c of enrichedContacts) {
+                  if (c.company) names.add(String(c.company).trim());
+                  if (c.guessedCompany) names.add(String(c.guessedCompany).trim());
+                }
+                return [...names].filter(Boolean).sort((a, b) => a.localeCompare(b)).map(n => <option key={n} value={n} />);
+              })()}
+            </datalist>
             {Object.entries(hsFilterOptions).map(([key, options]) => (
               <HubSpotFilterDrop key={key} label={HUBSPOT_FILTER_LABELS[key] || key} options={options} selected={colFilters[key] || []} onToggle={v => toggleColFilter(key, v)} onBulkSet={arr => setColFilters(prev => ({ ...prev, [key]: arr }))} />
             ))}
