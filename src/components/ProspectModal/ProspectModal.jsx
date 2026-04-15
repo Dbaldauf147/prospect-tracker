@@ -2630,17 +2630,17 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                               <th style={thBase}>Industry<span style={resizeHandleStyle} onMouseDown={e => startResize('industry', e)} /></th>
                               <th style={thBase}>HQ City<span style={resizeHandleStyle} onMouseDown={e => startResize('hqCity', e)} /></th>
                               <th style={thBase}>HQ Country<span style={resizeHandleStyle} onMouseDown={e => startResize('hqCountry', e)} /></th>
-                              <th style={{ ...thBase, textAlign: 'right' }}>Est. Energy (GWh/yr)<span style={resizeHandleStyle} onMouseDown={e => startResize('energy', e)} /></th>
-                              <th style={{ ...thBase, textAlign: 'right' }}>Est. Site Count<span style={resizeHandleStyle} onMouseDown={e => startResize('siteCount', e)} /></th>
+                              <th style={{ ...thBase }}>Est. Energy (GWh/yr)<span style={resizeHandleStyle} onMouseDown={e => startResize('energy', e)} /></th>
+                              <th style={{ ...thBase }}>Est. Site Count<span style={resizeHandleStyle} onMouseDown={e => startResize('siteCount', e)} /></th>
                               <th
-                                style={{ ...thBase, textAlign: 'right', cursor: 'pointer', userSelect: 'none' }}
+                                style={{ ...thBase, cursor: 'pointer', userSelect: 'none' }}
                                 onClick={() => setPortfolioSortByRank(v => !v)}
                                 title={portfolioSortByRank ? 'Showing best fit first — click to restore original order' : 'Click to sort best fit first'}
                               >
                                 Rank{portfolioSortByRank ? ' ▼' : ''}<span style={resizeHandleStyle} onMouseDown={e => startResize('rank', e)} />
                               </th>
                               <th style={thBase}>PC Description<span style={resizeHandleStyle} onMouseDown={e => startResize('pcDescription', e)} /></th>
-                              <th style={{ ...thBase, textAlign: 'right' }}>Acquisition Year<span style={resizeHandleStyle} onMouseDown={e => startResize('acquisitionYear', e)} /></th>
+                              <th style={{ ...thBase }}>Acquisition Year<span style={resizeHandleStyle} onMouseDown={e => startResize('acquisitionYear', e)} /></th>
                               <th style={thBase}>RA Client Match<span style={resizeHandleStyle} onMouseDown={e => startResize('raClient', e)} /></th>
                               <th style={thBase}>Client Manager<span style={resizeHandleStyle} onMouseDown={e => startResize('clientManager', e)} /></th>
                               <th style={thBase}>Target Account<span style={resizeHandleStyle} onMouseDown={e => startResize('targetAccount', e)} /></th>
@@ -2680,22 +2680,22 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                     </td>
                                   );
                                 })}
-                                <td style={{ padding: '0.15rem 0.25rem', textAlign: 'right' }}>
+                                <td style={{ padding: '0.15rem 0.25rem' }}>
                                   <input
                                     type="number"
                                     value={r.energyGwh || ''}
                                     onChange={e => updateRow(i, { energyGwh: e.target.value })}
-                                    style={{ width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: 'var(--color-text)', textAlign: 'right' }}
+                                    style={{ width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: 'var(--color-text)' }}
                                     onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; e.target.style.background = '#fff'; }}
                                     onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
                                   />
                                 </td>
-                                <td style={{ padding: '0.15rem 0.25rem', textAlign: 'right' }}>
+                                <td style={{ padding: '0.15rem 0.25rem' }}>
                                   <input
                                     type="number"
                                     value={r.siteCount || ''}
                                     onChange={e => updateRow(i, { siteCount: e.target.value })}
-                                    style={{ width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: 'var(--color-text)', textAlign: 'right' }}
+                                    style={{ width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: 'var(--color-text)' }}
                                     onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; e.target.style.background = '#fff'; }}
                                     onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
                                   />
@@ -2705,7 +2705,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                   const tier = industryTier(r.industry);
                                   const colors = tier ? TIER_COLORS[tier] : { bg: 'transparent', color: '#94A3B8', border: 'var(--color-border)' };
                                   return (
-                                    <td style={{ padding: '0.15rem 0.25rem', textAlign: 'right' }}>
+                                    <td style={{ padding: '0.15rem 0.25rem' }}>
                                       <span
                                         title={`Fit ${tier || '—'} · Energy ${r.energyGwh || 0} GWh · Sites ${r.siteCount || 0}`}
                                         style={{ display: 'inline-block', minWidth: '38px', padding: '0.1rem 0.35rem', borderRadius: 10, fontSize: '0.68rem', fontWeight: 700, background: colors.bg, color: colors.color, border: `1px solid ${colors.border}` }}
@@ -2726,14 +2726,14 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                     onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
                                   />
                                 </td>
-                                <td style={{ padding: '0.15rem 0.25rem', textAlign: 'right' }}>
+                                <td style={{ padding: '0.15rem 0.25rem' }}>
                                   <input
                                     type="number"
                                     inputMode="numeric"
                                     value={r.acquisitionYear || ''}
                                     onChange={e => updateRow(i, { acquisitionYear: e.target.value })}
                                     placeholder="YYYY"
-                                    style={{ width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: 'var(--color-text)', textAlign: 'right' }}
+                                    style={{ width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: 'var(--color-text)' }}
                                     onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; e.target.style.background = '#fff'; }}
                                     onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
                                   />
@@ -2959,9 +2959,9 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                             })}
                             {(totalEnergy > 0 || totalSites > 0) && (
                               <tr style={{ background: '#F8FAFC', fontWeight: 700 }}>
-                                <td colSpan={5} style={{ padding: '0.3rem 0.4rem', textAlign: 'right', fontSize: '0.65rem', color: '#64748B', textTransform: 'uppercase' }}>Totals</td>
-                                <td style={{ padding: '0.3rem 0.4rem', textAlign: 'right' }}>{totalEnergy > 0 ? totalEnergy.toLocaleString() : ''}</td>
-                                <td style={{ padding: '0.3rem 0.4rem', textAlign: 'right' }}>{totalSites > 0 ? totalSites.toLocaleString() : ''}</td>
+                                <td colSpan={5} style={{ padding: '0.3rem 0.4rem', fontSize: '0.65rem', color: '#64748B', textTransform: 'uppercase' }}>Totals</td>
+                                <td style={{ padding: '0.3rem 0.4rem' }}>{totalEnergy > 0 ? totalEnergy.toLocaleString() : ''}</td>
+                                <td style={{ padding: '0.3rem 0.4rem' }}>{totalSites > 0 ? totalSites.toLocaleString() : ''}</td>
                                 <td colSpan={9}></td>
                               </tr>
                             )}
