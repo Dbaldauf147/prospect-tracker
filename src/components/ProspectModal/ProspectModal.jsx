@@ -2185,9 +2185,6 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                         };
                         const isNumeric = i === 5 || i === 6 || i === 8;
                         cell.alignment = { vertical: 'middle', horizontal: isNumeric ? 'right' : 'left', wrapText: false };
-                        if (idx % 2 === 1) {
-                          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_ZEBRA } };
-                        }
                         // Fit Tier: color-code and override font
                         if (i === 7 && v) {
                           const tier = String(v);
