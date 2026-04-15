@@ -790,7 +790,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
   const [researchingPortfolio, setResearchingPortfolio] = useState(false);
   const [portfolioResearchError, setPortfolioResearchError] = useState(null);
   const [portfolioColWidths, setPortfolioColWidths] = useState({
-    num: 30, company: 180, industry: 140, geography: 120, hqCity: 130, hqCountry: 90, energy: 110, siteCount: 100, rank: 80, pcDescription: 260, raClient: 200, clientManager: 140, targetAccount: 200, tier: 80, salesRep: 160,
+    num: 30, company: 180, industry: 140, hqCity: 130, hqCountry: 90, energy: 110, siteCount: 100, rank: 80, pcDescription: 260, raClient: 200, clientManager: 140, targetAccount: 200, tier: 80, salesRep: 160,
   });
   const [portfolioSortByRank, setPortfolioSortByRank] = useState(false);
   const [raClientPickerOpen, setRaClientPickerOpen] = useState(null); // row index
@@ -2027,7 +2027,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                   set('portfolioCompanies', rows.filter((_, i) => i !== idx));
                 }
                 function addRow() {
-                  set('portfolioCompanies', [...rows, { companyName: '', industry: '', geography: '', hqCity: '', hqCountry: '', energyGwh: '', siteCount: '', pcDescription: '' }]);
+                  set('portfolioCompanies', [...rows, { companyName: '', industry: '', hqCity: '', hqCountry: '', energyGwh: '', siteCount: '', pcDescription: '' }]);
                 }
                 function parsePaste() {
                   const text = pastePortfolio.trim();
@@ -2040,8 +2040,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                     if (parts[0] && /^(#|number|no\.?)$/i.test(parts[0].trim())) continue;
                     // If first col is a number, shift
                     const startIdx = /^\d+$/.test((parts[0] || '').trim()) ? 1 : 0;
-                    const [companyName = '', industry = '', geography = '', hqCity = '', hqCountry = '', energyGwh = '', siteCount = ''] = parts.slice(startIdx).map(p => p.trim());
-                    if (companyName) parsed.push({ companyName, industry, geography, hqCity, hqCountry, energyGwh, siteCount });
+                    const [companyName = '', industry = '', hqCity = '', hqCountry = '', energyGwh = '', siteCount = ''] = parts.slice(startIdx).map(p => p.trim());
+                    if (companyName) parsed.push({ companyName, industry, hqCity, hqCountry, energyGwh, siteCount });
                   }
                   if (parsed.length > 0) {
                     set('portfolioCompanies', [...rows, ...parsed]);
@@ -2073,12 +2073,12 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                 }
                 function downloadTemplate() {
                   const templateRows = [
-                    { 'Company Name': 'Example Company', 'Industry': 'Technology', 'Geography': 'North America', 'HQ City': 'Austin, TX', 'HQ Country': 'USA', 'Est. Energy (GWh/yr)': 25, 'Est. Site Count': 12, 'PC Description': 'Short, 1-2 sentence description of what the company does.' },
+                    { 'Company Name': 'Example Company', 'Industry': 'Technology', 'HQ City': 'Austin, TX', 'HQ Country': 'USA', 'Est. Energy (GWh/yr)': 25, 'Est. Site Count': 12, 'PC Description': 'Short, 1-2 sentence description of what the company does.' },
                   ];
                   const ws = XLSX.utils.json_to_sheet(templateRows, {
-                    header: ['Company Name', 'Industry', 'Geography', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'PC Description'],
+                    header: ['Company Name', 'Industry', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'PC Description'],
                   });
-                  ws['!cols'] = [{ wch: 30 }, { wch: 18 }, { wch: 18 }, { wch: 20 }, { wch: 16 }, { wch: 20 }, { wch: 16 }, { wch: 48 }];
+                  ws['!cols'] = [{ wch: 30 }, { wch: 18 }, { wch: 20 }, { wch: 16 }, { wch: 20 }, { wch: 16 }, { wch: 48 }];
                   const wb = XLSX.utils.book_new();
                   XLSX.utils.book_append_sheet(wb, ws, 'Portfolio Companies');
                   const safeName = (fields.company || 'company').replace(/[^a-z0-9]+/gi, '_');
@@ -2091,8 +2091,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                   }
                   const maxE = rows.reduce((m, r) => Math.max(m, Number(r.energyGwh) || 0), 0);
                   const maxS = rows.reduce((m, r) => Math.max(m, Number(r.siteCount) || 0), 0);
-                  const headers = ['Company Name', 'Industry', 'Geography', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Fit Tier', 'Rank Score', 'PC Description', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Guess Sales Rep'];
-                  const colWidths = [32, 22, 18, 20, 16, 20, 16, 12, 12, 48, 26, 22, 26, 10, 22];
+                  const headers = ['Company Name', 'Industry', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Fit Tier', 'Rank Score', 'PC Description', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Guess Sales Rep'];
+                  const colWidths = [32, 22, 20, 16, 20, 16, 12, 12, 48, 26, 22, 26, 10, 22];
                   const data = rows.map(r => {
                     const tier = industryTier(r.industry) || '';
                     const score = computePortfolioFitScore(r, maxE, maxS);
@@ -2102,7 +2102,6 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                     return [
                       r.companyName || '',
                       r.industry || '',
-                      r.geography || '',
                       r.hqCity || '',
                       r.hqCountry || '',
                       energy,
@@ -2184,10 +2183,10 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                           left: { style: 'thin', color: { argb: SE_BORDER } },
                           right: { style: 'thin', color: { argb: SE_BORDER } },
                         };
-                        const isNumeric = i === 5 || i === 6 || i === 8;
+                        const isNumeric = i === 4 || i === 5 || i === 7;
                         cell.alignment = { vertical: 'middle', horizontal: isNumeric ? 'right' : 'left', wrapText: false };
                         // Fit Tier: color-code and override font
-                        if (i === 7 && v) {
+                        if (i === 6 && v) {
                           const tier = String(v);
                           const fill = TIER_FILL[tier];
                           const fg = TIER_FG[tier];
@@ -2196,8 +2195,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                           cell.alignment = { vertical: 'middle', horizontal: 'center' };
                         }
                         // Number formats
-                        if (i === 5 || i === 6) cell.numFmt = '#,##0';
-                        if (i === 8) cell.numFmt = '0';
+                        if (i === 4 || i === 5) cell.numFmt = '#,##0';
+                        if (i === 7) cell.numFmt = '0';
                       });
                       row.height = 18;
                     });
@@ -2241,7 +2240,6 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                         return {
                           companyName: String(findKey(['companyname', 'company']) || '').trim(),
                           industry: String(findKey(['industry']) || '').trim(),
-                          geography: String(findKey(['geography', 'region']) || '').trim(),
                           hqCity: String(findKey(['hqcity', 'city']) || '').trim(),
                           hqCountry: String(findKey(['hqcountry', 'country']) || '').trim(),
                           energyGwh: String(findKey(['energy', 'gwh']) || '').trim(),
@@ -2471,7 +2469,6 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                             <col style={{ width: portfolioColWidths.num + 'px' }} />
                             <col style={{ width: portfolioColWidths.company + 'px' }} />
                             <col style={{ width: portfolioColWidths.industry + 'px' }} />
-                            <col style={{ width: portfolioColWidths.geography + 'px' }} />
                             <col style={{ width: portfolioColWidths.hqCity + 'px' }} />
                             <col style={{ width: portfolioColWidths.hqCountry + 'px' }} />
                             <col style={{ width: portfolioColWidths.energy + 'px' }} />
@@ -2490,7 +2487,6 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                               <th style={thBase}>#<span style={resizeHandleStyle} onMouseDown={e => startResize('num', e)} /></th>
                               <th style={thBase}>Company<span style={resizeHandleStyle} onMouseDown={e => startResize('company', e)} /></th>
                               <th style={thBase}>Industry<span style={resizeHandleStyle} onMouseDown={e => startResize('industry', e)} /></th>
-                              <th style={thBase}>Geography<span style={resizeHandleStyle} onMouseDown={e => startResize('geography', e)} /></th>
                               <th style={thBase}>HQ City<span style={resizeHandleStyle} onMouseDown={e => startResize('hqCity', e)} /></th>
                               <th style={thBase}>HQ Country<span style={resizeHandleStyle} onMouseDown={e => startResize('hqCountry', e)} /></th>
                               <th style={{ ...thBase, textAlign: 'right' }}>Est. Energy (GWh/yr)<span style={resizeHandleStyle} onMouseDown={e => startResize('energy', e)} /></th>
@@ -2522,7 +2518,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                               return (
                               <tr key={i} style={{ borderBottom: '1px solid #F1F5F9' }}>
                                 <td style={{ padding: '0.2rem 0.4rem', color: '#94A3B8', fontWeight: 600 }}>{displayI + 1}</td>
-                                {['companyName', 'industry', 'geography', 'hqCity', 'hqCountry'].map(field => {
+                                {['companyName', 'industry', 'hqCity', 'hqCountry'].map(field => {
                                   const isIndustry = field === 'industry';
                                   const tier = isIndustry ? industryTier(r.industry) : null;
                                   const tierColors = tier ? TIER_COLORS[tier] : null;
@@ -2809,7 +2805,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                             })}
                             {(totalEnergy > 0 || totalSites > 0) && (
                               <tr style={{ background: '#F8FAFC', fontWeight: 700 }}>
-                                <td colSpan={6} style={{ padding: '0.3rem 0.4rem', textAlign: 'right', fontSize: '0.65rem', color: '#64748B', textTransform: 'uppercase' }}>Totals</td>
+                                <td colSpan={5} style={{ padding: '0.3rem 0.4rem', textAlign: 'right', fontSize: '0.65rem', color: '#64748B', textTransform: 'uppercase' }}>Totals</td>
                                 <td style={{ padding: '0.3rem 0.4rem', textAlign: 'right' }}>{totalEnergy > 0 ? totalEnergy.toLocaleString() : ''}</td>
                                 <td style={{ padding: '0.3rem 0.4rem', textAlign: 'right' }}>{totalSites > 0 ? totalSites.toLocaleString() : ''}</td>
                                 <td colSpan={8}></td>
