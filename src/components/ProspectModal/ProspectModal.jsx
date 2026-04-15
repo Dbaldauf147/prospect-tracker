@@ -2270,10 +2270,13 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                     // Auto-filter on the header row so users can sort/filter immediately
                     ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: headers.length } };
 
-                    // ── Methodology & Assumptions tab ──
+                    // ── Methodology & Assumptions tab (hidden by default) ──
+                    // The sheet is still included so it can be unhidden in Excel when a
+                    // reader wants to see how the Rank Score was derived.
                     const mws = wb.addWorksheet('Methodology', {
                       properties: { tabColor: { argb: SE_GREEN } },
                       views: [{ state: 'frozen', ySplit: 2 }],
+                      state: 'hidden',
                     });
                     mws.columns = [{ width: 28 }, { width: 90 }];
 
