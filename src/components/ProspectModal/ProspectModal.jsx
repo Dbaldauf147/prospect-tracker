@@ -2098,12 +2098,26 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                 }
                 function downloadTemplate() {
                   const templateRows = [
-                    { 'Company Name': 'Example Company', 'Industry': 'Technology', 'HQ City': 'Austin, TX', 'HQ Country': 'USA', 'Est. Energy (GWh/yr)': 25, 'Est. Site Count': 12, 'PC Description': 'Short, 1-2 sentence description of what the company does.', 'Acquisition Year': 2021 },
+                    {
+                      'Company Name': 'Example Company',
+                      'Industry': 'Technology',
+                      'HQ City': 'Austin, TX',
+                      'HQ Country': 'USA',
+                      'Est. Energy (GWh/yr)': 25,
+                      'Est. Site Count': 12,
+                      'PC Description': 'Short, 1-2 sentence description of what the company does.',
+                      'Acquisition Year': 2021,
+                      'RA Client Match': '',
+                      'Client Manager': '',
+                      'Target Account': '',
+                      'Tier': '',
+                      'Other CDM': '',
+                    },
                   ];
                   const ws = XLSX.utils.json_to_sheet(templateRows, {
-                    header: ['Company Name', 'Industry', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'PC Description', 'Acquisition Year'],
+                    header: ['Company Name', 'Industry', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'PC Description', 'Acquisition Year', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM'],
                   });
-                  ws['!cols'] = [{ wch: 30 }, { wch: 18 }, { wch: 20 }, { wch: 16 }, { wch: 20 }, { wch: 16 }, { wch: 48 }, { wch: 14 }];
+                  ws['!cols'] = [{ wch: 30 }, { wch: 18 }, { wch: 20 }, { wch: 16 }, { wch: 20 }, { wch: 16 }, { wch: 48 }, { wch: 14 }, { wch: 26 }, { wch: 22 }, { wch: 26 }, { wch: 10 }, { wch: 22 }];
                   const wb = XLSX.utils.book_new();
                   XLSX.utils.book_append_sheet(wb, ws, 'Portfolio Companies');
                   const safeName = (fields.company || 'company').replace(/[^a-z0-9]+/gi, '_');
@@ -2118,7 +2132,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                   const maxS = rows.reduce((m, r) => Math.max(m, Number(r.siteCount) || 0), 0);
                   const years = rows.map(r => Number(r.acquisitionYear)).filter(y => y > 0);
                   const yearRange = years.length > 0 ? { min: Math.min(...years), max: Math.max(...years) } : null;
-                  const headers = ['Company Name', 'Industry', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Fit Tier', 'Rank Score', 'PC Description', 'Acquisition Year', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Guess Sales Rep'];
+                  const headers = ['Company Name', 'Industry', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Fit Tier', 'Rank Score', 'PC Description', 'Acquisition Year', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM'];
                   const colWidths = [32, 22, 20, 16, 20, 16, 12, 12, 48, 14, 26, 22, 26, 10, 22];
                   const data = rows.map(r => {
                     const tier = industryTier(r.industry) || '';
@@ -2631,7 +2645,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                               <th style={thBase}>Client Manager<span style={resizeHandleStyle} onMouseDown={e => startResize('clientManager', e)} /></th>
                               <th style={thBase}>Target Account<span style={resizeHandleStyle} onMouseDown={e => startResize('targetAccount', e)} /></th>
                               <th style={thBase}>Tier<span style={resizeHandleStyle} onMouseDown={e => startResize('tier', e)} /></th>
-                              <th style={thBase}>Guess Sales Rep<span style={resizeHandleStyle} onMouseDown={e => startResize('salesRep', e)} /></th>
+                              <th style={thBase}>Other CDM<span style={resizeHandleStyle} onMouseDown={e => startResize('salesRep', e)} /></th>
                               <th style={{ padding: '0.3rem 0.3rem', borderBottom: '1px solid var(--color-border)' }}></th>
                             </tr>
                           </thead>
