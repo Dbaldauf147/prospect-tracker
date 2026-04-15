@@ -280,7 +280,7 @@ function computePortfolioFitScore(row, maxEnergy, maxSites, yearRange) {
   } else if (year && yearRange && yearRange.max === yearRange.min) {
     yearPct = 1;
   }
-  const raw = tierVal * 0.4 + energyPct * 0.2 + sitesPct * 0.2 + yearPct * 0.2;
+  const raw = energyPct * 0.4 + tierVal * 0.25 + sitesPct * 0.2 + yearPct * 0.15;
   return Math.round(raw * 100);
 }
 
@@ -2314,10 +2314,10 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                     addBlank();
 
                     addSectionHeader('Component Weights');
-                    addKV('Industry Fit Tier', '40% — derived from the Industry column via keyword matching (see below).');
-                    addKV('Est. Energy (GWh/yr)', '20% — linearly normalized against the maximum value in the exported table.');
+                    addKV('Est. Energy (GWh/yr)', '40% — linearly normalized against the maximum value in the exported table. Largest single driver of the score.');
+                    addKV('Industry Fit Tier', '25% — derived from the Industry column via keyword matching (see below).');
                     addKV('Est. Site Count', '20% — linearly normalized against the maximum value in the exported table.');
-                    addKV('Acquisition Year', '20% — most recent acquisition year scores 1.0, oldest scores 0.0, others linearly between.');
+                    addKV('Acquisition Year', '15% — most recent acquisition year scores 1.0, oldest scores 0.0, others linearly between.');
                     addBlank();
 
                     addSectionHeader('Industry Fit Tier Mapping');
@@ -2334,7 +2334,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                     addBlank();
 
                     addSectionHeader('Composite Formula');
-                    addParagraph('Rank Score = round( 100 × ( 0.40 × TierValue + 0.20 × Energy% + 0.20 × Sites% + 0.20 × Year% ) )');
+                    addParagraph('Rank Score = round( 100 × ( 0.40 × Energy% + 0.25 × TierValue + 0.20 × Sites% + 0.15 × Year% ) )');
                     addBlank();
 
                     addSectionHeader('Key Assumptions & Caveats');
