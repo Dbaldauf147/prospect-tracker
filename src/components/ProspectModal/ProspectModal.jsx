@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import * as XLSX from 'xlsx';
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
+import { asBlob as htmlToDocxBlob } from 'html-docx-js-typescript';
+import mammoth from 'mammoth/mammoth.browser';
 import raClientsData from '../../data/raClients.json';
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES, COUNTRIES } from '../../data/enums';
 import styles from './ProspectModal.module.css';
@@ -976,6 +978,60 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
     }, 800);
   }, [companySlug, selectedOppId, settings.companyOpportunities, updateSettings]);
 
+  // ── Opportunity Word (.docx) import / export ──
+  const oppDocxInputRef = useRef(null);
+
+  const downloadOppAsDocx = useCallback(async () => {
+    if (!selectedOpp) return;
+    const safeTitle = (selectedOpp.title || 'opportunity').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 80) || 'opportunity';
+    const safeCompany = (fields.company || 'company').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 60);
+    const bodyHtml = oppNoteDraft && oppNoteDraft.trim() ? oppNoteDraft : '<p></p>';
+    const fullHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${safeTitle}</title></head><body><h1>${safeCompany} — ${safeTitle}</h1>${bodyHtml}</body></html>`;
+    try {
+      const result = await htmlToDocxBlob(fullHtml);
+      const blob = result instanceof Blob ? result : new Blob([result], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${safeCompany} - ${safeTitle}.docx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) {
+      alert('Failed to export Word document: ' + (err.message || err));
+    }
+  }, [selectedOpp, oppNoteDraft, fields.company]);
+
+  const handleOppDocxUpload = useCallback(async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file || !selectedOppId) return;
+    if (!/\.docx$/i.test(file.name)) {
+      alert('Please choose a .docx file.');
+      return;
+    }
+    try {
+      const buf = await file.arrayBuffer();
+      const result = await mammoth.convertToHtml({ arrayBuffer: buf });
+      const html = result.value || '';
+      const replace = !oppNoteDraft || !oppNoteDraft.replace(/<[^>]*>/g, '').trim()
+        ? true
+        : window.confirm('Replace existing notes with the uploaded document? Click Cancel to append instead.');
+      const nextHtml = replace ? html : `${oppNoteDraft}<hr>${html}`;
+      setOppNoteDraft(nextHtml);
+      if (oppSaveTimerRef.current) clearTimeout(oppSaveTimerRef.current);
+      const idAtEdit = selectedOppId;
+      const all = { ...(settings.companyOpportunities || {}) };
+      const data = all[companySlug] || { buckets: [], opportunities: [] };
+      const nextOpps = (data.opportunities || []).map(o => o.id === idAtEdit ? { ...o, notes: nextHtml, updatedAt: Date.now() } : o);
+      all[companySlug] = { buckets: data.buckets || [], opportunities: nextOpps };
+      updateSettings({ companyOpportunities: all });
+    } catch (err) {
+      alert('Failed to read Word document: ' + (err.message || err));
+    }
+  }, [selectedOppId, oppNoteDraft, companySlug, settings.companyOpportunities, updateSettings]);
+
   async function handleDeleteContact(contact) {
     const name = [contact.firstname, contact.lastname].filter(Boolean).join(' ') || 'this contact';
     if (!window.confirm(`Delete ${name} from HubSpot? This cannot be undone.`)) return;
@@ -1348,6 +1404,29 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                           style={{ fontSize: '0.72rem', padding: '0.25rem 0.5rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 4, cursor: 'pointer' }}
                         >
                           Rename
+                        </button>
+                        <input
+                          ref={oppDocxInputRef}
+                          type="file"
+                          accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                          onChange={handleOppDocxUpload}
+                          style={{ display: 'none' }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => oppDocxInputRef.current?.click()}
+                          title="Upload a Word document (.docx) into this opportunity's notes"
+                          style={{ fontSize: '0.72rem', padding: '0.25rem 0.5rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 4, cursor: 'pointer' }}
+                        >
+                          Upload .docx
+                        </button>
+                        <button
+                          type="button"
+                          onClick={downloadOppAsDocx}
+                          title="Download this opportunity's notes as a Word document"
+                          style={{ fontSize: '0.72rem', padding: '0.25rem 0.5rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 4, cursor: 'pointer' }}
+                        >
+                          Download .docx
                         </button>
                         <button
                           type="button"
