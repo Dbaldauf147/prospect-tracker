@@ -781,6 +781,18 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
   // Reset the search query whenever a picker opens / closes / moves rows
   useEffect(() => { setRaClientPickerQuery(''); }, [raClientPickerOpen]);
   useEffect(() => { setTargetAccountPickerQuery(''); }, [targetAccountPickerOpen]);
+  // Close any open picker when the user clicks outside of it
+  useEffect(() => {
+    if (raClientPickerOpen == null && targetAccountPickerOpen == null) return;
+    function onDown(e) {
+      const t = e.target;
+      if (t instanceof Element && (t.closest('[data-picker="ra-client"]') || t.closest('[data-picker="target-account"]'))) return;
+      setRaClientPickerOpen(null);
+      setTargetAccountPickerOpen(null);
+    }
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [raClientPickerOpen, targetAccountPickerOpen]);
   const [newCompetitor, setNewCompetitor] = useState('');
   const [oppsCache, setOppsCache] = useState(null);
   const [clientManager, setClientManager] = useState(null);
@@ -2543,7 +2555,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                     </td>
                                   );
                                 })()}
-                                <td style={{ padding: '0.15rem 0.25rem', position: 'relative' }}>
+                                <td data-picker="ra-client" style={{ padding: '0.15rem 0.25rem', position: 'relative' }}>
                                   <button
                                     onClick={() => setRaClientPickerOpen(pickerOpen ? null : i)}
                                     style={{ width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.68rem', fontFamily: 'inherit', background: isMatched ? '#DCFCE7' : 'transparent', color: isMatched ? '#166534' : (suggestions.length > 0 ? '#F59E0B' : '#CBD5E1'), cursor: 'pointer', textAlign: 'left', fontWeight: isMatched ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
@@ -2652,7 +2664,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                   const targetSuggestions = targetDismissed ? [] : rawTargetSuggestions;
                                   const hasTarget = !!r.targetAccount;
                                   return (
-                                    <td style={{ padding: '0.15rem 0.25rem', position: 'relative' }}>
+                                    <td data-picker="target-account" style={{ padding: '0.15rem 0.25rem', position: 'relative' }}>
                                       <button
                                         onClick={() => setTargetAccountPickerOpen(targetOpen ? null : i)}
                                         style={{ width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.68rem', fontFamily: 'inherit', background: hasTarget ? '#DBEAFE' : 'transparent', color: hasTarget ? '#1E40AF' : (targetSuggestions.length > 0 ? '#3B7DDD' : '#CBD5E1'), cursor: 'pointer', textAlign: 'left', fontWeight: hasTarget ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
