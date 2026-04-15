@@ -5,7 +5,7 @@ import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
 import { asBlob as htmlToDocxBlob } from 'html-docx-js-typescript';
 import mammoth from 'mammoth/mammoth.browser';
-import raClientsData from '../../data/raClients.json';
+import { loadEffectiveRaClients } from '../../utils/raClientsStore';
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES, COUNTRIES } from '../../data/enums';
 import styles from './ProspectModal.module.css';
 
@@ -2210,7 +2210,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                   updateSettings({ dismissedPortfolioGuesses: next });
                 }
 
-                // RA Client matching helpers
+                // RA Client matching helpers — read the effective list (user override or bundled default)
+                const raClientsData = loadEffectiveRaClients().data;
                 const allRaClientNames = (() => {
                   const seen = new Set();
                   const names = [];
