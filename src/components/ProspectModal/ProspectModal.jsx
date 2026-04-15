@@ -790,7 +790,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
   const [researchingPortfolio, setResearchingPortfolio] = useState(false);
   const [portfolioResearchError, setPortfolioResearchError] = useState(null);
   const [portfolioColWidths, setPortfolioColWidths] = useState({
-    num: 30, company: 180, industry: 140, geography: 120, hqCity: 130, hqCountry: 90, energy: 110, siteCount: 100, rank: 80, raClient: 200, clientManager: 140, targetAccount: 200, tier: 80, salesRep: 160,
+    num: 30, company: 180, industry: 140, geography: 120, hqCity: 130, hqCountry: 90, energy: 110, siteCount: 100, rank: 80, pcDescription: 260, raClient: 200, clientManager: 140, targetAccount: 200, tier: 80, salesRep: 160,
   });
   const [portfolioSortByRank, setPortfolioSortByRank] = useState(false);
   const [raClientPickerOpen, setRaClientPickerOpen] = useState(null); // row index
@@ -2027,7 +2027,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                   set('portfolioCompanies', rows.filter((_, i) => i !== idx));
                 }
                 function addRow() {
-                  set('portfolioCompanies', [...rows, { companyName: '', industry: '', geography: '', hqCity: '', hqCountry: '', energyGwh: '', siteCount: '' }]);
+                  set('portfolioCompanies', [...rows, { companyName: '', industry: '', geography: '', hqCity: '', hqCountry: '', energyGwh: '', siteCount: '', pcDescription: '' }]);
                 }
                 function parsePaste() {
                   const text = pastePortfolio.trim();
@@ -2073,12 +2073,12 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                 }
                 function downloadTemplate() {
                   const templateRows = [
-                    { 'Company Name': 'Example Company', 'Industry': 'Technology', 'Geography': 'North America', 'HQ City': 'Austin, TX', 'HQ Country': 'USA', 'Est. Energy (GWh/yr)': 25, 'Est. Site Count': 12 },
+                    { 'Company Name': 'Example Company', 'Industry': 'Technology', 'Geography': 'North America', 'HQ City': 'Austin, TX', 'HQ Country': 'USA', 'Est. Energy (GWh/yr)': 25, 'Est. Site Count': 12, 'PC Description': 'Short, 1-2 sentence description of what the company does.' },
                   ];
                   const ws = XLSX.utils.json_to_sheet(templateRows, {
-                    header: ['Company Name', 'Industry', 'Geography', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count'],
+                    header: ['Company Name', 'Industry', 'Geography', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'PC Description'],
                   });
-                  ws['!cols'] = [{ wch: 30 }, { wch: 18 }, { wch: 18 }, { wch: 20 }, { wch: 16 }, { wch: 20 }, { wch: 16 }];
+                  ws['!cols'] = [{ wch: 30 }, { wch: 18 }, { wch: 18 }, { wch: 20 }, { wch: 16 }, { wch: 20 }, { wch: 16 }, { wch: 48 }];
                   const wb = XLSX.utils.book_new();
                   XLSX.utils.book_append_sheet(wb, ws, 'Portfolio Companies');
                   const safeName = (fields.company || 'company').replace(/[^a-z0-9]+/gi, '_');
@@ -2091,8 +2091,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                   }
                   const maxE = rows.reduce((m, r) => Math.max(m, Number(r.energyGwh) || 0), 0);
                   const maxS = rows.reduce((m, r) => Math.max(m, Number(r.siteCount) || 0), 0);
-                  const headers = ['Company Name', 'Industry', 'Geography', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Fit Tier', 'Rank Score', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Guess Sales Rep'];
-                  const colWidths = [32, 22, 18, 20, 16, 20, 16, 12, 12, 26, 22, 26, 10, 22];
+                  const headers = ['Company Name', 'Industry', 'Geography', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Fit Tier', 'Rank Score', 'PC Description', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Guess Sales Rep'];
+                  const colWidths = [32, 22, 18, 20, 16, 20, 16, 12, 12, 48, 26, 22, 26, 10, 22];
                   const data = rows.map(r => {
                     const tier = industryTier(r.industry) || '';
                     const score = computePortfolioFitScore(r, maxE, maxS);
@@ -2109,6 +2109,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                       sites,
                       tier,
                       score,
+                      r.pcDescription || '',
                       r.raClientMatch || '',
                       clientMgr,
                       r.targetAccount || '',
@@ -2245,6 +2246,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                           hqCountry: String(findKey(['hqcountry', 'country']) || '').trim(),
                           energyGwh: String(findKey(['energy', 'gwh']) || '').trim(),
                           siteCount: String(findKey(['sitecount', 'sites', 'numberofsites', 'estsitecount']) || '').trim(),
+                          pcDescription: String(findKey(['pcdescription', 'pcdesc', 'description']) || '').trim(),
                           raClientMatch: String(findKey(['raclientmatch', 'raclient']) || '').trim(),
                           clientManager: String(findKey(['clientmanager', 'manager']) || '').trim(),
                           targetAccount: String(findKey(['targetaccount', 'target']) || '').trim(),
@@ -2475,6 +2477,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                             <col style={{ width: portfolioColWidths.energy + 'px' }} />
                             <col style={{ width: portfolioColWidths.siteCount + 'px' }} />
                             <col style={{ width: portfolioColWidths.rank + 'px' }} />
+                            <col style={{ width: portfolioColWidths.pcDescription + 'px' }} />
                             <col style={{ width: portfolioColWidths.raClient + 'px' }} />
                             <col style={{ width: portfolioColWidths.clientManager + 'px' }} />
                             <col style={{ width: portfolioColWidths.targetAccount + 'px' }} />
@@ -2499,6 +2502,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                               >
                                 Rank{portfolioSortByRank ? ' ▼' : ''}<span style={resizeHandleStyle} onMouseDown={e => startResize('rank', e)} />
                               </th>
+                              <th style={thBase}>PC Description<span style={resizeHandleStyle} onMouseDown={e => startResize('pcDescription', e)} /></th>
                               <th style={thBase}>RA Client Match<span style={resizeHandleStyle} onMouseDown={e => startResize('raClient', e)} /></th>
                               <th style={thBase}>Client Manager<span style={resizeHandleStyle} onMouseDown={e => startResize('clientManager', e)} /></th>
                               <th style={thBase}>Target Account<span style={resizeHandleStyle} onMouseDown={e => startResize('targetAccount', e)} /></th>
@@ -2573,6 +2577,17 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                     </td>
                                   );
                                 })()}
+                                <td style={{ padding: '0.15rem 0.25rem' }}>
+                                  <input
+                                    value={r.pcDescription || ''}
+                                    onChange={e => updateRow(i, { pcDescription: e.target.value })}
+                                    title={r.pcDescription || 'Describe what this company does — hover to read full text'}
+                                    placeholder="Describe what this company does…"
+                                    style={{ width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: 'var(--color-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                                    onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; e.target.style.background = '#fff'; }}
+                                    onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
+                                  />
+                                </td>
                                 <td data-picker="ra-client" style={{ padding: '0.15rem 0.25rem', position: 'relative' }}>
                                   <button
                                     onClick={() => setRaClientPickerOpen(pickerOpen ? null : i)}
@@ -2797,7 +2812,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                 <td colSpan={6} style={{ padding: '0.3rem 0.4rem', textAlign: 'right', fontSize: '0.65rem', color: '#64748B', textTransform: 'uppercase' }}>Totals</td>
                                 <td style={{ padding: '0.3rem 0.4rem', textAlign: 'right' }}>{totalEnergy > 0 ? totalEnergy.toLocaleString() : ''}</td>
                                 <td style={{ padding: '0.3rem 0.4rem', textAlign: 'right' }}>{totalSites > 0 ? totalSites.toLocaleString() : ''}</td>
-                                <td colSpan={7}></td>
+                                <td colSpan={8}></td>
                               </tr>
                             )}
                           </tbody>
