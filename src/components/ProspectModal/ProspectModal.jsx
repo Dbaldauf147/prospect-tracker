@@ -248,15 +248,20 @@ const TIER_COLORS = {
 function industrySector(industry) {
   const s = (industry || '').toLowerCase().trim();
   if (!s) return null;
+  // Most specific first — exact sector-label matches always win.
   if (/\bdata\s*cent|datacent|colocation/.test(s)) return 'Data Centers';
   if (/cold\s*storag|food\s*m(fg|anufactur|anuf|nfg)|food\s*process|beverage\s*m(fg|anuf)/.test(s)) return 'Cold Storage / Food Mfg';
   if (/healthcare|life\s*scienc|pharma|biotech|medical|hospital|clinic/.test(s)) return 'Healthcare / Life Sciences';
-  if (/real\s*estate|facilit|propert|\breit\b|infrastructure/.test(s)) return 'Real Estate / Facilities';
-  if (/hotel|restaurant|food\s*service|lodging|qsr|hospitality/.test(s)) return 'Hospitality / Food Service';
-  if (/warehous|\b3pl\b|logistic|distribution|freight|transport|supply\s*chain/.test(s)) return 'Warehousing / 3PL';
-  if (/retail|consumer|grocery|apparel|e-?commerce/.test(s)) return 'Retail / Consumer';
-  if (/tech|software|saas|fintech|media|telecom|advertis|\boffice\b|profession|financ|insur|\bbank|asset\s*mgmt|asset\s*managem/.test(s)) return 'Tech / Software & Office Occupiers';
-  if (/industrial|manufactur|factory|\bplant\b|chemical|material|\benergy\b|utilit|mining|metal|petroleum|\boil\b|\bgas\b|steel|cement|paper|pulp|automotive|aerospace/.test(s)) return 'Industrial / Manufacturing';
+  // Real Estate / Facilities — incl. facilities management, janitorial, landscaping, security, maintenance
+  if (/real\s*estate|facilit|propert|\breit\b|infrastructure|janitor|cleaning\s*serv|landscap|groundskeep|\blawn\b|grounds\s*maint|outdoor\s*maint|pest\s*control|security\s*serv|\bhvac\b|mechanical\s*maint/.test(s)) return 'Real Estate / Facilities';
+  if (/hotel|restaurant|food\s*service|lodging|qsr|hospitality|catering/.test(s)) return 'Hospitality / Food Service';
+  if (/warehous|\b3pl\b|logistic|distribution|freight|transport|supply\s*chain|last\s*mile/.test(s)) return 'Warehousing / 3PL';
+  // Retail / Consumer — incl. consumer auto services (auto glass/repair) before Industrial catches "automotive"
+  if (/retail|\bconsumer\b|grocery|apparel|e-?commerce|auto\s*glass|auto\s*repair|vehicle\s*serv|automotive\s*serv/.test(s)) return 'Retail / Consumer';
+  // Tech / Office — incl. financial services, insurance, wealth management, professional services
+  if (/tech|software|saas|fintech|media|telecom|advertis|\boffice\b|profession|financ|insur|\bbank|asset\s*mgmt|asset\s*managem|wealth\s*managem/.test(s)) return 'Tech / Software & Office Occupiers';
+  // Industrial / Manufacturing — incl. TIC (testing/inspection/certification) services for industry
+  if (/industrial|manufactur|factory|\bplant\b|chemical|material|\benergy\b|utilit|mining|metal|petroleum|\boil\b|\bgas\b|steel|cement|paper|pulp|automotive|aerospace|\btic\b|testing.*inspect|inspection.*certif|testing\s*&?\s*inspect/.test(s)) return 'Industrial / Manufacturing';
   return null;
 }
 
