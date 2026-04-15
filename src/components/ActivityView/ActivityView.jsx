@@ -9,7 +9,7 @@ const CACHE_KEY = 'hubspot-activity-cache';
 function loadCache() {
   try { return JSON.parse(localStorage.getItem(CACHE_KEY)); } catch { return null; }
 }
-function saveCache(data) { localStorage.setItem(CACHE_KEY, JSON.stringify(data)); }
+function saveCache(data) { try { localStorage.setItem(CACHE_KEY, JSON.stringify(data)); } catch (err) { console.warn('ActivityView cache write skipped (quota):', err?.message || err); } }
 
 function fmtDate(dateStr) {
   if (!dateStr) return '—';
@@ -359,6 +359,30 @@ export function ActivityView({ prospects = [] }) {
   const callCount = allActivities.filter(a => a._type === 'call').length;
   const meetingCount = allActivities.filter(a => a._type === 'meeting').length;
 
+  const todaysMeetings = useMemo(() => {
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const todayEnd = todayStart + 24 * 60 * 60 * 1000;
+    return allActivities
+      .filter(a => a._type === 'meeting' && a._meetingStart)
+      .filter(a => {
+        const t = new Date(a._meetingStart).getTime();
+        return Number.isFinite(t) && t >= todayStart && t < todayEnd;
+      })
+      .sort((a, b) => new Date(a._meetingStart) - new Date(b._meetingStart));
+  }, [allActivities]);
+
+  function fmtMeetingTime(startStr, endStr) {
+    if (!startStr) return '—';
+    const start = new Date(startStr);
+    if (isNaN(start)) return '—';
+    const fmt = (d) => d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    if (!endStr) return fmt(start);
+    const end = new Date(endStr);
+    if (isNaN(end)) return fmt(start);
+    return `${fmt(start)} – ${fmt(end)}`;
+  }
+
   const filtered = useMemo(() => {
     let result = allActivities;
     if (typeFilter) result = result.filter(a => a._type === typeFilter);
@@ -402,6 +426,46 @@ export function ActivityView({ prospects = [] }) {
       </div>
 
       {error && <div className={styles.error}>{error}</div>}
+
+      {data && (
+        <div style={{ marginBottom: '1rem', border: '1px solid var(--color-border)', borderRadius: 8, background: '#fff', overflow: 'hidden' }}>
+          <div style={{ padding: '0.6rem 0.9rem', background: '#F8FAFC', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+            <div style={{ fontWeight: 700, fontSize: '0.85rem', color: 'var(--color-text)' }}>
+              Today's Meetings
+              <span style={{ marginLeft: '0.5rem', fontSize: '0.7rem', fontWeight: 500, color: 'var(--color-text-muted)' }}>
+                {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
+              </span>
+            </div>
+            <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>{todaysMeetings.length} meeting{todaysMeetings.length === 1 ? '' : 's'}</div>
+          </div>
+          {todaysMeetings.length === 0 ? (
+            <div style={{ padding: '0.8rem 0.9rem', fontSize: '0.8rem', color: '#94A3B8', fontStyle: 'italic' }}>
+              No meetings scheduled for today.
+            </div>
+          ) : (
+            <div>
+              {todaysMeetings.map((m, i) => (
+                <div key={m.id || i} style={{ display: 'grid', gridTemplateColumns: '120px 1fr 220px', gap: '0.75rem', padding: '0.55rem 0.9rem', borderBottom: i < todaysMeetings.length - 1 ? '1px solid #F1F5F9' : 'none', alignItems: 'center' }}>
+                  <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#7C3AED', fontVariantNumeric: 'tabular-nums' }}>
+                    {fmtMeetingTime(m._meetingStart, m._meetingEnd)}
+                  </div>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--color-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m._subject}>
+                      {m._subject || 'Meeting'}
+                    </div>
+                    {m._company && (
+                      <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', marginTop: 1 }}>{m._company}</div>
+                    )}
+                  </div>
+                  <div style={{ fontSize: '0.72rem', color: '#334155', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m._attendees}>
+                    {m._attendees || <span style={{ color: '#94A3B8', fontStyle: 'italic' }}>No attendees resolved</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className={styles.summary}>
         <button className={`${styles.summaryCard} ${typeFilter === null ? styles.summaryCardActive : ''}`} onClick={() => setTypeFilter(null)}>
