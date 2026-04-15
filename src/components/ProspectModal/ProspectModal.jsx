@@ -2205,7 +2205,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                       cell.value = h;
                       cell.font = { name: 'Nunito Sans', bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
                       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
-                      cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+                      cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
                       cell.border = {
                         top: { style: 'thin', color: { argb: SE_BORDER } },
                         bottom: { style: 'thin', color: { argb: SE_BORDER } },
@@ -2227,8 +2227,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                           left: { style: 'thin', color: { argb: SE_BORDER } },
                           right: { style: 'thin', color: { argb: SE_BORDER } },
                         };
-                        const isNumeric = i === 4 || i === 5 || i === 7 || i === 9;
-                        cell.alignment = { vertical: 'middle', horizontal: isNumeric ? 'right' : 'left', wrapText: false };
+                        cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: false };
                         // Fit Tier: color-code and override font
                         if (i === 6 && v) {
                           const tier = String(v);
@@ -2236,7 +2235,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                           const fg = TIER_FG[tier];
                           if (fill) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill } };
                           if (fg) cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: fg } };
-                          cell.alignment = { vertical: 'middle', horizontal: 'center' };
+                          cell.alignment = { vertical: 'middle', horizontal: 'left' };
                         }
                         // Number formats
                         if (i === 4 || i === 5) cell.numFmt = '#,##0';
