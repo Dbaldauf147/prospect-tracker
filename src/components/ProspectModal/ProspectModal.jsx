@@ -2357,7 +2357,11 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                       })
                       .filter(r => r.companyName);
                     if (parsed.length > 0) {
-                      set('portfolioCompanies', [...rows, ...parsed]);
+                      if (rows.length > 0 && !window.confirm(`Replace the current ${rows.length} portfolio compan${rows.length === 1 ? 'y' : 'ies'} with ${parsed.length} row${parsed.length === 1 ? '' : 's'} from the uploaded file? This cannot be undone.`)) {
+                        e.target.value = '';
+                        return;
+                      }
+                      set('portfolioCompanies', parsed);
                     } else {
                       alert('No valid rows found in the uploaded file.');
                     }
