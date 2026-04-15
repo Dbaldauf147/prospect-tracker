@@ -2192,6 +2192,24 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                   return scored.slice(0, 8).map(s => s.name);
                 }
 
+                // Portfolio-company suggestion dismissals — stored per company name, per suggestion type, synced via userSettings.
+                const dismissedGuesses = settings.dismissedPortfolioGuesses || { ra: {}, target: {} };
+                function dismissKey(name) { return (name || '').toLowerCase().trim(); }
+                function isRaDismissed(company) { const k = dismissKey(company); return !!k && !!(dismissedGuesses.ra || {})[k]; }
+                function isTargetDismissed(company) { const k = dismissKey(company); return !!k && !!(dismissedGuesses.target || {})[k]; }
+                function setDismiss(type, company, value) {
+                  const k = dismissKey(company);
+                  if (!k) return;
+                  const current = settings.dismissedPortfolioGuesses || { ra: {}, target: {} };
+                  const next = {
+                    ra: { ...(current.ra || {}) },
+                    target: { ...(current.target || {}) },
+                  };
+                  if (value) next[type][k] = true;
+                  else delete next[type][k];
+                  updateSettings({ dismissedPortfolioGuesses: next });
+                }
+
                 // RA Client matching helpers
                 const allRaClientNames = (() => {
                   const seen = new Set();
@@ -2345,7 +2363,9 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                           <tbody>
                             {displayOrder.map((i, displayI) => {
                               const r = rows[i];
-                              const suggestions = findRaSuggestions(r.companyName);
+                              const rawSuggestions = findRaSuggestions(r.companyName);
+                              const raDismissed = isRaDismissed(r.companyName);
+                              const suggestions = raDismissed ? [] : rawSuggestions;
                               const isMatched = !!r.raClientMatch;
                               const pickerOpen = raClientPickerOpen === i;
                               return (
@@ -2444,7 +2464,27 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                           </div>
                                         )}
                                         {!raClientPickerQuery.trim() && suggestions.length > 0 && (
-                                          <div style={{ padding: '0.25rem 0.6rem', fontSize: '0.6rem', color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 700 }}>Suggestions</div>
+                                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.25rem 0.6rem' }}>
+                                            <span style={{ fontSize: '0.6rem', color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 700 }}>Suggestions</span>
+                                            <button
+                                              type="button"
+                                              onClick={() => { setDismiss('ra', r.companyName, true); setRaClientPickerOpen(null); }}
+                                              title="Hide these suggestions for this company"
+                                              style={{ background: 'none', border: 'none', fontSize: '0.6rem', color: '#94A3B8', cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 700 }}
+                                              onMouseEnter={e => e.currentTarget.style.color = '#DC2626'}
+                                              onMouseLeave={e => e.currentTarget.style.color = '#94A3B8'}
+                                            >× Dismiss</button>
+                                          </div>
+                                        )}
+                                        {!raClientPickerQuery.trim() && raDismissed && rawSuggestions.length > 0 && (
+                                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.3rem 0.6rem', fontSize: '0.65rem', color: '#64748B', background: '#F8FAFC' }}>
+                                            <span>Suggestions dismissed for {r.companyName}</span>
+                                            <button
+                                              type="button"
+                                              onClick={() => setDismiss('ra', r.companyName, false)}
+                                              style={{ background: 'none', border: 'none', fontSize: '0.65rem', color: 'var(--color-accent)', cursor: 'pointer', fontWeight: 600 }}
+                                            >Undo</button>
+                                          </div>
                                         )}
                                         {displayList.map(s => (
                                           <button
@@ -2472,7 +2512,9 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                 </td>
                                 {(() => {
                                   const targetOpen = targetAccountPickerOpen === i;
-                                  const targetSuggestions = findTargetSuggestions(r.companyName);
+                                  const rawTargetSuggestions = findTargetSuggestions(r.companyName);
+                                  const targetDismissed = isTargetDismissed(r.companyName);
+                                  const targetSuggestions = targetDismissed ? [] : rawTargetSuggestions;
                                   const hasTarget = !!r.targetAccount;
                                   return (
                                     <td style={{ padding: '0.15rem 0.25rem', position: 'relative' }}>
@@ -2519,7 +2561,27 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                               </div>
                                             )}
                                             {!targetAccountPickerQuery.trim() && targetSuggestions.length > 0 && (
-                                              <div style={{ padding: '0.25rem 0.6rem', fontSize: '0.6rem', color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 700 }}>Suggestions</div>
+                                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.25rem 0.6rem' }}>
+                                                <span style={{ fontSize: '0.6rem', color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 700 }}>Suggestions</span>
+                                                <button
+                                                  type="button"
+                                                  onClick={() => { setDismiss('target', r.companyName, true); setTargetAccountPickerOpen(null); }}
+                                                  title="Hide these suggestions for this company"
+                                                  style={{ background: 'none', border: 'none', fontSize: '0.6rem', color: '#94A3B8', cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 700 }}
+                                                  onMouseEnter={e => e.currentTarget.style.color = '#DC2626'}
+                                                  onMouseLeave={e => e.currentTarget.style.color = '#94A3B8'}
+                                                >× Dismiss</button>
+                                              </div>
+                                            )}
+                                            {!targetAccountPickerQuery.trim() && targetDismissed && rawTargetSuggestions.length > 0 && (
+                                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.3rem 0.6rem', fontSize: '0.65rem', color: '#64748B', background: '#F8FAFC' }}>
+                                                <span>Suggestions dismissed for {r.companyName}</span>
+                                                <button
+                                                  type="button"
+                                                  onClick={() => setDismiss('target', r.companyName, false)}
+                                                  style={{ background: 'none', border: 'none', fontSize: '0.65rem', color: 'var(--color-accent)', cursor: 'pointer', fontWeight: 600 }}
+                                                >Undo</button>
+                                              </div>
                                             )}
                                             {displayList.map(s => (
                                               <button
