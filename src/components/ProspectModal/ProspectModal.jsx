@@ -2217,6 +2217,97 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                     // Auto-filter on the header row so users can sort/filter immediately
                     ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: headers.length } };
 
+                    // ── Methodology & Assumptions tab ──
+                    const mws = wb.addWorksheet('Methodology', {
+                      properties: { tabColor: { argb: SE_GREEN } },
+                      views: [{ state: 'frozen', ySplit: 2 }],
+                    });
+                    mws.columns = [{ width: 28 }, { width: 90 }];
+
+                    // Row 1: Title band
+                    mws.mergeCells(1, 1, 1, 2);
+                    const mTitle = mws.getCell(1, 1);
+                    mTitle.value = 'Schneider Electric';
+                    mTitle.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
+                    mTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN } };
+                    mTitle.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+                    mws.getRow(1).height = 30;
+
+                    // Row 2: Subtitle
+                    mws.mergeCells(2, 1, 2, 2);
+                    const mSub = mws.getCell(2, 1);
+                    mSub.value = `${fields.company || 'Company'}  ·  Ranking Methodology & Assumptions`;
+                    mSub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: 'FF64748B' } };
+                    mSub.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+                    mws.getRow(2).height = 20;
+
+                    let mRow = 4;
+                    function addSectionHeader(text) {
+                      mws.mergeCells(mRow, 1, mRow, 2);
+                      const c = mws.getCell(mRow, 1);
+                      c.value = text;
+                      c.font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: 'FFFFFFFF' } };
+                      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+                      c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+                      mws.getRow(mRow).height = 22;
+                      mRow++;
+                    }
+                    function addKV(label, value) {
+                      const a = mws.getCell(mRow, 1);
+                      const b = mws.getCell(mRow, 2);
+                      a.value = label;
+                      b.value = value;
+                      a.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_TEXT_DARK } };
+                      b.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+                      a.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
+                      b.alignment = { vertical: 'top', horizontal: 'left', wrapText: true };
+                      mRow++;
+                    }
+                    function addParagraph(text) {
+                      mws.mergeCells(mRow, 1, mRow, 2);
+                      const c = mws.getCell(mRow, 1);
+                      c.value = text;
+                      c.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+                      c.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
+                      mws.getRow(mRow).height = Math.max(18, Math.ceil(text.length / 90) * 16);
+                      mRow++;
+                    }
+                    function addBlank() { mRow++; }
+
+                    addSectionHeader('Overview');
+                    addParagraph('The Rank Score is a 0–100 composite value computed for each portfolio company. Higher values indicate a better fit for Schneider Electric engagement based on industry alignment, operational scale, and acquisition recency. The score is computed relative to the other companies in this table — energy, site count, and acquisition year are normalized against the rows exported here.');
+                    addBlank();
+
+                    addSectionHeader('Component Weights');
+                    addKV('Industry Fit Tier', '40% — derived from the Industry column via keyword matching (see below).');
+                    addKV('Est. Energy (GWh/yr)', '20% — linearly normalized against the maximum value in the exported table.');
+                    addKV('Est. Site Count', '20% — linearly normalized against the maximum value in the exported table.');
+                    addKV('Acquisition Year', '20% — most recent acquisition year scores 1.0, oldest scores 0.0, others linearly between.');
+                    addBlank();
+
+                    addSectionHeader('Industry Fit Tier Mapping');
+                    addParagraph('The Industry value is matched against the keyword patterns below. The first matching tier wins. Unmatched industries contribute 0 to the tier component.');
+                    addKV('High (value 1.0)', 'Data centers, colocation • Cold storage, food mfg/processing, beverage mfg • Healthcare, life sciences, pharma, biotech, medical, hospital • Real estate, facilities, property, REIT, infrastructure • Industrial, manufacturing, factory, chemical, materials, energy, utilities, mining, metal, petroleum/oil & gas, steel, cement, paper/pulp, automotive, aerospace');
+                    addKV('Medium (value 0.5)', 'Hotel, restaurant, food service, lodging, QSR, hospitality • Warehousing, 3PL, logistics, distribution, freight, transport, supply chain • Retail, consumer, grocery, apparel, e-commerce');
+                    addKV('Low (value 0.0)', 'Tech, software, SaaS, fintech, media, telecom, advertising, office, professional services, financial services, insurance, banking, asset management');
+                    addBlank();
+
+                    addSectionHeader('Normalization Formulas');
+                    addKV('Energy %', 'min(1, row.Energy ÷ max(Energy in table))');
+                    addKV('Sites %', 'min(1, row.Sites ÷ max(Sites in table))');
+                    addKV('Year %', '(row.Year − min(Year)) ÷ (max(Year) − min(Year)). Missing year contributes 0.');
+                    addBlank();
+
+                    addSectionHeader('Composite Formula');
+                    addParagraph('Rank Score = round( 100 × ( 0.40 × TierValue + 0.20 × Energy% + 0.20 × Sites% + 0.20 × Year% ) )');
+                    addBlank();
+
+                    addSectionHeader('Key Assumptions & Caveats');
+                    addKV('Relative scoring', 'Scores are relative to the current table. Adding or removing rows changes the normalization max/min and can shift every row\'s score.');
+                    addKV('Estimates', 'Energy (GWh/yr) and Site Count are best-effort estimates — Claude research output or manual input. They are not audited figures.');
+                    addKV('Industry keywords', 'Matching is substring-based and may mis-classify broad terms. Review the Fit Tier column and correct the Industry text if needed.');
+                    addKV('Missing values', 'Blank energy / sites / year cells contribute 0 to their component, never negative.');
+
                     const buf = await wb.xlsx.writeBuffer();
                     const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
                     const url = URL.createObjectURL(blob);
