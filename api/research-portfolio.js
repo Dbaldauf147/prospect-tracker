@@ -1,5 +1,5 @@
 // Research a private equity firm's portfolio companies using Claude.
-// Returns a structured array of { companyName, industry, hqCity, hqCountry, energyGwh, siteCount }.
+// Returns a structured array of { companyName, industry, hqCity, hqCountry, energyGwh, siteCount, pcDescription, acquisitionYear }.
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -25,6 +25,8 @@ For the given firm, return ONLY a JSON array (no prose, no markdown fences) of t
 - hqCountry: string (e.g. "USA", "UK", "France")
 - energyGwh: number — an ESTIMATED annual electricity consumption in GWh/year based on the company's industry, scale, and operations. Use industry benchmarks (manufacturing = high, software = low). These are approximations.
 - siteCount: number — an ESTIMATED count of physical operating sites/facilities (offices, plants, warehouses, stores, data centers). Use best available public info or a reasonable industry estimate.
+- pcDescription: string — a short (1-2 sentence) description of what the company does.
+- acquisitionYear: number — the four-digit year the firm acquired this portfolio company (omit if unknown).
 
 Return up to 100 companies. If unsure about a field, use your best estimate. Do not wrap in any object — return a bare JSON array.`;
 
@@ -80,6 +82,8 @@ Return up to 100 companies. If unsure about a field, use your best estimate. Do 
         hqCountry: String(c.hqCountry || '').trim(),
         energyGwh: c.energyGwh == null ? '' : String(c.energyGwh),
         siteCount: c.siteCount == null ? '' : String(c.siteCount),
+        pcDescription: c.pcDescription == null ? '' : String(c.pcDescription).trim(),
+        acquisitionYear: c.acquisitionYear == null ? '' : String(c.acquisitionYear).trim(),
       }));
 
     return res.status(200).json({ companies: cleaned, count: cleaned.length });
