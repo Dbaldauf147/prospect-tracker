@@ -2074,7 +2074,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                       'Fit Tier': tier,
                       'Rank Score': score,
                       'RA Client Match': r.raClientMatch || '',
-                      'Client Manager': r.clientManager || '',
+                      'Client Manager': (r.clientManager || '').trim() || cmForRaClient(r.raClientMatch),
                       'Target Account': r.targetAccount || '',
                       'Guess Sales Rep': repForTarget(r.targetAccount),
                     };
@@ -2503,13 +2503,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                         {displayList.map(s => (
                                           <button
                                             key={s}
-                                            onClick={() => {
-                                              const patch = { raClientMatch: s };
-                                              const autoCm = cmForRaClient(s);
-                                              if (autoCm && !(r.clientManager || '').trim()) patch.clientManager = autoCm;
-                                              updateRow(i, patch);
-                                              setRaClientPickerOpen(null);
-                                            }}
+                                            onClick={() => { updateRow(i, { raClientMatch: s }); setRaClientPickerOpen(null); }}
                                             style={{ display: 'block', width: '100%', padding: '0.35rem 0.6rem', border: 'none', background: r.raClientMatch === s ? '#DCFCE7' : 'none', textAlign: 'left', fontSize: '0.7rem', cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text)' }}
                                             onMouseEnter={e => e.currentTarget.style.background = '#EFF6FF'}
                                             onMouseLeave={e => e.currentTarget.style.background = r.raClientMatch === s ? '#DCFCE7' : 'none'}
@@ -2520,16 +2514,34 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                     );
                                   })()}
                                 </td>
-                                <td style={{ padding: '0.15rem 0.25rem' }}>
-                                  <input
-                                    value={r.clientManager || ''}
-                                    onChange={e => updateRow(i, { clientManager: e.target.value })}
-                                    placeholder="—"
-                                    style={{ width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: 'var(--color-text)' }}
-                                    onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; e.target.style.background = '#fff'; }}
-                                    onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
-                                  />
-                                </td>
+                                {(() => {
+                                  const suggestedCm = cmForRaClient(r.raClientMatch);
+                                  const userOverride = (r.clientManager || '').trim();
+                                  const showingSuggestion = !userOverride && !!suggestedCm;
+                                  return (
+                                    <td style={{ padding: '0.15rem 0.25rem' }}>
+                                      <input
+                                        value={r.clientManager || ''}
+                                        onChange={e => updateRow(i, { clientManager: e.target.value })}
+                                        placeholder={suggestedCm || '—'}
+                                        title={showingSuggestion ? `Suggested from RA Client "${r.raClientMatch}". Type to override.` : undefined}
+                                        style={{
+                                          width: '100%',
+                                          padding: '0.15rem 0.3rem',
+                                          border: '1px solid transparent',
+                                          borderRadius: '3px',
+                                          fontSize: '0.7rem',
+                                          fontFamily: 'inherit',
+                                          background: 'transparent',
+                                          color: 'var(--color-text)',
+                                          fontStyle: showingSuggestion ? 'italic' : 'normal',
+                                        }}
+                                        onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; e.target.style.background = '#fff'; }}
+                                        onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
+                                      />
+                                    </td>
+                                  );
+                                })()}
                                 {(() => {
                                   const targetOpen = targetAccountPickerOpen === i;
                                   const rawTargetSuggestions = findTargetSuggestions(r.companyName);
