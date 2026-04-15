@@ -2636,7 +2636,6 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                       <div style={{ border: '1px solid var(--color-border)', borderRadius: '6px', overflow: 'auto' }}>
                         <table style={{ borderCollapse: 'collapse', fontSize: '0.7rem', tableLayout: 'fixed', width: 'auto' }}>
                           <colgroup>
-                            <col style={{ width: portfolioColWidths.num + 'px' }} />
                             <col style={{ width: portfolioColWidths.company + 'px' }} />
                             <col style={{ width: portfolioColWidths.hqCity + 'px' }} />
                             <col style={{ width: portfolioColWidths.hqCountry + 'px' }} />
@@ -2656,7 +2655,6 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                           </colgroup>
                           <thead>
                             <tr style={{ background: '#F8FAFC' }}>
-                              <th style={thBase}>#<span style={resizeHandleStyle} onMouseDown={e => startResize('num', e)} /></th>
                               <th style={thBase}>Company<span style={resizeHandleStyle} onMouseDown={e => startResize('company', e)} /></th>
                               <th style={thBase}>HQ City<span style={resizeHandleStyle} onMouseDown={e => startResize('hqCity', e)} /></th>
                               <th style={thBase}>HQ Country<span style={resizeHandleStyle} onMouseDown={e => startResize('hqCountry', e)} /></th>
@@ -2691,7 +2689,6 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                               const pickerOpen = raClientPickerOpen === i;
                               return (
                               <tr key={i} style={{ borderBottom: '1px solid #F1F5F9' }}>
-                                <td style={{ padding: '0.2rem 0.4rem', color: '#94A3B8', fontWeight: 600 }}>{displayI + 1}</td>
                                 {['companyName', 'hqCity', 'hqCountry'].map(field => (
                                   <td key={field} style={{ padding: '0.15rem 0.25rem' }}>
                                     <input
@@ -3012,7 +3009,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                             })}
                             {(totalEnergy > 0 || totalSites > 0) && (
                               <tr style={{ background: '#F8FAFC', fontWeight: 700 }}>
-                                <td colSpan={4} style={{ padding: '0.3rem 0.4rem', fontSize: '0.65rem', color: '#64748B', textTransform: 'uppercase' }}>Totals</td>
+                                <td colSpan={3} style={{ padding: '0.3rem 0.4rem', fontSize: '0.65rem', color: '#64748B', textTransform: 'uppercase' }}>Totals</td>
                                 <td style={{ padding: '0.3rem 0.4rem' }}>{totalEnergy > 0 ? totalEnergy.toLocaleString() : ''}</td>
                                 <td style={{ padding: '0.3rem 0.4rem' }}>{totalSites > 0 ? totalSites.toLocaleString() : ''}</td>
                                 <td colSpan={11}></td>
