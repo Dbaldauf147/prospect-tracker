@@ -2132,9 +2132,9 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                   const maxS = rows.reduce((m, r) => Math.max(m, Number(r.siteCount) || 0), 0);
                   const years = rows.map(r => Number(r.acquisitionYear)).filter(y => y > 0);
                   const yearRange = years.length > 0 ? { min: Math.min(...years), max: Math.max(...years) } : null;
-                  const headers = ['Company Name', 'Industry', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Fit Tier', 'Rank Score', 'PC Description', 'Acquisition Year', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM'];
-                  const colWidths = [32, 22, 20, 16, 20, 16, 12, 12, 48, 14, 26, 22, 26, 10, 22];
-                  const data = rows.map(r => {
+                  const headers = ['#', 'Company Name', 'Industry', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Fit Tier', 'Rank Score', 'PC Description', 'Acquisition Year', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM'];
+                  const colWidths = [6, 32, 22, 20, 16, 20, 16, 12, 12, 48, 14, 26, 22, 26, 10, 22];
+                  const data = rows.map((r, idx) => {
                     const tier = industryTier(r.industry) || '';
                     const score = computePortfolioFitScore(r, maxE, maxS, yearRange);
                     const energy = r.energyGwh === '' || r.energyGwh == null ? null : (Number(r.energyGwh) || r.energyGwh);
@@ -2143,6 +2143,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                     const acqYear = acqYearNum > 0 ? acqYearNum : (r.acquisitionYear || '');
                     const clientMgr = (r.clientManager || '').trim() || cmForRaClient(r.raClientMatch);
                     return [
+                      idx + 1,
                       r.companyName || '',
                       r.industry || '',
                       r.hqCity || '',
@@ -2229,7 +2230,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                         };
                         cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: false };
                         // Fit Tier: color-code and override font
-                        if (i === 6 && v) {
+                        if (i === 7 && v) {
                           const tier = String(v);
                           const fill = TIER_FILL[tier];
                           const fg = TIER_FG[tier];
@@ -2238,8 +2239,9 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                           cell.alignment = { vertical: 'middle', horizontal: 'left' };
                         }
                         // Number formats
-                        if (i === 4 || i === 5) cell.numFmt = '#,##0';
-                        if (i === 7 || i === 9) cell.numFmt = '0';
+                        if (i === 0) cell.numFmt = '0';
+                        if (i === 5 || i === 6) cell.numFmt = '#,##0';
+                        if (i === 8 || i === 10) cell.numFmt = '0';
                       });
                       row.height = 18;
                     });
