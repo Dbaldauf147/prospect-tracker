@@ -1,5 +1,5 @@
 // Research a private equity firm's portfolio companies using Claude.
-// Returns a structured array of { companyName, industry, geography, hqCity, hqCountry, energyGwh }.
+// Returns a structured array of { companyName, industry, geography, hqCity, hqCountry, energyGwh, siteCount }.
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -25,6 +25,7 @@ For the given firm, return ONLY a JSON array (no prose, no markdown fences) of t
 - hqCity: string (include state abbreviation for USA, e.g. "Dallas, TX")
 - hqCountry: string (e.g. "USA", "UK", "France")
 - energyGwh: number — an ESTIMATED annual electricity consumption in GWh/year based on the company's industry, scale, and operations. Use industry benchmarks (manufacturing = high, software = low). These are approximations.
+- siteCount: number — an ESTIMATED count of physical operating sites/facilities (offices, plants, warehouses, stores, data centers). Use best available public info or a reasonable industry estimate.
 
 Return up to 100 companies. If unsure about a field, use your best estimate. Do not wrap in any object — return a bare JSON array.`;
 
@@ -80,6 +81,7 @@ Return up to 100 companies. If unsure about a field, use your best estimate. Do 
         hqCity: String(c.hqCity || '').trim(),
         hqCountry: String(c.hqCountry || '').trim(),
         energyGwh: c.energyGwh == null ? '' : String(c.energyGwh),
+        siteCount: c.siteCount == null ? '' : String(c.siteCount),
       }));
 
     return res.status(200).json({ companies: cleaned, count: cleaned.length });
