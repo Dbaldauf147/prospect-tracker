@@ -223,19 +223,7 @@ const EMPTY = {
 // ── Inline HubSpot Contact Editor ──
 const TAG_OPTIONS = ['ESG', 'Procurement', 'Private Equity', 'Real Estate', 'Capital Planning', 'Dan Key Target', 'Test', 'EU'];
 
-// Portfolio-company sector fit: user-defined sector list mapped to overall fit tier.
-const PORTFOLIO_SECTORS = [
-  { name: 'Industrial / Manufacturing', tier: 'High' },
-  { name: 'Data Centers', tier: 'High' },
-  { name: 'Cold Storage / Food Mfg', tier: 'High' },
-  { name: 'Healthcare / Life Sciences', tier: 'High' },
-  { name: 'Real Estate / Facilities', tier: 'High' },
-  { name: 'Hospitality / Food Service', tier: 'Medium' },
-  { name: 'Retail / Consumer', tier: 'Medium' },
-  { name: 'Warehousing / 3PL', tier: 'Medium' },
-  { name: 'Tech / Software & Office Occupiers', tier: 'Low' },
-];
-const PORTFOLIO_SECTOR_TIER = Object.fromEntries(PORTFOLIO_SECTORS.map(s => [s.name, s.tier]));
+// Portfolio-company industry fit: maps an uploaded Industry string directly to an overall fit tier.
 const TIER_VALUE = { High: 1, Medium: 0.5, Low: 0 };
 const TIER_COLORS = {
   High: { bg: '#DCFCE7', color: '#166534', border: '#86EFAC' },
@@ -243,22 +231,28 @@ const TIER_COLORS = {
   Low: { bg: '#F1F5F9', color: '#475569', border: '#CBD5E1' },
 };
 
-// Best-guess map from the broad Industry enum to a user-defined sector (user can override).
-function inferSectorFromIndustry(industry) {
-  const k = (industry || '').toLowerCase().trim();
-  if (!k) return '';
-  if (k === 'industrials' || k === 'materials') return 'Industrial / Manufacturing';
-  if (k === 'healthcare') return 'Healthcare / Life Sciences';
-  if (k === 'real estate') return 'Real Estate / Facilities';
-  if (k === 'energy') return 'Industrial / Manufacturing';
-  if (k === 'consumer') return 'Retail / Consumer';
-  if (k === 'technology' || k === 'media & telecom' || k === 'media and telecom') return 'Tech / Software & Office Occupiers';
-  return '';
+// Fuzzy-match the uploaded Industry value to a High/Medium/Low fit tier.
+// Returns null when no keyword hits so the UI can show a neutral state.
+function industryTier(industry) {
+  const s = (industry || '').toLowerCase().trim();
+  if (!s) return null;
+  // High — heavy industrial / energy-intensive / facility-heavy
+  if (/\bdata\s*cent|datacent|colocation/.test(s)) return 'High';
+  if (/cold\s*storag|food\s*m(fg|anufactur|anuf|nfg)|food\s*process|beverage\s*m(fg|anuf)/.test(s)) return 'High';
+  if (/healthcare|life\s*scienc|pharma|biotech|medical|hospital|clinic/.test(s)) return 'High';
+  if (/real\s*estate|facilit|propert|\breit\b|infrastructure/.test(s)) return 'High';
+  if (/industrial|manufactur|factory|\bplant\b|chemical|material|\benergy\b|utilit|mining|metal|petroleum|\boil\b|\bgas\b|steel|cement|paper|pulp|automotive|aerospace/.test(s)) return 'High';
+  // Medium — consumer-facing / distribution
+  if (/hotel|restaurant|food\s*service|lodging|qsr|hospitality/.test(s)) return 'Medium';
+  if (/warehous|\b3pl\b|logistic|distribution|freight|transport|supply\s*chain/.test(s)) return 'Medium';
+  if (/retail|consumer|grocery|apparel|e-?commerce/.test(s)) return 'Medium';
+  // Low — office-only / digital
+  if (/tech|software|saas|fintech|media|telecom|advertis|\boffice\b|profession|financ|insur|\bbank|asset\s*mgmt|asset\s*managem/.test(s)) return 'Low';
+  return null;
 }
 
 function computePortfolioFitScore(row, maxEnergy, maxSites) {
-  const sector = row.sector || inferSectorFromIndustry(row.industry);
-  const tier = PORTFOLIO_SECTOR_TIER[sector] || null;
+  const tier = industryTier(row.industry);
   const tierVal = tier ? TIER_VALUE[tier] : 0;
   const energyPct = maxEnergy > 0 ? Math.min(1, (Number(row.energyGwh) || 0) / maxEnergy) : 0;
   const sitesPct = maxSites > 0 ? Math.min(1, (Number(row.siteCount) || 0) / maxSites) : 0;
@@ -716,6 +710,40 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
   useEffect(() => { setLocalContacts(baseContacts); }, [baseContacts]);
   const companyContacts = localContacts;
 
+  // Build a lookup of target-account -> sales rep from the uploaded Target Accounts sheets.
+  // Mirrors MyAccountsView's logic: we scan every sheet and prefer the first rep we see for a given account.
+  const targetAccountRepMap = useMemo(() => {
+    const map = new Map();
+    const data = targetAccountsData;
+    if (!data?.sheets) return map;
+    function findCol(r, keywords) {
+      for (const key of Object.keys(r)) {
+        const lower = (key || '').toLowerCase();
+        for (const kw of keywords) {
+          if (lower.includes(kw.toLowerCase())) return String(r[key] || '').trim();
+        }
+      }
+      return '';
+    }
+    for (const sn of data.sheetNames || []) {
+      const sheet = data.sheets[sn];
+      if (!sheet?.records) continue;
+      for (const rec of sheet.records) {
+        const company = findCol(rec, ['Account Name', 'Company Name', 'Account', 'Company', 'Client Name', 'Client', 'Name']);
+        if (!company) continue;
+        const rep = findCol(rec, ['CDM', 'Salesperson', 'Sales Rep', 'Account Owner', 'Owner', 'Rep', 'Assigned', 'Team Member']);
+        if (!rep) continue;
+        const key = company.toLowerCase();
+        if (!map.has(key)) map.set(key, rep);
+      }
+    }
+    return map;
+  }, [targetAccountsData]);
+  const repForTarget = useCallback((targetAccount) => {
+    if (!targetAccount) return '';
+    return targetAccountRepMap.get(targetAccount.toLowerCase()) || '';
+  }, [targetAccountRepMap]);
+
   // Collect all unique tags across all HubSpot contacts for the dropdown
   const allTagOptions = useMemo(() => {
     const tagSet = new Set();
@@ -743,7 +771,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
   const [researchingPortfolio, setResearchingPortfolio] = useState(false);
   const [portfolioResearchError, setPortfolioResearchError] = useState(null);
   const [portfolioColWidths, setPortfolioColWidths] = useState({
-    num: 30, company: 180, industry: 110, geography: 120, hqCity: 130, hqCountry: 90, energy: 110, siteCount: 100, sector: 200, rank: 80, raClient: 200, clientManager: 140, targetAccount: 200,
+    num: 30, company: 180, industry: 140, geography: 120, hqCity: 130, hqCountry: 90, energy: 110, siteCount: 100, rank: 80, raClient: 200, clientManager: 140, targetAccount: 200, salesRep: 160,
   });
   const [portfolioSortByRank, setPortfolioSortByRank] = useState(false);
   const [raClientPickerOpen, setRaClientPickerOpen] = useState(null); // row index
@@ -1963,7 +1991,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                   set('portfolioCompanies', rows.filter((_, i) => i !== idx));
                 }
                 function addRow() {
-                  set('portfolioCompanies', [...rows, { companyName: '', industry: '', geography: '', hqCity: '', hqCountry: '', energyGwh: '', siteCount: '', sector: '' }]);
+                  set('portfolioCompanies', [...rows, { companyName: '', industry: '', geography: '', hqCity: '', hqCountry: '', energyGwh: '', siteCount: '' }]);
                 }
                 function parsePaste() {
                   const text = pastePortfolio.trim();
@@ -1976,9 +2004,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                     if (parts[0] && /^(#|number|no\.?)$/i.test(parts[0].trim())) continue;
                     // If first col is a number, shift
                     const startIdx = /^\d+$/.test((parts[0] || '').trim()) ? 1 : 0;
-                    const [companyName = '', industry = '', geography = '', hqCity = '', hqCountry = '', energyGwh = '', siteCount = '', sectorIn = ''] = parts.slice(startIdx).map(p => p.trim());
-                    const sector = PORTFOLIO_SECTOR_TIER[sectorIn] ? sectorIn : inferSectorFromIndustry(industry);
-                    if (companyName) parsed.push({ companyName, industry, geography, hqCity, hqCountry, energyGwh, siteCount, sector });
+                    const [companyName = '', industry = '', geography = '', hqCity = '', hqCountry = '', energyGwh = '', siteCount = ''] = parts.slice(startIdx).map(p => p.trim());
+                    if (companyName) parsed.push({ companyName, industry, geography, hqCity, hqCountry, energyGwh, siteCount });
                   }
                   if (parsed.length > 0) {
                     set('portfolioCompanies', [...rows, ...parsed]);
@@ -2002,11 +2029,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                     const json = await res.json();
                     if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
                     if (!json.companies || json.companies.length === 0) throw new Error('No companies returned');
-                    const enriched = json.companies.map(c => ({
-                      ...c,
-                      sector: c.sector && PORTFOLIO_SECTOR_TIER[c.sector] ? c.sector : inferSectorFromIndustry(c.industry),
-                    }));
-                    set('portfolioCompanies', [...rows, ...enriched]);
+                    set('portfolioCompanies', [...rows, ...json.companies]);
                   } catch (err) {
                     setPortfolioResearchError(err.message || 'Research failed');
                   }
@@ -2014,12 +2037,12 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                 }
                 function downloadTemplate() {
                   const templateRows = [
-                    { 'Company Name': 'Example Company', 'Industry': 'Technology', 'Geography': 'North America', 'HQ City': 'Austin, TX', 'HQ Country': 'USA', 'Est. Energy (GWh/yr)': 25, 'Est. Site Count': 12, 'Sector': 'Tech / Software & Office Occupiers' },
+                    { 'Company Name': 'Example Company', 'Industry': 'Technology', 'Geography': 'North America', 'HQ City': 'Austin, TX', 'HQ Country': 'USA', 'Est. Energy (GWh/yr)': 25, 'Est. Site Count': 12 },
                   ];
                   const ws = XLSX.utils.json_to_sheet(templateRows, {
-                    header: ['Company Name', 'Industry', 'Geography', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Sector'],
+                    header: ['Company Name', 'Industry', 'Geography', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count'],
                   });
-                  ws['!cols'] = [{ wch: 30 }, { wch: 18 }, { wch: 18 }, { wch: 20 }, { wch: 16 }, { wch: 20 }, { wch: 16 }, { wch: 36 }];
+                  ws['!cols'] = [{ wch: 30 }, { wch: 18 }, { wch: 18 }, { wch: 20 }, { wch: 16 }, { wch: 20 }, { wch: 16 }];
                   const wb = XLSX.utils.book_new();
                   XLSX.utils.book_append_sheet(wb, ws, 'Portfolio Companies');
                   const safeName = (fields.company || 'company').replace(/[^a-z0-9]+/gi, '_');
@@ -2033,8 +2056,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                   const maxE = rows.reduce((m, r) => Math.max(m, Number(r.energyGwh) || 0), 0);
                   const maxS = rows.reduce((m, r) => Math.max(m, Number(r.siteCount) || 0), 0);
                   const exportRows = rows.map(r => {
-                    const sector = r.sector || inferSectorFromIndustry(r.industry);
-                    const tier = PORTFOLIO_SECTOR_TIER[sector] || '';
+                    const tier = industryTier(r.industry) || '';
                     const score = computePortfolioFitScore(r, maxE, maxS);
                     return {
                       'Company Name': r.companyName || '',
@@ -2044,18 +2066,18 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                       'HQ Country': r.hqCountry || '',
                       'Est. Energy (GWh/yr)': r.energyGwh === '' || r.energyGwh == null ? '' : Number(r.energyGwh) || r.energyGwh,
                       'Est. Site Count': r.siteCount === '' || r.siteCount == null ? '' : Number(r.siteCount) || r.siteCount,
-                      'Sector': sector,
                       'Fit Tier': tier,
                       'Rank Score': score,
                       'RA Client Match': r.raClientMatch || '',
                       'Client Manager': r.clientManager || '',
                       'Target Account': r.targetAccount || '',
+                      'Guess Sales Rep': repForTarget(r.targetAccount),
                     };
                   });
                   const ws = XLSX.utils.json_to_sheet(exportRows, {
-                    header: ['Company Name', 'Industry', 'Geography', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Sector', 'Fit Tier', 'Rank Score', 'RA Client Match', 'Client Manager', 'Target Account'],
+                    header: ['Company Name', 'Industry', 'Geography', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Fit Tier', 'Rank Score', 'RA Client Match', 'Client Manager', 'Target Account', 'Guess Sales Rep'],
                   });
-                  ws['!cols'] = [{ wch: 30 }, { wch: 18 }, { wch: 18 }, { wch: 20 }, { wch: 16 }, { wch: 20 }, { wch: 16 }, { wch: 36 }, { wch: 10 }, { wch: 12 }, { wch: 24 }, { wch: 20 }, { wch: 24 }];
+                  ws['!cols'] = [{ wch: 30 }, { wch: 18 }, { wch: 18 }, { wch: 20 }, { wch: 16 }, { wch: 20 }, { wch: 16 }, { wch: 10 }, { wch: 12 }, { wch: 24 }, { wch: 20 }, { wch: 24 }, { wch: 22 }];
                   const wb = XLSX.utils.book_new();
                   XLSX.utils.book_append_sheet(wb, ws, 'Portfolio Companies');
                   const safeName = (fields.company || 'company').replace(/[^a-z0-9]+/gi, '_');
@@ -2087,11 +2109,6 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                           hqCountry: String(findKey(['hqcountry', 'country']) || '').trim(),
                           energyGwh: String(findKey(['energy', 'gwh']) || '').trim(),
                           siteCount: String(findKey(['sitecount', 'sites', 'numberofsites', 'estsitecount']) || '').trim(),
-                          sector: (() => {
-                            const raw = String(findKey(['sector']) || '').trim();
-                            if (PORTFOLIO_SECTOR_TIER[raw]) return raw;
-                            return inferSectorFromIndustry(String(findKey(['industry']) || '').trim());
-                          })(),
                           raClientMatch: String(findKey(['raclientmatch', 'raclient']) || '').trim(),
                           clientManager: String(findKey(['clientmanager', 'manager']) || '').trim(),
                           targetAccount: String(findKey(['targetaccount', 'target']) || '').trim(),
@@ -2265,11 +2282,11 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                             <col style={{ width: portfolioColWidths.hqCountry + 'px' }} />
                             <col style={{ width: portfolioColWidths.energy + 'px' }} />
                             <col style={{ width: portfolioColWidths.siteCount + 'px' }} />
-                            <col style={{ width: portfolioColWidths.sector + 'px' }} />
                             <col style={{ width: portfolioColWidths.rank + 'px' }} />
                             <col style={{ width: portfolioColWidths.raClient + 'px' }} />
                             <col style={{ width: portfolioColWidths.clientManager + 'px' }} />
                             <col style={{ width: portfolioColWidths.targetAccount + 'px' }} />
+                            <col style={{ width: portfolioColWidths.salesRep + 'px' }} />
                             <col style={{ width: '28px' }} />
                           </colgroup>
                           <thead>
@@ -2282,7 +2299,6 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                               <th style={thBase}>HQ Country<span style={resizeHandleStyle} onMouseDown={e => startResize('hqCountry', e)} /></th>
                               <th style={{ ...thBase, textAlign: 'right' }}>Est. Energy (GWh/yr)<span style={resizeHandleStyle} onMouseDown={e => startResize('energy', e)} /></th>
                               <th style={{ ...thBase, textAlign: 'right' }}>Est. Site Count<span style={resizeHandleStyle} onMouseDown={e => startResize('siteCount', e)} /></th>
-                              <th style={thBase}>Sector / Fit<span style={resizeHandleStyle} onMouseDown={e => startResize('sector', e)} /></th>
                               <th
                                 style={{ ...thBase, textAlign: 'right', cursor: 'pointer', userSelect: 'none' }}
                                 onClick={() => setPortfolioSortByRank(v => !v)}
@@ -2293,6 +2309,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                               <th style={thBase}>RA Client Match<span style={resizeHandleStyle} onMouseDown={e => startResize('raClient', e)} /></th>
                               <th style={thBase}>Client Manager<span style={resizeHandleStyle} onMouseDown={e => startResize('clientManager', e)} /></th>
                               <th style={thBase}>Target Account<span style={resizeHandleStyle} onMouseDown={e => startResize('targetAccount', e)} /></th>
+                              <th style={thBase}>Guess Sales Rep<span style={resizeHandleStyle} onMouseDown={e => startResize('salesRep', e)} /></th>
                               <th style={{ padding: '0.3rem 0.3rem', borderBottom: '1px solid var(--color-border)' }}></th>
                             </tr>
                           </thead>
@@ -2305,17 +2322,26 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                               return (
                               <tr key={i} style={{ borderBottom: '1px solid #F1F5F9' }}>
                                 <td style={{ padding: '0.2rem 0.4rem', color: '#94A3B8', fontWeight: 600 }}>{displayI + 1}</td>
-                                {['companyName', 'industry', 'geography', 'hqCity', 'hqCountry'].map(field => (
-                                  <td key={field} style={{ padding: '0.15rem 0.25rem' }}>
-                                    <input
-                                      value={r[field] || ''}
-                                      onChange={e => updateRow(i, { [field]: e.target.value })}
-                                      style={{ width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: 'var(--color-text)' }}
-                                      onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; e.target.style.background = '#fff'; }}
-                                      onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
-                                    />
-                                  </td>
-                                ))}
+                                {['companyName', 'industry', 'geography', 'hqCity', 'hqCountry'].map(field => {
+                                  const isIndustry = field === 'industry';
+                                  const tier = isIndustry ? industryTier(r.industry) : null;
+                                  const tierColors = tier ? TIER_COLORS[tier] : null;
+                                  const cellStyle = tierColors ? { padding: '0.15rem 0.25rem', background: tierColors.bg } : { padding: '0.15rem 0.25rem' };
+                                  const inputStyle = tierColors
+                                    ? { width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: tierColors.color, fontWeight: 600 }
+                                    : { width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: 'var(--color-text)' };
+                                  return (
+                                    <td key={field} style={cellStyle} title={isIndustry && tier ? `Fit: ${tier}` : undefined}>
+                                      <input
+                                        value={r[field] || ''}
+                                        onChange={e => updateRow(i, { [field]: e.target.value })}
+                                        style={inputStyle}
+                                        onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; e.target.style.background = '#fff'; }}
+                                        onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
+                                      />
+                                    </td>
+                                  );
+                                })}
                                 <td style={{ padding: '0.15rem 0.25rem', textAlign: 'right' }}>
                                   <input
                                     type="number"
@@ -2337,30 +2363,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                   />
                                 </td>
                                 {(() => {
-                                  const effectiveSector = r.sector || inferSectorFromIndustry(r.industry);
-                                  const tier = PORTFOLIO_SECTOR_TIER[effectiveSector] || null;
-                                  const colors = tier ? TIER_COLORS[tier] : { bg: 'transparent', color: 'var(--color-text-muted)', border: 'var(--color-border)' };
-                                  return (
-                                    <td style={{ padding: '0.15rem 0.25rem' }}>
-                                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                                        <select
-                                          value={r.sector || ''}
-                                          onChange={e => updateRow(i, { sector: e.target.value })}
-                                          style={{ flex: 1, minWidth: 0, padding: '0.15rem 0.3rem', border: `1px solid ${colors.border}`, borderRadius: 3, fontSize: '0.68rem', fontFamily: 'inherit', background: colors.bg, color: colors.color, fontWeight: 600, cursor: 'pointer' }}
-                                        >
-                                          <option value="">{r.sector ? '' : (effectiveSector ? `(auto) ${effectiveSector}` : '— Select —')}</option>
-                                          {PORTFOLIO_SECTORS.map(s => (
-                                            <option key={s.name} value={s.name}>{s.name} ({s.tier})</option>
-                                          ))}
-                                        </select>
-                                      </div>
-                                    </td>
-                                  );
-                                })()}
-                                {(() => {
                                   const score = rowScores[i];
-                                  const effectiveSector = r.sector || inferSectorFromIndustry(r.industry);
-                                  const tier = PORTFOLIO_SECTOR_TIER[effectiveSector] || null;
+                                  const tier = industryTier(r.industry);
                                   const colors = tier ? TIER_COLORS[tier] : { bg: 'transparent', color: '#94A3B8', border: 'var(--color-border)' };
                                   return (
                                     <td style={{ padding: '0.15rem 0.25rem', textAlign: 'right' }}>
@@ -2458,6 +2462,14 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                         ))}
                                         </div>
                                       )}
+                                    </td>
+                                  );
+                                })()}
+                                {(() => {
+                                  const rep = repForTarget(r.targetAccount);
+                                  return (
+                                    <td style={{ padding: '0.15rem 0.3rem', fontSize: '0.7rem', color: rep ? 'var(--color-text)' : '#CBD5E1', fontStyle: rep ? 'normal' : 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={rep ? `From Target Accounts sheet for "${r.targetAccount}"` : (r.targetAccount ? 'No rep found on Target Accounts sheet for this account' : 'Map a target account to see its rep')}>
+                                      {rep || (r.targetAccount ? '— no rep found —' : '—')}
                                     </td>
                                   );
                                 })()}
