@@ -710,12 +710,15 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
   useEffect(() => { setLocalContacts(baseContacts); }, [baseContacts]);
   const companyContacts = localContacts;
 
-  // Build a lookup of target-account -> sales rep from the uploaded Target Accounts sheets.
-  // Mirrors MyAccountsView's logic: we scan every sheet and prefer the first rep we see for a given account.
-  const targetAccountRepMap = useMemo(() => {
-    const map = new Map();
+  // Build lookups from the uploaded Target Accounts sheets keyed by account name:
+  //   repMap  — sales rep / owner
+  //   tierMap — Tier 1 / Tier 2 / etc. (normalized to "Tier N" when possible)
+  // Mirrors MyAccountsView's column-finding logic; prefers the first match per account.
+  const [targetAccountRepMap, targetAccountTierMap] = useMemo(() => {
+    const repMap = new Map();
+    const tierMap = new Map();
     const data = targetAccountsData;
-    if (!data?.sheets) return map;
+    if (!data?.sheets) return [repMap, tierMap];
     function findCol(r, keywords) {
       for (const key of Object.keys(r)) {
         const lower = (key || '').toLowerCase();
@@ -725,24 +728,40 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
       }
       return '';
     }
+    function normalizeTier(raw) {
+      const s = (raw || '').trim();
+      if (!s) return '';
+      const m = s.match(/^(?:tier\s*)?(\d+)$/i);
+      if (m) return `Tier ${m[1]}`;
+      return s;
+    }
     for (const sn of data.sheetNames || []) {
       const sheet = data.sheets[sn];
       if (!sheet?.records) continue;
       for (const rec of sheet.records) {
         const company = findCol(rec, ['Account Name', 'Company Name', 'Account', 'Company', 'Client Name', 'Client', 'Name']);
         if (!company) continue;
-        const rep = findCol(rec, ['CDM', 'Salesperson', 'Sales Rep', 'Account Owner', 'Owner', 'Rep', 'Assigned', 'Team Member']);
-        if (!rep) continue;
         const key = company.toLowerCase();
-        if (!map.has(key)) map.set(key, rep);
+        const rep = findCol(rec, ['CDM', 'Salesperson', 'Sales Rep', 'Account Owner', 'Owner', 'Rep', 'Assigned', 'Team Member']);
+        if (rep && !repMap.has(key)) repMap.set(key, rep);
+        let tierRaw = findCol(rec, ['Account Tier', 'Tier Level', 'Tier']);
+        if (!tierRaw) {
+          tierRaw = Object.values(rec).find(v => /^tier\s*\d+$/i.test(String(v || '').trim())) || '';
+        }
+        const tier = normalizeTier(String(tierRaw));
+        if (tier && !tierMap.has(key)) tierMap.set(key, tier);
       }
     }
-    return map;
+    return [repMap, tierMap];
   }, [targetAccountsData]);
   const repForTarget = useCallback((targetAccount) => {
     if (!targetAccount) return '';
     return targetAccountRepMap.get(targetAccount.toLowerCase()) || '';
   }, [targetAccountRepMap]);
+  const tierForTarget = useCallback((targetAccount) => {
+    if (!targetAccount) return '';
+    return targetAccountTierMap.get(targetAccount.toLowerCase()) || '';
+  }, [targetAccountTierMap]);
 
   // Collect all unique tags across all HubSpot contacts for the dropdown
   const allTagOptions = useMemo(() => {
@@ -771,7 +790,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
   const [researchingPortfolio, setResearchingPortfolio] = useState(false);
   const [portfolioResearchError, setPortfolioResearchError] = useState(null);
   const [portfolioColWidths, setPortfolioColWidths] = useState({
-    num: 30, company: 180, industry: 140, geography: 120, hqCity: 130, hqCountry: 90, energy: 110, siteCount: 100, rank: 80, raClient: 200, clientManager: 140, targetAccount: 200, salesRep: 160,
+    num: 30, company: 180, industry: 140, geography: 120, hqCity: 130, hqCountry: 90, energy: 110, siteCount: 100, rank: 80, raClient: 200, clientManager: 140, targetAccount: 200, tier: 80, salesRep: 160,
   });
   const [portfolioSortByRank, setPortfolioSortByRank] = useState(false);
   const [raClientPickerOpen, setRaClientPickerOpen] = useState(null); // row index
@@ -2072,8 +2091,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                   }
                   const maxE = rows.reduce((m, r) => Math.max(m, Number(r.energyGwh) || 0), 0);
                   const maxS = rows.reduce((m, r) => Math.max(m, Number(r.siteCount) || 0), 0);
-                  const headers = ['Company Name', 'Industry', 'Geography', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Fit Tier', 'Rank Score', 'RA Client Match', 'Client Manager', 'Target Account', 'Guess Sales Rep'];
-                  const colWidths = [32, 22, 18, 20, 16, 20, 16, 12, 12, 26, 22, 26, 22];
+                  const headers = ['Company Name', 'Industry', 'Geography', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Fit Tier', 'Rank Score', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Guess Sales Rep'];
+                  const colWidths = [32, 22, 18, 20, 16, 20, 16, 12, 12, 26, 22, 26, 10, 22];
                   const data = rows.map(r => {
                     const tier = industryTier(r.industry) || '';
                     const score = computePortfolioFitScore(r, maxE, maxS);
@@ -2093,6 +2112,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                       r.raClientMatch || '',
                       clientMgr,
                       r.targetAccount || '',
+                      tierForTarget(r.targetAccount),
                       repForTarget(r.targetAccount),
                     ];
                   });
@@ -2126,11 +2146,10 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                     titleCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
                     ws.getRow(1).height = 30;
 
-                    // Row 2: Subtitle
+                    // Row 2: Subtitle — "{Company} · Portfolio Companies"
                     ws.mergeCells(2, 1, 2, headers.length);
                     const subCell = ws.getCell(2, 1);
-                    const today = new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
-                    subCell.value = `Portfolio Companies  ·  ${fields.company || 'Company'}  ·  Exported ${today}`;
+                    subCell.value = `${fields.company || 'Company'}  ·  Portfolio Companies`;
                     subCell.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: 'FF64748B' } };
                     subCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
                     ws.getRow(2).height = 20;
@@ -2462,6 +2481,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                             <col style={{ width: portfolioColWidths.raClient + 'px' }} />
                             <col style={{ width: portfolioColWidths.clientManager + 'px' }} />
                             <col style={{ width: portfolioColWidths.targetAccount + 'px' }} />
+                            <col style={{ width: portfolioColWidths.tier + 'px' }} />
                             <col style={{ width: portfolioColWidths.salesRep + 'px' }} />
                             <col style={{ width: '28px' }} />
                           </colgroup>
@@ -2485,6 +2505,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                               <th style={thBase}>RA Client Match<span style={resizeHandleStyle} onMouseDown={e => startResize('raClient', e)} /></th>
                               <th style={thBase}>Client Manager<span style={resizeHandleStyle} onMouseDown={e => startResize('clientManager', e)} /></th>
                               <th style={thBase}>Target Account<span style={resizeHandleStyle} onMouseDown={e => startResize('targetAccount', e)} /></th>
+                              <th style={thBase}>Tier<span style={resizeHandleStyle} onMouseDown={e => startResize('tier', e)} /></th>
                               <th style={thBase}>Guess Sales Rep<span style={resizeHandleStyle} onMouseDown={e => startResize('salesRep', e)} /></th>
                               <th style={{ padding: '0.3rem 0.3rem', borderBottom: '1px solid var(--color-border)' }}></th>
                             </tr>
@@ -2747,6 +2768,14 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                   );
                                 })()}
                                 {(() => {
+                                  const tier = tierForTarget(r.targetAccount);
+                                  return (
+                                    <td style={{ padding: '0.15rem 0.3rem', fontSize: '0.7rem', color: tier ? 'var(--color-text)' : '#CBD5E1', fontStyle: tier ? 'normal' : 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={tier ? `Tier for "${r.targetAccount}" from the Target Accounts sheet` : (r.targetAccount ? 'No tier found on Target Accounts sheet for this account' : 'Map a target account to see its tier')}>
+                                      {tier || (r.targetAccount ? '—' : '—')}
+                                    </td>
+                                  );
+                                })()}
+                                {(() => {
                                   const rep = repForTarget(r.targetAccount);
                                   return (
                                     <td style={{ padding: '0.15rem 0.3rem', fontSize: '0.7rem', color: rep ? 'var(--color-text)' : '#CBD5E1', fontStyle: rep ? 'normal' : 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={rep ? `From Target Accounts sheet for "${r.targetAccount}"` : (r.targetAccount ? 'No rep found on Target Accounts sheet for this account' : 'Map a target account to see its rep')}>
@@ -2771,7 +2800,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                 <td colSpan={6} style={{ padding: '0.3rem 0.4rem', textAlign: 'right', fontSize: '0.65rem', color: '#64748B', textTransform: 'uppercase' }}>Totals</td>
                                 <td style={{ padding: '0.3rem 0.4rem', textAlign: 'right' }}>{totalEnergy > 0 ? totalEnergy.toLocaleString() : ''}</td>
                                 <td style={{ padding: '0.3rem 0.4rem', textAlign: 'right' }}>{totalSites > 0 ? totalSites.toLocaleString() : ''}</td>
-                                <td colSpan={6}></td>
+                                <td colSpan={7}></td>
                               </tr>
                             )}
                           </tbody>
