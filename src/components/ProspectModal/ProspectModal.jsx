@@ -1,6 +1,8 @@
 import { useState, useMemo, useEffect, useRef, useCallback, memo } from 'react';
 import { createPortal } from 'react-dom';
 import * as XLSX from 'xlsx';
+import ReactQuill from 'react-quill-new';
+import 'react-quill-new/dist/quill.snow.css';
 import raClientsData from '../../data/raClients.json';
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES, COUNTRIES } from '../../data/enums';
 import styles from './ProspectModal.module.css';
@@ -332,7 +334,9 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
       const noteValue = notes || '';
       const oldEmailsValue = oldEmails || '';
       const nicknameValue = nickname || '';
-      let isNew = !contact.id && !contact.vid;
+      const existingId = contact.id || contact.vid;
+      const isLocalOnly = typeof existingId === 'string' && existingId.startsWith('local-');
+      let isNew = !existingId || isLocalOnly;
       let action = isNew ? 'create-contact' : 'update-contact';
       let body = isNew
         ? { properties: hsProps }
@@ -348,9 +352,9 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
         const msg = json?.message || json?.error || '';
         const existingIdMatch = String(msg).match(/Existing ID[:\s]+(\d+)/i);
         if (existingIdMatch) {
-          const existingId = existingIdMatch[1];
+          const dupId = existingIdMatch[1];
           action = 'update-contact';
-          body = { contactId: existingId, properties: hsProps };
+          body = { contactId: dupId, properties: hsProps };
           res = await fetch(`/api/hubspot?action=${action}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -359,7 +363,7 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
           json = await res.json();
           if (res.ok) {
             isNew = false;
-            contact.id = existingId; // so downstream savedContact carries it
+            contact.id = dupId; // so downstream savedContact carries it
           }
         }
       }
@@ -372,6 +376,10 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
         if (cache?.contacts) {
           const cacheProps = { ...hsProps };
           if (isNew) {
+            // If this was promoted from a local-only contact, remove the old local entry so we don't duplicate
+            if (isLocalOnly && existingId) {
+              cache.contacts = cache.contacts.filter(c => String(c.id || c.vid) !== String(existingId));
+            }
             cache.contacts.push({ id: savedContact.id, ...cacheProps });
           } else {
             const idx = cache.contacts.findIndex(c => String(c.id || c.vid) === String(contact.id || contact.vid));
@@ -645,7 +653,7 @@ const ALL_SERVICE_ITEMS_LOWER = new Set(
   SERVICE_CATEGORIES.flatMap(cat => cat.items.map(i => i.toLowerCase()))
 );
 
-export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContacts = [], onDeleteContact, orgCharts = {}, onUpdateOrgChart = () => {}, settings = {}, updateSettings = () => {} }) {
+export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContacts = [], onDeleteContact, orgCharts = {}, onUpdateOrgChart = () => {}, settings = {}, updateSettings = () => {}, targetAccountsData = null }) {
   const [fields, setFields] = useState(() => {
     if (prospect) return { ...EMPTY, ...prospect };
     return { ...EMPTY };
@@ -690,9 +698,10 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
   const [researchingPortfolio, setResearchingPortfolio] = useState(false);
   const [portfolioResearchError, setPortfolioResearchError] = useState(null);
   const [portfolioColWidths, setPortfolioColWidths] = useState({
-    num: 30, company: 180, industry: 110, geography: 120, hqCity: 130, hqCountry: 90, energy: 110, raClient: 200,
+    num: 30, company: 180, industry: 110, geography: 120, hqCity: 130, hqCountry: 90, energy: 110, raClient: 200, clientManager: 140, targetAccount: 200,
   });
   const [raClientPickerOpen, setRaClientPickerOpen] = useState(null); // row index
+  const [targetAccountPickerOpen, setTargetAccountPickerOpen] = useState(null); // row index
   const [newCompetitor, setNewCompetitor] = useState('');
   const [oppsCache, setOppsCache] = useState(null);
   const [clientManager, setClientManager] = useState(null);
@@ -794,6 +803,178 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
     setEditingContact(null);
     setAddingContact(false);
   }, []);
+
+  // ── Company Notes (per-company, synced via userSettings) ──
+  const companySlug = useMemo(
+    () => (fields.company || '').toLowerCase().replace(/[^a-z0-9]/g, '-'),
+    [fields.company]
+  );
+  const savedCompanyNote = (settings.companyNotes || {})[companySlug] || '';
+  const [companyNoteDraft, setCompanyNoteDraft] = useState(savedCompanyNote);
+  const [companyNotesOpen, setCompanyNotesOpen] = useState(false);
+  const companyNoteSaveTimerRef = useRef(null);
+  const companyNoteSlugRef = useRef(companySlug);
+
+  // Rehydrate draft when the active company changes (switching modals / renaming).
+  useEffect(() => {
+    if (companyNoteSlugRef.current !== companySlug) {
+      companyNoteSlugRef.current = companySlug;
+      setCompanyNoteDraft(savedCompanyNote);
+    }
+  }, [companySlug, savedCompanyNote]);
+
+  useEffect(() => () => {
+    if (companyNoteSaveTimerRef.current) clearTimeout(companyNoteSaveTimerRef.current);
+  }, []);
+
+  const handleCompanyNoteChange = useCallback((html) => {
+    setCompanyNoteDraft(html);
+    if (companyNoteSaveTimerRef.current) clearTimeout(companyNoteSaveTimerRef.current);
+    const slugAtEdit = companySlug;
+    companyNoteSaveTimerRef.current = setTimeout(() => {
+      if (!slugAtEdit) return;
+      const current = settings.companyNotes || {};
+      const next = { ...current };
+      const isEmpty = !html || html === '<p><br></p>' || !html.replace(/<[^>]*>/g, '').trim();
+      if (isEmpty) delete next[slugAtEdit];
+      else next[slugAtEdit] = html;
+      updateSettings({ companyNotes: next });
+    }, 800);
+  }, [companySlug, settings.companyNotes, updateSettings]);
+
+  // ── Opportunities (per-company, synced via userSettings) ──
+  // Shape: settings.companyOpportunities[slug] = { buckets: [{id,name}], opportunities: [{id,bucketId,title,notes,createdAt,updatedAt}] }
+  const companyOppsData = (settings.companyOpportunities || {})[companySlug] || { buckets: [], opportunities: [] };
+  const [opportunitiesOpen, setOpportunitiesOpen] = useState(false);
+  const [selectedOppId, setSelectedOppId] = useState(null);
+  const [oppNoteDraft, setOppNoteDraft] = useState('');
+  const oppSaveTimerRef = useRef(null);
+  const oppSlugRef = useRef(companySlug);
+
+  // Clear selection / draft when switching company
+  useEffect(() => {
+    if (oppSlugRef.current !== companySlug) {
+      oppSlugRef.current = companySlug;
+      setSelectedOppId(null);
+      setOppNoteDraft('');
+    }
+  }, [companySlug]);
+
+  useEffect(() => () => {
+    if (oppSaveTimerRef.current) clearTimeout(oppSaveTimerRef.current);
+  }, []);
+
+  const selectedOpp = useMemo(
+    () => (companyOppsData.opportunities || []).find(o => o.id === selectedOppId) || null,
+    [companyOppsData.opportunities, selectedOppId]
+  );
+
+  // When selection changes, load its notes into the draft (flush any pending save first)
+  useEffect(() => {
+    if (oppSaveTimerRef.current) { clearTimeout(oppSaveTimerRef.current); oppSaveTimerRef.current = null; }
+    setOppNoteDraft(selectedOpp ? (selectedOpp.notes || '') : '');
+  }, [selectedOppId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const writeCompanyOpps = useCallback((nextData) => {
+    if (!companySlug) return;
+    const all = { ...(settings.companyOpportunities || {}) };
+    const isEmpty = (!nextData.buckets || nextData.buckets.length === 0) && (!nextData.opportunities || nextData.opportunities.length === 0);
+    if (isEmpty) delete all[companySlug];
+    else all[companySlug] = nextData;
+    updateSettings({ companyOpportunities: all });
+  }, [companySlug, settings.companyOpportunities, updateSettings]);
+
+  const addBucket = useCallback(() => {
+    const name = window.prompt('Bucket name:');
+    if (!name || !name.trim()) return;
+    const bucket = { id: `b_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, name: name.trim() };
+    writeCompanyOpps({
+      buckets: [...(companyOppsData.buckets || []), bucket],
+      opportunities: companyOppsData.opportunities || [],
+    });
+  }, [companyOppsData, writeCompanyOpps]);
+
+  const renameBucket = useCallback((bucketId) => {
+    const current = (companyOppsData.buckets || []).find(b => b.id === bucketId);
+    if (!current) return;
+    const name = window.prompt('Rename bucket:', current.name);
+    if (!name || !name.trim() || name.trim() === current.name) return;
+    writeCompanyOpps({
+      buckets: (companyOppsData.buckets || []).map(b => b.id === bucketId ? { ...b, name: name.trim() } : b),
+      opportunities: companyOppsData.opportunities || [],
+    });
+  }, [companyOppsData, writeCompanyOpps]);
+
+  const deleteBucket = useCallback((bucketId) => {
+    const bucket = (companyOppsData.buckets || []).find(b => b.id === bucketId);
+    if (!bucket) return;
+    const count = (companyOppsData.opportunities || []).filter(o => o.bucketId === bucketId).length;
+    const msg = count > 0
+      ? `Delete bucket "${bucket.name}" and its ${count} opportunit${count === 1 ? 'y' : 'ies'}?`
+      : `Delete bucket "${bucket.name}"?`;
+    if (!window.confirm(msg)) return;
+    const nextOpps = (companyOppsData.opportunities || []).filter(o => o.bucketId !== bucketId);
+    if (selectedOppId && !nextOpps.find(o => o.id === selectedOppId)) setSelectedOppId(null);
+    writeCompanyOpps({
+      buckets: (companyOppsData.buckets || []).filter(b => b.id !== bucketId),
+      opportunities: nextOpps,
+    });
+  }, [companyOppsData, selectedOppId, writeCompanyOpps]);
+
+  const addOpportunity = useCallback((bucketId) => {
+    const title = window.prompt('Opportunity title:');
+    if (!title || !title.trim()) return;
+    const now = Date.now();
+    const opp = { id: `o_${now}_${Math.random().toString(36).slice(2, 7)}`, bucketId, title: title.trim(), notes: '', createdAt: now, updatedAt: now };
+    writeCompanyOpps({
+      buckets: companyOppsData.buckets || [],
+      opportunities: [...(companyOppsData.opportunities || []), opp],
+    });
+    setSelectedOppId(opp.id);
+  }, [companyOppsData, writeCompanyOpps]);
+
+  const renameOpportunity = useCallback((oppId) => {
+    const current = (companyOppsData.opportunities || []).find(o => o.id === oppId);
+    if (!current) return;
+    const title = window.prompt('Rename opportunity:', current.title);
+    if (!title || !title.trim() || title.trim() === current.title) return;
+    writeCompanyOpps({
+      buckets: companyOppsData.buckets || [],
+      opportunities: (companyOppsData.opportunities || []).map(o => o.id === oppId ? { ...o, title: title.trim(), updatedAt: Date.now() } : o),
+    });
+  }, [companyOppsData, writeCompanyOpps]);
+
+  const deleteOpportunity = useCallback((oppId) => {
+    const opp = (companyOppsData.opportunities || []).find(o => o.id === oppId);
+    if (!opp) return;
+    if (!window.confirm(`Delete opportunity "${opp.title}"? This cannot be undone.`)) return;
+    if (selectedOppId === oppId) setSelectedOppId(null);
+    writeCompanyOpps({
+      buckets: companyOppsData.buckets || [],
+      opportunities: (companyOppsData.opportunities || []).filter(o => o.id !== oppId),
+    });
+  }, [companyOppsData, selectedOppId, writeCompanyOpps]);
+
+  const moveOpportunity = useCallback((oppId, newBucketId) => {
+    writeCompanyOpps({
+      buckets: companyOppsData.buckets || [],
+      opportunities: (companyOppsData.opportunities || []).map(o => o.id === oppId ? { ...o, bucketId: newBucketId, updatedAt: Date.now() } : o),
+    });
+  }, [companyOppsData, writeCompanyOpps]);
+
+  const handleOppNoteChange = useCallback((html) => {
+    setOppNoteDraft(html);
+    if (!selectedOppId) return;
+    if (oppSaveTimerRef.current) clearTimeout(oppSaveTimerRef.current);
+    const idAtEdit = selectedOppId;
+    oppSaveTimerRef.current = setTimeout(() => {
+      const all = { ...(settings.companyOpportunities || {}) };
+      const data = all[companySlug] || { buckets: [], opportunities: [] };
+      const nextOpps = (data.opportunities || []).map(o => o.id === idAtEdit ? { ...o, notes: html, updatedAt: Date.now() } : o);
+      all[companySlug] = { buckets: data.buckets || [], opportunities: nextOpps };
+      updateSettings({ companyOpportunities: all });
+    }, 800);
+  }, [companySlug, selectedOppId, settings.companyOpportunities, updateSettings]);
 
   async function handleDeleteContact(contact) {
     const name = [contact.firstname, contact.lastname].filter(Boolean).join(' ') || 'this contact';
@@ -1080,6 +1261,203 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
               <textarea className={styles.textarea} value={fields.notes} onChange={e => set('notes', e.target.value)} rows={2} />
             </div>
           </div>
+
+          {/* Company Notes — rich, per-company, synced across devices */}
+          {!isNew && fields.company?.trim() && (
+            <div style={{ marginTop: '1rem', borderTop: '1px solid var(--color-border-light)', paddingTop: '0.75rem' }}>
+              <div
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', userSelect: 'none' }}
+                onClick={() => setCompanyNotesOpen(o => !o)}
+              >
+                <label className={styles.label} style={{ margin: 0, cursor: 'pointer' }}>
+                  Company Notes
+                </label>
+                <span style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', transform: companyNotesOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>&#9660;</span>
+                {savedCompanyNote && (
+                  <span style={{ fontSize: '0.68rem', color: '#64748B', fontWeight: 600 }}>
+                    has notes
+                  </span>
+                )}
+              </div>
+              {companyNotesOpen && (
+                <div style={{ marginTop: '0.5rem' }}>
+                  <ReactQuill
+                    theme="snow"
+                    value={companyNoteDraft}
+                    onChange={handleCompanyNoteChange}
+                    placeholder="Meeting notes, context, follow-ups…"
+                    modules={{
+                      toolbar: [
+                        [{ 'header': [1, 2, 3, false] }],
+                        ['bold', 'italic', 'underline', 'strike'],
+                        [{ 'list': 'ordered' }, { 'list': 'bullet' }],
+                        ['link', 'blockquote', 'code-block'],
+                        ['clean'],
+                      ],
+                      clipboard: { matchVisual: false },
+                    }}
+                    formats={['header', 'bold', 'italic', 'underline', 'strike', 'list', 'link', 'blockquote', 'code-block']}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Opportunities — bucketed notes pages, per-company, synced across devices */}
+          {!isNew && fields.company?.trim() && (
+            <div style={{ marginTop: '1rem', borderTop: '1px solid var(--color-border-light)', paddingTop: '0.75rem' }}>
+              <div
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', userSelect: 'none' }}
+                onClick={() => setOpportunitiesOpen(o => !o)}
+              >
+                <label className={styles.label} style={{ margin: 0, cursor: 'pointer' }}>
+                  Opportunities
+                </label>
+                <span style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', transform: opportunitiesOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>&#9660;</span>
+                {(() => {
+                  const n = (companyOppsData.opportunities || []).length;
+                  return n > 0 ? <span style={{ fontSize: '0.68rem', color: '#64748B' }}>{n} {n === 1 ? 'opportunity' : 'opportunities'}</span> : null;
+                })()}
+              </div>
+              {opportunitiesOpen && (
+                <div style={{ marginTop: '0.75rem' }}>
+                  {selectedOpp ? (
+                    // Detail view — editing a single opportunity
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedOppId(null)}
+                          style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 4, cursor: 'pointer' }}
+                        >
+                          &larr; Back
+                        </button>
+                        <span style={{ fontWeight: 600, fontSize: '0.9rem', flex: 1 }}>{selectedOpp.title}</span>
+                        <select
+                          value={selectedOpp.bucketId}
+                          onChange={e => moveOpportunity(selectedOpp.id, e.target.value)}
+                          style={{ fontSize: '0.75rem', padding: '0.2rem 0.4rem', border: '1px solid var(--color-border)', borderRadius: 4 }}
+                        >
+                          {(companyOppsData.buckets || []).map(b => (
+                            <option key={b.id} value={b.id}>{b.name}</option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => renameOpportunity(selectedOpp.id)}
+                          style={{ fontSize: '0.72rem', padding: '0.25rem 0.5rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 4, cursor: 'pointer' }}
+                        >
+                          Rename
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => deleteOpportunity(selectedOpp.id)}
+                          style={{ fontSize: '0.72rem', padding: '0.25rem 0.5rem', border: '1px solid #FCA5A5', background: 'white', color: '#DC2626', borderRadius: 4, cursor: 'pointer' }}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                      <ReactQuill
+                        theme="snow"
+                        value={oppNoteDraft}
+                        onChange={handleOppNoteChange}
+                        placeholder="Notes for this opportunity…"
+                        modules={{
+                          toolbar: [
+                            [{ 'header': [1, 2, 3, false] }],
+                            ['bold', 'italic', 'underline', 'strike'],
+                            [{ 'list': 'ordered' }, { 'list': 'bullet' }],
+                            ['link', 'blockquote', 'code-block'],
+                            ['clean'],
+                          ],
+                          clipboard: { matchVisual: false },
+                        }}
+                        formats={['header', 'bold', 'italic', 'underline', 'strike', 'list', 'link', 'blockquote', 'code-block']}
+                      />
+                    </div>
+                  ) : (
+                    // Overview — buckets + opportunity cards
+                    <div>
+                      <div style={{ marginBottom: '0.75rem' }}>
+                        <button
+                          type="button"
+                          onClick={addBucket}
+                          style={{ fontSize: '0.75rem', padding: '0.3rem 0.7rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 4, cursor: 'pointer' }}
+                        >
+                          + Bucket
+                        </button>
+                      </div>
+                      {(companyOppsData.buckets || []).length === 0 ? (
+                        <div style={{ fontSize: '0.78rem', color: '#64748B', fontStyle: 'italic', padding: '0.5rem 0' }}>
+                          No buckets yet. Add one to start grouping opportunities.
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                          {(companyOppsData.buckets || []).map(bucket => {
+                            const bucketOpps = (companyOppsData.opportunities || []).filter(o => o.bucketId === bucket.id);
+                            return (
+                              <div key={bucket.id} style={{ border: '1px solid var(--color-border-light)', borderRadius: 6, padding: '0.6rem 0.75rem', background: '#F8FAFC' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                                  <span style={{ fontWeight: 600, fontSize: '0.82rem', color: '#334155' }}>{bucket.name}</span>
+                                  <span style={{ fontSize: '0.68rem', color: '#64748B' }}>{bucketOpps.length}</span>
+                                  <div style={{ flex: 1 }} />
+                                  <button
+                                    type="button"
+                                    onClick={() => addOpportunity(bucket.id)}
+                                    style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 4, cursor: 'pointer' }}
+                                  >
+                                    + Opportunity
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => renameBucket(bucket.id)}
+                                    style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 4, cursor: 'pointer' }}
+                                  >
+                                    Rename
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => deleteBucket(bucket.id)}
+                                    style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem', border: '1px solid #FCA5A5', background: 'white', color: '#DC2626', borderRadius: 4, cursor: 'pointer' }}
+                                  >
+                                    Delete
+                                  </button>
+                                </div>
+                                {bucketOpps.length === 0 ? (
+                                  <div style={{ fontSize: '0.72rem', color: '#94A3B8', fontStyle: 'italic' }}>No opportunities in this bucket.</div>
+                                ) : (
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                                    {bucketOpps.map(opp => {
+                                      const preview = (opp.notes || '').replace(/<[^>]*>/g, '').trim().slice(0, 80);
+                                      return (
+                                        <div
+                                          key={opp.id}
+                                          onClick={() => setSelectedOppId(opp.id)}
+                                          style={{ background: 'white', border: '1px solid var(--color-border-light)', borderRadius: 4, padding: '0.4rem 0.6rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                                        >
+                                          <div style={{ flex: 1, minWidth: 0 }}>
+                                            <div style={{ fontWeight: 600, fontSize: '0.78rem', color: '#1E293B' }}>{opp.title}</div>
+                                            {preview && (
+                                              <div style={{ fontSize: '0.7rem', color: '#64748B', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{preview}</div>
+                                            )}
+                                          </div>
+                                          <span style={{ fontSize: '0.6rem', color: '#94A3B8' }}>&rsaquo;</span>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Services Explored */}
           {!isNew && (
@@ -1530,11 +1908,14 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                     'HQ City': r.hqCity || '',
                     'HQ Country': r.hqCountry || '',
                     'Est. Energy (GWh/yr)': r.energyGwh === '' || r.energyGwh == null ? '' : Number(r.energyGwh) || r.energyGwh,
+                    'RA Client Match': r.raClientMatch || '',
+                    'Client Manager': r.clientManager || '',
+                    'Target Account': r.targetAccount || '',
                   }));
                   const ws = XLSX.utils.json_to_sheet(exportRows, {
-                    header: ['Company Name', 'Industry', 'Geography', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)'],
+                    header: ['Company Name', 'Industry', 'Geography', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'RA Client Match', 'Client Manager', 'Target Account'],
                   });
-                  ws['!cols'] = [{ wch: 30 }, { wch: 18 }, { wch: 18 }, { wch: 20 }, { wch: 16 }, { wch: 20 }];
+                  ws['!cols'] = [{ wch: 30 }, { wch: 18 }, { wch: 18 }, { wch: 20 }, { wch: 16 }, { wch: 20 }, { wch: 24 }, { wch: 20 }, { wch: 24 }];
                   const wb = XLSX.utils.book_new();
                   XLSX.utils.book_append_sheet(wb, ws, 'Portfolio Companies');
                   const safeName = (fields.company || 'company').replace(/[^a-z0-9]+/gi, '_');
@@ -1565,6 +1946,9 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                           hqCity: String(findKey(['hqcity', 'city']) || '').trim(),
                           hqCountry: String(findKey(['hqcountry', 'country']) || '').trim(),
                           energyGwh: String(findKey(['energy', 'gwh']) || '').trim(),
+                          raClientMatch: String(findKey(['raclientmatch', 'raclient']) || '').trim(),
+                          clientManager: String(findKey(['clientmanager', 'manager']) || '').trim(),
+                          targetAccount: String(findKey(['targetaccount', 'target']) || '').trim(),
                         };
                       })
                       .filter(r => r.companyName);
@@ -1579,6 +1963,59 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                   e.target.value = '';
                 }
                 const totalEnergy = rows.reduce((sum, r) => sum + (Number(r.energyGwh) || 0), 0);
+
+                // Target Accounts — full list of names from the uploaded sheet (same source as MyAccountsView)
+                const targetAccountNames = (() => {
+                  const names = new Set();
+                  const sheets = targetAccountsData?.sheets;
+                  const sheetNames = targetAccountsData?.sheetNames;
+                  if (!sheets || !sheetNames) return [];
+                  const companyKeywords = ['account name', 'account', 'company name', 'company', 'client name', 'client'];
+                  for (const sn of sheetNames) {
+                    const sheet = sheets[sn];
+                    if (!sheet?.records?.length) continue;
+                    const headers = sheet.headers || Object.keys(sheet.records[0]).filter(k => k !== '_id');
+                    let companyCol = null;
+                    for (const kw of companyKeywords) {
+                      for (const h of headers) {
+                        if ((h || '').toLowerCase().trim() === kw) { companyCol = h; break; }
+                      }
+                      if (companyCol) break;
+                    }
+                    if (!companyCol) {
+                      for (const kw of companyKeywords) {
+                        for (const h of headers) {
+                          if ((h || '').toLowerCase().includes(kw)) { companyCol = h; break; }
+                        }
+                        if (companyCol) break;
+                      }
+                    }
+                    if (!companyCol) continue;
+                    for (const rec of sheet.records) {
+                      const v = (rec[companyCol] || '').toString().trim();
+                      if (v) names.add(v);
+                    }
+                  }
+                  return [...names].sort((a, b) => a.localeCompare(b));
+                })();
+
+                function findTargetSuggestions(companyName) {
+                  const lower = (companyName || '').toLowerCase().trim();
+                  if (!lower) return targetAccountNames.slice(0, 8);
+                  const scored = [];
+                  for (const name of targetAccountNames) {
+                    const n = name.toLowerCase();
+                    if (n === lower) { scored.push({ name, score: 100 }); continue; }
+                    if (n.includes(lower) || lower.includes(n)) { scored.push({ name, score: 80 }); continue; }
+                    const firstLower = lower.split(/[^a-z0-9]+/)[0];
+                    const firstN = n.split(/[^a-z0-9]+/)[0];
+                    if (firstLower && firstLower.length >= 4 && firstLower === firstN) {
+                      scored.push({ name, score: 60 });
+                    }
+                  }
+                  scored.sort((a, b) => b.score - a.score);
+                  return scored.slice(0, 8).map(s => s.name);
+                }
 
                 // RA Client matching helpers
                 function findRaSuggestions(companyName) {
@@ -1675,6 +2112,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                             <col style={{ width: portfolioColWidths.hqCountry + 'px' }} />
                             <col style={{ width: portfolioColWidths.energy + 'px' }} />
                             <col style={{ width: portfolioColWidths.raClient + 'px' }} />
+                            <col style={{ width: portfolioColWidths.clientManager + 'px' }} />
+                            <col style={{ width: portfolioColWidths.targetAccount + 'px' }} />
                             <col style={{ width: '28px' }} />
                           </colgroup>
                           <thead>
@@ -1687,6 +2126,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                               <th style={thBase}>HQ Country<span style={resizeHandleStyle} onMouseDown={e => startResize('hqCountry', e)} /></th>
                               <th style={{ ...thBase, textAlign: 'right' }}>Est. Energy (GWh/yr)<span style={resizeHandleStyle} onMouseDown={e => startResize('energy', e)} /></th>
                               <th style={thBase}>RA Client Match<span style={resizeHandleStyle} onMouseDown={e => startResize('raClient', e)} /></th>
+                              <th style={thBase}>Client Manager<span style={resizeHandleStyle} onMouseDown={e => startResize('clientManager', e)} /></th>
+                              <th style={thBase}>Target Account<span style={resizeHandleStyle} onMouseDown={e => startResize('targetAccount', e)} /></th>
                               <th style={{ padding: '0.3rem 0.3rem', borderBottom: '1px solid var(--color-border)' }}></th>
                             </tr>
                           </thead>
@@ -1753,6 +2194,60 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                     </div>
                                   )}
                                 </td>
+                                <td style={{ padding: '0.15rem 0.25rem' }}>
+                                  <input
+                                    value={r.clientManager || ''}
+                                    onChange={e => updateRow(i, { clientManager: e.target.value })}
+                                    placeholder="—"
+                                    style={{ width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: 'var(--color-text)' }}
+                                    onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; e.target.style.background = '#fff'; }}
+                                    onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
+                                  />
+                                </td>
+                                {(() => {
+                                  const targetOpen = targetAccountPickerOpen === i;
+                                  const targetSuggestions = findTargetSuggestions(r.companyName);
+                                  const hasTarget = !!r.targetAccount;
+                                  return (
+                                    <td style={{ padding: '0.15rem 0.25rem', position: 'relative' }}>
+                                      <button
+                                        onClick={() => setTargetAccountPickerOpen(targetOpen ? null : i)}
+                                        style={{ width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.68rem', fontFamily: 'inherit', background: hasTarget ? '#DBEAFE' : 'transparent', color: hasTarget ? '#1E40AF' : (targetSuggestions.length > 0 ? '#3B7DDD' : '#CBD5E1'), cursor: 'pointer', textAlign: 'left', fontWeight: hasTarget ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                        onMouseEnter={e => e.currentTarget.style.border = '1px solid var(--color-accent)'}
+                                        onMouseLeave={e => e.currentTarget.style.border = '1px solid transparent'}
+                                      >
+                                        {hasTarget ? `✓ ${r.targetAccount}` : (targetAccountNames.length === 0 ? '— No target list loaded —' : (targetSuggestions.length > 0 ? `${targetSuggestions.length} suggestion${targetSuggestions.length === 1 ? '' : 's'} ▾` : '— Click to map —'))}
+                                      </button>
+                                      {targetOpen && (
+                                        <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 100, background: '#fff', border: '1px solid var(--color-border)', borderRadius: '5px', boxShadow: '0 4px 12px rgba(0,0,0,0.12)', minWidth: '240px', maxHeight: '260px', overflowY: 'auto', marginTop: '2px' }}>
+                                        {hasTarget && (
+                                          <button
+                                            onClick={() => { updateRow(i, { targetAccount: '' }); setTargetAccountPickerOpen(null); }}
+                                            style={{ display: 'block', width: '100%', padding: '0.35rem 0.6rem', border: 'none', background: 'none', textAlign: 'left', fontSize: '0.68rem', cursor: 'pointer', fontFamily: 'inherit', color: '#DC2626', borderBottom: '1px solid #F1F5F9' }}
+                                            onMouseEnter={e => e.currentTarget.style.background = '#FEF2F2'}
+                                            onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                                          >× Clear mapping</button>
+                                        )}
+                                        {targetAccountNames.length === 0 && (
+                                          <div style={{ padding: '0.4rem 0.6rem', fontSize: '0.68rem', color: '#94A3B8', fontStyle: 'italic' }}>Upload a Target Accounts file on the My Accounts tab first.</div>
+                                        )}
+                                        {targetAccountNames.length > 0 && targetSuggestions.length === 0 && !hasTarget && (
+                                          <div style={{ padding: '0.4rem 0.6rem', fontSize: '0.68rem', color: '#94A3B8', fontStyle: 'italic' }}>No obvious matches — pick manually below.</div>
+                                        )}
+                                        {(targetSuggestions.length > 0 ? targetSuggestions : targetAccountNames.slice(0, 50)).map(s => (
+                                          <button
+                                            key={s}
+                                            onClick={() => { updateRow(i, { targetAccount: s }); setTargetAccountPickerOpen(null); }}
+                                            style={{ display: 'block', width: '100%', padding: '0.35rem 0.6rem', border: 'none', background: r.targetAccount === s ? '#DBEAFE' : 'none', textAlign: 'left', fontSize: '0.7rem', cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text)' }}
+                                            onMouseEnter={e => e.currentTarget.style.background = '#EFF6FF'}
+                                            onMouseLeave={e => e.currentTarget.style.background = r.targetAccount === s ? '#DBEAFE' : 'none'}
+                                          >{s}</button>
+                                        ))}
+                                        </div>
+                                      )}
+                                    </td>
+                                  );
+                                })()}
                                 <td style={{ padding: '0.15rem 0.25rem', textAlign: 'center' }}>
                                   <button
                                     onClick={() => deleteRow(i)}
@@ -1769,7 +2264,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                               <tr style={{ background: '#F8FAFC', fontWeight: 700 }}>
                                 <td colSpan={6} style={{ padding: '0.3rem 0.4rem', textAlign: 'right', fontSize: '0.65rem', color: '#64748B', textTransform: 'uppercase' }}>Total Est. Energy</td>
                                 <td style={{ padding: '0.3rem 0.4rem', textAlign: 'right' }}>{totalEnergy.toLocaleString()}</td>
-                                <td colSpan={2}></td>
+                                <td colSpan={4}></td>
                               </tr>
                             )}
                           </tbody>
