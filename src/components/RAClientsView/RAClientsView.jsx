@@ -98,16 +98,37 @@ export function RAClientsView() {
       if (!sheet) throw new Error('Workbook has no sheets');
       const parsed = XLSX.utils.sheet_to_json(sheet, { defval: '' });
       if (!Array.isArray(parsed) || parsed.length === 0) throw new Error('No rows parsed');
-      // Must have a usable name column
-      const first = parsed[0] || {};
-      const hasName = Object.keys(first).some(k => {
-        const lk = k.trim().toLowerCase();
-        return lk === 'client name' || lk === 'mdm name';
+
+      // Fuzzy header detection — accept a variety of name/CM header spellings.
+      const headers = Object.keys(parsed[0] || {});
+      const findHeader = (patterns) => headers.find(h => {
+        const lk = (h || '').trim().toLowerCase();
+        return patterns.some(p => lk === p || lk.includes(p));
       });
-      if (!hasName) throw new Error('No "Client Name" (or "MDM Name") column found — required for matching on Portfolio Companies.');
-      // Drop fully-empty rows
-      const cleaned = parsed.filter(r => raClientName(r));
-      if (cleaned.length === 0) throw new Error('All rows are missing a client name.');
+      const nameHeader = findHeader(['client name', 'mdm name', 'client', 'company name', 'company', 'account name', 'account', 'name']);
+      const cmHeader = findHeader(['cm', 'client manager', 'client management team', 'client mgmt', 'manager', 'owner']);
+
+      if (!nameHeader) {
+        throw new Error(
+          `Could not find a name column. Headers found: ${headers.map(h => `"${h}"`).join(', ') || '(none)'}. ` +
+          `Rename your first column to "Client Name".`
+        );
+      }
+
+      // Normalize every row to the canonical shape: Client Name + CM (+ keep originals too).
+      const cleaned = parsed
+        .map(r => {
+          const out = { ...r };
+          out['Client Name'] = String(r[nameHeader] ?? '').trim();
+          if (cmHeader) out['CM'] = String(r[cmHeader] ?? '').trim();
+          return out;
+        })
+        .filter(r => r['Client Name']);
+
+      if (cleaned.length === 0) {
+        throw new Error(`No rows had a non-empty "${nameHeader}" value.`);
+      }
+
       saveRaClientsOverride(cleaned);
       setStore(loadEffectiveRaClients());
     } catch (err) {
