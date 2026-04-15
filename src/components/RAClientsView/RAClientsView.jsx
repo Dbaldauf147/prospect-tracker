@@ -115,12 +115,20 @@ export function RAClientsView() {
         );
       }
 
-      // Normalize every row to the canonical shape: Client Name + CM (+ keep originals too).
+      // Normalize every row to the canonical shape: replace the source headers
+      // with "Client Name" / "CM" so we don't end up with duplicate columns when
+      // the uploaded spelling differs by case/whitespace (e.g. " Client Name ").
       const cleaned = parsed
         .map(r => {
           const out = { ...r };
-          out['Client Name'] = String(r[nameHeader] ?? '').trim();
-          if (cmHeader) out['CM'] = String(r[cmHeader] ?? '').trim();
+          const nameVal = String(r[nameHeader] ?? '').trim();
+          if (nameHeader !== 'Client Name') delete out[nameHeader];
+          out['Client Name'] = nameVal;
+          if (cmHeader) {
+            const cmVal = String(r[cmHeader] ?? '').trim();
+            if (cmHeader !== 'CM') delete out[cmHeader];
+            out['CM'] = cmVal;
+          }
           return out;
         })
         .filter(r => r['Client Name']);
