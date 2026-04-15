@@ -67,6 +67,12 @@ export function RAClientsView() {
 
   const rows = useMemo(() => data.map((r, i) => ({ ...r, id: i })), [data]);
   const columns = useMemo(() => buildColumns(rows), [rows]);
+  // Namespace the table by the column-key signature so that uploading a
+  // different-shape file doesn't inherit stale hidden-columns state.
+  const tableId = useMemo(
+    () => 'ra-clients:' + columns.map(c => c.key).sort().join('|'),
+    [columns]
+  );
   const alwaysVisible = useMemo(() => {
     const first = columns[0];
     return first ? [first.key] : [];
@@ -171,7 +177,8 @@ export function RAClientsView() {
         {search && <span className={styles.resultCount}>{filtered.length} results</span>}
       </div>
       <DataTable
-        tableId="ra-clients"
+        key={tableId}
+        tableId={tableId}
         columns={columns}
         rows={filtered}
         alwaysVisible={alwaysVisible}
