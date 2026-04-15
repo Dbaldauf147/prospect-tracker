@@ -612,7 +612,17 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
 
   useEffect(() => {
     if (!tagsDropdownOpen) return;
-    const h = e => { if (tagsDropdownRef.current && !tagsDropdownRef.current.contains(e.target)) setTagsDropdownOpen(false); };
+    const h = e => {
+      const target = e.target;
+      // Keep open if the click is inside the tag dropdown wrapper OR if the target
+      // is a node that was detached during a re-render (selecting a tag can reorder
+      // the labels, and a detached node fails .contains() even though it originated
+      // inside the dropdown).
+      if (!(target instanceof Node)) return;
+      if (!target.isConnected) return;
+      if (tagsDropdownRef.current && tagsDropdownRef.current.contains(target)) return;
+      setTagsDropdownOpen(false);
+    };
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, [tagsDropdownOpen]);
@@ -791,7 +801,12 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
                 {COUNTRIES.map(c => <option key={c} value={c} />)}
               </datalist>
             </div>
-            <div className={styles.modalSpan2} ref={tagsDropdownRef}>
+            <div
+              className={styles.modalSpan2}
+              ref={tagsDropdownRef}
+              onMouseDown={e => e.stopPropagation()}
+              onClick={e => e.stopPropagation()}
+            >
               <label className={styles.modalLabel} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                 <span>Dan's Tags</span>
                 {tagsSaveStatus && (

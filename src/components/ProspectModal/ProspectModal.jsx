@@ -571,7 +571,12 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
           </div>
           <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>Old Emails <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(comma-separated, inactive)</span></label><input style={inputStyle} value={f.oldEmails} onChange={e => set('oldEmails', e.target.value)} placeholder="old.email@company.com" /></div>
           <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>Notes</label><textarea style={{ ...inputStyle, resize: 'vertical', minHeight: '50px', lineHeight: 1.4 }} value={f.notes} onChange={e => set('notes', e.target.value)} rows={2} placeholder="Add notes about this contact..." /></div>
-          <div style={{ gridColumn: 'span 2' }} ref={tagsRef}>
+          <div
+            style={{ gridColumn: 'span 2' }}
+            ref={tagsRef}
+            onMouseDown={e => e.stopPropagation()}
+            onClick={e => e.stopPropagation()}
+          >
             <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
               <span>Tags</span>
               {tagsSaveStatus && (
