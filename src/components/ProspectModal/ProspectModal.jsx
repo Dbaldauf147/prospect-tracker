@@ -2193,7 +2193,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                     // Row 2: Subtitle — "{Company} · Portfolio Companies"
                     ws.mergeCells(2, 1, 2, headers.length);
                     const subCell = ws.getCell(2, 1);
-                    subCell.value = `${fields.company || 'Company'}  ·  Portfolio Companies`;
+                    subCell.value = fields.company || 'Company';
                     subCell.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: 'FF64748B' } };
                     subCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
                     ws.getRow(2).height = 20;
