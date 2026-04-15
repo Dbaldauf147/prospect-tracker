@@ -1347,12 +1347,13 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                         [{ 'header': [1, 2, 3, false] }],
                         ['bold', 'italic', 'underline', 'strike'],
                         [{ 'list': 'ordered' }, { 'list': 'bullet' }],
+                        [{ 'indent': '-1' }, { 'indent': '+1' }],
                         ['link', 'blockquote', 'code-block'],
                         ['clean'],
                       ],
                       clipboard: { matchVisual: false },
                     }}
-                    formats={['header', 'bold', 'italic', 'underline', 'strike', 'list', 'link', 'blockquote', 'code-block']}
+                    formats={['header', 'bold', 'italic', 'underline', 'strike', 'list', 'indent', 'link', 'blockquote', 'code-block']}
                   />
                 </div>
               )}
@@ -1451,7 +1452,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                           ],
                           clipboard: { matchVisual: false },
                         }}
-                        formats={['header', 'bold', 'italic', 'underline', 'strike', 'list', 'link', 'blockquote', 'code-block']}
+                        formats={['header', 'bold', 'italic', 'underline', 'strike', 'list', 'indent', 'link', 'blockquote', 'code-block']}
                       />
                     </div>
                   ) : (
