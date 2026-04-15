@@ -251,6 +251,21 @@ function industryTier(industry) {
   return null;
 }
 
+const PORTFOLIO_FIELD_OPTIONS = [
+  { key: '', label: '— Ignore this column —' },
+  { key: 'companyName', label: 'Company Name (required)' },
+  { key: 'industry', label: 'Industry' },
+  { key: 'hqCity', label: 'HQ City' },
+  { key: 'hqCountry', label: 'HQ Country' },
+  { key: 'energyGwh', label: 'Est. Energy (GWh/yr)' },
+  { key: 'siteCount', label: 'Est. Site Count' },
+  { key: 'pcDescription', label: 'PC Description' },
+  { key: 'acquisitionYear', label: 'Acquisition Year' },
+  { key: 'raClientMatch', label: 'RA Client Match' },
+  { key: 'clientManager', label: 'Client Manager' },
+  { key: 'targetAccount', label: 'Target Account' },
+];
+
 function computePortfolioFitScore(row, maxEnergy, maxSites, yearRange) {
   const tier = industryTier(row.industry);
   const tierVal = tier ? TIER_VALUE[tier] : 0;
@@ -803,6 +818,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
   const [portfolioSortByRank, setPortfolioSortByRank] = useState(false);
   const [raClientPickerOpen, setRaClientPickerOpen] = useState(null); // row index
   const [targetAccountPickerOpen, setTargetAccountPickerOpen] = useState(null); // row index
+  // Portfolio Companies upload preview — shows detected column mapping before applying
+  const [portfolioUpload, setPortfolioUpload] = useState(null); // { fileName, headers: string[], rows: object[], mapping: { [header]: fieldKey|'' } }
   const [raClientPickerQuery, setRaClientPickerQuery] = useState('');
   const [targetAccountPickerQuery, setTargetAccountPickerQuery] = useState('');
   // Reset the search query whenever a picker opens / closes / moves rows
@@ -2325,50 +2342,45 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                 }
                 async function handleUpload(e) {
                   const file = e.target.files?.[0];
+                  e.target.value = '';
                   if (!file) return;
                   try {
                     const buf = await file.arrayBuffer();
                     const wb = XLSX.read(buf);
                     const sheet = wb.Sheets[wb.SheetNames[0]];
                     const data = XLSX.utils.sheet_to_json(sheet, { defval: '' });
-                    const parsed = data
-                      .map(r => {
-                        const findKey = (keywords) => {
-                          const keys = Object.keys(r);
-                          for (const kw of keywords) {
-                            const k = keys.find(key => key.toLowerCase().replace(/[^a-z0-9]/g, '').includes(kw));
-                            if (k) return r[k];
-                          }
-                          return '';
-                        };
-                        return {
-                          companyName: String(findKey(['companyname', 'company']) || '').trim(),
-                          industry: String(findKey(['industry']) || '').trim(),
-                          hqCity: String(findKey(['hqcity', 'city']) || '').trim(),
-                          hqCountry: String(findKey(['hqcountry', 'country']) || '').trim(),
-                          energyGwh: String(findKey(['energy', 'gwh']) || '').trim(),
-                          siteCount: String(findKey(['sitecount', 'sites', 'numberofsites', 'estsitecount']) || '').trim(),
-                          pcDescription: String(findKey(['pcdescription', 'pcdesc', 'description']) || '').trim(),
-                          acquisitionYear: String(findKey(['acquisitionyear', 'acquired', 'yearacquired', 'acqyear']) || '').trim(),
-                          raClientMatch: String(findKey(['raclientmatch', 'raclient']) || '').trim(),
-                          clientManager: String(findKey(['clientmanager', 'manager']) || '').trim(),
-                          targetAccount: String(findKey(['targetaccount', 'target']) || '').trim(),
-                        };
-                      })
-                      .filter(r => r.companyName);
-                    if (parsed.length > 0) {
-                      if (rows.length > 0 && !window.confirm(`Replace the current ${rows.length} portfolio compan${rows.length === 1 ? 'y' : 'ies'} with ${parsed.length} row${parsed.length === 1 ? '' : 's'} from the uploaded file? This cannot be undone.`)) {
-                        e.target.value = '';
-                        return;
+                    if (!data.length) { alert('Uploaded file has no rows.'); return; }
+                    const headers = Object.keys(data[0]);
+
+                    // Auto-detect mapping: uploaded header -> internal field key
+                    const patterns = {
+                      companyName: ['companyname', 'company'],
+                      industry: ['industry'],
+                      hqCity: ['hqcity', 'city'],
+                      hqCountry: ['hqcountry', 'country'],
+                      energyGwh: ['energy', 'gwh'],
+                      siteCount: ['sitecount', 'sites', 'numberofsites', 'estsitecount'],
+                      pcDescription: ['pcdescription', 'pcdesc', 'description'],
+                      acquisitionYear: ['acquisitionyear', 'acquired', 'yearacquired', 'acqyear'],
+                      raClientMatch: ['raclientmatch', 'raclient'],
+                      clientManager: ['clientmanager', 'manager'],
+                      targetAccount: ['targetaccount', 'target'],
+                    };
+                    const mapping = {};
+                    const used = new Set();
+                    for (const h of headers) {
+                      const norm = (h || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+                      let assigned = '';
+                      for (const [fieldKey, pats] of Object.entries(patterns)) {
+                        if (used.has(fieldKey)) continue;
+                        if (pats.some(p => norm.includes(p))) { assigned = fieldKey; used.add(fieldKey); break; }
                       }
-                      set('portfolioCompanies', parsed);
-                    } else {
-                      alert('No valid rows found in the uploaded file.');
+                      mapping[h] = assigned;
                     }
+                    setPortfolioUpload({ fileName: file.name, headers, rows: data, mapping });
                   } catch (err) {
                     alert('Failed to parse file: ' + (err.message || 'Unknown error'));
                   }
-                  e.target.value = '';
                 }
                 const totalEnergy = rows.reduce((sum, r) => sum + (Number(r.energyGwh) || 0), 0);
                 const totalSites = rows.reduce((sum, r) => sum + (Number(r.siteCount) || 0), 0);
@@ -3082,6 +3094,130 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
           onSaveNickname={handleSaveContactNickname}
           emailDomains={(fields.emailDomain || '').split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)}
         />
+      )}
+      {portfolioUpload && createPortal(
+        (() => {
+          const { fileName, headers, rows: fileRows, mapping } = portfolioUpload;
+          const sampleRow = fileRows[0] || {};
+          const mappedFields = new Set(Object.values(mapping).filter(Boolean));
+          const hasCompanyName = mappedFields.has('companyName');
+          const usedFieldCounts = {};
+          for (const f of Object.values(mapping)) if (f) usedFieldCounts[f] = (usedFieldCounts[f] || 0) + 1;
+          const hasDuplicateMapping = Object.values(usedFieldCounts).some(n => n > 1);
+          function updateMap(header, fieldKey) {
+            setPortfolioUpload(prev => prev ? { ...prev, mapping: { ...prev.mapping, [header]: fieldKey } } : prev);
+          }
+          function cancel() { setPortfolioUpload(null); }
+          function confirmImport() {
+            if (!hasCompanyName) { alert('You must map at least one column to "Company Name" before importing.'); return; }
+            if (hasDuplicateMapping) { alert('Each field can only be mapped once. Set duplicate mappings to "Ignore" or change one of them.'); return; }
+            const parsed = fileRows
+              .map(r => {
+                const out = {
+                  companyName: '', industry: '', hqCity: '', hqCountry: '',
+                  energyGwh: '', siteCount: '', pcDescription: '', acquisitionYear: '',
+                  raClientMatch: '', clientManager: '', targetAccount: '',
+                };
+                for (const [header, fieldKey] of Object.entries(mapping)) {
+                  if (!fieldKey) continue;
+                  out[fieldKey] = String(r[header] ?? '').trim();
+                }
+                return out;
+              })
+              .filter(r => r.companyName);
+            if (parsed.length === 0) {
+              alert('No rows had a non-empty Company Name — nothing to import.');
+              return;
+            }
+            const existing = fields.portfolioCompanies || [];
+            if (existing.length > 0 && !window.confirm(`Replace the current ${existing.length} portfolio compan${existing.length === 1 ? 'y' : 'ies'} with ${parsed.length} row${parsed.length === 1 ? '' : 's'} from "${fileName}"? This cannot be undone.`)) {
+              return;
+            }
+            set('portfolioCompanies', parsed);
+            setPortfolioUpload(null);
+          }
+          return (
+            <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.55)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }} onClick={cancel}>
+              <div
+                onClick={e => e.stopPropagation()}
+                style={{ background: '#fff', borderRadius: 10, boxShadow: '0 20px 60px rgba(0,0,0,0.25)', width: 'min(780px, 100%)', maxHeight: '90vh', display: 'flex', flexDirection: 'column', fontFamily: 'inherit' }}
+              >
+                <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid var(--color-border-light)' }}>
+                  <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-text)' }}>Review column mapping</div>
+                  <div style={{ fontSize: '0.8rem', color: '#64748B', marginTop: '0.2rem' }}>
+                    <strong>{fileRows.length}</strong> row{fileRows.length === 1 ? '' : 's'} from <em>{fileName}</em> — confirm each column maps to the right field, then import.
+                  </div>
+                  {!hasCompanyName && (
+                    <div style={{ marginTop: '0.5rem', padding: '0.4rem 0.6rem', background: '#FEF2F2', border: '1px solid #FCA5A5', color: '#991B1B', borderRadius: 6, fontSize: '0.75rem' }}>
+                      A column must map to <strong>Company Name</strong> before you can import.
+                    </div>
+                  )}
+                  {hasDuplicateMapping && (
+                    <div style={{ marginTop: '0.5rem', padding: '0.4rem 0.6rem', background: '#FFFBEB', border: '1px solid #FCD34D', color: '#854D0E', borderRadius: 6, fontSize: '0.75rem' }}>
+                      Some fields are mapped by more than one column. Only one mapping can win — set duplicates to "Ignore" or change them.
+                    </div>
+                  )}
+                </div>
+                <div style={{ flex: 1, overflowY: 'auto', padding: '0.75rem 1.25rem' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+                    <thead>
+                      <tr style={{ background: '#F8FAFC', textAlign: 'left' }}>
+                        <th style={{ padding: '0.4rem 0.5rem', borderBottom: '1px solid var(--color-border)', fontSize: '0.7rem', color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>File Column</th>
+                        <th style={{ padding: '0.4rem 0.5rem', borderBottom: '1px solid var(--color-border)', fontSize: '0.7rem', color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Sample Value</th>
+                        <th style={{ padding: '0.4rem 0.5rem', borderBottom: '1px solid var(--color-border)', fontSize: '0.7rem', color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Maps To</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {headers.map(h => {
+                        const fieldKey = mapping[h] || '';
+                        const sample = String(sampleRow[h] ?? '').slice(0, 80);
+                        const isDuplicate = fieldKey && usedFieldCounts[fieldKey] > 1;
+                        const isRequiredHit = fieldKey === 'companyName';
+                        return (
+                          <tr key={h} style={{ borderBottom: '1px solid #F1F5F9' }}>
+                            <td style={{ padding: '0.4rem 0.5rem', fontWeight: 600, color: 'var(--color-text)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={h}>{h || <em style={{ color: '#94A3B8' }}>(blank header)</em>}</td>
+                            <td style={{ padding: '0.4rem 0.5rem', color: '#64748B', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontStyle: sample ? 'normal' : 'italic' }} title={String(sampleRow[h] ?? '')}>{sample || '(empty)'}</td>
+                            <td style={{ padding: '0.4rem 0.5rem' }}>
+                              <select
+                                value={fieldKey}
+                                onChange={e => updateMap(h, e.target.value)}
+                                style={{
+                                  width: '100%', padding: '0.3rem 0.4rem',
+                                  border: `1px solid ${isDuplicate ? '#FCD34D' : (isRequiredHit ? '#86EFAC' : 'var(--color-border)')}`,
+                                  background: isDuplicate ? '#FFFBEB' : (isRequiredHit ? '#F0FDF4' : '#fff'),
+                                  borderRadius: 4, fontSize: '0.75rem', fontFamily: 'inherit',
+                                  color: fieldKey ? 'var(--color-text)' : '#94A3B8',
+                                }}
+                              >
+                                {PORTFOLIO_FIELD_OPTIONS.map(o => (
+                                  <option key={o.key} value={o.key}>{o.label}</option>
+                                ))}
+                              </select>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{ padding: '0.75rem 1.25rem', borderTop: '1px solid var(--color-border-light)', display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+                  <button
+                    type="button"
+                    onClick={cancel}
+                    style={{ padding: '0.4rem 0.9rem', border: '1px solid var(--color-border)', background: '#fff', borderRadius: 6, fontSize: '0.8rem', fontFamily: 'inherit', cursor: 'pointer' }}
+                  >Cancel</button>
+                  <button
+                    type="button"
+                    onClick={confirmImport}
+                    disabled={!hasCompanyName || hasDuplicateMapping}
+                    style={{ padding: '0.4rem 0.9rem', border: 'none', background: (!hasCompanyName || hasDuplicateMapping) ? '#CBD5E1' : 'var(--color-accent)', color: '#fff', borderRadius: 6, fontSize: '0.8rem', fontFamily: 'inherit', cursor: (!hasCompanyName || hasDuplicateMapping) ? 'not-allowed' : 'pointer', fontWeight: 600 }}
+                  >Import {fileRows.length} row{fileRows.length === 1 ? '' : 's'}</button>
+                </div>
+              </div>
+            </div>
+          );
+        })(),
+        document.body
       )}
     </div>
   );
