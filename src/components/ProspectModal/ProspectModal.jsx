@@ -223,32 +223,60 @@ const EMPTY = {
 // ── Inline HubSpot Contact Editor ──
 const TAG_OPTIONS = ['ESG', 'Procurement', 'Private Equity', 'Real Estate', 'Capital Planning', 'Dan Key Target', 'Test', 'EU'];
 
-// Portfolio-company industry fit: maps an uploaded Industry string directly to an overall fit tier.
-const TIER_VALUE = { High: 1, Medium: 0.5, Low: 0 };
+// Portfolio-company sector scoring. Each sector has a 1-10 fit score; the tier
+// bucket (High/Medium/Low) is derived from the score for color-coding only.
+const SECTOR_SCORES = {
+  'Industrial / Manufacturing': 9.5,
+  'Data Centers': 9.3,
+  'Cold Storage / Food Mfg': 9.0,
+  'Healthcare / Life Sciences': 8.6,
+  'Real Estate / Facilities': 8.4,
+  'Hospitality / Food Service': 7.8,
+  'Retail / Consumer': 6.5,
+  'Warehousing / 3PL': 4.2,
+  'Tech / Software & Office Occupiers': 3.0,
+};
 const TIER_COLORS = {
   High: { bg: '#DCFCE7', color: '#166534', border: '#86EFAC' },
   Medium: { bg: '#FEF9C3', color: '#854D0E', border: '#FDE68A' },
   Low: { bg: '#F1F5F9', color: '#475569', border: '#CBD5E1' },
 };
 
-// Fuzzy-match the uploaded Industry value to a High/Medium/Low fit tier.
-// Returns null when no keyword hits so the UI can show a neutral state.
-function industryTier(industry) {
+// Fuzzy-match the uploaded Industry value to one of the defined sectors.
+// Check order matters: the more specific patterns run first so "Food Mfg"
+// isn't swallowed by the generic "manufacturing" rule.
+function industrySector(industry) {
   const s = (industry || '').toLowerCase().trim();
   if (!s) return null;
-  // High — heavy industrial / energy-intensive / facility-heavy
-  if (/\bdata\s*cent|datacent|colocation/.test(s)) return 'High';
-  if (/cold\s*storag|food\s*m(fg|anufactur|anuf|nfg)|food\s*process|beverage\s*m(fg|anuf)/.test(s)) return 'High';
-  if (/healthcare|life\s*scienc|pharma|biotech|medical|hospital|clinic/.test(s)) return 'High';
-  if (/real\s*estate|facilit|propert|\breit\b|infrastructure/.test(s)) return 'High';
-  if (/industrial|manufactur|factory|\bplant\b|chemical|material|\benergy\b|utilit|mining|metal|petroleum|\boil\b|\bgas\b|steel|cement|paper|pulp|automotive|aerospace/.test(s)) return 'High';
-  // Medium — consumer-facing / distribution
-  if (/hotel|restaurant|food\s*service|lodging|qsr|hospitality/.test(s)) return 'Medium';
-  if (/warehous|\b3pl\b|logistic|distribution|freight|transport|supply\s*chain/.test(s)) return 'Medium';
-  if (/retail|consumer|grocery|apparel|e-?commerce/.test(s)) return 'Medium';
-  // Low — office-only / digital
-  if (/tech|software|saas|fintech|media|telecom|advertis|\boffice\b|profession|financ|insur|\bbank|asset\s*mgmt|asset\s*managem/.test(s)) return 'Low';
+  if (/\bdata\s*cent|datacent|colocation/.test(s)) return 'Data Centers';
+  if (/cold\s*storag|food\s*m(fg|anufactur|anuf|nfg)|food\s*process|beverage\s*m(fg|anuf)/.test(s)) return 'Cold Storage / Food Mfg';
+  if (/healthcare|life\s*scienc|pharma|biotech|medical|hospital|clinic/.test(s)) return 'Healthcare / Life Sciences';
+  if (/real\s*estate|facilit|propert|\breit\b|infrastructure/.test(s)) return 'Real Estate / Facilities';
+  if (/hotel|restaurant|food\s*service|lodging|qsr|hospitality/.test(s)) return 'Hospitality / Food Service';
+  if (/warehous|\b3pl\b|logistic|distribution|freight|transport|supply\s*chain/.test(s)) return 'Warehousing / 3PL';
+  if (/retail|consumer|grocery|apparel|e-?commerce/.test(s)) return 'Retail / Consumer';
+  if (/tech|software|saas|fintech|media|telecom|advertis|\boffice\b|profession|financ|insur|\bbank|asset\s*mgmt|asset\s*managem/.test(s)) return 'Tech / Software & Office Occupiers';
+  if (/industrial|manufactur|factory|\bplant\b|chemical|material|\benergy\b|utilit|mining|metal|petroleum|\boil\b|\bgas\b|steel|cement|paper|pulp|automotive|aerospace/.test(s)) return 'Industrial / Manufacturing';
   return null;
+}
+
+function sectorScoreFor(sector) {
+  return sector && SECTOR_SCORES[sector] != null ? SECTOR_SCORES[sector] : 0;
+}
+
+function sectorTier(sector) {
+  const s = sectorScoreFor(sector);
+  if (s >= 8) return 'High';
+  if (s >= 5) return 'Medium';
+  if (s > 0) return 'Low';
+  return null;
+}
+
+// Backward-compatible wrapper — callers that just want the High/Medium/Low
+// color bucket continue to work. The rank score now uses the raw sector
+// score (see computePortfolioFitScore) rather than a coarse tier value.
+function industryTier(industry) {
+  return sectorTier(industrySector(industry));
 }
 
 const PORTFOLIO_FIELD_OPTIONS = [
@@ -268,8 +296,9 @@ const PORTFOLIO_FIELD_OPTIONS = [
 ];
 
 function computePortfolioFitScore(row, maxEnergy, maxSites, yearRange) {
-  const tier = industryTier(row.industry);
-  const tierVal = tier ? TIER_VALUE[tier] : 0;
+  // Sector score is 1-10; normalize to 0-1 for the composite.
+  const sector = industrySector(row.industry);
+  const sectorVal = sectorScoreFor(sector) / 10;
   const energyPct = maxEnergy > 0 ? Math.min(1, (Number(row.energyGwh) || 0) / maxEnergy) : 0;
   const sitesPct = maxSites > 0 ? Math.min(1, (Number(row.siteCount) || 0) / maxSites) : 0;
   // Recency of acquisition: most recent year in the table -> 1.0, oldest -> 0.0
@@ -280,7 +309,7 @@ function computePortfolioFitScore(row, maxEnergy, maxSites, yearRange) {
   } else if (year && yearRange && yearRange.max === yearRange.min) {
     yearPct = 1;
   }
-  const raw = energyPct * 0.4 + tierVal * 0.25 + sitesPct * 0.2 + yearPct * 0.15;
+  const raw = energyPct * 0.4 + sectorVal * 0.25 + sitesPct * 0.2 + yearPct * 0.15;
   return Math.round(raw * 100);
 }
 
@@ -2315,26 +2344,33 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
 
                     addSectionHeader('Component Weights');
                     addKV('Est. Energy (GWh/yr)', '40% — linearly normalized against the maximum value in the exported table. Largest single driver of the score.');
-                    addKV('Industry Fit Tier', '25% — derived from the Industry column via keyword matching (see below).');
+                    addKV('Sector Fit Score', '25% — a per-sector 1-10 score (see sector table below), divided by 10.');
                     addKV('Est. Site Count', '20% — linearly normalized against the maximum value in the exported table.');
                     addKV('Acquisition Year', '15% — most recent acquisition year scores 1.0, oldest scores 0.0, others linearly between.');
                     addBlank();
 
-                    addSectionHeader('Industry Fit Tier Mapping');
-                    addParagraph('The Industry value is matched against the keyword patterns below. The first matching tier wins. Unmatched industries contribute 0 to the tier component.');
-                    addKV('High (value 1.0)', 'Data centers, colocation • Cold storage, food mfg/processing, beverage mfg • Healthcare, life sciences, pharma, biotech, medical, hospital • Real estate, facilities, property, REIT, infrastructure • Industrial, manufacturing, factory, chemical, materials, energy, utilities, mining, metal, petroleum/oil & gas, steel, cement, paper/pulp, automotive, aerospace');
-                    addKV('Medium (value 0.5)', 'Hotel, restaurant, food service, lodging, QSR, hospitality • Warehousing, 3PL, logistics, distribution, freight, transport, supply chain • Retail, consumer, grocery, apparel, e-commerce');
-                    addKV('Low (value 0.0)', 'Tech, software, SaaS, fintech, media, telecom, advertising, office, professional services, financial services, insurance, banking, asset management');
+                    addSectionHeader('Sector Fit Scores');
+                    addParagraph('The Industry column is fuzzy-matched to one of the sectors below. The sector score (1-10) is divided by 10 and contributes 25% to the composite. Unmatched industries contribute 0. Fit Tier in the data tab reflects the same mapping: High for 8.0+, Medium for 5.0-7.9, Low for under 5.0.');
+                    addKV('Industrial / Manufacturing', '9.5 — industrial, manufacturing, factory, plant, chemical, materials, energy, utilities, mining, metal, petroleum/oil & gas, steel, cement, paper/pulp, automotive, aerospace');
+                    addKV('Data Centers', '9.3 — data center, colocation');
+                    addKV('Cold Storage / Food Mfg', '9.0 — cold storage, food mfg/processing, beverage mfg');
+                    addKV('Healthcare / Life Sciences', '8.6 — healthcare, life sciences, pharma, biotech, medical, hospital, clinic');
+                    addKV('Real Estate / Facilities', '8.4 — real estate, facilities, property, REIT, infrastructure');
+                    addKV('Hospitality / Food Service', '7.8 — hotel, restaurant, food service, lodging, QSR, hospitality');
+                    addKV('Retail / Consumer', '6.5 — retail, consumer, grocery, apparel, e-commerce');
+                    addKV('Warehousing / 3PL', '4.2 — warehousing, 3PL, logistics, distribution, freight, transport, supply chain');
+                    addKV('Tech / Software & Office Occupiers', '3.0 — tech, software, SaaS, fintech, media, telecom, advertising, office, professional services, financial services, insurance, banking, asset management');
                     addBlank();
 
                     addSectionHeader('Normalization Formulas');
                     addKV('Energy %', 'min(1, row.Energy ÷ max(Energy in table))');
                     addKV('Sites %', 'min(1, row.Sites ÷ max(Sites in table))');
                     addKV('Year %', '(row.Year − min(Year)) ÷ (max(Year) − min(Year)). Missing year contributes 0.');
+                    addKV('Sector %', 'SectorScore ÷ 10. Unmatched industries contribute 0.');
                     addBlank();
 
                     addSectionHeader('Composite Formula');
-                    addParagraph('Rank Score = round( 100 × ( 0.40 × Energy% + 0.25 × TierValue + 0.20 × Sites% + 0.15 × Year% ) )');
+                    addParagraph('Rank Score = round( 100 × ( 0.40 × Energy% + 0.25 × Sector% + 0.20 × Sites% + 0.15 × Year% ) )');
                     addBlank();
 
                     addSectionHeader('Key Assumptions & Caveats');
@@ -2735,15 +2771,17 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                   );
                                 })()}
                                 {(() => {
-                                  const tier = industryTier(r.industry);
+                                  const sector = industrySector(r.industry);
+                                  const score = sectorScoreFor(sector);
+                                  const tier = sectorTier(sector);
                                   const colors = tier ? TIER_COLORS[tier] : { bg: 'transparent', color: '#94A3B8', border: 'var(--color-border)' };
                                   return (
                                     <td style={{ padding: '0.15rem 0.3rem' }}>
                                       <span
-                                        title={tier ? `Derived from Industry: "${r.industry}"` : 'No fit tier inferred from Industry'}
+                                        title={sector ? `${sector} (score ${score} / 10) — derived from Industry: "${r.industry}"` : 'No sector inferred from Industry'}
                                         style={{ display: 'inline-block', padding: '0.1rem 0.5rem', borderRadius: 10, fontSize: '0.68rem', fontWeight: 700, background: colors.bg, color: colors.color, border: `1px solid ${colors.border}` }}
                                       >
-                                        {tier || '—'}
+                                        {sector ? `${tier} · ${score}` : '—'}
                                       </span>
                                     </td>
                                   );
