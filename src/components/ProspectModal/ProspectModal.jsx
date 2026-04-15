@@ -776,6 +776,11 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
   const [portfolioSortByRank, setPortfolioSortByRank] = useState(false);
   const [raClientPickerOpen, setRaClientPickerOpen] = useState(null); // row index
   const [targetAccountPickerOpen, setTargetAccountPickerOpen] = useState(null); // row index
+  const [raClientPickerQuery, setRaClientPickerQuery] = useState('');
+  const [targetAccountPickerQuery, setTargetAccountPickerQuery] = useState('');
+  // Reset the search query whenever a picker opens / closes / moves rows
+  useEffect(() => { setRaClientPickerQuery(''); }, [raClientPickerOpen]);
+  useEffect(() => { setTargetAccountPickerQuery(''); }, [targetAccountPickerOpen]);
   const [newCompetitor, setNewCompetitor] = useState('');
   const [oppsCache, setOppsCache] = useState(null);
   const [clientManager, setClientManager] = useState(null);
@@ -2188,6 +2193,30 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                 }
 
                 // RA Client matching helpers
+                const allRaClientNames = (() => {
+                  const seen = new Set();
+                  const names = [];
+                  for (const ra of raClientsData) {
+                    const name = ra['MDM Name'];
+                    if (!name || seen.has(name)) continue;
+                    seen.add(name);
+                    names.push(name);
+                  }
+                  return names.sort((a, b) => a.localeCompare(b));
+                })();
+                function filterNames(list, query, limit = 50) {
+                  const q = (query || '').toLowerCase().trim();
+                  if (!q) return [];
+                  const starts = [];
+                  const includes = [];
+                  for (const name of list) {
+                    const lower = name.toLowerCase();
+                    if (lower.startsWith(q)) starts.push(name);
+                    else if (lower.includes(q)) includes.push(name);
+                    if (starts.length + includes.length >= limit + 20) break;
+                  }
+                  return [...starts, ...includes].slice(0, limit);
+                }
                 function findRaSuggestions(companyName) {
                   const lower = (companyName || '').toLowerCase().trim();
                   if (!lower) return [];
@@ -2386,30 +2415,50 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                   >
                                     {isMatched ? `✓ ${r.raClientMatch}` : (suggestions.length > 0 ? `${suggestions.length} suggestion${suggestions.length === 1 ? '' : 's'} ▾` : '— Click to map —')}
                                   </button>
-                                  {pickerOpen && (
-                                    <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 100, background: '#fff', border: '1px solid var(--color-border)', borderRadius: '5px', boxShadow: '0 4px 12px rgba(0,0,0,0.12)', minWidth: '220px', maxHeight: '240px', overflowY: 'auto', marginTop: '2px' }}>
-                                      {r.raClientMatch && (
-                                        <button
-                                          onClick={() => { updateRow(i, { raClientMatch: '' }); setRaClientPickerOpen(null); }}
-                                          style={{ display: 'block', width: '100%', padding: '0.35rem 0.6rem', border: 'none', background: 'none', textAlign: 'left', fontSize: '0.68rem', cursor: 'pointer', fontFamily: 'inherit', color: '#DC2626', borderBottom: '1px solid #F1F5F9' }}
-                                          onMouseEnter={e => e.currentTarget.style.background = '#FEF2F2'}
-                                          onMouseLeave={e => e.currentTarget.style.background = 'none'}
-                                        >× Clear mapping</button>
-                                      )}
-                                      {suggestions.length === 0 && !r.raClientMatch && (
-                                        <div style={{ padding: '0.4rem 0.6rem', fontSize: '0.68rem', color: '#94A3B8', fontStyle: 'italic' }}>No matches found</div>
-                                      )}
-                                      {suggestions.map(s => (
-                                        <button
-                                          key={s}
-                                          onClick={() => { updateRow(i, { raClientMatch: s }); setRaClientPickerOpen(null); }}
-                                          style={{ display: 'block', width: '100%', padding: '0.35rem 0.6rem', border: 'none', background: r.raClientMatch === s ? '#DCFCE7' : 'none', textAlign: 'left', fontSize: '0.7rem', cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text)' }}
-                                          onMouseEnter={e => e.currentTarget.style.background = '#EFF6FF'}
-                                          onMouseLeave={e => e.currentTarget.style.background = r.raClientMatch === s ? '#DCFCE7' : 'none'}
-                                        >{s}</button>
-                                      ))}
+                                  {pickerOpen && (() => {
+                                    const searched = filterNames(allRaClientNames, raClientPickerQuery, 50);
+                                    const displayList = raClientPickerQuery.trim() ? searched : suggestions;
+                                    return (
+                                    <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 100, background: '#fff', border: '1px solid var(--color-border)', borderRadius: '5px', boxShadow: '0 4px 12px rgba(0,0,0,0.12)', minWidth: '260px', maxHeight: '280px', display: 'flex', flexDirection: 'column', marginTop: '2px' }}>
+                                      <div style={{ padding: '0.35rem 0.5rem', borderBottom: '1px solid #F1F5F9', flexShrink: 0 }}>
+                                        <input
+                                          autoFocus
+                                          value={raClientPickerQuery}
+                                          onChange={e => setRaClientPickerQuery(e.target.value)}
+                                          placeholder="Search RA clients…"
+                                          style={{ width: '100%', padding: '0.3rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.72rem', fontFamily: 'inherit' }}
+                                        />
+                                      </div>
+                                      <div style={{ overflowY: 'auto', flex: 1 }}>
+                                        {r.raClientMatch && (
+                                          <button
+                                            onClick={() => { updateRow(i, { raClientMatch: '' }); setRaClientPickerOpen(null); }}
+                                            style={{ display: 'block', width: '100%', padding: '0.35rem 0.6rem', border: 'none', background: 'none', textAlign: 'left', fontSize: '0.68rem', cursor: 'pointer', fontFamily: 'inherit', color: '#DC2626', borderBottom: '1px solid #F1F5F9' }}
+                                            onMouseEnter={e => e.currentTarget.style.background = '#FEF2F2'}
+                                            onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                                          >× Clear mapping</button>
+                                        )}
+                                        {displayList.length === 0 && (
+                                          <div style={{ padding: '0.4rem 0.6rem', fontSize: '0.68rem', color: '#94A3B8', fontStyle: 'italic' }}>
+                                            {raClientPickerQuery.trim() ? `No RA clients match "${raClientPickerQuery}"` : (r.raClientMatch ? '' : 'No suggestions — type to search')}
+                                          </div>
+                                        )}
+                                        {!raClientPickerQuery.trim() && suggestions.length > 0 && (
+                                          <div style={{ padding: '0.25rem 0.6rem', fontSize: '0.6rem', color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 700 }}>Suggestions</div>
+                                        )}
+                                        {displayList.map(s => (
+                                          <button
+                                            key={s}
+                                            onClick={() => { updateRow(i, { raClientMatch: s }); setRaClientPickerOpen(null); }}
+                                            style={{ display: 'block', width: '100%', padding: '0.35rem 0.6rem', border: 'none', background: r.raClientMatch === s ? '#DCFCE7' : 'none', textAlign: 'left', fontSize: '0.7rem', cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text)' }}
+                                            onMouseEnter={e => e.currentTarget.style.background = '#EFF6FF'}
+                                            onMouseLeave={e => e.currentTarget.style.background = r.raClientMatch === s ? '#DCFCE7' : 'none'}
+                                          >{s}</button>
+                                        ))}
+                                      </div>
                                     </div>
-                                  )}
+                                    );
+                                  })()}
                                 </td>
                                 <td style={{ padding: '0.15rem 0.25rem' }}>
                                   <input
@@ -2435,33 +2484,56 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                       >
                                         {hasTarget ? `✓ ${r.targetAccount}` : (targetAccountNames.length === 0 ? '— No target list loaded —' : (targetSuggestions.length > 0 ? `${targetSuggestions.length} suggestion${targetSuggestions.length === 1 ? '' : 's'} ▾` : '— Click to map —'))}
                                       </button>
-                                      {targetOpen && (
-                                        <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 100, background: '#fff', border: '1px solid var(--color-border)', borderRadius: '5px', boxShadow: '0 4px 12px rgba(0,0,0,0.12)', minWidth: '240px', maxHeight: '260px', overflowY: 'auto', marginTop: '2px' }}>
-                                        {hasTarget && (
-                                          <button
-                                            onClick={() => { updateRow(i, { targetAccount: '' }); setTargetAccountPickerOpen(null); }}
-                                            style={{ display: 'block', width: '100%', padding: '0.35rem 0.6rem', border: 'none', background: 'none', textAlign: 'left', fontSize: '0.68rem', cursor: 'pointer', fontFamily: 'inherit', color: '#DC2626', borderBottom: '1px solid #F1F5F9' }}
-                                            onMouseEnter={e => e.currentTarget.style.background = '#FEF2F2'}
-                                            onMouseLeave={e => e.currentTarget.style.background = 'none'}
-                                          >× Clear mapping</button>
-                                        )}
-                                        {targetAccountNames.length === 0 && (
-                                          <div style={{ padding: '0.4rem 0.6rem', fontSize: '0.68rem', color: '#94A3B8', fontStyle: 'italic' }}>Upload a Target Accounts file on the My Accounts tab first.</div>
-                                        )}
-                                        {targetAccountNames.length > 0 && targetSuggestions.length === 0 && !hasTarget && (
-                                          <div style={{ padding: '0.4rem 0.6rem', fontSize: '0.68rem', color: '#94A3B8', fontStyle: 'italic' }}>No obvious matches — pick manually below.</div>
-                                        )}
-                                        {(targetSuggestions.length > 0 ? targetSuggestions : targetAccountNames.slice(0, 50)).map(s => (
-                                          <button
-                                            key={s}
-                                            onClick={() => { updateRow(i, { targetAccount: s }); setTargetAccountPickerOpen(null); }}
-                                            style={{ display: 'block', width: '100%', padding: '0.35rem 0.6rem', border: 'none', background: r.targetAccount === s ? '#DBEAFE' : 'none', textAlign: 'left', fontSize: '0.7rem', cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text)' }}
-                                            onMouseEnter={e => e.currentTarget.style.background = '#EFF6FF'}
-                                            onMouseLeave={e => e.currentTarget.style.background = r.targetAccount === s ? '#DBEAFE' : 'none'}
-                                          >{s}</button>
-                                        ))}
+                                      {targetOpen && (() => {
+                                        const searched = filterNames(targetAccountNames, targetAccountPickerQuery, 50);
+                                        const displayList = targetAccountPickerQuery.trim()
+                                          ? searched
+                                          : (targetSuggestions.length > 0 ? targetSuggestions : targetAccountNames.slice(0, 50));
+                                        return (
+                                        <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 100, background: '#fff', border: '1px solid var(--color-border)', borderRadius: '5px', boxShadow: '0 4px 12px rgba(0,0,0,0.12)', minWidth: '280px', maxHeight: '300px', display: 'flex', flexDirection: 'column', marginTop: '2px' }}>
+                                          <div style={{ padding: '0.35rem 0.5rem', borderBottom: '1px solid #F1F5F9', flexShrink: 0 }}>
+                                            <input
+                                              autoFocus
+                                              value={targetAccountPickerQuery}
+                                              onChange={e => setTargetAccountPickerQuery(e.target.value)}
+                                              placeholder={targetAccountNames.length === 0 ? 'No target accounts loaded' : 'Search target accounts…'}
+                                              disabled={targetAccountNames.length === 0}
+                                              style={{ width: '100%', padding: '0.3rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.72rem', fontFamily: 'inherit' }}
+                                            />
+                                          </div>
+                                          <div style={{ overflowY: 'auto', flex: 1 }}>
+                                            {hasTarget && (
+                                              <button
+                                                onClick={() => { updateRow(i, { targetAccount: '' }); setTargetAccountPickerOpen(null); }}
+                                                style={{ display: 'block', width: '100%', padding: '0.35rem 0.6rem', border: 'none', background: 'none', textAlign: 'left', fontSize: '0.68rem', cursor: 'pointer', fontFamily: 'inherit', color: '#DC2626', borderBottom: '1px solid #F1F5F9' }}
+                                                onMouseEnter={e => e.currentTarget.style.background = '#FEF2F2'}
+                                                onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                                              >× Clear mapping</button>
+                                            )}
+                                            {targetAccountNames.length === 0 && (
+                                              <div style={{ padding: '0.4rem 0.6rem', fontSize: '0.68rem', color: '#94A3B8', fontStyle: 'italic' }}>Upload a Target Accounts file on the My Accounts tab first.</div>
+                                            )}
+                                            {targetAccountNames.length > 0 && displayList.length === 0 && (
+                                              <div style={{ padding: '0.4rem 0.6rem', fontSize: '0.68rem', color: '#94A3B8', fontStyle: 'italic' }}>
+                                                {targetAccountPickerQuery.trim() ? `No target accounts match "${targetAccountPickerQuery}"` : 'No obvious matches — type to search.'}
+                                              </div>
+                                            )}
+                                            {!targetAccountPickerQuery.trim() && targetSuggestions.length > 0 && (
+                                              <div style={{ padding: '0.25rem 0.6rem', fontSize: '0.6rem', color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 700 }}>Suggestions</div>
+                                            )}
+                                            {displayList.map(s => (
+                                              <button
+                                                key={s}
+                                                onClick={() => { updateRow(i, { targetAccount: s }); setTargetAccountPickerOpen(null); }}
+                                                style={{ display: 'block', width: '100%', padding: '0.35rem 0.6rem', border: 'none', background: r.targetAccount === s ? '#DBEAFE' : 'none', textAlign: 'left', fontSize: '0.7rem', cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text)' }}
+                                                onMouseEnter={e => e.currentTarget.style.background = '#EFF6FF'}
+                                                onMouseLeave={e => e.currentTarget.style.background = r.targetAccount === s ? '#DBEAFE' : 'none'}
+                                              >{s}</button>
+                                            ))}
+                                          </div>
                                         </div>
-                                      )}
+                                        );
+                                      })()}
                                     </td>
                                   );
                                 })()}
