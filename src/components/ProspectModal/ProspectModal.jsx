@@ -305,13 +305,18 @@ const PORTFOLIO_FIELD_OPTIONS = [
 ];
 
 function computePortfolioFitScore(row, maxEnergy, maxSites, yearRange) {
-  // Sector fit: prefer an explicit per-row Subsector Score (uploaded with the
-  // file), then a per-row Sector Score, then fall back to the keyword-derived
-  // sector lookup from the Industry text. All scores are 1-10; normalize to 0-1.
+  // Sector fit precedence:
+  //   1. Subsector Score — only used when BOTH a Subsector label and a
+  //      numeric Subsector Score are present.
+  //   2. Sector Score — used when subsector is unmapped or unscored.
+  //   3. Keyword-derived sector lookup from the Industry text.
+  // All scores are 1-10; normalize to 0-1.
   const explicitSubsectorScore = Number(row.subsectorScore);
   const explicitSectorScore = Number(row.sectorScore);
+  const subsectorMapped = !!(row.subsector && String(row.subsector).trim());
+  const subsectorUsable = subsectorMapped && explicitSubsectorScore > 0;
   let sectorScoreRaw;
-  if (explicitSubsectorScore > 0) sectorScoreRaw = explicitSubsectorScore;
+  if (subsectorUsable) sectorScoreRaw = explicitSubsectorScore;
   else if (explicitSectorScore > 0) sectorScoreRaw = explicitSectorScore;
   else sectorScoreRaw = sectorScoreFor(industrySector(row.industry));
   const sectorVal = Math.min(1, sectorScoreRaw / 10);
@@ -2451,7 +2456,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
 
                     addSectionHeader('Component Weights');
                     addKV('Est. Energy (GWh/yr)', '40% — linearly normalized against the maximum value in the exported table. Largest single driver of the score.');
-                    addKV('Sector Fit Score', '25% — uses the per-row Subsector Score (1-10) when present, then per-row Sector Score, then falls back to the keyword-derived sector lookup (table below). Divided by 10.');
+                    addKV('Sector Fit Score', '25% — uses the per-row Subsector Score (1-10) only when both a Subsector label AND its score are present. If the subsector is missing or unscored, falls back to the per-row Sector Score; if that is also missing, falls back to the keyword-derived sector lookup (table below). Divided by 10.');
                     addKV('Est. Site Count', '20% — linearly normalized against the maximum value in the exported table.');
                     addKV('Acquisition Year', '15% — most recent acquisition year scores 1.0, oldest scores 0.0, others linearly between.');
                     addBlank();
