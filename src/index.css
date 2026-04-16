@@ -66,3 +66,10 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
 
 a { color: var(--color-accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
+
+/* Tall rich-text editor for the per-opportunity notes inside the Portfolio Companies modal */
+.opportunity-notes-editor .ql-editor {
+  min-height: 480px;
+  max-height: 70vh;
+  overflow-y: auto;
+}

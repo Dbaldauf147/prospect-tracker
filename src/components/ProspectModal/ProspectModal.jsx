@@ -1727,23 +1727,25 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                           Delete
                         </button>
                       </div>
-                      <ReactQuill
-                        theme="snow"
-                        value={oppNoteDraft}
-                        onChange={handleOppNoteChange}
-                        placeholder="Notes for this opportunity…"
-                        modules={{
-                          toolbar: [
-                            [{ 'header': [1, 2, 3, false] }],
-                            ['bold', 'italic', 'underline', 'strike'],
-                            [{ 'list': 'ordered' }, { 'list': 'bullet' }],
-                            ['link', 'blockquote', 'code-block'],
-                            ['clean'],
-                          ],
-                          clipboard: { matchVisual: false },
-                        }}
-                        formats={['header', 'bold', 'italic', 'underline', 'strike', 'list', 'indent', 'link', 'blockquote', 'code-block']}
-                      />
+                      <div className="opportunity-notes-editor">
+                        <ReactQuill
+                          theme="snow"
+                          value={oppNoteDraft}
+                          onChange={handleOppNoteChange}
+                          placeholder="Notes for this opportunity…"
+                          modules={{
+                            toolbar: [
+                              [{ 'header': [1, 2, 3, false] }],
+                              ['bold', 'italic', 'underline', 'strike'],
+                              [{ 'list': 'ordered' }, { 'list': 'bullet' }],
+                              ['link', 'blockquote', 'code-block'],
+                              ['clean'],
+                            ],
+                            clipboard: { matchVisual: false },
+                          }}
+                          formats={['header', 'bold', 'italic', 'underline', 'strike', 'list', 'indent', 'link', 'blockquote', 'code-block']}
+                        />
+                      </div>
                     </div>
                   ) : (
                     // Overview — buckets + opportunity cards
