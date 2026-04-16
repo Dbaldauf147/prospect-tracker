@@ -88,9 +88,23 @@ function HubSpotInlineCell({ contact, field, value, onSave, suggestions }) {
     setSaving(false);
   }
 
-  const filtered = (editing && showSuggestions && suggestions && editValue.trim().length >= 1)
-    ? suggestions.filter(s => s.toLowerCase().includes(editValue.toLowerCase()) && s.toLowerCase() !== editValue.toLowerCase()).slice(0, 8)
-    : [];
+  const filtered = (() => {
+    if (!editing || !showSuggestions || !suggestions) return [];
+    const q = editValue.trim().toLowerCase();
+    if (!q) return [];
+    const starts = [];
+    const includes = [];
+    for (const s of suggestions) {
+      const lower = s.toLowerCase();
+      if (lower === q) continue;
+      if (lower.startsWith(q)) starts.push(s);
+      else if (lower.includes(q)) includes.push(s);
+    }
+    return [
+      ...starts.sort((a, b) => a.localeCompare(b)),
+      ...includes.sort((a, b) => a.localeCompare(b)),
+    ].slice(0, 25);
+  })();
 
   if (editing) {
     return (
@@ -1927,28 +1941,10 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
             <input
               className={styles.searchInput}
               type="text"
-              placeholder="Search contacts or company..."
+              placeholder="Search contacts..."
               value={search}
               onChange={e => setSearch(e.target.value)}
-              list="hubspot-company-suggestions"
-              autoComplete="off"
             />
-            <datalist id="hubspot-company-suggestions">
-              {(() => {
-                const names = new Set();
-                // Companies from the loaded HubSpot contacts (incl. domain-derived guesses)
-                for (const c of enrichedContacts) {
-                  if (c.company) names.add(String(c.company).trim());
-                  if (c.guessedCompany) names.add(String(c.guessedCompany).trim());
-                }
-                // Companies from the Prospects table (TableView source) so users can search
-                // by any prospect company name even if no contact has been imported yet.
-                for (const p of (prospects || [])) {
-                  if (p.company) names.add(String(p.company).trim());
-                }
-                return [...names].filter(Boolean).sort((a, b) => a.localeCompare(b)).map(n => <option key={n} value={n} />);
-              })()}
-            </datalist>
             {Object.entries(hsFilterOptions).map(([key, options]) => (
               <HubSpotFilterDrop key={key} label={HUBSPOT_FILTER_LABELS[key] || key} options={options} selected={colFilters[key] || []} onToggle={v => toggleColFilter(key, v)} onBulkSet={arr => setColFilters(prev => ({ ...prev, [key]: arr }))} />
             ))}
