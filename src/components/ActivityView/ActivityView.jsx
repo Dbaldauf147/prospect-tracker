@@ -1,6 +1,7 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { DataTable } from '../common/DataTable';
 import { logAction } from '../../utils/auditLog';
+import { secureGet, secureSet } from '../../utils/secureStorage';
 import { useAuth } from '../../contexts/AuthContext';
 import styles from './ActivityView.module.css';
 
@@ -359,7 +360,7 @@ export function ActivityView({ prospects = [] }) {
   const callCount = allActivities.filter(a => a._type === 'call').length;
   const meetingCount = allActivities.filter(a => a._type === 'meeting').length;
 
-  const todaysMeetings = useMemo(() => {
+  const hubspotTodaysMeetings = useMemo(() => {
     const now = new Date();
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
     const todayEnd = todayStart + 24 * 60 * 60 * 1000;
@@ -369,8 +370,100 @@ export function ActivityView({ prospects = [] }) {
         const t = new Date(a._meetingStart).getTime();
         return Number.isFinite(t) && t >= todayStart && t < todayEnd;
       })
+      .map(a => ({ ...a, _source: 'hubspot' }))
       .sort((a, b) => new Date(a._meetingStart) - new Date(b._meetingStart));
   }, [allActivities]);
+
+  // ── Outlook Calendar ──
+  const [outlookConnected, setOutlookConnected] = useState(false);
+  const [outlookEvents, setOutlookEvents] = useState([]);
+  const [outlookLoading, setOutlookLoading] = useState(false);
+  const [outlookError, setOutlookError] = useState(null);
+
+  // Check for stored Outlook token on mount
+  useEffect(() => {
+    (async () => {
+      const token = await secureGet('outlook-access-token');
+      const expiry = await secureGet('outlook-token-expiry');
+      setOutlookConnected(!!token && (!expiry || Date.now() < Number(expiry)));
+    })();
+  }, []);
+
+  // Listen for Outlook OAuth callback (user might connect from this page)
+  useEffect(() => {
+    function handleMessage(e) {
+      if (e.data?.type === 'outlook-auth-success') {
+        (async () => {
+          await secureSet('outlook-access-token', e.data.accessToken);
+          if (e.data.refreshToken) await secureSet('outlook-refresh-token', e.data.refreshToken);
+          await secureSet('outlook-token-expiry', String(Date.now() + (e.data.expiresIn || 3600) * 1000));
+          setOutlookConnected(true);
+          fetchOutlookCalendar(e.data.accessToken);
+        })();
+      }
+    }
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
+
+  const fetchOutlookCalendar = useCallback(async (tokenOverride) => {
+    const token = tokenOverride || await secureGet('outlook-access-token');
+    if (!token) return;
+    setOutlookLoading(true);
+    setOutlookError(null);
+    try {
+      const resp = await fetch('/api/outlook-calendar', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (resp.status === 401) {
+        setOutlookConnected(false);
+        setOutlookError('Outlook session expired — click Connect to re-authenticate.');
+        setOutlookEvents([]);
+        return;
+      }
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${resp.status}`);
+      }
+      const data = await resp.json();
+      const normalized = (data.events || []).map(e => ({
+        id: e.id,
+        _type: 'meeting',
+        _source: 'outlook',
+        _subject: e.subject,
+        _meetingStart: e.start,
+        _meetingEnd: e.end,
+        _attendees: (e.attendees || [])
+          .filter(a => !a.email?.toLowerCase().endsWith('@se.com'))
+          .map(a => a.name || a.email)
+          .join(', '),
+        _attendeeDetails: e.attendees || [],
+        _location: e.location,
+        _company: '',
+      }));
+      setOutlookEvents(normalized);
+    } catch (err) {
+      setOutlookError(err.message || 'Failed to fetch Outlook calendar');
+    } finally {
+      setOutlookLoading(false);
+    }
+  }, []);
+
+  // Auto-fetch Outlook calendar on mount if connected
+  useEffect(() => {
+    if (outlookConnected) fetchOutlookCalendar();
+  }, [outlookConnected, fetchOutlookCalendar]);
+
+  function connectOutlook() {
+    window.open('/api/outlook-auth', 'outlook-auth', 'width=500,height=700');
+  }
+
+  // Merge HubSpot + Outlook meetings for Today panel, sorted by start time
+  const todaysMeetings = useMemo(() => {
+    const combined = [...hubspotTodaysMeetings, ...outlookEvents];
+    combined.sort((a, b) => new Date(a._meetingStart || 0) - new Date(b._meetingStart || 0));
+    return combined;
+  }, [hubspotTodaysMeetings, outlookEvents]);
 
   function fmtMeetingTime(startStr, endStr) {
     if (!startStr) return '—';
@@ -429,15 +522,34 @@ export function ActivityView({ prospects = [] }) {
 
       {data && (
         <div style={{ marginBottom: '1rem', border: '1px solid var(--color-border)', borderRadius: 8, background: '#fff', overflow: 'hidden' }}>
-          <div style={{ padding: '0.6rem 0.9rem', background: '#F8FAFC', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+          <div style={{ padding: '0.6rem 0.9rem', background: '#F8FAFC', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap' }}>
             <div style={{ fontWeight: 700, fontSize: '0.85rem', color: 'var(--color-text)' }}>
               Today's Meetings
               <span style={{ marginLeft: '0.5rem', fontSize: '0.7rem', fontWeight: 500, color: 'var(--color-text-muted)' }}>
                 {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
               </span>
             </div>
-            <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>{todaysMeetings.length} meeting{todaysMeetings.length === 1 ? '' : 's'}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>{todaysMeetings.length} meeting{todaysMeetings.length === 1 ? '' : 's'}</span>
+              {!outlookConnected ? (
+                <button
+                  onClick={connectOutlook}
+                  style={{ padding: '0.25rem 0.6rem', border: '1px solid #0078D4', borderRadius: 4, background: '#fff', color: '#0078D4', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+                >Connect Outlook</button>
+              ) : (
+                <button
+                  onClick={() => fetchOutlookCalendar()}
+                  disabled={outlookLoading}
+                  style={{ padding: '0.25rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 4, background: '#fff', color: 'var(--color-text)', fontSize: '0.68rem', fontWeight: 500, cursor: outlookLoading ? 'wait' : 'pointer', fontFamily: 'inherit' }}
+                >{outlookLoading ? 'Loading…' : '↻ Outlook'}</button>
+              )}
+            </div>
           </div>
+          {outlookError && (
+            <div style={{ padding: '0.4rem 0.9rem', background: '#FEF2F2', color: '#991B1B', fontSize: '0.75rem', borderBottom: '1px solid #FCA5A5' }}>
+              {outlookError}
+            </div>
+          )}
           {todaysMeetings.length === 0 ? (
             <div style={{ padding: '0.8rem 0.9rem', fontSize: '0.8rem', color: '#94A3B8', fontStyle: 'italic' }}>
               No meetings scheduled for today.
@@ -445,20 +557,44 @@ export function ActivityView({ prospects = [] }) {
           ) : (
             <div>
               {todaysMeetings.map((m, i) => (
-                <div key={m.id || i} style={{ display: 'grid', gridTemplateColumns: '120px 1fr 220px', gap: '0.75rem', padding: '0.55rem 0.9rem', borderBottom: i < todaysMeetings.length - 1 ? '1px solid #F1F5F9' : 'none', alignItems: 'center' }}>
-                  <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#7C3AED', fontVariantNumeric: 'tabular-nums' }}>
-                    {fmtMeetingTime(m._meetingStart, m._meetingEnd)}
+                <div key={m.id || `m${i}`} style={{ display: 'grid', gridTemplateColumns: '120px 1fr 260px', gap: '0.75rem', padding: '0.55rem 0.9rem', borderBottom: i < todaysMeetings.length - 1 ? '1px solid #F1F5F9' : 'none', alignItems: 'start' }}>
+                  <div>
+                    <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#7C3AED', fontVariantNumeric: 'tabular-nums' }}>
+                      {fmtMeetingTime(m._meetingStart, m._meetingEnd)}
+                    </div>
+                    <span style={{ display: 'inline-block', marginTop: 2, fontSize: '0.55rem', fontWeight: 700, padding: '1px 5px', borderRadius: 999, color: m._source === 'outlook' ? '#0078D4' : '#7C3AED', background: m._source === 'outlook' ? '#E8F4FD' : '#F3E8FF', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                      {m._source === 'outlook' ? 'Outlook' : 'HubSpot'}
+                    </span>
                   </div>
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--color-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m._subject}>
                       {m._subject || 'Meeting'}
                     </div>
+                    {m._location && (
+                      <div style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m._location}>{m._location}</div>
+                    )}
                     {m._company && (
                       <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', marginTop: 1 }}>{m._company}</div>
                     )}
                   </div>
-                  <div style={{ fontSize: '0.72rem', color: '#334155', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m._attendees}>
-                    {m._attendees || <span style={{ color: '#94A3B8', fontStyle: 'italic' }}>No attendees resolved</span>}
+                  <div style={{ fontSize: '0.72rem', color: '#334155' }}>
+                    {m._attendeeDetails && m._attendeeDetails.length > 0 ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                        {m._attendeeDetails.filter(a => !a.email?.toLowerCase().endsWith('@se.com')).map((a, j) => (
+                          <div key={j} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`${a.name} <${a.email}> · ${a.response || 'no response'}`}>
+                            <span style={{ fontWeight: 600 }}>{a.name || a.email}</span>
+                            {a.name && a.email && <span style={{ color: '#94A3B8', marginLeft: 4 }}>{a.email}</span>}
+                          </div>
+                        ))}
+                        {m._attendeeDetails.filter(a => !a.email?.toLowerCase().endsWith('@se.com')).length === 0 && (
+                          <span style={{ color: '#94A3B8', fontStyle: 'italic' }}>Internal only</span>
+                        )}
+                      </div>
+                    ) : (
+                      <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m._attendees}>
+                        {m._attendees || <span style={{ color: '#94A3B8', fontStyle: 'italic' }}>No attendees</span>}
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}

@@ -20,7 +20,7 @@ export default async function handler(req, res) {
         code,
         redirect_uri: redirectUri,
         grant_type: 'authorization_code',
-        scope: 'Mail.ReadWrite offline_access',
+        scope: 'Mail.ReadWrite Calendars.Read offline_access',
       }),
     });
 
