@@ -691,9 +691,23 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
     ? allEmails.filter(c => !toAlsoEmails.includes(c.email) && c.email !== fields.email && (c.email.toLowerCase().includes(toAlsoInput.toLowerCase()) || c.name.toLowerCase().includes(toAlsoInput.toLowerCase()))).slice(0, 6)
     : [];
 
-  const companySuggestions = fields.company.trim()
-    ? (companyNames || []).filter(n => n.toLowerCase().includes(fields.company.toLowerCase()) && n.toLowerCase() !== fields.company.toLowerCase()).slice(0, 8)
-    : [];
+  const companySuggestions = (() => {
+    const q = fields.company.trim().toLowerCase();
+    if (!q) return [];
+    const starts = [];
+    const includes = [];
+    for (const n of (companyNames || [])) {
+      const lower = n.toLowerCase();
+      if (lower === q) continue; // skip the exact-current value
+      if (lower.startsWith(q)) starts.push(n);
+      else if (lower.includes(q)) includes.push(n);
+    }
+    // Prefix matches first, then substring matches; alphabetized within each.
+    return [
+      ...starts.sort((a, b) => a.localeCompare(b)),
+      ...includes.sort((a, b) => a.localeCompare(b)),
+    ].slice(0, 50);
+  })();
 
   return (
     <div className={styles.modalOverlay} onClick={onClose}>
