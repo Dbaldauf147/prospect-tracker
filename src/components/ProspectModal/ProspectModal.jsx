@@ -2261,9 +2261,9 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                     },
                   ];
                   const ws = XLSX.utils.json_to_sheet(templateRows, {
-                    header: ['Company Name', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Sector', 'Subsector', 'Subsector Score', 'PC Description', 'Acquisition Year', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM'],
+                    header: ['Company Name', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Sector', 'Subsector', 'Subsector Score', 'Acquisition Year', 'PC Description', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM'],
                   });
-                  ws['!cols'] = [{ wch: 30 }, { wch: 20 }, { wch: 16 }, { wch: 20 }, { wch: 16 }, { wch: 28 }, { wch: 22 }, { wch: 12 }, { wch: 48 }, { wch: 14 }, { wch: 36 }, { wch: 26 }, { wch: 22 }, { wch: 26 }, { wch: 10 }, { wch: 22 }];
+                  ws['!cols'] = [{ wch: 30 }, { wch: 20 }, { wch: 16 }, { wch: 20 }, { wch: 16 }, { wch: 28 }, { wch: 22 }, { wch: 12 }, { wch: 14 }, { wch: 48 }, { wch: 36 }, { wch: 26 }, { wch: 22 }, { wch: 26 }, { wch: 10 }, { wch: 22 }];
                   const wb = XLSX.utils.book_new();
                   XLSX.utils.book_append_sheet(wb, ws, 'Portfolio Companies');
                   const safeName = (fields.company || 'company').replace(/[^a-z0-9]+/gi, '_');
@@ -2278,8 +2278,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                   const maxS = rows.reduce((m, r) => Math.max(m, Number(r.siteCount) || 0), 0);
                   const years = rows.map(r => Number(r.acquisitionYear)).filter(y => y > 0);
                   const yearRange = years.length > 0 ? { min: Math.min(...years), max: Math.max(...years) } : null;
-                  const headers = ['Opportunity Score', 'Company Name', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Sector', 'Subsector', 'Subsector Score', 'PC Description', 'Acquisition Year', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM'];
-                  const colWidths = [16, 32, 20, 16, 20, 16, 28, 22, 12, 48, 14, 36, 26, 22, 26, 10, 22];
+                  const headers = ['Opportunity Score', 'Company Name', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Sector', 'Subsector', 'Subsector Score', 'Acquisition Year', 'PC Description', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM'];
+                  const colWidths = [16, 32, 20, 16, 20, 16, 28, 22, 12, 14, 48, 36, 26, 22, 26, 10, 22];
                   const data = rows.map((r, idx) => {
                     const score = computePortfolioFitScore(r, maxE, maxS, yearRange);
                     const energy = r.energyGwh === '' || r.energyGwh == null ? null : (Number(r.energyGwh) || r.energyGwh);
@@ -2299,8 +2299,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                       r.sector || r.industry || '',
                       r.subsector || '',
                       subsectorScoreCell,
-                      r.pcDescription || '',
                       acqYear,
+                      r.pcDescription || '',
                       r.notes || '',
                       r.raClientMatch || '',
                       clientMgr,
@@ -2378,7 +2378,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                         };
                         cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: false };
                         // Number formats
-                        if (i === 0 || i === 10) cell.numFmt = '0';
+                        if (i === 0 || i === 9) cell.numFmt = '0';
                         if (i === 4 || i === 5) cell.numFmt = '#,##0';
                         if (i === 8) cell.numFmt = '0.0';
                       });
@@ -2728,8 +2728,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                             <col style={{ width: portfolioColWidths.sector + 'px' }} />
                             <col style={{ width: portfolioColWidths.subsector + 'px' }} />
                             <col style={{ width: portfolioColWidths.subsectorScore + 'px' }} />
-                            <col style={{ width: portfolioColWidths.pcDescription + 'px' }} />
                             <col style={{ width: portfolioColWidths.acquisitionYear + 'px' }} />
+                            <col style={{ width: portfolioColWidths.pcDescription + 'px' }} />
                             <col style={{ width: portfolioColWidths.notes + 'px' }} />
                             <col style={{ width: portfolioColWidths.raClient + 'px' }} />
                             <col style={{ width: portfolioColWidths.clientManager + 'px' }} />
@@ -2755,8 +2755,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                               <th style={thBase}>Sector<span style={resizeHandleStyle} onMouseDown={e => startResize('sector', e)} /></th>
                               <th style={thBase}>Subsector<span style={resizeHandleStyle} onMouseDown={e => startResize('subsector', e)} /></th>
                               <th style={thBase}>Score<span style={resizeHandleStyle} onMouseDown={e => startResize('subsectorScore', e)} /></th>
-                              <th style={thBase}>PC Description<span style={resizeHandleStyle} onMouseDown={e => startResize('pcDescription', e)} /></th>
                               <th style={{ ...thBase }}>Acquisition Year<span style={resizeHandleStyle} onMouseDown={e => startResize('acquisitionYear', e)} /></th>
+                              <th style={thBase}>PC Description<span style={resizeHandleStyle} onMouseDown={e => startResize('pcDescription', e)} /></th>
                               <th style={thBase}>Notes<span style={resizeHandleStyle} onMouseDown={e => startResize('notes', e)} /></th>
                               <th style={thBase}>RA Client Match<span style={resizeHandleStyle} onMouseDown={e => startResize('raClient', e)} /></th>
                               <th style={thBase}>Client Manager<span style={resizeHandleStyle} onMouseDown={e => startResize('clientManager', e)} /></th>
@@ -2878,23 +2878,23 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                 </td>
                                 <td style={{ padding: '0.15rem 0.25rem' }}>
                                   <input
-                                    value={r.pcDescription || ''}
-                                    onChange={e => updateRow(i, { pcDescription: e.target.value })}
-                                    title={r.pcDescription || 'Describe what this company does — hover to read full text'}
-                                    placeholder="Describe what this company does…"
-                                    style={{ width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: 'var(--color-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
-                                    onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; e.target.style.background = '#fff'; }}
-                                    onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
-                                  />
-                                </td>
-                                <td style={{ padding: '0.15rem 0.25rem' }}>
-                                  <input
                                     type="number"
                                     inputMode="numeric"
                                     value={r.acquisitionYear || ''}
                                     onChange={e => updateRow(i, { acquisitionYear: e.target.value })}
                                     placeholder="YYYY"
                                     style={{ width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: 'var(--color-text)' }}
+                                    onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; e.target.style.background = '#fff'; }}
+                                    onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
+                                  />
+                                </td>
+                                <td style={{ padding: '0.15rem 0.25rem' }}>
+                                  <input
+                                    value={r.pcDescription || ''}
+                                    onChange={e => updateRow(i, { pcDescription: e.target.value })}
+                                    title={r.pcDescription || 'Describe what this company does — hover to read full text'}
+                                    placeholder="Describe what this company does…"
+                                    style={{ width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: 'var(--color-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
                                     onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; e.target.style.background = '#fff'; }}
                                     onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
                                   />
