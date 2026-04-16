@@ -288,6 +288,10 @@ const PORTFOLIO_FIELD_OPTIONS = [
   { key: '', label: '— Ignore this column —' },
   { key: 'companyName', label: 'Company Name (required)' },
   { key: 'industry', label: 'Industry' },
+  { key: 'sector', label: 'Sector' },
+  { key: 'subsector', label: 'Subsector' },
+  { key: 'subsectorScore', label: 'Subsector Score (1-10)' },
+  { key: 'sectorScore', label: 'Sector Score (1-10)' },
   { key: 'hqCity', label: 'HQ City' },
   { key: 'hqCountry', label: 'HQ Country' },
   { key: 'energyGwh', label: 'Est. Energy (GWh/yr)' },
@@ -301,9 +305,16 @@ const PORTFOLIO_FIELD_OPTIONS = [
 ];
 
 function computePortfolioFitScore(row, maxEnergy, maxSites, yearRange) {
-  // Sector score is 1-10; normalize to 0-1 for the composite.
-  const sector = industrySector(row.industry);
-  const sectorVal = sectorScoreFor(sector) / 10;
+  // Sector fit: prefer an explicit per-row Subsector Score (uploaded with the
+  // file), then a per-row Sector Score, then fall back to the keyword-derived
+  // sector lookup from the Industry text. All scores are 1-10; normalize to 0-1.
+  const explicitSubsectorScore = Number(row.subsectorScore);
+  const explicitSectorScore = Number(row.sectorScore);
+  let sectorScoreRaw;
+  if (explicitSubsectorScore > 0) sectorScoreRaw = explicitSubsectorScore;
+  else if (explicitSectorScore > 0) sectorScoreRaw = explicitSectorScore;
+  else sectorScoreRaw = sectorScoreFor(industrySector(row.industry));
+  const sectorVal = Math.min(1, sectorScoreRaw / 10);
   const energyPct = maxEnergy > 0 ? Math.min(1, (Number(row.energyGwh) || 0) / maxEnergy) : 0;
   const sitesPct = maxSites > 0 ? Math.min(1, (Number(row.siteCount) || 0) / maxSites) : 0;
   // Recency of acquisition: most recent year in the table -> 1.0, oldest -> 0.0
@@ -853,7 +864,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
   const [researchingPortfolio, setResearchingPortfolio] = useState(false);
   const [portfolioResearchError, setPortfolioResearchError] = useState(null);
   const [portfolioColWidths, setPortfolioColWidths] = useState({
-    num: 30, company: 180, industry: 140, hqCity: 130, hqCountry: 90, energy: 110, siteCount: 100, rank: 80, fitTier: 100, pcDescription: 260, acquisitionYear: 90, notes: 220, raClient: 200, clientManager: 140, targetAccount: 200, tier: 80, salesRep: 160,
+    num: 30, company: 180, industry: 140, sector: 160, subsector: 160, subsectorScore: 80, hqCity: 130, hqCountry: 90, energy: 110, siteCount: 100, rank: 80, fitTier: 100, pcDescription: 260, acquisitionYear: 90, notes: 220, raClient: 200, clientManager: 140, targetAccount: 200, tier: 80, salesRep: 160,
   });
   const [portfolioSortByRank, setPortfolioSortByRank] = useState(false);
   const [raClientPickerOpen, setRaClientPickerOpen] = useState(null); // row index
@@ -876,6 +887,12 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
       const patterns = {
         companyName: ['companyname', 'company'],
         industry: ['industry'],
+        // Subsector before sector so a header literally named "Subsector Score"
+        // wins over the broader "sector" / "score" patterns.
+        subsectorScore: ['subsectorscore', 'subsectorfit', 'subsectorrating'],
+        sectorScore: ['sectorscore', 'sectorfit', 'sectorrating', 'fitscore'],
+        subsector: ['subsector'],
+        sector: ['sector'],
         hqCity: ['hqcity', 'city'],
         hqCountry: ['hqcountry', 'country'],
         energyGwh: ['energy', 'gwh'],
@@ -2171,7 +2188,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                   set('portfolioCompanies', rows.filter((_, i) => i !== idx));
                 }
                 function addRow() {
-                  set('portfolioCompanies', [...rows, { companyName: '', industry: '', hqCity: '', hqCountry: '', energyGwh: '', siteCount: '', pcDescription: '', acquisitionYear: '', notes: '' }]);
+                  set('portfolioCompanies', [...rows, { companyName: '', industry: '', sector: '', subsector: '', subsectorScore: '', hqCity: '', hqCountry: '', energyGwh: '', siteCount: '', pcDescription: '', acquisitionYear: '', notes: '' }]);
                 }
                 function parsePaste() {
                   const text = pastePortfolio.trim();
@@ -2224,6 +2241,9 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                       'Est. Energy (GWh/yr)': 25,
                       'Est. Site Count': 12,
                       'Industry': 'Technology',
+                      'Sector': 'Tech / Software & Office Occupiers',
+                      'Subsector': 'Enterprise SaaS',
+                      'Subsector Score': 3.2,
                       'PC Description': 'Short, 1-2 sentence description of what the company does.',
                       'Acquisition Year': 2021,
                       'Notes': '',
@@ -2235,9 +2255,9 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                     },
                   ];
                   const ws = XLSX.utils.json_to_sheet(templateRows, {
-                    header: ['Company Name', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Industry', 'PC Description', 'Acquisition Year', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM'],
+                    header: ['Company Name', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Industry', 'Sector', 'Subsector', 'Subsector Score', 'PC Description', 'Acquisition Year', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM'],
                   });
-                  ws['!cols'] = [{ wch: 30 }, { wch: 20 }, { wch: 16 }, { wch: 20 }, { wch: 16 }, { wch: 18 }, { wch: 48 }, { wch: 14 }, { wch: 36 }, { wch: 26 }, { wch: 22 }, { wch: 26 }, { wch: 10 }, { wch: 22 }];
+                  ws['!cols'] = [{ wch: 30 }, { wch: 20 }, { wch: 16 }, { wch: 20 }, { wch: 16 }, { wch: 18 }, { wch: 28 }, { wch: 22 }, { wch: 12 }, { wch: 48 }, { wch: 14 }, { wch: 36 }, { wch: 26 }, { wch: 22 }, { wch: 26 }, { wch: 10 }, { wch: 22 }];
                   const wb = XLSX.utils.book_new();
                   XLSX.utils.book_append_sheet(wb, ws, 'Portfolio Companies');
                   const safeName = (fields.company || 'company').replace(/[^a-z0-9]+/gi, '_');
@@ -2252,14 +2272,16 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                   const maxS = rows.reduce((m, r) => Math.max(m, Number(r.siteCount) || 0), 0);
                   const years = rows.map(r => Number(r.acquisitionYear)).filter(y => y > 0);
                   const yearRange = years.length > 0 ? { min: Math.min(...years), max: Math.max(...years) } : null;
-                  const headers = ['#', 'Company Name', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Rank Score', 'Industry', 'PC Description', 'Acquisition Year', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM'];
-                  const colWidths = [6, 32, 20, 16, 20, 16, 12, 22, 48, 14, 36, 26, 22, 26, 10, 22];
+                  const headers = ['#', 'Company Name', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Rank Score', 'Industry', 'Sector', 'Subsector', 'Subsector Score', 'PC Description', 'Acquisition Year', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM'];
+                  const colWidths = [6, 32, 20, 16, 20, 16, 12, 22, 28, 22, 12, 48, 14, 36, 26, 22, 26, 10, 22];
                   const data = rows.map((r, idx) => {
                     const score = computePortfolioFitScore(r, maxE, maxS, yearRange);
                     const energy = r.energyGwh === '' || r.energyGwh == null ? null : (Number(r.energyGwh) || r.energyGwh);
                     const sites = r.siteCount === '' || r.siteCount == null ? null : (Number(r.siteCount) || r.siteCount);
                     const acqYearNum = Number(r.acquisitionYear);
                     const acqYear = acqYearNum > 0 ? acqYearNum : (r.acquisitionYear || '');
+                    const subsectorScoreNum = Number(r.subsectorScore);
+                    const subsectorScoreCell = subsectorScoreNum > 0 ? subsectorScoreNum : (r.subsectorScore || '');
                     const clientMgr = (r.clientManager || '').trim() || cmForRaClient(r.raClientMatch);
                     return [
                       idx + 1,
@@ -2270,6 +2292,9 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                       sites,
                       score,
                       r.industry || '',
+                      r.sector || '',
+                      r.subsector || '',
+                      subsectorScoreCell,
                       r.pcDescription || '',
                       acqYear,
                       r.notes || '',
@@ -2351,7 +2376,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                         // Number formats
                         if (i === 0) cell.numFmt = '0';
                         if (i === 4 || i === 5) cell.numFmt = '#,##0';
-                        if (i === 6 || i === 9) cell.numFmt = '0';
+                        if (i === 6 || i === 12) cell.numFmt = '0';
+                        if (i === 10) cell.numFmt = '0.0';
                       });
                       row.height = 18;
                     });
@@ -2425,7 +2451,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
 
                     addSectionHeader('Component Weights');
                     addKV('Est. Energy (GWh/yr)', '40% — linearly normalized against the maximum value in the exported table. Largest single driver of the score.');
-                    addKV('Sector Fit Score', '25% — a per-sector 1-10 score (see sector table below), divided by 10.');
+                    addKV('Sector Fit Score', '25% — uses the per-row Subsector Score (1-10) when present, then per-row Sector Score, then falls back to the keyword-derived sector lookup (table below). Divided by 10.');
                     addKV('Est. Site Count', '20% — linearly normalized against the maximum value in the exported table.');
                     addKV('Acquisition Year', '15% — most recent acquisition year scores 1.0, oldest scores 0.0, others linearly between.');
                     addBlank();
@@ -2697,6 +2723,9 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                             <col style={{ width: portfolioColWidths.energy + 'px' }} />
                             <col style={{ width: portfolioColWidths.siteCount + 'px' }} />
                             <col style={{ width: portfolioColWidths.industry + 'px' }} />
+                            <col style={{ width: portfolioColWidths.sector + 'px' }} />
+                            <col style={{ width: portfolioColWidths.subsector + 'px' }} />
+                            <col style={{ width: portfolioColWidths.subsectorScore + 'px' }} />
                             <col style={{ width: portfolioColWidths.pcDescription + 'px' }} />
                             <col style={{ width: portfolioColWidths.acquisitionYear + 'px' }} />
                             <col style={{ width: portfolioColWidths.notes + 'px' }} />
@@ -2722,6 +2751,9 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                               <th style={{ ...thBase }}>Est. Energy (GWh/yr)<span style={resizeHandleStyle} onMouseDown={e => startResize('energy', e)} /></th>
                               <th style={{ ...thBase }}>Est. Site Count<span style={resizeHandleStyle} onMouseDown={e => startResize('siteCount', e)} /></th>
                               <th style={thBase}>Industry<span style={resizeHandleStyle} onMouseDown={e => startResize('industry', e)} /></th>
+                              <th style={thBase}>Sector<span style={resizeHandleStyle} onMouseDown={e => startResize('sector', e)} /></th>
+                              <th style={thBase}>Subsector<span style={resizeHandleStyle} onMouseDown={e => startResize('subsector', e)} /></th>
+                              <th style={thBase}>Score<span style={resizeHandleStyle} onMouseDown={e => startResize('subsectorScore', e)} /></th>
                               <th style={thBase}>PC Description<span style={resizeHandleStyle} onMouseDown={e => startResize('pcDescription', e)} /></th>
                               <th style={{ ...thBase }}>Acquisition Year<span style={resizeHandleStyle} onMouseDown={e => startResize('acquisitionYear', e)} /></th>
                               <th style={thBase}>Notes<span style={resizeHandleStyle} onMouseDown={e => startResize('notes', e)} /></th>
@@ -2808,6 +2840,41 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                     </td>
                                   );
                                 })()}
+                                <td style={{ padding: '0.15rem 0.25rem' }}>
+                                  <input
+                                    value={r.sector || ''}
+                                    onChange={e => updateRow(i, { sector: e.target.value })}
+                                    title={r.sector || ''}
+                                    style={{ width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: 'var(--color-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                                    onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; e.target.style.background = '#fff'; }}
+                                    onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
+                                  />
+                                </td>
+                                <td style={{ padding: '0.15rem 0.25rem' }}>
+                                  <input
+                                    value={r.subsector || ''}
+                                    onChange={e => updateRow(i, { subsector: e.target.value })}
+                                    title={r.subsector || ''}
+                                    style={{ width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: 'var(--color-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                                    onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; e.target.style.background = '#fff'; }}
+                                    onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
+                                  />
+                                </td>
+                                <td style={{ padding: '0.15rem 0.25rem' }}>
+                                  <input
+                                    type="number"
+                                    step="0.1"
+                                    min="0"
+                                    max="10"
+                                    value={r.subsectorScore || ''}
+                                    onChange={e => updateRow(i, { subsectorScore: e.target.value })}
+                                    title="Per-row sector fit score (1-10). Overrides the keyword-derived sector score."
+                                    placeholder="—"
+                                    style={{ width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: 'var(--color-text)' }}
+                                    onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; e.target.style.background = '#fff'; }}
+                                    onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
+                                  />
+                                </td>
                                 <td style={{ padding: '0.15rem 0.25rem' }}>
                                   <input
                                     value={r.pcDescription || ''}
@@ -3066,7 +3133,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                 <td colSpan={4} style={{ padding: '0.3rem 0.4rem', fontSize: '0.65rem', color: '#64748B', textTransform: 'uppercase' }}>Totals</td>
                                 <td style={{ padding: '0.3rem 0.4rem' }}>{totalEnergy > 0 ? totalEnergy.toLocaleString() : ''}</td>
                                 <td style={{ padding: '0.3rem 0.4rem' }}>{totalSites > 0 ? totalSites.toLocaleString() : ''}</td>
-                                <td colSpan={10}></td>
+                                <td colSpan={13}></td>
                               </tr>
                             )}
                           </tbody>
@@ -3232,8 +3299,11 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
             const parsed = fileRows
               .map(r => {
                 const out = {
-                  companyName: '', industry: '', hqCity: '', hqCountry: '',
+                  companyName: '', industry: '', sector: '', subsector: '',
+                  sectorScore: '', subsectorScore: '',
+                  hqCity: '', hqCountry: '',
                   energyGwh: '', siteCount: '', pcDescription: '', acquisitionYear: '',
+                  notes: '',
                   raClientMatch: '', clientManager: '', targetAccount: '',
                 };
                 for (const [header, fieldKey] of Object.entries(mapping)) {
