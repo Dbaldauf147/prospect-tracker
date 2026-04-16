@@ -2574,9 +2574,11 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                     const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement('a');
-                    const safeName = (fields.company || 'company').replace(/[^a-z0-9]+/gi, '_');
+                    // Filename: "{Company Name}_Portfolio Company Analysis.xlsx".
+                    // Strip only filesystem-illegal characters; keep spaces and the rest of the name as-is.
+                    const safeName = (fields.company || 'Company').replace(/[\\/:*?"<>|]+/g, '').trim() || 'Company';
                     a.href = url;
-                    a.download = `${safeName}_portfolio_companies.xlsx`;
+                    a.download = `${safeName}_Portfolio Company Analysis.xlsx`;
                     document.body.appendChild(a);
                     a.click();
                     a.remove();
