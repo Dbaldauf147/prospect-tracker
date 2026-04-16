@@ -2446,9 +2446,12 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                         if (i === 0 || i === 8) cell.numFmt = '0';
                         if (i === 3 || i === 4) cell.numFmt = '#,##0';
                         if (i === 7) cell.numFmt = '0.0';
-                        // Italicize estimated site counts (originally tagged with "(E)" in the source)
+                        // Estimated site counts (originally tagged with "(E)" in the source):
+                        // italic font + a custom number format that appends " est." while keeping
+                        // the cell numeric and sortable.
                         if (i === 4 && siteEstimateFlags[idx]) {
                           cell.font = { ...cell.font, italic: true };
+                          cell.numFmt = '#,##0" est."';
                         }
                       });
                       row.height = 18;
