@@ -860,6 +860,49 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
   const [targetAccountPickerOpen, setTargetAccountPickerOpen] = useState(null); // row index
   // Portfolio Companies upload preview — shows detected column mapping before applying
   const [portfolioUpload, setPortfolioUpload] = useState(null); // { fileName, headers: string[], rows: object[], mapping: { [header]: fieldKey|'' } }
+  const [portfolioDragActive, setPortfolioDragActive] = useState(false);
+
+  // Shared file -> mapping-preview parser. Used by both the Upload Excel button
+  // and the drag-and-drop handler on the Portfolio Companies section.
+  const openPortfolioMappingForFile = useCallback(async (file) => {
+    if (!file) return;
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf);
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const data = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+      if (!data.length) { alert('Uploaded file has no rows.'); return; }
+      const headers = Object.keys(data[0]);
+      const patterns = {
+        companyName: ['companyname', 'company'],
+        industry: ['industry'],
+        hqCity: ['hqcity', 'city'],
+        hqCountry: ['hqcountry', 'country'],
+        energyGwh: ['energy', 'gwh'],
+        siteCount: ['sitecount', 'sites', 'numberofsites', 'estsitecount'],
+        pcDescription: ['pcdescription', 'pcdesc', 'description'],
+        acquisitionYear: ['acquisitionyear', 'acquired', 'yearacquired', 'acqyear'],
+        notes: ['notes', 'note', 'comment', 'remarks'],
+        raClientMatch: ['raclientmatch', 'raclient'],
+        clientManager: ['clientmanager', 'manager'],
+        targetAccount: ['targetaccount', 'target'],
+      };
+      const mapping = {};
+      const used = new Set();
+      for (const h of headers) {
+        const norm = (h || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        let assigned = '';
+        for (const [fieldKey, pats] of Object.entries(patterns)) {
+          if (used.has(fieldKey)) continue;
+          if (pats.some(p => norm.includes(p))) { assigned = fieldKey; used.add(fieldKey); break; }
+        }
+        mapping[h] = assigned;
+      }
+      setPortfolioUpload({ fileName: file.name, headers, rows: data, mapping });
+    } catch (err) {
+      alert('Failed to parse file: ' + (err.message || 'Unknown error'));
+    }
+  }, []);
   const [raClientPickerQuery, setRaClientPickerQuery] = useState('');
   const [targetAccountPickerQuery, setTargetAccountPickerQuery] = useState('');
   // Reset the search query whenever a picker opens / closes / moves rows
@@ -2068,7 +2111,43 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
 
           {/* Portfolio Companies */}
           {!isNew && (
-            <div style={{ marginTop: '1rem', borderTop: '1px solid var(--color-border-light)', paddingTop: '0.75rem' }}>
+            <div
+              style={{ marginTop: '1rem', borderTop: '1px solid var(--color-border-light)', paddingTop: '0.75rem', position: 'relative', borderRadius: 8, transition: 'background 0.15s, outline 0.15s', outline: portfolioDragActive ? '2px dashed var(--color-accent)' : '2px dashed transparent', outlineOffset: portfolioDragActive ? '4px' : '0px', background: portfolioDragActive ? 'rgba(59, 125, 221, 0.06)' : 'transparent' }}
+              onDragOver={e => {
+                if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'copy';
+                  if (!portfolioDragActive) setPortfolioDragActive(true);
+                }
+              }}
+              onDragEnter={e => {
+                if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) {
+                  e.preventDefault();
+                  setPortfolioDragActive(true);
+                }
+              }}
+              onDragLeave={e => {
+                // Only clear when leaving the wrapper, not when entering a child
+                if (e.currentTarget === e.target) setPortfolioDragActive(false);
+              }}
+              onDrop={e => {
+                e.preventDefault();
+                setPortfolioDragActive(false);
+                const file = e.dataTransfer?.files?.[0];
+                if (!file) return;
+                if (!/\.(xlsx|xls)$/i.test(file.name)) {
+                  alert('Please drop an Excel file (.xlsx or .xls).');
+                  return;
+                }
+                if (!portfolioOpen) setPortfolioOpen(true);
+                openPortfolioMappingForFile(file);
+              }}
+            >
+              {portfolioDragActive && (
+                <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', background: 'var(--color-accent)', color: '#fff', padding: '0.5rem 1rem', borderRadius: 6, fontSize: '0.85rem', fontWeight: 600, pointerEvents: 'none', zIndex: 5, boxShadow: '0 4px 12px rgba(0,0,0,0.2)' }}>
+                  Drop Excel to replace Portfolio Companies
+                </div>
+              )}
               <div
                 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', userSelect: 'none' }}
                 onClick={() => setPortfolioOpen(o => !o)}
@@ -2399,45 +2478,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                 async function handleUpload(e) {
                   const file = e.target.files?.[0];
                   e.target.value = '';
-                  if (!file) return;
-                  try {
-                    const buf = await file.arrayBuffer();
-                    const wb = XLSX.read(buf);
-                    const sheet = wb.Sheets[wb.SheetNames[0]];
-                    const data = XLSX.utils.sheet_to_json(sheet, { defval: '' });
-                    if (!data.length) { alert('Uploaded file has no rows.'); return; }
-                    const headers = Object.keys(data[0]);
-
-                    // Auto-detect mapping: uploaded header -> internal field key
-                    const patterns = {
-                      companyName: ['companyname', 'company'],
-                      industry: ['industry'],
-                      hqCity: ['hqcity', 'city'],
-                      hqCountry: ['hqcountry', 'country'],
-                      energyGwh: ['energy', 'gwh'],
-                      siteCount: ['sitecount', 'sites', 'numberofsites', 'estsitecount'],
-                      pcDescription: ['pcdescription', 'pcdesc', 'description'],
-                      acquisitionYear: ['acquisitionyear', 'acquired', 'yearacquired', 'acqyear'],
-                      notes: ['notes', 'note', 'comment', 'remarks'],
-                      raClientMatch: ['raclientmatch', 'raclient'],
-                      clientManager: ['clientmanager', 'manager'],
-                      targetAccount: ['targetaccount', 'target'],
-                    };
-                    const mapping = {};
-                    const used = new Set();
-                    for (const h of headers) {
-                      const norm = (h || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-                      let assigned = '';
-                      for (const [fieldKey, pats] of Object.entries(patterns)) {
-                        if (used.has(fieldKey)) continue;
-                        if (pats.some(p => norm.includes(p))) { assigned = fieldKey; used.add(fieldKey); break; }
-                      }
-                      mapping[h] = assigned;
-                    }
-                    setPortfolioUpload({ fileName: file.name, headers, rows: data, mapping });
-                  } catch (err) {
-                    alert('Failed to parse file: ' + (err.message || 'Unknown error'));
-                  }
+                  if (file) await openPortfolioMappingForFile(file);
                 }
                 const totalEnergy = rows.reduce((sum, r) => sum + (Number(r.energyGwh) || 0), 0);
                 const totalSites = rows.reduce((sum, r) => sum + (Number(r.siteCount) || 0), 0);
