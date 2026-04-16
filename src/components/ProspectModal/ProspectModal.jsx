@@ -2278,8 +2278,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                   const maxS = rows.reduce((m, r) => Math.max(m, Number(r.siteCount) || 0), 0);
                   const years = rows.map(r => Number(r.acquisitionYear)).filter(y => y > 0);
                   const yearRange = years.length > 0 ? { min: Math.min(...years), max: Math.max(...years) } : null;
-                  const headers = ['Opportunity Score', 'Company Name', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Sector', 'Subsector', 'Subsector Score', 'Acquisition Year', 'PC Description', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM'];
-                  const colWidths = [16, 32, 20, 16, 20, 16, 28, 22, 12, 14, 48, 36, 26, 22, 26, 10, 22];
+                  const headers = ['Opportunity Score', 'Company Name', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Sector', 'Subsector', 'Subsector Score', 'Acquisition Year', 'PC Description', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM'];
+                  const colWidths = [12, 32, 15, 15, 15, 28, 22, 12, 14, 48, 36, 26, 22, 26, 10, 22];
                   const data = rows.map((r, idx) => {
                     const score = computePortfolioFitScore(r, maxE, maxS, yearRange);
                     const energy = r.energyGwh === '' || r.energyGwh == null ? null : (Number(r.energyGwh) || r.energyGwh);
@@ -2292,7 +2292,6 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                     return [
                       score,
                       r.companyName || '',
-                      r.hqCity || '',
                       r.hqCountry || '',
                       energy,
                       sites,
@@ -2378,9 +2377,9 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                         };
                         cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: false };
                         // Number formats
-                        if (i === 0 || i === 9) cell.numFmt = '0';
-                        if (i === 4 || i === 5) cell.numFmt = '#,##0';
-                        if (i === 8) cell.numFmt = '0.0';
+                        if (i === 0 || i === 8) cell.numFmt = '0';
+                        if (i === 3 || i === 4) cell.numFmt = '#,##0';
+                        if (i === 7) cell.numFmt = '0.0';
                       });
                       row.height = 18;
                     });
