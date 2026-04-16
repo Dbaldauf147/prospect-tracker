@@ -2430,7 +2430,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                           left: { style: 'thin', color: { argb: SE_BORDER } },
                           right: { style: 'thin', color: { argb: SE_BORDER } },
                         };
-                        cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: false };
+                        cell.alignment = { vertical: 'middle', horizontal: i === 0 ? 'center' : 'left', wrapText: false };
                         // Number formats
                         if (i === 0 || i === 8) cell.numFmt = '0';
                         if (i === 3 || i === 4) cell.numFmt = '#,##0';
