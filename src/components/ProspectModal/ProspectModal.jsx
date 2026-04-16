@@ -270,10 +270,13 @@ function sectorScoreFor(sector) {
 }
 
 function sectorTier(sector) {
-  const s = sectorScoreFor(sector);
-  if (s >= 8) return 'High';
-  if (s >= 5) return 'Medium';
-  if (s > 0) return 'Low';
+  return tierForScoreValue(sectorScoreFor(sector));
+}
+
+function tierForScoreValue(score) {
+  if (score >= 8) return 'High';
+  if (score >= 5) return 'Medium';
+  if (score > 0) return 'Low';
   return null;
 }
 
@@ -2821,19 +2824,38 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                     onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
                                   />
                                 </td>
+                                <td style={{ padding: '0.15rem 0.25rem' }}>
+                                  <input
+                                    value={r.sector || r.industry || ''}
+                                    onChange={e => updateRow(i, { sector: e.target.value })}
+                                    title={r.sector || r.industry || ''}
+                                    style={{ width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: 'var(--color-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                                    onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; e.target.style.background = '#fff'; }}
+                                    onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
+                                  />
+                                </td>
                                 {(() => {
-                                  const sectorText = r.sector || r.industry || '';
-                                  const tier = industryTier(sectorText);
+                                  // Color the Subsector cell by the effective sector-fit score
+                                  // (subsectorScore when both label + score present, then sectorScore,
+                                  // then keyword-derived from sector text).
+                                  const sub = Number(r.subsectorScore);
+                                  const subText = (r.subsector || '').trim();
+                                  const sec = Number(r.sectorScore);
+                                  let effScore;
+                                  if (subText && sub > 0) effScore = sub;
+                                  else if (sec > 0) effScore = sec;
+                                  else effScore = sectorScoreFor(industrySector(r.sector || r.industry));
+                                  const tier = tierForScoreValue(effScore);
                                   const tierColors = tier ? TIER_COLORS[tier] : null;
                                   const cellStyle = tierColors ? { padding: '0.15rem 0.25rem', background: tierColors.bg } : { padding: '0.15rem 0.25rem' };
                                   const inputStyle = tierColors
-                                    ? { width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: tierColors.color, fontWeight: 600 }
-                                    : { width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: 'var(--color-text)' };
+                                    ? { width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: tierColors.color, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }
+                                    : { width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: 'var(--color-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
                                   return (
-                                    <td style={cellStyle} title={tier ? `Fit: ${tier}` : undefined}>
+                                    <td style={cellStyle} title={tier ? `Fit ${tier} · score ${effScore}` : (r.subsector || '')}>
                                       <input
-                                        value={sectorText}
-                                        onChange={e => updateRow(i, { sector: e.target.value })}
+                                        value={r.subsector || ''}
+                                        onChange={e => updateRow(i, { subsector: e.target.value })}
                                         style={inputStyle}
                                         onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; e.target.style.background = '#fff'; }}
                                         onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
@@ -2841,16 +2863,6 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                     </td>
                                   );
                                 })()}
-                                <td style={{ padding: '0.15rem 0.25rem' }}>
-                                  <input
-                                    value={r.subsector || ''}
-                                    onChange={e => updateRow(i, { subsector: e.target.value })}
-                                    title={r.subsector || ''}
-                                    style={{ width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: 'var(--color-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
-                                    onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; e.target.style.background = '#fff'; }}
-                                    onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
-                                  />
-                                </td>
                                 <td style={{ padding: '0.15rem 0.25rem' }}>
                                   <input
                                     type="number"
