@@ -877,8 +877,58 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
   const [raClientPickerOpen, setRaClientPickerOpen] = useState(null); // row index
   const [targetAccountPickerOpen, setTargetAccountPickerOpen] = useState(null); // row index
   // Portfolio Companies upload preview — shows detected column mapping before applying
-  const [portfolioUpload, setPortfolioUpload] = useState(null); // { fileName, headers: string[], rows: object[], mapping: { [header]: fieldKey|'' } }
+  const [portfolioUpload, setPortfolioUpload] = useState(null); // { fileName, headers: string[], rows: object[], mapping: { [header]: fieldKey|'' }, file?: File }
   const [portfolioDragActive, setPortfolioDragActive] = useState(false);
+  // Bumped after save / clear so the source-file metadata re-reads from localStorage.
+  const [portfolioSourceFileVersion, setPortfolioSourceFileVersion] = useState(0);
+
+  // Source-file attachment helpers (per-parent-company, persisted to localStorage so
+  // the user can download the original Excel they uploaded later).
+  function portfolioSourceKey(companyName) {
+    const slug = (companyName || '').toLowerCase().replace(/[^a-z0-9]/g, '-');
+    return slug ? `portfolioUploadFile:${slug}` : '';
+  }
+  function loadPortfolioSourceFile(companyName) {
+    const key = portfolioSourceKey(companyName);
+    if (!key) return null;
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch { return null; }
+  }
+  function clearPortfolioSourceFile(companyName) {
+    const key = portfolioSourceKey(companyName);
+    if (!key) return;
+    try { localStorage.removeItem(key); } catch {}
+    setPortfolioSourceFileVersion(v => v + 1);
+  }
+  async function savePortfolioSourceFile(companyName, file) {
+    const key = portfolioSourceKey(companyName);
+    if (!key || !file) return;
+    try {
+      const dataUrl = await new Promise((res, rej) => {
+        const reader = new FileReader();
+        reader.onload = () => res(reader.result);
+        reader.onerror = rej;
+        reader.readAsDataURL(file);
+      });
+      localStorage.setItem(key, JSON.stringify({
+        name: file.name,
+        type: file.type || 'application/octet-stream',
+        size: file.size,
+        uploadedAt: new Date().toISOString(),
+        dataUrl,
+      }));
+      setPortfolioSourceFileVersion(v => v + 1);
+    } catch (err) {
+      if (err && err.name === 'QuotaExceededError') {
+        alert('The data imported, but the source file was too large to keep as an attachment (browser storage cap).');
+      } else {
+        console.error('Failed to save source file attachment:', err);
+      }
+    }
+  }
 
   // Shared file -> mapping-preview parser. Used by both the Upload Excel button
   // and the drag-and-drop handler on the Portfolio Companies section.
@@ -922,7 +972,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
         }
         mapping[h] = assigned;
       }
-      setPortfolioUpload({ fileName: file.name, headers, rows: data, mapping });
+      setPortfolioUpload({ fileName: file.name, headers, rows: data, mapping, file });
     } catch (err) {
       alert('Failed to parse file: ' + (err.message || 'Unknown error'));
     }
@@ -2713,6 +2763,41 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                         ↑ Upload Excel
                         <input type="file" accept=".xlsx,.xls,.csv" onChange={handleUpload} style={{ display: 'none' }} />
                       </label>
+                      {(() => {
+                        // Show the saved source-file attachment for this company.
+                        // Reads localStorage on every render via the version state.
+                        const _ = portfolioSourceFileVersion; // dependency hint
+                        const sourceFile = loadPortfolioSourceFile(fields.company);
+                        if (!sourceFile) return null;
+                        const sizeKb = sourceFile.size ? Math.round(sourceFile.size / 1024) : null;
+                        const uploadedDate = sourceFile.uploadedAt ? new Date(sourceFile.uploadedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '';
+                        return (
+                          <div
+                            title={`Source file uploaded ${uploadedDate}${sizeKb ? ` · ${sizeKb} KB` : ''}`}
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.25rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 999, background: '#F0FDF4', fontSize: '0.7rem', color: '#166534', fontWeight: 600 }}
+                          >
+                            <span style={{ fontSize: '0.78rem' }}>📎</span>
+                            <a
+                              href={sourceFile.dataUrl}
+                              download={sourceFile.name}
+                              style={{ color: '#166534', textDecoration: 'underline', fontWeight: 600, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                            >{sourceFile.name}</a>
+                            {uploadedDate && <span style={{ color: '#64748B', fontWeight: 400 }}>· {uploadedDate}</span>}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (window.confirm(`Remove the saved source file "${sourceFile.name}"? The current Portfolio Companies data is not affected.`)) {
+                                  clearPortfolioSourceFile(fields.company);
+                                }
+                              }}
+                              title="Remove the saved source file (does not delete the table)"
+                              style={{ background: 'none', border: 'none', color: '#94A3B8', cursor: 'pointer', fontSize: '0.85rem', padding: '0 2px', lineHeight: 1 }}
+                              onMouseEnter={e => e.currentTarget.style.color = '#DC2626'}
+                              onMouseLeave={e => e.currentTarget.style.color = '#94A3B8'}
+                            >×</button>
+                          </div>
+                        );
+                      })()}
                       {portfolioResearchError && (
                         <span style={{ fontSize: '0.68rem', color: '#DC2626', fontWeight: 600 }}>{portfolioResearchError}</span>
                       )}
@@ -3385,6 +3470,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
               return;
             }
             set('portfolioCompanies', parsed);
+            // Persist the original file as a downloadable attachment for this company.
+            if (portfolioUpload.file) savePortfolioSourceFile(fields.company, portfolioUpload.file);
             setPortfolioUpload(null);
           }
           return (
