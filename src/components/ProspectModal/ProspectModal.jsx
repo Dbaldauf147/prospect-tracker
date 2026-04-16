@@ -871,7 +871,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
   const [researchingPortfolio, setResearchingPortfolio] = useState(false);
   const [portfolioResearchError, setPortfolioResearchError] = useState(null);
   const [portfolioColWidths, setPortfolioColWidths] = useState({
-    num: 30, company: 180, industry: 140, sector: 160, subsector: 160, subsectorScore: 80, hqCity: 130, hqCountry: 90, energy: 110, siteCount: 100, rank: 80, fitTier: 100, pcDescription: 260, acquisitionYear: 90, notes: 220, raClient: 200, clientManager: 140, targetAccount: 200, tier: 80, salesRep: 160,
+    num: 30, company: 180, industry: 140, sector: 160, subsector: 160, subsectorScore: 80, hqCity: 130, hqCountry: 90, energy: 110, siteCount: 100, rank: 130, fitTier: 100, pcDescription: 260, acquisitionYear: 90, notes: 220, raClient: 200, clientManager: 140, targetAccount: 200, tier: 80, salesRep: 160,
   });
   const [portfolioSortByRank, setPortfolioSortByRank] = useState(false);
   const [raClientPickerOpen, setRaClientPickerOpen] = useState(null); // row index
@@ -2278,8 +2278,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                   const maxS = rows.reduce((m, r) => Math.max(m, Number(r.siteCount) || 0), 0);
                   const years = rows.map(r => Number(r.acquisitionYear)).filter(y => y > 0);
                   const yearRange = years.length > 0 ? { min: Math.min(...years), max: Math.max(...years) } : null;
-                  const headers = ['#', 'Company Name', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Rank Score', 'Sector', 'Subsector', 'Subsector Score', 'PC Description', 'Acquisition Year', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM'];
-                  const colWidths = [6, 32, 20, 16, 20, 16, 12, 28, 22, 12, 48, 14, 36, 26, 22, 26, 10, 22];
+                  const headers = ['Opportunity Score', 'Company Name', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Sector', 'Subsector', 'Subsector Score', 'PC Description', 'Acquisition Year', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM'];
+                  const colWidths = [16, 32, 20, 16, 20, 16, 28, 22, 12, 48, 14, 36, 26, 22, 26, 10, 22];
                   const data = rows.map((r, idx) => {
                     const score = computePortfolioFitScore(r, maxE, maxS, yearRange);
                     const energy = r.energyGwh === '' || r.energyGwh == null ? null : (Number(r.energyGwh) || r.energyGwh);
@@ -2290,13 +2290,12 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                     const subsectorScoreCell = subsectorScoreNum > 0 ? subsectorScoreNum : (r.subsectorScore || '');
                     const clientMgr = (r.clientManager || '').trim() || cmForRaClient(r.raClientMatch);
                     return [
-                      idx + 1,
+                      score,
                       r.companyName || '',
                       r.hqCity || '',
                       r.hqCountry || '',
                       energy,
                       sites,
-                      score,
                       r.sector || r.industry || '',
                       r.subsector || '',
                       subsectorScoreCell,
@@ -2379,10 +2378,9 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                         };
                         cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: false };
                         // Number formats
-                        if (i === 0) cell.numFmt = '0';
+                        if (i === 0 || i === 10) cell.numFmt = '0';
                         if (i === 4 || i === 5) cell.numFmt = '#,##0';
-                        if (i === 6 || i === 11) cell.numFmt = '0';
-                        if (i === 9) cell.numFmt = '0.0';
+                        if (i === 8) cell.numFmt = '0.0';
                       });
                       row.height = 18;
                     });
@@ -2392,7 +2390,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
 
                     // ── Methodology & Assumptions tab (hidden by default) ──
                     // The sheet is still included so it can be unhidden in Excel when a
-                    // reader wants to see how the Rank Score was derived.
+                    // reader wants to see how the Opportunity Score was derived.
                     const mws = wb.addWorksheet('Methodology', {
                       properties: { tabColor: { argb: SE_GREEN } },
                       views: [{ state: 'frozen', ySplit: 2 }],
@@ -2451,7 +2449,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                     function addBlank() { mRow++; }
 
                     addSectionHeader('Overview');
-                    addParagraph('The Rank Score is a 0–100 composite value computed for each portfolio company. Higher values indicate a better fit for Schneider Electric engagement based on industry alignment, operational scale, and acquisition recency. The score is computed relative to the other companies in this table — energy, site count, and acquisition year are normalized against the rows exported here.');
+                    addParagraph('The Opportunity Score is a 0–100 composite value computed for each portfolio company. Higher values indicate a better fit for Schneider Electric engagement based on industry alignment, operational scale, and acquisition recency. The score is computed relative to the other companies in this table — energy, site count, and acquisition year are normalized against the rows exported here.');
                     addBlank();
 
                     addSectionHeader('Component Weights');
@@ -2482,7 +2480,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                     addBlank();
 
                     addSectionHeader('Composite Formula');
-                    addParagraph('Rank Score = round( 100 × ( 0.40 × Energy% + 0.25 × Sector% + 0.20 × Sites% + 0.15 × Year% ) )');
+                    addParagraph('Opportunity Score = round( 100 × ( 0.40 × Energy% + 0.25 × Sector% + 0.20 × Sites% + 0.15 × Year% ) )');
                     addBlank();
 
                     addSectionHeader('Key Assumptions & Caveats');
@@ -2747,7 +2745,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                 onClick={() => setPortfolioSortByRank(v => !v)}
                                 title={portfolioSortByRank ? 'Showing best fit first — click to restore original order' : 'Click to sort best fit first'}
                               >
-                                Rank{portfolioSortByRank ? ' ▼' : ''}<span style={resizeHandleStyle} onMouseDown={e => startResize('rank', e)} />
+                                Opportunity Score{portfolioSortByRank ? ' ▼' : ''}<span style={resizeHandleStyle} onMouseDown={e => startResize('rank', e)} />
                               </th>
                               <th style={thBase}>Company<span style={resizeHandleStyle} onMouseDown={e => startResize('company', e)} /></th>
                               <th style={thBase}>HQ City<span style={resizeHandleStyle} onMouseDown={e => startResize('hqCity', e)} /></th>
