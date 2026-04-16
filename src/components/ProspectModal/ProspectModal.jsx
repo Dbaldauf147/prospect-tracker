@@ -3296,9 +3296,9 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
           const hasDuplicateMapping = Object.values(usedFieldCounts).some(n => n > 1);
           // Which of the internal fields the upload mapping does NOT cover.
           // companyName is excluded because its own dedicated warning is shown above.
-          const unmappedExpected = PORTFOLIO_FIELD_OPTIONS
-            .filter(opt => opt.key && opt.key !== 'companyName' && !mappedFields.has(opt.key))
-            .map(opt => opt.label);
+          const unmappedExpectedFields = PORTFOLIO_FIELD_OPTIONS
+            .filter(opt => opt.key && opt.key !== 'companyName' && !mappedFields.has(opt.key));
+          const unmappedExpected = unmappedExpectedFields.map(opt => opt.label);
           function updateMap(header, fieldKey) {
             setPortfolioUpload(prev => prev ? { ...prev, mapping: { ...prev.mapping, [header]: fieldKey } } : prev);
           }
@@ -3402,6 +3402,37 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                           </tr>
                         );
                       })}
+                      {unmappedExpectedFields.map(field => (
+                        <tr key={`__missing__${field.key}`} style={{ borderBottom: '1px solid #F1F5F9', background: '#FFFBEB' }}>
+                          <td style={{ padding: '0.4rem 0.5rem', fontStyle: 'italic', color: '#854D0E', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`No column in your file maps to ${field.label}`}>
+                            (no file column)
+                          </td>
+                          <td style={{ padding: '0.4rem 0.5rem', color: '#A16207', fontStyle: 'italic' }}>—</td>
+                          <td style={{ padding: '0.4rem 0.5rem' }}>
+                            <div
+                              title={`No file column maps to "${field.label}". Choose this field in the Maps To dropdown of one of the rows above to populate it on import, or leave it blank.`}
+                              style={{
+                                width: '100%',
+                                padding: '0.3rem 0.5rem',
+                                border: '1px solid #FCD34D',
+                                background: '#FEF9C3',
+                                borderRadius: 4,
+                                fontSize: '0.75rem',
+                                fontFamily: 'inherit',
+                                color: '#854D0E',
+                                fontWeight: 600,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                gap: '0.4rem',
+                              }}
+                            >
+                              <span>Missing: {field.label}</span>
+                              <span style={{ fontSize: '0.65rem', fontWeight: 700, padding: '0.05rem 0.4rem', border: '1px solid #FCD34D', borderRadius: 10, background: '#fff' }}>not uploaded</span>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>
