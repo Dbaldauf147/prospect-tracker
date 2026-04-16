@@ -1922,9 +1922,15 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
             <datalist id="hubspot-company-suggestions">
               {(() => {
                 const names = new Set();
+                // Companies from the loaded HubSpot contacts (incl. domain-derived guesses)
                 for (const c of enrichedContacts) {
                   if (c.company) names.add(String(c.company).trim());
                   if (c.guessedCompany) names.add(String(c.guessedCompany).trim());
+                }
+                // Companies from the Prospects table (TableView source) so users can search
+                // by any prospect company name even if no contact has been imported yet.
+                for (const p of (prospects || [])) {
+                  if (p.company) names.add(String(p.company).trim());
                 }
                 return [...names].filter(Boolean).sort((a, b) => a.localeCompare(b)).map(n => <option key={n} value={n} />);
               })()}
