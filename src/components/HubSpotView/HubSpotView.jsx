@@ -70,6 +70,28 @@ function HubSpotInlineCell({ contact, field, value, onSave, suggestions }) {
   const [saving, setSaving] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const wrapRef = useRef(null);
+  const inputRef = useRef(null);
+  const [dropdownRect, setDropdownRect] = useState(null);
+
+  // Recompute the dropdown's screen position when editing/showSuggestions/value changes.
+  // The dropdown is portaled to document.body so it can escape the cell's overflow:hidden,
+  // which was previously clipping the suggestion list out of view.
+  useEffect(() => {
+    if (!editing || !showSuggestions) { setDropdownRect(null); return; }
+    function update() {
+      const el = inputRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      setDropdownRect({ top: r.bottom + 2, left: r.left, width: r.width });
+    }
+    update();
+    window.addEventListener('scroll', update, true);
+    window.addEventListener('resize', update);
+    return () => {
+      window.removeEventListener('scroll', update, true);
+      window.removeEventListener('resize', update);
+    };
+  }, [editing, showSuggestions, editValue]);
 
   function startEdit(e) {
     e.stopPropagation();
@@ -110,6 +132,7 @@ function HubSpotInlineCell({ contact, field, value, onSave, suggestions }) {
     return (
       <div style={{ position: 'relative' }} ref={wrapRef}>
         <input
+          ref={inputRef}
           className={styles.inlineInput}
           value={editValue}
           onChange={e => { setEditValue(e.target.value); setShowSuggestions(true); }}
@@ -118,15 +141,16 @@ function HubSpotInlineCell({ contact, field, value, onSave, suggestions }) {
           autoFocus
           onClick={e => e.stopPropagation()}
         />
-        {filtered.length > 0 && (
-          <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#fff', border: '1px solid var(--color-border)', borderRadius: '6px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', zIndex: 50, maxHeight: '180px', overflowY: 'auto' }}>
+        {filtered.length > 0 && dropdownRect && createPortal(
+          <div style={{ position: 'fixed', top: dropdownRect.top, left: dropdownRect.left, width: Math.max(dropdownRect.width, 220), background: '#fff', border: '1px solid var(--color-border)', borderRadius: '6px', boxShadow: '0 4px 12px rgba(0,0,0,0.18)', zIndex: 10001, maxHeight: '220px', overflowY: 'auto' }}>
             {filtered.map(name => (
               <button key={name} onMouseDown={e => { e.preventDefault(); setEditValue(name); save(name); }} style={{ display: 'block', width: '100%', padding: '0.35rem 0.6rem', border: 'none', background: 'none', textAlign: 'left', fontSize: '0.78rem', cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text)' }}
                 onMouseEnter={e => e.target.style.background = '#F8FAFC'}
                 onMouseLeave={e => e.target.style.background = 'none'}
               >{name}</button>
             ))}
-          </div>
+          </div>,
+          document.body
         )}
       </div>
     );
