@@ -2329,7 +2329,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                   const years = rows.map(r => Number(r.acquisitionYear)).filter(y => y > 0);
                   const yearRange = years.length > 0 ? { min: Math.min(...years), max: Math.max(...years) } : null;
                   const headers = ['Opportunity Score', 'Company Name', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Sector', 'Subsector', 'Subsector Score', 'Acquisition Year', 'PC Description', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM'];
-                  const colWidths = [12, 32, 15, 15, 15, 28, 22, 12, 14, 48, 36, 26, 22, 26, 10, 22];
+                  const colWidths = [12.15, 32, 15, 15, 15, 28, 22, 12, 14, 48, 36, 26, 22, 26, 10, 22];
                   // Export ordered by Opportunity Score (highest first); ties keep original order
                   const orderedRows = rows
                     .map((r, idx) => ({ r, idx, score: computePortfolioFitScore(r, maxE, maxS, yearRange) }))
@@ -2353,7 +2353,9 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                       subsectorScoreCell,
                       acqYear,
                       r.pcDescription || '',
-                      r.notes || '',
+                      // Use a single space when notes is empty so a long PC Description
+                      // can't visually spill into the Notes column in Excel.
+                      r.notes && r.notes.trim() ? r.notes : ' ',
                       r.raClientMatch || '',
                       clientMgr,
                       r.targetAccount || '',
