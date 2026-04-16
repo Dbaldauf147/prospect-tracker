@@ -3009,14 +3009,25 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                 {(() => {
                                   const suggestedCm = cmForRaClient(r.raClientMatch);
                                   const userOverride = (r.clientManager || '').trim();
+                                  const displayValue = userOverride || suggestedCm || '';
                                   const showingSuggestion = !userOverride && !!suggestedCm;
                                   return (
                                     <td style={{ padding: '0.15rem 0.25rem' }}>
                                       <input
-                                        value={r.clientManager || ''}
-                                        onChange={e => updateRow(i, { clientManager: e.target.value })}
-                                        placeholder={suggestedCm || '—'}
-                                        title={showingSuggestion ? `Suggested from RA Client "${r.raClientMatch}". Type to override.` : undefined}
+                                        value={displayValue}
+                                        onChange={e => {
+                                          const v = e.target.value;
+                                          // If they typed the same string the suggestion already provides,
+                                          // store nothing so the suggestion stays "live" against future
+                                          // RA-Client changes. Otherwise save as a manual override.
+                                          if (suggestedCm && v.trim() === suggestedCm.trim()) {
+                                            updateRow(i, { clientManager: '' });
+                                          } else {
+                                            updateRow(i, { clientManager: v });
+                                          }
+                                        }}
+                                        placeholder="—"
+                                        title={showingSuggestion ? `Suggested from RA Client "${r.raClientMatch}" — select and copy as needed, or type to override.` : undefined}
                                         style={{
                                           width: '100%',
                                           padding: '0.15rem 0.3rem',
@@ -3025,10 +3036,16 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                           fontSize: '0.7rem',
                                           fontFamily: 'inherit',
                                           background: 'transparent',
-                                          color: 'var(--color-text)',
+                                          color: showingSuggestion ? '#64748B' : 'var(--color-text)',
                                           fontStyle: showingSuggestion ? 'italic' : 'normal',
                                         }}
-                                        onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; e.target.style.background = '#fff'; }}
+                                        onFocus={e => {
+                                          e.target.style.border = '1px solid var(--color-accent)';
+                                          e.target.style.background = '#fff';
+                                          // Auto-select on focus when displaying a suggestion so a single
+                                          // keystroke replaces it cleanly while still allowing copy.
+                                          if (showingSuggestion) e.target.select();
+                                        }}
                                         onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
                                       />
                                     </td>
