@@ -2460,6 +2460,15 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                     // Auto-filter on the header row so users can sort/filter immediately
                     ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: headers.length } };
 
+                    // Re-apply column widths AFTER all cells are written. ExcelJS
+                    // sometimes recalculates a column's width when cells are added
+                    // via getCell(), so an authoritative second pass guarantees the
+                    // widths the user configured (e.g. Opportunity Score = 12) are
+                    // what's actually saved in the workbook.
+                    colWidths.forEach((w, idx) => {
+                      ws.getColumn(idx + 1).width = w;
+                    });
+
                     // ── Methodology & Assumptions tab (hidden by default) ──
                     // The sheet is still included so it can be unhidden in Excel when a
                     // reader wants to see how the Opportunity Score was derived.
