@@ -287,7 +287,6 @@ function industryTier(industry) {
 const PORTFOLIO_FIELD_OPTIONS = [
   { key: '', label: '— Ignore this column —' },
   { key: 'companyName', label: 'Company Name (required)' },
-  { key: 'industry', label: 'Industry' },
   { key: 'sector', label: 'Sector' },
   { key: 'subsector', label: 'Subsector' },
   { key: 'subsectorScore', label: 'Subsector Score (1-10)' },
@@ -318,7 +317,7 @@ function computePortfolioFitScore(row, maxEnergy, maxSites, yearRange) {
   let sectorScoreRaw;
   if (subsectorUsable) sectorScoreRaw = explicitSubsectorScore;
   else if (explicitSectorScore > 0) sectorScoreRaw = explicitSectorScore;
-  else sectorScoreRaw = sectorScoreFor(industrySector(row.industry));
+  else sectorScoreRaw = sectorScoreFor(industrySector(row.sector || row.industry));
   const sectorVal = Math.min(1, sectorScoreRaw / 10);
   const energyPct = maxEnergy > 0 ? Math.min(1, (Number(row.energyGwh) || 0) / maxEnergy) : 0;
   const sitesPct = maxSites > 0 ? Math.min(1, (Number(row.siteCount) || 0) / maxSites) : 0;
@@ -891,13 +890,13 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
       const headers = Object.keys(data[0]);
       const patterns = {
         companyName: ['companyname', 'company'],
-        industry: ['industry'],
         // Subsector before sector so a header literally named "Subsector Score"
         // wins over the broader "sector" / "score" patterns.
         subsectorScore: ['subsectorscore', 'subsectorfit', 'subsectorrating'],
         sectorScore: ['sectorscore', 'sectorfit', 'sectorrating', 'fitscore'],
         subsector: ['subsector'],
-        sector: ['sector'],
+        // Industry and Sector are merged — both map to the sector field.
+        sector: ['sector', 'industry'],
         hqCity: ['hqcity', 'city'],
         hqCountry: ['hqcountry', 'country'],
         energyGwh: ['energy', 'gwh'],
@@ -2193,7 +2192,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                   set('portfolioCompanies', rows.filter((_, i) => i !== idx));
                 }
                 function addRow() {
-                  set('portfolioCompanies', [...rows, { companyName: '', industry: '', sector: '', subsector: '', subsectorScore: '', hqCity: '', hqCountry: '', energyGwh: '', siteCount: '', pcDescription: '', acquisitionYear: '', notes: '' }]);
+                  set('portfolioCompanies', [...rows, { companyName: '', sector: '', subsector: '', subsectorScore: '', hqCity: '', hqCountry: '', energyGwh: '', siteCount: '', pcDescription: '', acquisitionYear: '', notes: '' }]);
                 }
                 function parsePaste() {
                   const text = pastePortfolio.trim();
@@ -2245,7 +2244,6 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                       'HQ Country': 'USA',
                       'Est. Energy (GWh/yr)': 25,
                       'Est. Site Count': 12,
-                      'Industry': 'Technology',
                       'Sector': 'Tech / Software & Office Occupiers',
                       'Subsector': 'Enterprise SaaS',
                       'Subsector Score': 3.2,
@@ -2260,9 +2258,9 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                     },
                   ];
                   const ws = XLSX.utils.json_to_sheet(templateRows, {
-                    header: ['Company Name', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Industry', 'Sector', 'Subsector', 'Subsector Score', 'PC Description', 'Acquisition Year', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM'],
+                    header: ['Company Name', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Sector', 'Subsector', 'Subsector Score', 'PC Description', 'Acquisition Year', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM'],
                   });
-                  ws['!cols'] = [{ wch: 30 }, { wch: 20 }, { wch: 16 }, { wch: 20 }, { wch: 16 }, { wch: 18 }, { wch: 28 }, { wch: 22 }, { wch: 12 }, { wch: 48 }, { wch: 14 }, { wch: 36 }, { wch: 26 }, { wch: 22 }, { wch: 26 }, { wch: 10 }, { wch: 22 }];
+                  ws['!cols'] = [{ wch: 30 }, { wch: 20 }, { wch: 16 }, { wch: 20 }, { wch: 16 }, { wch: 28 }, { wch: 22 }, { wch: 12 }, { wch: 48 }, { wch: 14 }, { wch: 36 }, { wch: 26 }, { wch: 22 }, { wch: 26 }, { wch: 10 }, { wch: 22 }];
                   const wb = XLSX.utils.book_new();
                   XLSX.utils.book_append_sheet(wb, ws, 'Portfolio Companies');
                   const safeName = (fields.company || 'company').replace(/[^a-z0-9]+/gi, '_');
@@ -2277,8 +2275,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                   const maxS = rows.reduce((m, r) => Math.max(m, Number(r.siteCount) || 0), 0);
                   const years = rows.map(r => Number(r.acquisitionYear)).filter(y => y > 0);
                   const yearRange = years.length > 0 ? { min: Math.min(...years), max: Math.max(...years) } : null;
-                  const headers = ['#', 'Company Name', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Rank Score', 'Industry', 'Sector', 'Subsector', 'Subsector Score', 'PC Description', 'Acquisition Year', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM'];
-                  const colWidths = [6, 32, 20, 16, 20, 16, 12, 22, 28, 22, 12, 48, 14, 36, 26, 22, 26, 10, 22];
+                  const headers = ['#', 'Company Name', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Rank Score', 'Sector', 'Subsector', 'Subsector Score', 'PC Description', 'Acquisition Year', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM'];
+                  const colWidths = [6, 32, 20, 16, 20, 16, 12, 28, 22, 12, 48, 14, 36, 26, 22, 26, 10, 22];
                   const data = rows.map((r, idx) => {
                     const score = computePortfolioFitScore(r, maxE, maxS, yearRange);
                     const energy = r.energyGwh === '' || r.energyGwh == null ? null : (Number(r.energyGwh) || r.energyGwh);
@@ -2296,8 +2294,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                       energy,
                       sites,
                       score,
-                      r.industry || '',
-                      r.sector || '',
+                      r.sector || r.industry || '',
                       r.subsector || '',
                       subsectorScoreCell,
                       r.pcDescription || '',
@@ -2381,8 +2378,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                         // Number formats
                         if (i === 0) cell.numFmt = '0';
                         if (i === 4 || i === 5) cell.numFmt = '#,##0';
-                        if (i === 6 || i === 12) cell.numFmt = '0';
-                        if (i === 10) cell.numFmt = '0.0';
+                        if (i === 6 || i === 11) cell.numFmt = '0';
+                        if (i === 9) cell.numFmt = '0.0';
                       });
                       row.height = 18;
                     });
@@ -2727,7 +2724,6 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                             <col style={{ width: portfolioColWidths.hqCountry + 'px' }} />
                             <col style={{ width: portfolioColWidths.energy + 'px' }} />
                             <col style={{ width: portfolioColWidths.siteCount + 'px' }} />
-                            <col style={{ width: portfolioColWidths.industry + 'px' }} />
                             <col style={{ width: portfolioColWidths.sector + 'px' }} />
                             <col style={{ width: portfolioColWidths.subsector + 'px' }} />
                             <col style={{ width: portfolioColWidths.subsectorScore + 'px' }} />
@@ -2755,7 +2751,6 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                               <th style={thBase}>HQ Country<span style={resizeHandleStyle} onMouseDown={e => startResize('hqCountry', e)} /></th>
                               <th style={{ ...thBase }}>Est. Energy (GWh/yr)<span style={resizeHandleStyle} onMouseDown={e => startResize('energy', e)} /></th>
                               <th style={{ ...thBase }}>Est. Site Count<span style={resizeHandleStyle} onMouseDown={e => startResize('siteCount', e)} /></th>
-                              <th style={thBase}>Industry<span style={resizeHandleStyle} onMouseDown={e => startResize('industry', e)} /></th>
                               <th style={thBase}>Sector<span style={resizeHandleStyle} onMouseDown={e => startResize('sector', e)} /></th>
                               <th style={thBase}>Subsector<span style={resizeHandleStyle} onMouseDown={e => startResize('subsector', e)} /></th>
                               <th style={thBase}>Score<span style={resizeHandleStyle} onMouseDown={e => startResize('subsectorScore', e)} /></th>
@@ -2782,7 +2777,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                               <tr key={i} style={{ borderBottom: '1px solid #F1F5F9' }}>
                                 {(() => {
                                   const score = rowScores[i];
-                                  const tier = industryTier(r.industry);
+                                  const tier = industryTier(r.sector || r.industry);
                                   const colors = tier ? TIER_COLORS[tier] : { bg: 'transparent', color: '#94A3B8', border: 'var(--color-border)' };
                                   return (
                                     <td style={{ padding: '0.15rem 0.25rem' }}>
@@ -2827,7 +2822,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                   />
                                 </td>
                                 {(() => {
-                                  const tier = industryTier(r.industry);
+                                  const sectorText = r.sector || r.industry || '';
+                                  const tier = industryTier(sectorText);
                                   const tierColors = tier ? TIER_COLORS[tier] : null;
                                   const cellStyle = tierColors ? { padding: '0.15rem 0.25rem', background: tierColors.bg } : { padding: '0.15rem 0.25rem' };
                                   const inputStyle = tierColors
@@ -2836,8 +2832,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                   return (
                                     <td style={cellStyle} title={tier ? `Fit: ${tier}` : undefined}>
                                       <input
-                                        value={r.industry || ''}
-                                        onChange={e => updateRow(i, { industry: e.target.value })}
+                                        value={sectorText}
+                                        onChange={e => updateRow(i, { sector: e.target.value })}
                                         style={inputStyle}
                                         onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; e.target.style.background = '#fff'; }}
                                         onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
@@ -2845,16 +2841,6 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                     </td>
                                   );
                                 })()}
-                                <td style={{ padding: '0.15rem 0.25rem' }}>
-                                  <input
-                                    value={r.sector || ''}
-                                    onChange={e => updateRow(i, { sector: e.target.value })}
-                                    title={r.sector || ''}
-                                    style={{ width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: 'var(--color-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
-                                    onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; e.target.style.background = '#fff'; }}
-                                    onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
-                                  />
-                                </td>
                                 <td style={{ padding: '0.15rem 0.25rem' }}>
                                   <input
                                     value={r.subsector || ''}
@@ -2924,8 +2910,12 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                     {isMatched ? `✓ ${r.raClientMatch}` : (suggestions.length > 0 ? `${suggestions.length} suggestion${suggestions.length === 1 ? '' : 's'} ▾` : '— Click to map —')}
                                   </button>
                                   {pickerOpen && (() => {
-                                    const searched = filterNames(allRaClientNames, raClientPickerQuery, 50);
-                                    const displayList = raClientPickerQuery.trim() ? searched : suggestions;
+                                    const isSearching = !!raClientPickerQuery.trim();
+                                    const searched = filterNames(allRaClientNames, raClientPickerQuery, 100);
+                                    const fullList = isSearching ? searched : allRaClientNames;
+                                    const showSuggestionsSection = !isSearching && suggestions.length > 0;
+                                    const suggestionSet = new Set(suggestions);
+                                    const browseList = showSuggestionsSection ? fullList.filter(n => !suggestionSet.has(n)) : fullList;
                                     return (
                                     <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 100, background: '#fff', border: '1px solid var(--color-border)', borderRadius: '5px', boxShadow: '0 4px 12px rgba(0,0,0,0.12)', minWidth: '260px', maxHeight: '280px', display: 'flex', flexDirection: 'column', marginTop: '2px' }}>
                                       <div style={{ padding: '0.35rem 0.5rem', borderBottom: '1px solid #F1F5F9', flexShrink: 0 }}>
@@ -2946,25 +2936,36 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                             onMouseLeave={e => e.currentTarget.style.background = 'none'}
                                           >× Clear mapping</button>
                                         )}
-                                        {displayList.length === 0 && (
+                                        {isSearching && fullList.length === 0 && (
                                           <div style={{ padding: '0.4rem 0.6rem', fontSize: '0.68rem', color: '#94A3B8', fontStyle: 'italic' }}>
-                                            {raClientPickerQuery.trim() ? `No RA clients match "${raClientPickerQuery}"` : (r.raClientMatch ? '' : 'No suggestions — type to search')}
+                                            No RA clients match "{raClientPickerQuery}"
                                           </div>
                                         )}
-                                        {!raClientPickerQuery.trim() && suggestions.length > 0 && (
-                                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.25rem 0.6rem' }}>
-                                            <span style={{ fontSize: '0.6rem', color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 700 }}>Suggestions</span>
-                                            <button
-                                              type="button"
-                                              onClick={() => { setDismiss('ra', r.companyName, true); setRaClientPickerOpen(null); }}
-                                              title="Hide these suggestions for this company"
-                                              style={{ background: 'none', border: 'none', fontSize: '0.6rem', color: '#94A3B8', cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 700 }}
-                                              onMouseEnter={e => e.currentTarget.style.color = '#DC2626'}
-                                              onMouseLeave={e => e.currentTarget.style.color = '#94A3B8'}
-                                            >× Dismiss</button>
-                                          </div>
+                                        {showSuggestionsSection && (
+                                          <>
+                                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.25rem 0.6rem', background: '#F8FAFC' }}>
+                                              <span style={{ fontSize: '0.6rem', color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 700 }}>Suggestions for {r.companyName}</span>
+                                              <button
+                                                type="button"
+                                                onClick={() => { setDismiss('ra', r.companyName, true); setRaClientPickerOpen(null); }}
+                                                title="Hide these suggestions for this company"
+                                                style={{ background: 'none', border: 'none', fontSize: '0.6rem', color: '#94A3B8', cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 700 }}
+                                                onMouseEnter={e => e.currentTarget.style.color = '#DC2626'}
+                                                onMouseLeave={e => e.currentTarget.style.color = '#94A3B8'}
+                                              >× Dismiss</button>
+                                            </div>
+                                            {suggestions.map(s => (
+                                              <button
+                                                key={`sug-${s}`}
+                                                onClick={() => { updateRow(i, { raClientMatch: s }); setRaClientPickerOpen(null); }}
+                                                style={{ display: 'block', width: '100%', padding: '0.35rem 0.6rem', border: 'none', background: r.raClientMatch === s ? '#DCFCE7' : '#FFFBEB', textAlign: 'left', fontSize: '0.7rem', cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text)', fontWeight: 600 }}
+                                                onMouseEnter={e => e.currentTarget.style.background = '#FEF3C7'}
+                                                onMouseLeave={e => e.currentTarget.style.background = r.raClientMatch === s ? '#DCFCE7' : '#FFFBEB'}
+                                              >{s}</button>
+                                            ))}
+                                          </>
                                         )}
-                                        {!raClientPickerQuery.trim() && raDismissed && rawSuggestions.length > 0 && (
+                                        {!isSearching && raDismissed && rawSuggestions.length > 0 && (
                                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.3rem 0.6rem', fontSize: '0.65rem', color: '#64748B', background: '#F8FAFC' }}>
                                             <span>Suggestions dismissed for {r.companyName}</span>
                                             <button
@@ -2974,7 +2975,12 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                             >Undo</button>
                                           </div>
                                         )}
-                                        {displayList.map(s => (
+                                        {!isSearching && (showSuggestionsSection || browseList.length > 0) && (
+                                          <div style={{ padding: '0.25rem 0.6rem', fontSize: '0.6rem', color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 700, background: '#F8FAFC' }}>
+                                            All RA Clients ({allRaClientNames.length})
+                                          </div>
+                                        )}
+                                        {browseList.map(s => (
                                           <button
                                             key={s}
                                             onClick={() => { updateRow(i, { raClientMatch: s }); setRaClientPickerOpen(null); }}
@@ -3033,10 +3039,12 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                         {hasTarget ? `✓ ${r.targetAccount}` : (targetAccountNames.length === 0 ? '— No target list loaded —' : (targetSuggestions.length > 0 ? `${targetSuggestions.length} suggestion${targetSuggestions.length === 1 ? '' : 's'} ▾` : '— Click to map —'))}
                                       </button>
                                       {targetOpen && (() => {
-                                        const searched = filterNames(targetAccountNames, targetAccountPickerQuery, 50);
-                                        const displayList = targetAccountPickerQuery.trim()
-                                          ? searched
-                                          : (targetSuggestions.length > 0 ? targetSuggestions : targetAccountNames.slice(0, 50));
+                                        const isSearching = !!targetAccountPickerQuery.trim();
+                                        const searched = filterNames(targetAccountNames, targetAccountPickerQuery, 100);
+                                        const fullList = isSearching ? searched : targetAccountNames;
+                                        const showSuggestionsSection = !isSearching && targetSuggestions.length > 0;
+                                        const suggestionSet = new Set(targetSuggestions);
+                                        const browseList = showSuggestionsSection ? fullList.filter(n => !suggestionSet.has(n)) : fullList;
                                         return (
                                         <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 100, background: '#fff', border: '1px solid var(--color-border)', borderRadius: '5px', boxShadow: '0 4px 12px rgba(0,0,0,0.12)', minWidth: '280px', maxHeight: '300px', display: 'flex', flexDirection: 'column', marginTop: '2px' }}>
                                           <div style={{ padding: '0.35rem 0.5rem', borderBottom: '1px solid #F1F5F9', flexShrink: 0 }}>
@@ -3061,25 +3069,36 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                             {targetAccountNames.length === 0 && (
                                               <div style={{ padding: '0.4rem 0.6rem', fontSize: '0.68rem', color: '#94A3B8', fontStyle: 'italic' }}>Upload a Target Accounts file on the My Accounts tab first.</div>
                                             )}
-                                            {targetAccountNames.length > 0 && displayList.length === 0 && (
+                                            {isSearching && targetAccountNames.length > 0 && fullList.length === 0 && (
                                               <div style={{ padding: '0.4rem 0.6rem', fontSize: '0.68rem', color: '#94A3B8', fontStyle: 'italic' }}>
-                                                {targetAccountPickerQuery.trim() ? `No target accounts match "${targetAccountPickerQuery}"` : 'No obvious matches — type to search.'}
+                                                No target accounts match "{targetAccountPickerQuery}"
                                               </div>
                                             )}
-                                            {!targetAccountPickerQuery.trim() && targetSuggestions.length > 0 && (
-                                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.25rem 0.6rem' }}>
-                                                <span style={{ fontSize: '0.6rem', color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 700 }}>Suggestions</span>
-                                                <button
-                                                  type="button"
-                                                  onClick={() => { setDismiss('target', r.companyName, true); setTargetAccountPickerOpen(null); }}
-                                                  title="Hide these suggestions for this company"
-                                                  style={{ background: 'none', border: 'none', fontSize: '0.6rem', color: '#94A3B8', cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 700 }}
-                                                  onMouseEnter={e => e.currentTarget.style.color = '#DC2626'}
-                                                  onMouseLeave={e => e.currentTarget.style.color = '#94A3B8'}
-                                                >× Dismiss</button>
-                                              </div>
+                                            {showSuggestionsSection && (
+                                              <>
+                                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.25rem 0.6rem', background: '#F8FAFC' }}>
+                                                  <span style={{ fontSize: '0.6rem', color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 700 }}>Suggestions for {r.companyName}</span>
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => { setDismiss('target', r.companyName, true); setTargetAccountPickerOpen(null); }}
+                                                    title="Hide these suggestions for this company"
+                                                    style={{ background: 'none', border: 'none', fontSize: '0.6rem', color: '#94A3B8', cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 700 }}
+                                                    onMouseEnter={e => e.currentTarget.style.color = '#DC2626'}
+                                                    onMouseLeave={e => e.currentTarget.style.color = '#94A3B8'}
+                                                  >× Dismiss</button>
+                                                </div>
+                                                {targetSuggestions.map(s => (
+                                                  <button
+                                                    key={`sug-${s}`}
+                                                    onClick={() => { updateRow(i, { targetAccount: s }); setTargetAccountPickerOpen(null); }}
+                                                    style={{ display: 'block', width: '100%', padding: '0.35rem 0.6rem', border: 'none', background: r.targetAccount === s ? '#DBEAFE' : '#FFFBEB', textAlign: 'left', fontSize: '0.7rem', cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text)', fontWeight: 600 }}
+                                                    onMouseEnter={e => e.currentTarget.style.background = '#FEF3C7'}
+                                                    onMouseLeave={e => e.currentTarget.style.background = r.targetAccount === s ? '#DBEAFE' : '#FFFBEB'}
+                                                  >{s}</button>
+                                                ))}
+                                              </>
                                             )}
-                                            {!targetAccountPickerQuery.trim() && targetDismissed && rawTargetSuggestions.length > 0 && (
+                                            {!isSearching && targetDismissed && rawTargetSuggestions.length > 0 && (
                                               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.3rem 0.6rem', fontSize: '0.65rem', color: '#64748B', background: '#F8FAFC' }}>
                                                 <span>Suggestions dismissed for {r.companyName}</span>
                                                 <button
@@ -3089,7 +3108,12 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                                 >Undo</button>
                                               </div>
                                             )}
-                                            {displayList.map(s => (
+                                            {!isSearching && targetAccountNames.length > 0 && (
+                                              <div style={{ padding: '0.25rem 0.6rem', fontSize: '0.6rem', color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 700, background: '#F8FAFC' }}>
+                                                All Target Accounts ({targetAccountNames.length})
+                                              </div>
+                                            )}
+                                            {browseList.map(s => (
                                               <button
                                                 key={s}
                                                 onClick={() => { updateRow(i, { targetAccount: s }); setTargetAccountPickerOpen(null); }}
@@ -3138,7 +3162,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                 <td colSpan={4} style={{ padding: '0.3rem 0.4rem', fontSize: '0.65rem', color: '#64748B', textTransform: 'uppercase' }}>Totals</td>
                                 <td style={{ padding: '0.3rem 0.4rem' }}>{totalEnergy > 0 ? totalEnergy.toLocaleString() : ''}</td>
                                 <td style={{ padding: '0.3rem 0.4rem' }}>{totalSites > 0 ? totalSites.toLocaleString() : ''}</td>
-                                <td colSpan={13}></td>
+                                <td colSpan={12}></td>
                               </tr>
                             )}
                           </tbody>
@@ -3309,7 +3333,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
             const parsed = fileRows
               .map(r => {
                 const out = {
-                  companyName: '', industry: '', sector: '', subsector: '',
+                  companyName: '', sector: '', subsector: '',
                   sectorScore: '', subsectorScore: '',
                   hqCity: '', hqCountry: '',
                   energyGwh: '', siteCount: '', pcDescription: '', acquisitionYear: '',

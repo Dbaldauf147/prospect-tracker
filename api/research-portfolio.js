@@ -1,5 +1,5 @@
 // Research a private equity firm's portfolio companies using Claude.
-// Returns a structured array of { companyName, industry, hqCity, hqCountry, energyGwh, siteCount, pcDescription, acquisitionYear }.
+// Returns a structured array of { companyName, sector, hqCity, hqCountry, energyGwh, siteCount, pcDescription, acquisitionYear }.
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -20,7 +20,7 @@ export default async function handler(req, res) {
 
 For the given firm, return ONLY a JSON array (no prose, no markdown fences) of their CURRENT portfolio companies. Each object must have exactly these fields:
 - companyName: string
-- industry: MUST be one of these exact sector labels (pick the single best fit based on what the company actually does — do NOT invent new values and do NOT use "Other"):
+- sector: MUST be one of these exact sector labels (pick the single best fit based on what the company actually does — do NOT invent new values and do NOT use "Other"):
   • "Industrial / Manufacturing" — heavy industry, factories, chemicals, materials, energy, utilities, mining, metals, oil & gas, automotive mfg, aerospace, and Testing/Inspection/Certification (TIC) services that serve industrial clients.
   • "Data Centers" — data center operators, colocation, hyperscale, edge compute.
   • "Cold Storage / Food Mfg" — cold storage warehousing, food manufacturing/processing, beverage manufacturing.
@@ -86,7 +86,7 @@ Return up to 100 companies. If unsure about a field, use your best estimate. Do 
       .filter(c => c && typeof c === 'object' && c.companyName)
       .map(c => ({
         companyName: String(c.companyName || '').trim(),
-        industry: String(c.industry || '').trim(),
+        sector: String(c.sector || c.industry || '').trim(),
         hqCity: String(c.hqCity || '').trim(),
         hqCountry: String(c.hqCountry || '').trim(),
         energyGwh: c.energyGwh == null ? '' : String(c.energyGwh),
