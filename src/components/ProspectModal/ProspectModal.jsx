@@ -3294,18 +3294,11 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
           const usedFieldCounts = {};
           for (const f of Object.values(mapping)) if (f) usedFieldCounts[f] = (usedFieldCounts[f] || 0) + 1;
           const hasDuplicateMapping = Object.values(usedFieldCounts).some(n => n > 1);
-          // Per-column coverage: how many rows have a non-empty value for each header
-          const totalRows = fileRows.length;
-          const filledCounts = {};
-          for (const h of headers) {
-            let filled = 0;
-            for (const r of fileRows) {
-              const v = r[h];
-              if (v !== '' && v !== null && v !== undefined && String(v).trim() !== '') filled++;
-            }
-            filledCounts[h] = filled;
-          }
-          const columnsWithMissing = headers.filter(h => filledCounts[h] < totalRows).length;
+          // Which of the internal fields the upload mapping does NOT cover.
+          // companyName is excluded because its own dedicated warning is shown above.
+          const unmappedExpected = PORTFOLIO_FIELD_OPTIONS
+            .filter(opt => opt.key && opt.key !== 'companyName' && !mappedFields.has(opt.key))
+            .map(opt => opt.label);
           function updateMap(header, fieldKey) {
             setPortfolioUpload(prev => prev ? { ...prev, mapping: { ...prev.mapping, [header]: fieldKey } } : prev);
           }
@@ -3362,9 +3355,11 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                       Some fields are mapped by more than one column. Only one mapping can win — set duplicates to "Ignore" or change them.
                     </div>
                   )}
-                  {columnsWithMissing > 0 && (
+                  {unmappedExpected.length > 0 && (
                     <div style={{ marginTop: '0.5rem', padding: '0.4rem 0.6rem', background: '#FFFBEB', border: '1px solid #FCD34D', color: '#854D0E', borderRadius: 6, fontSize: '0.75rem' }}>
-                      <strong>{columnsWithMissing}</strong> of <strong>{headers.length}</strong> column{headers.length === 1 ? '' : 's'} have one or more rows with missing values — see the highlighted "Filled" cells below.
+                      <strong>{unmappedExpected.length}</strong> expected column{unmappedExpected.length === 1 ? ' is' : 's are'} not being uploaded:{' '}
+                      <span style={{ fontWeight: 600 }}>{unmappedExpected.join(', ')}</span>.
+                      {' '}Map a file column to each one below, or leave them blank if you don't have that data.
                     </div>
                   )}
                 </div>
@@ -3374,7 +3369,6 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                       <tr style={{ background: '#F8FAFC', textAlign: 'left' }}>
                         <th style={{ padding: '0.4rem 0.5rem', borderBottom: '1px solid var(--color-border)', fontSize: '0.7rem', color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>File Column</th>
                         <th style={{ padding: '0.4rem 0.5rem', borderBottom: '1px solid var(--color-border)', fontSize: '0.7rem', color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Sample Value</th>
-                        <th style={{ padding: '0.4rem 0.5rem', borderBottom: '1px solid var(--color-border)', fontSize: '0.7rem', color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Filled</th>
                         <th style={{ padding: '0.4rem 0.5rem', borderBottom: '1px solid var(--color-border)', fontSize: '0.7rem', color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Maps To</th>
                       </tr>
                     </thead>
@@ -3384,31 +3378,10 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                         const sample = String(sampleRow[h] ?? '').slice(0, 80);
                         const isDuplicate = fieldKey && usedFieldCounts[fieldKey] > 1;
                         const isRequiredHit = fieldKey === 'companyName';
-                        const filled = filledCounts[h];
-                        const missing = totalRows - filled;
-                        const allEmpty = filled === 0 && totalRows > 0;
-                        const partialMissing = missing > 0 && filled > 0;
-                        const rowBg = allEmpty ? '#FEF2F2' : (partialMissing ? '#FFFBEB' : 'transparent');
                         return (
-                          <tr key={h} style={{ borderBottom: '1px solid #F1F5F9', background: rowBg }}>
+                          <tr key={h} style={{ borderBottom: '1px solid #F1F5F9' }}>
                             <td style={{ padding: '0.4rem 0.5rem', fontWeight: 600, color: 'var(--color-text)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={h}>{h || <em style={{ color: '#94A3B8' }}>(blank header)</em>}</td>
                             <td style={{ padding: '0.4rem 0.5rem', color: '#64748B', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontStyle: sample ? 'normal' : 'italic' }} title={String(sampleRow[h] ?? '')}>{sample || '(empty)'}</td>
-                            <td style={{ padding: '0.4rem 0.5rem', whiteSpace: 'nowrap' }}>
-                              {(() => {
-                                const pct = totalRows > 0 ? Math.round((filled / totalRows) * 100) : 0;
-                                let color = '#166534', bg = '#DCFCE7', border = '#86EFAC';
-                                if (allEmpty) { color = '#991B1B'; bg = '#FEE2E2'; border = '#FCA5A5'; }
-                                else if (partialMissing) { color = '#854D0E'; bg = '#FEF9C3'; border = '#FDE68A'; }
-                                return (
-                                  <span
-                                    title={missing > 0 ? `${missing} of ${totalRows} rows are missing a value for "${h}"` : `Every row has a value for "${h}"`}
-                                    style={{ display: 'inline-block', padding: '0.1rem 0.45rem', borderRadius: 10, fontSize: '0.68rem', fontWeight: 700, background: bg, color, border: `1px solid ${border}`, fontVariantNumeric: 'tabular-nums' }}
-                                  >
-                                    {filled} / {totalRows} {missing > 0 ? `· ${missing} missing` : `· ${pct}%`}
-                                  </span>
-                                );
-                              })()}
-                            </td>
                             <td style={{ padding: '0.4rem 0.5rem' }}>
                               <select
                                 value={fieldKey}
