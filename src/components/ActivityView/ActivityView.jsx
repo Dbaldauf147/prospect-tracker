@@ -1,4 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { db } from '../../firebase';
 import { DataTable } from '../common/DataTable';
 import { logAction } from '../../utils/auditLog';
 import { useAuth } from '../../contexts/AuthContext';
@@ -373,79 +375,83 @@ export function ActivityView({ prospects = [] }) {
       .sort((a, b) => new Date(a._meetingStart) - new Date(b._meetingStart));
   }, [allActivities]);
 
-  // ── Outlook Calendar via ICS feed (no OAuth — user pastes their private ICS URL) ──
+  // ── Outlook Calendar via Power Automate webhook ──
+  // Power Automate pushes meetings to /api/calendar-webhook?token=xxx,
+  // which writes to Firestore calendarWebhook/{token}. We listen in real time.
   const [outlookEvents, setOutlookEvents] = useState([]);
-  const [outlookLoading, setOutlookLoading] = useState(false);
   const [outlookError, setOutlookError] = useState(null);
-  const [showIcsInput, setShowIcsInput] = useState(false);
-  const [icsUrlDraft, setIcsUrlDraft] = useState('');
+  const [showWebhookSetup, setShowWebhookSetup] = useState(false);
 
-  // Load saved ICS URL from localStorage (per-user key)
-  const icsStorageKey = 'outlook-ics-url';
-  const savedIcsUrl = (() => { try { return localStorage.getItem(icsStorageKey) || ''; } catch { return ''; } })();
-  const hasIcsUrl = !!savedIcsUrl;
+  const webhookStorageKey = 'outlook-webhook-token';
+  const savedWebhookToken = (() => { try { return localStorage.getItem(webhookStorageKey) || ''; } catch { return ''; } })();
+  const hasWebhookToken = !!savedWebhookToken;
+  const [webhookToken, setWebhookToken] = useState(savedWebhookToken);
+  const outlookLoading = false;
 
-  const fetchIcsCalendar = useCallback(async (urlOverride) => {
-    const url = urlOverride || savedIcsUrl;
-    if (!url) return;
-    setOutlookLoading(true);
-    setOutlookError(null);
-    try {
-      const resp = await fetch('/api/outlook-calendar-ics', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ icsUrl: url }),
-      });
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({}));
-        throw new Error(err.error || `HTTP ${resp.status}`);
-      }
-      const data = await resp.json();
-      const normalized = (data.events || []).map(e => ({
-        id: e.id,
-        _type: 'meeting',
-        _source: 'outlook',
-        _subject: e.subject,
-        _meetingStart: e.start,
-        _meetingEnd: e.end,
-        _attendees: (e.attendees || [])
-          .filter(a => !a.email?.toLowerCase().endsWith('@se.com'))
-          .map(a => a.name || a.email)
-          .join(', '),
-        _attendeeDetails: e.attendees || [],
-        _location: e.location,
-        _company: '',
-      }));
-      setOutlookEvents(normalized);
-    } catch (err) {
-      setOutlookError(err.message || 'Failed to fetch Outlook calendar');
-    } finally {
-      setOutlookLoading(false);
-    }
-  }, [savedIcsUrl]);
-
-  function saveIcsUrl() {
-    const url = icsUrlDraft.trim();
-    if (!url.startsWith('https://')) {
-      alert('Please paste a valid https:// ICS URL from Outlook.');
-      return;
-    }
-    try { localStorage.setItem(icsStorageKey, url); } catch {}
-    setShowIcsInput(false);
-    fetchIcsCalendar(url);
+  // Generate a random token for new users
+  function generateToken() {
+    return 'wh_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
   }
 
-  function removeIcsUrl() {
-    if (!window.confirm('Remove saved calendar link? Outlook meetings will stop showing until you paste a new one.')) return;
-    try { localStorage.removeItem(icsStorageKey); } catch {}
+  function setupWebhook() {
+    const token = savedWebhookToken || generateToken();
+    if (!savedWebhookToken) {
+      try { localStorage.setItem(webhookStorageKey, token); } catch {}
+      setWebhookToken(token);
+    }
+    setShowWebhookSetup(true);
+  }
+
+  function removeWebhook() {
+    if (!window.confirm('Disconnect Outlook calendar? Your Power Automate flow will keep running but meetings will stop showing here.')) return;
+    try { localStorage.removeItem(webhookStorageKey); } catch {}
+    setWebhookToken('');
     setOutlookEvents([]);
-    setOutlookError(null);
+    setShowWebhookSetup(false);
   }
 
-  // Auto-fetch on mount if ICS URL is saved
+  // Subscribe to Firestore for real-time meeting updates from the webhook
   useEffect(() => {
-    if (savedIcsUrl) fetchIcsCalendar(savedIcsUrl);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!webhookToken) return;
+    const unsub = onSnapshot(
+      doc(db, 'calendarWebhook', webhookToken),
+      (snap) => {
+        const data = snap.data();
+        if (!data?.meetings) { setOutlookEvents([]); return; }
+        // Filter to today only (Power Automate might send multi-day data)
+        const now = new Date();
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+        const todayEnd = todayStart + 24 * 60 * 60 * 1000;
+        const events = data.meetings
+          .filter(m => {
+            const t = new Date(m.start).getTime();
+            return Number.isFinite(t) && t >= todayStart && t < todayEnd;
+          })
+          .map((m, i) => ({
+            id: `outlook-wh-${i}`,
+            _type: 'meeting',
+            _source: 'outlook',
+            _subject: m.subject || '(No subject)',
+            _meetingStart: m.start,
+            _meetingEnd: m.end,
+            _location: m.location || '',
+            _attendees: (m.attendees || [])
+              .filter(a => !a.email?.toLowerCase().endsWith('@se.com'))
+              .map(a => a.name || a.email)
+              .join(', '),
+            _attendeeDetails: m.attendees || [],
+            _company: '',
+          }))
+          .sort((a, b) => new Date(a._meetingStart) - new Date(b._meetingStart));
+        setOutlookEvents(events);
+      },
+      (err) => {
+        console.error('Webhook snapshot error:', err);
+        setOutlookError('Failed to read calendar webhook data');
+      }
+    );
+    return unsub;
+  }, [webhookToken]);
 
   // Merge HubSpot + Outlook meetings for Today panel, sorted by start time
   const todaysMeetings = useMemo(() => {
@@ -520,21 +526,21 @@ export function ActivityView({ prospects = [] }) {
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>{todaysMeetings.length} meeting{todaysMeetings.length === 1 ? '' : 's'}</span>
-              {!hasIcsUrl ? (
+              {!hasWebhookToken ? (
                 <button
-                  onClick={() => { setShowIcsInput(true); setIcsUrlDraft(''); }}
+                  onClick={setupWebhook}
                   style={{ padding: '0.25rem 0.6rem', border: '1px solid #0078D4', borderRadius: 4, background: '#fff', color: '#0078D4', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
                 >+ Outlook Calendar</button>
               ) : (
                 <>
                   <button
-                    onClick={() => fetchIcsCalendar()}
-                    disabled={outlookLoading}
-                    style={{ padding: '0.25rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 4, background: '#fff', color: 'var(--color-text)', fontSize: '0.68rem', fontWeight: 500, cursor: outlookLoading ? 'wait' : 'pointer', fontFamily: 'inherit' }}
-                  >{outlookLoading ? 'Loading…' : '↻ Outlook'}</button>
+                    onClick={setupWebhook}
+                    title="View Power Automate setup instructions"
+                    style={{ padding: '0.25rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 4, background: '#fff', color: 'var(--color-text)', fontSize: '0.68rem', fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' }}
+                  >⚙ Outlook Setup</button>
                   <button
-                    onClick={removeIcsUrl}
-                    title="Remove saved Outlook calendar link"
+                    onClick={removeWebhook}
+                    title="Disconnect Outlook calendar"
                     style={{ padding: '0.25rem 0.4rem', border: '1px solid var(--color-border)', borderRadius: 4, background: '#fff', color: '#94A3B8', fontSize: '0.72rem', cursor: 'pointer', fontFamily: 'inherit', lineHeight: 1 }}
                     onMouseEnter={e => e.currentTarget.style.color = '#DC2626'}
                     onMouseLeave={e => e.currentTarget.style.color = '#94A3B8'}
@@ -543,24 +549,52 @@ export function ActivityView({ prospects = [] }) {
               )}
             </div>
           </div>
-          {showIcsInput && (
-            <div style={{ padding: '0.5rem 0.9rem', background: '#EFF6FF', borderBottom: '1px solid #BFDBFE', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <input
-                autoFocus
-                value={icsUrlDraft}
-                onChange={e => setIcsUrlDraft(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') saveIcsUrl(); if (e.key === 'Escape') setShowIcsInput(false); }}
-                placeholder="Paste your Outlook ICS calendar link (https://outlook.office365.com/owa/calendar/...)"
-                style={{ flex: 1, padding: '0.35rem 0.5rem', border: '1px solid #93C5FD', borderRadius: 4, fontSize: '0.75rem', fontFamily: 'inherit' }}
-              />
+          {showWebhookSetup && webhookToken && (
+            <div style={{ padding: '0.75rem 0.9rem', background: '#EFF6FF', borderBottom: '1px solid #BFDBFE', fontSize: '0.75rem', color: 'var(--color-text)' }}>
+              <div style={{ fontWeight: 700, marginBottom: '0.4rem' }}>Power Automate Setup</div>
+              <div style={{ marginBottom: '0.3rem' }}>Create a scheduled flow in Power Automate that runs daily and sends today's meetings to this webhook URL:</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.5rem' }}>
+                <code style={{ flex: 1, padding: '0.35rem 0.5rem', background: '#fff', border: '1px solid #93C5FD', borderRadius: 4, fontSize: '0.72rem', wordBreak: 'break-all', userSelect: 'all' }}>
+                  {`${window.location.origin}/api/calendar-webhook`}
+                </code>
+                <button
+                  onClick={() => navigator.clipboard?.writeText(`${window.location.origin}/api/calendar-webhook`)}
+                  style={{ padding: '0.3rem 0.5rem', border: '1px solid #93C5FD', borderRadius: 4, background: '#fff', color: '#0078D4', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+                >Copy URL</button>
+              </div>
+              <div style={{ marginBottom: '0.3rem' }}>Your webhook token (include this in the JSON body as <code>"token"</code>):</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.5rem' }}>
+                <code style={{ flex: 1, padding: '0.35rem 0.5rem', background: '#fff', border: '1px solid #93C5FD', borderRadius: 4, fontSize: '0.72rem', wordBreak: 'break-all', userSelect: 'all' }}>
+                  {webhookToken}
+                </code>
+                <button
+                  onClick={() => navigator.clipboard?.writeText(webhookToken)}
+                  style={{ padding: '0.3rem 0.5rem', border: '1px solid #93C5FD', borderRadius: 4, background: '#fff', color: '#0078D4', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+                >Copy Token</button>
+              </div>
+              <details style={{ marginTop: '0.4rem' }}>
+                <summary style={{ cursor: 'pointer', fontWeight: 600, color: '#0078D4' }}>Step-by-step Power Automate instructions</summary>
+                <ol style={{ margin: '0.4rem 0 0 1.2rem', lineHeight: 1.6 }}>
+                  <li>Go to <a href="https://make.powerautomate.com" target="_blank" rel="noopener noreferrer">make.powerautomate.com</a></li>
+                  <li>Click <strong>+ Create</strong> → <strong>Scheduled cloud flow</strong></li>
+                  <li>Name it "Calendar Sync" and set it to run <strong>every 1 hour</strong> (or daily)</li>
+                  <li>Add action: <strong>Office 365 Outlook → Get events (V4)</strong></li>
+                  <li>Set Calendar to your default, Start Time = <code>utcNow()</code>, End Time = <code>addDays(utcNow(), 1)</code></li>
+                  <li>Add action: <strong>HTTP</strong> with:
+                    <ul style={{ marginTop: '0.2rem' }}>
+                      <li>Method: <strong>POST</strong></li>
+                      <li>URI: <strong>{window.location.origin}/api/calendar-webhook</strong></li>
+                      <li>Headers: <code>Content-Type: application/json</code></li>
+                      <li>Body: <code>{`{"token":"${webhookToken}","meetings":@{body('Get_events_(V4)')?['value']}}`}</code></li>
+                    </ul>
+                  </li>
+                  <li>Save and run the flow once to test</li>
+                </ol>
+              </details>
               <button
-                onClick={saveIcsUrl}
-                style={{ padding: '0.35rem 0.7rem', border: 'none', borderRadius: 4, background: '#0078D4', color: '#fff', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
-              >Save</button>
-              <button
-                onClick={() => setShowIcsInput(false)}
-                style={{ padding: '0.35rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 4, background: '#fff', color: '#64748B', fontSize: '0.72rem', cursor: 'pointer', fontFamily: 'inherit' }}
-              >Cancel</button>
+                onClick={() => setShowWebhookSetup(false)}
+                style={{ marginTop: '0.5rem', padding: '0.3rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 4, background: '#fff', color: '#64748B', fontSize: '0.72rem', cursor: 'pointer', fontFamily: 'inherit' }}
+              >Close</button>
             </div>
           )}
           {outlookError && (

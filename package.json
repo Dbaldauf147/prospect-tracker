@@ -12,6 +12,7 @@
   "dependencies": {
     "exceljs": "^4.4.0",
     "firebase": "^12.11.0",
+    "firebase-admin": "^13.8.0",
     "googleapis": "^171.4.0",
     "html-docx-js-typescript": "^0.1.5",
     "mammoth": "^1.12.0",
