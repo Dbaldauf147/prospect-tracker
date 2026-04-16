@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { DataTable } from '../common/DataTable';
 import { logAction } from '../../utils/auditLog';
-import { secureGet, secureSet } from '../../utils/secureStorage';
 import { useAuth } from '../../contexts/AuthContext';
 import styles from './ActivityView.module.css';
 
@@ -374,53 +373,29 @@ export function ActivityView({ prospects = [] }) {
       .sort((a, b) => new Date(a._meetingStart) - new Date(b._meetingStart));
   }, [allActivities]);
 
-  // ── Outlook Calendar ──
-  const [outlookConnected, setOutlookConnected] = useState(false);
+  // ── Outlook Calendar via ICS feed (no OAuth — user pastes their private ICS URL) ──
   const [outlookEvents, setOutlookEvents] = useState([]);
   const [outlookLoading, setOutlookLoading] = useState(false);
   const [outlookError, setOutlookError] = useState(null);
+  const [showIcsInput, setShowIcsInput] = useState(false);
+  const [icsUrlDraft, setIcsUrlDraft] = useState('');
 
-  // Check for stored Outlook token on mount
-  useEffect(() => {
-    (async () => {
-      const token = await secureGet('outlook-access-token');
-      const expiry = await secureGet('outlook-token-expiry');
-      setOutlookConnected(!!token && (!expiry || Date.now() < Number(expiry)));
-    })();
-  }, []);
+  // Load saved ICS URL from localStorage (per-user key)
+  const icsStorageKey = 'outlook-ics-url';
+  const savedIcsUrl = (() => { try { return localStorage.getItem(icsStorageKey) || ''; } catch { return ''; } })();
+  const hasIcsUrl = !!savedIcsUrl;
 
-  // Listen for Outlook OAuth callback (user might connect from this page)
-  useEffect(() => {
-    function handleMessage(e) {
-      if (e.data?.type === 'outlook-auth-success') {
-        (async () => {
-          await secureSet('outlook-access-token', e.data.accessToken);
-          if (e.data.refreshToken) await secureSet('outlook-refresh-token', e.data.refreshToken);
-          await secureSet('outlook-token-expiry', String(Date.now() + (e.data.expiresIn || 3600) * 1000));
-          setOutlookConnected(true);
-          fetchOutlookCalendar(e.data.accessToken);
-        })();
-      }
-    }
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
-  }, []);
-
-  const fetchOutlookCalendar = useCallback(async (tokenOverride) => {
-    const token = tokenOverride || await secureGet('outlook-access-token');
-    if (!token) return;
+  const fetchIcsCalendar = useCallback(async (urlOverride) => {
+    const url = urlOverride || savedIcsUrl;
+    if (!url) return;
     setOutlookLoading(true);
     setOutlookError(null);
     try {
-      const resp = await fetch('/api/outlook-calendar', {
-        headers: { Authorization: `Bearer ${token}` },
+      const resp = await fetch('/api/outlook-calendar-ics', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ icsUrl: url }),
       });
-      if (resp.status === 401) {
-        setOutlookConnected(false);
-        setOutlookError('Outlook session expired — click Connect to re-authenticate.');
-        setOutlookEvents([]);
-        return;
-      }
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
         throw new Error(err.error || `HTTP ${resp.status}`);
@@ -447,16 +422,30 @@ export function ActivityView({ prospects = [] }) {
     } finally {
       setOutlookLoading(false);
     }
-  }, []);
+  }, [savedIcsUrl]);
 
-  // Auto-fetch Outlook calendar on mount if connected
-  useEffect(() => {
-    if (outlookConnected) fetchOutlookCalendar();
-  }, [outlookConnected, fetchOutlookCalendar]);
-
-  function connectOutlook() {
-    window.open('/api/outlook-auth', 'outlook-auth', 'width=500,height=700');
+  function saveIcsUrl() {
+    const url = icsUrlDraft.trim();
+    if (!url.startsWith('https://')) {
+      alert('Please paste a valid https:// ICS URL from Outlook.');
+      return;
+    }
+    try { localStorage.setItem(icsStorageKey, url); } catch {}
+    setShowIcsInput(false);
+    fetchIcsCalendar(url);
   }
+
+  function removeIcsUrl() {
+    if (!window.confirm('Remove saved calendar link? Outlook meetings will stop showing until you paste a new one.')) return;
+    try { localStorage.removeItem(icsStorageKey); } catch {}
+    setOutlookEvents([]);
+    setOutlookError(null);
+  }
+
+  // Auto-fetch on mount if ICS URL is saved
+  useEffect(() => {
+    if (savedIcsUrl) fetchIcsCalendar(savedIcsUrl);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Merge HubSpot + Outlook meetings for Today panel, sorted by start time
   const todaysMeetings = useMemo(() => {
@@ -531,20 +520,49 @@ export function ActivityView({ prospects = [] }) {
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>{todaysMeetings.length} meeting{todaysMeetings.length === 1 ? '' : 's'}</span>
-              {!outlookConnected ? (
+              {!hasIcsUrl ? (
                 <button
-                  onClick={connectOutlook}
+                  onClick={() => { setShowIcsInput(true); setIcsUrlDraft(''); }}
                   style={{ padding: '0.25rem 0.6rem', border: '1px solid #0078D4', borderRadius: 4, background: '#fff', color: '#0078D4', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
-                >Connect Outlook</button>
+                >+ Outlook Calendar</button>
               ) : (
-                <button
-                  onClick={() => fetchOutlookCalendar()}
-                  disabled={outlookLoading}
-                  style={{ padding: '0.25rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 4, background: '#fff', color: 'var(--color-text)', fontSize: '0.68rem', fontWeight: 500, cursor: outlookLoading ? 'wait' : 'pointer', fontFamily: 'inherit' }}
-                >{outlookLoading ? 'Loading…' : '↻ Outlook'}</button>
+                <>
+                  <button
+                    onClick={() => fetchIcsCalendar()}
+                    disabled={outlookLoading}
+                    style={{ padding: '0.25rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 4, background: '#fff', color: 'var(--color-text)', fontSize: '0.68rem', fontWeight: 500, cursor: outlookLoading ? 'wait' : 'pointer', fontFamily: 'inherit' }}
+                  >{outlookLoading ? 'Loading…' : '↻ Outlook'}</button>
+                  <button
+                    onClick={removeIcsUrl}
+                    title="Remove saved Outlook calendar link"
+                    style={{ padding: '0.25rem 0.4rem', border: '1px solid var(--color-border)', borderRadius: 4, background: '#fff', color: '#94A3B8', fontSize: '0.72rem', cursor: 'pointer', fontFamily: 'inherit', lineHeight: 1 }}
+                    onMouseEnter={e => e.currentTarget.style.color = '#DC2626'}
+                    onMouseLeave={e => e.currentTarget.style.color = '#94A3B8'}
+                  >×</button>
+                </>
               )}
             </div>
           </div>
+          {showIcsInput && (
+            <div style={{ padding: '0.5rem 0.9rem', background: '#EFF6FF', borderBottom: '1px solid #BFDBFE', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <input
+                autoFocus
+                value={icsUrlDraft}
+                onChange={e => setIcsUrlDraft(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') saveIcsUrl(); if (e.key === 'Escape') setShowIcsInput(false); }}
+                placeholder="Paste your Outlook ICS calendar link (https://outlook.office365.com/owa/calendar/...)"
+                style={{ flex: 1, padding: '0.35rem 0.5rem', border: '1px solid #93C5FD', borderRadius: 4, fontSize: '0.75rem', fontFamily: 'inherit' }}
+              />
+              <button
+                onClick={saveIcsUrl}
+                style={{ padding: '0.35rem 0.7rem', border: 'none', borderRadius: 4, background: '#0078D4', color: '#fff', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+              >Save</button>
+              <button
+                onClick={() => setShowIcsInput(false)}
+                style={{ padding: '0.35rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 4, background: '#fff', color: '#64748B', fontSize: '0.72rem', cursor: 'pointer', fontFamily: 'inherit' }}
+              >Cancel</button>
+            </div>
+          )}
           {outlookError && (
             <div style={{ padding: '0.4rem 0.9rem', background: '#FEF2F2', color: '#991B1B', fontSize: '0.75rem', borderBottom: '1px solid #FCA5A5' }}>
               {outlookError}
