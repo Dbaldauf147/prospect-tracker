@@ -2752,8 +2752,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                               <th style={thBase}>Company<span style={resizeHandleStyle} onMouseDown={e => startResize('company', e)} /></th>
                               <th style={thBase}>HQ City<span style={resizeHandleStyle} onMouseDown={e => startResize('hqCity', e)} /></th>
                               <th style={thBase}>HQ Country<span style={resizeHandleStyle} onMouseDown={e => startResize('hqCountry', e)} /></th>
-                              <th style={{ ...thBase }}>Est. Energy (GWh/yr)<span style={resizeHandleStyle} onMouseDown={e => startResize('energy', e)} /></th>
-                              <th style={{ ...thBase }}>Est. Site Count<span style={resizeHandleStyle} onMouseDown={e => startResize('siteCount', e)} /></th>
+                              <th style={thBase} title="Est. Energy (GWh/yr)">Energy<span style={resizeHandleStyle} onMouseDown={e => startResize('energy', e)} /></th>
+                              <th style={thBase} title="Est. Site Count">Sites<span style={resizeHandleStyle} onMouseDown={e => startResize('siteCount', e)} /></th>
                               <th style={thBase}>Sector<span style={resizeHandleStyle} onMouseDown={e => startResize('sector', e)} /></th>
                               <th style={thBase}>Subsector<span style={resizeHandleStyle} onMouseDown={e => startResize('subsector', e)} /></th>
                               <th style={thBase}>Score<span style={resizeHandleStyle} onMouseDown={e => startResize('subsectorScore', e)} /></th>
