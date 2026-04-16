@@ -2649,12 +2649,12 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                       <div style={{ border: '1px solid var(--color-border)', borderRadius: '6px', overflow: 'auto' }}>
                         <table style={{ borderCollapse: 'collapse', fontSize: '0.7rem', tableLayout: 'fixed', width: 'auto' }}>
                           <colgroup>
+                            <col style={{ width: portfolioColWidths.rank + 'px' }} />
                             <col style={{ width: portfolioColWidths.company + 'px' }} />
                             <col style={{ width: portfolioColWidths.hqCity + 'px' }} />
                             <col style={{ width: portfolioColWidths.hqCountry + 'px' }} />
                             <col style={{ width: portfolioColWidths.energy + 'px' }} />
                             <col style={{ width: portfolioColWidths.siteCount + 'px' }} />
-                            <col style={{ width: portfolioColWidths.rank + 'px' }} />
                             <col style={{ width: portfolioColWidths.industry + 'px' }} />
                             <col style={{ width: portfolioColWidths.pcDescription + 'px' }} />
                             <col style={{ width: portfolioColWidths.acquisitionYear + 'px' }} />
@@ -2668,11 +2668,6 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                           </colgroup>
                           <thead>
                             <tr style={{ background: '#F8FAFC' }}>
-                              <th style={thBase}>Company<span style={resizeHandleStyle} onMouseDown={e => startResize('company', e)} /></th>
-                              <th style={thBase}>HQ City<span style={resizeHandleStyle} onMouseDown={e => startResize('hqCity', e)} /></th>
-                              <th style={thBase}>HQ Country<span style={resizeHandleStyle} onMouseDown={e => startResize('hqCountry', e)} /></th>
-                              <th style={{ ...thBase }}>Est. Energy (GWh/yr)<span style={resizeHandleStyle} onMouseDown={e => startResize('energy', e)} /></th>
-                              <th style={{ ...thBase }}>Est. Site Count<span style={resizeHandleStyle} onMouseDown={e => startResize('siteCount', e)} /></th>
                               <th
                                 style={{ ...thBase, cursor: 'pointer', userSelect: 'none' }}
                                 onClick={() => setPortfolioSortByRank(v => !v)}
@@ -2680,6 +2675,11 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                               >
                                 Rank{portfolioSortByRank ? ' ▼' : ''}<span style={resizeHandleStyle} onMouseDown={e => startResize('rank', e)} />
                               </th>
+                              <th style={thBase}>Company<span style={resizeHandleStyle} onMouseDown={e => startResize('company', e)} /></th>
+                              <th style={thBase}>HQ City<span style={resizeHandleStyle} onMouseDown={e => startResize('hqCity', e)} /></th>
+                              <th style={thBase}>HQ Country<span style={resizeHandleStyle} onMouseDown={e => startResize('hqCountry', e)} /></th>
+                              <th style={{ ...thBase }}>Est. Energy (GWh/yr)<span style={resizeHandleStyle} onMouseDown={e => startResize('energy', e)} /></th>
+                              <th style={{ ...thBase }}>Est. Site Count<span style={resizeHandleStyle} onMouseDown={e => startResize('siteCount', e)} /></th>
                               <th style={thBase}>Industry<span style={resizeHandleStyle} onMouseDown={e => startResize('industry', e)} /></th>
                               <th style={thBase}>PC Description<span style={resizeHandleStyle} onMouseDown={e => startResize('pcDescription', e)} /></th>
                               <th style={{ ...thBase }}>Acquisition Year<span style={resizeHandleStyle} onMouseDown={e => startResize('acquisitionYear', e)} /></th>
@@ -2702,6 +2702,21 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                               const pickerOpen = raClientPickerOpen === i;
                               return (
                               <tr key={i} style={{ borderBottom: '1px solid #F1F5F9' }}>
+                                {(() => {
+                                  const score = rowScores[i];
+                                  const tier = industryTier(r.industry);
+                                  const colors = tier ? TIER_COLORS[tier] : { bg: 'transparent', color: '#94A3B8', border: 'var(--color-border)' };
+                                  return (
+                                    <td style={{ padding: '0.15rem 0.25rem' }}>
+                                      <span
+                                        title={`Fit ${tier || '—'} · Energy ${r.energyGwh || 0} GWh · Sites ${r.siteCount || 0}`}
+                                        style={{ display: 'inline-block', minWidth: '38px', padding: '0.1rem 0.35rem', borderRadius: 10, fontSize: '0.68rem', fontWeight: 700, background: colors.bg, color: colors.color, border: `1px solid ${colors.border}` }}
+                                      >
+                                        {score}
+                                      </span>
+                                    </td>
+                                  );
+                                })()}
                                 {['companyName', 'hqCity', 'hqCountry'].map(field => (
                                   <td key={field} style={{ padding: '0.15rem 0.25rem' }}>
                                     <input
@@ -2733,21 +2748,6 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                     onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
                                   />
                                 </td>
-                                {(() => {
-                                  const score = rowScores[i];
-                                  const tier = industryTier(r.industry);
-                                  const colors = tier ? TIER_COLORS[tier] : { bg: 'transparent', color: '#94A3B8', border: 'var(--color-border)' };
-                                  return (
-                                    <td style={{ padding: '0.15rem 0.25rem' }}>
-                                      <span
-                                        title={`Fit ${tier || '—'} · Energy ${r.energyGwh || 0} GWh · Sites ${r.siteCount || 0}`}
-                                        style={{ display: 'inline-block', minWidth: '38px', padding: '0.1rem 0.35rem', borderRadius: 10, fontSize: '0.68rem', fontWeight: 700, background: colors.bg, color: colors.color, border: `1px solid ${colors.border}` }}
-                                      >
-                                        {score}
-                                      </span>
-                                    </td>
-                                  );
-                                })()}
                                 {(() => {
                                   const tier = industryTier(r.industry);
                                   const tierColors = tier ? TIER_COLORS[tier] : null;
@@ -3022,10 +3022,10 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                             })}
                             {(totalEnergy > 0 || totalSites > 0) && (
                               <tr style={{ background: '#F8FAFC', fontWeight: 700 }}>
-                                <td colSpan={3} style={{ padding: '0.3rem 0.4rem', fontSize: '0.65rem', color: '#64748B', textTransform: 'uppercase' }}>Totals</td>
+                                <td colSpan={4} style={{ padding: '0.3rem 0.4rem', fontSize: '0.65rem', color: '#64748B', textTransform: 'uppercase' }}>Totals</td>
                                 <td style={{ padding: '0.3rem 0.4rem' }}>{totalEnergy > 0 ? totalEnergy.toLocaleString() : ''}</td>
                                 <td style={{ padding: '0.3rem 0.4rem' }}>{totalSites > 0 ? totalSites.toLocaleString() : ''}</td>
-                                <td colSpan={11}></td>
+                                <td colSpan={10}></td>
                               </tr>
                             )}
                           </tbody>
