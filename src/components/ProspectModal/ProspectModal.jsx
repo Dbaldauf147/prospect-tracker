@@ -2280,8 +2280,11 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                   const yearRange = years.length > 0 ? { min: Math.min(...years), max: Math.max(...years) } : null;
                   const headers = ['Opportunity Score', 'Company Name', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Sector', 'Subsector', 'Subsector Score', 'Acquisition Year', 'PC Description', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM'];
                   const colWidths = [12, 32, 15, 15, 15, 28, 22, 12, 14, 48, 36, 26, 22, 26, 10, 22];
-                  const data = rows.map((r, idx) => {
-                    const score = computePortfolioFitScore(r, maxE, maxS, yearRange);
+                  // Export ordered by Opportunity Score (highest first); ties keep original order
+                  const orderedRows = rows
+                    .map((r, idx) => ({ r, idx, score: computePortfolioFitScore(r, maxE, maxS, yearRange) }))
+                    .sort((a, b) => b.score - a.score || a.idx - b.idx);
+                  const data = orderedRows.map(({ r, score }) => {
                     const energy = r.energyGwh === '' || r.energyGwh == null ? null : (Number(r.energyGwh) || r.energyGwh);
                     const sites = r.siteCount === '' || r.siteCount == null ? null : (Number(r.siteCount) || r.siteCount);
                     const acqYearNum = Number(r.acquisitionYear);
