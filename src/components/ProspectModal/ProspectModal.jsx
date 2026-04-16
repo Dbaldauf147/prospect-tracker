@@ -2330,13 +2330,24 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                   const yearRange = years.length > 0 ? { min: Math.min(...years), max: Math.max(...years) } : null;
                   const headers = ['Opportunity Score', 'Company Name', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Sector', 'Subsector', 'Subsector Score', 'Acquisition Year', 'PC Description', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM'];
                   const colWidths = [12, 32, 15, 15, 15, 28, 22, 12, 14, 48, 36, 26, 22, 26, 10, 22];
+                  // Parse a site-count cell that may carry a (P)/(E) marker — e.g. "12 (E)" → { num: 12, isEstimate: true }.
+                  // The number is what we write; the marker drives italic formatting in the export.
+                  function parseSiteCount(raw) {
+                    const s = String(raw ?? '').trim();
+                    if (!s) return { value: null, isEstimate: false };
+                    const isEstimate = /\(\s*e\s*\)/i.test(s);
+                    const cleaned = s.replace(/\(\s*[pe]\s*\)/gi, '').trim();
+                    const n = Number(cleaned);
+                    return { value: Number.isFinite(n) && cleaned !== '' ? n : (cleaned || null), isEstimate };
+                  }
                   // Export ordered by Opportunity Score (highest first); ties keep original order
                   const orderedRows = rows
                     .map((r, idx) => ({ r, idx, score: computePortfolioFitScore(r, maxE, maxS, yearRange) }))
                     .sort((a, b) => b.score - a.score || a.idx - b.idx);
+                  const siteEstimateFlags = orderedRows.map(({ r }) => parseSiteCount(r.siteCount).isEstimate);
                   const data = orderedRows.map(({ r, score }) => {
                     const energy = r.energyGwh === '' || r.energyGwh == null ? null : (Number(r.energyGwh) || r.energyGwh);
-                    const sites = r.siteCount === '' || r.siteCount == null ? null : (Number(r.siteCount) || r.siteCount);
+                    const sites = parseSiteCount(r.siteCount).value;
                     const acqYearNum = Number(r.acquisitionYear);
                     const acqYear = acqYearNum > 0 ? acqYearNum : (r.acquisitionYear || '');
                     const subsectorScoreNum = Number(r.subsectorScore);
@@ -2435,6 +2446,10 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                         if (i === 0 || i === 8) cell.numFmt = '0';
                         if (i === 3 || i === 4) cell.numFmt = '#,##0';
                         if (i === 7) cell.numFmt = '0.0';
+                        // Italicize estimated site counts (originally tagged with "(E)" in the source)
+                        if (i === 4 && siteEstimateFlags[idx]) {
+                          cell.font = { ...cell.font, italic: true };
+                        }
                       });
                       row.height = 18;
                     });
