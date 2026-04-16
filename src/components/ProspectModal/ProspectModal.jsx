@@ -2296,7 +2296,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                       'HQ City': 'Austin, TX',
                       'HQ Country': 'USA',
                       'Est. Energy (GWh/yr)': 25,
-                      'Est. Site Count': 12,
+                      'Site Count': 12,
                       'Sector': 'Tech / Software & Office Occupiers',
                       'Subsector': 'Enterprise SaaS',
                       'Subsector Score': 3.2,
@@ -2311,7 +2311,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                     },
                   ];
                   const ws = XLSX.utils.json_to_sheet(templateRows, {
-                    header: ['Company Name', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Sector', 'Subsector', 'Subsector Score', 'Acquisition Year', 'PC Description', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM'],
+                    header: ['Company Name', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Site Count', 'Sector', 'Subsector', 'Subsector Score', 'Acquisition Year', 'PC Description', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM'],
                   });
                   ws['!cols'] = [{ wch: 30 }, { wch: 20 }, { wch: 16 }, { wch: 20 }, { wch: 16 }, { wch: 28 }, { wch: 22 }, { wch: 12 }, { wch: 14 }, { wch: 48 }, { wch: 36 }, { wch: 26 }, { wch: 22 }, { wch: 26 }, { wch: 10 }, { wch: 22 }];
                   const wb = XLSX.utils.book_new();
@@ -2328,8 +2328,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                   const maxS = rows.reduce((m, r) => Math.max(m, Number(r.siteCount) || 0), 0);
                   const years = rows.map(r => Number(r.acquisitionYear)).filter(y => y > 0);
                   const yearRange = years.length > 0 ? { min: Math.min(...years), max: Math.max(...years) } : null;
-                  const headers = ['Opportunity Score', 'Company Name', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Site Count', 'Sector', 'Subsector', 'Subsector Score', 'Acquisition Year', 'PC Description', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM'];
-                  const colWidths = [12, 32, 15, 15, 15, 28, 22, 12, 14, 48, 36, 26, 22, 26, 10, 22];
+                  const headers = ['Opportunity Score', 'Company Name', 'HQ Country', 'Est. Energy (GWh/yr)', 'Site Count', 'Sector', 'Subsector', 'Subsector Score', 'Acquisition Year', 'PC Description', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM'];
+                  const colWidths = [13, 32, 15, 15, 15, 28, 22, 12, 14, 48, 36, 26, 22, 26, 10, 22];
                   // Parse a site-count cell that may carry a (P)/(E) marker — e.g. "12 (E)" → { num: 12, isEstimate: true }.
                   // The number is what we write; the marker drives italic formatting in the export.
                   function parseSiteCount(raw) {
@@ -2536,7 +2536,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                     addSectionHeader('Component Weights');
                     addKV('Est. Energy (GWh/yr)', '40% — linearly normalized against the maximum value in the exported table. Largest single driver of the score.');
                     addKV('Sector Fit Score', '25% — uses the per-row Subsector Score (1-10) only when both a Subsector label AND its score are present. If the subsector is missing or unscored, falls back to the per-row Sector Score; if that is also missing, falls back to the keyword-derived sector lookup (table below). Divided by 10.');
-                    addKV('Est. Site Count', '20% — linearly normalized against the maximum value in the exported table.');
+                    addKV('Site Count', '20% — linearly normalized against the maximum value in the exported table.');
                     addKV('Acquisition Year', '15% — most recent acquisition year scores 1.0, oldest scores 0.0, others linearly between.');
                     addBlank();
 
