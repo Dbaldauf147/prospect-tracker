@@ -19,12 +19,25 @@ function parseDroppedText(text) {
     if (seen.has(email)) continue;
     if (email.endsWith('@se.com')) continue;
     seen.add(email);
-    const name = (m[1] || '').trim();
-    const parts = name ? name.replace(/^['"]|['"]$/g, '').split(/\s+/) : [];
+    let name = (m[1] || '').trim().replace(/^['"]|['"]$/g, '');
+    let firstname = '';
+    let lastname = '';
+    if (name) {
+      if (name.includes(',')) {
+        // "Last, First" — common for Outlook contact cards.
+        const [lastPart, firstPart = ''] = name.split(',').map(s => s.trim());
+        lastname = lastPart;
+        firstname = firstPart;
+      } else {
+        const parts = name.split(/\s+/);
+        firstname = parts[0] || '';
+        lastname = parts.slice(1).join(' ') || '';
+      }
+    }
     out.push({
       email,
-      firstname: parts[0] || '',
-      lastname: parts.slice(1).join(' ') || '',
+      firstname,
+      lastname,
       company: '',
       phone: '',
       jobtitle: '',
@@ -79,6 +92,18 @@ function fixAllCapsName(name) {
   return trimmed.toLowerCase().replace(/([a-z])([a-z]*)/g, (_, first, rest) => first.toUpperCase() + rest);
 }
 
+// Extract the "brand" label from a domain — the second-level label minus TLD.
+// "urw.com" -> "urw", "ext.urw.com" -> "urw", "acme.co.uk" -> "acme".
+function extractBrandToken(domain) {
+  if (!domain) return '';
+  const parts = domain.split('.').filter(Boolean);
+  if (parts.length < 2) return domain;
+  const twoPartTlds = new Set(['co.uk', 'co.jp', 'com.au', 'com.br', 'co.nz', 'com.mx', 'co.in']);
+  const last2 = parts.slice(-2).join('.');
+  if (twoPartTlds.has(last2) && parts.length >= 3) return parts[parts.length - 3];
+  return parts[parts.length - 2];
+}
+
 function guessDomainCompany(email) {
   const at = email.lastIndexOf('@');
   if (at < 0) return '';
@@ -115,9 +140,13 @@ export function AgendaView({ prospects = [] }) {
 
   // Build domain → prospect (and prospect → all known domains) maps so we can both
   // suggest a company and surface the full domain list tied to that prospect.
-  const { domainToProspect, prospectDomains } = useMemo(() => {
+  // Also build a token → prospect map from company-name words (e.g. "URW" from
+  // "Unibail-Rodamco-Westfield (URW)") so we can fuzzy-match when the domain
+  // itself isn't registered on the prospect.
+  const { domainToProspect, prospectDomains, tokenToProspect } = useMemo(() => {
     const dToP = new Map();
-    const pDoms = new Map(); // company name (lower) -> Set<domain>
+    const pDoms = new Map();
+    const tToP = new Map();
     function recordDomain(p, domain) {
       if (!domain || !p.company) return;
       dToP.set(domain, p);
@@ -137,14 +166,30 @@ export function AgendaView({ prospects = [] }) {
         const d = p.website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '').toLowerCase();
         recordDomain(p, d);
       }
+      // Tokens from company name — 3+ chars, lowercased, deduped. Skip generic suffixes.
+      const GENERIC = new Set(['inc', 'llc', 'ltd', 'corp', 'group', 'holdings', 'plc', 'the', 'and', 'company', 'co']);
+      if (p.company) {
+        const tokens = new Set(
+          p.company.toLowerCase().split(/[^a-z0-9]+/).filter(t => t.length >= 3 && !GENERIC.has(t))
+        );
+        for (const t of tokens) {
+          if (!tToP.has(t)) tToP.set(t, p); // first-wins; prospects loaded earlier take priority
+        }
+      }
     }
-    return { domainToProspect: dToP, prospectDomains: pDoms };
+    return { domainToProspect: dToP, prospectDomains: pDoms, tokenToProspect: tToP };
   }, [prospects]);
 
   const enrichRow = useCallback((r) => {
     const at = r.email.lastIndexOf('@');
     const domain = at >= 0 ? r.email.slice(at + 1).toLowerCase() : '';
-    const matched = domain ? domainToProspect.get(domain) : null;
+    // 1. Exact domain match on a prospect's emailDomain/website.
+    let matched = domain ? domainToProspect.get(domain) : null;
+    // 2. Fallback: match the domain's brand token against any word in a prospect's company name.
+    if (!matched && domain) {
+      const token = extractBrandToken(domain);
+      if (token && token.length >= 3) matched = tokenToProspect.get(token) || null;
+    }
     const suggestedCompany = matched?.company || (domain ? guessDomainCompany(r.email) : '');
     const domainSet = matched ? prospectDomains.get(matched.company.toLowerCase()) : null;
     const companyDomains = domainSet ? Array.from(domainSet).sort() : (domain ? [domain] : []);
@@ -158,7 +203,7 @@ export function AgendaView({ prospects = [] }) {
       suggestedCompany,
       companyDomains,
     };
-  }, [domainToProspect, prospectDomains]);
+  }, [domainToProspect, prospectDomains, tokenToProspect]);
 
   const mergeNewRows = useCallback((parsed) => {
     if (parsed.length === 0) return;
