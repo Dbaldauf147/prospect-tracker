@@ -2751,7 +2751,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                 }
 
                 const resizeHandleStyle = { position: 'absolute', right: 0, top: 0, bottom: 0, width: '5px', cursor: 'col-resize', userSelect: 'none' };
-                const thBase = { padding: '0.3rem 0.4rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.62rem', textTransform: 'uppercase', borderBottom: '1px solid var(--color-border)', position: 'relative', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
+                const thBase = { padding: '0.3rem 0.4rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.62rem', textTransform: 'uppercase', borderBottom: '1px solid var(--color-border)', position: 'relative', whiteSpace: 'normal', wordBreak: 'normal', overflowWrap: 'normal', overflow: 'hidden', lineHeight: 1.25, verticalAlign: 'bottom' };
                 return (
                   <div style={{ marginTop: '0.5rem' }}>
                     <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.5rem', alignItems: 'flex-start' }}>
