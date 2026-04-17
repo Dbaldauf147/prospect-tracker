@@ -59,8 +59,8 @@ export function Sidebar({ view, setView, user, onLogout, onSync }) {
           className={view === 'agenda' ? styles.navItemActive : styles.navItem}
           onClick={() => setView('agenda')}
         >
-          <span className={styles.navIcon}>&#128197;</span>
-          Daily Agenda
+          <span className={styles.navIcon}>&#10133;</span>
+          Bulk Add Contacts
         </button>
         <button
           className={view === 'hubspot' ? styles.navItemActive : styles.navItem}
