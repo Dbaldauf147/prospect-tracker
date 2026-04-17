@@ -346,6 +346,23 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
     try { localStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
   }
 
+  // Build a properties object of fields the user has supplied that are currently blank
+  // on the existing HubSpot contact. Used to "fill in missing values" without overwriting
+  // data that HubSpot already has.
+  function missingFieldUpdates(row, existing) {
+    if (!existing) return null;
+    const firstname = fixAllCapsName(row.firstname);
+    const lastname = fixAllCapsName(row.lastname);
+    const patch = {};
+    if (row.company && !existing.company) patch.company = row.company;
+    if (firstname && !existing.firstname) patch.firstname = firstname;
+    if (lastname && !existing.lastname) patch.lastname = lastname;
+    if (row.phone && !existing.phone) patch.phone = row.phone;
+    if (row.jobtitle && !existing.jobtitle) patch.jobtitle = row.jobtitle;
+    if (row.dans_tags && row.dans_tags.trim() && !existing.dans_tags && !existing.dan_s_tags) patch.dans_tags = row.dans_tags.trim();
+    return Object.keys(patch).length ? patch : null;
+  }
+
   async function addOne(row) {
     const firstname = fixAllCapsName(row.firstname);
     const lastname = fixAllCapsName(row.lastname);
@@ -386,24 +403,75 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
     }
   }
 
+  async function updateOne(row, existing, patch) {
+    try {
+      const res = await fetch('/api/hubspot?action=update-contact', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contactId: existing.id, properties: patch }),
+      });
+      const data = await res.json();
+      if (data.success || data.contact) {
+        logAction(user, 'contact_updated', {
+          contactId: existing.id,
+          properties: patch,
+          source: 'bulk_contacts',
+        });
+        try {
+          const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
+          if (cache?.contacts) {
+            cache.contacts = cache.contacts.map(c => c.id === existing.id ? { ...c, ...patch } : c);
+            localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache));
+          }
+        } catch { /* ignore */ }
+        return 'updated';
+      }
+      return 'error: ' + (data.error || 'unknown');
+    } catch (err) {
+      return 'error: ' + (err.message || 'network');
+    }
+  }
+
   async function addAll() {
-    const queue = rows.filter(r => !hubspotByEmail.has(r.email) && results[r.email] !== 'added');
-    if (queue.length === 0) return;
+    // Two parallel queues: create new contacts, and fill in missing fields on existing ones.
+    const toCreate = rows.filter(r => !hubspotByEmail.has(r.email) && results[r.email] !== 'added');
+    const toUpdate = [];
+    for (const r of rows) {
+      if (results[r.email] === 'added' || results[r.email] === 'updated') continue;
+      const existing = hubspotByEmail.get(r.email);
+      if (!existing) continue;
+      const patch = missingFieldUpdates(r, existing);
+      if (patch) toUpdate.push({ row: r, existing, patch });
+    }
+    const total = toCreate.length + toUpdate.length;
+    if (total === 0) return;
     setBusy(true);
-    setProgress({ done: 0, total: queue.length });
-    for (let i = 0; i < queue.length; i++) {
-      const row = queue[i];
+    setProgress({ done: 0, total });
+    let done = 0;
+    for (const row of toCreate) {
       const outcome = await addOne(row);
       setResults(prev => ({ ...prev, [row.email]: outcome }));
-      setProgress({ done: i + 1, total: queue.length });
+      done += 1;
+      setProgress({ done, total });
+    }
+    for (const { row, existing, patch } of toUpdate) {
+      const outcome = await updateOne(row, existing, patch);
+      setResults(prev => ({ ...prev, [row.email]: outcome }));
+      done += 1;
+      setProgress({ done, total });
     }
     setBusy(false);
     setProgress(null);
   }
 
   const newCount = rows.filter(r => !hubspotByEmail.has(r.email)).length;
+  const updateCount = rows.filter(r => {
+    const existing = hubspotByEmail.get(r.email);
+    return !!existing && !!missingFieldUpdates(r, existing);
+  }).length;
   const dupCount = rows.length - newCount;
   const addedCount = Object.values(results).filter(v => v === 'added').length;
+  const updatedCount = Object.values(results).filter(v => v === 'updated').length;
   const errorCount = Object.values(results).filter(v => typeof v === 'string' && v.startsWith('error')).length;
 
   return (
@@ -417,11 +485,21 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
           {rows.length > 0 && <button className={styles.secondaryBtn} onClick={clearAll}>Clear</button>}
           <button
             className={styles.primaryBtn}
-            disabled={busy || newCount === 0}
+            disabled={busy || (newCount === 0 && updateCount === 0)}
             onClick={addAll}
-            title={newCount === 0 ? 'No new contacts to add' : `Add ${newCount} new contact${newCount === 1 ? '' : 's'} to HubSpot`}
+            title={
+              newCount === 0 && updateCount === 0
+                ? 'Nothing to send'
+                : `Create ${newCount} new and fill missing fields on ${updateCount} existing contact${updateCount === 1 ? '' : 's'}`
+            }
           >
-            {busy ? `Adding ${progress?.done}/${progress?.total}…` : `+ Add ${newCount} to HubSpot`}
+            {busy
+              ? `Sending ${progress?.done}/${progress?.total}…`
+              : updateCount > 0 && newCount > 0
+                ? `Send to HubSpot (${newCount} new · ${updateCount} update${updateCount === 1 ? '' : 's'})`
+                : updateCount > 0
+                  ? `Update ${updateCount} in HubSpot`
+                  : `+ Add ${newCount} to HubSpot`}
           </button>
         </div>
       </div>
@@ -458,8 +536,12 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
             <div className={styles.summaryValue}>{dupCount}</div>
           </div>
           <div className={styles.summaryCard}>
-            <div className={styles.summaryLabel}>Added this session</div>
-            <div className={styles.summaryValue}>{addedCount}{errorCount > 0 ? <span className={styles.errInline}> · {errorCount} err</span> : null}</div>
+            <div className={styles.summaryLabel}>Sent this session</div>
+            <div className={styles.summaryValue}>
+              {addedCount + updatedCount}
+              {updatedCount > 0 && <span style={{ fontSize: '0.7rem', fontWeight: 500, color: '#64748B', marginLeft: '0.35rem' }}>({addedCount} new · {updatedCount} upd)</span>}
+              {errorCount > 0 ? <span className={styles.errInline}> · {errorCount} err</span> : null}
+            </div>
           </div>
         </div>
 
@@ -507,7 +589,13 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                   let statusClass = styles.statusNew;
                   if (exists) { statusLabel = 'In HubSpot'; statusClass = styles.statusDup; }
                   if (outcome === 'added') { statusLabel = 'Added ✓'; statusClass = styles.statusAdded; }
+                  else if (outcome === 'updated') { statusLabel = 'Updated ✓'; statusClass = styles.statusAdded; }
                   else if (typeof outcome === 'string' && outcome.startsWith('error')) { statusLabel = outcome.replace(/^error: /, ''); statusClass = styles.statusErr; }
+                  // If this existing contact has pending field fill-ins, flag as updatable.
+                  if (exists && outcome !== 'updated' && missingFieldUpdates(r, hubspotContact)) {
+                    statusLabel = 'Update pending';
+                    statusClass = styles.statusUpdatePending;
+                  }
                   const live = lookupMatch(r.email);
                   const currentHsCompany = hubspotContact?.company?.trim() || '';
                   return (
