@@ -3534,7 +3534,23 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 };
                 for (const [header, fieldKey] of Object.entries(mapping)) {
                   if (!fieldKey) continue;
-                  out[fieldKey] = String(r[header] ?? '').trim();
+                  const raw = String(r[header] ?? '').trim();
+                  if (fieldKey === 'energyGwh') {
+                    // Accept values like "850 est.", "1,200", "520 est" — keep the number.
+                    const m = raw.replace(/,/g, '').match(/-?\d+(\.\d+)?/);
+                    out.energyGwh = m ? m[0] : '';
+                  } else if (fieldKey === 'siteCount') {
+                    // Accept "45 (P)", "20 (E)", "5,200" — keep the number, preserve marker when present.
+                    const numMatch = raw.replace(/,/g, '').match(/-?\d+(\.\d+)?/);
+                    const markerMatch = raw.match(/\((?:[PpEe])\)/);
+                    if (numMatch) {
+                      out.siteCount = markerMatch ? `${numMatch[0]} ${markerMatch[0].toUpperCase()}` : numMatch[0];
+                    } else {
+                      out.siteCount = '';
+                    }
+                  } else {
+                    out[fieldKey] = raw;
+                  }
                 }
                 return out;
               })
