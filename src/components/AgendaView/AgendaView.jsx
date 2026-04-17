@@ -65,6 +65,7 @@ export function AgendaView({ prospects = [], onSelectProspect }) {
   const [input, setInput] = useState(cached?.text || '');
   const [pastedAt, setPastedAt] = useState(cached?.pastedAt || null);
   const [copied, setCopied] = useState(null);
+  const [allCopied, setAllCopied] = useState(false);
 
   const meetings = useMemo(() => parseOutlookAgenda(input), [input]);
 
@@ -117,6 +118,29 @@ export function AgendaView({ prospects = [], onSelectProspect }) {
   const totalMinutes = enriched.reduce((s, m) => s + (durationMinutes(m) || 0), 0);
   const matchedCount = enriched.filter(m => m.matchedProspect).length;
 
+  const externalEmails = useMemo(() => {
+    const set = new Set();
+    const EMAIL_RE = /[\w.+-]+@[\w-]+\.[\w.-]+/g;
+    for (const m of enriched) {
+      for (const att of m.attendees) {
+        const matches = att.match(EMAIL_RE) || [];
+        for (const e of matches) {
+          const lower = e.toLowerCase();
+          if (!lower.endsWith('@se.com')) set.add(lower);
+        }
+      }
+    }
+    return Array.from(set);
+  }, [enriched]);
+
+  function copyAllEmails() {
+    if (externalEmails.length === 0) return;
+    navigator.clipboard?.writeText(externalEmails.join('; ')).then(() => {
+      setAllCopied(true);
+      setTimeout(() => setAllCopied(false), 1800);
+    });
+  }
+
   return (
     <div className={styles.wrapper}>
       <div className={styles.header}>
@@ -165,6 +189,18 @@ export function AgendaView({ prospects = [], onSelectProspect }) {
               <div className={styles.summaryLabel}>Matched prospects</div>
               <div className={styles.summaryValue}>{matchedCount}</div>
             </div>
+            <button
+              type="button"
+              className={styles.summaryCardAction}
+              onClick={copyAllEmails}
+              disabled={externalEmails.length === 0}
+              title={externalEmails.length ? 'Copy all external attendee emails (semicolon-separated)' : 'No external attendees to copy'}
+            >
+              <div className={styles.summaryLabel}>
+                {allCopied ? 'Copied!' : 'Copy external emails'}
+              </div>
+              <div className={styles.summaryValue}>{externalEmails.length}</div>
+            </button>
           </div>
 
           {enriched.length === 0 ? (
