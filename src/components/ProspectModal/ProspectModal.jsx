@@ -1227,6 +1227,20 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     });
   }, [companyOppsData, writeCompanyOpps]);
 
+  const toggleOppContact = useCallback((oppId, contactId) => {
+    writeCompanyOpps({
+      buckets: companyOppsData.buckets || [],
+      opportunities: (companyOppsData.opportunities || []).map(o => {
+        if (o.id !== oppId) return o;
+        const existing = Array.isArray(o.contactIds) ? o.contactIds : [];
+        const next = existing.includes(contactId)
+          ? existing.filter(id => id !== contactId)
+          : [...existing, contactId];
+        return { ...o, contactIds: next, updatedAt: Date.now() };
+      }),
+    });
+  }, [companyOppsData, writeCompanyOpps]);
+
   const handleOppNoteChange = useCallback((html) => {
     setOppNoteDraft(html);
     if (!selectedOppId) return;
@@ -1658,6 +1672,59 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                           Delete
                         </button>
                       </div>
+                      {/* Contacts linked to this opportunity (shows who was on the call for these notes) */}
+                      {(() => {
+                        const linkedIds = new Set(Array.isArray(selectedOpp.contactIds) ? selectedOpp.contactIds : []);
+                        const linkedContacts = companyContacts.filter(c => linkedIds.has(c.id));
+                        const unlinkedContacts = companyContacts.filter(c => !linkedIds.has(c.id));
+                        return (
+                          <div style={{ marginBottom: '0.6rem', padding: '0.5rem 0.6rem', background: '#F8FAFC', border: '1px solid var(--color-border-light)', borderRadius: 6 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: linkedContacts.length > 0 ? '0.4rem' : 0 }}>
+                              <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                                Contacts on this opportunity
+                              </span>
+                              <span style={{ fontSize: '0.7rem', color: '#94A3B8' }}>{linkedContacts.length}</span>
+                              <div style={{ flex: 1 }} />
+                              {unlinkedContacts.length > 0 ? (
+                                <select
+                                  value=""
+                                  onChange={e => { if (e.target.value) toggleOppContact(selectedOpp.id, e.target.value); }}
+                                  style={{ fontSize: '0.72rem', padding: '0.2rem 0.4rem', border: '1px solid var(--color-border)', borderRadius: 4, background: 'white' }}
+                                >
+                                  <option value="">+ Add contact…</option>
+                                  {unlinkedContacts.map(c => {
+                                    const name = [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email || `Contact ${c.id}`;
+                                    return <option key={c.id} value={c.id}>{name}{c.jobtitle ? ` — ${c.jobtitle}` : ''}</option>;
+                                  })}
+                                </select>
+                              ) : (
+                                <span style={{ fontSize: '0.7rem', color: '#94A3B8', fontStyle: 'italic' }}>
+                                  {companyContacts.length === 0 ? 'No HubSpot contacts for this company' : 'All contacts added'}
+                                </span>
+                              )}
+                            </div>
+                            {linkedContacts.length > 0 && (
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
+                                {linkedContacts.map(c => {
+                                  const name = [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email || `Contact ${c.id}`;
+                                  return (
+                                    <span key={c.id} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', padding: '2px 8px', background: '#E0F2FE', color: '#075985', border: '1px solid #7DD3FC', borderRadius: 999, fontSize: '0.72rem', fontWeight: 600 }}>
+                                      {name}
+                                      {c.jobtitle && <span style={{ fontWeight: 400, color: '#0369A1' }}>· {c.jobtitle}</span>}
+                                      <button
+                                        type="button"
+                                        onClick={() => toggleOppContact(selectedOpp.id, c.id)}
+                                        title="Remove from this opportunity"
+                                        style={{ background: 'none', border: 'none', padding: 0, marginLeft: 2, cursor: 'pointer', color: '#0369A1', fontSize: '0.9rem', lineHeight: 1 }}
+                                      >×</button>
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                       <div className="opportunity-notes-editor">
                         <ReactQuill
                           theme="snow"
