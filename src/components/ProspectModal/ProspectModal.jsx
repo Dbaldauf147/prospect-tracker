@@ -2963,9 +2963,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                 </td>
                                 <td style={{ padding: '0.15rem 0.25rem' }}>
                                   <input
-                                    type="number"
+                                    type="text"
+                                    inputMode="numeric"
                                     value={r.siteCount || ''}
                                     onChange={e => updateRow(i, { siteCount: e.target.value })}
+                                    title="Number of sites. Optional (E) or (P) suffix marks estimated/projected values."
                                     style={{ width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: 'var(--color-text)' }}
                                     onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; e.target.style.background = '#fff'; }}
                                     onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
