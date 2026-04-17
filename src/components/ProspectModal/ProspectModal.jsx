@@ -3604,7 +3604,13 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       </tr>
                     </thead>
                     <tbody>
-                      {companyContacts.map((c, i) => {
+                      {[...companyContacts]
+                        .sort((a, b) => {
+                          const aLeft = contactHasTag(a, 'left') ? 1 : 0;
+                          const bLeft = contactHasTag(b, 'left') ? 1 : 0;
+                          return aLeft - bLeft;
+                        })
+                        .map((c, i) => {
                         const name = [c.firstname, c.lastname].filter(Boolean).join(' ');
                         const linkedinUrl = c.hs_linkedin_url || c.linkedin_url || c.hs_linkedinid;
                         const isDM = contactHasTag(c, 'decision maker');
