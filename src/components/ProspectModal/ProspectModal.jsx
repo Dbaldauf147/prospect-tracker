@@ -873,7 +873,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const [portfolioColWidths, setPortfolioColWidths] = useState({
     num: 30, company: 180, industry: 140, sector: 160, subsector: 160, subsectorScore: 80, hqCity: 130, hqCountry: 90, energy: 110, siteCount: 100, rank: 130, fitTier: 100, pcDescription: 260, acquisitionYear: 90, notes: 220, raClient: 200, clientManager: 140, targetAccount: 200, tier: 80, salesRep: 160,
   });
-  const [portfolioSortByRank, setPortfolioSortByRank] = useState(false);
+  const [portfolioSortByRank, setPortfolioSortByRank] = useState(true);
   const [raClientPickerOpen, setRaClientPickerOpen] = useState(null); // row index
   const [targetAccountPickerOpen, setTargetAccountPickerOpen] = useState(null); // row index
   // Portfolio Companies upload preview — shows detected column mapping before applying
