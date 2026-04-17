@@ -380,7 +380,12 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
 
   useEffect(() => {
     if (!tagsOpen) return;
-    const h = e => { if (tagsRef.current && !tagsRef.current.contains(e.target)) setTagsOpen(false); };
+    // Use closest() with a data attribute so clicks on checkboxes/labels that may
+    // momentarily re-render don't close the dropdown mid-selection.
+    const h = e => {
+      if (e.target?.closest?.('[data-tags-picker]')) return;
+      setTagsOpen(false);
+    };
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, [tagsOpen]);
@@ -597,6 +602,7 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
           <div
             style={{ gridColumn: 'span 2' }}
             ref={tagsRef}
+            data-tags-picker="true"
             onMouseDown={e => e.stopPropagation()}
             onClick={e => e.stopPropagation()}
           >
