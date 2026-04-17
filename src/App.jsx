@@ -18,13 +18,13 @@ import { HubSpotView } from './components/HubSpotView/HubSpotView';
 import { OppsView } from './components/OppsView/OppsView';
 import { ClientsView } from './components/ClientsView/ClientsView';
 import { ActivityView } from './components/ActivityView/ActivityView';
-import { TargetAccountsView, loadTargetAccountsFromDB } from './components/TargetAccountsView/TargetAccountsView';
+import { loadTargetAccountsFromDB } from './components/TargetAccountsView/TargetAccountsView';
 import { DedupeView } from './components/DedupeView/DedupeView';
 import { DraftEmailView } from './components/DraftEmailView/DraftEmailView';
 import { VibeProspecting } from './components/VibeProspecting/VibeProspecting';
 import { EmailCampaignView } from './components/EmailCampaignView/EmailCampaignView';
 import { ProgressView } from './components/ProgressView/ProgressView';
-import { RAClientsView } from './components/RAClientsView/RAClientsView';
+import { ListsView } from './components/ListsView/ListsView';
 import { AgendaView } from './components/AgendaView/AgendaView';
 import { SERVICE_CATEGORIES } from './data/enums';
 import './App.css';
@@ -237,10 +237,8 @@ function App() {
             <ActivityView prospects={prospects} />
           ) : view === 'agenda' ? (
             <AgendaView prospects={prospects} onSelectProspect={handleSelect} />
-          ) : view === 'targets' ? (
-            <TargetAccountsView onDataLoaded={setTargetAccountsData} />
-          ) : view === 'raclients' ? (
-            <RAClientsView />
+          ) : view === 'lists' ? (
+            <ListsView onTargetAccountsLoaded={setTargetAccountsData} />
           ) : view === 'clients' ? (
             <ClientsView />
           ) : view === 'opps' ? (
@@ -292,6 +290,7 @@ function App() {
           onUpdateOrgChart={handleUpdateOrgChart}
           settings={settings}
           updateSettings={updateSettings}
+          targetAccountsData={targetAccountsData}
         />
       )}
 

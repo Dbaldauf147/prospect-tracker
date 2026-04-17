@@ -28,11 +28,11 @@ export function Sidebar({ view, setView, user, onLogout, onSync }) {
           Table View
         </button>
         <button
-          className={view === 'targets' ? styles.navItemActive : styles.navItem}
-          onClick={() => setView('targets')}
+          className={view === 'lists' ? styles.navItemActive : styles.navItem}
+          onClick={() => setView('lists')}
         >
-          <span className={styles.navIcon}>&#9872;</span>
-          Target Accounts
+          <span className={styles.navIcon}>&#9776;</span>
+          Lists
         </button>
         <button
           className={view === 'opps' ? styles.navItemActive : styles.navItem}
@@ -47,13 +47,6 @@ export function Sidebar({ view, setView, user, onLogout, onSync }) {
         >
           <span className={styles.navIcon}>&#9878;</span>
           Clients
-        </button>
-        <button
-          className={view === 'raclients' ? styles.navItemActive : styles.navItem}
-          onClick={() => setView('raclients')}
-        >
-          <span className={styles.navIcon}>&#9881;</span>
-          RA Clients
         </button>
         <button
           className={view === 'activity' ? styles.navItemActive : styles.navItem}

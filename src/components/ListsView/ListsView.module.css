@@ -1,0 +1,43 @@
+.wrapper {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.subtabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 2px solid var(--color-border);
+  padding: 0 0.5rem;
+  background: var(--color-surface);
+  flex-shrink: 0;
+}
+
+.subtab,
+.subtabActive {
+  padding: 0.6rem 1.2rem;
+  border: none;
+  background: none;
+  font-size: 0.82rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.subtab:hover {
+  color: var(--color-text);
+}
+
+.subtabActive {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+}
+
+.content {
+  flex: 1;
+  overflow: auto;
+}
