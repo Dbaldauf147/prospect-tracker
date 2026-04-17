@@ -492,7 +492,8 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
               </thead>
               <tbody>
                 {rows.map(r => {
-                  const exists = hubspotByEmail.has(r.email);
+                  const hubspotContact = hubspotByEmail.get(r.email);
+                  const exists = !!hubspotContact;
                   const outcome = results[r.email];
                   let statusLabel = 'New';
                   let statusClass = styles.statusNew;
@@ -500,12 +501,20 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                   if (outcome === 'added') { statusLabel = 'Added ✓'; statusClass = styles.statusAdded; }
                   else if (typeof outcome === 'string' && outcome.startsWith('error')) { statusLabel = outcome.replace(/^error: /, ''); statusClass = styles.statusErr; }
                   const live = lookupMatch(r.email);
+                  const currentHsCompany = hubspotContact?.company?.trim() || '';
                   return (
                     <tr key={r.email}>
                       <td className={styles.emailCell}>{r.email}</td>
                       <td><input className={styles.cellInput} value={r.firstname} onChange={e => updateRow(r.email, { firstname: e.target.value })} /></td>
                       <td><input className={styles.cellInput} value={r.lastname} onChange={e => updateRow(r.email, { lastname: e.target.value })} /></td>
-                      <td><input className={styles.cellInput} value={r.company} onChange={e => updateRow(r.email, { company: e.target.value })} /></td>
+                      <td>
+                        <input className={styles.cellInput} value={r.company} onChange={e => updateRow(r.email, { company: e.target.value })} />
+                        {exists && currentHsCompany && (
+                          <div className={styles.hsCompanyHint} title={`Currently stored in HubSpot`}>
+                            HubSpot: {currentHsCompany}
+                          </div>
+                        )}
+                      </td>
                       <td className={styles.suggestCell}>
                         {live.suggestedCompany ? (
                           <button

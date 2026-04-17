@@ -238,6 +238,16 @@
 
 .metaText { color: var(--color-text-muted); font-size: 0.75rem; }
 
+.hsCompanyHint {
+  font-size: 0.65rem;
+  color: var(--color-text-muted);
+  padding: 1px 4px 0 4px;
+  margin-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .statusPill {
   display: inline-block;
   padding: 2px 8px;
