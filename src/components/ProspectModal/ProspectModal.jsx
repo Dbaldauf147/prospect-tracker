@@ -426,7 +426,7 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
           window.dispatchEvent(new Event('hubspot-cache-updated'));
         }
       } catch {}
-      onSave({ ...contact, dans_tags: tagsStr });
+      onSave({ ...contact, dans_tags: tagsStr }, { silent: true });
       setTagsSaveStatus('Saved ✓');
       setTimeout(() => setTagsSaveStatus(''), 1500);
     } catch (err) {
@@ -1064,7 +1064,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     return matched;
   }, [oppsRecords]);
 
-  const handleContactSaved = useCallback((updated) => {
+  const handleContactSaved = useCallback((updated, options = {}) => {
     setLocalContacts(prev => {
       const existing = prev.find(c => String(c.id || c.vid) === String(updated.id || updated.vid));
       if (existing) {
@@ -1072,6 +1072,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       }
       return [...prev, updated];
     });
+    if (options.silent) return; // e.g. inline autosaves shouldn't close the modal
     setAddingContact(false);
     setEditingContact(null);
   }, []);
