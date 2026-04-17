@@ -462,6 +462,7 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
             <table className={styles.table}>
               <colgroup>
                 <col style={{ width: '230px' }} />
+                <col style={{ width: '120px' }} />
                 <col style={{ width: '110px' }} />
                 <col style={{ width: '130px' }} />
                 <col style={{ width: '180px' }} />
@@ -471,12 +472,12 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                 <col style={{ width: '140px' }} />
                 <col style={{ width: '120px' }} />
                 <col style={{ width: '240px' }} />
-                <col style={{ width: '120px' }} />
                 <col style={{ width: '36px' }} />
               </colgroup>
               <thead>
                 <tr>
                   <th>Email</th>
+                  <th>HubSpot Status</th>
                   <th>First</th>
                   <th>Last</th>
                   <th>Company</th>
@@ -486,7 +487,6 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                   <th>Job title</th>
                   <th>Phone</th>
                   <th>Notes</th>
-                  <th>Status</th>
                   <th></th>
                 </tr>
               </thead>
@@ -505,6 +505,7 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                   return (
                     <tr key={r.email}>
                       <td className={styles.emailCell}>{r.email}</td>
+                      <td><span className={`${styles.statusPill} ${statusClass}`}>{statusLabel}</span></td>
                       <td><input className={styles.cellInput} value={r.firstname} onChange={e => updateRow(r.email, { firstname: e.target.value })} /></td>
                       <td><input className={styles.cellInput} value={r.lastname} onChange={e => updateRow(r.email, { lastname: e.target.value })} /></td>
                       <td>
@@ -533,7 +534,6 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                       <td><input className={styles.cellInput} value={r.jobtitle} onChange={e => updateRow(r.email, { jobtitle: e.target.value })} /></td>
                       <td><input className={styles.cellInput} value={r.phone} onChange={e => updateRow(r.email, { phone: e.target.value })} /></td>
                       <td><input className={styles.cellInput} value={r.notes || ''} onChange={e => updateRow(r.email, { notes: e.target.value })} placeholder="Free-form note" /></td>
-                      <td><span className={`${styles.statusPill} ${statusClass}`}>{statusLabel}</span></td>
                       <td><button className={styles.rowRemove} onClick={() => removeRow(r.email)} title="Remove row">×</button></td>
                     </tr>
                   );
