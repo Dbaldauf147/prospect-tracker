@@ -74,6 +74,20 @@ function guessDomainCompany(email) {
   return domain.replace(/\.(com|org|net|io|co|us|ca|uk)$/i, '').replace(/\./g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
+// Mirrors the name-from-email guess used on the HubSpot Contacts page:
+// split the local part on '.' / '_' / '-' and title-case the first + last token.
+// Returns { firstname, lastname } with either/both possibly empty.
+function guessNameFromEmail(email) {
+  if (!email) return { firstname: '', lastname: '' };
+  const at = email.lastIndexOf('@');
+  if (at < 0) return { firstname: '', lastname: '' };
+  const local = email.slice(0, at).toLowerCase();
+  const parts = local.split(/[._-]/).filter(Boolean).filter(p => !/^\d+$/.test(p));
+  if (parts.length < 2) return { firstname: '', lastname: '' };
+  const cap = s => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+  return { firstname: cap(parts[0]), lastname: cap(parts[parts.length - 1]) };
+}
+
 export function AgendaView({ prospects = [] }) {
   const { user } = useAuth();
   const [rows, setRows] = useState(() => loadCache());
@@ -121,8 +135,12 @@ export function AgendaView({ prospects = [] }) {
     const suggestedCompany = matched?.company || (domain ? guessDomainCompany(r.email) : '');
     const domainSet = matched ? prospectDomains.get(matched.company.toLowerCase()) : null;
     const companyDomains = domainSet ? Array.from(domainSet).sort() : (domain ? [domain] : []);
+    // Only guess name parts if the parsed row didn't already carry them from "Name <email>" drops.
+    const nameGuess = (!r.firstname && !r.lastname) ? guessNameFromEmail(r.email) : { firstname: '', lastname: '' };
     return {
       ...r,
+      firstname: r.firstname || nameGuess.firstname,
+      lastname: r.lastname || nameGuess.lastname,
       company: r.company || suggestedCompany,
       suggestedCompany,
       companyDomains,
