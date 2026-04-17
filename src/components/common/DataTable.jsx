@@ -111,6 +111,8 @@ export function DataTable({
   sortConfig: externalSortConfig,
   alwaysVisible = [],
   onRowClick,
+  rowClassName,
+  rowStyle,
   emptyMessage = 'No data found',
 }) {
   const [colWidths, setColWidths] = useState(() => loadColWidths(tableId));
@@ -241,8 +243,9 @@ export function DataTable({
           const ws = XLSX.utils.json_to_sheet(data);
           ws['!cols'] = exportCols.map(col => ({ wch: Math.max((colNames[col.key] || col.label).length, 12) }));
           const wb = XLSX.utils.book_new();
-          XLSX.utils.book_append_sheet(wb, ws, tableId || 'Export');
-          XLSX.writeFile(wb, `${tableId || 'export'}-${new Date().toISOString().slice(0, 10)}.xlsx`);
+          XLSX.utils.book_append_sheet(wb, ws, (tableId || 'Export').replace(/[\\/:*?\[\]]+/g, '-').slice(0, 31));
+          const safeName = (tableId || 'export').replace(/[\\/:*?"<>|]+/g, '-');
+          XLSX.writeFile(wb, `${safeName}-${new Date().toISOString().slice(0, 10)}.xlsx`);
         }}>
           Export Excel
         </button>
@@ -293,7 +296,7 @@ export function DataTable({
               </colgroup>
               <tbody>
                 {sortedRows.map((row, ri) => (
-                  <tr key={row.id || ri} onClick={onRowClick ? () => onRowClick(row) : undefined} style={onRowClick ? { cursor: 'pointer' } : undefined}>
+                  <tr key={row.id || ri} className={rowClassName ? rowClassName(row) : undefined} onClick={onRowClick ? () => onRowClick(row) : undefined} style={{ ...(onRowClick ? { cursor: 'pointer' } : undefined), ...(rowStyle ? rowStyle(row) : undefined) }}>
                     {visibleColumns.map(col => (
                       <td key={col.key} className={col.sticky ? styles.stickyCol : undefined}>
                         {col.render ? col.render(row) : (row[col.key] ?? '—')}
