@@ -380,14 +380,17 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
 
   useEffect(() => {
     if (!tagsOpen) return;
-    // Use closest() with a data attribute so clicks on checkboxes/labels that may
-    // momentarily re-render don't close the dropdown mid-selection.
+    // Close only when the click is truly outside the picker. Use capture phase + closest()
+    // so the check runs before any re-render can remove the clicked element from the DOM.
     const h = e => {
-      if (e.target?.closest?.('[data-tags-picker]')) return;
+      const t = e.target;
+      if (!t) return;
+      if (tagsRef.current && tagsRef.current.contains(t)) return;
+      if (typeof t.closest === 'function' && t.closest('[data-tags-picker]')) return;
       setTagsOpen(false);
     };
-    document.addEventListener('mousedown', h);
-    return () => document.removeEventListener('mousedown', h);
+    document.addEventListener('mousedown', h, true);
+    return () => document.removeEventListener('mousedown', h, true);
   }, [tagsOpen]);
 
   const [tagsSaveStatus, setTagsSaveStatus] = useState('');
