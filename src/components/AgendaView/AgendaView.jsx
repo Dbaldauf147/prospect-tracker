@@ -470,6 +470,7 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                 <col style={{ width: '140px' }} />
                 <col style={{ width: '140px' }} />
                 <col style={{ width: '120px' }} />
+                <col style={{ width: '240px' }} />
                 <col style={{ width: '120px' }} />
                 <col style={{ width: '36px' }} />
               </colgroup>
@@ -484,6 +485,7 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                   <th>Dan's Tags</th>
                   <th>Job title</th>
                   <th>Phone</th>
+                  <th>Notes</th>
                   <th>Status</th>
                   <th></th>
                 </tr>
@@ -521,6 +523,7 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                       <td><input className={styles.cellInput} value={r.dans_tags || ''} onChange={e => updateRow(r.email, { dans_tags: e.target.value })} placeholder="Tag1, Tag2" /></td>
                       <td><input className={styles.cellInput} value={r.jobtitle} onChange={e => updateRow(r.email, { jobtitle: e.target.value })} /></td>
                       <td><input className={styles.cellInput} value={r.phone} onChange={e => updateRow(r.email, { phone: e.target.value })} /></td>
+                      <td><input className={styles.cellInput} value={r.notes || ''} onChange={e => updateRow(r.email, { notes: e.target.value })} placeholder="Free-form note" /></td>
                       <td><span className={`${styles.statusPill} ${statusClass}`}>{statusLabel}</span></td>
                       <td><button className={styles.rowRemove} onClick={() => removeRow(r.email)} title="Remove row">×</button></td>
                     </tr>
