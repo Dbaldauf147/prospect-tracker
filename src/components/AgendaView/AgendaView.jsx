@@ -180,20 +180,26 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
     return { domainToProspect: dToP, prospectDomains: pDoms, tokenToProspect: tToP };
   }, [prospects]);
 
-  const enrichRow = useCallback((r) => {
-    const at = r.email.lastIndexOf('@');
-    const domain = at >= 0 ? r.email.slice(at + 1).toLowerCase() : '';
-    // 1. Exact domain match on a prospect's emailDomain/website.
+  // Look up match details for a single row based on the current prospects snapshot.
+  // Used both during initial enrichment AND at render time so the columns refresh
+  // after the prospect's emailDomain is auto-patched.
+  const lookupMatch = useCallback((email) => {
+    const at = email.lastIndexOf('@');
+    const domain = at >= 0 ? email.slice(at + 1).toLowerCase() : '';
     let matched = domain ? domainToProspect.get(domain) : null;
     const wasExactMatch = !!matched;
-    // 2. Fallback: match the domain's brand token against any word in a prospect's company name.
     if (!matched && domain) {
       const token = extractBrandToken(domain);
       if (token && token.length >= 3) matched = tokenToProspect.get(token) || null;
     }
-    const suggestedCompany = matched?.company || (domain ? guessDomainCompany(r.email) : '');
+    const suggestedCompany = matched?.company || (domain ? guessDomainCompany(email) : '');
     const domainSet = matched ? prospectDomains.get(matched.company.toLowerCase()) : null;
     const companyDomains = domainSet ? Array.from(domainSet).sort() : (domain ? [domain] : []);
+    return { domain, matched, wasExactMatch, suggestedCompany, companyDomains };
+  }, [domainToProspect, prospectDomains, tokenToProspect]);
+
+  const enrichRow = useCallback((r) => {
+    const { domain, matched, wasExactMatch, suggestedCompany } = lookupMatch(r.email);
     // Only guess name parts if the parsed row didn't already carry them from "Name <email>" drops.
     const nameGuess = (!r.firstname && !r.lastname) ? guessNameFromEmail(r.email) : { firstname: '', lastname: '' };
     return {
@@ -201,13 +207,11 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
       firstname: fixAllCapsName(r.firstname || nameGuess.firstname),
       lastname: fixAllCapsName(r.lastname || nameGuess.lastname),
       company: r.company || suggestedCompany,
-      suggestedCompany,
-      companyDomains,
       _matchedProspectId: matched?.id || null,
       _matchedDomain: domain,
       _domainAlreadyKnown: wasExactMatch,
     };
-  }, [domainToProspect, prospectDomains, tokenToProspect]);
+  }, [lookupMatch]);
 
   // Track which (prospectId, domain) pairs we've already patched this session so we don't flood Firestore.
   const patchedPairsRef = useRef(new Set());
@@ -338,19 +342,19 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
     const firstname = fixAllCapsName(row.firstname);
     const lastname = fixAllCapsName(row.lastname);
     try {
+      const properties = {
+        email: row.email,
+        firstname,
+        lastname,
+        company: row.company,
+        phone: row.phone,
+        jobtitle: row.jobtitle,
+      };
+      if (row.dans_tags && row.dans_tags.trim()) properties.dans_tags = row.dans_tags.trim();
       const res = await fetch('/api/hubspot?action=create-contact', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          properties: {
-            email: row.email,
-            firstname,
-            lastname,
-            company: row.company,
-            phone: row.phone,
-            jobtitle: row.jobtitle,
-          },
-        }),
+        body: JSON.stringify({ properties }),
       });
       const data = await res.json();
       if (data.success) {
@@ -464,6 +468,7 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                 <col style={{ width: '170px' }} />
                 <col style={{ width: '200px' }} />
                 <col style={{ width: '140px' }} />
+                <col style={{ width: '140px' }} />
                 <col style={{ width: '120px' }} />
                 <col style={{ width: '120px' }} />
                 <col style={{ width: '36px' }} />
@@ -476,6 +481,7 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                   <th>Company</th>
                   <th>Suggested Company</th>
                   <th>Company Email Domains</th>
+                  <th>Dan's Tags</th>
                   <th>Job title</th>
                   <th>Phone</th>
                   <th>Status</th>
@@ -491,6 +497,7 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                   if (exists) { statusLabel = 'In HubSpot'; statusClass = styles.statusDup; }
                   if (outcome === 'added') { statusLabel = 'Added ✓'; statusClass = styles.statusAdded; }
                   else if (typeof outcome === 'string' && outcome.startsWith('error')) { statusLabel = outcome.replace(/^error: /, ''); statusClass = styles.statusErr; }
+                  const live = lookupMatch(r.email);
                   return (
                     <tr key={r.email}>
                       <td className={styles.emailCell}>{r.email}</td>
@@ -498,19 +505,20 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                       <td><input className={styles.cellInput} value={r.lastname} onChange={e => updateRow(r.email, { lastname: e.target.value })} /></td>
                       <td><input className={styles.cellInput} value={r.company} onChange={e => updateRow(r.email, { company: e.target.value })} /></td>
                       <td className={styles.suggestCell}>
-                        {r.suggestedCompany ? (
+                        {live.suggestedCompany ? (
                           <button
                             className={styles.suggestPill}
-                            title={r.company === r.suggestedCompany ? 'Already applied' : 'Click to use this as Company'}
-                            onClick={() => updateRow(r.email, { company: r.suggestedCompany })}
-                          >{r.suggestedCompany}</button>
+                            title={r.company === live.suggestedCompany ? 'Already applied' : 'Click to use this as Company'}
+                            onClick={() => updateRow(r.email, { company: live.suggestedCompany })}
+                          >{live.suggestedCompany}</button>
                         ) : <span className={styles.metaText}>—</span>}
                       </td>
-                      <td className={styles.domainsCell} title={r.companyDomains?.join('\n')}>
-                        {r.companyDomains && r.companyDomains.length > 0
-                          ? r.companyDomains.join(', ')
+                      <td className={styles.domainsCell} title={live.companyDomains?.join('\n')}>
+                        {live.companyDomains && live.companyDomains.length > 0
+                          ? live.companyDomains.join(', ')
                           : <span className={styles.metaText}>—</span>}
                       </td>
+                      <td><input className={styles.cellInput} value={r.dans_tags || ''} onChange={e => updateRow(r.email, { dans_tags: e.target.value })} placeholder="Tag1, Tag2" /></td>
                       <td><input className={styles.cellInput} value={r.jobtitle} onChange={e => updateRow(r.email, { jobtitle: e.target.value })} /></td>
                       <td><input className={styles.cellInput} value={r.phone} onChange={e => updateRow(r.email, { phone: e.target.value })} /></td>
                       <td><span className={`${styles.statusPill} ${statusClass}`}>{statusLabel}</span></td>
