@@ -510,10 +510,16 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                       <td><input className={styles.cellInput} value={r.lastname} onChange={e => updateRow(r.email, { lastname: e.target.value })} /></td>
                       <td>
                         <input className={styles.cellInput} value={r.company} onChange={e => updateRow(r.email, { company: e.target.value })} />
-                        {exists && currentHsCompany && (
-                          <div className={styles.hsCompanyHint} title={`Currently stored in HubSpot`}>
-                            HubSpot: {currentHsCompany}
-                          </div>
+                        {exists && (
+                          currentHsCompany ? (
+                            <div className={styles.hsCompanyHint} title="Currently stored in HubSpot">
+                              HubSpot: {currentHsCompany}
+                            </div>
+                          ) : (
+                            <div className={styles.hsCompanyMissing} title="HubSpot has no company value for this contact">
+                              HubSpot: no company listed
+                            </div>
+                          )
                         )}
                       </td>
                       <td className={styles.suggestCell}>
