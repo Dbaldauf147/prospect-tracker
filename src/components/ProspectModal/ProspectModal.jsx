@@ -55,6 +55,78 @@ function loadClientsFromIndexedDB() {
   });
 }
 
+function buildDefaultOpportunityTemplate(dateLine, timeLine) {
+  return [
+    `<p><em>${dateLine} · ${timeLine}</em></p>`,
+    '<p><strong>ESS Call Plan</strong> — Advanced Collaboration Tools</p>',
+    '<h2>Intent</h2>',
+    '<p>To find out if they have any needs we can address</p>',
+    '<h2>End In Mind</h2>',
+    '<p>To mutually determine whether or not there is something else we should explore further</p>',
+    '<p><em>Client Validated?</em> ☐</p>',
+    '<h2>Meeting Filters</h2>',
+    '<ol>',
+    '<li data-list="unchecked">Customer focused</li>',
+    '<li data-list="unchecked">Requires a decision</li>',
+    '<li data-list="unchecked">Logical, realistic and appropriate for the meeting</li>',
+    '<li data-list="unchecked">Makes no an OK choice</li>',
+    '<li data-list="unchecked">Singular ask for the client?</li>',
+    '<li data-list="unchecked">Should we be talking?</li>',
+    '<li data-list="unchecked">Should we keep talking?</li>',
+    '<li data-list="unchecked">Should you do this?</li>',
+    '<li data-list="unchecked">Should you do this with us?</li>',
+    '</ol>',
+    '<p><em>Insert everything from key people to issues from previous call.</em></p>',
+    '<p><em>Insert Agenda, timing, with SME asks as well.</em></p>',
+    '<h2>What Key Beliefs Must They Have</h2>',
+    '<ul>',
+    '<li>Get this from the evidence</li>',
+    '<li>Something we know they should be thinking about based on our previous experience with clients</li>',
+    '</ul>',
+    '<h3>How Will You Address Those Key Beliefs</h3>',
+    '<p><br></p>',
+    '<h2>Our Questions (What and How)</h2>',
+    '<ul>',
+    '<li>What are you currently trying to solve for?</li>',
+    '<li>Are they facing any pressure from investors or other stakeholders on ESG?</li>',
+    '<li>How do you buy energy?</li>',
+    '<li>How are you managing your energy data?</li>',
+    '</ul>',
+    '<h3>Their Answers</h3>',
+    '<p><br></p>',
+    '<h2>What Questions They Might Ask</h2>',
+    '<ul>',
+    '<li>Who else have you worked with in our industry/vertical?</li>',
+    '</ul>',
+    '<h3>How Will You Respond?</h3>',
+    '<ul>',
+    '<li>Our clients have confidentiality clauses in their agreements. We can say we are working with Blackstone as their system of record.</li>',
+    '</ul>',
+    '<h2>Yellow Lights — Possible Doubts, Concerns, or Objections</h2>',
+    '<ul>',
+    '<li>We already have someone who handles our procurement/utility bills</li>',
+    '</ul>',
+    '<h3>How Will You Respond? (Soften, State Your Concern, Hand It Back)</h3>',
+    '<ul>',
+    '<li>Oh great. How did you choose this company?</li>',
+    '</ul>',
+    '<h2>What Next Steps Are We Hoping Will Happen?</h2>',
+    '<ul>',
+    '<li>Item 1</li>',
+    '<li>Item 2</li>',
+    '</ul>',
+    '<h2>Agenda</h2>',
+    '<ul>',
+    '<li>Agenda overview · Introduction of ESS Team — Dan (02:00)</li>',
+    '<li>RFP questions (listed in the Call Plan) — Dan (10:00)</li>',
+    '<li>Ashley\'s questions — Ashley (15:00)</li>',
+    '<li>Stephanie\'s questions — Stephanie (15:00)</li>',
+    '<li>Mike\'s questions — Chelsea (15:00)</li>',
+    '<li>Final GIC questions and next step discussions — Mike</li>',
+    '</ul>',
+  ].join('');
+}
+
 function companiesMatch(a, b) {
   const na = (a || '').toLowerCase().trim();
   const nb = (b || '').toLowerCase().trim();
@@ -1196,6 +1268,71 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     });
   }, [companyOppsData, selectedOppId, writeCompanyOpps]);
 
+  const customOpportunityTemplate = settings.opportunityTemplate || '';
+
+  const applyDateStampToTemplate = useCallback((templateHtml, dateLine, timeLine) => {
+    // Replace any existing "<em>… · …</em>" first paragraph or prepend a fresh stamp.
+    const stamp = `<p><em>${dateLine} · ${timeLine}</em></p>`;
+    if (/^<p><em>[^<]+·[^<]+<\/em><\/p>/i.test(templateHtml.trim())) {
+      return templateHtml.trim().replace(/^<p><em>[^<]+·[^<]+<\/em><\/p>/i, stamp);
+    }
+    return stamp + templateHtml;
+  }, []);
+
+  const getEffectiveTemplate = useCallback((dateLine, timeLine) => {
+    if (customOpportunityTemplate && customOpportunityTemplate.replace(/<[^>]*>/g, '').trim()) {
+      return applyDateStampToTemplate(customOpportunityTemplate, dateLine, timeLine);
+    }
+    return buildDefaultOpportunityTemplate(dateLine, timeLine);
+  }, [customOpportunityTemplate, applyDateStampToTemplate]);
+
+  const downloadOpportunityTemplate = useCallback(async () => {
+    const d = new Date();
+    const dateLine = d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+    const timeLine = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    const bodyHtml = getEffectiveTemplate(dateLine, timeLine);
+    const fullHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Opportunity Template</title></head><body><h1>Opportunity Template</h1>${bodyHtml}</body></html>`;
+    try {
+      const result = await htmlToDocxBlob(fullHtml);
+      const blob = result instanceof Blob ? result : new Blob([result], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Opportunity Template.docx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) {
+      alert('Failed to export template: ' + (err.message || err));
+    }
+  }, [getEffectiveTemplate]);
+
+  const templateFileInputRef = useRef(null);
+  const handleTemplateUpload = useCallback(async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    if (!/\.docx$/i.test(file.name)) { alert('Please choose a .docx file.'); return; }
+    try {
+      const buf = await file.arrayBuffer();
+      const result = await mammoth.convertToHtml({ arrayBuffer: buf });
+      let html = result.value || '';
+      // Strip the "Opportunity Template" H1 we add on export, if present.
+      html = html.replace(/^\s*<h1>[^<]*Opportunity\s+Template[^<]*<\/h1>\s*/i, '');
+      if (!html.replace(/<[^>]*>/g, '').trim()) { alert('The uploaded document appears to be empty.'); return; }
+      updateSettings({ opportunityTemplate: html });
+      alert('Template updated. New opportunities will use this template.');
+    } catch (err) {
+      alert('Failed to read Word document: ' + (err.message || err));
+    }
+  }, [updateSettings]);
+
+  const resetOpportunityTemplate = useCallback(() => {
+    if (!window.confirm('Reset the opportunity template to the built-in default?')) return;
+    updateSettings({ opportunityTemplate: '' });
+  }, [updateSettings]);
+
   const addOpportunity = useCallback((bucketId) => {
     const title = window.prompt('Opportunity title:');
     if (!title || !title.trim()) return;
@@ -1203,82 +1340,15 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     const d = new Date();
     const dateLine = d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
     const timeLine = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-    const notes = [
-      `<p><em>${dateLine} · ${timeLine}</em></p>`,
-      '<p><strong>ESS Call Plan</strong> — Advanced Collaboration Tools</p>',
-      '<h2>Intent</h2>',
-      '<p>To find out if they have any needs we can address</p>',
-      '<h2>End In Mind</h2>',
-      '<p>To mutually determine whether or not there is something else we should explore further</p>',
-      '<p><em>Client Validated?</em> ☐</p>',
-      '<h2>Meeting Filters</h2>',
-      '<ol>',
-      '<li data-list="unchecked">Customer focused</li>',
-      '<li data-list="unchecked">Requires a decision</li>',
-      '<li data-list="unchecked">Logical, realistic and appropriate for the meeting</li>',
-      '<li data-list="unchecked">Makes no an OK choice</li>',
-      '<li data-list="unchecked">Singular ask for the client?</li>',
-      '<li data-list="unchecked">Should we be talking?</li>',
-      '<li data-list="unchecked">Should we keep talking?</li>',
-      '<li data-list="unchecked">Should you do this?</li>',
-      '<li data-list="unchecked">Should you do this with us?</li>',
-      '</ol>',
-      '<p><em>Insert everything from key people to issues from previous call.</em></p>',
-      '<p><em>Insert Agenda, timing, with SME asks as well.</em></p>',
-      '<h2>What Key Beliefs Must They Have</h2>',
-      '<ul>',
-      '<li>Get this from the evidence</li>',
-      '<li>Something we know they should be thinking about based on our previous experience with clients</li>',
-      '</ul>',
-      '<h3>How Will You Address Those Key Beliefs</h3>',
-      '<p><br></p>',
-      '<h2>Our Questions (What and How)</h2>',
-      '<ul>',
-      '<li>What are you currently trying to solve for?</li>',
-      '<li>Are they facing any pressure from investors or other stakeholders on ESG?</li>',
-      '<li>How do you buy energy?</li>',
-      '<li>How are you managing your energy data?</li>',
-      '</ul>',
-      '<h3>Their Answers</h3>',
-      '<p><br></p>',
-      '<h2>What Questions They Might Ask</h2>',
-      '<ul>',
-      '<li>Who else have you worked with in our industry/vertical?</li>',
-      '</ul>',
-      '<h3>How Will You Respond?</h3>',
-      '<ul>',
-      '<li>Our clients have confidentiality clauses in their agreements. We can say we are working with Blackstone as their system of record.</li>',
-      '</ul>',
-      '<h2>Yellow Lights — Possible Doubts, Concerns, or Objections</h2>',
-      '<ul>',
-      '<li>We already have someone who handles our procurement/utility bills</li>',
-      '</ul>',
-      '<h3>How Will You Respond? (Soften, State Your Concern, Hand It Back)</h3>',
-      '<ul>',
-      '<li>Oh great. How did you choose this company?</li>',
-      '</ul>',
-      '<h2>What Next Steps Are We Hoping Will Happen?</h2>',
-      '<ul>',
-      '<li>Item 1</li>',
-      '<li>Item 2</li>',
-      '</ul>',
-      '<h2>Agenda</h2>',
-      '<ul>',
-      '<li>Agenda overview · Introduction of ESS Team — Dan (02:00)</li>',
-      '<li>RFP questions (listed in the Call Plan) — Dan (10:00)</li>',
-      '<li>Ashley\'s questions — Ashley (15:00)</li>',
-      '<li>Stephanie\'s questions — Stephanie (15:00)</li>',
-      '<li>Mike\'s questions — Chelsea (15:00)</li>',
-      '<li>Final GIC questions and next step discussions — Mike</li>',
-      '</ul>',
-    ].join('');
+    const notes = getEffectiveTemplate(dateLine, timeLine);
     const opp = { id: `o_${now}_${Math.random().toString(36).slice(2, 7)}`, bucketId, title: title.trim(), notes, createdAt: now, updatedAt: now };
     writeCompanyOpps({
       buckets: companyOppsData.buckets || [],
       opportunities: [...(companyOppsData.opportunities || []), opp],
     });
     setSelectedOppId(opp.id);
-  }, [companyOppsData, writeCompanyOpps]);
+  }, [companyOppsData, writeCompanyOpps, getEffectiveTemplate]);
+
 
   const renameOpportunity = useCallback((oppId) => {
     const current = (companyOppsData.opportunities || []).find(o => o.id === oppId);
@@ -1830,7 +1900,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   ) : (
                     // Overview — buckets + opportunity cards
                     <div>
-                      <div style={{ marginBottom: '0.75rem' }}>
+                      <div style={{ marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
                         <button
                           type="button"
                           onClick={addBucket}
@@ -1838,6 +1908,43 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         >
                           + Bucket
                         </button>
+                        <div style={{ flex: 1 }} />
+                        <input
+                          ref={templateFileInputRef}
+                          type="file"
+                          accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                          onChange={handleTemplateUpload}
+                          style={{ display: 'none' }}
+                        />
+                        <span style={{ fontSize: '0.68rem', color: '#64748B', marginRight: '0.15rem' }}>
+                          Template{customOpportunityTemplate ? ' (custom)' : ''}:
+                        </span>
+                        <button
+                          type="button"
+                          onClick={downloadOpportunityTemplate}
+                          title="Download the current opportunity template as a Word document"
+                          style={{ fontSize: '0.7rem', padding: '0.25rem 0.55rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 4, cursor: 'pointer' }}
+                        >
+                          Download .docx
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => templateFileInputRef.current?.click()}
+                          title="Upload a Word document to use as the template for new opportunities"
+                          style={{ fontSize: '0.7rem', padding: '0.25rem 0.55rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 4, cursor: 'pointer' }}
+                        >
+                          Upload .docx
+                        </button>
+                        {customOpportunityTemplate && (
+                          <button
+                            type="button"
+                            onClick={resetOpportunityTemplate}
+                            title="Reset to the built-in default template"
+                            style={{ fontSize: '0.7rem', padding: '0.25rem 0.55rem', border: '1px solid #FCA5A5', background: 'white', color: '#DC2626', borderRadius: 4, cursor: 'pointer' }}
+                          >
+                            Reset
+                          </button>
+                        )}
                       </div>
                       {(companyOppsData.buckets || []).length === 0 ? (
                         <div style={{ fontSize: '0.78rem', color: '#64748B', fontStyle: 'italic', padding: '0.5rem 0' }}>
