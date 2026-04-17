@@ -1096,43 +1096,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     setAddingContact(false);
   }, []);
 
-  // ── Company Notes (per-company, synced via userSettings) ──
+  // Per-company slug used by the Opportunities section below.
   const companySlug = useMemo(
     () => (fields.company || '').toLowerCase().replace(/[^a-z0-9]/g, '-'),
     [fields.company]
   );
-  const savedCompanyNote = (settings.companyNotes || {})[companySlug] || '';
-  const [companyNoteDraft, setCompanyNoteDraft] = useState(savedCompanyNote);
-  const [companyNotesOpen, setCompanyNotesOpen] = useState(false);
-  const companyNoteSaveTimerRef = useRef(null);
-  const companyNoteSlugRef = useRef(companySlug);
-
-  // Rehydrate draft when the active company changes (switching modals / renaming).
-  useEffect(() => {
-    if (companyNoteSlugRef.current !== companySlug) {
-      companyNoteSlugRef.current = companySlug;
-      setCompanyNoteDraft(savedCompanyNote);
-    }
-  }, [companySlug, savedCompanyNote]);
-
-  useEffect(() => () => {
-    if (companyNoteSaveTimerRef.current) clearTimeout(companyNoteSaveTimerRef.current);
-  }, []);
-
-  const handleCompanyNoteChange = useCallback((html) => {
-    setCompanyNoteDraft(html);
-    if (companyNoteSaveTimerRef.current) clearTimeout(companyNoteSaveTimerRef.current);
-    const slugAtEdit = companySlug;
-    companyNoteSaveTimerRef.current = setTimeout(() => {
-      if (!slugAtEdit) return;
-      const current = settings.companyNotes || {};
-      const next = { ...current };
-      const isEmpty = !html || html === '<p><br></p>' || !html.replace(/<[^>]*>/g, '').trim();
-      if (isEmpty) delete next[slugAtEdit];
-      else next[slugAtEdit] = html;
-      updateSettings({ companyNotes: next });
-    }, 800);
-  }, [companySlug, settings.companyNotes, updateSettings]);
 
   // ── Opportunities (per-company, synced via userSettings) ──
   // Shape: settings.companyOpportunities[slug] = { buckets: [{id,name}], opportunities: [{id,bucketId,title,notes,createdAt,updatedAt}] }
@@ -1607,48 +1575,6 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               <textarea className={styles.textarea} value={fields.notes} onChange={e => set('notes', e.target.value)} rows={2} />
             </div>
           </div>
-
-          {/* Company Notes — rich, per-company, synced across devices */}
-          {!isNew && fields.company?.trim() && (
-            <div style={{ marginTop: '1rem', borderTop: '1px solid var(--color-border-light)', paddingTop: '0.75rem' }}>
-              <div
-                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', userSelect: 'none' }}
-                onClick={() => setCompanyNotesOpen(o => !o)}
-              >
-                <label className={styles.label} style={{ margin: 0, cursor: 'pointer' }}>
-                  Company Notes
-                </label>
-                <span style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', transform: companyNotesOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>&#9660;</span>
-                {savedCompanyNote && (
-                  <span style={{ fontSize: '0.68rem', color: '#64748B', fontWeight: 600 }}>
-                    has notes
-                  </span>
-                )}
-              </div>
-              {companyNotesOpen && (
-                <div style={{ marginTop: '0.5rem' }}>
-                  <ReactQuill
-                    theme="snow"
-                    value={companyNoteDraft}
-                    onChange={handleCompanyNoteChange}
-                    placeholder="Meeting notes, context, follow-ups…"
-                    modules={{
-                      toolbar: [
-                        [{ 'header': [1, 2, 3, false] }],
-                        ['bold', 'italic', 'underline', 'strike'],
-                        [{ 'list': 'ordered' }, { 'list': 'bullet' }],
-                        [{ 'indent': '-1' }, { 'indent': '+1' }],
-                        ['link', 'blockquote', 'code-block'],
-                        ['clean'],
-                      ],
-                      clipboard: { matchVisual: false },
-                    }}
-                    formats={['header', 'bold', 'italic', 'underline', 'strike', 'list', 'indent', 'link', 'blockquote', 'code-block']}
-                  />
-                </div>
-              )}
-            </div>
-          )}
 
           {/* Opportunities — bucketed notes pages, per-company, synced across devices */}
           {!isNew && fields.company?.trim() && (
