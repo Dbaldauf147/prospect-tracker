@@ -1290,7 +1290,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     const d = new Date();
     const dateLine = d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
     const timeLine = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-    const bodyHtml = getEffectiveTemplate(dateLine, timeLine);
+    let bodyHtml = getEffectiveTemplate(dateLine, timeLine);
+    // For Word output, replace Quill checklist items (<li data-list="checked|unchecked">X</li>)
+    // with plain paragraphs that use inline ☑/☐ characters. Word doesn't understand
+    // Quill's checklist attribute and would otherwise render them as a bulleted list.
+    bodyHtml = bodyHtml
+      .replace(/<li\s+data-list="checked">([^<]+)<\/li>/g, '<p>☑ $1</p>')
+      .replace(/<li\s+data-list="unchecked">([^<]+)<\/li>/g, '<p>☐ $1</p>')
+      .replace(/<ol>(\s*(?:<p>[☑☐][^<]*<\/p>\s*)+)<\/ol>/g, '$1');
     const fullHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Opportunity Template</title></head><body><h1>Opportunity Template</h1>${bodyHtml}</body></html>`;
     try {
       const result = await htmlToDocxBlob(fullHtml);
