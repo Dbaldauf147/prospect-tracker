@@ -2330,8 +2330,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                   const maxS = rows.reduce((m, r) => Math.max(m, Number(r.siteCount) || 0), 0);
                   const years = rows.map(r => Number(r.acquisitionYear)).filter(y => y > 0);
                   const yearRange = years.length > 0 ? { min: Math.min(...years), max: Math.max(...years) } : null;
-                  const headers = ['Opportunity Score', 'Company Name', 'HQ Country', 'Est. Energy (GWh/yr)', 'Site Count', 'Sector', 'Subsector', 'Subsector Score', 'Acquisition Year', 'PC Description', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM'];
-                  const colWidths = [13, 32, 15, 15, 15, 28, 22, 12, 14, 48, 36, 26, 22, 26, 10, 22];
+                  const headers = ['Opportunity Score', 'Company Name', 'HQ Country', 'Est. Energy (GWh/yr)', 'Site Count', 'Sector', 'Subsector', 'Acquisition Year', 'PC Description', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM'];
+                  const colWidths = [13, 32, 15, 15, 15, 28, 22, 14, 48, 36, 26, 22, 26, 10, 22];
                   // Parse a site-count cell that may carry a (P)/(E) marker — e.g. "12 (E)" → { num: 12, isEstimate: true }.
                   // The number is what we write; the marker drives italic formatting in the export.
                   function parseSiteCount(raw) {
@@ -2352,8 +2352,6 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                     const sites = parseSiteCount(r.siteCount).value;
                     const acqYearNum = Number(r.acquisitionYear);
                     const acqYear = acqYearNum > 0 ? acqYearNum : (r.acquisitionYear || '');
-                    const subsectorScoreNum = Number(r.subsectorScore);
-                    const subsectorScoreCell = subsectorScoreNum > 0 ? subsectorScoreNum : (r.subsectorScore || '');
                     const clientMgr = (r.clientManager || '').trim() || cmForRaClient(r.raClientMatch);
                     return [
                       score,
@@ -2363,7 +2361,6 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                       sites,
                       r.sector || r.industry || '',
                       r.subsector || '',
-                      subsectorScoreCell,
                       acqYear,
                       r.pcDescription || '',
                       // Use a single space when notes is empty so a long PC Description
@@ -2445,9 +2442,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                         };
                         cell.alignment = { vertical: 'middle', horizontal: i === 0 ? 'center' : 'left', wrapText: false };
                         // Number formats
-                        if (i === 0 || i === 8) cell.numFmt = '0';
+                        if (i === 0 || i === 7) cell.numFmt = '0';
                         if (i === 3 || i === 4) cell.numFmt = '#,##0';
-                        if (i === 7) cell.numFmt = '0.0';
                         // Estimated site counts (originally tagged with "(E)" in the source):
                         // italic font + a custom number format that appends " est." while keeping
                         // the cell numeric and sortable.
