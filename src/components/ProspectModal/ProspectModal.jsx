@@ -1145,11 +1145,16 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   }, [companySlug, settings.companyOpportunities, updateSettings]);
 
   const addBucket = useCallback(() => {
-    const name = window.prompt('Bucket name:');
-    if (!name || !name.trim()) return;
-    const bucket = { id: `b_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, name: name.trim() };
+    const bucket = { id: `b_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, name: '' };
     writeCompanyOpps({
       buckets: [...(companyOppsData.buckets || []), bucket],
+      opportunities: companyOppsData.opportunities || [],
+    });
+  }, [companyOppsData, writeCompanyOpps]);
+
+  const renameBucketTo = useCallback((bucketId, name) => {
+    writeCompanyOpps({
+      buckets: (companyOppsData.buckets || []).map(b => b.id === bucketId ? { ...b, name } : b),
       opportunities: companyOppsData.opportunities || [],
     });
   }, [companyOppsData, writeCompanyOpps]);
@@ -1158,7 +1163,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     const current = (companyOppsData.buckets || []).find(b => b.id === bucketId);
     if (!current) return;
     const name = window.prompt('Rename bucket:', current.name);
-    if (!name || !name.trim() || name.trim() === current.name) return;
+    if (name == null || name.trim() === current.name) return;
     writeCompanyOpps({
       buckets: (companyOppsData.buckets || []).map(b => b.id === bucketId ? { ...b, name: name.trim() } : b),
       opportunities: companyOppsData.opportunities || [],
@@ -1696,7 +1701,16 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             return (
                               <div key={bucket.id} style={{ border: '1px solid var(--color-border-light)', borderRadius: 6, padding: '0.6rem 0.75rem', background: '#F8FAFC' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                                  <span style={{ fontWeight: 600, fontSize: '0.82rem', color: '#334155' }}>{bucket.name}</span>
+                                  <input
+                                    type="text"
+                                    value={bucket.name}
+                                    onChange={e => renameBucketTo(bucket.id, e.target.value)}
+                                    placeholder="Bucket name…"
+                                    autoFocus={!bucket.name}
+                                    style={{ fontWeight: 600, fontSize: '0.82rem', color: '#334155', border: '1px solid transparent', padding: '0.2rem 0.4rem', borderRadius: 4, background: 'transparent', fontFamily: 'inherit', minWidth: 120, flex: '0 1 260px' }}
+                                    onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; e.target.style.background = '#fff'; }}
+                                    onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
+                                  />
                                   <span style={{ fontSize: '0.68rem', color: '#64748B' }}>{bucketOpps.length}</span>
                                   <div style={{ flex: 1 }} />
                                   <button
@@ -1705,13 +1719,6 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                     style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 4, cursor: 'pointer' }}
                                   >
                                     + Opportunity
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => renameBucket(bucket.id)}
-                                    style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 4, cursor: 'pointer' }}
-                                  >
-                                    Rename
                                   </button>
                                   <button
                                     type="button"
