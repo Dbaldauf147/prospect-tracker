@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback } from 'react';
+import { useMemo, useState, useCallback, useRef } from 'react';
 import { logAction } from '../../utils/auditLog';
 import { useAuth } from '../../contexts/AuthContext';
 import styles from './AgendaView.module.css';
@@ -126,7 +126,7 @@ function guessNameFromEmail(email) {
   return { firstname: cap(parts[0]), lastname: cap(parts[parts.length - 1]) };
 }
 
-export function AgendaView({ prospects = [] }) {
+export function AgendaView({ prospects = [], onUpdateProspect }) {
   const { user } = useAuth();
   const [rows, setRows] = useState(() => loadCache());
   const [dragActive, setDragActive] = useState(false);
@@ -185,6 +185,7 @@ export function AgendaView({ prospects = [] }) {
     const domain = at >= 0 ? r.email.slice(at + 1).toLowerCase() : '';
     // 1. Exact domain match on a prospect's emailDomain/website.
     let matched = domain ? domainToProspect.get(domain) : null;
+    const wasExactMatch = !!matched;
     // 2. Fallback: match the domain's brand token against any word in a prospect's company name.
     if (!matched && domain) {
       const token = extractBrandToken(domain);
@@ -202,21 +203,57 @@ export function AgendaView({ prospects = [] }) {
       company: r.company || suggestedCompany,
       suggestedCompany,
       companyDomains,
+      _matchedProspectId: matched?.id || null,
+      _matchedDomain: domain,
+      _domainAlreadyKnown: wasExactMatch,
     };
   }, [domainToProspect, prospectDomains, tokenToProspect]);
 
+  // Track which (prospectId, domain) pairs we've already patched this session so we don't flood Firestore.
+  const patchedPairsRef = useRef(new Set());
+
+  const patchProspectDomains = useCallback((enrichedRows) => {
+    if (!onUpdateProspect) return;
+    // One update per prospect — collect all domains to add in a single set.
+    const byProspect = new Map(); // id -> { prospect, domainsToAdd: Set<string> }
+    for (const r of enrichedRows) {
+      if (!r._matchedProspectId || !r._matchedDomain) continue;
+      if (r._domainAlreadyKnown) continue; // already in emailDomain/website — nothing to do
+      const p = prospects.find(pp => pp.id === r._matchedProspectId);
+      if (!p) continue;
+      const existing = prospectDomains.get((p.company || '').toLowerCase()) || new Set();
+      if (existing.has(r._matchedDomain)) continue;
+      const pairKey = `${p.id}|${r._matchedDomain}`;
+      if (patchedPairsRef.current.has(pairKey)) continue;
+      patchedPairsRef.current.add(pairKey);
+      if (!byProspect.has(p.id)) byProspect.set(p.id, { prospect: p, domainsToAdd: new Set() });
+      byProspect.get(p.id).domainsToAdd.add(r._matchedDomain);
+    }
+    for (const { prospect, domainsToAdd } of byProspect.values()) {
+      const currentEntries = (prospect.emailDomain || '').split(/[\n;,]+/).map(s => s.trim()).filter(Boolean);
+      const nextEntries = [...currentEntries, ...Array.from(domainsToAdd)];
+      onUpdateProspect(prospect.id, { emailDomain: nextEntries.join('\n') });
+    }
+  }, [onUpdateProspect, prospects, prospectDomains]);
+
   const mergeNewRows = useCallback((parsed) => {
     if (parsed.length === 0) return;
+    const newlyEnriched = [];
     setRows(prev => {
       const byEmail = new Map(prev.map(r => [r.email, r]));
       for (const p of parsed) {
-        if (!byEmail.has(p.email)) byEmail.set(p.email, enrichRow(p));
+        if (!byEmail.has(p.email)) {
+          const er = enrichRow(p);
+          byEmail.set(p.email, er);
+          newlyEnriched.push(er);
+        }
       }
       const next = Array.from(byEmail.values());
       saveCache(next);
       return next;
     });
-  }, [enrichRow]);
+    if (newlyEnriched.length > 0) patchProspectDomains(newlyEnriched);
+  }, [enrichRow, patchProspectDomains]);
 
   function handleDrop(e) {
     e.preventDefault();
