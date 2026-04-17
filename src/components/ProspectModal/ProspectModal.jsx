@@ -773,7 +773,7 @@ const ALL_SERVICE_ITEMS_LOWER = new Set(
   SERVICE_CATEGORIES.flatMap(cat => cat.items.map(i => i.toLowerCase()))
 );
 
-export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContacts = [], onDeleteContact, orgCharts = {}, onUpdateOrgChart = () => {}, settings = {}, updateSettings = () => {}, targetAccountsData = null }) {
+export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew, hubspotContacts = [], onDeleteContact, orgCharts = {}, onUpdateOrgChart = () => {}, settings = {}, updateSettings = () => {}, targetAccountsData = null }) {
   const [fields, setFields] = useState(() => {
     if (prospect) return { ...EMPTY, ...prospect };
     return { ...EMPTY };
@@ -2689,14 +2689,35 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                   return m;
                 })();
                 function cmForRaClient(name) { return raNameToCm.get((name || '').toLowerCase()) || ''; }
+                // Map lowercase internal client/old-client company names -> status label.
+                // Lets us show Client / Old Client suggestions in the RA Client dropdown
+                // (and tag them in the UI) alongside the formal RA clients list.
+                const internalClientStatusByLower = (() => {
+                  const map = new Map();
+                  for (const p of prospects) {
+                    const name = (p.company || '').trim();
+                    if (!name) continue;
+                    if (p.status === 'Client' || p.status === 'Old Client') {
+                      const key = name.toLowerCase();
+                      if (!map.has(key)) map.set(key, { name, status: p.status });
+                    }
+                  }
+                  return map;
+                })();
                 const allRaClientNames = (() => {
                   const seen = new Set();
                   const names = [];
                   for (const ra of raClientsData) {
                     const name = raClientName(ra);
-                    if (!name || seen.has(name)) continue;
-                    seen.add(name);
+                    if (!name || seen.has(name.toLowerCase())) continue;
+                    seen.add(name.toLowerCase());
                     names.push(name);
+                  }
+                  for (const { name } of internalClientStatusByLower.values()) {
+                    if (!seen.has(name.toLowerCase())) {
+                      seen.add(name.toLowerCase());
+                      names.push(name);
+                    }
                   }
                   return names.sort((a, b) => a.localeCompare(b));
                 })();
@@ -2717,21 +2738,33 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                   const lower = (companyName || '').toLowerCase().trim();
                   if (!lower) return [];
                   const scored = [];
-                  for (const ra of raClientsData) {
-                    const display = raClientName(ra);
+                  const seenLower = new Set();
+                  function consider(display, baseScore) {
+                    const key = display.toLowerCase();
+                    if (seenLower.has(key)) return;
+                    seenLower.add(key);
+                    scored.push({ name: display, score: baseScore });
+                  }
+                  const pool = [
+                    ...raClientsData.map(ra => raClientName(ra)).filter(Boolean),
+                    ...Array.from(internalClientStatusByLower.values()).map(v => v.name),
+                  ];
+                  for (const display of pool) {
                     const name = display.toLowerCase();
-                    if (!name) continue;
-                    if (name === lower) { scored.push({ name: display, score: 100 }); continue; }
-                    if (name.includes(lower) || lower.includes(name)) { scored.push({ name: display, score: 80 }); continue; }
-                    // First word match
+                    if (name === lower) { consider(display, 100); continue; }
+                    if (name.includes(lower) || lower.includes(name)) { consider(display, 80); continue; }
                     const firstLower = lower.split(/[^a-z0-9]+/)[0];
                     const firstName = name.split(/[^a-z0-9]+/)[0];
                     if (firstLower && firstLower.length >= 4 && firstLower === firstName) {
-                      scored.push({ name: display, score: 60 });
+                      consider(display, 60);
                     }
                   }
                   scored.sort((a, b) => b.score - a.score);
                   return scored.slice(0, 6).map(s => s.name);
+                }
+                function clientStatusBadge(name) {
+                  const entry = internalClientStatusByLower.get((name || '').toLowerCase());
+                  return entry ? entry.status : null;
                 }
 
                 function startResize(colKey, e) {
@@ -3082,15 +3115,21 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                                 onMouseLeave={e => e.currentTarget.style.color = '#94A3B8'}
                                               >× Dismiss</button>
                                             </div>
-                                            {suggestions.map(s => (
+                                            {suggestions.map(s => {
+                                              const badge = clientStatusBadge(s);
+                                              return (
                                               <button
                                                 key={`sug-${s}`}
                                                 onClick={() => { updateRow(i, { raClientMatch: s }); setRaClientPickerOpen(null); }}
-                                                style={{ display: 'block', width: '100%', padding: '0.35rem 0.6rem', border: 'none', background: r.raClientMatch === s ? '#DCFCE7' : '#FFFBEB', textAlign: 'left', fontSize: '0.7rem', cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text)', fontWeight: 600 }}
+                                                style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.4rem', width: '100%', padding: '0.35rem 0.6rem', border: 'none', background: r.raClientMatch === s ? '#DCFCE7' : '#FFFBEB', textAlign: 'left', fontSize: '0.7rem', cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text)', fontWeight: 600 }}
                                                 onMouseEnter={e => e.currentTarget.style.background = '#FEF3C7'}
                                                 onMouseLeave={e => e.currentTarget.style.background = r.raClientMatch === s ? '#DCFCE7' : '#FFFBEB'}
-                                              >{s}</button>
-                                            ))}
+                                              >
+                                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s}</span>
+                                                {badge && <span style={{ flexShrink: 0, padding: '1px 6px', borderRadius: 999, fontSize: '0.58rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', background: badge === 'Client' ? '#DCFCE7' : '#E2E8F0', color: badge === 'Client' ? '#166534' : '#475569' }}>{badge}</span>}
+                                              </button>
+                                              );
+                                            })}
                                           </>
                                         )}
                                         {!isSearching && raDismissed && rawSuggestions.length > 0 && (
@@ -3108,15 +3147,21 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                             All RA Clients ({allRaClientNames.length})
                                           </div>
                                         )}
-                                        {browseList.map(s => (
+                                        {browseList.map(s => {
+                                          const badge = clientStatusBadge(s);
+                                          return (
                                           <button
                                             key={s}
                                             onClick={() => { updateRow(i, { raClientMatch: s }); setRaClientPickerOpen(null); }}
-                                            style={{ display: 'block', width: '100%', padding: '0.35rem 0.6rem', border: 'none', background: r.raClientMatch === s ? '#DCFCE7' : 'none', textAlign: 'left', fontSize: '0.7rem', cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text)' }}
+                                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.4rem', width: '100%', padding: '0.35rem 0.6rem', border: 'none', background: r.raClientMatch === s ? '#DCFCE7' : 'none', textAlign: 'left', fontSize: '0.7rem', cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text)' }}
                                             onMouseEnter={e => e.currentTarget.style.background = '#EFF6FF'}
                                             onMouseLeave={e => e.currentTarget.style.background = r.raClientMatch === s ? '#DCFCE7' : 'none'}
-                                          >{s}</button>
-                                        ))}
+                                          >
+                                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s}</span>
+                                            {badge && <span style={{ flexShrink: 0, padding: '1px 6px', borderRadius: 999, fontSize: '0.58rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', background: badge === 'Client' ? '#DCFCE7' : '#E2E8F0', color: badge === 'Client' ? '#166534' : '#475569' }}>{badge}</span>}
+                                          </button>
+                                          );
+                                        })}
                                       </div>
                                     </div>
                                     );

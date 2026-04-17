@@ -281,6 +281,7 @@ function App() {
       {modal && (
         <ProspectModal
           prospect={modal.prospect}
+          prospects={prospects}
           isNew={modal.isNew}
           onSave={handleModalSave}
           onClose={handleModalClose}
