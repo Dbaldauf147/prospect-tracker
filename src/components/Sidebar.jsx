@@ -63,6 +63,13 @@ export function Sidebar({ view, setView, user, onLogout, onSync }) {
           Activity
         </button>
         <button
+          className={view === 'agenda' ? styles.navItemActive : styles.navItem}
+          onClick={() => setView('agenda')}
+        >
+          <span className={styles.navIcon}>&#128197;</span>
+          Daily Agenda
+        </button>
+        <button
           className={view === 'hubspot' ? styles.navItemActive : styles.navItem}
           onClick={() => setView('hubspot')}
         >

@@ -25,6 +25,7 @@ import { VibeProspecting } from './components/VibeProspecting/VibeProspecting';
 import { EmailCampaignView } from './components/EmailCampaignView/EmailCampaignView';
 import { ProgressView } from './components/ProgressView/ProgressView';
 import { RAClientsView } from './components/RAClientsView/RAClientsView';
+import { AgendaView } from './components/AgendaView/AgendaView';
 import { SERVICE_CATEGORIES } from './data/enums';
 import './App.css';
 
@@ -234,6 +235,8 @@ function App() {
             <PrivacyPolicy />
           ) : view === 'activity' ? (
             <ActivityView prospects={prospects} />
+          ) : view === 'agenda' ? (
+            <AgendaView prospects={prospects} onSelectProspect={handleSelect} />
           ) : view === 'targets' ? (
             <TargetAccountsView onDataLoaded={setTargetAccountsData} />
           ) : view === 'raclients' ? (
