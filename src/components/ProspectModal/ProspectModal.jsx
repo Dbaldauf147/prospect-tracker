@@ -3026,7 +3026,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                     onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
                                   />
                                 </td>
-                                <td data-picker="ra-client" style={{ padding: '0.15rem 0.25rem', position: 'relative', overflow: 'hidden', maxWidth: 0 }}>
+                                <td data-picker="ra-client" style={{ padding: 0, position: 'relative', maxWidth: 0 }}>
+                                  <div style={{ overflow: 'hidden', padding: '0.15rem 0.25rem' }}>
                                   <button
                                     onClick={() => setRaClientPickerOpen(pickerOpen ? null : i)}
                                     style={{ display: 'block', width: '100%', minWidth: 0, maxWidth: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.68rem', fontFamily: 'inherit', background: isMatched ? '#DCFCE7' : 'transparent', color: isMatched ? '#166534' : (suggestions.length > 0 ? '#F59E0B' : '#CBD5E1'), cursor: 'pointer', textAlign: 'left', fontWeight: isMatched ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
@@ -3035,6 +3036,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                   >
                                     {isMatched ? `✓ ${r.raClientMatch}` : (suggestions.length > 0 ? `${suggestions.length} suggestion${suggestions.length === 1 ? '' : 's'} ▾` : '— Click to map —')}
                                   </button>
+                                  </div>
                                   {pickerOpen && (() => {
                                     const isSearching = !!raClientPickerQuery.trim();
                                     const searched = filterNames(allRaClientNames, raClientPickerQuery, 100);
@@ -3172,7 +3174,8 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                   const targetSuggestions = targetDismissed ? [] : rawTargetSuggestions;
                                   const hasTarget = !!r.targetAccount;
                                   return (
-                                    <td data-picker="target-account" style={{ padding: '0.15rem 0.25rem', position: 'relative', overflow: 'hidden', maxWidth: 0 }}>
+                                    <td data-picker="target-account" style={{ padding: 0, position: 'relative', maxWidth: 0 }}>
+                                      <div style={{ overflow: 'hidden', padding: '0.15rem 0.25rem' }}>
                                       <button
                                         onClick={() => setTargetAccountPickerOpen(targetOpen ? null : i)}
                                         style={{ display: 'block', width: '100%', minWidth: 0, maxWidth: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.68rem', fontFamily: 'inherit', background: hasTarget ? '#DBEAFE' : 'transparent', color: hasTarget ? '#1E40AF' : (targetSuggestions.length > 0 ? '#3B7DDD' : '#CBD5E1'), cursor: 'pointer', textAlign: 'left', fontWeight: hasTarget ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
@@ -3181,6 +3184,7 @@ export function ProspectModal({ prospect, onSave, onClose, isNew, hubspotContact
                                       >
                                         {hasTarget ? `✓ ${r.targetAccount}` : (targetAccountNames.length === 0 ? '— No target list loaded —' : (targetSuggestions.length > 0 ? `${targetSuggestions.length} suggestion${targetSuggestions.length === 1 ? '' : 's'} ▾` : '— Click to map —'))}
                                       </button>
+                                      </div>
                                       {targetOpen && (() => {
                                         const isSearching = !!targetAccountPickerQuery.trim();
                                         const searched = filterNames(targetAccountNames, targetAccountPickerQuery, 100);
