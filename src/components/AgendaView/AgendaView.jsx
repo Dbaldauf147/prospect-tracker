@@ -27,6 +27,8 @@ function parseDroppedText(text) {
       company: '',
       phone: '',
       jobtitle: '',
+      suggestedCompany: '',
+      companyDomains: [],
     });
   }
   return out;
@@ -83,32 +85,48 @@ export function AgendaView({ prospects = [] }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const hubspotByEmail = useMemo(() => loadHubSpotByEmail(), [results]);
 
-  // Build a domain → company map from prospects so we can pre-populate Company.
-  const domainToCompany = useMemo(() => {
-    const m = new Map();
+  // Build domain → prospect (and prospect → all known domains) maps so we can both
+  // suggest a company and surface the full domain list tied to that prospect.
+  const { domainToProspect, prospectDomains } = useMemo(() => {
+    const dToP = new Map();
+    const pDoms = new Map(); // company name (lower) -> Set<domain>
+    function recordDomain(p, domain) {
+      if (!domain || !p.company) return;
+      dToP.set(domain, p);
+      const key = p.company.toLowerCase();
+      if (!pDoms.has(key)) pDoms.set(key, new Set());
+      pDoms.get(key).add(domain);
+    }
     for (const p of prospects) {
       if (p.emailDomain) {
         p.emailDomain.split(/[\n;,]+/).map(s => s.trim()).filter(Boolean).forEach(entry => {
           const at = entry.lastIndexOf('@');
           const d = (at >= 0 ? entry.slice(at + 1) : entry).toLowerCase();
-          if (d && p.company) m.set(d, p.company);
+          recordDomain(p, d);
         });
       }
       if (p.website) {
         const d = p.website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '').toLowerCase();
-        if (d && p.company) m.set(d, p.company);
+        recordDomain(p, d);
       }
     }
-    return m;
+    return { domainToProspect: dToP, prospectDomains: pDoms };
   }, [prospects]);
 
   const enrichRow = useCallback((r) => {
-    if (r.company) return r;
     const at = r.email.lastIndexOf('@');
     const domain = at >= 0 ? r.email.slice(at + 1).toLowerCase() : '';
-    const company = (domain && domainToCompany.get(domain)) || guessDomainCompany(r.email);
-    return { ...r, company };
-  }, [domainToCompany]);
+    const matched = domain ? domainToProspect.get(domain) : null;
+    const suggestedCompany = matched?.company || (domain ? guessDomainCompany(r.email) : '');
+    const domainSet = matched ? prospectDomains.get(matched.company.toLowerCase()) : null;
+    const companyDomains = domainSet ? Array.from(domainSet).sort() : (domain ? [domain] : []);
+    return {
+      ...r,
+      company: r.company || suggestedCompany,
+      suggestedCompany,
+      companyDomains,
+    };
+  }, [domainToProspect, prospectDomains]);
 
   const mergeNewRows = useCallback((parsed) => {
     if (parsed.length === 0) return;
@@ -324,11 +342,13 @@ export function AgendaView({ prospects = [] }) {
             <table className={styles.table}>
               <colgroup>
                 <col style={{ width: '230px' }} />
-                <col style={{ width: '120px' }} />
-                <col style={{ width: '140px' }} />
-                <col style={{ width: '180px' }} />
-                <col style={{ width: '140px' }} />
+                <col style={{ width: '110px' }} />
                 <col style={{ width: '130px' }} />
+                <col style={{ width: '180px' }} />
+                <col style={{ width: '170px' }} />
+                <col style={{ width: '200px' }} />
+                <col style={{ width: '140px' }} />
+                <col style={{ width: '120px' }} />
                 <col style={{ width: '120px' }} />
                 <col style={{ width: '36px' }} />
               </colgroup>
@@ -338,6 +358,8 @@ export function AgendaView({ prospects = [] }) {
                   <th>First</th>
                   <th>Last</th>
                   <th>Company</th>
+                  <th>Suggested Company</th>
+                  <th>Company Email Domains</th>
                   <th>Job title</th>
                   <th>Phone</th>
                   <th>Status</th>
@@ -359,6 +381,20 @@ export function AgendaView({ prospects = [] }) {
                       <td><input className={styles.cellInput} value={r.firstname} onChange={e => updateRow(r.email, { firstname: e.target.value })} /></td>
                       <td><input className={styles.cellInput} value={r.lastname} onChange={e => updateRow(r.email, { lastname: e.target.value })} /></td>
                       <td><input className={styles.cellInput} value={r.company} onChange={e => updateRow(r.email, { company: e.target.value })} /></td>
+                      <td className={styles.suggestCell}>
+                        {r.suggestedCompany ? (
+                          <button
+                            className={styles.suggestPill}
+                            title={r.company === r.suggestedCompany ? 'Already applied' : 'Click to use this as Company'}
+                            onClick={() => updateRow(r.email, { company: r.suggestedCompany })}
+                          >{r.suggestedCompany}</button>
+                        ) : <span className={styles.metaText}>—</span>}
+                      </td>
+                      <td className={styles.domainsCell} title={r.companyDomains?.join('\n')}>
+                        {r.companyDomains && r.companyDomains.length > 0
+                          ? r.companyDomains.join(', ')
+                          : <span className={styles.metaText}>—</span>}
+                      </td>
                       <td><input className={styles.cellInput} value={r.jobtitle} onChange={e => updateRow(r.email, { jobtitle: e.target.value })} /></td>
                       <td><input className={styles.cellInput} value={r.phone} onChange={e => updateRow(r.email, { phone: e.target.value })} /></td>
                       <td><span className={`${styles.statusPill} ${statusClass}`}>{statusLabel}</span></td>
