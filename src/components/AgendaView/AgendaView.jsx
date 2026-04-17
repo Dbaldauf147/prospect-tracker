@@ -199,14 +199,22 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
   }, [domainToProspect, prospectDomains, tokenToProspect]);
 
   const enrichRow = useCallback((r) => {
-    const { domain, matched, wasExactMatch, suggestedCompany } = lookupMatch(r.email);
+    const { domain, matched, wasExactMatch } = lookupMatch(r.email);
     // Only guess name parts if the parsed row didn't already carry them from "Name <email>" drops.
     const nameGuess = (!r.firstname && !r.lastname) ? guessNameFromEmail(r.email) : { firstname: '', lastname: '' };
+    // Initial Company value: match HubSpot's current value when the contact already exists
+    // (even if blank — so user sees the real state). For brand-new contacts, leave blank so the
+    // Suggested Company chip is an explicit opt-in rather than an auto-fill.
+    const hubspotCache = loadHubSpotByEmail();
+    const existing = hubspotCache.get(r.email);
+    const initialCompany = r.company !== undefined && r.company !== null && r.company !== ''
+      ? r.company
+      : (existing ? (existing.company || '') : '');
     return {
       ...r,
       firstname: fixAllCapsName(r.firstname || nameGuess.firstname),
       lastname: fixAllCapsName(r.lastname || nameGuess.lastname),
-      company: r.company || suggestedCompany,
+      company: initialCompany,
       _matchedProspectId: matched?.id || null,
       _matchedDomain: domain,
       _domainAlreadyKnown: wasExactMatch,
