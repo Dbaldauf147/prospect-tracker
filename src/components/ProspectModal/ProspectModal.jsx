@@ -3405,6 +3405,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     .map((r, idx) => ({ r, idx, score: computePortfolioFitScore(r, maxE, maxS, yearRange) }))
                     .sort((a, b) => b.score - a.score || a.idx - b.idx);
                   const siteEstimateFlags = orderedRows.map(({ r }) => parseSiteCount(r.siteCount).isEstimate);
+                  // Acquisition year recency: 0 = oldest (hurts score), 1 = newest (helps).
+                  // null when the row has no year.
+                  const yearRecencyPcts = orderedRows.map(({ r }) => {
+                    const y = Number(r.acquisitionYear);
+                    if (!y || !yearRange) return null;
+                    if (yearRange.max === yearRange.min) return 1;
+                    return (y - yearRange.min) / (yearRange.max - yearRange.min);
+                  });
                   const data = orderedRows.map(({ r, score }) => {
                     const energy = r.energyGwh === '' || r.energyGwh == null ? null : (Number(r.energyGwh) || r.energyGwh);
                     const sites = parseSiteCount(r.siteCount).value;
@@ -3502,6 +3510,26 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         // Number formats
                         if (i === 0 || i === 7) cell.numFmt = '0';
                         if (i === 3 || i === 4) cell.numFmt = '#,##0';
+                        // Acquisition Year (col 7): color-code by recency so older years
+                        // visibly show they're pulling the opportunity score down.
+                        if (i === 7 && v != null) {
+                          const yPct = yearRecencyPcts[idx];
+                          if (yPct != null) {
+                            if (yPct >= 0.7) {
+                              // Recent — helping the score
+                              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDCFCE7' } };
+                              cell.font = { ...cell.font, color: { argb: 'FF166534' }, bold: true };
+                            } else if (yPct >= 0.3) {
+                              // Mid-range — moderate drag
+                              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF9C3' } };
+                              cell.font = { ...cell.font, color: { argb: 'FF854D0E' } };
+                            } else {
+                              // Old — hurting the score
+                              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEE2E2' } };
+                              cell.font = { ...cell.font, color: { argb: 'FF991B1B' }, bold: true };
+                            }
+                          }
+                        }
                         // Estimated site counts (originally tagged with "(E)" in the source):
                         // italic font + a custom number format that appends " est." while keeping
                         // the cell numeric and sortable.
