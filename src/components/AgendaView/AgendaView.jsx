@@ -17,6 +17,7 @@ function parseDroppedText(text) {
   while ((m = PAIR_RE.exec(text)) !== null) {
     const email = m[2].toLowerCase();
     if (seen.has(email)) continue;
+    if (email.endsWith('@se.com')) continue;
     seen.add(email);
     const name = (m[1] || '').trim();
     const parts = name ? name.replace(/^['"]|['"]$/g, '').split(/\s+/) : [];
