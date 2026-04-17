@@ -66,6 +66,19 @@ function loadHubSpotByEmail() {
   } catch { return new Map(); }
 }
 
+// Convert an ALL-CAPS name to Title Case. "JOHN SMITH" -> "John Smith",
+// "MARY-ANNE O'BRIEN" -> "Mary-Anne O'Brien". Mixed-case names pass through unchanged.
+function fixAllCapsName(name) {
+  if (!name) return name;
+  const trimmed = String(name).trim();
+  if (!trimmed) return trimmed;
+  // Only touch it if it contains at least one letter AND the whole string is uppercase.
+  if (!/[A-Z]/.test(trimmed)) return trimmed;
+  if (trimmed !== trimmed.toUpperCase()) return trimmed;
+  // Title-case each run of letters; preserve hyphens, apostrophes, spaces, dots.
+  return trimmed.toLowerCase().replace(/([a-z])([a-z]*)/g, (_, first, rest) => first.toUpperCase() + rest);
+}
+
 function guessDomainCompany(email) {
   const at = email.lastIndexOf('@');
   if (at < 0) return '';
@@ -139,8 +152,8 @@ export function AgendaView({ prospects = [] }) {
     const nameGuess = (!r.firstname && !r.lastname) ? guessNameFromEmail(r.email) : { firstname: '', lastname: '' };
     return {
       ...r,
-      firstname: r.firstname || nameGuess.firstname,
-      lastname: r.lastname || nameGuess.lastname,
+      firstname: fixAllCapsName(r.firstname || nameGuess.firstname),
+      lastname: fixAllCapsName(r.lastname || nameGuess.lastname),
       company: r.company || suggestedCompany,
       suggestedCompany,
       companyDomains,
@@ -240,6 +253,8 @@ export function AgendaView({ prospects = [] }) {
   }
 
   async function addOne(row) {
+    const firstname = fixAllCapsName(row.firstname);
+    const lastname = fixAllCapsName(row.lastname);
     try {
       const res = await fetch('/api/hubspot?action=create-contact', {
         method: 'POST',
@@ -247,8 +262,8 @@ export function AgendaView({ prospects = [] }) {
         body: JSON.stringify({
           properties: {
             email: row.email,
-            firstname: row.firstname,
-            lastname: row.lastname,
+            firstname,
+            lastname,
             company: row.company,
             phone: row.phone,
             jobtitle: row.jobtitle,
@@ -259,7 +274,7 @@ export function AgendaView({ prospects = [] }) {
       if (data.success) {
         logAction(user, 'contact_created', {
           contactId: data.contact?.id,
-          properties: { email: row.email, firstname: row.firstname, lastname: row.lastname, company: row.company },
+          properties: { email: row.email, firstname, lastname, company: row.company },
           source: 'bulk_contacts',
         });
         try {
