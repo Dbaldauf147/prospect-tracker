@@ -393,6 +393,7 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
           if (cache?.contacts) {
             cache.contacts.push(data.contact);
             localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache));
+            window.dispatchEvent(new Event('hubspot-cache-updated'));
           }
         } catch { /* ignore */ }
         return 'added';
@@ -422,6 +423,7 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
           if (cache?.contacts) {
             cache.contacts = cache.contacts.map(c => c.id === existing.id ? { ...c, ...patch } : c);
             localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache));
+            window.dispatchEvent(new Event('hubspot-cache-updated'));
           }
         } catch { /* ignore */ }
         return 'updated';
