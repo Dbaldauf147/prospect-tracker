@@ -278,24 +278,33 @@ export function OppsView() {
     return counts;
   }, [prefiltered]);
 
-  // Service (Scope) breakdown: count opps per scope and % of total (respects filters)
+  // Service (Scope) breakdown: split each opp's Scope by comma and count
+  // each individual service. One opp with "A, B, C" contributes 1 to each of A, B, C.
   const serviceBreakdown = useMemo(() => {
     const counts = {};
-    let total = 0;
+    const totalOpps = prefiltered.length;
     for (const r of prefiltered) {
       const raw = (r['Scope'] || '').trim();
-      const key = raw && raw !== '-' && raw !== '#N/A' ? raw : '(Unspecified)';
-      counts[key] = (counts[key] || 0) + 1;
-      total += 1;
+      const cleaned = raw && raw !== '-' && raw !== '#N/A' ? raw : '';
+      const services = cleaned
+        ? cleaned.split(',').map(s => s.trim()).filter(Boolean)
+        : ['(Unspecified)'];
+      // Deduplicate within a single opp so a scope listed twice isn't double-counted.
+      const seen = new Set();
+      for (const s of services) {
+        if (seen.has(s)) continue;
+        seen.add(s);
+        counts[s] = (counts[s] || 0) + 1;
+      }
     }
     const rows = Object.entries(counts)
       .map(([scope, count]) => ({
         scope,
         count,
-        percent: total > 0 ? (count / total) * 100 : 0,
+        percent: totalOpps > 0 ? (count / totalOpps) * 100 : 0,
       }))
       .sort((a, b) => b.count - a.count);
-    return { rows, total };
+    return { rows, total: totalOpps };
   }, [prefiltered]);
 
   const filtersActive = !!(dateFrom || dateTo || statusFilter !== 'all' || activityFilter !== 'all');
