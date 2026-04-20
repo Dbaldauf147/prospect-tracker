@@ -200,7 +200,14 @@ export function OppsView() {
   }, []);
 
   const headers = data?.headers || [];
-  const records = data?.records || [];
+  // Ignore any opp row that doesn't have an Open Year value.
+  const records = useMemo(() => {
+    const raw = data?.records || [];
+    return raw.filter(r => {
+      const v = String(r['Open Year'] ?? '').trim();
+      return v && v !== '-' && v !== '#N/A';
+    });
+  }, [data]);
 
   // Build columns from headers
   const columns = useMemo(() => {
