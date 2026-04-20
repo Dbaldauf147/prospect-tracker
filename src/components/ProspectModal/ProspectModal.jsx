@@ -284,8 +284,26 @@ function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact, r
     );
   }
 
+  // Coverage check: which buckets currently have no contacts tagged?
+  const missingBuckets = BUCKETS.filter(b => !contacts.some(c => getContactTags(c).includes(b.tag)));
+
   return (
-    <div style={{ display: 'flex', gap: '1rem', overflowX: 'auto', alignItems: 'flex-start', paddingBottom: '0.25rem' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+      {missingBuckets.length > 0 && (
+        <div style={{ padding: '0.5rem 0.7rem', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 6 }}>
+          <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#92400E', marginBottom: '0.3rem' }}>
+            No contacts found for these categories
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
+            {missingBuckets.map(b => (
+              <span key={b.key} style={{ padding: '2px 8px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: b.headerBg, color: b.headerColor, border: `1px solid ${b.border}` }}>
+                {b.label}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: '1rem', overflowX: 'auto', alignItems: 'flex-start', paddingBottom: '0.25rem' }}>
       {/* Main hierarchy — roots and their direct/indirect reports */}
       <div style={{ flex: '1 1 auto', minWidth: 0, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
         {roots.length === 0 && orphans.length === contacts.length ? (
@@ -306,6 +324,7 @@ function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact, r
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }
