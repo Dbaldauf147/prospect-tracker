@@ -1,21 +1,68 @@
-import { useMemo, useState } from 'react';
-import { useUserSettings } from '../../hooks/useUserSettings';
-import { useAuth } from '../../contexts/AuthContext';
+import { useEffect, useMemo, useState } from 'react';
 
-// Match the stage set used on the company popup's Opportunities list.
-const STAGES = ['New', 'Qualifying', 'Proposed', 'Quoting', 'Verbal', 'Won', 'Lost', 'Hold'];
-const INACTIVE_STAGES = new Set(['Won', 'Lost', 'Hold']);
+// Closed/invalid stages from the Opps tab — these shouldn't count toward "active pipeline".
+const CLOSED_STAGES = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
+const INVALID_STAGES = new Set(['#N/A', '#REF!', '#VALUE!', '#ERROR!', 'N/A', 'n/a', '-', '']);
 
-function companySlug(name) {
-  return (name || '').toLowerCase().replace(/[^a-z0-9]/g, '-');
+// Same fuzzy match the My Accounts table uses, so the Opps column here agrees with that one.
+function companiesMatch(a, b) {
+  const na = (a || '').toLowerCase().trim();
+  const nb = (b || '').toLowerCase().trim();
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  const longer = na.length >= nb.length ? na : nb;
+  const shorter = na.length >= nb.length ? nb : na;
+  if (shorter.length >= 4 && shorter.length >= longer.length * 0.6 && longer.includes(shorter)) return true;
+  const strip = s => s.replace(/\b(inc|llc|ltd|corp|co|lp)\b\.?/gi, '').replace(/[^a-z0-9 ]/g, '').trim();
+  const sa = strip(na);
+  const sb = strip(nb);
+  if (sa === sb) return true;
+  const sLonger = sa.length >= sb.length ? sa : sb;
+  const sShorter = sa.length >= sb.length ? sb : sa;
+  if (sShorter.length >= 4 && sShorter.length >= sLonger.length * 0.6 && sLonger.includes(sShorter)) return true;
+  return false;
+}
+
+function useOppsRecords() {
+  const [records, setRecords] = useState([]);
+  useEffect(() => {
+    try {
+      const req = indexedDB.open('prospect-tracker-db', 3);
+      req.onupgradeneeded = () => {
+        const idb = req.result;
+        if (!idb.objectStoreNames.contains('target-accounts')) idb.createObjectStore('target-accounts');
+        if (!idb.objectStoreNames.contains('opps-cache')) idb.createObjectStore('opps-cache');
+        if (!idb.objectStoreNames.contains('clients-cache')) idb.createObjectStore('clients-cache');
+      };
+      req.onsuccess = () => {
+        const idb = req.result;
+        const tx = idb.transaction('opps-cache', 'readonly');
+        const store = tx.objectStore('opps-cache');
+        const getReq = store.get('data');
+        getReq.onsuccess = () => {
+          const data = getReq.result;
+          if (data?.records) { setRecords(data.records); return; }
+          try {
+            const cache = JSON.parse(localStorage.getItem('opps-cache'));
+            if (cache?.records) setRecords(cache.records);
+          } catch { /* noop */ }
+        };
+      };
+    } catch {
+      try {
+        const cache = JSON.parse(localStorage.getItem('opps-cache'));
+        if (cache?.records) setRecords(cache.records);
+      } catch { /* noop */ }
+    }
+  }, []);
+  return records;
 }
 
 export function PEPortfolioView({ prospects = [], onSelectProspect }) {
-  const { user } = useAuth();
-  const { settings } = useUserSettings(user);
-  const [showInactive, setShowInactive] = useState(false);
+  const [showClosed, setShowClosed] = useState(false);
   const [expanded, setExpanded] = useState(() => new Set());
   const [query, setQuery] = useState('');
+  const oppsRecords = useOppsRecords();
 
   const peFirms = useMemo(() => (
     prospects
@@ -23,6 +70,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
       .sort((a, b) => (a.company || '').localeCompare(b.company || ''))
   ), [prospects]);
 
+  // Portfolio company → PE firm (lowercased name) lookup, from each prospect's peOwner field.
   const portfolioByPe = useMemo(() => {
     const map = new Map();
     for (const p of prospects) {
@@ -34,11 +82,58 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
     return map;
   }, [prospects]);
 
-  const deals = settings.companyDeals || {};
+  // Bucket each Opps row into a portfolio company (using fuzzy account-name match).
+  // Produces: Map<prospectId, Array<oppRecord>>
+  const oppsByProspectId = useMemo(() => {
+    const map = new Map();
+    if (oppsRecords.length === 0) return map;
+    // Narrow search to only prospects that are tagged as portfolio companies
+    const portfolioProspects = prospects.filter(p => (p.peOwner || '').trim());
+    for (const p of portfolioProspects) {
+      const list = [];
+      const name = (p.company || '').toLowerCase();
+      if (!name) continue;
+      for (const r of oppsRecords) {
+        const acct = (r['Account'] || '').toLowerCase();
+        if (companiesMatch(name, acct)) list.push(r);
+      }
+      if (list.length > 0) map.set(p.id, list);
+    }
+    return map;
+  }, [prospects, oppsRecords]);
 
-  function dealsFor(prospect) {
-    return deals[companySlug(prospect.company)] || [];
-  }
+  const firmOppCount = useMemo(() => {
+    const counts = new Map();
+    for (const pe of peFirms) {
+      const portfolio = portfolioByPe.get((pe.company || '').trim().toLowerCase()) || [];
+      let n = 0;
+      for (const p of portfolio) {
+        const opps = oppsByProspectId.get(p.id) || [];
+        for (const r of opps) {
+          const stage = (r['Stage'] || '').trim();
+          if (INVALID_STAGES.has(stage)) continue;
+          if (!showClosed && CLOSED_STAGES.has(stage)) continue;
+          n += 1;
+        }
+      }
+      counts.set(pe.id, n);
+    }
+    return counts;
+  }, [peFirms, portfolioByPe, oppsByProspectId, showClosed]);
+
+  const sortedPeFirms = useMemo(() => (
+    [...peFirms].sort((a, b) => {
+      const ca = firmOppCount.get(a.id) || 0;
+      const cb = firmOppCount.get(b.id) || 0;
+      if (ca !== cb) return cb - ca;
+      return (a.company || '').localeCompare(b.company || '');
+    })
+  ), [peFirms, firmOppCount]);
+
+  const q = query.trim().toLowerCase();
+  const filteredFirms = q
+    ? sortedPeFirms.filter(p => (p.company || '').toLowerCase().includes(q))
+    : sortedPeFirms;
 
   function toggle(peId) {
     setExpanded(prev => {
@@ -49,49 +144,18 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
     });
   }
 
-  // For each PE firm, count the opportunities across its portfolio companies
-  // (respecting the current Won/Lost/Hold toggle). Firms with ≥1 opp float to the top.
-  const firmOppCount = useMemo(() => {
-    const counts = new Map();
-    for (const pe of peFirms) {
-      const portfolio = portfolioByPe.get((pe.company || '').trim().toLowerCase()) || [];
-      let n = 0;
-      for (const p of portfolio) {
-        for (const d of (dealsFor(p) || [])) {
-          if (showInactive || !INACTIVE_STAGES.has(d.stage)) n += 1;
-        }
-      }
-      counts.set(pe.id, n);
-    }
-    return counts;
-  }, [peFirms, portfolioByPe, deals, showInactive]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const sortedPeFirms = useMemo(() => (
-    [...peFirms].sort((a, b) => {
-      const ca = firmOppCount.get(a.id) || 0;
-      const cb = firmOppCount.get(b.id) || 0;
-      if (ca !== cb) return cb - ca; // highest opp count first
-      return (a.company || '').localeCompare(b.company || '');
-    })
-  ), [peFirms, firmOppCount]);
-
-  const q = query.trim().toLowerCase();
-  const filteredFirms = q
-    ? sortedPeFirms.filter(p => (p.company || '').toLowerCase().includes(q))
-    : sortedPeFirms;
-
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
       <div style={{ padding: '1rem 1.25rem 0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexShrink: 0 }}>
         <div>
           <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#1E293B', margin: 0 }}>PE Portfolio</h2>
-          <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2, maxWidth: 620 }}>
-            Every prospect in My Accounts with Type = <code>Private Equity</code>, with their portfolio companies and opportunities grouped by sales stage.
+          <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2, maxWidth: 640 }}>
+            Every prospect with Type = <code>Private Equity</code>, sorted by pipeline from their portfolio companies. Opportunity counts come from the <strong>Opps</strong> tab (same as the Opps column in My Accounts).
           </div>
         </div>
         <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.72rem', color: '#475569', cursor: 'pointer' }}>
-          <input type="checkbox" checked={showInactive} onChange={e => setShowInactive(e.target.checked)} />
-          <span>Include Won / Lost / Hold</span>
+          <input type="checkbox" checked={showClosed} onChange={e => setShowClosed(e.target.checked)} />
+          <span>Include closed (Sold / Not Sold / Lost)</span>
         </label>
       </div>
 
@@ -106,6 +170,11 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '0 1.25rem 1.25rem', minHeight: 0 }}>
+        {oppsRecords.length === 0 && (
+          <div style={{ padding: '0.6rem 0.8rem', marginBottom: '0.5rem', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 6, fontSize: '0.72rem', color: '#92400E' }}>
+            No Opps data loaded. Open the <strong>Opps</strong> tab once to sync it from Google Sheets; counts will populate here afterwards.
+          </div>
+        )}
         {filteredFirms.length === 0 ? (
           <div style={{ padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
             <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>
@@ -119,14 +188,20 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
           </div>
         ) : filteredFirms.map(pe => {
           const portfolio = portfolioByPe.get((pe.company || '').trim().toLowerCase()) || [];
-          const allDeals = portfolio.flatMap(p => (dealsFor(p) || []).map(d => ({ ...d, _company: p.company, _prospectId: p.id })));
-          const visibleDeals = showInactive ? allDeals : allDeals.filter(d => !INACTIVE_STAGES.has(d.stage));
-          const dealsByStage = new Map();
-          for (const d of visibleDeals) {
-            const key = d.stage || 'New';
-            if (!dealsByStage.has(key)) dealsByStage.set(key, []);
-            dealsByStage.get(key).push(d);
+          const allOpps = portfolio.flatMap(p => (oppsByProspectId.get(p.id) || []).map(r => ({ ...r, _company: p.company, _prospectId: p.id })));
+          const visibleOpps = allOpps.filter(r => {
+            const stage = (r['Stage'] || '').trim();
+            if (INVALID_STAGES.has(stage)) return false;
+            if (!showClosed && CLOSED_STAGES.has(stage)) return false;
+            return true;
+          });
+          const oppsByStage = new Map();
+          for (const r of visibleOpps) {
+            const key = (r['Stage'] || 'Unspecified').trim() || 'Unspecified';
+            if (!oppsByStage.has(key)) oppsByStage.set(key, []);
+            oppsByStage.get(key).push(r);
           }
+          const stageOrder = Array.from(oppsByStage.keys()).sort((a, b) => a.localeCompare(b));
           const isExpanded = expanded.has(pe.id);
           return (
             <div key={pe.id} style={{ background: '#FFFFFF', border: '1px solid #CBD5E1', borderRadius: 8, overflow: 'hidden', marginBottom: '0.5rem' }}>
@@ -139,7 +214,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.72rem', color: '#64748B', whiteSpace: 'nowrap' }}>
                   <span>{portfolio.length} portfolio {portfolio.length === 1 ? 'company' : 'companies'}</span>
                   <span>·</span>
-                  <span>{visibleDeals.length} {visibleDeals.length === 1 ? 'opportunity' : 'opportunities'}</span>
+                  <span>{visibleOpps.length} {visibleOpps.length === 1 ? 'opportunity' : 'opportunities'}</span>
                   <span style={{ marginLeft: '0.4rem', color: '#94A3B8' }}>{isExpanded ? '▾' : '▸'}</span>
                 </div>
               </button>
@@ -152,30 +227,31 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
                     </div>
                   ) : (
                     <>
-                      {STAGES.filter(s => showInactive || !INACTIVE_STAGES.has(s)).map(stage => {
-                        const list = dealsByStage.get(stage) || [];
-                        if (list.length === 0) return null;
+                      {stageOrder.map(stage => {
+                        const list = oppsByStage.get(stage) || [];
                         return (
                           <div key={stage} style={{ background: '#FBFBFB', border: '1px solid #E2E8F0', borderRadius: 6, padding: '0.55rem 0.75rem' }}>
                             <div style={{ fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#475569', marginBottom: '0.4rem' }}>
                               {stage} <span style={{ color: '#94A3B8', fontWeight: 500 }}>({list.length})</span>
                             </div>
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '0.4rem' }}>
-                              {list.map(d => {
-                                const parent = prospects.find(p => p.id === d._prospectId);
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '0.4rem' }}>
+                              {list.map((r, idx) => {
+                                const parent = prospects.find(p => p.id === r._prospectId);
+                                const title = r['Opportunity Name'] || r['Opportunity'] || r['Name'] || r['Description'] || '(Unnamed opportunity)';
+                                const value = r['Amount'] || r['Value'] || r['$'] || '';
+                                const closeDate = r['Close Date'] || r['Est. Close'] || r['Target Close'] || '';
                                 return (
                                   <div
-                                    key={`${d._prospectId}-${d.id}`}
+                                    key={`${r._prospectId}-${idx}`}
                                     onClick={() => parent && onSelectProspect?.(parent)}
                                     style={{ background: '#fff', border: '1px solid #E2E8F0', borderRadius: 4, padding: '0.45rem 0.6rem', cursor: 'pointer' }}
                                     onMouseEnter={e => e.currentTarget.style.borderColor = '#3B82F6'}
                                     onMouseLeave={e => e.currentTarget.style.borderColor = '#E2E8F0'}
                                   >
-                                    <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.title || '(Untitled opportunity)'}</div>
-                                    <div style={{ fontSize: '0.68rem', color: '#3B82F6', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d._company}</div>
-                                    {d.value && <div style={{ fontSize: '0.72rem', color: '#059669', fontWeight: 600 }}>${d.value}</div>}
-                                    {d.closeDate && <div style={{ fontSize: '0.65rem', color: '#94A3B8' }}>Close: {d.closeDate}</div>}
-                                    {d.description && <div style={{ fontSize: '0.68rem', color: '#475569', marginTop: 2, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{d.description}</div>}
+                                    <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</div>
+                                    <div style={{ fontSize: '0.68rem', color: '#3B82F6', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r._company}</div>
+                                    {value && <div style={{ fontSize: '0.72rem', color: '#059669', fontWeight: 600 }}>{String(value).startsWith('$') ? value : `$${value}`}</div>}
+                                    {closeDate && <div style={{ fontSize: '0.65rem', color: '#94A3B8' }}>Close: {closeDate}</div>}
                                   </div>
                                 );
                               })}
@@ -183,9 +259,9 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
                           </div>
                         );
                       })}
-                      {visibleDeals.length === 0 && (
+                      {visibleOpps.length === 0 && (
                         <div style={{ fontSize: '0.78rem', color: '#64748B', fontStyle: 'italic' }}>
-                          No {showInactive ? '' : 'active '}opportunities yet on this PE firm's portfolio.
+                          No {showClosed ? '' : 'active '}opportunities on this PE firm's portfolio in the Opps tab.
                         </div>
                       )}
                       <div style={{ paddingTop: '0.4rem', borderTop: '1px dashed #E2E8F0' }}>
