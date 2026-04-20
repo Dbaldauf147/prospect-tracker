@@ -3633,7 +3633,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                 const fullFirst = c.firstname || '';
                                 const fullLast = c.lastname || '';
                                 const full = `${fullFirst} ${fullLast}`.trim();
-                                const nick = (c.id && contactNicknames && contactNicknames[c.id]) || '';
+                                const nicknames = (settings && settings.contactNicknames) || {};
+                                const nick = (c.id && nicknames[c.id]) || '';
                                 if (!full && !nick) return <span style={{ color: '#CBD5E1' }}>—</span>;
                                 return (
                                   <>
