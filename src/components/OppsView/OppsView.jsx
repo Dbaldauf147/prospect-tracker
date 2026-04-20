@@ -111,6 +111,7 @@ export function OppsView() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
+  const [activeTab, setActiveTab] = useState('opps');
 
   async function fetchOpps() {
     setLoading(true);
@@ -239,6 +240,26 @@ export function OppsView() {
 
   const stageOrder = ['Lead', 'Not Started', 'Qualifying', 'Quoting', 'Quoted', 'Verbal', 'Sold', 'Not Sold'];
 
+  // Service (Scope) breakdown: count opps per scope and % of total
+  const serviceBreakdown = useMemo(() => {
+    const counts = {};
+    let total = 0;
+    for (const r of records) {
+      const raw = (r['Scope'] || '').trim();
+      const key = raw && raw !== '-' && raw !== '#N/A' ? raw : '(Unspecified)';
+      counts[key] = (counts[key] || 0) + 1;
+      total += 1;
+    }
+    const rows = Object.entries(counts)
+      .map(([scope, count]) => ({
+        scope,
+        count,
+        percent: total > 0 ? (count / total) * 100 : 0,
+      }))
+      .sort((a, b) => b.count - a.count);
+    return { rows, total };
+  }, [records]);
+
   return (
     <div className={styles.wrapper}>
       <div className={styles.header}>
@@ -253,42 +274,97 @@ export function OppsView() {
 
       {error && <div className={styles.error}>{error}</div>}
 
-      <div className={styles.summary}>
-        {stageOrder.filter(s => stageCounts[s]).map(stage => (
-          <div key={stage} className={styles.summaryChip}>
-            <span className={styles.summaryChipValue}>{stageCounts[stage]}</span>
-            <span className={styles.summaryChipLabel}>{stage}</span>
-          </div>
-        ))}
-        {Object.keys(stageCounts).filter(s => !stageOrder.includes(s) && s !== 'Unknown').map(stage => (
-          <div key={stage} className={styles.summaryChip}>
-            <span className={styles.summaryChipValue}>{stageCounts[stage]}</span>
-            <span className={styles.summaryChipLabel}>{stage}</span>
-          </div>
-        ))}
+      <div className={styles.tabs}>
+        <button
+          className={activeTab === 'opps' ? styles.tabActive : styles.tab}
+          onClick={() => setActiveTab('opps')}
+        >Opportunities</button>
+        <button
+          className={activeTab === 'services' ? styles.tabActive : styles.tab}
+          onClick={() => setActiveTab('services')}
+        >By Service</button>
       </div>
 
-      <div className={styles.searchRow}>
-        <input
-          className={styles.searchInput}
-          type="text"
-          placeholder="Search opps..."
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-        />
-        <span className={styles.resultCount}>{filtered.length} of {records.length}</span>
-      </div>
+      {activeTab === 'opps' ? (
+        <>
+          <div className={styles.summary}>
+            {stageOrder.filter(s => stageCounts[s]).map(stage => (
+              <div key={stage} className={styles.summaryChip}>
+                <span className={styles.summaryChipValue}>{stageCounts[stage]}</span>
+                <span className={styles.summaryChipLabel}>{stage}</span>
+              </div>
+            ))}
+            {Object.keys(stageCounts).filter(s => !stageOrder.includes(s) && s !== 'Unknown').map(stage => (
+              <div key={stage} className={styles.summaryChip}>
+                <span className={styles.summaryChipValue}>{stageCounts[stage]}</span>
+                <span className={styles.summaryChipLabel}>{stage}</span>
+              </div>
+            ))}
+          </div>
 
-      {loading && !data ? (
-        <div className={styles.loading}>Loading from Google Sheets...</div>
+          <div className={styles.searchRow}>
+            <input
+              className={styles.searchInput}
+              type="text"
+              placeholder="Search opps..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
+            <span className={styles.resultCount}>{filtered.length} of {records.length}</span>
+          </div>
+
+          {loading && !data ? (
+            <div className={styles.loading}>Loading from Google Sheets...</div>
+          ) : (
+            <DataTable
+              tableId="opps"
+              columns={columns}
+              rows={filtered}
+              alwaysVisible={['Account']}
+              emptyMessage="No opportunities found"
+            />
+          )}
+        </>
       ) : (
-        <DataTable
-          tableId="opps"
-          columns={columns}
-          rows={filtered}
-          alwaysVisible={['Account']}
-          emptyMessage="No opportunities found"
-        />
+        <div className={styles.servicesWrap}>
+          <div className={styles.servicesHeader}>
+            <span className={styles.resultCount}>
+              {serviceBreakdown.rows.length} service{serviceBreakdown.rows.length === 1 ? '' : 's'}
+              {' · '}{serviceBreakdown.total} total opps
+            </span>
+          </div>
+          {serviceBreakdown.rows.length === 0 ? (
+            <div className={styles.loading}>No services to display.</div>
+          ) : (
+            <table className={styles.servicesTable}>
+              <thead>
+                <tr>
+                  <th>Service (Scope)</th>
+                  <th style={{ textAlign: 'right' }}># of Opps</th>
+                  <th style={{ textAlign: 'right' }}>% of Total</th>
+                  <th style={{ width: '30%' }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {serviceBreakdown.rows.map(row => (
+                  <tr key={row.scope}>
+                    <td>{row.scope}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 600 }}>{row.count}</td>
+                    <td style={{ textAlign: 'right' }}>{row.percent.toFixed(1)}%</td>
+                    <td>
+                      <div className={styles.serviceBar}>
+                        <div
+                          className={styles.serviceBarFill}
+                          style={{ width: `${row.percent}%` }}
+                        />
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
       )}
     </div>
   );

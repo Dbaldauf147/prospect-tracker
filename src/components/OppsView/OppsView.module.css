@@ -110,3 +110,90 @@
   text-align: center;
   color: var(--color-text-muted);
 }
+
+.tabs {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0 1.25rem 0.5rem;
+  border-bottom: 1px solid var(--color-border-light);
+  margin-bottom: 0.5rem;
+}
+
+.tab, .tabActive {
+  padding: 0.45rem 0.9rem;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  margin-bottom: -1px;
+}
+
+.tab:hover { color: var(--color-text); }
+
+.tabActive {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+}
+
+.servicesWrap {
+  padding: 0 1.25rem 1.25rem;
+  overflow: auto;
+}
+
+.servicesHeader {
+  padding: 0 0 0.5rem;
+}
+
+.servicesTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.servicesTable th {
+  text-align: left;
+  padding: 0.6rem 0.75rem;
+  background: var(--color-bg);
+  font-weight: 600;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.servicesTable td {
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid var(--color-border-light);
+  color: var(--color-text);
+}
+
+.servicesTable tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.servicesTable tbody tr:hover {
+  background: var(--color-bg);
+}
+
+.serviceBar {
+  height: 8px;
+  background: var(--color-border-light);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.serviceBarFill {
+  height: 100%;
+  background: var(--color-accent);
+  border-radius: 999px;
+  transition: width 0.2s ease;
+}
