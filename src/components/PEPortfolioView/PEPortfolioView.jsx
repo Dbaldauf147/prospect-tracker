@@ -55,23 +55,23 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
   }
 
   return (
-    <div className={styles.wrapper}>
-      <div className={styles.header}>
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden', background: '#F8FAFC' }}>
+      <div style={{ padding: '1rem 1.25rem 0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexShrink: 0 }}>
         <div>
-          <h2 className={styles.title}>PE Portfolio</h2>
-          <div className={styles.subtitle}>
+          <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#1E293B', margin: 0 }}>PE Portfolio</h2>
+          <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2, maxWidth: 620 }}>
             Every prospect in My Accounts with Type = <code>Private Equity</code>, with their portfolio companies and opportunities grouped by sales stage.
           </div>
         </div>
-        <label className={styles.inactiveToggle}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.72rem', color: '#475569', cursor: 'pointer' }}>
           <input type="checkbox" checked={showInactive} onChange={e => setShowInactive(e.target.checked)} />
           <span>Include Won / Lost / Hold</span>
         </label>
       </div>
 
-      <div className={styles.body}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '0 1.25rem 1.25rem', minHeight: 0 }}>
         <div style={{ padding: '0.5rem 0.75rem', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 6, marginBottom: '0.5rem', fontSize: '0.72rem', color: '#92400E' }}>
-          Debug: {prospects.length} total prospects loaded, {peFirms.length} with Type = "Private Equity".
+          Debug: {prospects.length} total prospects loaded, {peFirms.length} with Type = &quot;Private Equity&quot;.
         </div>
         {peFirms.length === 0 ? (
           <div style={{ padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
