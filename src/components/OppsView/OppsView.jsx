@@ -112,6 +112,10 @@ export function OppsView() {
   const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
   const [activeTab, setActiveTab] = useState('opps');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [activityFilter, setActivityFilter] = useState('active');
 
   async function fetchOpps() {
     setLoading(true);
@@ -220,31 +224,65 @@ export function OppsView() {
       }));
   }, [headers]);
 
+  const stageOrder = ['Lead', 'Not Started', 'Qualifying', 'Quoting', 'Quoted', 'Verbal', 'Sold', 'Not Sold'];
+  const CLOSED_STAGES = useMemo(() => new Set(['Sold', 'Not Sold']), []);
+
+  // Unique Status values across all records (for dropdown)
+  const statusOptions = useMemo(() => {
+    const set = new Set();
+    for (const r of records) {
+      const v = (r['Status'] || '').trim();
+      if (v && v !== '-' && v !== '#N/A') set.add(v);
+    }
+    return Array.from(set).sort();
+  }, [records]);
+
+  // Apply date / status / activity filters (shared by both tabs)
+  const prefiltered = useMemo(() => {
+    const fromTs = dateFrom ? Date.parse(dateFrom) : null;
+    const toTs = dateTo ? Date.parse(dateTo) + 86399999 : null;
+    return records.filter(r => {
+      // Date range on Start Date
+      if (fromTs != null || toTs != null) {
+        const raw = r['Start Date'];
+        const ts = raw ? Date.parse(raw) : NaN;
+        if (isNaN(ts)) return false;
+        if (fromTs != null && ts < fromTs) return false;
+        if (toTs != null && ts > toTs) return false;
+      }
+      // Status filter
+      if (statusFilter !== 'all' && (r['Status'] || '').trim() !== statusFilter) return false;
+      // Active / Closed
+      const stage = (r['Stage'] || '').trim();
+      if (activityFilter === 'active' && CLOSED_STAGES.has(stage)) return false;
+      if (activityFilter === 'closed' && !CLOSED_STAGES.has(stage)) return false;
+      return true;
+    });
+  }, [records, dateFrom, dateTo, statusFilter, activityFilter, CLOSED_STAGES]);
+
   const filtered = useMemo(() => {
-    if (!search.trim()) return records;
+    if (!search.trim()) return prefiltered;
     const term = search.toLowerCase();
-    return records.filter(r =>
+    return prefiltered.filter(r =>
       Object.values(r).some(v => v && String(v).toLowerCase().includes(term))
     );
-  }, [records, search]);
+  }, [prefiltered, search]);
 
-  // Stage counts for summary
+  // Stage counts for summary (respects filters)
   const stageCounts = useMemo(() => {
     const counts = {};
-    for (const r of records) {
+    for (const r of prefiltered) {
       const stage = r['Stage'] || 'Unknown';
       counts[stage] = (counts[stage] || 0) + 1;
     }
     return counts;
-  }, [records]);
+  }, [prefiltered]);
 
-  const stageOrder = ['Lead', 'Not Started', 'Qualifying', 'Quoting', 'Quoted', 'Verbal', 'Sold', 'Not Sold'];
-
-  // Service (Scope) breakdown: count opps per scope and % of total
+  // Service (Scope) breakdown: count opps per scope and % of total (respects filters)
   const serviceBreakdown = useMemo(() => {
     const counts = {};
     let total = 0;
-    for (const r of records) {
+    for (const r of prefiltered) {
       const raw = (r['Scope'] || '').trim();
       const key = raw && raw !== '-' && raw !== '#N/A' ? raw : '(Unspecified)';
       counts[key] = (counts[key] || 0) + 1;
@@ -258,7 +296,12 @@ export function OppsView() {
       }))
       .sort((a, b) => b.count - a.count);
     return { rows, total };
-  }, [records]);
+  }, [prefiltered]);
+
+  const filtersActive = !!(dateFrom || dateTo || statusFilter !== 'all' || activityFilter !== 'all');
+  const clearFilters = () => {
+    setDateFrom(''); setDateTo(''); setStatusFilter('all'); setActivityFilter('all');
+  };
 
   return (
     <div className={styles.wrapper}>
@@ -283,6 +326,55 @@ export function OppsView() {
           className={activeTab === 'services' ? styles.tabActive : styles.tab}
           onClick={() => setActiveTab('services')}
         >By Service</button>
+      </div>
+
+      <div className={styles.filterRow}>
+        <label className={styles.filterLabel}>
+          Start Date from
+          <input
+            type="date"
+            className={styles.filterInput}
+            value={dateFrom}
+            onChange={e => setDateFrom(e.target.value)}
+          />
+        </label>
+        <label className={styles.filterLabel}>
+          to
+          <input
+            type="date"
+            className={styles.filterInput}
+            value={dateTo}
+            onChange={e => setDateTo(e.target.value)}
+          />
+        </label>
+        <label className={styles.filterLabel}>
+          Status
+          <select
+            className={styles.filterInput}
+            value={statusFilter}
+            onChange={e => setStatusFilter(e.target.value)}
+          >
+            <option value="all">All</option>
+            {statusOptions.map(s => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+        </label>
+        <label className={styles.filterLabel}>
+          Show
+          <select
+            className={styles.filterInput}
+            value={activityFilter}
+            onChange={e => setActivityFilter(e.target.value)}
+          >
+            <option value="active">Active only</option>
+            <option value="closed">Closed only</option>
+            <option value="all">All</option>
+          </select>
+        </label>
+        {filtersActive && (
+          <button className={styles.clearFiltersBtn} onClick={clearFilters}>Clear filters</button>
+        )}
       </div>
 
       {activeTab === 'opps' ? (
@@ -310,7 +402,7 @@ export function OppsView() {
               value={search}
               onChange={e => setSearch(e.target.value)}
             />
-            <span className={styles.resultCount}>{filtered.length} of {records.length}</span>
+            <span className={styles.resultCount}>{filtered.length} of {prefiltered.length}{filtersActive && prefiltered.length !== records.length ? ` (filtered from ${records.length})` : ''}</span>
           </div>
 
           {loading && !data ? (
