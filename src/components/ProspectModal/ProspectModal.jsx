@@ -2554,8 +2554,128 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   );
                 })()}
                 <button
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    const svc = fields.servicesExplored || {};
+                    const svcNotes = fields.serviceNotes || {};
+                    const hidden = new Set(settings.hiddenServices || []);
+                    const renames = settings.serviceRenames || {};
+                    const categories = settings.customServiceCategories || SERVICE_CATEGORIES.map(c => ({ name: c.name, items: [...c.items] }));
+                    const SE_GREEN = 'FF3DCD58';
+                    const SE_GREEN_DARK = 'FF009530';
+                    const SE_TEXT_DARK = 'FF1E293B';
+                    const SE_BORDER = 'FFD4DDE1';
+                    const STATUS_FILL = {
+                      'Sold': 'FFDCFCE7',
+                      'Not Sold': 'FFFEE2E2',
+                      'Renewal': 'FFDBEAFE',
+                      'In Progress': 'FFFEF3C7',
+                      'N/A': 'FFF1F5F9',
+                    };
+                    const STATUS_FG = {
+                      'Sold': 'FF166534',
+                      'Not Sold': 'FF991B1B',
+                      'Renewal': 'FF1E40AF',
+                      'In Progress': 'FF92400E',
+                      'N/A': 'FF64748B',
+                    };
+                    try {
+                      const { Workbook } = await import('exceljs');
+                      const wb = new Workbook();
+                      wb.creator = 'Schneider Electric · Prospect Tracker';
+                      wb.created = new Date();
+                      const ws = wb.addWorksheet('Services Explored', {
+                        properties: { tabColor: { argb: SE_GREEN } },
+                        views: [{ state: 'frozen', ySplit: 3 }],
+                      });
+                      const headers = ['Category', 'Service', 'Status', 'Notes'];
+                      const colWidths = [28, 40, 18, 60];
+                      ws.columns = colWidths.map(w => ({ width: w }));
+
+                      ws.mergeCells(1, 1, 1, headers.length);
+                      const titleCell = ws.getCell(1, 1);
+                      titleCell.value = 'Schneider Electric';
+                      titleCell.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
+                      titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN } };
+                      titleCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+                      ws.getRow(1).height = 30;
+
+                      ws.mergeCells(2, 1, 2, headers.length);
+                      const subCell = ws.getCell(2, 1);
+                      subCell.value = `${fields.company || 'Company'}  ·  Services Explored`;
+                      subCell.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: 'FF64748B' } };
+                      subCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+                      ws.getRow(2).height = 20;
+
+                      const headerRow = ws.getRow(3);
+                      headers.forEach((h, i) => {
+                        const cell = headerRow.getCell(i + 1);
+                        cell.value = h;
+                        cell.font = { name: 'Nunito Sans', bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
+                        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+                        cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+                        cell.border = {
+                          top: { style: 'thin', color: { argb: SE_BORDER } },
+                          bottom: { style: 'thin', color: { argb: SE_BORDER } },
+                          left: { style: 'thin', color: { argb: SE_BORDER } },
+                          right: { style: 'thin', color: { argb: SE_BORDER } },
+                        };
+                      });
+                      headerRow.height = 30;
+
+                      let rowIdx = 4;
+                      for (const cat of categories) {
+                        const items = (cat.items || []).filter(it => !hidden.has(it));
+                        if (items.length === 0) continue;
+                        for (const item of items) {
+                          const rawStatus = svc[item] || '';
+                          const status = rawStatus && rawStatus !== '-' ? rawStatus : '';
+                          const note = svcNotes[item] || '';
+                          const row = ws.getRow(rowIdx);
+                          const display = renames[item] || item;
+                          [cat.name, display, status, note].forEach((v, i) => {
+                            const cell = row.getCell(i + 1);
+                            cell.value = v === '' || v == null ? null : v;
+                            cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+                            cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: i === 3, indent: 1 };
+                            cell.border = {
+                              bottom: { style: 'thin', color: { argb: SE_BORDER } },
+                              left: { style: 'thin', color: { argb: SE_BORDER } },
+                              right: { style: 'thin', color: { argb: SE_BORDER } },
+                            };
+                            if (i === 2 && status && STATUS_FILL[status]) {
+                              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: STATUS_FILL[status] } };
+                              cell.font = { ...cell.font, bold: true, color: { argb: STATUS_FG[status] } };
+                            }
+                          });
+                          row.height = 18;
+                          rowIdx += 1;
+                        }
+                      }
+
+                      ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: headers.length } };
+                      colWidths.forEach((w, idx) => { ws.getColumn(idx + 1).width = w; });
+
+                      const buf = await wb.xlsx.writeBuffer();
+                      const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                      const url = URL.createObjectURL(blob);
+                      const safeCompany = (fields.company || 'Company').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 60);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `${safeCompany} - Services Explored.xlsx`;
+                      document.body.appendChild(a);
+                      a.click();
+                      a.remove();
+                      setTimeout(() => URL.revokeObjectURL(url), 1000);
+                    } catch (err) {
+                      alert('Failed to export services: ' + (err.message || err));
+                    }
+                  }}
+                  style={{ marginLeft: '0.5rem', padding: '0.15rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: '4px', background: '#fff', fontSize: '0.62rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: '#059669' }}
+                >Export Excel</button>
+                <button
                   onClick={(e) => { e.stopPropagation(); setServicesEditMode(m => !m); }}
-                  style={{ marginLeft: 'auto', padding: '0.15rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: '4px', background: servicesEditMode ? '#FEF3C7' : 'var(--color-surface)', fontSize: '0.62rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: servicesEditMode ? '#92400E' : 'var(--color-text-muted)' }}
+                  style={{ marginLeft: '0.4rem', padding: '0.15rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: '4px', background: servicesEditMode ? '#FEF3C7' : 'var(--color-surface)', fontSize: '0.62rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: servicesEditMode ? '#92400E' : 'var(--color-text-muted)' }}
                 >{servicesEditMode ? 'Done Editing' : 'Edit Services'}</button>
               </div>
               {servicesOpen && (() => {
