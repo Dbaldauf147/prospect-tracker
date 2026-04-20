@@ -157,6 +157,7 @@ const BUCKETS = [
   { key: 'utilities',      label: 'Utilities',        tag: 'utilities',       accent: '#2563EB', bg: '#EFF6FF', border: '#93C5FD', headerBg: '#DBEAFE', headerColor: '#1E3A8A' },
   { key: 'climaterisk',    label: 'Climate Risk',     tag: 'climate risk',    accent: '#DC2626', bg: '#FEF2F2', border: '#FCA5A5', headerBg: '#FEE2E2', headerColor: '#7F1D1D' },
   { key: 'capitalplanning',label: 'Capital Planning', tag: 'capital planning',accent: '#D97706', bg: '#FFFBEB', border: '#FDE68A', headerBg: '#FEF3C7', headerColor: '#78350F' },
+  { key: 'efficiencyrenewables', label: 'Efficiency / Renewables', tag: 'efficiency / renewables', accent: '#0D9488', bg: '#F0FDFA', border: '#5EEAD4', headerBg: '#CCFBF1', headerColor: '#134E4A' },
 ];
 
 function contactHasTag(c, tag) {
@@ -172,7 +173,7 @@ function getContactTags(c) {
   return raw.split(';').map(t => t.trim().toLowerCase()).filter(Boolean);
 }
 
-function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact }) {
+function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact, reportsTo = {} }) {
   if (contacts.length === 0) {
     return <div style={{ fontSize: '0.78rem', color: '#9CA3AF', fontStyle: 'italic', padding: '1rem 0' }}>No contacts to display</div>;
   }
@@ -192,6 +193,26 @@ function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact })
       }
     }
     if (!matched) untagged.push(c);
+  }
+
+  // Build parent→children tree within a bucket's contact list.
+  // Roots: contacts whose managers aren't also in the same bucket.
+  function buildHierarchy(items) {
+    const idOf = c => String(c.id || c.vid || '');
+    const inBucket = new Set(items.map(idOf));
+    const childrenByParent = new Map();
+    const rootItems = [];
+    for (const c of items) {
+      const mgrs = (reportsTo[c.id || c.vid] || []).map(String);
+      const parentInBucket = mgrs.find(m => inBucket.has(m));
+      if (parentInBucket) {
+        if (!childrenByParent.has(parentInBucket)) childrenByParent.set(parentInBucket, []);
+        childrenByParent.get(parentInBucket).push(c);
+      } else {
+        rootItems.push(c);
+      }
+    }
+    return { rootItems, childrenByParent, idOf };
   }
 
   function ContactCard({ contact, bucketAccent }) {
@@ -254,7 +275,32 @@ function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact })
             <div style={{ padding: '0.35rem', display: 'flex', flexDirection: 'column', gap: '0.3rem', minHeight: '60px' }}>
               {items.length === 0
                 ? <div style={{ fontSize: '0.62rem', color: '#CBD5E1', fontStyle: 'italic', textAlign: 'center', paddingTop: '0.5rem' }}>None</div>
-                : items.map(c => <ContactCard key={c.id || c.email} contact={c} bucketAccent={bucket.accent} />)
+                : (() => {
+                    const { rootItems, childrenByParent, idOf } = buildHierarchy(items);
+                    const rendered = new Set();
+                    function renderNode(c, depth) {
+                      const id = idOf(c);
+                      if (rendered.has(id)) return null;
+                      rendered.add(id);
+                      const kids = childrenByParent.get(id) || [];
+                      return (
+                        <div key={c.id || c.email} style={{ marginLeft: depth * 12 }}>
+                          <ContactCard contact={c} bucketAccent={bucket.accent} />
+                          {kids.length > 0 && (
+                            <div style={{ borderLeft: `1px dashed ${bucket.border}`, marginLeft: 8, paddingLeft: 4, marginTop: 4, display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                              {kids.map(k => renderNode(k, depth + 1))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    }
+                    const nodes = rootItems.map(c => renderNode(c, 0));
+                    // Safety: render any contacts that weren't visited (e.g., in a cycle).
+                    const leftovers = items.filter(c => !rendered.has(idOf(c))).map(c => (
+                      <ContactCard key={c.id || c.email} contact={c} bucketAccent={bucket.accent} />
+                    ));
+                    return [...nodes, ...leftovers];
+                  })()
               }
             </div>
           </div>
@@ -293,7 +339,7 @@ const EMPTY = {
 };
 
 // ── Inline HubSpot Contact Editor ──
-const TAG_OPTIONS = ['ESG', 'Procurement', 'Private Equity', 'Real Estate', 'Capital Planning', 'Dan Key Target', 'Test', 'EU'];
+const TAG_OPTIONS = ['ESG', 'Procurement', 'Private Equity', 'Real Estate', 'Capital Planning', 'Efficiency / Renewables', 'Dan Key Target', 'Test', 'EU'];
 
 // Portfolio-company sector scoring. Each sector has a 1-10 fit score; the tier
 // bucket (High/Medium/Low) is derived from the score for color-coding only.
@@ -408,7 +454,7 @@ function computePortfolioFitScore(row, maxEnergy, maxSites, yearRange) {
   return Math.round(raw * 100);
 }
 
-const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactNicknames = {}, onSaveNickname, emailDomains = [] }) {
+const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactNicknames = {}, onSaveNickname, contactReportsTo = {}, onSaveReportsTo, companyContacts = [], emailDomains = [] }) {
   const rawTags = contact.dans_tags || contact.dan_s_tags || contact.dans_tag || '';
   // Parse existing tags; track which known tags are checked separately from free-text extras
   const parsedTags = rawTags.split(';').map(t => t.trim()).filter(Boolean);
@@ -674,6 +720,45 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
           </div>
           <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>Old Emails <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(comma-separated, inactive)</span></label><input style={inputStyle} value={f.oldEmails} onChange={e => set('oldEmails', e.target.value)} placeholder="old.email@company.com" /></div>
           <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>Notes</label><textarea style={{ ...inputStyle, resize: 'vertical', minHeight: '50px', lineHeight: 1.4 }} value={f.notes} onChange={e => set('notes', e.target.value)} rows={2} placeholder="Add notes about this contact..." /></div>
+          <div style={{ gridColumn: 'span 2' }}>
+            <label style={labelStyle}>Reports To <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(positions this contact below their manager in the By Category view)</span></label>
+            {(() => {
+              const selfId = contact.id || contact.vid;
+              const rawSelected = (selfId && contactReportsTo[selfId]) || [];
+              const selectedIds = (Array.isArray(rawSelected) ? rawSelected : [rawSelected]).map(String).filter(Boolean);
+              const eligible = companyContacts.filter(c => String(c.id || c.vid || '') !== String(selfId || ''));
+              function toggle(mgrId) {
+                const next = selectedIds.includes(String(mgrId))
+                  ? selectedIds.filter(id => id !== String(mgrId))
+                  : [...selectedIds, String(mgrId)];
+                if (selfId && onSaveReportsTo) onSaveReportsTo(selfId, next);
+              }
+              if (!selfId) {
+                return <div style={{ fontSize: '0.7rem', color: '#94A3B8', fontStyle: 'italic', padding: '0.4rem 0.5rem', border: '1px dashed #E2E8F0', borderRadius: 6 }}>Save the contact first, then you can assign a manager.</div>;
+              }
+              return (
+                <div style={{ maxHeight: '160px', overflowY: 'auto', border: '1px solid #E2E8F0', borderRadius: 6, padding: '0.25rem 0' }}>
+                  {eligible.length === 0 ? (
+                    <div style={{ fontSize: '0.7rem', color: '#94A3B8', fontStyle: 'italic', padding: '0.35rem 0.55rem' }}>No other contacts on this company yet.</div>
+                  ) : eligible.map(mgr => {
+                    const mgrId = String(mgr.id || mgr.vid);
+                    const checked = selectedIds.includes(mgrId);
+                    const mgrName = [mgr.firstname, mgr.lastname].filter(Boolean).join(' ') || mgr.email || `Contact ${mgrId}`;
+                    return (
+                      <label key={mgrId} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.25rem 0.55rem', cursor: 'pointer', fontSize: '0.75rem', color: '#1E293B', background: checked ? '#EFF6FF' : 'transparent' }}
+                        onMouseEnter={e => { if (!checked) e.currentTarget.style.background = '#F8FAFC'; }}
+                        onMouseLeave={e => { e.currentTarget.style.background = checked ? '#EFF6FF' : 'transparent'; }}
+                      >
+                        <input type="checkbox" checked={checked} onChange={() => toggle(mgrId)} style={{ accentColor: '#0078D4' }} />
+                        <span>{mgrName}</span>
+                        {mgr.jobtitle && <span style={{ fontSize: '0.65rem', color: '#64748B' }}>· {mgr.jobtitle}</span>}
+                      </label>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+          </div>
           <div
             style={{ gridColumn: 'span 2' }}
             ref={tagsRef}
@@ -744,7 +829,12 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
   const prevId = prev.contact.id || prev.contact.vid;
   const nextId = next.contact.id || next.contact.vid;
   const domainsEqual = (prev.emailDomains || []).join('|') === (next.emailDomains || []).join('|');
-  return prevId === nextId && prev.onSave === next.onSave && prev.onClose === next.onClose && prev.tagOptions === next.tagOptions && prev.onSaveNote === next.onSaveNote && prev.onSaveOldEmails === next.onSaveOldEmails && prev.onSaveNickname === next.onSaveNickname && domainsEqual;
+  // Compare the reportsTo array for this specific contact so changes rerender the picker.
+  const prevMgrs = JSON.stringify((prev.contactReportsTo || {})[prevId] || []);
+  const nextMgrs = JSON.stringify((next.contactReportsTo || {})[nextId] || []);
+  const companyContactsEqual = (prev.companyContacts || []).length === (next.companyContacts || []).length
+    && (prev.companyContacts || []).every((c, i) => (c.id || c.vid) === ((next.companyContacts || [])[i]?.id || (next.companyContacts || [])[i]?.vid));
+  return prevId === nextId && prev.onSave === next.onSave && prev.onClose === next.onClose && prev.tagOptions === next.tagOptions && prev.onSaveNote === next.onSaveNote && prev.onSaveOldEmails === next.onSaveOldEmails && prev.onSaveNickname === next.onSaveNickname && prev.onSaveReportsTo === next.onSaveReportsTo && prevMgrs === nextMgrs && companyContactsEqual && domainsEqual;
 });
 
 function MultiSelectDropdown({ options, selected, onToggle }) {
@@ -1172,6 +1262,17 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     else delete next[contactId];
     updateSettings({ contactNicknames: next });
   }, [settings.contactNicknames, updateSettings]);
+
+  const handleSaveContactReportsTo = useCallback((contactId, managerIds) => {
+    const current = settings.contactReportsTo || {};
+    const next = { ...current };
+    const arr = Array.isArray(managerIds)
+      ? managerIds.filter(Boolean).map(String)
+      : (managerIds ? [String(managerIds)] : []);
+    if (arr.length > 0) next[contactId] = arr;
+    else delete next[contactId];
+    updateSettings({ contactReportsTo: next });
+  }, [settings.contactReportsTo, updateSettings]);
 
   const handleCloseContactEdit = useCallback(() => {
     setEditingContact(null);
@@ -3591,7 +3692,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               </div>
 
               {contactView === 'orgchart' ? (
-                <OrgChart contacts={companyContacts} onDeleteContact={handleDeleteContact} deletingContact={deletingContact} onEditContact={setEditingContact} />
+                <OrgChart contacts={companyContacts} onDeleteContact={handleDeleteContact} deletingContact={deletingContact} onEditContact={setEditingContact} reportsTo={settings.contactReportsTo || {}} />
               ) : companyContacts.length > 0 ? (
                 <div style={{ maxHeight: '400px', overflowY: 'auto', border: '1px solid #E2E8F0', borderRadius: '6px' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.75rem' }}>
@@ -3719,6 +3820,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           onSaveOldEmails={handleSaveContactOldEmails}
           contactNicknames={settings.contactNicknames || {}}
           onSaveNickname={handleSaveContactNickname}
+          contactReportsTo={settings.contactReportsTo || {}}
+          onSaveReportsTo={handleSaveContactReportsTo}
+          companyContacts={companyContacts}
           emailDomains={(fields.emailDomain || '').split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)}
         />
       )}
