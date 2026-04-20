@@ -202,7 +202,8 @@ function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact, r
     const cid = idOf(c);
     if (hasManager.has(cid)) continue;
     const hasReports = (childrenByParent.get(cid) || []).length > 0;
-    if (hasReports) roots.push(c);
+    const isDM = contactHasTag(c, 'decision maker');
+    if (hasReports || isDM) roots.push(c);
     else orphans.push(c);
   }
 
