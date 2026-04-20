@@ -1514,18 +1514,42 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   }, [companyOppsData, writeCompanyOpps]);
 
   const toggleOppContact = useCallback((oppId, contactId) => {
+    const opp = (companyOppsData.opportunities || []).find(o => o.id === oppId);
+    if (!opp) return;
+    const existingIds = Array.isArray(opp.contactIds) ? opp.contactIds : [];
+    const isAdding = !existingIds.includes(contactId);
+    const nextIds = isAdding
+      ? [...existingIds, contactId]
+      : existingIds.filter(id => id !== contactId);
+
+    // When adding a contact, append a contact-info block to the opportunity's notes so
+    // the reader can see who was on the call inline with the rest of the page content.
+    let nextNotes = opp.notes || '';
+    if (isAdding) {
+      const contact = (companyContacts || []).find(c => String(c.id || c.vid) === String(contactId));
+      if (contact) {
+        const name = [contact.firstname, contact.lastname].filter(Boolean).join(' ') || contact.email || `Contact ${contactId}`;
+        const bits = [];
+        if (contact.jobtitle) bits.push(contact.jobtitle);
+        if (contact.email) bits.push(contact.email);
+        if (contact.phone) bits.push(contact.phone);
+        const infoHtml = `<p><strong>${name}</strong>${bits.length ? ' — ' + bits.join(' · ') : ''}</p>`;
+        nextNotes = (nextNotes || '') + infoHtml;
+      }
+    }
+
     writeCompanyOpps({
       buckets: companyOppsData.buckets || [],
-      opportunities: (companyOppsData.opportunities || []).map(o => {
-        if (o.id !== oppId) return o;
-        const existing = Array.isArray(o.contactIds) ? o.contactIds : [];
-        const next = existing.includes(contactId)
-          ? existing.filter(id => id !== contactId)
-          : [...existing, contactId];
-        return { ...o, contactIds: next, updatedAt: Date.now() };
-      }),
+      opportunities: (companyOppsData.opportunities || []).map(o => (
+        o.id !== oppId ? o : { ...o, contactIds: nextIds, notes: nextNotes, updatedAt: Date.now() }
+      )),
     });
-  }, [companyOppsData, writeCompanyOpps]);
+
+    // Keep the currently-open editor in sync with the persisted notes.
+    if (isAdding && selectedOppId === oppId) {
+      setOppNoteDraft(nextNotes);
+    }
+  }, [companyOppsData, writeCompanyOpps, companyContacts, selectedOppId]);
 
   const handleOppNoteChange = useCallback((html) => {
     setOppNoteDraft(html);
