@@ -73,7 +73,7 @@ function parseCsvRow(line) {
 function App() {
   const { user, loading: authLoading, authError, signInWithGoogle, signInWithEmail, createAccount, logout } = useAuth();
   const { prospects, loading: dataLoading, addProspect, updateProspect, deleteProspect, replaceAll } = useProspects(user);
-  const { settings, updateSettings } = useUserSettings(user);
+  const { settings, updateSettings, updateSettingsPath } = useUserSettings(user);
   useSheetSync(user);
   const {
     filtered, searchTerm, setSearchTerm,
@@ -303,6 +303,7 @@ function App() {
           onUpdateOrgChart={handleUpdateOrgChart}
           settings={settings}
           updateSettings={updateSettings}
+          updateSettingsPath={updateSettingsPath}
           targetAccountsData={targetAccountsData}
         />
       )}
