@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -116,6 +116,20 @@ export function OppsView() {
   const [dateTo, setDateTo] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [activityFilter, setActivityFilter] = useState('all');
+  const [hiddenServices, setHiddenServices] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('opps-services-hidden')) || []); }
+    catch { return new Set(); }
+  });
+  const [showHidden, setShowHidden] = useState(false);
+
+  const toggleHideService = useCallback((scope) => {
+    setHiddenServices(prev => {
+      const next = new Set(prev);
+      if (next.has(scope)) next.delete(scope); else next.add(scope);
+      localStorage.setItem('opps-services-hidden', JSON.stringify([...next]));
+      return next;
+    });
+  }, []);
 
   async function fetchOpps() {
     setLoading(true);
@@ -369,7 +383,21 @@ export function OppsView() {
         <div style={{ textAlign: 'right', fontWeight: 600 }}>{row.count}</div>
       ),
     },
-  ], []);
+    {
+      key: '_actions',
+      label: '',
+      defaultWidth: 90,
+      render: (row) => (
+        <button
+          className={styles.hideServiceBtn}
+          onClick={(e) => { e.stopPropagation(); toggleHideService(row.scope); }}
+          title={row._hidden ? 'Unhide service' : 'Hide service'}
+        >
+          {row._hidden ? 'Unhide' : 'Hide'}
+        </button>
+      ),
+    },
+  ], [toggleHideService]);
 
   return (
     <div className={styles.wrapper}>
@@ -489,15 +517,30 @@ export function OppsView() {
         <>
           <div className={styles.searchRow}>
             <span className={styles.resultCount}>
-              {serviceBreakdown.rows.length} service{serviceBreakdown.rows.length === 1 ? '' : 's'}
-              {' · '}{serviceBreakdown.total} total opps
+              {(() => {
+                const visibleCount = serviceBreakdown.rows.filter(r => showHidden || !hiddenServices.has(r.scope)).length;
+                return `${visibleCount} service${visibleCount === 1 ? '' : 's'} · ${serviceBreakdown.total} total opps`;
+              })()}
             </span>
+            {hiddenServices.size > 0 && (
+              <label className={styles.showHiddenLabel}>
+                <input
+                  type="checkbox"
+                  checked={showHidden}
+                  onChange={e => setShowHidden(e.target.checked)}
+                />
+                Show {hiddenServices.size} hidden
+              </label>
+            )}
           </div>
           <DataTable
             tableId="opps-services"
             columns={servicesColumns}
-            rows={serviceBreakdown.rows.map(r => ({ ...r, id: r.scope }))}
+            rows={serviceBreakdown.rows
+              .filter(r => showHidden || !hiddenServices.has(r.scope))
+              .map(r => ({ ...r, id: r.scope, _hidden: hiddenServices.has(r.scope) }))}
             alwaysVisible={['scope']}
+            rowStyle={(row) => row._hidden ? { opacity: 0.5 } : undefined}
             emptyMessage="No services to display."
           />
         </>
