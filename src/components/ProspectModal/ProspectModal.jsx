@@ -1087,6 +1087,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const [raClientPickerOpen, setRaClientPickerOpen] = useState(null); // row index
   const [targetAccountPickerOpen, setTargetAccountPickerOpen] = useState(null); // row index
   const [peOwnerPickerOpen, setPeOwnerPickerOpen] = useState(false);
+  const contactsImportRef = useRef(null);
 
   // Close the PE Owner dropdown when clicking outside
   useEffect(() => {
@@ -4280,6 +4281,134 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   }}
                   style={{ marginLeft: 'auto', padding: '0.2rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '4px', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', background: '#fff', color: '#059669' }}
                 >Export Excel</button>
+                <button
+                  onClick={async () => {
+                    try {
+                      const { Workbook } = await import('exceljs');
+                      const wb = new Workbook();
+                      const ws = wb.addWorksheet('Contacts Template');
+                      const headers = ['First Name', 'Last Name', 'Job Title', 'Team Name', 'Email', 'Phone', 'City', 'State', 'Country', 'LinkedIn', 'Tags', 'Notes'];
+                      const colWidths = [18, 18, 28, 20, 32, 18, 18, 10, 14, 32, 24, 40];
+                      ws.columns = colWidths.map(w => ({ width: w }));
+                      const headerRow = ws.getRow(1);
+                      headers.forEach((h, i) => {
+                        const cell = headerRow.getCell(i + 1);
+                        cell.value = h;
+                        cell.font = { name: 'Nunito Sans', bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
+                        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF009530' } };
+                        cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+                      });
+                      headerRow.height = 24;
+                      // One example row for clarity.
+                      const example = ws.getRow(2);
+                      ['Jane', 'Doe', 'Director of Sustainability', 'ESG', 'jane.doe@example.com', '+1 555 123 4567', 'Boston', 'MA', 'USA', 'https://linkedin.com/in/janedoe', 'ESG; Procurement', 'Met at Q3 summit'].forEach((v, i) => {
+                        const cell = example.getCell(i + 1);
+                        cell.value = v;
+                        cell.font = { name: 'Nunito Sans', size: 10, italic: true, color: { argb: 'FF94A3B8' } };
+                      });
+                      ws.views = [{ state: 'frozen', ySplit: 1 }];
+                      const buf = await wb.xlsx.writeBuffer();
+                      const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = 'Contacts Template.xlsx';
+                      document.body.appendChild(a);
+                      a.click();
+                      a.remove();
+                      setTimeout(() => URL.revokeObjectURL(url), 1000);
+                    } catch (err) {
+                      alert('Failed to generate template: ' + (err.message || err));
+                    }
+                  }}
+                  style={{ marginLeft: '0.4rem', padding: '0.2rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '4px', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', background: '#fff', color: '#0369A1' }}
+                >Generate Template</button>
+                <input
+                  ref={contactsImportRef}
+                  type="file"
+                  accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                  style={{ display: 'none' }}
+                  onChange={async e => {
+                    const file = e.target.files && e.target.files[0];
+                    e.target.value = '';
+                    if (!file) return;
+                    try {
+                      const buf = await file.arrayBuffer();
+                      const wb = XLSX.read(buf);
+                      const sheet = wb.Sheets[wb.SheetNames[0]];
+                      const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+                      if (!rows.length) { alert('The uploaded file has no rows.'); return; }
+                      const norm = s => (s || '').toString().toLowerCase().replace(/[^a-z0-9]/g, '');
+                      const headerMap = {};
+                      for (const h of Object.keys(rows[0])) {
+                        const n = norm(h);
+                        if (n === 'firstname' || n === 'first') headerMap[h] = 'firstname';
+                        else if (n === 'lastname' || n === 'last') headerMap[h] = 'lastname';
+                        else if (n === 'jobtitle' || n === 'title') headerMap[h] = 'jobtitle';
+                        else if (n === 'teamname' || n === 'team') headerMap[h] = 'teamName';
+                        else if (n === 'email') headerMap[h] = 'email';
+                        else if (n === 'phone') headerMap[h] = 'phone';
+                        else if (n === 'city') headerMap[h] = 'city';
+                        else if (n === 'state') headerMap[h] = 'state';
+                        else if (n === 'country') headerMap[h] = 'country';
+                        else if (n === 'linkedin' || n === 'linkedinurl') headerMap[h] = 'linkedin';
+                        else if (n === 'tags' || n === 'danstags') headerMap[h] = 'dans_tags';
+                        else if (n === 'notes' || n === 'note') headerMap[h] = 'notes';
+                      }
+                      const parsed = rows
+                        .map(r => {
+                          const out = { company: fields.company };
+                          for (const [src, dst] of Object.entries(headerMap)) {
+                            const v = String(r[src] ?? '').trim();
+                            if (dst === 'linkedin') out.hs_linkedin_url = v;
+                            else out[dst] = v;
+                          }
+                          return out;
+                        })
+                        .filter(r => r.email);
+                      if (parsed.length === 0) { alert('No rows had an Email — nothing imported.'); return; }
+                      if (!window.confirm(`Import ${parsed.length} contact${parsed.length === 1 ? '' : 's'} into HubSpot under ${fields.company}?`)) return;
+                      let added = 0, errors = 0;
+                      for (const row of parsed) {
+                        const { teamName, notes: noteText, ...hsProps } = row;
+                        try {
+                          const res = await fetch('/api/hubspot?action=create-contact', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ properties: hsProps }),
+                          });
+                          const data = await res.json();
+                          if (data.success && data.contact) {
+                            added += 1;
+                            try {
+                              const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
+                              if (cache?.contacts) {
+                                cache.contacts.push(data.contact);
+                                localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache));
+                              }
+                            } catch { /* ignore */ }
+                            // Persist local-only fields in settings keyed by new id.
+                            const newId = data.contact.id;
+                            if (newId && teamName) handleSaveContactTeamName(newId, teamName);
+                            if (newId && noteText) handleSaveContactNote(newId, noteText);
+                          } else {
+                            errors += 1;
+                          }
+                        } catch {
+                          errors += 1;
+                        }
+                      }
+                      window.dispatchEvent(new Event('hubspot-cache-updated'));
+                      alert(`Imported ${added} contact${added === 1 ? '' : 's'}${errors > 0 ? ` (${errors} failed)` : ''}.`);
+                    } catch (err) {
+                      alert('Failed to read file: ' + (err.message || err));
+                    }
+                  }}
+                />
+                <button
+                  onClick={() => contactsImportRef.current?.click()}
+                  style={{ marginLeft: '0.4rem', padding: '0.2rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '4px', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', background: '#fff', color: '#7C3AED' }}
+                >Import Excel</button>
                 <button
                   onClick={() => { setAddingContact(true); setEditingContact({ company: fields.company, firstname: '', lastname: '', email: '', phone: '', jobtitle: '', hs_linkedin_url: '', dans_tags: '' }); }}
                   style={{ marginLeft: '0.4rem', padding: '0.2rem 0.6rem', border: 'none', borderRadius: '4px', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', background: 'var(--color-accent)', color: '#fff' }}
