@@ -54,7 +54,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
   const firmOppCount = useMemo(() => {
     const counts = new Map();
     for (const pe of peFirms) {
-      const portfolio = portfolioByPe.get((pe.company || '').toLowerCase()) || [];
+      const portfolio = portfolioByPe.get((pe.company || '').trim().toLowerCase()) || [];
       let n = 0;
       for (const p of portfolio) {
         for (const d of (dealsFor(p) || [])) {
@@ -118,7 +118,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
             </div>
           </div>
         ) : filteredFirms.map(pe => {
-          const portfolio = portfolioByPe.get((pe.company || '').toLowerCase()) || [];
+          const portfolio = portfolioByPe.get((pe.company || '').trim().toLowerCase()) || [];
           const allDeals = portfolio.flatMap(p => (dealsFor(p) || []).map(d => ({ ...d, _company: p.company, _prospectId: p.id })));
           const visibleDeals = showInactive ? allDeals : allDeals.filter(d => !INACTIVE_STAGES.has(d.stage));
           const dealsByStage = new Map();
