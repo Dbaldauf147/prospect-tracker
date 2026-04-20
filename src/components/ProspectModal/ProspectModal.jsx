@@ -1319,8 +1319,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     [fields.company]
   );
 
-  // ── Opportunities (per-company, synced via userSettings) ──
+  // ── Notes (per-company, synced via userSettings) ──
   // Shape: settings.companyOpportunities[slug] = { buckets: [{id,name}], opportunities: [{id,bucketId,title,notes,createdAt,updatedAt}] }
+  // (Legacy storage key; the UI label is "Notes" but the underlying data model is unchanged.)
   const companyOppsData = (settings.companyOpportunities || {})[companySlug] || { buckets: [], opportunities: [] };
   const [opportunitiesOpen, setOpportunitiesOpen] = useState(false);
   const [selectedOppId, setSelectedOppId] = useState(null);
@@ -1602,6 +1603,48 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       alert('Failed to read Word document: ' + (err.message || err));
     }
   }, [selectedOppId, oppNoteDraft, companySlug, settings.companyOpportunities, updateSettings]);
+
+  // ── Opportunities tab — separate from Notes, simpler flat list per company.
+  // Shape: settings.companyDeals[slug] = [{ id, title, stage, value, closeDate, description, createdAt, updatedAt }]
+  const companyDeals = useMemo(() => (
+    (settings.companyDeals || {})[companySlug] || []
+  ), [settings.companyDeals, companySlug]);
+  const [dealsOpen, setDealsOpen] = useState(false);
+  const DEAL_STAGES = ['New', 'Qualifying', 'Proposed', 'Quoting', 'Verbal', 'Won', 'Lost', 'Hold'];
+
+  const writeCompanyDeals = useCallback((nextList) => {
+    if (!companySlug) return;
+    const all = { ...(settings.companyDeals || {}) };
+    if (!nextList || nextList.length === 0) delete all[companySlug];
+    else all[companySlug] = nextList;
+    updateSettings({ companyDeals: all });
+  }, [companySlug, settings.companyDeals, updateSettings]);
+
+  const addDeal = useCallback(() => {
+    const now = Date.now();
+    const deal = {
+      id: `d_${now}_${Math.random().toString(36).slice(2, 7)}`,
+      title: '',
+      stage: 'New',
+      value: '',
+      closeDate: '',
+      description: '',
+      createdAt: now,
+      updatedAt: now,
+    };
+    writeCompanyDeals([...companyDeals, deal]);
+  }, [companyDeals, writeCompanyDeals]);
+
+  const updateDeal = useCallback((dealId, patch) => {
+    writeCompanyDeals(companyDeals.map(d => d.id === dealId ? { ...d, ...patch, updatedAt: Date.now() } : d));
+  }, [companyDeals, writeCompanyDeals]);
+
+  const deleteDeal = useCallback((dealId) => {
+    const d = companyDeals.find(x => x.id === dealId);
+    if (!d) return;
+    if (!window.confirm(`Delete opportunity${d.title ? ` "${d.title}"` : ''}?`)) return;
+    writeCompanyDeals(companyDeals.filter(x => x.id !== dealId));
+  }, [companyDeals, writeCompanyDeals]);
 
   async function handleDeleteContact(contact) {
     const name = [contact.firstname, contact.lastname].filter(Boolean).join(' ') || 'this contact';
@@ -1897,12 +1940,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 onClick={() => setOpportunitiesOpen(o => !o)}
               >
                 <label className={styles.label} style={{ margin: 0, cursor: 'pointer' }}>
-                  Opportunities
+                  Notes
                 </label>
                 <span style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', transform: opportunitiesOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>&#9660;</span>
                 {(() => {
                   const n = (companyOppsData.opportunities || []).length;
-                  return n > 0 ? <span style={{ fontSize: '0.68rem', color: '#64748B' }}>{n} {n === 1 ? 'opportunity' : 'opportunities'}</span> : null;
+                  return n > 0 ? <span style={{ fontSize: '0.68rem', color: '#64748B' }}>{n} {n === 1 ? 'note page' : 'note pages'}</span> : null;
                 })()}
               </div>
               {opportunitiesOpen && (
@@ -2155,6 +2198,90 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                           })}
                         </div>
                       )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Opportunities — simple flat list of deals/opportunities for this company */}
+          {!isNew && fields.company?.trim() && (
+            <div style={{ marginTop: '1rem', borderTop: '1px solid var(--color-border-light)', paddingTop: '0.75rem' }}>
+              <div
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', userSelect: 'none' }}
+                onClick={() => setDealsOpen(o => !o)}
+              >
+                <label className={styles.label} style={{ margin: 0, cursor: 'pointer' }}>
+                  Opportunities
+                </label>
+                <span style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', transform: dealsOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>&#9660;</span>
+                {companyDeals.length > 0 && (
+                  <span style={{ fontSize: '0.68rem', color: '#64748B' }}>{companyDeals.length} {companyDeals.length === 1 ? 'opportunity' : 'opportunities'}</span>
+                )}
+              </div>
+              {dealsOpen && (
+                <div style={{ marginTop: '0.6rem' }}>
+                  <div style={{ marginBottom: '0.5rem' }}>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); addDeal(); }}
+                      style={{ fontSize: '0.75rem', padding: '0.3rem 0.7rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 4, cursor: 'pointer' }}
+                    >+ Opportunity</button>
+                  </div>
+                  {companyDeals.length === 0 ? (
+                    <div style={{ fontSize: '0.78rem', color: '#64748B', fontStyle: 'italic', padding: '0.5rem 0' }}>
+                      No opportunities yet. Click + Opportunity to add one.
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      {companyDeals.map(d => (
+                        <div key={d.id} style={{ border: '1px solid var(--color-border-light)', borderRadius: 6, padding: '0.6rem 0.75rem', background: '#F8FAFC' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr auto', gap: '0.5rem', alignItems: 'center' }}>
+                            <input
+                              type="text"
+                              value={d.title}
+                              onChange={e => updateDeal(d.id, { title: e.target.value })}
+                              placeholder="Opportunity title…"
+                              style={{ padding: '0.3rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.8rem', fontFamily: 'inherit', fontWeight: 600 }}
+                            />
+                            <select
+                              value={d.stage || 'New'}
+                              onChange={e => updateDeal(d.id, { stage: e.target.value })}
+                              style={{ padding: '0.3rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.78rem', fontFamily: 'inherit', background: 'white' }}
+                            >
+                              {DEAL_STAGES.map(s => <option key={s} value={s}>{s}</option>)}
+                            </select>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              value={d.value}
+                              onChange={e => updateDeal(d.id, { value: e.target.value })}
+                              placeholder="$ value"
+                              style={{ padding: '0.3rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.78rem', fontFamily: 'inherit' }}
+                            />
+                            <input
+                              type="date"
+                              value={d.closeDate}
+                              onChange={e => updateDeal(d.id, { closeDate: e.target.value })}
+                              style={{ padding: '0.3rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.78rem', fontFamily: 'inherit' }}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => deleteDeal(d.id)}
+                              title="Delete opportunity"
+                              style={{ padding: '0.25rem 0.5rem', border: '1px solid #FCA5A5', background: 'white', color: '#DC2626', borderRadius: 4, cursor: 'pointer', fontSize: '0.72rem' }}
+                            >×</button>
+                          </div>
+                          <textarea
+                            value={d.description}
+                            onChange={e => updateDeal(d.id, { description: e.target.value })}
+                            placeholder="Description / notes…"
+                            rows={2}
+                            style={{ width: '100%', marginTop: '0.4rem', padding: '0.3rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.78rem', fontFamily: 'inherit', resize: 'vertical', boxSizing: 'border-box' }}
+                          />
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
