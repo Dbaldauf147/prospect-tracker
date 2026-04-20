@@ -1071,6 +1071,19 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const [portfolioSortByRank, setPortfolioSortByRank] = useState(true);
   const [raClientPickerOpen, setRaClientPickerOpen] = useState(null); // row index
   const [targetAccountPickerOpen, setTargetAccountPickerOpen] = useState(null); // row index
+  const [peOwnerPickerOpen, setPeOwnerPickerOpen] = useState(false);
+
+  // Close the PE Owner dropdown when clicking outside
+  useEffect(() => {
+    if (!peOwnerPickerOpen) return;
+    const h = e => {
+      const t = e.target;
+      if (t instanceof Element && t.closest('[data-pe-picker]')) return;
+      setPeOwnerPickerOpen(false);
+    };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [peOwnerPickerOpen]);
   // Portfolio Companies upload preview — shows detected column mapping before applying
   const [portfolioUpload, setPortfolioUpload] = useState(null); // { fileName, headers: string[], rows: object[], mapping: { [header]: fieldKey|'' }, file?: File }
   const [portfolioDragActive, setPortfolioDragActive] = useState(false);
@@ -1998,19 +2011,46 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
             <div>
               <label className={styles.label}>PE Owner <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(if portfolio co)</span></label>
-              <input
-                className={styles.input}
-                value={fields.peOwner || ''}
-                onChange={e => set('peOwner', e.target.value)}
-                placeholder="e.g. Stonepeak Infrastructure Partners"
-                list="pe-owner-suggestions"
-              />
-              <datalist id="pe-owner-suggestions">
-                {(prospects || [])
-                  .filter(p => (p.type === 'Private Equity') && p.company && p.company !== fields.company)
-                  .map(p => <option key={p.id} value={p.company} />)
-                }
-              </datalist>
+              {(() => {
+                const [peOpen, setPeOpen] = [peOwnerPickerOpen, setPeOwnerPickerOpen];
+                const peList = (prospects || []).filter(p => p.type === 'Private Equity' && p.company && p.company !== fields.company);
+                const q = (fields.peOwner || '').toLowerCase().trim();
+                const filtered = q
+                  ? peList.filter(p => p.company.toLowerCase().includes(q)).slice(0, 50)
+                  : peList.slice(0, 50);
+                return (
+                  <div style={{ position: 'relative' }} data-pe-picker>
+                    <input
+                      className={styles.input}
+                      value={fields.peOwner || ''}
+                      onChange={e => { set('peOwner', e.target.value); setPeOpen(true); }}
+                      onFocus={() => setPeOpen(true)}
+                      placeholder="Type to search PE firms…"
+                    />
+                    {peOpen && peList.length > 0 && (
+                      <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 2, background: '#fff', border: '1px solid #E2E8F0', borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.12)', maxHeight: 260, overflowY: 'auto', zIndex: 100 }}>
+                        {filtered.length === 0 ? (
+                          <div style={{ padding: '0.5rem 0.75rem', fontSize: '0.72rem', color: '#94A3B8', fontStyle: 'italic' }}>No PE firms match &quot;{fields.peOwner}&quot;</div>
+                        ) : filtered.map(p => (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onMouseDown={e => { e.preventDefault(); set('peOwner', p.company); setPeOpen(false); }}
+                            style={{ display: 'block', width: '100%', padding: '0.4rem 0.75rem', border: 'none', background: fields.peOwner === p.company ? '#EFF6FF' : '#fff', textAlign: 'left', cursor: 'pointer', fontSize: '0.78rem', fontFamily: 'inherit', color: '#1E293B' }}
+                            onMouseEnter={e => { if (fields.peOwner !== p.company) e.currentTarget.style.background = '#F8FAFC'; }}
+                            onMouseLeave={e => { e.currentTarget.style.background = fields.peOwner === p.company ? '#EFF6FF' : '#fff'; }}
+                          >{p.company}</button>
+                        ))}
+                        {peList.length > 50 && !q && (
+                          <div style={{ padding: '0.35rem 0.75rem', fontSize: '0.65rem', color: '#94A3B8', fontStyle: 'italic', borderTop: '1px solid #F1F5F9' }}>
+                            Showing first 50 of {peList.length}. Type to narrow.
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
 
             <div style={{ gridColumn: 'span 2' }}>
