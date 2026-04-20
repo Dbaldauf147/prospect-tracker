@@ -2120,12 +2120,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                           type="button"
                           onClick={insertOppTodo}
                           title="Insert a clickable to-do box at the cursor"
-                          style={{ fontSize: '0.95rem', fontWeight: 600, padding: '0.55rem 1rem', border: '2px solid var(--color-accent)', background: '#EFF6FF', color: 'var(--color-accent)', borderRadius: 6, cursor: 'pointer', fontFamily: 'inherit', display: 'inline-flex', alignItems: 'center', gap: '0.55rem' }}
+                          style={{ fontSize: '0.72rem', padding: '0.25rem 0.6rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 4, cursor: 'pointer', fontFamily: 'inherit', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}
                         >
-                          <span style={{ display: 'inline-block', width: 20, height: 20, border: '2.5px solid currentColor', borderRadius: 4 }} />
+                          <span style={{ display: 'inline-block', width: 12, height: 12, border: '1.5px solid #475569', borderRadius: 2 }} />
                           Add To-Do
                         </button>
-                        <span style={{ fontSize: '0.7rem', color: '#94A3B8' }}>Click the box later to mark it complete.</span>
+                        <span style={{ fontSize: '0.65rem', color: '#94A3B8' }}>Click the box later to mark it complete.</span>
                       </div>
                       <div className="opportunity-notes-editor">
                         <ReactQuill
