@@ -3598,6 +3598,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     <thead>
                       <tr style={{ background: '#F8FAFC', position: 'sticky', top: 0, zIndex: 1 }}>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Name</th>
+                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Full Name</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Title</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Tags</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Category</th>
@@ -3626,6 +3627,21 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             <td style={{ padding: '0.35rem 0.5rem', fontWeight: 600, color: '#1E293B', whiteSpace: 'nowrap' }}>
                               {name || '—'}
                               {isDM && <span style={{ marginLeft: '0.3rem', fontSize: '0.55rem', fontWeight: 700, color: '#92400E', background: '#FDE68A', padding: '0px 5px', borderRadius: '3px' }}>DM</span>}
+                            </td>
+                            <td style={{ padding: '0.35rem 0.5rem', color: '#1E293B', whiteSpace: 'nowrap' }}>
+                              {(() => {
+                                const fullFirst = c.firstname || '';
+                                const fullLast = c.lastname || '';
+                                const full = `${fullFirst} ${fullLast}`.trim();
+                                const nick = (c.id && contactNicknames && contactNicknames[c.id]) || '';
+                                if (!full && !nick) return <span style={{ color: '#CBD5E1' }}>—</span>;
+                                return (
+                                  <>
+                                    <span>{full || '—'}</span>
+                                    {nick && <span style={{ marginLeft: '0.35rem', fontSize: '0.65rem', color: '#64748B', fontWeight: 400 }}>({nick})</span>}
+                                  </>
+                                );
+                              })()}
                             </td>
                             <td style={{ padding: '0.35rem 0.5rem', color: '#475569', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.jobtitle || '—'}</td>
                             <td style={{ padding: '0.35rem 0.5rem', maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.68rem', color: '#475569' }}>
