@@ -81,7 +81,24 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
               Open a PE firm's popup and set its <strong>Type</strong> field to <code>Private Equity</code> to make it appear here.
             </div>
           </div>
-        ) : peFirms.map(pe => {
+        ) : (
+          <>
+            <div style={{ marginBottom: '0.5rem', fontSize: '0.75rem', color: '#DC2626', fontWeight: 700 }}>
+              Rendering {peFirms.length} PE firm{peFirms.length === 1 ? '' : 's'}…
+            </div>
+            {peFirms.slice(0, 20).map((pe, i) => (
+              <div key={pe.id || `pe-${i}`} style={{ padding: '0.5rem 0.75rem', background: '#FFFFFF', border: '2px solid #3B82F6', borderRadius: 6, marginBottom: '0.35rem', color: '#1E293B', fontSize: '0.85rem', fontWeight: 600 }}>
+                {i + 1}. {pe.company || '(no company name)'} — id: {String(pe.id || 'missing')}
+              </div>
+            ))}
+            {peFirms.length > 20 && (
+              <div style={{ fontSize: '0.7rem', color: '#64748B', fontStyle: 'italic' }}>
+                …and {peFirms.length - 20} more. Limiting to first 20 for now while we debug rendering.
+              </div>
+            )}
+          </>
+        )}
+        {false && peFirms.map(pe => {
           const portfolio = portfolioByPe.get((pe.company || '').toLowerCase()) || [];
           const allDeals = portfolio.flatMap(p => (dealsFor(p) || []).map(d => ({ ...d, _company: p.company, _prospectId: p.id })));
           const visibleDeals = showInactive ? allDeals : allDeals.filter(d => !INACTIVE_STAGES.has(d.stage));
