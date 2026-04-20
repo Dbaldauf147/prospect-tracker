@@ -4160,8 +4160,129 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   >By Category</button>
                 </div>
                 <button
+                  onClick={async () => {
+                    if (!companyContacts || companyContacts.length === 0) { alert('No contacts to export.'); return; }
+                    // Brand palette (matches Portfolio Companies export)
+                    const SE_GREEN = 'FF3DCD58';
+                    const SE_GREEN_DARK = 'FF009530';
+                    const SE_TEXT_DARK = 'FF1E293B';
+                    const SE_ZEBRA = 'FFF6F9F4';
+                    const SE_BORDER = 'FFD4DDE1';
+                    const headers = ['Name', 'Full Name', 'Title', 'Team Name', 'Tags', 'Role', 'Email', 'Phone', 'City', 'State', 'Country', 'LinkedIn', 'Notes'];
+                    const colWidths = [22, 26, 28, 20, 24, 14, 32, 18, 18, 10, 14, 32, 40];
+                    const sorted = [...companyContacts].sort((a, b) => {
+                      const aLeft = contactHasTag(a, 'left') ? 1 : 0;
+                      const bLeft = contactHasTag(b, 'left') ? 1 : 0;
+                      if (aLeft !== bLeft) return aLeft - bLeft;
+                      return ((a.lastname || '') + (a.firstname || '')).localeCompare((b.lastname || '') + (b.firstname || ''));
+                    });
+                    const nicknames = settings.contactNicknames || {};
+                    const teamNames = settings.contactTeamNames || {};
+                    const contactNotes = settings.contactNotes || {};
+                    const data = sorted.map(c => {
+                      const name = [c.firstname, c.lastname].filter(Boolean).join(' ') || '';
+                      const nick = c.id && nicknames[c.id] ? nicknames[c.id] : '';
+                      const fullName = nick ? `${name} (${nick})`.trim() : name;
+                      const tags = c.dans_tags || c.dan_s_tags || c.dans_tag || '';
+                      const role = contactHasTag(c, 'decision maker') ? 'Decision Maker'
+                        : contactHasTag(c, 'left') ? 'Left'
+                        : contactHasTag(c, 'hide') ? 'Hide' : '';
+                      const note = (c.id && contactNotes[c.id]) || c.notes || c.hs_content_membership_notes || '';
+                      const linkedin = c.hs_linkedin_url || c.linkedin_url || c.hs_linkedinid || '';
+                      return [
+                        name, fullName, c.jobtitle || '', (c.id && teamNames[c.id]) || '',
+                        tags, role, c.email || '', c.phone || '',
+                        c.city || '', c.state || '', c.country || '',
+                        linkedin, note,
+                      ];
+                    });
+                    try {
+                      const { Workbook } = await import('exceljs');
+                      const wb = new Workbook();
+                      wb.creator = 'Schneider Electric · Prospect Tracker';
+                      wb.created = new Date();
+                      const ws = wb.addWorksheet('Contacts', {
+                        properties: { tabColor: { argb: SE_GREEN } },
+                        views: [{ state: 'frozen', ySplit: 3 }],
+                      });
+                      ws.columns = colWidths.map(w => ({ width: w }));
+
+                      // Title band
+                      ws.mergeCells(1, 1, 1, headers.length);
+                      const titleCell = ws.getCell(1, 1);
+                      titleCell.value = 'Schneider Electric';
+                      titleCell.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
+                      titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN } };
+                      titleCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+                      ws.getRow(1).height = 30;
+
+                      // Subtitle
+                      ws.mergeCells(2, 1, 2, headers.length);
+                      const subCell = ws.getCell(2, 1);
+                      subCell.value = `${fields.company || 'Company'}  ·  Contacts`;
+                      subCell.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: 'FF64748B' } };
+                      subCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+                      ws.getRow(2).height = 20;
+
+                      // Header row
+                      const headerRow = ws.getRow(3);
+                      headers.forEach((h, i) => {
+                        const cell = headerRow.getCell(i + 1);
+                        cell.value = h;
+                        cell.font = { name: 'Nunito Sans', bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
+                        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+                        cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+                        cell.border = {
+                          top: { style: 'thin', color: { argb: SE_BORDER } },
+                          bottom: { style: 'thin', color: { argb: SE_BORDER } },
+                          left: { style: 'thin', color: { argb: SE_BORDER } },
+                          right: { style: 'thin', color: { argb: SE_BORDER } },
+                        };
+                      });
+                      headerRow.height = 30;
+
+                      // Data rows + zebra
+                      data.forEach((vals, idx) => {
+                        const row = ws.getRow(4 + idx);
+                        const zebra = idx % 2 === 1;
+                        vals.forEach((v, i) => {
+                          const cell = row.getCell(i + 1);
+                          cell.value = v === '' || v == null ? null : v;
+                          cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+                          cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: i === 12 /* Notes */ };
+                          cell.border = {
+                            bottom: { style: 'thin', color: { argb: SE_BORDER } },
+                            left: { style: 'thin', color: { argb: SE_BORDER } },
+                            right: { style: 'thin', color: { argb: SE_BORDER } },
+                          };
+                          if (zebra) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_ZEBRA } };
+                        });
+                        row.height = 18;
+                      });
+
+                      ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: headers.length } };
+                      colWidths.forEach((w, idx) => { ws.getColumn(idx + 1).width = w; });
+
+                      const buf = await wb.xlsx.writeBuffer();
+                      const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                      const url = URL.createObjectURL(blob);
+                      const safeCompany = (fields.company || 'Company').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 60);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `${safeCompany} - Contacts.xlsx`;
+                      document.body.appendChild(a);
+                      a.click();
+                      a.remove();
+                      setTimeout(() => URL.revokeObjectURL(url), 1000);
+                    } catch (err) {
+                      alert('Failed to export contacts: ' + (err.message || err));
+                    }
+                  }}
+                  style={{ marginLeft: 'auto', padding: '0.2rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '4px', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', background: '#fff', color: '#059669' }}
+                >Export Excel</button>
+                <button
                   onClick={() => { setAddingContact(true); setEditingContact({ company: fields.company, firstname: '', lastname: '', email: '', phone: '', jobtitle: '', hs_linkedin_url: '', dans_tags: '' }); }}
-                  style={{ marginLeft: 'auto', padding: '0.2rem 0.6rem', border: 'none', borderRadius: '4px', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', background: 'var(--color-accent)', color: '#fff' }}
+                  style={{ marginLeft: '0.4rem', padding: '0.2rem 0.6rem', border: 'none', borderRadius: '4px', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', background: 'var(--color-accent)', color: '#fff' }}
                 >+ Add Contact</button>
               </div>
 
