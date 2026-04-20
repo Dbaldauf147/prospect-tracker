@@ -1592,6 +1592,19 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
   // ── Opportunity Word (.docx) import / export ──
   const oppDocxInputRef = useRef(null);
+  const oppQuillRef = useRef(null);
+
+  const insertOppTodo = useCallback(() => {
+    const quill = oppQuillRef.current?.getEditor?.();
+    if (!quill) return;
+    const sel = quill.getSelection(true);
+    const index = sel ? sel.index : quill.getLength();
+    // Insert a newline at the current caret, then format that line as a checklist item.
+    quill.insertText(index, '\n', 'user');
+    quill.setSelection(index + 1, 0, 'user');
+    quill.formatLine(index + 1, 1, 'list', 'unchecked', 'user');
+    quill.focus();
+  }, []);
 
   const downloadOppAsDocx = useCallback(async () => {
     if (!selectedOpp) return;
@@ -2102,8 +2115,21 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                           </div>
                         );
                       })()}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.35rem' }}>
+                        <button
+                          type="button"
+                          onClick={insertOppTodo}
+                          title="Insert a clickable to-do box at the cursor"
+                          style={{ fontSize: '0.72rem', padding: '0.25rem 0.6rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 4, cursor: 'pointer', fontFamily: 'inherit', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}
+                        >
+                          <span style={{ display: 'inline-block', width: 12, height: 12, border: '1.5px solid #475569', borderRadius: 2 }} />
+                          Add To-Do
+                        </button>
+                        <span style={{ fontSize: '0.65rem', color: '#94A3B8' }}>Click the box later to mark it complete.</span>
+                      </div>
                       <div className="opportunity-notes-editor">
                         <ReactQuill
+                          ref={oppQuillRef}
                           theme="snow"
                           value={oppNoteDraft}
                           onChange={handleOppNoteChange}
