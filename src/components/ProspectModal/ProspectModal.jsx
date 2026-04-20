@@ -4420,8 +4420,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     const SE_TEXT_DARK = 'FF1E293B';
                     const SE_ZEBRA = 'FFF6F9F4';
                     const SE_BORDER = 'FFD4DDE1';
-                    const headers = ['Name', 'Full Name', 'Title', 'Team Name', 'Tags', 'Role', 'Email', 'Phone', 'City', 'State', 'Country', 'LinkedIn', 'Notes'];
-                    const colWidths = [22, 26, 28, 20, 24, 14, 32, 18, 18, 10, 14, 32, 40];
+                    const headers = ['First Name', 'Last Name', 'Name', 'Full Name', 'Title', 'Team Name', 'Tags', 'Role', 'Email', 'Phone', 'City', 'State', 'Country', 'LinkedIn', 'Notes'];
+                    const colWidths = [18, 18, 22, 26, 28, 20, 24, 14, 32, 18, 18, 10, 14, 32, 40];
                     const sorted = [...companyContacts].sort((a, b) => {
                       const aLeft = contactHasTag(a, 'left') ? 1 : 0;
                       const bLeft = contactHasTag(b, 'left') ? 1 : 0;
@@ -4442,6 +4442,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       const note = (c.id && contactNotes[c.id]) || c.notes || c.hs_content_membership_notes || '';
                       const linkedin = c.hs_linkedin_url || c.linkedin_url || c.hs_linkedinid || '';
                       return [
+                        c.firstname || '', c.lastname || '',
                         name, fullName, c.jobtitle || '', (c.id && teamNames[c.id]) || '',
                         tags, role, c.email || '', c.phone || '',
                         c.city || '', c.state || '', c.country || '',
@@ -4455,29 +4456,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       wb.created = new Date();
                       const ws = wb.addWorksheet('Contacts', {
                         properties: { tabColor: { argb: SE_GREEN } },
-                        views: [{ state: 'frozen', ySplit: 3 }],
+                        views: [{ state: 'frozen', ySplit: 1 }],
                       });
                       ws.columns = colWidths.map(w => ({ width: w }));
 
-                      // Title band
-                      ws.mergeCells(1, 1, 1, headers.length);
-                      const titleCell = ws.getCell(1, 1);
-                      titleCell.value = 'Schneider Electric';
-                      titleCell.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
-                      titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN } };
-                      titleCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-                      ws.getRow(1).height = 30;
-
-                      // Subtitle
-                      ws.mergeCells(2, 1, 2, headers.length);
-                      const subCell = ws.getCell(2, 1);
-                      subCell.value = `${fields.company || 'Company'}  ·  Contacts`;
-                      subCell.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: 'FF64748B' } };
-                      subCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-                      ws.getRow(2).height = 20;
-
                       // Header row
-                      const headerRow = ws.getRow(3);
+                      const headerRow = ws.getRow(1);
                       headers.forEach((h, i) => {
                         const cell = headerRow.getCell(i + 1);
                         cell.value = h;
@@ -4495,13 +4479,13 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
                       // Data rows + zebra
                       data.forEach((vals, idx) => {
-                        const row = ws.getRow(4 + idx);
+                        const row = ws.getRow(2 + idx);
                         const zebra = idx % 2 === 1;
                         vals.forEach((v, i) => {
                           const cell = row.getCell(i + 1);
                           cell.value = v === '' || v == null ? null : v;
                           cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-                          cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: i === 12 /* Notes */ };
+                          cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: i === 14 /* Notes */ };
                           cell.border = {
                             bottom: { style: 'thin', color: { argb: SE_BORDER } },
                             left: { style: 'thin', color: { argb: SE_BORDER } },
@@ -4512,7 +4496,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         row.height = 18;
                       });
 
-                      ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: headers.length } };
+                      ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: headers.length } };
                       colWidths.forEach((w, idx) => { ws.getColumn(idx + 1).width = w; });
 
                       const buf = await wb.xlsx.writeBuffer();
