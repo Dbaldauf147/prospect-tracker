@@ -53,7 +53,7 @@ function emptyFormData(template = DEFAULT_FORM_TEMPLATE) {
   return { fieldValues, tables, linkedBfoLink: null };
 }
 
-export function OpportunityForm({ value, onChange, companyName }) {
+export function OpportunityForm({ value, onChange, onLinkOpp, companyName }) {
   const template = DEFAULT_FORM_TEMPLATE;
   const formData = useMemo(() => {
     const base = emptyFormData(template);
@@ -115,6 +115,7 @@ export function OpportunityForm({ value, onChange, companyName }) {
       fieldValues: nextValues,
       linkedBfoLink: opp['BFO Link'] || null,
     });
+    if (onLinkOpp) onLinkOpp(opp);
     setPickerOpen(false);
     setSearch('');
   };
