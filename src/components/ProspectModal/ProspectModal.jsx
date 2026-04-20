@@ -1639,7 +1639,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     lines.push('');
     if (items.length > 0) {
       for (const item of items) {
-        lines.push(`${item.checked ? '[x]' : '[ ]'} ${item.text}`);
+        lines.push(`• ${item.text}`);
       }
     } else {
       lines.push('(No follow-up items captured in the notes yet.)');
