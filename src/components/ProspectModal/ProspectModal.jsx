@@ -979,7 +979,7 @@ const ALL_SERVICE_ITEMS_LOWER = new Set(
   SERVICE_CATEGORIES.flatMap(cat => cat.items.map(i => i.toLowerCase()))
 );
 
-export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew, hubspotContacts = [], onDeleteContact, orgCharts = {}, onUpdateOrgChart = () => {}, settings = {}, updateSettings = () => {}, targetAccountsData = null }) {
+export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew, hubspotContacts = [], onDeleteContact, orgCharts = {}, onUpdateOrgChart = () => {}, settings = {}, updateSettings = () => {}, updateSettingsPath = () => {}, targetAccountsData = null }) {
   const [fields, setFields] = useState(() => {
     if (prospect) return { ...EMPTY, ...prospect };
     return { ...EMPTY };
@@ -1532,12 +1532,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
   const writeCompanyOpps = useCallback((nextData) => {
     if (!companySlug) return;
-    const all = { ...(settings.companyOpportunities || {}) };
     const isEmpty = (!nextData.buckets || nextData.buckets.length === 0) && (!nextData.opportunities || nextData.opportunities.length === 0);
-    if (isEmpty) delete all[companySlug];
-    else all[companySlug] = nextData;
-    updateSettings({ companyOpportunities: all });
-  }, [companySlug, settings.companyOpportunities, updateSettings]);
+    // Path-based write so other devices editing other companies don't get overwritten.
+    updateSettingsPath({ [`companyOpportunities.${companySlug}`]: isEmpty ? null : nextData });
+  }, [companySlug, updateSettingsPath]);
 
   const addBucket = useCallback(() => {
     const bucket = { id: `b_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, name: '' };
@@ -1794,13 +1792,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     if (oppSaveTimerRef.current) clearTimeout(oppSaveTimerRef.current);
     const idAtEdit = selectedOppId;
     oppSaveTimerRef.current = setTimeout(() => {
-      const all = { ...(settings.companyOpportunities || {}) };
-      const data = all[companySlug] || { buckets: [], opportunities: [] };
+      const data = (settings.companyOpportunities || {})[companySlug] || { buckets: [], opportunities: [] };
       const nextOpps = (data.opportunities || []).map(o => o.id === idAtEdit ? { ...o, notes: html, updatedAt: Date.now() } : o);
-      all[companySlug] = { buckets: data.buckets || [], opportunities: nextOpps };
-      updateSettings({ companyOpportunities: all });
+      updateSettingsPath({ [`companyOpportunities.${companySlug}`]: { buckets: data.buckets || [], opportunities: nextOpps } });
     }, 800);
-  }, [companySlug, selectedOppId, settings.companyOpportunities, updateSettings]);
+  }, [companySlug, selectedOppId, settings.companyOpportunities, updateSettingsPath]);
 
   // ── Opportunity Word (.docx) import / export ──
   const oppDocxInputRef = useRef(null);
@@ -1919,15 +1915,13 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       setOppNoteDraft(nextHtml);
       if (oppSaveTimerRef.current) clearTimeout(oppSaveTimerRef.current);
       const idAtEdit = selectedOppId;
-      const all = { ...(settings.companyOpportunities || {}) };
-      const data = all[companySlug] || { buckets: [], opportunities: [] };
+      const data = (settings.companyOpportunities || {})[companySlug] || { buckets: [], opportunities: [] };
       const nextOpps = (data.opportunities || []).map(o => o.id === idAtEdit ? { ...o, notes: nextHtml, updatedAt: Date.now() } : o);
-      all[companySlug] = { buckets: data.buckets || [], opportunities: nextOpps };
-      updateSettings({ companyOpportunities: all });
+      updateSettingsPath({ [`companyOpportunities.${companySlug}`]: { buckets: data.buckets || [], opportunities: nextOpps } });
     } catch (err) {
       alert('Failed to read Word document: ' + (err.message || err));
     }
-  }, [selectedOppId, oppNoteDraft, companySlug, settings.companyOpportunities, updateSettings]);
+  }, [selectedOppId, oppNoteDraft, companySlug, settings.companyOpportunities, updateSettingsPath]);
 
   // ── Opportunities tab — separate from Notes, simpler flat list per company.
   // Shape: settings.companyDeals[slug] = [{ id, title, stage, value, closeDate, description, createdAt, updatedAt }]

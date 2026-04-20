@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { subscribeToUserSettings, saveUserSettings, initUserSettings } from '../utils/userSettingsSync';
+import { subscribeToUserSettings, saveUserSettings, savePathUpdates, initUserSettings } from '../utils/userSettingsSync';
 import { pushBackup } from '../utils/settingsBackup';
 
 export function useUserSettings(user) {
@@ -83,5 +83,68 @@ export function useUserSettings(user) {
     }
   }, []);
 
-  return { settings, loaded, updateSettings };
+  // Path-based update. Writes only the specific dotted keys to Firestore,
+  // so two laptops editing different paths (e.g. different companies) don't
+  // stomp each other's work. Same backup + stale-write semantics as
+  // updateSettings.
+  //
+  //   pathUpdates = { 'companyOpportunities.acme-inc': data }
+  //   A null/undefined value means "delete that path".
+  const updateSettingsPath = useCallback(async (pathUpdates) => {
+    if (!userIdRef.current) return;
+
+    pushBackup(settingsRef.current, 'pre-save-path').catch(() => {});
+
+    const prev = settingsRef.current || {};
+    const expectedAt = prev._lastWriteAt || null;
+
+    // Build optimistic local state by walking each path.
+    const optimistic = structuredClone(prev);
+    for (const [path, value] of Object.entries(pathUpdates)) {
+      const parts = path.split('.');
+      let cur = optimistic;
+      for (let i = 0; i < parts.length - 1; i++) {
+        if (typeof cur[parts[i]] !== 'object' || cur[parts[i]] == null) cur[parts[i]] = {};
+        cur = cur[parts[i]];
+      }
+      const last = parts[parts.length - 1];
+      if (value == null) delete cur[last]; else cur[last] = value;
+    }
+    settingsRef.current = optimistic;
+    setSettings(optimistic);
+    writingRef.current = true;
+
+    try {
+      const result = await savePathUpdates(userIdRef.current, pathUpdates, { expectedAt });
+      if (result.stale) {
+        const choice = window.confirm(
+          'Your settings have been changed on another device since this page loaded.\n\n' +
+          'OK = Overwrite the other device\'s changes with yours.\n' +
+          'Cancel = Keep the other device\'s changes and discard yours.\n\n' +
+          'Either way, your pre-save state has been backed up locally.'
+        );
+        if (choice) {
+          const forced = await savePathUpdates(userIdRef.current, pathUpdates, { force: true });
+          const next = { ...optimistic, _lastWriteAt: forced.writtenAt };
+          settingsRef.current = next;
+          setSettings(next);
+        } else {
+          const remote = result.remoteData || {};
+          settingsRef.current = remote;
+          setSettings(remote);
+        }
+      } else {
+        const next = { ...optimistic, _lastWriteAt: result.writtenAt };
+        settingsRef.current = next;
+        setSettings(next);
+      }
+    } catch (err) {
+      console.error('Failed path-based save:', err);
+      alert('Failed to save: ' + err.message);
+    } finally {
+      writingRef.current = false;
+    }
+  }, []);
+
+  return { settings, loaded, updateSettings, updateSettingsPath };
 }
