@@ -1533,6 +1533,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         if (contact.jobtitle) bits.push(contact.jobtitle);
         if (contact.email) bits.push(contact.email);
         if (contact.phone) bits.push(contact.phone);
+        if (contact.city) bits.push(contact.city);
+        const rawLinkedin = contact.hs_linkedin_url || contact.linkedin_url || contact.hs_linkedinid || '';
+        if (rawLinkedin) {
+          const href = rawLinkedin.startsWith('http') ? rawLinkedin : `https://linkedin.com/in/${rawLinkedin}`;
+          bits.push(`<a href="${href}" target="_blank" rel="noopener noreferrer">LinkedIn</a>`);
+        }
         const infoHtml = `<p><strong>${name}</strong>${bits.length ? ' — ' + bits.join(' · ') : ''}</p>`;
         nextNotes = (nextNotes || '') + infoHtml;
       }
