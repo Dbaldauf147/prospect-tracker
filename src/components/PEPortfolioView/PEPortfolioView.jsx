@@ -60,7 +60,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
         <div>
           <h2 className={styles.title}>PE Portfolio</h2>
           <div className={styles.subtitle}>
-            Active Private Equity firms from My Accounts, with their portfolio companies and live opportunities grouped by sales stage.
+            Every prospect in My Accounts with Type = <code>Private Equity</code>, with their portfolio companies and opportunities grouped by sales stage.
           </div>
         </div>
         <label className={styles.inactiveToggle}>
@@ -72,7 +72,11 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
       <div className={styles.body}>
         {peFirms.length === 0 ? (
           <div className={styles.empty}>
-            No active PE firms found. Set a prospect's <strong>Type</strong> to <code>Private Equity</code> in My Accounts to see it here.
+            <div style={{ marginBottom: '0.5rem', fontWeight: 600 }}>No PE firms found.</div>
+            <div style={{ fontSize: '0.75rem', color: '#64748B' }}>
+              Scanned {prospects.length} prospect{prospects.length === 1 ? '' : 's'} in My Accounts — none had Type set to <code>Private Equity</code>.
+              Open a PE firm's popup and set its <strong>Type</strong> field to <code>Private Equity</code> to make it appear here.
+            </div>
           </div>
         ) : peFirms.map(pe => {
           const portfolio = portfolioByPe.get((pe.company || '').toLowerCase()) || [];
