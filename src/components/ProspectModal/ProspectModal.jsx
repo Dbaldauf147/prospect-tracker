@@ -278,23 +278,30 @@ function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact, r
                 : (() => {
                     const { rootItems, childrenByParent, idOf } = buildHierarchy(items);
                     const rendered = new Set();
-                    function renderNode(c, depth) {
+                    function renderNode(c) {
                       const id = idOf(c);
                       if (rendered.has(id)) return null;
                       rendered.add(id);
                       const kids = childrenByParent.get(id) || [];
                       return (
-                        <div key={c.id || c.email} style={{ marginLeft: depth * 12 }}>
+                        <div key={c.id || c.email}>
                           <ContactCard contact={c} bucketAccent={bucket.accent} />
                           {kids.length > 0 && (
-                            <div style={{ borderLeft: `1px dashed ${bucket.border}`, marginLeft: 8, paddingLeft: 4, marginTop: 4, display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
-                              {kids.map(k => renderNode(k, depth + 1))}
+                            <div style={{ marginLeft: 6, marginTop: 0, borderLeft: `2px solid ${bucket.accent}` }}>
+                              {kids.map(k => (
+                                <div key={k.id || k.email} style={{ display: 'flex', alignItems: 'flex-start', marginTop: '0.3rem' }}>
+                                  <div style={{ width: 8, height: 16, borderBottom: `2px solid ${bucket.accent}`, flexShrink: 0 }} />
+                                  <div style={{ flex: 1, paddingLeft: 2, minWidth: 0 }}>
+                                    {renderNode(k)}
+                                  </div>
+                                </div>
+                              ))}
                             </div>
                           )}
                         </div>
                       );
                     }
-                    const nodes = rootItems.map(c => renderNode(c, 0));
+                    const nodes = rootItems.map(c => renderNode(c));
                     // Safety: render any contacts that weren't visited (e.g., in a cycle).
                     const leftovers = items.filter(c => !rendered.has(idOf(c))).map(c => (
                       <ContactCard key={c.id || c.email} contact={c} bucketAccent={bucket.accent} />
