@@ -469,6 +469,21 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
   const savedNickname = (cid && contactNicknames[cid]) || '';
   const savedTeamName = (cid && contactTeamNames[cid]) || '';
 
+  // Prevent Backspace from triggering browser back-navigation (Firefox / older Edge behaviour)
+  // when focus is outside a text field. This otherwise unmounts the modal.
+  useEffect(() => {
+    function onKey(e) {
+      if (e.key !== 'Backspace') return;
+      const t = e.target;
+      if (!t) return;
+      const tag = (t.tagName || '').toLowerCase();
+      const isEditable = tag === 'input' || tag === 'textarea' || tag === 'select' || t.isContentEditable;
+      if (!isEditable) e.preventDefault();
+    }
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, []);
+
   const [f, setF] = useState({
     firstname: contact.firstname || '',
     lastname: contact.lastname || '',
