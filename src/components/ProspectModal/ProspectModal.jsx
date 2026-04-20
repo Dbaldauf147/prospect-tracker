@@ -178,47 +178,39 @@ function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact, r
     return <div style={{ fontSize: '0.78rem', color: '#9CA3AF', fontStyle: 'italic', padding: '1rem 0' }}>No contacts to display</div>;
   }
 
-  // Assign each contact to buckets based on tags
-  const bucketContacts = {};
-  const untagged = [];
-  for (const bucket of BUCKETS) bucketContacts[bucket.key] = [];
+  const idOf = (c) => String(c.id || c.vid || c.email || '');
 
+  // Build a parent→children map using the full contact set (not per-bucket).
+  const byId = new Map(contacts.map(c => [idOf(c), c]));
+  const childrenByParent = new Map();
+  const hasManager = new Set();
   for (const c of contacts) {
-    const tags = getContactTags(c);
-    let matched = false;
-    for (const bucket of BUCKETS) {
-      if (tags.some(t => t === bucket.tag)) {
-        bucketContacts[bucket.key].push(c);
-        matched = true;
-      }
+    const cid = idOf(c);
+    const mgrs = (reportsTo[c.id || c.vid] || []).map(String);
+    const firstMgrInSet = mgrs.find(m => byId.has(m));
+    if (firstMgrInSet) {
+      hasManager.add(cid);
+      if (!childrenByParent.has(firstMgrInSet)) childrenByParent.set(firstMgrInSet, []);
+      childrenByParent.get(firstMgrInSet).push(c);
     }
-    if (!matched) untagged.push(c);
+  }
+  // Roots: contacts with no manager in the set AND who have at least one report.
+  // Orphans: contacts with no manager in the set AND no reports either.
+  const roots = [];
+  const orphans = [];
+  for (const c of contacts) {
+    const cid = idOf(c);
+    if (hasManager.has(cid)) continue;
+    const hasReports = (childrenByParent.get(cid) || []).length > 0;
+    if (hasReports) roots.push(c);
+    else orphans.push(c);
   }
 
-  // Build parent→children tree within a bucket's contact list.
-  // Roots: contacts whose managers aren't also in the same bucket.
-  function buildHierarchy(items) {
-    const idOf = c => String(c.id || c.vid || '');
-    const inBucket = new Set(items.map(idOf));
-    const childrenByParent = new Map();
-    const rootItems = [];
-    for (const c of items) {
-      const mgrs = (reportsTo[c.id || c.vid] || []).map(String);
-      const parentInBucket = mgrs.find(m => inBucket.has(m));
-      if (parentInBucket) {
-        if (!childrenByParent.has(parentInBucket)) childrenByParent.set(parentInBucket, []);
-        childrenByParent.get(parentInBucket).push(c);
-      } else {
-        rootItems.push(c);
-      }
-    }
-    return { rootItems, childrenByParent, idOf };
-  }
-
-  function ContactCard({ contact, bucketAccent }) {
+  function ContactCard({ contact }) {
     const name = [contact.firstname, contact.lastname].filter(Boolean).join(' ') || '—';
     const isDM = contactHasTag(contact, 'decision maker');
     const isDeleting = deletingContact === (contact.id || contact.vid);
+    const matchedBuckets = BUCKETS.filter(b => getContactTags(contact).includes(b.tag));
 
     return (
       <div
@@ -226,14 +218,15 @@ function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact, r
         style={{
           background: isDM ? '#FEFCE8' : '#fff',
           border: isDM ? '2px solid #F59E0B' : '1px solid #E2E8F0',
-          borderLeft: `3px solid ${isDM ? '#F59E0B' : bucketAccent}`,
           borderRadius: '6px',
           padding: '0.45rem 0.55rem',
           position: 'relative',
           cursor: 'pointer',
+          minWidth: '180px',
+          maxWidth: '240px',
         }}
         onMouseEnter={e => e.currentTarget.style.background = '#F8FAFC'}
-        onMouseLeave={e => e.currentTarget.style.background = '#fff'}
+        onMouseLeave={e => e.currentTarget.style.background = isDM ? '#FEFCE8' : '#fff'}
       >
         {onDeleteContact && (
           <button
@@ -252,92 +245,70 @@ function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact, r
         {contact.jobtitle && (
           <div style={{ fontSize: '0.62rem', color: '#64748B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: '1px' }}>{contact.jobtitle}</div>
         )}
+        {matchedBuckets.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px', marginTop: '4px' }}>
+            {matchedBuckets.map(b => (
+              <span key={b.key} style={{ padding: '1px 6px', borderRadius: '999px', fontSize: '0.55rem', fontWeight: 700, background: b.headerBg, color: b.headerColor, whiteSpace: 'nowrap' }}>
+                {b.label}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  const rendered = new Set();
+  function renderNode(c) {
+    const id = idOf(c);
+    if (rendered.has(id)) return null;
+    rendered.add(id);
+    const kids = childrenByParent.get(id) || [];
+    return (
+      <div key={id}>
+        <ContactCard contact={c} />
+        {kids.length > 0 && (
+          <div style={{ marginLeft: 12, marginTop: 0, borderLeft: '2px solid #94A3B8' }}>
+            {kids.map(k => (
+              <div key={idOf(k)} style={{ display: 'flex', alignItems: 'flex-start', marginTop: '0.4rem' }}>
+                <div style={{ width: 10, height: 16, borderBottom: '2px solid #94A3B8', flexShrink: 0 }} />
+                <div style={{ flex: 1, paddingLeft: 4, minWidth: 0 }}>
+                  {renderNode(k)}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     );
   }
 
   return (
-    <div style={{ display: 'flex', gap: '0.6rem', overflowX: 'auto', paddingBottom: '0.25rem', alignItems: 'flex-start' }}>
-      {BUCKETS.map(bucket => {
-        const items = bucketContacts[bucket.key];
-        return (
-          <div key={bucket.key} style={{ flex: '0 0 160px', minWidth: '160px', border: `1px solid ${bucket.border}`, borderRadius: '8px', overflow: 'hidden' }}>
-            {/* Bucket header */}
-            <div style={{ background: bucket.headerBg, padding: '0.35rem 0.55rem', borderBottom: `1px solid ${bucket.border}` }}>
-              <div style={{ fontSize: '0.65rem', fontWeight: 700, color: bucket.headerColor, textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {bucket.label}
-              </div>
-              <div style={{ fontSize: '0.6rem', color: bucket.accent, fontWeight: 600, marginTop: '1px' }}>
-                {items.length} contact{items.length !== 1 ? 's' : ''}
-              </div>
-            </div>
-            {/* Cards */}
-            <div style={{ padding: '0.35rem', display: 'flex', flexDirection: 'column', gap: '0.3rem', minHeight: '60px' }}>
-              {items.length === 0
-                ? <div style={{ fontSize: '0.62rem', color: '#CBD5E1', fontStyle: 'italic', textAlign: 'center', paddingTop: '0.5rem' }}>None</div>
-                : (() => {
-                    const { rootItems, childrenByParent, idOf } = buildHierarchy(items);
-                    const rendered = new Set();
-                    function renderNode(c) {
-                      const id = idOf(c);
-                      if (rendered.has(id)) return null;
-                      rendered.add(id);
-                      const kids = childrenByParent.get(id) || [];
-                      return (
-                        <div key={c.id || c.email}>
-                          <ContactCard contact={c} bucketAccent={bucket.accent} />
-                          {kids.length > 0 && (
-                            <div style={{ marginLeft: 6, marginTop: 0, borderLeft: `2px solid ${bucket.accent}` }}>
-                              {kids.map(k => (
-                                <div key={k.id || k.email} style={{ display: 'flex', alignItems: 'flex-start', marginTop: '0.3rem' }}>
-                                  <div style={{ width: 8, height: 16, borderBottom: `2px solid ${bucket.accent}`, flexShrink: 0 }} />
-                                  <div style={{ flex: 1, paddingLeft: 2, minWidth: 0 }}>
-                                    {renderNode(k)}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    }
-                    const nodes = rootItems.map(c => renderNode(c));
-                    // Safety: render any contacts that weren't visited (e.g., in a cycle).
-                    const leftovers = items.filter(c => !rendered.has(idOf(c))).map(c => (
-                      <ContactCard key={c.id || c.email} contact={c} bucketAccent={bucket.accent} />
-                    ));
-                    return [...nodes, ...leftovers];
-                  })()
-              }
-            </div>
+    <div style={{ display: 'flex', gap: '1rem', overflowX: 'auto', alignItems: 'flex-start', paddingBottom: '0.25rem' }}>
+      {/* Main hierarchy — roots and their direct/indirect reports */}
+      <div style={{ flex: '1 1 auto', minWidth: 0, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+        {roots.length === 0 && orphans.length === contacts.length ? (
+          <div style={{ fontSize: '0.72rem', color: '#94A3B8', fontStyle: 'italic' }}>
+            No reporting relationships set. Open a contact and pick a manager under &quot;Reports To&quot; to build the tree.
           </div>
-        );
-      })}
-
-      {/* Untagged bucket — always shown so you can see what tags contacts have */}
-      <div style={{ flex: '0 0 160px', minWidth: '160px', border: '1px solid #E2E8F0', borderRadius: '8px', overflow: 'hidden' }}>
-        <div style={{ background: '#F8FAFC', padding: '0.35rem 0.55rem', borderBottom: '1px solid #E2E8F0' }}>
-          <div style={{ fontSize: '0.65rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Untagged</div>
-          <div style={{ fontSize: '0.6rem', color: '#94A3B8', fontWeight: 600, marginTop: '1px' }}>{untagged.length} contact{untagged.length !== 1 ? 's' : ''}</div>
-        </div>
-        <div style={{ padding: '0.35rem', display: 'flex', flexDirection: 'column', gap: '0.3rem', minHeight: '60px' }}>
-          {untagged.length === 0
-            ? <div style={{ fontSize: '0.62rem', color: '#CBD5E1', fontStyle: 'italic', textAlign: 'center', paddingTop: '0.5rem' }}>None</div>
-            : untagged.map(c => {
-                const rawTag = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').trim();
-                return (
-                  <div key={c.id || c.email}>
-                    <ContactCard contact={c} bucketAccent="#94A3B8" />
-                    {rawTag && <div style={{ fontSize: '0.55rem', color: '#94A3B8', marginTop: '2px', paddingLeft: '4px', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={rawTag}>tag: {rawTag}</div>}
-                  </div>
-                );
-              })
-          }
-        </div>
+        ) : roots.map(r => renderNode(r))}
       </div>
+
+      {/* Orphans — contacts with no relationships, shown off to the side */}
+      {orphans.length > 0 && (
+        <div style={{ flex: '0 0 240px', borderLeft: '1px solid var(--color-border-light)', paddingLeft: '0.75rem' }}>
+          <div style={{ fontSize: '0.6rem', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.35rem' }}>
+            Unlinked
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+            {orphans.map(c => <ContactCard key={idOf(c)} contact={c} />)}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
 
 const EMPTY = {
   company: '', cdm: '', status: 'Inside Sales', type: '', geography: '', publicPrivate: '',
