@@ -5,6 +5,7 @@ import { useSheetSync } from './hooks/useSheetSync';
 import { useFilters } from './hooks/useFilters';
 import { useUserSettings } from './hooks/useUserSettings';
 import { Sidebar } from './components/Sidebar';
+import { SettingsBackupsModal } from './components/SettingsBackupsModal';
 import { LoginPage } from './components/LoginPage';
 import { FilterBar } from './components/FilterBar/FilterBar';
 import { TableView } from './components/TableView/TableView';
@@ -83,6 +84,7 @@ function App() {
   const [view, setView] = useState('accounts');
   const [modal, setModal] = useState(null); // null | { prospect, isNew }
   const [showSync, setShowSync] = useState(false);
+  const [showBackups, setShowBackups] = useState(false);
   const [migrating, setMigrating] = useState(false);
   const [migrateResult, setMigrateResult] = useState(null);
   const [hubspotContacts, setHubspotContacts] = useState(() => {
@@ -198,7 +200,14 @@ function App() {
 
   return (
     <div className="layout">
-      <Sidebar view={view} setView={setView} user={user} onLogout={logout} onSync={() => setShowSync(true)} />
+      <Sidebar
+        view={view}
+        setView={setView}
+        user={user}
+        onLogout={logout}
+        onSync={() => setShowSync(true)}
+        onOpenBackups={() => setShowBackups(true)}
+      />
       <div className="main">
         {(view === 'table' || view === 'kanban') && (
           <FilterBar
@@ -299,6 +308,15 @@ function App() {
       )}
 
       {showSync && <SyncPanel prospects={prospects} onClose={() => setShowSync(false)} />}
+      <SettingsBackupsModal
+        open={showBackups}
+        onClose={() => setShowBackups(false)}
+        onRestore={(data) => {
+          // Overwrite every top-level key from the backup so restore is complete
+          // (updateSettings merges at the top level, so nested keys get replaced wholesale).
+          updateSettings(data);
+        }}
+      />
       {/* One-time migration button */}
       {!settings.clientsServicesMigrated && (
         <div style={{ position: 'fixed', bottom: '1rem', right: '1rem', zIndex: 300, background: '#fff', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '0.75rem 1rem', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', maxWidth: '320px' }}>

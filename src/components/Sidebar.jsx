@@ -1,6 +1,6 @@
 import styles from './Sidebar.module.css';
 
-export function Sidebar({ view, setView, user, onLogout, onSync }) {
+export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups }) {
   const initials = user?.displayName
     ? user.displayName.split(' ').map(n => n[0]).join('').toUpperCase()
     : user?.email?.[0]?.toUpperCase() || '?';
@@ -117,6 +117,14 @@ export function Sidebar({ view, setView, user, onLogout, onSync }) {
         >
           <span className={styles.navIcon}>&#8635;</span>
           Sync Google Sheets
+        </button>
+        <button
+          className={styles.navItem}
+          onClick={onOpenBackups}
+          title="View and restore local backups of your settings"
+        >
+          <span className={styles.navIcon}>&#128190;</span>
+          Backups
         </button>
         <button
           className={view === 'privacy' ? styles.navItemActive : styles.navItem}
