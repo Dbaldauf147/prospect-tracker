@@ -1606,6 +1606,54 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     quill.focus();
   }, []);
 
+  // Generate a plain-text follow-up email that lists the to-do items from the notes
+  // and open it in Outlook Web's compose view, with linked contacts on the To line.
+  const openOppFollowUpEmail = useCallback(() => {
+    if (!selectedOpp) return;
+    const html = oppNoteDraft || '';
+    const parser = typeof DOMParser !== 'undefined' ? new DOMParser() : null;
+    let items = [];
+    if (parser) {
+      const doc = parser.parseFromString(html, 'text/html');
+      items = Array.from(doc.querySelectorAll('li[data-list="checked"], li[data-list="unchecked"]'))
+        .map(el => ({
+          checked: el.getAttribute('data-list') === 'checked',
+          text: (el.textContent || '').trim(),
+        }))
+        .filter(i => i.text);
+    }
+
+    const linkedIds = new Set((selectedOpp.contactIds || []).map(String));
+    const recipients = (companyContacts || [])
+      .filter(c => linkedIds.has(String(c.id || c.vid)))
+      .map(c => c.email)
+      .filter(Boolean);
+
+    const titleBit = selectedOpp.title ? ` — ${selectedOpp.title}` : '';
+    const subject = `Follow-up — ${fields.company || 'our conversation'}${titleBit}`;
+
+    const lines = [];
+    lines.push('Hi,');
+    lines.push('');
+    lines.push(`Thanks again for the conversation${fields.company ? ` about ${fields.company}` : ''}${selectedOpp.title ? ` (${selectedOpp.title})` : ''}. Below is a recap of the follow-up items:`);
+    lines.push('');
+    if (items.length > 0) {
+      for (const item of items) {
+        lines.push(`${item.checked ? '[x]' : '[ ]'} ${item.text}`);
+      }
+    } else {
+      lines.push('(No follow-up items captured in the notes yet.)');
+    }
+    lines.push('');
+    lines.push('Let me know if I\'ve missed anything or you\'d like to dig deeper on any of these.');
+    lines.push('');
+    lines.push('Thanks,');
+
+    const body = lines.join('\n');
+    const url = `https://outlook.office.com/mail/deeplink/compose?to=${encodeURIComponent(recipients.join(';'))}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }, [selectedOpp, oppNoteDraft, companyContacts, fields.company]);
+
   const downloadOppAsDocx = useCallback(async () => {
     if (!selectedOpp) return;
     const safeTitle = (selectedOpp.title || 'opportunity').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 80) || 'opportunity';
@@ -2115,7 +2163,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                           </div>
                         );
                       })()}
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.35rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.35rem', flexWrap: 'wrap' }}>
                         <button
                           type="button"
                           onClick={insertOppTodo}
@@ -2124,6 +2172,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         >
                           <span style={{ display: 'inline-block', width: 12, height: 12, border: '1.5px solid #475569', borderRadius: 2 }} />
                           Add To-Do
+                        </button>
+                        <button
+                          type="button"
+                          onClick={openOppFollowUpEmail}
+                          title="Open Outlook with a follow-up email summarizing the to-do items and linked contacts"
+                          style={{ fontSize: '0.72rem', padding: '0.25rem 0.6rem', border: '1px solid #0078D4', background: '#EFF6FF', color: '#0078D4', borderRadius: 4, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}
+                        >
+                          ✉ Follow-Up Email
                         </button>
                         <span style={{ fontSize: '0.65rem', color: '#94A3B8' }}>Click the box later to mark it complete.</span>
                       </div>
