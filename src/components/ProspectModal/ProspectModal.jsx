@@ -2272,7 +2272,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             </div>
 
             <div className={styles.fieldFull}>
-              <label className={styles.label}>Notes</label>
+              <label className={styles.label}>Company Notes</label>
               <textarea className={styles.textarea} value={fields.notes} onChange={e => set('notes', e.target.value)} rows={2} />
             </div>
           </div>
