@@ -304,13 +304,17 @@ function OrgChart({ contacts, onDeleteContact, deletingContact, onEditContact, r
         </div>
       )}
       <div style={{ display: 'flex', gap: '1rem', overflowX: 'auto', alignItems: 'flex-start', paddingBottom: '0.25rem' }}>
-      {/* Main hierarchy — roots and their direct/indirect reports */}
-      <div style={{ flex: '1 1 auto', minWidth: 0, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+      {/* Main hierarchy — roots and their direct/indirect reports. Peer roots render
+          side-by-side so multiple independent decision makers sit next to each other
+          instead of stacked vertically. */}
+      <div style={{ flex: '1 1 auto', minWidth: 0, display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: '0.75rem 1rem' }}>
         {roots.length === 0 && orphans.length === contacts.length ? (
           <div style={{ fontSize: '0.72rem', color: '#94A3B8', fontStyle: 'italic' }}>
             No reporting relationships set. Open a contact and pick a manager under &quot;Reports To&quot; to build the tree.
           </div>
-        ) : roots.map(r => renderNode(r))}
+        ) : roots.map(r => (
+          <div key={idOf(r)} style={{ flex: '0 0 auto' }}>{renderNode(r)}</div>
+        ))}
       </div>
 
       {/* Orphans — contacts with no relationships, shown off to the side */}
