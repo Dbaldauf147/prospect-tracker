@@ -49,10 +49,36 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
     });
   }
 
+  // For each PE firm, count the opportunities across its portfolio companies
+  // (respecting the current Won/Lost/Hold toggle). Firms with ≥1 opp float to the top.
+  const firmOppCount = useMemo(() => {
+    const counts = new Map();
+    for (const pe of peFirms) {
+      const portfolio = portfolioByPe.get((pe.company || '').toLowerCase()) || [];
+      let n = 0;
+      for (const p of portfolio) {
+        for (const d of (dealsFor(p) || [])) {
+          if (showInactive || !INACTIVE_STAGES.has(d.stage)) n += 1;
+        }
+      }
+      counts.set(pe.id, n);
+    }
+    return counts;
+  }, [peFirms, portfolioByPe, deals, showInactive]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const sortedPeFirms = useMemo(() => (
+    [...peFirms].sort((a, b) => {
+      const ca = firmOppCount.get(a.id) || 0;
+      const cb = firmOppCount.get(b.id) || 0;
+      if (ca !== cb) return cb - ca; // highest opp count first
+      return (a.company || '').localeCompare(b.company || '');
+    })
+  ), [peFirms, firmOppCount]);
+
   const q = query.trim().toLowerCase();
   const filteredFirms = q
-    ? peFirms.filter(p => (p.company || '').toLowerCase().includes(q))
-    : peFirms;
+    ? sortedPeFirms.filter(p => (p.company || '').toLowerCase().includes(q))
+    : sortedPeFirms;
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
