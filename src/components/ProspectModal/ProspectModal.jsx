@@ -2012,12 +2012,28 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             <div>
               <label className={styles.label}>PE Owner <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(if portfolio co)</span></label>
               {(() => {
-                const [peOpen, setPeOpen] = [peOwnerPickerOpen, setPeOwnerPickerOpen];
-                const peList = (prospects || []).filter(p => p.type === 'Private Equity' && p.company && p.company !== fields.company);
+                const setPeOpen = setPeOwnerPickerOpen;
+                const peOpen = peOwnerPickerOpen;
+                // Pull candidates from the full Table View / prospects list, not just Type=PE.
+                const allCompanies = (prospects || [])
+                  .filter(p => p.company && p.company !== fields.company);
                 const q = (fields.peOwner || '').toLowerCase().trim();
-                const filtered = q
-                  ? peList.filter(p => p.company.toLowerCase().includes(q)).slice(0, 50)
-                  : peList.slice(0, 50);
+                // When user is typing, show matches anywhere. Prefer Private Equity type matches first.
+                function score(p) {
+                  const name = (p.company || '').toLowerCase();
+                  if (!q) return p.type === 'Private Equity' ? 0 : 1;
+                  if (name.startsWith(q)) return p.type === 'Private Equity' ? 0 : 2;
+                  if (name.includes(q)) return p.type === 'Private Equity' ? 1 : 3;
+                  return 99;
+                }
+                const filtered = allCompanies
+                  .filter(p => !q || (p.company || '').toLowerCase().includes(q))
+                  .sort((a, b) => {
+                    const sa = score(a), sb = score(b);
+                    if (sa !== sb) return sa - sb;
+                    return (a.company || '').localeCompare(b.company || '');
+                  })
+                  .slice(0, 50);
                 return (
                   <div style={{ position: 'relative' }} data-pe-picker>
                     <input
@@ -2025,25 +2041,31 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       value={fields.peOwner || ''}
                       onChange={e => { set('peOwner', e.target.value); setPeOpen(true); }}
                       onFocus={() => setPeOpen(true)}
-                      placeholder="Type to search PE firms…"
+                      placeholder="Type a company name (searches all of Table View)…"
                     />
-                    {peOpen && peList.length > 0 && (
+                    {peOpen && allCompanies.length > 0 && (
                       <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 2, background: '#fff', border: '1px solid #E2E8F0', borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.12)', maxHeight: 260, overflowY: 'auto', zIndex: 100 }}>
                         {filtered.length === 0 ? (
-                          <div style={{ padding: '0.5rem 0.75rem', fontSize: '0.72rem', color: '#94A3B8', fontStyle: 'italic' }}>No PE firms match &quot;{fields.peOwner}&quot;</div>
-                        ) : filtered.map(p => (
-                          <button
-                            key={p.id}
-                            type="button"
-                            onMouseDown={e => { e.preventDefault(); set('peOwner', p.company); setPeOpen(false); }}
-                            style={{ display: 'block', width: '100%', padding: '0.4rem 0.75rem', border: 'none', background: fields.peOwner === p.company ? '#EFF6FF' : '#fff', textAlign: 'left', cursor: 'pointer', fontSize: '0.78rem', fontFamily: 'inherit', color: '#1E293B' }}
-                            onMouseEnter={e => { if (fields.peOwner !== p.company) e.currentTarget.style.background = '#F8FAFC'; }}
-                            onMouseLeave={e => { e.currentTarget.style.background = fields.peOwner === p.company ? '#EFF6FF' : '#fff'; }}
-                          >{p.company}</button>
-                        ))}
-                        {peList.length > 50 && !q && (
+                          <div style={{ padding: '0.5rem 0.75rem', fontSize: '0.72rem', color: '#94A3B8', fontStyle: 'italic' }}>No companies match &quot;{fields.peOwner}&quot;</div>
+                        ) : filtered.map(p => {
+                          const isPE = p.type === 'Private Equity';
+                          return (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onMouseDown={e => { e.preventDefault(); set('peOwner', p.company); setPeOpen(false); }}
+                              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', width: '100%', padding: '0.4rem 0.75rem', border: 'none', background: fields.peOwner === p.company ? '#EFF6FF' : '#fff', textAlign: 'left', cursor: 'pointer', fontSize: '0.78rem', fontFamily: 'inherit', color: '#1E293B' }}
+                              onMouseEnter={e => { if (fields.peOwner !== p.company) e.currentTarget.style.background = '#F8FAFC'; }}
+                              onMouseLeave={e => { e.currentTarget.style.background = fields.peOwner === p.company ? '#EFF6FF' : '#fff'; }}
+                            >
+                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.company}</span>
+                              {isPE && <span style={{ flexShrink: 0, fontSize: '0.6rem', fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: '#F3E8FF', color: '#7C3AED' }}>PE</span>}
+                            </button>
+                          );
+                        })}
+                        {!q && allCompanies.length > 50 && (
                           <div style={{ padding: '0.35rem 0.75rem', fontSize: '0.65rem', color: '#94A3B8', fontStyle: 'italic', borderTop: '1px solid #F1F5F9' }}>
-                            Showing first 50 of {peList.length}. Type to narrow.
+                            Showing first 50 of {allCompanies.length}. Type to narrow.
                           </div>
                         )}
                       </div>
