@@ -115,7 +115,7 @@ export function OppsView() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [activityFilter, setActivityFilter] = useState('active');
+  const [activityFilter, setActivityFilter] = useState('all');
 
   async function fetchOpps() {
     setLoading(true);
@@ -278,24 +278,44 @@ export function OppsView() {
     return counts;
   }, [prefiltered]);
 
-  // Service (Scope) breakdown: count opps per scope and % of total (respects filters)
+  // Service (Scope) breakdown: split each opp's Scope by comma and count
+  // each individual service. One opp with "A, B, C" contributes 1 to each of A, B, C.
+  // Also tracks Sold / Not Sold per service so we can show win rate.
   const serviceBreakdown = useMemo(() => {
-    const counts = {};
-    let total = 0;
+    const stats = {}; // scope -> { total, wins, losses }
+    const totalOpps = prefiltered.length;
     for (const r of prefiltered) {
       const raw = (r['Scope'] || '').trim();
-      const key = raw && raw !== '-' && raw !== '#N/A' ? raw : '(Unspecified)';
-      counts[key] = (counts[key] || 0) + 1;
-      total += 1;
+      const cleaned = raw && raw !== '-' && raw !== '#N/A' ? raw : '';
+      const services = cleaned
+        ? cleaned.split(',').map(s => s.trim()).filter(Boolean)
+        : ['(Unspecified)'];
+      const stage = (r['Stage'] || '').trim();
+      const isWin = stage === 'Sold';
+      const isLoss = stage === 'Not Sold';
+      const seen = new Set();
+      for (const s of services) {
+        if (seen.has(s)) continue;
+        seen.add(s);
+        if (!stats[s]) stats[s] = { total: 0, wins: 0, losses: 0 };
+        stats[s].total += 1;
+        if (isWin) stats[s].wins += 1;
+        else if (isLoss) stats[s].losses += 1;
+      }
     }
-    const rows = Object.entries(counts)
-      .map(([scope, count]) => ({
-        scope,
-        count,
-        percent: total > 0 ? (count / total) * 100 : 0,
-      }))
+    const rows = Object.entries(stats)
+      .map(([scope, s]) => {
+        const decided = s.wins + s.losses;
+        return {
+          scope,
+          count: s.total,
+          wins: s.wins,
+          winRate: decided > 0 ? (s.wins / decided) * 100 : null,
+          percent: totalOpps > 0 ? (s.total / totalOpps) * 100 : 0,
+        };
+      })
       .sort((a, b) => b.count - a.count);
-    return { rows, total };
+    return { rows, total: totalOpps };
   }, [prefiltered]);
 
   const filtersActive = !!(dateFrom || dateTo || statusFilter !== 'all' || activityFilter !== 'all');
@@ -432,16 +452,21 @@ export function OppsView() {
               <thead>
                 <tr>
                   <th>Service (Scope)</th>
-                  <th style={{ textAlign: 'right' }}># of Opps</th>
+                  <th style={{ textAlign: 'right' }}>Wins</th>
+                  <th style={{ textAlign: 'right' }}>Win Rate</th>
                   <th style={{ textAlign: 'right' }}>% of Total</th>
-                  <th style={{ width: '30%' }}></th>
+                  <th style={{ width: '25%' }}></th>
+                  <th style={{ textAlign: 'right' }}>Total Opps</th>
                 </tr>
               </thead>
               <tbody>
                 {serviceBreakdown.rows.map(row => (
                   <tr key={row.scope}>
                     <td>{row.scope}</td>
-                    <td style={{ textAlign: 'right', fontWeight: 600 }}>{row.count}</td>
+                    <td style={{ textAlign: 'right' }}>{row.wins}</td>
+                    <td style={{ textAlign: 'right' }}>
+                      {row.winRate == null ? '—' : `${row.winRate.toFixed(1)}%`}
+                    </td>
                     <td style={{ textAlign: 'right' }}>{row.percent.toFixed(1)}%</td>
                     <td>
                       <div className={styles.serviceBar}>
@@ -451,6 +476,7 @@ export function OppsView() {
                         />
                       </div>
                     </td>
+                    <td style={{ textAlign: 'right', fontWeight: 600 }}>{row.count}</td>
                   </tr>
                 ))}
               </tbody>
