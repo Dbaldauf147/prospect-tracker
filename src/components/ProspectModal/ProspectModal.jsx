@@ -1038,9 +1038,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     const tagSet = new Set();
     for (const c of hubspotContacts) {
       const raw = c.dans_tags || c.dan_s_tags || c.dans_tag || '';
-      raw.split(';').map(t => t.trim()).filter(Boolean).forEach(t => tagSet.add(t));
+      raw.split(';').map(t => t.trim()).filter(Boolean).forEach(t => {
+        // Canonicalize on the spaced version "Efficiency / Renewables";
+        // drop the no-space variant so we don't show both in the picker.
+        if (t.toLowerCase().replace(/\s+/g, '') === 'efficiency/renewables') return;
+        tagSet.add(t);
+      });
     }
-    // Always include the 5 bucket tags
+    // Always include the canonical bucket tags
     TAG_OPTIONS.forEach(t => tagSet.add(t));
     return [...tagSet].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
   }, [hubspotContacts]);
