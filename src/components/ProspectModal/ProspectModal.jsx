@@ -1088,6 +1088,137 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const [targetAccountPickerOpen, setTargetAccountPickerOpen] = useState(null); // row index
   const [peOwnerPickerOpen, setPeOwnerPickerOpen] = useState(false);
   const contactsImportRef = useRef(null);
+  const [contactsDragging, setContactsDragging] = useState(false);
+  const [contactsUploadPreview, setContactsUploadPreview] = useState(null); // { fileName, headers, rows, mapping }
+  const [contactsImporting, setContactsImporting] = useState(false);
+
+  // Load an Excel file and show the column-mapping preview modal; don't import yet.
+  const processContactsFile = useCallback(async (file) => {
+    if (!file) return;
+    if (!/\.xlsx?$/i.test(file.name)) { alert('Please drop an Excel file (.xlsx or .xls).'); return; }
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf);
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+      if (!rows.length) { alert('The uploaded file has no rows.'); return; }
+      const headers = Object.keys(rows[0]);
+      const norm = s => (s || '').toString().toLowerCase().replace(/[^a-z0-9]/g, '');
+      const mapping = {};
+      for (const h of headers) {
+        const n = norm(h);
+        if (n === 'firstname' || n === 'first') mapping[h] = 'firstname';
+        else if (n === 'lastname' || n === 'last') mapping[h] = 'lastname';
+        else if (n === 'jobtitle' || n === 'title') mapping[h] = 'jobtitle';
+        else if (n === 'teamname' || n === 'team') mapping[h] = 'teamName';
+        else if (n === 'email') mapping[h] = 'email';
+        else if (n === 'phone') mapping[h] = 'phone';
+        else if (n === 'city') mapping[h] = 'city';
+        else if (n === 'state') mapping[h] = 'state';
+        else if (n === 'country') mapping[h] = 'country';
+        else if (n === 'linkedin' || n === 'linkedinurl') mapping[h] = 'linkedin';
+        else if (n === 'tags' || n === 'danstags') mapping[h] = 'dans_tags';
+        else if (n === 'notes' || n === 'note') mapping[h] = 'notes';
+        else mapping[h] = '';
+      }
+      setContactsUploadPreview({ fileName: file.name, headers, rows, mapping });
+    } catch (err) {
+      alert('Failed to read file: ' + (err.message || err));
+    }
+  }, []);
+
+  // Run the actual delete+create import with the user-confirmed mapping.
+  const confirmContactsImport = useCallback(async () => {
+    const preview = contactsUploadPreview;
+    if (!preview) return;
+    const { rows, mapping } = preview;
+    const parsed = rows
+      .map(r => {
+        const out = { company: fields.company };
+        for (const [src, dst] of Object.entries(mapping)) {
+          if (!dst) continue;
+          const v = String(r[src] ?? '').trim();
+          if (dst === 'linkedin') out.hs_linkedin_url = v;
+          else out[dst] = v;
+        }
+        return out;
+      })
+      .filter(r => r.email);
+    if (parsed.length === 0) { alert('No rows had a mapped Email — nothing to import.'); return; }
+    const existingToDelete = companyContacts.filter(c => c.id || c.vid);
+    const confirmMsg = existingToDelete.length > 0
+      ? `This will REPLACE the contacts under ${fields.company}.\n\n` +
+        `• ${existingToDelete.length} existing contact${existingToDelete.length === 1 ? '' : 's'} will be DELETED from HubSpot.\n` +
+        `• ${parsed.length} contact${parsed.length === 1 ? '' : 's'} from the file will be CREATED.\n\n` +
+        `This cannot be undone. Continue?`
+      : `Import ${parsed.length} contact${parsed.length === 1 ? '' : 's'} into HubSpot under ${fields.company}?`;
+    if (!window.confirm(confirmMsg)) return;
+
+    setContactsImporting(true);
+    let deleted = 0, deleteErrors = 0;
+    for (const c of existingToDelete) {
+      const cid = c.id || c.vid;
+      try {
+        const res = await fetch('/api/hubspot?action=delete-contact', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contactId: cid }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          deleted += 1;
+          try {
+            const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
+            if (cache?.contacts) {
+              cache.contacts = cache.contacts.filter(x => String(x.id || x.vid) !== String(cid));
+              localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache));
+            }
+          } catch { /* ignore */ }
+        } else {
+          deleteErrors += 1;
+        }
+      } catch {
+        deleteErrors += 1;
+      }
+    }
+
+    let added = 0, errors = 0;
+    for (const row of parsed) {
+      const { teamName, notes: noteText, ...hsProps } = row;
+      try {
+        const res = await fetch('/api/hubspot?action=create-contact', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ properties: hsProps }),
+        });
+        const data = await res.json();
+        if (data.success && data.contact) {
+          added += 1;
+          try {
+            const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
+            if (cache?.contacts) {
+              cache.contacts.push(data.contact);
+              localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache));
+            }
+          } catch { /* ignore */ }
+          const newId = data.contact.id;
+          if (newId && teamName) handleSaveContactTeamName(newId, teamName);
+          if (newId && noteText) handleSaveContactNote(newId, noteText);
+        } else {
+          errors += 1;
+        }
+      } catch {
+        errors += 1;
+      }
+    }
+    window.dispatchEvent(new Event('hubspot-cache-updated'));
+    setContactsImporting(false);
+    setContactsUploadPreview(null);
+    alert(
+      `Deleted ${deleted} existing contact${deleted === 1 ? '' : 's'}${deleteErrors > 0 ? ` (${deleteErrors} failed to delete)` : ''}.\n` +
+      `Imported ${added} new contact${added === 1 ? '' : 's'}${errors > 0 ? ` (${errors} failed)` : ''}.`
+    );
+  }, [contactsUploadPreview, fields.company, companyContacts, handleSaveContactTeamName, handleSaveContactNote]);
 
   // Close the PE Owner dropdown when clicking outside
   useEffect(() => {
@@ -4451,117 +4582,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   onChange={async e => {
                     const file = e.target.files && e.target.files[0];
                     e.target.value = '';
-                    if (!file) return;
-                    try {
-                      const buf = await file.arrayBuffer();
-                      const wb = XLSX.read(buf);
-                      const sheet = wb.Sheets[wb.SheetNames[0]];
-                      const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
-                      if (!rows.length) { alert('The uploaded file has no rows.'); return; }
-                      const norm = s => (s || '').toString().toLowerCase().replace(/[^a-z0-9]/g, '');
-                      const headerMap = {};
-                      for (const h of Object.keys(rows[0])) {
-                        const n = norm(h);
-                        if (n === 'firstname' || n === 'first') headerMap[h] = 'firstname';
-                        else if (n === 'lastname' || n === 'last') headerMap[h] = 'lastname';
-                        else if (n === 'jobtitle' || n === 'title') headerMap[h] = 'jobtitle';
-                        else if (n === 'teamname' || n === 'team') headerMap[h] = 'teamName';
-                        else if (n === 'email') headerMap[h] = 'email';
-                        else if (n === 'phone') headerMap[h] = 'phone';
-                        else if (n === 'city') headerMap[h] = 'city';
-                        else if (n === 'state') headerMap[h] = 'state';
-                        else if (n === 'country') headerMap[h] = 'country';
-                        else if (n === 'linkedin' || n === 'linkedinurl') headerMap[h] = 'linkedin';
-                        else if (n === 'tags' || n === 'danstags') headerMap[h] = 'dans_tags';
-                        else if (n === 'notes' || n === 'note') headerMap[h] = 'notes';
-                      }
-                      const parsed = rows
-                        .map(r => {
-                          const out = { company: fields.company };
-                          for (const [src, dst] of Object.entries(headerMap)) {
-                            const v = String(r[src] ?? '').trim();
-                            if (dst === 'linkedin') out.hs_linkedin_url = v;
-                            else out[dst] = v;
-                          }
-                          return out;
-                        })
-                        .filter(r => r.email);
-                      if (parsed.length === 0) { alert('No rows had an Email — nothing imported.'); return; }
-                      const existingToDelete = companyContacts.filter(c => c.id || c.vid);
-                      const confirmMsg = existingToDelete.length > 0
-                        ? `This will REPLACE the contacts under ${fields.company}.\n\n` +
-                          `• ${existingToDelete.length} existing contact${existingToDelete.length === 1 ? '' : 's'} will be DELETED from HubSpot.\n` +
-                          `• ${parsed.length} contact${parsed.length === 1 ? '' : 's'} from the file will be CREATED.\n\n` +
-                          `This cannot be undone. Continue?`
-                        : `Import ${parsed.length} contact${parsed.length === 1 ? '' : 's'} into HubSpot under ${fields.company}?`;
-                      if (!window.confirm(confirmMsg)) return;
-
-                      // First pass: delete all existing contacts from HubSpot.
-                      let deleted = 0, deleteErrors = 0;
-                      for (const c of existingToDelete) {
-                        const cid = c.id || c.vid;
-                        try {
-                          const res = await fetch('/api/hubspot?action=delete-contact', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ contactId: cid }),
-                          });
-                          const data = await res.json();
-                          if (data.success) {
-                            deleted += 1;
-                            try {
-                              const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
-                              if (cache?.contacts) {
-                                cache.contacts = cache.contacts.filter(x => String(x.id || x.vid) !== String(cid));
-                                localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache));
-                              }
-                            } catch { /* ignore */ }
-                          } else {
-                            deleteErrors += 1;
-                          }
-                        } catch {
-                          deleteErrors += 1;
-                        }
-                      }
-
-                      // Second pass: create the imported rows.
-                      let added = 0, errors = 0;
-                      for (const row of parsed) {
-                        const { teamName, notes: noteText, ...hsProps } = row;
-                        try {
-                          const res = await fetch('/api/hubspot?action=create-contact', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ properties: hsProps }),
-                          });
-                          const data = await res.json();
-                          if (data.success && data.contact) {
-                            added += 1;
-                            try {
-                              const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
-                              if (cache?.contacts) {
-                                cache.contacts.push(data.contact);
-                                localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache));
-                              }
-                            } catch { /* ignore */ }
-                            const newId = data.contact.id;
-                            if (newId && teamName) handleSaveContactTeamName(newId, teamName);
-                            if (newId && noteText) handleSaveContactNote(newId, noteText);
-                          } else {
-                            errors += 1;
-                          }
-                        } catch {
-                          errors += 1;
-                        }
-                      }
-                      window.dispatchEvent(new Event('hubspot-cache-updated'));
-                      alert(
-                        `Deleted ${deleted} existing contact${deleted === 1 ? '' : 's'}${deleteErrors > 0 ? ` (${deleteErrors} failed to delete)` : ''}.\n` +
-                        `Imported ${added} new contact${added === 1 ? '' : 's'}${errors > 0 ? ` (${errors} failed)` : ''}.`
-                      );
-                    } catch (err) {
-                      alert('Failed to read file: ' + (err.message || err));
-                    }
+                    await processContactsFile(file);
                   }}
                 />
                 <button
@@ -4574,6 +4595,28 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 >+ Add Contact</button>
               </div>
 
+              <div
+                onDragEnter={e => { if (e.dataTransfer?.types?.includes?.('Files')) { e.preventDefault(); setContactsDragging(true); } }}
+                onDragOver={e => { if (e.dataTransfer?.types?.includes?.('Files')) { e.preventDefault(); setContactsDragging(true); } }}
+                onDragLeave={e => {
+                  if (e.currentTarget.contains(e.relatedTarget)) return;
+                  setContactsDragging(false);
+                }}
+                onDrop={async e => {
+                  e.preventDefault();
+                  setContactsDragging(false);
+                  const file = e.dataTransfer?.files?.[0];
+                  await processContactsFile(file);
+                }}
+                style={{ position: 'relative', border: contactsDragging ? '2px dashed #7C3AED' : '2px dashed transparent', borderRadius: 6, transition: 'border-color 0.15s' }}
+              >
+                {contactsDragging && (
+                  <div style={{ position: 'absolute', inset: 0, background: 'rgba(124, 58, 237, 0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', zIndex: 10, borderRadius: 6 }}>
+                    <div style={{ padding: '0.75rem 1.25rem', background: '#fff', border: '2px solid #7C3AED', borderRadius: 8, fontWeight: 700, color: '#7C3AED', fontSize: '0.9rem', boxShadow: '0 4px 16px rgba(0,0,0,0.12)' }}>
+                      Drop Excel file to replace contacts
+                    </div>
+                  </div>
+                )}
               {contactView === 'orgchart' ? (
                 <OrgChart contacts={companyContacts} onDeleteContact={handleDeleteContact} deletingContact={deletingContact} onEditContact={setEditingContact} reportsTo={settings.contactReportsTo || {}} />
               ) : companyContacts.length > 0 ? (
@@ -4668,6 +4711,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               ) : (
                 <div style={{ fontSize: '0.78rem', color: '#9CA3AF', fontStyle: 'italic' }}>No HubSpot contacts found for this company</div>
               )}
+              </div>
             </div>
           )}
         </div>
@@ -4710,6 +4754,118 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           companyContacts={companyContacts}
           emailDomains={(fields.emailDomain || '').split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)}
         />
+      )}
+      {contactsUploadPreview && createPortal(
+        (() => {
+          const { fileName, headers, rows, mapping } = contactsUploadPreview;
+          const sample = rows[0] || {};
+          const FIELD_OPTIONS = [
+            { key: '', label: '— Ignore —' },
+            { key: 'firstname', label: 'First Name' },
+            { key: 'lastname', label: 'Last Name' },
+            { key: 'email', label: 'Email (required)' },
+            { key: 'jobtitle', label: 'Job Title' },
+            { key: 'teamName', label: 'Team Name' },
+            { key: 'phone', label: 'Phone' },
+            { key: 'city', label: 'City' },
+            { key: 'state', label: 'State' },
+            { key: 'country', label: 'Country' },
+            { key: 'linkedin', label: 'LinkedIn URL' },
+            { key: 'dans_tags', label: 'Tags' },
+            { key: 'notes', label: 'Notes' },
+          ];
+          const mappedFields = new Set(Object.values(mapping).filter(Boolean));
+          const hasEmail = mappedFields.has('email');
+          const usedCounts = {};
+          for (const f of Object.values(mapping)) if (f) usedCounts[f] = (usedCounts[f] || 0) + 1;
+          const hasDuplicate = Object.values(usedCounts).some(n => n > 1);
+
+          function updateMap(header, fieldKey) {
+            setContactsUploadPreview(prev => prev ? { ...prev, mapping: { ...prev.mapping, [header]: fieldKey } } : prev);
+          }
+          function cancel() { if (!contactsImporting) setContactsUploadPreview(null); }
+
+          return (
+            <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.55)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }} onClick={cancel}>
+              <div
+                onClick={e => e.stopPropagation()}
+                style={{ background: '#fff', borderRadius: 10, width: 820, maxWidth: '100%', maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 10px 40px rgba(0,0,0,0.25)' }}
+              >
+                <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div>
+                    <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#1E293B' }}>Map columns for import</div>
+                    <div style={{ fontSize: '0.7rem', color: '#64748B' }}>
+                      <code>{fileName}</code> — {rows.length} row{rows.length === 1 ? '' : 's'} detected. Review each column's mapping before importing.
+                    </div>
+                  </div>
+                  <button onClick={cancel} style={{ border: 'none', background: 'none', fontSize: '1.2rem', color: '#94A3B8', cursor: 'pointer' }}>×</button>
+                </div>
+
+                <div style={{ flex: 1, overflowY: 'auto', padding: '0.75rem 1rem' }}>
+                  {!hasEmail && (
+                    <div style={{ padding: '0.5rem 0.75rem', background: '#FEE2E2', border: '1px solid #FCA5A5', borderRadius: 6, fontSize: '0.75rem', color: '#991B1B', marginBottom: '0.5rem', fontWeight: 600 }}>
+                      At least one column must be mapped to <strong>Email</strong> — rows with no email are skipped.
+                    </div>
+                  )}
+                  {hasDuplicate && (
+                    <div style={{ padding: '0.5rem 0.75rem', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 6, fontSize: '0.75rem', color: '#92400E', marginBottom: '0.5rem' }}>
+                      Each field can only be mapped to one column. Fix duplicate assignments below.
+                    </div>
+                  )}
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
+                    <thead>
+                      <tr style={{ background: '#F8FAFC' }}>
+                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: '#64748B', borderBottom: '1px solid #E2E8F0' }}>File column</th>
+                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: '#64748B', borderBottom: '1px solid #E2E8F0' }}>Sample row</th>
+                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: '#64748B', borderBottom: '1px solid #E2E8F0' }}>Maps to</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {headers.map(h => {
+                        const fieldKey = mapping[h] || '';
+                        const duplicate = fieldKey && usedCounts[fieldKey] > 1;
+                        const sampleVal = String(sample[h] ?? '').slice(0, 80);
+                        return (
+                          <tr key={h} style={{ borderBottom: '1px solid #F1F5F9' }}>
+                            <td style={{ padding: '0.4rem 0.5rem', fontWeight: 600, color: '#1E293B' }}>{h}</td>
+                            <td style={{ padding: '0.4rem 0.5rem', color: '#64748B', fontSize: '0.72rem', maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sampleVal || <span style={{ color: '#CBD5E1', fontStyle: 'italic' }}>empty</span>}</td>
+                            <td style={{ padding: '0.4rem 0.5rem' }}>
+                              <select
+                                value={fieldKey}
+                                onChange={e => updateMap(h, e.target.value)}
+                                style={{ padding: '0.25rem 0.4rem', border: `1px solid ${duplicate ? '#DC2626' : '#E2E8F0'}`, borderRadius: 4, fontSize: '0.75rem', fontFamily: 'inherit', background: duplicate ? '#FEF2F2' : '#fff', color: '#1E293B', minWidth: 180 }}
+                              >
+                                {FIELD_OPTIONS.map(opt => (
+                                  <option key={opt.key || '_ignore'} value={opt.key}>{opt.label}</option>
+                                ))}
+                              </select>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div style={{ padding: '0.75rem 1rem', borderTop: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                  <button
+                    onClick={cancel}
+                    disabled={contactsImporting}
+                    style={{ padding: '0.45rem 0.9rem', border: '1px solid #E2E8F0', background: '#fff', color: '#64748B', borderRadius: 6, fontSize: '0.8rem', fontWeight: 600, cursor: contactsImporting ? 'not-allowed' : 'pointer', fontFamily: 'inherit' }}
+                  >Cancel</button>
+                  <button
+                    onClick={confirmContactsImport}
+                    disabled={contactsImporting || !hasEmail || hasDuplicate}
+                    style={{ padding: '0.45rem 0.9rem', border: 'none', background: (!hasEmail || hasDuplicate) ? '#94A3B8' : '#7C3AED', color: '#fff', borderRadius: 6, fontSize: '0.8rem', fontWeight: 700, cursor: (contactsImporting || !hasEmail || hasDuplicate) ? 'not-allowed' : 'pointer', fontFamily: 'inherit' }}
+                  >
+                    {contactsImporting ? 'Importing…' : `Replace with ${rows.length} row${rows.length === 1 ? '' : 's'}`}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })(),
+        document.body
       )}
       {portfolioUpload && createPortal(
         (() => {
