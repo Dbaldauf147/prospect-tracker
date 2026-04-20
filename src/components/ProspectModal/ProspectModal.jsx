@@ -1606,8 +1606,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     quill.focus();
   }, []);
 
-  // Generate a plain-text follow-up email that lists the to-do items from the notes
-  // and open it in Outlook Web's compose view, with linked contacts on the To line.
+  // Generate a follow-up email and download it as an .eml file (matches the Draft Emails
+  // section pattern — double-click the downloaded file to open as a draft in Outlook).
   const openOppFollowUpEmail = useCallback(() => {
     if (!selectedOpp) return;
     const html = oppNoteDraft || '';
@@ -1632,26 +1632,38 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     const titleBit = selectedOpp.title ? ` — ${selectedOpp.title}` : '';
     const subject = `Follow-up — ${fields.company || 'our conversation'}${titleBit}`;
 
-    const lines = [];
-    lines.push('Hi,');
-    lines.push('');
-    lines.push(`Thanks again for the conversation${fields.company ? ` about ${fields.company}` : ''}${selectedOpp.title ? ` (${selectedOpp.title})` : ''}. Below is a recap of the follow-up items:`);
-    lines.push('');
-    if (items.length > 0) {
-      for (const item of items) {
-        lines.push(`• ${item.text}`);
-      }
-    } else {
-      lines.push('(No follow-up items captured in the notes yet.)');
-    }
-    lines.push('');
-    lines.push('Let me know if I\'ve missed anything or you\'d like to dig deeper on any of these.');
-    lines.push('');
-    lines.push('Thanks,');
+    // Build the HTML body — bulleted list for the to-do items.
+    const esc = s => String(s || '')
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const introLine = `Thanks again for the conversation${fields.company ? ` about ${esc(fields.company)}` : ''}${selectedOpp.title ? ` (${esc(selectedOpp.title)})` : ''}. Below is a recap of the follow-up items:`;
+    const itemsHtml = items.length > 0
+      ? `<ul>${items.map(i => `<li>${esc(i.text)}</li>`).join('')}</ul>`
+      : '<p><em>(No follow-up items captured in the notes yet.)</em></p>';
+    const htmlContent = `<html><body><p>Hi,</p><p>${introLine}</p>${itemsHtml}<p>Let me know if I've missed anything or you'd like to dig deeper on any of these.</p><p>Thanks,</p></body></html>`;
 
-    const body = lines.join('\n');
-    const url = `https://outlook.office.com/mail/deeplink/compose?to=${encodeURIComponent(recipients.join(';'))}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    window.open(url, '_blank', 'noopener,noreferrer');
+    const toHeader = recipients.join(', ');
+    const eml = [
+      'MIME-Version: 1.0',
+      `Subject: ${subject}`,
+      toHeader ? `To: ${toHeader}` : null,
+      'X-Unsent: 1',
+      'Content-Type: text/html; charset=UTF-8',
+      'Content-Transfer-Encoding: 8bit',
+      '',
+      htmlContent,
+    ].filter(Boolean).join('\r\n');
+
+    const safeName = (selectedOpp.title || fields.company || 'follow-up')
+      .replace(/[\\/:*?"<>|]+/g, '_').slice(0, 60) || 'follow-up';
+    const blob = new Blob([eml], { type: 'message/rfc822' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `followup_${safeName}.eml`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }, [selectedOpp, oppNoteDraft, companyContacts, fields.company]);
 
   const downloadOppAsDocx = useCallback(async () => {
