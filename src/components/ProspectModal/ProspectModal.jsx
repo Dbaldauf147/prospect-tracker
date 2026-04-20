@@ -1092,134 +1092,6 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const [contactsUploadPreview, setContactsUploadPreview] = useState(null); // { fileName, headers, rows, mapping }
   const [contactsImporting, setContactsImporting] = useState(false);
 
-  // Load an Excel file and show the column-mapping preview modal; don't import yet.
-  const processContactsFile = useCallback(async (file) => {
-    if (!file) return;
-    if (!/\.xlsx?$/i.test(file.name)) { alert('Please drop an Excel file (.xlsx or .xls).'); return; }
-    try {
-      const buf = await file.arrayBuffer();
-      const wb = XLSX.read(buf);
-      const sheet = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
-      if (!rows.length) { alert('The uploaded file has no rows.'); return; }
-      const headers = Object.keys(rows[0]);
-      const norm = s => (s || '').toString().toLowerCase().replace(/[^a-z0-9]/g, '');
-      const mapping = {};
-      for (const h of headers) {
-        const n = norm(h);
-        if (n === 'firstname' || n === 'first') mapping[h] = 'firstname';
-        else if (n === 'lastname' || n === 'last') mapping[h] = 'lastname';
-        else if (n === 'jobtitle' || n === 'title') mapping[h] = 'jobtitle';
-        else if (n === 'teamname' || n === 'team') mapping[h] = 'teamName';
-        else if (n === 'email') mapping[h] = 'email';
-        else if (n === 'phone') mapping[h] = 'phone';
-        else if (n === 'city') mapping[h] = 'city';
-        else if (n === 'state') mapping[h] = 'state';
-        else if (n === 'country') mapping[h] = 'country';
-        else if (n === 'linkedin' || n === 'linkedinurl') mapping[h] = 'linkedin';
-        else if (n === 'tags' || n === 'danstags') mapping[h] = 'dans_tags';
-        else if (n === 'notes' || n === 'note') mapping[h] = 'notes';
-        else mapping[h] = '';
-      }
-      setContactsUploadPreview({ fileName: file.name, headers, rows, mapping });
-    } catch (err) {
-      alert('Failed to read file: ' + (err.message || err));
-    }
-  }, []);
-
-  // Run the actual delete+create import with the user-confirmed mapping.
-  const confirmContactsImport = useCallback(async () => {
-    const preview = contactsUploadPreview;
-    if (!preview) return;
-    const { rows, mapping } = preview;
-    const parsed = rows
-      .map(r => {
-        const out = { company: fields.company };
-        for (const [src, dst] of Object.entries(mapping)) {
-          if (!dst) continue;
-          const v = String(r[src] ?? '').trim();
-          if (dst === 'linkedin') out.hs_linkedin_url = v;
-          else out[dst] = v;
-        }
-        return out;
-      })
-      .filter(r => r.email);
-    if (parsed.length === 0) { alert('No rows had a mapped Email — nothing to import.'); return; }
-    const existingToDelete = companyContacts.filter(c => c.id || c.vid);
-    const confirmMsg = existingToDelete.length > 0
-      ? `This will REPLACE the contacts under ${fields.company}.\n\n` +
-        `• ${existingToDelete.length} existing contact${existingToDelete.length === 1 ? '' : 's'} will be DELETED from HubSpot.\n` +
-        `• ${parsed.length} contact${parsed.length === 1 ? '' : 's'} from the file will be CREATED.\n\n` +
-        `This cannot be undone. Continue?`
-      : `Import ${parsed.length} contact${parsed.length === 1 ? '' : 's'} into HubSpot under ${fields.company}?`;
-    if (!window.confirm(confirmMsg)) return;
-
-    setContactsImporting(true);
-    let deleted = 0, deleteErrors = 0;
-    for (const c of existingToDelete) {
-      const cid = c.id || c.vid;
-      try {
-        const res = await fetch('/api/hubspot?action=delete-contact', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ contactId: cid }),
-        });
-        const data = await res.json();
-        if (data.success) {
-          deleted += 1;
-          try {
-            const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
-            if (cache?.contacts) {
-              cache.contacts = cache.contacts.filter(x => String(x.id || x.vid) !== String(cid));
-              localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache));
-            }
-          } catch { /* ignore */ }
-        } else {
-          deleteErrors += 1;
-        }
-      } catch {
-        deleteErrors += 1;
-      }
-    }
-
-    let added = 0, errors = 0;
-    for (const row of parsed) {
-      const { teamName, notes: noteText, ...hsProps } = row;
-      try {
-        const res = await fetch('/api/hubspot?action=create-contact', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ properties: hsProps }),
-        });
-        const data = await res.json();
-        if (data.success && data.contact) {
-          added += 1;
-          try {
-            const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
-            if (cache?.contacts) {
-              cache.contacts.push(data.contact);
-              localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache));
-            }
-          } catch { /* ignore */ }
-          const newId = data.contact.id;
-          if (newId && teamName) handleSaveContactTeamName(newId, teamName);
-          if (newId && noteText) handleSaveContactNote(newId, noteText);
-        } else {
-          errors += 1;
-        }
-      } catch {
-        errors += 1;
-      }
-    }
-    window.dispatchEvent(new Event('hubspot-cache-updated'));
-    setContactsImporting(false);
-    setContactsUploadPreview(null);
-    alert(
-      `Deleted ${deleted} existing contact${deleted === 1 ? '' : 's'}${deleteErrors > 0 ? ` (${deleteErrors} failed to delete)` : ''}.\n` +
-      `Imported ${added} new contact${added === 1 ? '' : 's'}${errors > 0 ? ` (${errors} failed)` : ''}.`
-    );
-  }, [contactsUploadPreview, fields.company, companyContacts, handleSaveContactTeamName, handleSaveContactNote]);
-
   // Close the PE Owner dropdown when clicking outside
   useEffect(() => {
     if (!peOwnerPickerOpen) return;
@@ -1483,6 +1355,134 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     else delete next[contactId];
     updateSettings({ contactReportsTo: next });
   }, [settings.contactReportsTo, updateSettings]);
+  // Load an Excel file and show the column-mapping preview modal; don't import yet.
+  const processContactsFile = useCallback(async (file) => {
+    if (!file) return;
+    if (!/\.xlsx?$/i.test(file.name)) { alert('Please drop an Excel file (.xlsx or .xls).'); return; }
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf);
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+      if (!rows.length) { alert('The uploaded file has no rows.'); return; }
+      const headers = Object.keys(rows[0]);
+      const norm = s => (s || '').toString().toLowerCase().replace(/[^a-z0-9]/g, '');
+      const mapping = {};
+      for (const h of headers) {
+        const n = norm(h);
+        if (n === 'firstname' || n === 'first') mapping[h] = 'firstname';
+        else if (n === 'lastname' || n === 'last') mapping[h] = 'lastname';
+        else if (n === 'jobtitle' || n === 'title') mapping[h] = 'jobtitle';
+        else if (n === 'teamname' || n === 'team') mapping[h] = 'teamName';
+        else if (n === 'email') mapping[h] = 'email';
+        else if (n === 'phone') mapping[h] = 'phone';
+        else if (n === 'city') mapping[h] = 'city';
+        else if (n === 'state') mapping[h] = 'state';
+        else if (n === 'country') mapping[h] = 'country';
+        else if (n === 'linkedin' || n === 'linkedinurl') mapping[h] = 'linkedin';
+        else if (n === 'tags' || n === 'danstags') mapping[h] = 'dans_tags';
+        else if (n === 'notes' || n === 'note') mapping[h] = 'notes';
+        else mapping[h] = '';
+      }
+      setContactsUploadPreview({ fileName: file.name, headers, rows, mapping });
+    } catch (err) {
+      alert('Failed to read file: ' + (err.message || err));
+    }
+  }, []);
+
+  // Run the actual delete+create import with the user-confirmed mapping.
+  const confirmContactsImport = useCallback(async () => {
+    const preview = contactsUploadPreview;
+    if (!preview) return;
+    const { rows, mapping } = preview;
+    const parsed = rows
+      .map(r => {
+        const out = { company: fields.company };
+        for (const [src, dst] of Object.entries(mapping)) {
+          if (!dst) continue;
+          const v = String(r[src] ?? '').trim();
+          if (dst === 'linkedin') out.hs_linkedin_url = v;
+          else out[dst] = v;
+        }
+        return out;
+      })
+      .filter(r => r.email);
+    if (parsed.length === 0) { alert('No rows had a mapped Email — nothing to import.'); return; }
+    const existingToDelete = companyContacts.filter(c => c.id || c.vid);
+    const confirmMsg = existingToDelete.length > 0
+      ? `This will REPLACE the contacts under ${fields.company}.\n\n` +
+        `• ${existingToDelete.length} existing contact${existingToDelete.length === 1 ? '' : 's'} will be DELETED from HubSpot.\n` +
+        `• ${parsed.length} contact${parsed.length === 1 ? '' : 's'} from the file will be CREATED.\n\n` +
+        `This cannot be undone. Continue?`
+      : `Import ${parsed.length} contact${parsed.length === 1 ? '' : 's'} into HubSpot under ${fields.company}?`;
+    if (!window.confirm(confirmMsg)) return;
+
+    setContactsImporting(true);
+    let deleted = 0, deleteErrors = 0;
+    for (const c of existingToDelete) {
+      const cid = c.id || c.vid;
+      try {
+        const res = await fetch('/api/hubspot?action=delete-contact', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contactId: cid }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          deleted += 1;
+          try {
+            const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
+            if (cache?.contacts) {
+              cache.contacts = cache.contacts.filter(x => String(x.id || x.vid) !== String(cid));
+              localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache));
+            }
+          } catch { /* ignore */ }
+        } else {
+          deleteErrors += 1;
+        }
+      } catch {
+        deleteErrors += 1;
+      }
+    }
+
+    let added = 0, errors = 0;
+    for (const row of parsed) {
+      const { teamName, notes: noteText, ...hsProps } = row;
+      try {
+        const res = await fetch('/api/hubspot?action=create-contact', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ properties: hsProps }),
+        });
+        const data = await res.json();
+        if (data.success && data.contact) {
+          added += 1;
+          try {
+            const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
+            if (cache?.contacts) {
+              cache.contacts.push(data.contact);
+              localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache));
+            }
+          } catch { /* ignore */ }
+          const newId = data.contact.id;
+          if (newId && teamName) handleSaveContactTeamName(newId, teamName);
+          if (newId && noteText) handleSaveContactNote(newId, noteText);
+        } else {
+          errors += 1;
+        }
+      } catch {
+        errors += 1;
+      }
+    }
+    window.dispatchEvent(new Event('hubspot-cache-updated'));
+    setContactsImporting(false);
+    setContactsUploadPreview(null);
+    alert(
+      `Deleted ${deleted} existing contact${deleted === 1 ? '' : 's'}${deleteErrors > 0 ? ` (${deleteErrors} failed to delete)` : ''}.\n` +
+      `Imported ${added} new contact${added === 1 ? '' : 's'}${errors > 0 ? ` (${errors} failed)` : ''}.`
+    );
+  }, [contactsUploadPreview, fields.company, companyContacts, handleSaveContactTeamName, handleSaveContactNote]);
+
 
   const handleCloseContactEdit = useCallback(() => {
     setEditingContact(null);
