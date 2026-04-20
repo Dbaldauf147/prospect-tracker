@@ -200,7 +200,14 @@ export function OppsView() {
   }, []);
 
   const headers = data?.headers || [];
-  const records = data?.records || [];
+  // Ignore any opp row that doesn't have an Open Year value.
+  const records = useMemo(() => {
+    const raw = data?.records || [];
+    return raw.filter(r => {
+      const v = String(r['Open Year'] ?? '').trim();
+      return v && v !== '-' && v !== '#N/A';
+    });
+  }, [data]);
 
   // Build columns from headers
   const columns = useMemo(() => {
@@ -323,6 +330,47 @@ export function OppsView() {
     setDateFrom(''); setDateTo(''); setStatusFilter('all'); setActivityFilter('all');
   };
 
+  const servicesColumns = useMemo(() => [
+    { key: 'scope', label: 'Service (Scope)', defaultWidth: 260 },
+    {
+      key: 'wins',
+      label: 'Wins',
+      defaultWidth: 90,
+      render: (row) => <div style={{ textAlign: 'right' }}>{row.wins}</div>,
+    },
+    {
+      key: 'winRate',
+      label: 'Win Rate',
+      defaultWidth: 110,
+      render: (row) => (
+        <div style={{ textAlign: 'right' }}>
+          {row.winRate == null ? '—' : `${row.winRate.toFixed(1)}%`}
+        </div>
+      ),
+    },
+    {
+      key: 'percent',
+      label: '% of Total',
+      defaultWidth: 220,
+      render: (row) => (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <span style={{ minWidth: '48px', textAlign: 'right' }}>{row.percent.toFixed(1)}%</span>
+          <div className={styles.serviceBar} style={{ flex: 1 }}>
+            <div className={styles.serviceBarFill} style={{ width: `${row.percent}%` }} />
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: 'count',
+      label: 'Total Opps',
+      defaultWidth: 110,
+      render: (row) => (
+        <div style={{ textAlign: 'right', fontWeight: 600 }}>{row.count}</div>
+      ),
+    },
+  ], []);
+
   return (
     <div className={styles.wrapper}>
       <div className={styles.header}>
@@ -438,51 +486,21 @@ export function OppsView() {
           )}
         </>
       ) : (
-        <div className={styles.servicesWrap}>
-          <div className={styles.servicesHeader}>
+        <>
+          <div className={styles.searchRow}>
             <span className={styles.resultCount}>
               {serviceBreakdown.rows.length} service{serviceBreakdown.rows.length === 1 ? '' : 's'}
               {' · '}{serviceBreakdown.total} total opps
             </span>
           </div>
-          {serviceBreakdown.rows.length === 0 ? (
-            <div className={styles.loading}>No services to display.</div>
-          ) : (
-            <table className={styles.servicesTable}>
-              <thead>
-                <tr>
-                  <th>Service (Scope)</th>
-                  <th style={{ textAlign: 'right' }}>Wins</th>
-                  <th style={{ textAlign: 'right' }}>Win Rate</th>
-                  <th style={{ textAlign: 'right' }}>% of Total</th>
-                  <th style={{ width: '25%' }}></th>
-                  <th style={{ textAlign: 'right' }}>Total Opps</th>
-                </tr>
-              </thead>
-              <tbody>
-                {serviceBreakdown.rows.map(row => (
-                  <tr key={row.scope}>
-                    <td>{row.scope}</td>
-                    <td style={{ textAlign: 'right' }}>{row.wins}</td>
-                    <td style={{ textAlign: 'right' }}>
-                      {row.winRate == null ? '—' : `${row.winRate.toFixed(1)}%`}
-                    </td>
-                    <td style={{ textAlign: 'right' }}>{row.percent.toFixed(1)}%</td>
-                    <td>
-                      <div className={styles.serviceBar}>
-                        <div
-                          className={styles.serviceBarFill}
-                          style={{ width: `${row.percent}%` }}
-                        />
-                      </div>
-                    </td>
-                    <td style={{ textAlign: 'right', fontWeight: 600 }}>{row.count}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
+          <DataTable
+            tableId="opps-services"
+            columns={servicesColumns}
+            rows={serviceBreakdown.rows.map(r => ({ ...r, id: r.scope }))}
+            alwaysVisible={['scope']}
+            emptyMessage="No services to display."
+          />
+        </>
       )}
     </div>
   );
