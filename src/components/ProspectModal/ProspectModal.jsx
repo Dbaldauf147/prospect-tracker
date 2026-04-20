@@ -1670,13 +1670,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   }, [companyOppsData, writeCompanyOpps, getEffectiveTemplate]);
 
   const addOpportunityForm = useCallback((bucketId) => {
-    const title = window.prompt('Opportunity form title:');
-    if (!title || !title.trim()) return;
     const now = Date.now();
     const opp = {
       id: `o_${now}_${Math.random().toString(36).slice(2, 7)}`,
-      bucketId,
-      title: title.trim(),
+      bucketId: bucketId || null,
+      title: 'New form',
+      titleAuto: true,
       type: 'form',
       formData: null,
       createdAt: now,
@@ -1687,6 +1686,23 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       opportunities: [...(companyOppsData.opportunities || []), opp],
     });
     setSelectedOppId(opp.id);
+    setOpportunitiesOpen(true);
+  }, [companyOppsData, writeCompanyOpps]);
+
+  // Called when the form links to an opp — auto-renames the tab to the
+  // first service in Scope (unless the user has manually renamed the tab).
+  const applySuggestedTitle = useCallback((oppId, suggested) => {
+    if (!suggested) return;
+    writeCompanyOpps({
+      buckets: companyOppsData.buckets || [],
+      opportunities: (companyOppsData.opportunities || []).map(o => {
+        if (o.id !== oppId) return o;
+        if (o.titleAuto !== false) {
+          return { ...o, title: suggested, titleAuto: true, updatedAt: Date.now() };
+        }
+        return o;
+      }),
+    });
   }, [companyOppsData, writeCompanyOpps]);
 
   const updateOpportunityFormData = useCallback((oppId, formData) => {
@@ -1706,7 +1722,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     if (!title || !title.trim() || title.trim() === current.title) return;
     writeCompanyOpps({
       buckets: companyOppsData.buckets || [],
-      opportunities: (companyOppsData.opportunities || []).map(o => o.id === oppId ? { ...o, title: title.trim(), updatedAt: Date.now() } : o),
+      opportunities: (companyOppsData.opportunities || []).map(o => o.id === oppId ? { ...o, title: title.trim(), titleAuto: false, updatedAt: Date.now() } : o),
     });
   }, [companyOppsData, writeCompanyOpps]);
 
@@ -2323,8 +2339,56 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   return n > 0 ? <span style={{ fontSize: '0.68rem', color: '#64748B' }}>{n} {n === 1 ? 'note page' : 'note pages'}</span> : null;
                 })()}
               </div>
-              {opportunitiesOpen && (
+              {opportunitiesOpen && (() => {
+                const formNotes = (companyOppsData.opportunities || []).filter(o => o.type === 'form');
+                return (
                 <div style={{ marginTop: '0.75rem' }}>
+                  {/* Chrome-style tabs bar for form-type note pages */}
+                  <div style={{ display: 'flex', alignItems: 'flex-end', gap: 2, borderBottom: '1px solid var(--color-border-light)', marginBottom: '0.75rem', overflowX: 'auto' }}>
+                    {formNotes.map(note => {
+                      const isActive = note.id === selectedOppId;
+                      return (
+                        <div
+                          key={note.id}
+                          onClick={() => setSelectedOppId(note.id)}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: '0.3rem',
+                            padding: '0.35rem 0.6rem 0.35rem 0.75rem',
+                            border: '1px solid var(--color-border-light)',
+                            borderBottom: isActive ? '1px solid #fff' : '1px solid var(--color-border-light)',
+                            borderTopLeftRadius: 8, borderTopRightRadius: 8,
+                            background: isActive ? '#fff' : '#F1F5F9',
+                            color: isActive ? '#1E293B' : '#64748B',
+                            fontSize: '0.78rem',
+                            fontWeight: isActive ? 600 : 500,
+                            cursor: 'pointer',
+                            position: 'relative',
+                            top: 1,
+                            minWidth: 120, maxWidth: 220,
+                            whiteSpace: 'nowrap',
+                          }}
+                          title={note.title || 'New form'}
+                        >
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {note.title || 'New form'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); deleteOpportunity(note.id); }}
+                            title="Close tab"
+                            style={{ background: 'transparent', border: 'none', color: '#94A3B8', fontSize: '0.9rem', fontWeight: 700, cursor: 'pointer', padding: '0 0.2rem', lineHeight: 1 }}
+                          >×</button>
+                        </div>
+                      );
+                    })}
+                    <button
+                      type="button"
+                      onClick={() => addOpportunityForm(null)}
+                      title="New form tab"
+                      style={{ padding: '0.35rem 0.6rem', background: 'transparent', border: 'none', color: '#64748B', fontSize: '1rem', fontWeight: 700, cursor: 'pointer' }}
+                    >+</button>
+                  </div>
+
                   {selectedOpp ? (
                     // Detail view — editing a single opportunity
                     <div>
@@ -2465,6 +2529,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         <OpportunityForm
                           value={selectedOpp.formData}
                           onChange={(next) => updateOpportunityFormData(selectedOpp.id, next)}
+                          onLinkOpp={(opp) => {
+                            const scope = String(opp?.['Scope'] || '').trim();
+                            const first = scope.split(',').map(s => s.trim()).filter(Boolean)[0];
+                            if (first) applySuggestedTitle(selectedOpp.id, first);
+                          }}
                           companyName={fields.company}
                         />
                       ) : (
@@ -2617,7 +2686,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     </div>
                   )}
                 </div>
-              )}
+                );
+              })()}
             </div>
           )}
 
