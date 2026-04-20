@@ -338,6 +338,7 @@ const EMPTY = {
   company: '', cdm: '', status: 'Inside Sales', type: '', geography: '', publicPrivate: '',
   assetTypes: [], peAum: null, reAum: null, numberOfSites: null, rank: '', tier: 'Tier 2',
   hqRegion: '', frameworks: [], notes: '', website: '', emailDomain: '', servicesExplored: {}, serviceNotes: {}, competitors: {}, portfolioCompanies: [],
+  peOwner: '',
 };
 
 // ── Inline HubSpot Contact Editor ──
@@ -1993,6 +1994,23 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             <div>
               <label className={styles.label}>Website</label>
               <input className={styles.input} value={fields.website} onChange={e => set('website', e.target.value)} placeholder="www.example.com" />
+            </div>
+
+            <div>
+              <label className={styles.label}>PE Owner <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(if portfolio co)</span></label>
+              <input
+                className={styles.input}
+                value={fields.peOwner || ''}
+                onChange={e => set('peOwner', e.target.value)}
+                placeholder="e.g. Stonepeak Infrastructure Partners"
+                list="pe-owner-suggestions"
+              />
+              <datalist id="pe-owner-suggestions">
+                {(prospects || [])
+                  .filter(p => (p.type === 'Private Equity') && p.company && p.company !== fields.company)
+                  .map(p => <option key={p.id} value={p.company} />)
+                }
+              </datalist>
             </div>
 
             <div style={{ gridColumn: 'span 2' }}>

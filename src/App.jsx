@@ -26,6 +26,7 @@ import { EmailCampaignView } from './components/EmailCampaignView/EmailCampaignV
 import { ProgressView } from './components/ProgressView/ProgressView';
 import { ListsView } from './components/ListsView/ListsView';
 import { AgendaView } from './components/AgendaView/AgendaView';
+import { PEPortfolioView } from './components/PEPortfolioView/PEPortfolioView';
 import { SERVICE_CATEGORIES } from './data/enums';
 import './App.css';
 
@@ -235,6 +236,8 @@ function App() {
             <PrivacyPolicy />
           ) : view === 'activity' ? (
             <ActivityView prospects={prospects} />
+          ) : view === 'pe' ? (
+            <PEPortfolioView prospects={prospects} onSelectProspect={handleSelect} />
           ) : view === 'agenda' ? (
             <AgendaView prospects={prospects} onSelectProspect={handleSelect} onUpdateProspect={updateProspect} />
           ) : view === 'lists' ? (
