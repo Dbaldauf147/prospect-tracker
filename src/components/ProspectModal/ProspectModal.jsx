@@ -4367,7 +4367,44 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         })
                         .filter(r => r.email);
                       if (parsed.length === 0) { alert('No rows had an Email — nothing imported.'); return; }
-                      if (!window.confirm(`Import ${parsed.length} contact${parsed.length === 1 ? '' : 's'} into HubSpot under ${fields.company}?`)) return;
+                      const existingToDelete = companyContacts.filter(c => c.id || c.vid);
+                      const confirmMsg = existingToDelete.length > 0
+                        ? `This will REPLACE the contacts under ${fields.company}.\n\n` +
+                          `• ${existingToDelete.length} existing contact${existingToDelete.length === 1 ? '' : 's'} will be DELETED from HubSpot.\n` +
+                          `• ${parsed.length} contact${parsed.length === 1 ? '' : 's'} from the file will be CREATED.\n\n` +
+                          `This cannot be undone. Continue?`
+                        : `Import ${parsed.length} contact${parsed.length === 1 ? '' : 's'} into HubSpot under ${fields.company}?`;
+                      if (!window.confirm(confirmMsg)) return;
+
+                      // First pass: delete all existing contacts from HubSpot.
+                      let deleted = 0, deleteErrors = 0;
+                      for (const c of existingToDelete) {
+                        const cid = c.id || c.vid;
+                        try {
+                          const res = await fetch('/api/hubspot?action=delete-contact', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ contactId: cid }),
+                          });
+                          const data = await res.json();
+                          if (data.success) {
+                            deleted += 1;
+                            try {
+                              const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
+                              if (cache?.contacts) {
+                                cache.contacts = cache.contacts.filter(x => String(x.id || x.vid) !== String(cid));
+                                localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache));
+                              }
+                            } catch { /* ignore */ }
+                          } else {
+                            deleteErrors += 1;
+                          }
+                        } catch {
+                          deleteErrors += 1;
+                        }
+                      }
+
+                      // Second pass: create the imported rows.
                       let added = 0, errors = 0;
                       for (const row of parsed) {
                         const { teamName, notes: noteText, ...hsProps } = row;
@@ -4387,7 +4424,6 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                 localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache));
                               }
                             } catch { /* ignore */ }
-                            // Persist local-only fields in settings keyed by new id.
                             const newId = data.contact.id;
                             if (newId && teamName) handleSaveContactTeamName(newId, teamName);
                             if (newId && noteText) handleSaveContactNote(newId, noteText);
@@ -4399,7 +4435,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         }
                       }
                       window.dispatchEvent(new Event('hubspot-cache-updated'));
-                      alert(`Imported ${added} contact${added === 1 ? '' : 's'}${errors > 0 ? ` (${errors} failed)` : ''}.`);
+                      alert(
+                        `Deleted ${deleted} existing contact${deleted === 1 ? '' : 's'}${deleteErrors > 0 ? ` (${deleteErrors} failed to delete)` : ''}.\n` +
+                        `Imported ${added} new contact${added === 1 ? '' : 's'}${errors > 0 ? ` (${errors} failed)` : ''}.`
+                      );
                     } catch (err) {
                       alert('Failed to read file: ' + (err.message || err));
                     }
