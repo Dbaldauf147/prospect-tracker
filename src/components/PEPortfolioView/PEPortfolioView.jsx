@@ -70,10 +70,13 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
       </div>
 
       <div className={styles.body}>
+        <div style={{ padding: '0.5rem 0.75rem', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 6, marginBottom: '0.5rem', fontSize: '0.72rem', color: '#92400E' }}>
+          Debug: {prospects.length} total prospects loaded, {peFirms.length} with Type = "Private Equity".
+        </div>
         {peFirms.length === 0 ? (
-          <div className={styles.empty}>
-            <div style={{ marginBottom: '0.5rem', fontWeight: 600 }}>No PE firms found.</div>
-            <div style={{ fontSize: '0.75rem', color: '#64748B' }}>
+          <div style={{ padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
+            <div style={{ marginBottom: '0.5rem', fontWeight: 600, fontSize: '0.9rem' }}>No PE firms found</div>
+            <div style={{ fontSize: '0.78rem' }}>
               Scanned {prospects.length} prospect{prospects.length === 1 ? '' : 's'} in My Accounts — none had Type set to <code>Private Equity</code>.
               Open a PE firm's popup and set its <strong>Type</strong> field to <code>Private Equity</code> to make it appear here.
             </div>
