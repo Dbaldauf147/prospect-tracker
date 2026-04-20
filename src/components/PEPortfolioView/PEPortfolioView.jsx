@@ -93,18 +93,18 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
           }
           const isExpanded = expanded.has(pe.id);
           return (
-            <div key={pe.id} className={styles.peCard}>
+            <div key={pe.id} style={{ background: '#FFFFFF', border: '1px solid #CBD5E1', borderRadius: 8, overflow: 'hidden', boxShadow: '0 1px 2px rgba(0,0,0,0.05)', marginBottom: '0.5rem' }}>
               <button
                 type="button"
-                className={styles.peHeader}
                 onClick={() => toggle(pe.id)}
+                style={{ width: '100%', padding: '0.7rem 1rem', background: '#F8FAFC', border: 'none', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}
               >
-                <div className={styles.peName} title={pe.company}>{pe.company}</div>
-                <div className={styles.peMeta}>
+                <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={pe.company}>{pe.company}</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.72rem', color: '#64748B', whiteSpace: 'nowrap' }}>
                   <span>{portfolio.length} portfolio {portfolio.length === 1 ? 'company' : 'companies'}</span>
                   <span>·</span>
                   <span>{visibleDeals.length} {visibleDeals.length === 1 ? 'opportunity' : 'opportunities'}</span>
-                  <span className={styles.expandArrow}>{isExpanded ? '▾' : '▸'}</span>
+                  <span style={{ marginLeft: '0.4rem', color: '#94A3B8' }}>{isExpanded ? '▾' : '▸'}</span>
                 </div>
               </button>
 
