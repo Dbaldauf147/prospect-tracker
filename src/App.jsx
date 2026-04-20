@@ -243,7 +243,7 @@ function App() {
           ) : view === 'lists' ? (
             <ListsView onTargetAccountsLoaded={setTargetAccountsData} />
           ) : view === 'clients' ? (
-            <ClientsView />
+            <ClientsView prospects={prospects} onSelectProspect={handleSelect} />
           ) : view === 'opps' ? (
             <OppsView />
           ) : view === 'hubspot' ? (
