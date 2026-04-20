@@ -5,6 +5,7 @@ import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
 import { asBlob as htmlToDocxBlob } from 'html-docx-js-typescript';
 import mammoth from 'mammoth/mammoth.browser';
+import { OpportunityForm } from './OpportunityForm';
 import { loadEffectiveRaClients, raClientName, raClientCm } from '../../utils/raClientsStore';
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES, COUNTRIES } from '../../data/enums';
 import styles from './ProspectModal.module.css';
@@ -1668,6 +1669,35 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     setSelectedOppId(opp.id);
   }, [companyOppsData, writeCompanyOpps, getEffectiveTemplate]);
 
+  const addOpportunityForm = useCallback((bucketId) => {
+    const title = window.prompt('Opportunity form title:');
+    if (!title || !title.trim()) return;
+    const now = Date.now();
+    const opp = {
+      id: `o_${now}_${Math.random().toString(36).slice(2, 7)}`,
+      bucketId,
+      title: title.trim(),
+      type: 'form',
+      formData: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    writeCompanyOpps({
+      buckets: companyOppsData.buckets || [],
+      opportunities: [...(companyOppsData.opportunities || []), opp],
+    });
+    setSelectedOppId(opp.id);
+  }, [companyOppsData, writeCompanyOpps]);
+
+  const updateOpportunityFormData = useCallback((oppId, formData) => {
+    writeCompanyOpps({
+      buckets: companyOppsData.buckets || [],
+      opportunities: (companyOppsData.opportunities || []).map(o =>
+        o.id === oppId ? { ...o, formData, updatedAt: Date.now() } : o
+      ),
+    });
+  }, [companyOppsData, writeCompanyOpps]);
+
 
   const renameOpportunity = useCallback((oppId) => {
     const current = (companyOppsData.opportunities || []).find(o => o.id === oppId);
@@ -2323,29 +2353,33 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         >
                           Rename
                         </button>
-                        <input
-                          ref={oppDocxInputRef}
-                          type="file"
-                          accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                          onChange={handleOppDocxUpload}
-                          style={{ display: 'none' }}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => oppDocxInputRef.current?.click()}
-                          title="Upload a Word document (.docx) into this opportunity's notes"
-                          style={{ fontSize: '0.72rem', padding: '0.25rem 0.5rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 4, cursor: 'pointer' }}
-                        >
-                          Upload .docx
-                        </button>
-                        <button
-                          type="button"
-                          onClick={downloadOppAsDocx}
-                          title="Download this opportunity's notes as a Word document"
-                          style={{ fontSize: '0.72rem', padding: '0.25rem 0.5rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 4, cursor: 'pointer' }}
-                        >
-                          Download .docx
-                        </button>
+                        {selectedOpp.type !== 'form' && (
+                          <>
+                            <input
+                              ref={oppDocxInputRef}
+                              type="file"
+                              accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                              onChange={handleOppDocxUpload}
+                              style={{ display: 'none' }}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => oppDocxInputRef.current?.click()}
+                              title="Upload a Word document (.docx) into this opportunity's notes"
+                              style={{ fontSize: '0.72rem', padding: '0.25rem 0.5rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 4, cursor: 'pointer' }}
+                            >
+                              Upload .docx
+                            </button>
+                            <button
+                              type="button"
+                              onClick={downloadOppAsDocx}
+                              title="Download this opportunity's notes as a Word document"
+                              style={{ fontSize: '0.72rem', padding: '0.25rem 0.5rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 4, cursor: 'pointer' }}
+                            >
+                              Download .docx
+                            </button>
+                          </>
+                        )}
                         <button
                           type="button"
                           onClick={() => deleteOpportunity(selectedOpp.id)}
@@ -2427,26 +2461,34 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         </button>
                         <span style={{ fontSize: '0.65rem', color: '#94A3B8' }}>Click the box later to mark it complete.</span>
                       </div>
-                      <div className="opportunity-notes-editor">
-                        <ReactQuill
-                          ref={oppQuillRef}
-                          theme="snow"
-                          value={oppNoteDraft}
-                          onChange={handleOppNoteChange}
-                          placeholder="Notes for this opportunity…"
-                          modules={{
-                            toolbar: [
-                              [{ 'header': [1, 2, 3, false] }],
-                              ['bold', 'italic', 'underline', 'strike'],
-                              [{ 'list': 'ordered' }, { 'list': 'bullet' }, { 'list': 'check' }],
-                              ['link', 'blockquote', 'code-block'],
-                              ['clean'],
-                            ],
-                            clipboard: { matchVisual: false },
-                          }}
-                          formats={['header', 'bold', 'italic', 'underline', 'strike', 'list', 'indent', 'link', 'blockquote', 'code-block']}
+                      {selectedOpp.type === 'form' ? (
+                        <OpportunityForm
+                          value={selectedOpp.formData}
+                          onChange={(next) => updateOpportunityFormData(selectedOpp.id, next)}
+                          companyName={fields.company}
                         />
-                      </div>
+                      ) : (
+                        <div className="opportunity-notes-editor">
+                          <ReactQuill
+                            ref={oppQuillRef}
+                            theme="snow"
+                            value={oppNoteDraft}
+                            onChange={handleOppNoteChange}
+                            placeholder="Notes for this opportunity…"
+                            modules={{
+                              toolbar: [
+                                [{ 'header': [1, 2, 3, false] }],
+                                ['bold', 'italic', 'underline', 'strike'],
+                                [{ 'list': 'ordered' }, { 'list': 'bullet' }, { 'list': 'check' }],
+                                ['link', 'blockquote', 'code-block'],
+                                ['clean'],
+                              ],
+                              clipboard: { matchVisual: false },
+                            }}
+                            formats={['header', 'bold', 'italic', 'underline', 'strike', 'list', 'indent', 'link', 'blockquote', 'code-block']}
+                          />
+                        </div>
+                      )}
                     </div>
                   ) : (
                     // Overview — buckets + opportunity cards
@@ -2526,6 +2568,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                     style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 4, cursor: 'pointer' }}
                                   >
                                     + Opportunity
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => addOpportunityForm(bucket.id)}
+                                    title="Create a structured form page that pulls data from an opp row and exports to Excel"
+                                    style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 4, cursor: 'pointer' }}
+                                  >
+                                    + Form
                                   </button>
                                   <button
                                     type="button"
