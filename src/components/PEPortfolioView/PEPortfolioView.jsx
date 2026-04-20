@@ -11,20 +11,17 @@ function companySlug(name) {
   return (name || '').toLowerCase().replace(/[^a-z0-9]/g, '-');
 }
 
-function isActiveProspect(p) {
-  return p.status && p.status !== 'Lost - Not Sold';
-}
-
 export function PEPortfolioView({ prospects = [], onSelectProspect }) {
   const { user } = useAuth();
   const { settings } = useUserSettings(user);
   const [showInactive, setShowInactive] = useState(false);
   const [expanded, setExpanded] = useState(() => new Set());
 
-  // All active PE firms from the prospects list.
+  // Every prospect in My Accounts whose Type is Private Equity shows up here,
+  // regardless of status — "active" here refers to the linked opportunities, not the PE firm itself.
   const peFirms = useMemo(() => (
     prospects
-      .filter(p => p.type === 'Private Equity' && isActiveProspect(p))
+      .filter(p => p.type === 'Private Equity')
       .sort((a, b) => (a.company || '').localeCompare(b.company || ''))
   ), [prospects]);
 
