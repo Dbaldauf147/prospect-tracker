@@ -220,6 +220,22 @@ function currentServicesFor(prospect) {
     .sort();
 }
 
+// Map Dan's opportunity status values (from the Opps sheet's Status
+// column) to BFO stage names used in the form's Stage field.
+const DAN_STATUS_TO_BFO_STAGE = {
+  'Agreement Sent': '6 - Negotiate to Win',
+  'Contracting': '5 - Prepare & Bid',
+  'Quoted': '5 - Prepare & Bid',
+  'Quoting': '4 - Influence and Develop',
+  'Lead': '3 - Qualify Opportunity',
+  'Qualifying': '4 - Influence and Develop',
+};
+
+function mapDanStatusToBfoStage(status) {
+  if (!status) return '';
+  return DAN_STATUS_TO_BFO_STAGE[String(status).trim()] || '';
+}
+
 export function OpportunityForm({ value, onChange, onLinkOpp, companyName, companyContacts = [], allHubspotContacts = [], contactNotes = {}, prospects = [], onCreateContact }) {
   const template = DEFAULT_FORM_TEMPLATE;
   const formData = useMemo(() => {
@@ -293,6 +309,12 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
         nextValues.currentClientScope = '';
       }
     }
+    // Stage comes from mapping the opp's Status (Dan's internal status name)
+    // to a BFO stage. Falls back to the opp's own Stage column if the Status
+    // isn't in the lookup table.
+    const oppStatusForStage = (opp?.['Status'] || '').trim();
+    const mappedStage = mapDanStatusToBfoStage(oppStatusForStage);
+    if (mappedStage) nextValues.stage = mappedStage;
     set({
       fieldValues: nextValues,
       linkedBfoLink: opp['BFO Link'] || null,
