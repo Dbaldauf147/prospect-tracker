@@ -6,8 +6,15 @@ function getServicesCount(p) {
   return Object.values(svc).filter(v => v && v !== '-').length;
 }
 
+// Strict-ish match for Dan Baldauf so unrelated Baldaufs don't sneak in.
+// Accepts "Dan Baldauf", "Baldauf, Dan", "Baldauf Dan", "D. Baldauf",
+// "Dan.Baldauf", etc.
 function isBaldauf(cdm) {
-  return (cdm || '').toLowerCase().includes('baldauf');
+  const v = (cdm || '').toLowerCase().trim();
+  if (!v) return false;
+  if (!v.includes('baldauf')) return false;
+  // Must also include a Dan token (dan, d., d-, d_)
+  return /\bdan\b/.test(v) || /\bd\b/.test(v) || /\bd\./.test(v);
 }
 
 export function ClientsView({ prospects = [], onSelectProspect }) {
