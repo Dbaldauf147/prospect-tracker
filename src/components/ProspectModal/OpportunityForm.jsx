@@ -345,21 +345,83 @@ function meetingTemplateFor(rawStage) {
 
 export function OpportunityForm({ value, onChange, onLinkOpp, companyName, companyContacts = [], allHubspotContacts = [], contactNotes = {}, prospects = [], onCreateContact }) {
   const template = DEFAULT_FORM_TEMPLATE;
+
+  // Local mirror of the persisted value. All edits update localValue
+  // immediately (so the UI feels instant), and a debounced flush pushes
+  // the changes up to the parent — which in turn writes to Firestore and
+  // re-renders the whole modal. Without this, every keystroke round-trips
+  // through Firestore (stale-write check + updateDoc) and rebuilds the
+  // entire ProspectModal tree.
+  const [localValue, setLocalValue] = useState(value);
+  const lastAcceptedRef = useRef(value);
+  const flushTimerRef = useRef(null);
+  const pendingRef = useRef(null);
+
+  // Accept a new parent value when it's meaningfully different from what
+  // we currently hold (e.g. the user linked a new opp, or opened a
+  // different form tab).
+  useEffect(() => {
+    if (value === lastAcceptedRef.current) return;
+    // If the incoming value matches what we're about to flush, just accept it.
+    let same = false;
+    try { same = JSON.stringify(value) === JSON.stringify(localValue); } catch {}
+    lastAcceptedRef.current = value;
+    if (!same) {
+      setLocalValue(value);
+      // Drop any pending flush — parent is now authoritative.
+      if (flushTimerRef.current) { clearTimeout(flushTimerRef.current); flushTimerRef.current = null; pendingRef.current = null; }
+    }
+  }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Debounced flush: after 350ms without new edits, push localValue up.
+  useEffect(() => {
+    // Don't flush if we're already in sync with the parent.
+    let same = false;
+    try { same = JSON.stringify(localValue) === JSON.stringify(lastAcceptedRef.current); } catch {}
+    if (same) return;
+    if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
+    pendingRef.current = localValue;
+    flushTimerRef.current = setTimeout(() => {
+      const payload = pendingRef.current;
+      flushTimerRef.current = null;
+      pendingRef.current = null;
+      if (payload) {
+        lastAcceptedRef.current = payload;
+        onChange(payload);
+      }
+    }, 350);
+    return () => { if (flushTimerRef.current) { clearTimeout(flushTimerRef.current); flushTimerRef.current = null; } };
+  }, [localValue]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Flush pending edits on unmount so switching tabs / closing the modal
+  // doesn't lose the last few characters.
+  useEffect(() => {
+    return () => {
+      if (pendingRef.current) {
+        try { onChange(pendingRef.current); } catch {}
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const formData = useMemo(() => {
     const base = emptyFormData(template);
-    if (!value) return base;
+    const src = localValue;
+    if (!src) return base;
     return {
-      fieldValues: { ...base.fieldValues, ...(value.fieldValues || {}) },
+      fieldValues: { ...base.fieldValues, ...(src.fieldValues || {}) },
       tables: Object.fromEntries(
-        template.tables.map(t => [t.key, (value.tables && value.tables[t.key]) || base.tables[t.key]])
+        template.tables.map(t => [t.key, (src.tables && src.tables[t.key]) || base.tables[t.key]])
       ),
-      linkedBfoLink: value.linkedBfoLink || null,
-      linkedOppName: value.linkedOppName || null,
-      meeting: value.meeting || null,
+      linkedBfoLink: src.linkedBfoLink || null,
+      linkedOppName: src.linkedOppName || null,
+      meeting: src.meeting || null,
     };
-  }, [value, template]);
+  }, [localValue, template]);
 
-  const set = (next) => onChange({ ...formData, ...next });
+  // Optimistic local update — feels instant; debounced useEffect above
+  // flushes to the parent ~350ms after the last edit.
+  const set = (next) => setLocalValue(prev => ({ ...(prev || {}), ...next }));
 
   const updateField = (key, val) => {
     set({ fieldValues: { ...formData.fieldValues, [key]: val } });
@@ -679,6 +741,11 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     // overwrote write 1's formData, so all the freshly linked fields
     // disappeared. Now the parent gets the full delta and commits
     // formData + title in one atomic writeCompanyOpps.
+    // Linking is a discrete event — cancel any pending debounced typing
+    // flush, sync local state, and write up immediately.
+    if (flushTimerRef.current) { clearTimeout(flushTimerRef.current); flushTimerRef.current = null; pendingRef.current = null; }
+    lastAcceptedRef.current = nextFormData;
+    setLocalValue(nextFormData);
     if (onLinkOpp) onLinkOpp(opp, nextFormData);
     else onChange(nextFormData);
     setPickerOpen(false);
