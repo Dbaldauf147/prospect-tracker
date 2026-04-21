@@ -1446,7 +1446,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     let oppsOnlyAdded = 0;
     // Diagnostic: dump everything we can see about specific accounts the
     // user has asked about so we can confirm why they're (not) showing.
-    const DEBUG_RX = /(urw|unibail|rodamco|westfield|\bara\b|ara\s*partners)/i;
+    const DEBUG_RX = /(urw|unibail|rodamco|westfield|\bara\b|ara\s*partners|jpmc|jp\s*morgan|jpmorgan)/i;
     const debugProspects = prospects.filter(p => DEBUG_RX.test(p.company || ''));
     const debugOppsKeys = Object.keys(totalOppsByAccount).filter(k => DEBUG_RX.test(k));
     const renderedAccountNamesLower = new Set([...t1, ...t2].map(e => (e.company || '').toLowerCase()));
