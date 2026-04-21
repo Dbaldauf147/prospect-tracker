@@ -91,12 +91,31 @@ export function SettingsBackupsModal({ open, onClose, onRestore }) {
           boxShadow: '0 20px 40px rgba(0,0,0,0.2)',
         }}
       >
-        <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+        <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
           <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700 }}>Settings Backups</h3>
           <span style={{ fontSize: '0.75rem', color: '#64748B' }}>
             Saved locally in this browser before every settings write.
           </span>
           <div style={{ flex: 1 }} />
+          <button
+            onClick={async () => {
+              if (backups.length === 0) { alert('No backups to restore.'); return; }
+              const newest = backups[0];
+              const confirmed = window.confirm(
+                'Restore the most recent backup from this laptop?\n\n' +
+                'Taken: ' + fmtTime(newest.timestamp) + '\n' +
+                summarize(newest.data) + '\n\n' +
+                'This will overwrite your current settings with that snapshot. ' +
+                'A fresh backup of your current state is taken first, so you can roll back.'
+              );
+              if (!confirmed) return;
+              await onRestore(newest.data);
+              alert('Restored the latest backup. You may need to refresh the page.');
+              refresh();
+            }}
+            title="Restore the most recent backup in one click"
+            style={{ fontSize: '0.75rem', padding: '0.35rem 0.7rem', border: 'none', background: '#009530', color: '#fff', borderRadius: 4, cursor: 'pointer', fontWeight: 600 }}
+          >Restore latest</button>
           <button
             onClick={refresh}
             style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem', border: '1px solid #CBD5E1', background: '#fff', borderRadius: 4, cursor: 'pointer' }}
