@@ -20,6 +20,7 @@ export const DEFAULT_FORM_TEMPLATE = {
     {
       key: 'agenda',
       label: 'Agenda',
+      placement: 'top', // renders before the Stage/Status fields grid
       columns: [
         { key: 'subject', label: 'Subject' },
         { key: 'speaker', label: 'Speaker' },
@@ -342,6 +343,62 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     rows.splice(rowIdx, 1);
     set({ tables: { ...formData.tables, [tableKey]: rows } });
   };
+
+  function renderTables(list) {
+    return list.map((t, idx) => {
+      const prev = idx > 0 ? list[idx - 1] : null;
+      const showGroupHeader = t.group && (!prev || prev.group !== t.group);
+      return (
+        <div key={t.key}>
+          {showGroupHeader && (
+            <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#1E293B', margin: '1rem 0 0.15rem', borderBottom: '2px solid #009530', paddingBottom: '0.25rem' }}>
+              {t.group}
+            </div>
+          )}
+          <div style={sx.sectionTitle}>{t.label}</div>
+          <table style={sx.table}>
+            <thead>
+              <tr>
+                {t.columns.map(c => (
+                  <th key={c.key} style={sx.th}>{c.label}</th>
+                ))}
+                <th style={{ ...sx.th, width: 30 }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {(formData.tables[t.key] || []).map((row, rIdx) => (
+                <tr key={rIdx}>
+                  {t.columns.map(c => (
+                    <td key={c.key} style={sx.td}>
+                      <input
+                        style={sx.cellInput}
+                        value={row[c.key] || ''}
+                        onChange={e => updateTableCell(t.key, rIdx, c.key, e.target.value)}
+                      />
+                    </td>
+                  ))}
+                  <td style={sx.td}>
+                    <button
+                      type="button"
+                      style={sx.rowBtn}
+                      title="Remove row"
+                      onClick={() => removeTableRow(t.key, rIdx)}
+                    >×</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <button type="button" style={{ ...sx.btn, marginTop: '0.35rem' }} onClick={() => addTableRow(t.key)}>
+            + Add row
+          </button>
+        </div>
+      );
+    });
+  }
+
+  const topTables = template.tables.filter(t => t.placement === 'top');
+  const bottomTables = template.tables.filter(t => t.placement !== 'top');
 
   // ---- Link opportunity (search the Opps cache by BFO Link or text) ----
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -1133,6 +1190,8 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
         </div>
       </div>
 
+      {renderTables(topTables)}
+
       <div style={sx.grid}>
         {template.fields.map(f => {
           // Conditional fields (e.g. Current Client Scope only shows for Clients)
@@ -1178,56 +1237,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
         })}
       </div>
 
-      {template.tables.map((t, idx) => {
-        const prev = idx > 0 ? template.tables[idx - 1] : null;
-        const showGroupHeader = t.group && (!prev || prev.group !== t.group);
-        return (
-        <div key={t.key}>
-          {showGroupHeader && (
-            <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#1E293B', margin: '1rem 0 0.15rem', borderBottom: '2px solid #009530', paddingBottom: '0.25rem' }}>
-              {t.group}
-            </div>
-          )}
-          <div style={sx.sectionTitle}>{t.label}</div>
-          <table style={sx.table}>
-            <thead>
-              <tr>
-                {t.columns.map(c => (
-                  <th key={c.key} style={sx.th}>{c.label}</th>
-                ))}
-                <th style={{ ...sx.th, width: 30 }}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {(formData.tables[t.key] || []).map((row, rIdx) => (
-                <tr key={rIdx}>
-                  {t.columns.map(c => (
-                    <td key={c.key} style={sx.td}>
-                      <input
-                        style={sx.cellInput}
-                        value={row[c.key] || ''}
-                        onChange={e => updateTableCell(t.key, rIdx, c.key, e.target.value)}
-                      />
-                    </td>
-                  ))}
-                  <td style={sx.td}>
-                    <button
-                      type="button"
-                      style={sx.rowBtn}
-                      title="Remove row"
-                      onClick={() => removeTableRow(t.key, rIdx)}
-                    >×</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <button type="button" style={{ ...sx.btn, marginTop: '0.35rem' }} onClick={() => addTableRow(t.key)}>
-            + Add row
-          </button>
-        </div>
-        );
-      })}
+      {renderTables(bottomTables)}
     </div>
   );
 }
