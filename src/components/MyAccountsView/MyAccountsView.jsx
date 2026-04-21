@@ -1428,10 +1428,10 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         if (found) break;
       }
       const statusMismatch = !p.hideStatusSuggestion && !!suggestedStatus && suggestedStatus !== p.status && p.status && p.dismissedSuggestedStatus !== suggestedStatus;
-      // Hide accounts whose 'Opps' column (open / active, i.e. oppsCount)
-      // would render 0. Closed-only accounts (totalOpps > 0 but oppsCount
-      // == 0) are not worth surfacing in My Accounts.
-      if (!oppsCount || oppsCount === 0) continue;
+      // Hide accounts with zero open opps — UNLESS they're strategic
+      // (Tier 1 or Tier 2), which always show regardless of deal activity.
+      const isStrategicTier = tier === 'Tier 1' || tier === 'Tier 2';
+      if (!isStrategicTier && (!oppsCount || oppsCount === 0)) continue;
       const entry = { ...p, myTier: tier, activityCount, oppsCount, totalOpps, sources: sources.join(', '), dmFound: !!dmNames, dmNames: dmNames ? dmNames.join(', ') : '', cdmMismatch: !isBaldauf, targetNames, targetName: (targetNames || []).join(', '), targetTier, tierMismatch, otherReps, contactCount, bucketCount, suggestedStatus, statusMismatch };
       if (tier === 'Tier 1') t1.push(entry);
       else t2.push(entry); // Tier 2 and Tier 3 both go in t2 array
