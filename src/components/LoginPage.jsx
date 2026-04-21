@@ -1,12 +1,14 @@
 import { useState } from 'react';
 import styles from './LoginPage.module.css';
 
-export function LoginPage({ onSignIn, onSignInWithEmail, onCreateAccount, error }) {
+export function LoginPage({ onSignIn, onSignInWithEmail, onCreateAccount, onResetPassword, error }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [isCreateMode, setIsCreateMode] = useState(false);
   const [googleSigningIn, setGoogleSigningIn] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [resetMessage, setResetMessage] = useState(null);
 
   async function handleGoogleClick() {
     if (googleSigningIn) return;
@@ -15,6 +17,29 @@ export function LoginPage({ onSignIn, onSignInWithEmail, onCreateAccount, error 
       await onSignIn();
     } finally {
       setGoogleSigningIn(false);
+    }
+  }
+
+  async function handleResetPassword() {
+    setResetMessage(null);
+    let target = email.trim();
+    if (!target) {
+      target = (window.prompt('Enter the email address to send a reset link to:') || '').trim();
+      if (!target) return;
+    }
+    setResetting(true);
+    try {
+      await onResetPassword(target);
+      setResetMessage({ type: 'success', text: `Reset link sent to ${target}. Check your inbox (and spam folder).` });
+    } catch (err) {
+      const msg = err?.code === 'auth/user-not-found'
+        ? `No account found for ${target}.`
+        : err?.code === 'auth/invalid-email'
+        ? `"${target}" doesn't look like a valid email address.`
+        : err?.message || 'Failed to send reset email.';
+      setResetMessage({ type: 'error', text: msg });
+    } finally {
+      setResetting(false);
     }
   }
 
@@ -65,14 +90,37 @@ export function LoginPage({ onSignIn, onSignInWithEmail, onCreateAccount, error 
           </button>
         </form>
 
-        <div style={{ textAlign: 'center', marginBottom: '1rem' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
           <button
             onClick={() => setIsCreateMode(m => !m)}
             style={{ background: 'none', border: 'none', color: '#3B7DDD', fontSize: '0.78rem', cursor: 'pointer', fontFamily: 'inherit', textDecoration: 'underline' }}
           >
             {isCreateMode ? 'Already have an account? Sign in' : "Don't have an account? Create one"}
           </button>
+          {!isCreateMode && (
+            <button
+              type="button"
+              onClick={handleResetPassword}
+              disabled={resetting}
+              style={{ background: 'none', border: 'none', color: '#6B7280', fontSize: '0.78rem', cursor: resetting ? 'wait' : 'pointer', fontFamily: 'inherit', textDecoration: 'underline' }}
+            >
+              {resetting ? 'Sending…' : 'Forgot password?'}
+            </button>
+          )}
         </div>
+        {resetMessage && (
+          <p style={{
+            fontSize: '0.78rem',
+            padding: '0.5rem 0.75rem',
+            borderRadius: '6px',
+            marginBottom: '1rem',
+            background: resetMessage.type === 'success' ? '#ECFDF5' : '#FEF2F2',
+            color: resetMessage.type === 'success' ? '#065F46' : '#991B1B',
+            border: `1px solid ${resetMessage.type === 'success' ? '#A7F3D0' : '#FECACA'}`,
+          }}>
+            {resetMessage.text}
+          </p>
+        )}
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
           <div style={{ flex: 1, height: '1px', background: '#D1D5DB' }} />

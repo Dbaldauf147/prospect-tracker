@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { onAuthStateChanged, signInWithPopup, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
+import { onAuthStateChanged, signInWithPopup, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db, googleProvider } from '../firebase';
 import { logAction } from '../utils/auditLog';
@@ -98,6 +98,11 @@ export function AuthProvider({ children }) {
     }
   }
 
+  async function resetPassword(email) {
+    setAuthError(null);
+    await sendPasswordResetEmail(auth, email);
+  }
+
   async function logout() {
     await logAction(user, 'logout');
     await signOut(auth);
@@ -111,7 +116,7 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, authError, role, isAdmin, requireAdmin, signInWithGoogle, signInWithEmail, createAccount, logout }}>
+    <AuthContext.Provider value={{ user, loading, authError, role, isAdmin, requireAdmin, signInWithGoogle, signInWithEmail, createAccount, resetPassword, logout }}>
       {children}
     </AuthContext.Provider>
   );
