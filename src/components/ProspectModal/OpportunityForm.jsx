@@ -531,6 +531,27 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
           <button type="button" style={{ ...sx.btn, marginTop: '0.35rem' }} onClick={() => addTableRow(t.key)}>
             + Add row
           </button>
+          {t.smartAgenda && meetingStartIso && (() => {
+            let total = 0;
+            try {
+              const d = new Date(meetingStartIso);
+              d.setMinutes(d.getMinutes() + agendaSum);
+              total = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+            } catch {}
+            const scheduledEnd = formData.meeting?.end
+              ? (() => { try { return new Date(formData.meeting.end).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); } catch { return ''; } })()
+              : '';
+            return (
+              <div style={{ marginTop: '0.5rem', padding: '0.45rem 0.6rem', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 4, fontSize: '0.78rem', color: '#15803D', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                <span><strong>Meeting ends:</strong> {total || '—'}</span>
+                {scheduledEnd && total && scheduledEnd !== total && (
+                  <span style={{ color: '#B91C1C' }}>
+                    (invite says {scheduledEnd})
+                  </span>
+                )}
+              </div>
+            );
+          })()}
         </div>
       );
     });
