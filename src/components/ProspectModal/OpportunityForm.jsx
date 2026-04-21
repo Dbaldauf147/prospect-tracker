@@ -1542,6 +1542,9 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
           cell.border = borderAll;
         };
         for (let c = 0; c < 4; c++) styleHeader(hdrRow.getCell(c + 1), seColLabels[c], c < 3);
+        // Merge the Dan's Ask header cell across cols 3-4 so it spans the
+        // same width as the data cells below.
+        ws.mergeCells(hdrRow.number, 3, hdrRow.number, 4);
         for (let c = 0; c < 5; c++) styleHeader(hdrRow.getCell(c + 6), custColLabels[c], true);
         hdrRow.height = 22;
 
@@ -1585,6 +1588,15 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
             if (zebra) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_SURFACE } };
             if (c < 3) maxLines = Math.max(maxLines, estimateWrappedLines(seVals[c], colWidths[c]));
           }
+          // Merge Dan's Ask (col 3) with the empty col 4 so the field has
+          // more horizontal room for longer text and matches the visual
+          // weight of the customer-side Notes column.
+          ws.mergeCells(dRow.number, 3, dRow.number, 4);
+          // Re-estimate Dan's Ask wrap against the merged width.
+          maxLines = Math.max(
+            maxLines,
+            estimateWrappedLines(seVals[2], (colWidths[2] || 0) + (colWidths[3] || 0))
+          );
 
           const cust = customerAttendees[i];
           let custVals;
