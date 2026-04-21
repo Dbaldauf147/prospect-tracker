@@ -14,18 +14,18 @@ export const DEFAULT_FORM_TEMPLATE = {
     // company's current active services (Sold / Renewal / In Progress).
     { key: 'currentClientScope', label: 'Current Client Scope', type: 'textarea', showWhenStatus: 'Client' },
     { key: 'summary', label: 'Meeting Summary / Notes', type: 'textarea' },
-    { key: 'nextSteps', label: 'Next Steps', type: 'textarea' },
   ],
   tables: [
     {
       key: 'agenda',
       label: 'Agenda',
       placement: 'top', // renders before the Stage/Status fields grid
+      smartAgenda: true, // unlocks speaker picker + time-balance behavior
       columns: [
         { key: 'subject', label: 'Subject' },
         { key: 'speaker', label: 'Speaker' },
         { key: 'startTime', label: 'Start Time' },
-        { key: 'duration', label: 'Time for Presenting' },
+        { key: 'duration', label: 'Minutes' },
         { key: 'slides', label: 'Slides / Software' },
       ],
     },
@@ -344,6 +344,62 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     set({ tables: { ...formData.tables, [tableKey]: rows } });
   };
 
+  // --- Smart Agenda helpers -----------------------------------------
+  // Speaker dropdown options = meeting attendees bucketed into SE and
+  // customer groups. Reloaded each render since formData.meeting changes.
+  const agendaSpeakerGroups = useMemo(() => {
+    const opts = [];
+    if (seAttendees?.length) {
+      opts.push({
+        label: 'Schneider Electric',
+        items: seAttendees.map(a => a.name || a.email).filter(Boolean),
+      });
+    }
+    if (customerAttendees?.length) {
+      opts.push({
+        label: companyName || 'Customer',
+        items: customerAttendees.map(a => a.name || a.email).filter(Boolean),
+      });
+    }
+    return opts;
+  }, [seAttendees, customerAttendees, companyName]);
+
+  const meetingTotalMinutes = formData.meeting?.durationMinutes || 0;
+
+  // When the user edits a row's duration, the row after the edited one
+  // gets the leftover minutes so the agenda always sums to the meeting
+  // length. Other rows keep their manually-entered values.
+  function updateAgendaDuration(rowIdx, newMinutes) {
+    const rows = [...(formData.tables.agenda || [])];
+    if (!rows.length) return;
+    const parsed = Math.max(0, Number(newMinutes) || 0);
+    rows[rowIdx] = { ...rows[rowIdx], duration: parsed === 0 ? '' : String(parsed) };
+    if (meetingTotalMinutes > 0) {
+      let usedBeforeAndAt = 0;
+      for (let i = 0; i <= rowIdx; i++) usedBeforeAndAt += Number(rows[i]?.duration) || 0;
+      const remainAfter = Math.max(0, meetingTotalMinutes - usedBeforeAndAt);
+      // Spill the remainder into the NEXT row. If there is no next row,
+      // append one so the user sees the remaining time rather than losing it.
+      if (remainAfter > 0) {
+        if (rowIdx + 1 >= rows.length) {
+          rows.push({ subject: '', speaker: '', startTime: '', duration: String(remainAfter), slides: '' });
+        } else {
+          rows[rowIdx + 1] = { ...rows[rowIdx + 1], duration: String(remainAfter) };
+          // Zero out everything past the "next" row so totals still add up.
+          for (let i = rowIdx + 2; i < rows.length; i++) {
+            rows[i] = { ...rows[i], duration: '' };
+          }
+        }
+      }
+    }
+    set({ tables: { ...formData.tables, agenda: rows } });
+  }
+
+  const agendaSum = useMemo(() => {
+    const rows = formData.tables.agenda || [];
+    return rows.reduce((s, r) => s + (Number(r?.duration) || 0), 0);
+  }, [formData.tables.agenda]);
+
   function renderTables(list) {
     return list.map((t, idx) => {
       const prev = idx > 0 ? list[idx - 1] : null;
@@ -355,7 +411,16 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
               {t.group}
             </div>
           )}
-          <div style={sx.sectionTitle}>{t.label}</div>
+          <div style={{ ...sx.sectionTitle, display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
+            <span>{t.label}</span>
+            {t.smartAgenda && meetingTotalMinutes > 0 && (
+              <span style={{ fontSize: '0.68rem', fontWeight: 500, color: agendaSum > meetingTotalMinutes ? '#B91C1C' : agendaSum === meetingTotalMinutes ? '#15803D' : '#64748B' }}>
+                {agendaSum} / {meetingTotalMinutes} min
+                {agendaSum > meetingTotalMinutes && ' · over'}
+                {agendaSum < meetingTotalMinutes && ` · ${meetingTotalMinutes - agendaSum} min unassigned`}
+              </span>
+            )}
+          </div>
           <table style={sx.table}>
             <thead>
               <tr>
@@ -368,15 +433,55 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
             <tbody>
               {(formData.tables[t.key] || []).map((row, rIdx) => (
                 <tr key={rIdx}>
-                  {t.columns.map(c => (
-                    <td key={c.key} style={sx.td}>
-                      <input
-                        style={sx.cellInput}
-                        value={row[c.key] || ''}
-                        onChange={e => updateTableCell(t.key, rIdx, c.key, e.target.value)}
-                      />
-                    </td>
-                  ))}
+                  {t.columns.map(c => {
+                    // Smart Agenda: speaker column becomes a grouped picker,
+                    // duration column routes through updateAgendaDuration.
+                    if (t.smartAgenda && c.key === 'speaker') {
+                      const val = row[c.key] || '';
+                      const knownOptions = agendaSpeakerGroups.flatMap(g => g.items);
+                      const isCustom = val && !knownOptions.includes(val);
+                      return (
+                        <td key={c.key} style={sx.td}>
+                          <select
+                            style={sx.cellInput}
+                            value={val}
+                            onChange={e => updateTableCell(t.key, rIdx, c.key, e.target.value)}
+                          >
+                            <option value="">—</option>
+                            {agendaSpeakerGroups.map(g => (
+                              <optgroup key={g.label} label={g.label}>
+                                {g.items.map(name => <option key={name} value={name}>{name}</option>)}
+                              </optgroup>
+                            ))}
+                            {isCustom && <option value={val}>{val}</option>}
+                          </select>
+                        </td>
+                      );
+                    }
+                    if (t.smartAgenda && c.key === 'duration') {
+                      return (
+                        <td key={c.key} style={sx.td}>
+                          <input
+                            type="number"
+                            min="0"
+                            style={sx.cellInput}
+                            value={row[c.key] || ''}
+                            onChange={e => updateAgendaDuration(rIdx, e.target.value)}
+                            placeholder="min"
+                          />
+                        </td>
+                      );
+                    }
+                    return (
+                      <td key={c.key} style={sx.td}>
+                        <input
+                          style={sx.cellInput}
+                          value={row[c.key] || ''}
+                          onChange={e => updateTableCell(t.key, rIdx, c.key, e.target.value)}
+                        />
+                      </td>
+                    );
+                  })}
                   <td style={sx.td}>
                     <button
                       type="button"
