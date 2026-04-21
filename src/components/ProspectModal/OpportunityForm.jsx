@@ -398,7 +398,7 @@ const SERVICE_QUESTIONS = {
   ],
 };
 
-export function OpportunityForm({ value, onChange, onLinkOpp, companyName, companyContacts = [], allHubspotContacts = [], contactNotes = {}, prospects = [], onCreateContact }) {
+export function OpportunityForm({ value, onChange, onLinkOpp, companyName, companyContacts = [], allHubspotContacts = [], contactNotes = {}, contactReportsTo = {}, prospects = [], onCreateContact }) {
   const template = DEFAULT_FORM_TEMPLATE;
 
   // Local mirror of the persisted value. All edits update localValue
@@ -1530,7 +1530,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
 
         // Column headers row
         const seColLabels = ['Name', 'Required?', "Dan's Ask", ''];
-        const custColLabels = ['Name', 'Required?', 'Title', 'City, Country', 'Notes'];
+        const custColLabels = ['Name', 'Reports to', 'Title', 'City, Country', 'Notes'];
         const hdrRow = ws.addRow([]);
         const styleHeader = (cell, text, filled) => {
           cell.value = text;
@@ -1604,9 +1604,31 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
             const city = (cust.match?.city || '').trim();
             const country = (cust.match?.country || '').trim();
             const noteSrc = (cust.match?.id && contactNotes[cust.match.id]) || cust.match?.notes || cust.match?.hs_content_membership_notes || cust.match?.message || '';
+            // Resolve Reports to: contactReportsTo[id] holds an array of
+            // manager contact ids; map each to its display name from the
+            // hubspot pool. Falls back to '' if not matched or unknown.
+            const mgrIds = (cust.match?.id && Array.isArray(contactReportsTo[cust.match.id]))
+              ? contactReportsTo[cust.match.id]
+              : [];
+            const pool = (allHubspotContacts && allHubspotContacts.length > 0) ? allHubspotContacts : companyContacts;
+            const byId = new Map();
+            for (const c of pool) {
+              const id = c.id || c.vid;
+              if (id) byId.set(String(id), c);
+            }
+            const reportsToText = mgrIds
+              .map(id => {
+                const m = byId.get(String(id));
+                if (!m) return '';
+                const fn = (m.firstname || '').trim();
+                const ln = (m.lastname || '').trim();
+                return [fn, ln].filter(Boolean).join(' ') || (m.email || '');
+              })
+              .filter(Boolean)
+              .join(', ');
             custVals = [
               displayAttendeeName(cust),
-              cust.required ? 'Required' : 'Optional',
+              reportsToText,
               cust.match?.jobtitle || '',
               [city, country].filter(Boolean).join(', '),
               noteSrc,
