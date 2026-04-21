@@ -336,29 +336,30 @@ export function SyncPanel({ prospects, onClose }) {
       const existingMap = new Map();
       for (const d of existing.docs) existingMap.set((d.data().company || '').toLowerCase(), d);
 
-      let updated = 0, added = 0;
+      // Additive-only: never overwrite existing Table View rows from Sheets.
+      let added = 0, skipped = 0;
       for (let i = 0; i < parsed.length; i += 450) {
         const batch = writeBatch(db);
         const chunk = parsed.slice(i, i + 450);
+        let inBatch = 0;
         for (const p of chunk) {
           const key = (p.company || '').toLowerCase();
-          const existingDoc = existingMap.get(key);
-          if (existingDoc) {
-            batch.update(existingDoc.ref, { ...p, updatedAt: new Date().toISOString() });
-            updated++;
-          } else {
-            const ref = doc(collection(db, 'prospects'));
-            batch.set(ref, { ...p, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
-            added++;
+          if (existingMap.has(key)) {
+            skipped++;
+            continue;
           }
+          const ref = doc(collection(db, 'prospects'));
+          batch.set(ref, { ...p, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+          added++;
+          inBatch++;
         }
-        await batch.commit();
+        if (inBatch > 0) await batch.commit();
       }
 
       const now = new Date().toISOString();
       saveSettings({ ...settings, lastSync: now });
       setLastSync(now);
-      setStatus({ type: 'success', message: `Pulled from Sheets: ${updated} updated, ${added} added` });
+      setStatus({ type: 'success', message: `Added ${added} new rows from Sheets · ${skipped} existing rows left untouched` });
     } catch (err) {
       setStatus({ type: 'error', message: `Pull failed: ${err.message}` });
     } finally {
@@ -483,8 +484,13 @@ export function SyncPanel({ prospects, onClose }) {
               <button className={styles.btnSecondary} onClick={handlePushToSheets} disabled={syncing || !hasUrl}>
                 Website → Sheets
               </button>
-              <button className={styles.btnSecondary} onClick={handlePullFromSheets} disabled={syncing || !hasUrl}>
-                Sheets → Website
+              <button
+                className={styles.btnSecondary}
+                onClick={handlePullFromSheets}
+                disabled={syncing || !hasUrl}
+                title="Adds companies from the sheet that aren't in the Table View yet. Existing Table View rows are never overwritten."
+              >
+                Sheets → Website (add new only)
               </button>
               <button className={styles.btnSecondary} onClick={handleExportCsv}>
                 Download CSV
