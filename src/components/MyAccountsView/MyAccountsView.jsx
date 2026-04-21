@@ -1301,26 +1301,28 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
           }
         }
       }
-      // If no tier, check if the company has open (non-closed) opps — if so, include as Tier 3
+      // If no tier, check if the company has ANY opps (open or closed) — if
+      // so, include as Tier 3. Closed-deal companies (Sold/Not Sold/etc.)
+      // still deserve a line in My Accounts.
       if (!tier) {
         const companyLower = (p.company || '').toLowerCase();
-        let hasOpenOpp = false;
-        for (const [oppsCompany, count] of Object.entries(openOppsByAccount)) {
-          if (count > 0 && companiesMatch(companyLower, oppsCompany)) { hasOpenOpp = true; break; }
+        let hasAnyOpp = false;
+        for (const [oppsCompany, count] of Object.entries(totalOppsByAccount)) {
+          if (count > 0 && companiesMatch(companyLower, oppsCompany)) { hasAnyOpp = true; break; }
         }
-        if (!hasOpenOpp) continue;
+        if (!hasAnyOpp) continue;
         tier = 'Tier 3';
       }
       const cdm = (p.cdm || '').toLowerCase().trim();
       const isBaldauf = cdm.includes('baldauf');
       if (!isBaldauf) {
-        // Still include if the company has open opps
+        // Still include if the company has any opps (open or closed)
         const compLower = (p.company || '').toLowerCase();
-        let hasOpp = false;
-        for (const [oppsCompany, count] of Object.entries(openOppsByAccount)) {
-          if (count > 0 && companiesMatch(compLower, oppsCompany)) { hasOpp = true; break; }
+        let hasAnyOpp = false;
+        for (const [oppsCompany, count] of Object.entries(totalOppsByAccount)) {
+          if (count > 0 && companiesMatch(compLower, oppsCompany)) { hasAnyOpp = true; break; }
         }
-        if (!hasOpp) {
+        if (!hasAnyOpp) {
           skippedCdm.push({ company: p.company, cdm: p.cdm });
           continue;
         }
