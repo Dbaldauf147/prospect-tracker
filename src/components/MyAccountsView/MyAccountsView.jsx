@@ -1442,14 +1442,39 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     // shows up in My Accounts. This surfaces deals happening on companies
     // that aren't yet in the Table View.
     let oppsOnlyAdded = 0;
+    // Diagnostic: dump everything we can see about URW / Unibail-style accounts
+    // so the user can confirm why it is/isn't showing up.
+    const URW_RX = /(urw|unibail|rodamco|westfield)/i;
+    const urwProspects = prospects.filter(p => URW_RX.test(p.company || ''));
+    const urwOppsKeys = Object.keys(totalOppsByAccount).filter(k => URW_RX.test(k));
+    if (urwProspects.length > 0 || urwOppsKeys.length > 0) {
+      // eslint-disable-next-line no-console
+      console.log('[MyAccountsView] URW/Unibail diagnostics:', {
+        prospects: urwProspects.map(p => ({ company: p.company, cdm: p.cdm, status: p.status, tier: p.tier })),
+        oppsAccounts: urwOppsKeys.map(k => ({ key: k, count: totalOppsByAccount[k], display: displayNameByAccount[k] })),
+      });
+    }
+
     for (const [accountLower, count] of Object.entries(totalOppsByAccount)) {
       if (!count || count < 1) continue;
       const displayNameRaw = displayNameByAccount[accountLower] || accountLower;
-      if (isDismissed(displayNameRaw)) continue;
+      const urwInteresting = URW_RX.test(displayNameRaw);
+      if (isDismissed(displayNameRaw)) {
+        if (urwInteresting) console.log('[MyAccountsView] URW skipped by isDismissed:', displayNameRaw);
+        continue;
+      }
       // Skip if any prospect we've already included matches this opps account
       let matched = false;
+      let matchedProspect = null;
       for (const p of prospects) {
-        if (companiesMatch(p.company, displayNameRaw)) { matched = true; break; }
+        if (companiesMatch(p.company, displayNameRaw)) { matched = true; matchedProspect = p; break; }
+      }
+      if (urwInteresting) {
+        console.log('[MyAccountsView] URW opps-only decision:', {
+          account: displayNameRaw,
+          matched,
+          matchedProspect: matchedProspect ? { company: matchedProspect.company, cdm: matchedProspect.cdm } : null,
+        });
       }
       if (matched) continue;
 
