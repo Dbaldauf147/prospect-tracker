@@ -18,6 +18,23 @@ export const DEFAULT_FORM_TEMPLATE = {
   ],
   tables: [
     {
+      key: 'ourQuestions',
+      label: 'Questions to Ask Them',
+      group: 'Questions',
+      columns: [
+        { key: 'question', label: 'Question' },
+      ],
+    },
+    {
+      key: 'theirQuestions',
+      label: 'Questions They Might Ask',
+      group: 'Questions',
+      columns: [
+        { key: 'question', label: 'Their Question' },
+        { key: 'response', label: 'Our Response' },
+      ],
+    },
+    {
       key: 'actionItems',
       label: 'Action Items',
       columns: [
@@ -1150,8 +1167,16 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
         })}
       </div>
 
-      {template.tables.map(t => (
+      {template.tables.map((t, idx) => {
+        const prev = idx > 0 ? template.tables[idx - 1] : null;
+        const showGroupHeader = t.group && (!prev || prev.group !== t.group);
+        return (
         <div key={t.key}>
+          {showGroupHeader && (
+            <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#1E293B', margin: '1rem 0 0.15rem', borderBottom: '2px solid #009530', paddingBottom: '0.25rem' }}>
+              {t.group}
+            </div>
+          )}
           <div style={sx.sectionTitle}>{t.label}</div>
           <table style={sx.table}>
             <thead>
@@ -1190,7 +1215,8 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
             + Add row
           </button>
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
