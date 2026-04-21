@@ -49,6 +49,7 @@ export const DEFAULT_FORM_TEMPLATE = {
     {
       key: 'meetingNotes',
       label: 'Meeting Notes',
+      underField: 'summary', // rendered inline beneath the Meeting Summary / Notes field
       columns: [
         { key: 'issue', label: 'Issue' },
         { key: 'evidence', label: 'Evidence' },
@@ -575,7 +576,14 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
   }
 
   const topTables = template.tables.filter(t => t.placement === 'top');
-  const bottomTables = template.tables.filter(t => t.placement !== 'top');
+  const bottomTables = template.tables.filter(t => t.placement !== 'top' && !t.underField);
+  const tablesByField = {};
+  for (const t of template.tables) {
+    if (t.underField) {
+      if (!tablesByField[t.underField]) tablesByField[t.underField] = [];
+      tablesByField[t.underField].push(t);
+    }
+  }
 
   // ---- Link opportunity (search the Opps cache by BFO Link or text) ----
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -1607,8 +1615,12 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
           const isStatus = f.key === 'status';
           const statusValue = formData.fieldValues.status || '';
           const notCurrentClient = isStatus && statusValue && statusValue !== 'Client';
+          const nestedTables = tablesByField[f.key] || [];
+          // Any field that has nested tables takes the full grid width so
+          // the table actually fits. Textareas already do this.
+          const spanFull = f.type === 'textarea' || nestedTables.length > 0;
           return (
-            <div key={f.key} style={f.type === 'textarea' ? { gridColumn: 'span 2' } : undefined}>
+            <div key={f.key} style={spanFull ? { gridColumn: 'span 2' } : undefined}>
               <div style={sx.fieldLabel}>
                 {f.label}
                 {notCurrentClient && (
@@ -1639,6 +1651,11 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                   value={formData.fieldValues[f.key] || ''}
                   onChange={e => updateField(f.key, e.target.value)}
                 />
+              )}
+              {nestedTables.length > 0 && (
+                <div style={{ marginTop: '0.5rem' }}>
+                  {renderTables(nestedTables)}
+                </div>
               )}
             </div>
           );
