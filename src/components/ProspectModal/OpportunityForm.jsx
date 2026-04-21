@@ -1055,31 +1055,68 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       wb.created = new Date();
       const ws = wb.addWorksheet('Opportunity', {
         properties: { tabColor: { argb: SE_GREEN } },
-        views: [{ state: 'frozen', ySplit: 2 }],
+        views: [{ state: 'frozen', ySplit: 3 }],
       });
-      // Wide enough for label + long values and for a 5-col Agenda table.
-      const colWidths = [26, 22, 22, 22, 22];
+      // 10-column sheet so SE and customer attendee tables can sit
+      // side-by-side like they do in the form. Left half (1-4) for SE,
+      // col 5 is a narrow gap, right half (6-10) for the customer side.
+      // Other sections just span all 10 columns.
+      const colWidths = [28, 16, 40, 20, 4, 26, 14, 26, 22, 34];
       ws.columns = colWidths.map(w => ({ width: w }));
       const SPAN = colWidths.length;
+      const LEFT_COLS = [0, 1, 2, 3];   // 1-based: cols 1..4 (SE table)
+      const GAP_COL = 4;                // col 5 is the visual gap
+      const RIGHT_COLS = [5, 6, 7, 8, 9]; // 1-based: cols 6..10 (customer table)
 
-      // Row 1: "Schneider Electric" title band
+      // Estimate how many visible rows a cell will take given its text and
+      // column width (Excel character-width units). Used to set row.height
+      // so wrapped text is fully visible instead of being clipped.
+      const estimateWrappedLines = (text, colUnits) => {
+        if (!text) return 1;
+        const s = String(text);
+        const explicit = s.split('\n');
+        let lines = 0;
+        const perLine = Math.max(8, Math.floor(colUnits * 1.8));
+        for (const line of explicit) {
+          lines += Math.max(1, Math.ceil((line.length || 1) / perLine));
+        }
+        return lines;
+      };
+      // 15 pt per line (Nunito Sans 10pt), cap rows at ~50 lines for sanity.
+      const rowHeightForLines = (lines) => Math.min(750, Math.max(18, lines * 15));
+
+      // Row 1: "SE ADVISORY SERVICES" wordmark. SE is green, the rest
+      // is dark gray — rendered as a rich-text cell on a white background.
       ws.mergeCells(1, 1, 1, SPAN);
-      const titleCell = ws.getCell(1, 1);
+      const wordmarkCell = ws.getCell(1, 1);
+      wordmarkCell.value = {
+        richText: [
+          { text: 'SE', font: { name: 'Nunito Sans', bold: true, size: 22, color: { argb: SE_GREEN } } },
+          { text: ' ADVISORY SERVICES', font: { name: 'Nunito Sans', bold: true, size: 22, color: { argb: 'FF475569' } } },
+        ],
+      };
+      wordmarkCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } };
+      wordmarkCell.alignment = { vertical: 'middle', horizontal: 'center' };
+      ws.getRow(1).height = 40;
+
+      // Row 2: "Schneider Electric" brand band (green).
+      ws.mergeCells(2, 1, 2, SPAN);
+      const titleCell = ws.getCell(2, 1);
       titleCell.value = 'Schneider Electric';
-      titleCell.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
+      titleCell.font = { name: 'Nunito Sans', bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
       titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN } };
       titleCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-      ws.getRow(1).height = 30;
+      ws.getRow(2).height = 26;
 
-      // Row 2: Subtitle — "{Company} · Opportunity Prep"
-      ws.mergeCells(2, 1, 2, SPAN);
-      const subCell = ws.getCell(2, 1);
+      // Row 3: Subtitle — "{Company} · Opportunity Prep"
+      ws.mergeCells(3, 1, 3, SPAN);
+      const subCell = ws.getCell(3, 1);
       const subPieces = [companyName || 'Opportunity', 'Opportunity Prep'];
       if (formData.linkedOppName) subPieces.push(formData.linkedOppName);
       subCell.value = subPieces.join('  ·  ');
       subCell.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_MUTED } };
       subCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-      ws.getRow(2).height = 20;
+      ws.getRow(3).height = 20;
 
       // Helpers — all operate on the already-established column layout.
       const addSectionHeader = (text) => {
@@ -1110,9 +1147,11 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
         valCell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
         valCell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
         valCell.border = borderAll;
-        // Taller row for free-form text fields
-        const lines = String(value || '').split('\n').length;
-        row.height = Math.min(120, 18 + Math.max(0, lines - 1) * 14);
+        // Size the row so wrapped content isn't clipped. The merged value
+        // cell spans cols 2..SPAN, so we estimate wraps against the sum of
+        // their widths.
+        const mergedWidth = colWidths.slice(1).reduce((a, b) => a + b, 0);
+        row.height = rowHeightForLines(estimateWrappedLines(value, mergedWidth));
       };
 
       const addBlankRow = () => { ws.addRow([]); };
@@ -1155,14 +1194,19 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
           const values = columns.map(c => r[c.key] != null ? r[c.key] : '');
           const row = ws.addRow(values.concat(Array(Math.max(0, SPAN - values.length)).fill('')));
           const zebra = idx % 2 === 1;
+          let maxLines = 1;
           for (let i = 1; i <= SPAN; i++) {
             const cell = row.getCell(i);
             cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
             cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true };
             cell.border = borderAll;
             if (zebra) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_SURFACE } };
+            if (i <= columns.length) {
+              const w = (widths && widths[i - 1]) || colWidths[i - 1] || 20;
+              maxLines = Math.max(maxLines, estimateWrappedLines(values[i - 1], w));
+            }
           }
-          row.height = 20;
+          row.height = rowHeightForLines(maxLines);
         });
       };
 
@@ -1187,49 +1231,97 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
           [formData.meeting.organizer.name, formData.meeting.organizer.email && `<${formData.meeting.organizer.email}>`].filter(Boolean).join(' ')
         );
 
-        // Attendees broken into SE and Customer buckets, same way the UI shows them.
-        const writeAttendeeBucket = (heading, list) => {
-          if (!list?.length) return;
-          addSubheading(heading);
-          const isSE = /Schneider/i.test(heading);
-          const dansAskMap = dansAsks || {};
-          const cols = isSE
-            ? [
-                { key: 'name', label: 'Name' },
-                { key: 'required', label: 'Required?' },
-                { key: 'ask', label: "Dan's Ask" },
-              ]
-            : [
-                { key: 'name', label: 'Name' },
-                { key: 'required', label: 'Required?' },
-                { key: 'jobtitle', label: 'Title' },
-                { key: 'location', label: 'City, Country' },
-                { key: 'note', label: 'Notes' },
-              ];
-          const data = list.map(a => {
-            const base = {
-              name: a.name || a.email || '',
-              required: a.required ? 'Required' : 'Optional',
-            };
-            if (isSE) {
-              base.ask = (a.email && dansAskMap[a.email.toLowerCase()]) || '';
-            } else {
-              const city = (a.match?.city || '').trim();
-              const country = (a.match?.country || '').trim();
-              const noteSrc = (a.match?.id && contactNotes[a.match.id]) || a.match?.notes || a.match?.hs_content_membership_notes || a.match?.message || '';
-              base.jobtitle = a.match?.jobtitle || '';
-              base.location = [city, country].filter(Boolean).join(', ');
-              base.note = noteSrc;
-            }
-            return base;
-          });
-          const widths = isSE ? [26, 14, 42] : [24, 12, 24, 20, 30];
-          addTable(heading, cols, data, widths);
+        // Side-by-side attendee tables mirroring the on-screen form. SE
+        // uses cols 1-4 (Name, Required, Dan's Ask, filler); col 5 is the
+        // gap; Customer uses cols 6-10 (Name, Required, Title, City/Country,
+        // Notes).
+        addSectionHeader('Attendees');
+
+        // Company sub-headers row
+        const sbRow = ws.addRow([]);
+        ws.mergeCells(sbRow.number, 1, sbRow.number, 4);
+        ws.mergeCells(sbRow.number, 6, sbRow.number, 10);
+        const seHead = ws.getCell(sbRow.number, 1);
+        seHead.value = 'Schneider Electric';
+        seHead.font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: SE_TEXT_DARK } };
+        seHead.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        const custHead = ws.getCell(sbRow.number, 6);
+        custHead.value = companyName || 'Customer';
+        custHead.font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: SE_TEXT_DARK } };
+        custHead.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        sbRow.height = 20;
+
+        // Column headers row
+        const seColLabels = ['Name', 'Required?', "Dan's Ask", ''];
+        const custColLabels = ['Name', 'Required?', 'Title', 'City, Country', 'Notes'];
+        const hdrRow = ws.addRow([]);
+        const styleHeader = (cell, text, filled) => {
+          cell.value = text;
+          if (filled) {
+            cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+            cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+          }
+          cell.border = borderAll;
         };
-        writeAttendeeBucket('Schneider Electric Attendees', seAttendees);
-        writeAttendeeBucket((companyName || 'Customer') + ' Attendees', customerAttendees);
-        // Restore default column widths after per-table overrides
-        colWidths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+        for (let c = 0; c < 4; c++) styleHeader(hdrRow.getCell(c + 1), seColLabels[c], c < 3);
+        for (let c = 0; c < 5; c++) styleHeader(hdrRow.getCell(c + 6), custColLabels[c], true);
+        hdrRow.height = 22;
+
+        const dansAskMap = dansAsks || {};
+        const maxAttendeeRows = Math.max(seAttendees.length, customerAttendees.length, 1);
+        for (let i = 0; i < maxAttendeeRows; i++) {
+          const dRow = ws.addRow([]);
+          const zebra = i % 2 === 1;
+          let maxLines = 1;
+
+          const se = seAttendees[i];
+          const seVals = se
+            ? [
+                se.name || se.email || '',
+                se.required ? 'Required' : 'Optional',
+                (se.email && dansAskMap[se.email.toLowerCase()]) || '',
+                '',
+              ]
+            : ['', '', '', ''];
+          for (let c = 0; c < 4; c++) {
+            const cell = dRow.getCell(c + 1);
+            cell.value = seVals[c];
+            cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+            cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true };
+            cell.border = borderAll;
+            if (zebra) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_SURFACE } };
+            if (c < 3) maxLines = Math.max(maxLines, estimateWrappedLines(seVals[c], colWidths[c]));
+          }
+
+          const cust = customerAttendees[i];
+          let custVals;
+          if (cust) {
+            const city = (cust.match?.city || '').trim();
+            const country = (cust.match?.country || '').trim();
+            const noteSrc = (cust.match?.id && contactNotes[cust.match.id]) || cust.match?.notes || cust.match?.hs_content_membership_notes || cust.match?.message || '';
+            custVals = [
+              cust.name || cust.email || '',
+              cust.required ? 'Required' : 'Optional',
+              cust.match?.jobtitle || '',
+              [city, country].filter(Boolean).join(', '),
+              noteSrc,
+            ];
+          } else {
+            custVals = ['', '', '', '', ''];
+          }
+          for (let c = 0; c < 5; c++) {
+            const cell = dRow.getCell(c + 6);
+            cell.value = custVals[c];
+            cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+            cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true };
+            cell.border = borderAll;
+            if (zebra) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_SURFACE } };
+            maxLines = Math.max(maxLines, estimateWrappedLines(custVals[c], colWidths[c + 5]));
+          }
+
+          dRow.height = rowHeightForLines(maxLines);
+        }
       }
 
       // --- Meeting Prep (free-form) -----------------------------------
