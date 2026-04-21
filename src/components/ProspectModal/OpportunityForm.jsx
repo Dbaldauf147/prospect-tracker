@@ -879,10 +879,20 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
   // "Dan's Ask" — per-SE-attendee free text stored under the meeting
   // object, keyed by lowercased email so it survives ICS re-imports.
   const dansAsks = (formData.meeting?.dansAsks) || {};
-  const updateDansAsk = (email, text) => {
-    if (!email) return;
+  // Dan's Ask is keyed on the attendee's email when present, otherwise on
+  // a name-based key — so manually added attendees without an email still
+  // get their Ask persisted.
+  const dansAskKey = (att) => {
+    const em = (att?.email || '').trim().toLowerCase();
+    if (em) return em;
+    const nm = (att?.name || '').trim().toLowerCase();
+    return nm ? `name:${nm}` : '';
+  };
+  const updateDansAsk = (attendee, text) => {
+    const key = dansAskKey(attendee);
+    if (!key) return;
     const next = { ...(formData.meeting || {}) };
-    next.dansAsks = { ...(next.dansAsks || {}), [email.toLowerCase()]: text };
+    next.dansAsks = { ...(next.dansAsks || {}), [key]: text };
     set({ meeting: next });
   };
 
@@ -1392,7 +1402,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
             ? [
                 displayAttendeeName(se),
                 se.required ? 'Required' : 'Optional',
-                (se.email && dansAskMap[se.email.toLowerCase()]) || '',
+                dansAskMap[dansAskKey(se)] || '',
                 '',
               ]
             : ['', '', '', ''];
@@ -1809,7 +1819,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                   ? Object.entries(a.rawParams).map(([k, v]) => `${k}=${v}`).join('; ')
                   : '';
                 const tooltip = `${a.email}${a.role ? ' · ROLE=' + a.role : ''}${rawSummary ? ' · ' + rawSummary : ''}`;
-                const ask = (a.email && dansAsks[a.email.toLowerCase()]) || '';
+                const ask = dansAsks[dansAskKey(a)] || '';
                 const wrap = { overflowWrap: 'anywhere', wordBreak: 'break-word' };
                 return (
                   <div
@@ -1846,7 +1856,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                     <CommitOnBlurInput
                       multiline
                       value={ask}
-                      onCommit={v => updateDansAsk(a.email, v)}
+                      onCommit={v => updateDansAsk(a, v)}
                       rows={1}
                       placeholder="What do you want to ask / bring up with them?"
                       style={{
