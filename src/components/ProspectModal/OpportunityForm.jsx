@@ -1133,10 +1133,10 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       wordmarkCell.alignment = { vertical: 'middle', horizontal: 'center' };
       ws.getRow(1).height = 40;
 
-      // Row 2: "Schneider Electric" brand band (green).
+      // Row 2: Call Plan brand band (green).
       ws.mergeCells(2, 1, 2, SPAN);
       const titleCell = ws.getCell(2, 1);
-      titleCell.value = 'Schneider Electric';
+      titleCell.value = 'Call Plan';
       titleCell.font = { name: 'Nunito Sans', bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
       titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN } };
       titleCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
@@ -1145,9 +1145,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       // Row 3: Subtitle — "{Company} · Opportunity Prep"
       ws.mergeCells(3, 1, 3, SPAN);
       const subCell = ws.getCell(3, 1);
-      const subPieces = [companyName || 'Opportunity', 'Opportunity Prep'];
-      if (formData.linkedOppName) subPieces.push(formData.linkedOppName);
-      subCell.value = subPieces.join('  ·  ');
+      subCell.value = `${companyName || 'Opportunity'}  ·  Opportunity Prep`;
       subCell.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_MUTED } };
       subCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
       ws.getRow(3).height = 20;
