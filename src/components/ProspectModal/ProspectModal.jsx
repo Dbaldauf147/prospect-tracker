@@ -1724,6 +1724,37 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     });
   }, [companyOppsData, writeCompanyOpps]);
 
+  // Non-prompting rename used by the inline double-click editors (tab strip
+  // and the title next to the Back button).
+  const renameOpportunityTo = useCallback((oppId, nextTitle) => {
+    const trimmed = (nextTitle || '').trim();
+    const current = (companyOppsData.opportunities || []).find(o => o.id === oppId);
+    if (!current) return;
+    if (!trimmed || trimmed === current.title) return;
+    writeCompanyOpps({
+      buckets: companyOppsData.buckets || [],
+      opportunities: (companyOppsData.opportunities || []).map(o =>
+        o.id === oppId ? { ...o, title: trimmed, titleAuto: false, updatedAt: Date.now() } : o
+      ),
+    });
+  }, [companyOppsData, writeCompanyOpps]);
+
+  const [renamingOppId, setRenamingOppId] = useState(null);
+  const [renamingDraft, setRenamingDraft] = useState('');
+  const startInlineRename = useCallback((id, currentTitle) => {
+    setRenamingOppId(id);
+    setRenamingDraft(currentTitle || '');
+  }, []);
+  const commitInlineRename = useCallback(() => {
+    if (renamingOppId) renameOpportunityTo(renamingOppId, renamingDraft);
+    setRenamingOppId(null);
+    setRenamingDraft('');
+  }, [renamingOppId, renamingDraft, renameOpportunityTo]);
+  const cancelInlineRename = useCallback(() => {
+    setRenamingOppId(null);
+    setRenamingDraft('');
+  }, []);
+
   const deleteOpportunity = useCallback((oppId) => {
     const opp = (companyOppsData.opportunities || []).find(o => o.id === oppId);
     if (!opp) return;
@@ -2361,11 +2392,26 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             minWidth: 120, maxWidth: 220,
                             whiteSpace: 'nowrap',
                           }}
-                          title={note.title || 'New form'}
+                          title={renamingOppId === note.id ? 'Editing name' : (note.title || 'New form') + ' · double-click to rename'}
                         >
-                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {note.title || 'New form'}
-                          </span>
+                          {renamingOppId === note.id ? (
+                            <input
+                              value={renamingDraft}
+                              onChange={e => setRenamingDraft(e.target.value)}
+                              onBlur={commitInlineRename}
+                              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commitInlineRename(); } if (e.key === 'Escape') cancelInlineRename(); }}
+                              onClick={e => e.stopPropagation()}
+                              autoFocus
+                              style={{ padding: '0.1rem 0.3rem', fontSize: '0.78rem', fontWeight: 600, border: '1px solid #009530', borderRadius: 3, background: '#fff', width: 140, fontFamily: 'inherit' }}
+                            />
+                          ) : (
+                            <span
+                              style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}
+                              onDoubleClick={(e) => { e.stopPropagation(); startInlineRename(note.id, note.title); }}
+                            >
+                              {note.title || 'New form'}
+                            </span>
+                          )}
                           <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); deleteOpportunity(note.id); }}
@@ -2394,7 +2440,22 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         >
                           &larr; Back
                         </button>
-                        <span style={{ fontWeight: 600, fontSize: '0.9rem', flex: 1 }}>{selectedOpp.title}</span>
+                        {renamingOppId === selectedOpp.id ? (
+                          <input
+                            value={renamingDraft}
+                            onChange={e => setRenamingDraft(e.target.value)}
+                            onBlur={commitInlineRename}
+                            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commitInlineRename(); } if (e.key === 'Escape') cancelInlineRename(); }}
+                            autoFocus
+                            style={{ fontWeight: 600, fontSize: '0.9rem', flex: 1, padding: '0.2rem 0.4rem', border: '1px solid #009530', borderRadius: 4, fontFamily: 'inherit' }}
+                          />
+                        ) : (
+                          <span
+                            style={{ fontWeight: 600, fontSize: '0.9rem', flex: 1, cursor: 'text' }}
+                            title="Double-click to rename"
+                            onDoubleClick={() => startInlineRename(selectedOpp.id, selectedOpp.title)}
+                          >{selectedOpp.title}</span>
+                        )}
                         <select
                           value={selectedOpp.bucketId}
                           onChange={e => moveOpportunity(selectedOpp.id, e.target.value)}
