@@ -2345,7 +2345,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
             <div className={styles.fieldFull}>
               <label className={styles.label}>Company Notes</label>
-              <CommitOnBlurInput multiline className={styles.textarea} value={fields.notes} onCommit={v => set('notes', v)} rows={2} />
+              <CommitOnBlurInput multiline autoGrow className={styles.textarea} value={fields.notes} onCommit={v => set('notes', v)} rows={2} />
             </div>
           </div>
 
