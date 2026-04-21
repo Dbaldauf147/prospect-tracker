@@ -538,7 +538,7 @@ function StatusMismatchWarning({ row, onUpdate }) {
                 background: 'var(--color-accent)', color: '#fff', fontSize: '0.72rem', fontWeight: 600,
                 cursor: 'pointer', fontFamily: 'inherit',
               }}
-            >Convert</button>
+            >Update Table View</button>
             <button
               onClick={() => { onUpdate(row.id, { dismissedSuggestedStatus: row.suggestedStatus }); setOpen(false); }}
               style={{

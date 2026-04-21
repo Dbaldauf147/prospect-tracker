@@ -153,67 +153,31 @@ export function useSheetSync(user) {
           existingMap.set((d.data().company || '').toLowerCase(), d);
         }
 
-        // Last-edit-wins merge: if the website record was edited after the
-        // last auto-sync, preserve those fields; otherwise take sheet values.
-        const lastSyncTime = localStorage.getItem(LAST_AUTO_SYNC_KEY);
-        const lastSyncDate = lastSyncTime ? new Date(parseInt(lastSyncTime)) : new Date(0);
-
-        let updated = 0, added = 0, skipped = 0;
+        // Import mode: ADDITIVE-ONLY. Existing Table View rows are never
+        // overwritten from the sheet. Only rows whose company is not yet in
+        // the website are added. This prevents Google Sheets from ever
+        // clobbering website data.
+        let added = 0, skipped = 0;
         for (let i = 0; i < sheetProspects.length; i += 450) {
           const batch = writeBatch(db);
           const chunk = sheetProspects.slice(i, i + 450);
+          let inBatch = 0;
           for (const p of chunk) {
             const key = (p.company || '').toLowerCase();
-            const existingDoc = existingMap.get(key);
-            if (existingDoc) {
-              const existingData = existingDoc.data();
-              const existingUpdated = existingData.updatedAt ? new Date(existingData.updatedAt) : new Date(0);
-              const wasEditedOnWebsite = existingUpdated > lastSyncDate;
-
-              if (wasEditedOnWebsite) {
-                // Website was edited more recently than last sync — only fill empty fields
-                const updates = {};
-                let hasUpdates = false;
-                for (const [field, val] of Object.entries(p)) {
-                  if (field === 'updatedAt' || field === 'createdAt') continue;
-                  const existing = existingData[field];
-                  const isEmpty = existing == null || existing === '' || (Array.isArray(existing) && existing.length === 0);
-                  const sheetHasData = val != null && val !== '' && !(Array.isArray(val) && val.length === 0);
-                  if (isEmpty && sheetHasData) {
-                    updates[field] = val;
-                    hasUpdates = true;
-                  }
-                }
-                if (hasUpdates) {
-                  batch.update(existingDoc.ref, updates);
-                  updated++;
-                } else {
-                  skipped++;
-                }
-              } else {
-                // Sheet is newer — overwrite non-empty fields
-                const updates = {};
-                for (const [field, val] of Object.entries(p)) {
-                  if (field === 'updatedAt' || field === 'createdAt') continue;
-                  if (val != null && val !== '' && !(Array.isArray(val) && val.length === 0)) {
-                    updates[field] = val;
-                  }
-                }
-                updates.updatedAt = new Date().toISOString();
-                batch.update(existingDoc.ref, updates);
-                updated++;
-              }
-            } else {
-              const ref = doc(collection(db, 'prospects'));
-              batch.set(ref, { ...p, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
-              added++;
+            if (existingMap.has(key)) {
+              skipped++;
+              continue;
             }
+            const ref = doc(collection(db, 'prospects'));
+            batch.set(ref, { ...p, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+            added++;
+            inBatch++;
           }
-          await batch.commit();
+          if (inBatch > 0) await batch.commit();
         }
 
         localStorage.setItem(LAST_AUTO_SYNC_KEY, String(Date.now()));
-        console.log(`Auto-sync from Google Sheets: ${updated} updated, ${added} added, ${skipped} preserved (edited on website)`);
+        console.log(`Auto-sync from Google Sheets (additive-only): ${added} added, ${skipped} existing rows preserved`);
       } catch (err) {
         console.error('Auto-sync error:', err);
       } finally {
