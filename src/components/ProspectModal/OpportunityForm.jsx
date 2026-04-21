@@ -1366,7 +1366,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       wb.created = new Date();
       const ws = wb.addWorksheet('Opportunity', {
         properties: { tabColor: { argb: SE_GREEN } },
-        views: [{ state: 'frozen', ySplit: 3 }],
+        views: [{ state: 'frozen', ySplit: 3, showGridLines: false }],
       });
       // 10-column sheet with uniform widths so any N-column table splits
       // the full page width into visually balanced slots (1-col = full
@@ -1806,6 +1806,28 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
         addTable(t.label, t.columns, tableRows, widths);
         // Restore defaults for next block
         colWidths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+      }
+
+      // Frame the whole document with a medium SE-green outer border.
+      // Gridlines are already off (view.showGridLines = false), so this
+      // border is what visually defines where the sheet ends; we preserve
+      // each cell's existing thin internal borders and only override the
+      // perimeter side(s).
+      {
+        const outer = { style: 'medium', color: { argb: SE_GREEN_DARK } };
+        const lastRow = ws.rowCount;
+        for (let r = 1; r <= lastRow; r++) {
+          for (let c = 1; c <= SPAN; c++) {
+            if (r !== 1 && r !== lastRow && c !== 1 && c !== SPAN) continue;
+            const cell = ws.getCell(r, c);
+            const b = { ...(cell.border || {}) };
+            if (r === 1) b.top = outer;
+            if (r === lastRow) b.bottom = outer;
+            if (c === 1) b.left = outer;
+            if (c === SPAN) b.right = outer;
+            cell.border = b;
+          }
+        }
       }
 
       const buf = await wb.xlsx.writeBuffer();
