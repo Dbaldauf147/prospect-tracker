@@ -40,11 +40,12 @@ export const DEFAULT_FORM_TEMPLATE = {
     // as a clickable link in the form header and as a hyperlink in the
     // Excel export.
     { key: 'companyWebsite', label: 'Company Website', type: 'text', isLink: true },
-    { key: 'scope', label: 'Scope', type: 'text', autofill: 'Scope' },
+    { key: 'scope', label: 'Scope Being Explored', type: 'text', autofill: 'Scope' },
+    { key: 'clientManager', label: 'Client Manager', type: 'text' },
+    // Auto-populated with the matched prospect's current active services
+    // (Sold / Renewal / In Progress) on opp-link, but editable any time.
+    { key: 'currentScope', label: 'Current Scope', type: 'textarea' },
     { key: 'region', label: 'Region', type: 'select', options: ['EU', 'Global', 'NAM', 'APAC', 'LATAM'] },
-    // Only rendered when status === 'Client'. Auto-populated with the
-    // company's current active services (Sold / Renewal / In Progress).
-    { key: 'currentClientScope', label: 'Current Client Scope', type: 'textarea', showWhenStatus: 'Client' },
     { key: 'summary', label: 'Meeting Summary / Notes', type: 'textarea' },
   ],
   tables: [
@@ -501,16 +502,40 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     set({ fieldValues: { ...formData.fieldValues, ...updates } });
   }, [formData.fieldValues?.stage, companyName]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Self-heal: fill Company Website from the matching prospect's website
-  // when the field is still empty. Doesn't overwrite manual edits.
+  // Self-heal: fill Company Website / Current Scope / Client Manager from
+  // the matching prospect whenever those fields are empty. Doesn't overwrite
+  // manual edits. Also migrates any legacy currentClientScope value stored
+  // on older forms into the new currentScope field.
   useEffect(() => {
-    const current = (formData.fieldValues?.companyWebsite || '').trim();
-    if (current) return;
+    const fv = formData.fieldValues || {};
     const match = matchProspectByName(companyName, prospects);
-    const url = (match?.website || '').trim();
-    if (!url) return;
-    set({ fieldValues: { ...formData.fieldValues, companyWebsite: url } });
-  }, [companyName, prospects, formData.fieldValues?.companyWebsite]); // eslint-disable-line react-hooks/exhaustive-deps
+    const updates = {};
+
+    // Company Website
+    if (!(fv.companyWebsite || '').trim()) {
+      const url = (match?.website || '').trim();
+      if (url) updates.companyWebsite = url;
+    }
+    // Current Scope (auto-fill from prospect's active services)
+    if (!(fv.currentScope || '').trim()) {
+      // Migrate legacy key if present
+      const legacy = (fv.currentClientScope || '').trim();
+      if (legacy) {
+        updates.currentScope = legacy;
+      } else if (match) {
+        const active = currentServicesFor(match);
+        if (active.length > 0) updates.currentScope = active.join(', ');
+      }
+    }
+    // Client Manager (from prospect's CDM)
+    if (!(fv.clientManager || '').trim()) {
+      const cdm = (match?.cdm || '').trim();
+      if (cdm) updates.clientManager = cdm;
+    }
+
+    if (Object.keys(updates).length === 0) return;
+    set({ fieldValues: { ...fv, ...updates } });
+  }, [companyName, prospects, formData.fieldValues?.companyWebsite, formData.fieldValues?.currentScope, formData.fieldValues?.clientManager, formData.fieldValues?.currentClientScope]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const updateTableCell = (tableKey, rowIdx, colKey, val) => {
     const rows = [...(formData.tables[tableKey] || [])];
@@ -772,17 +797,19 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     }
     // Status is driven by the Account (company) on this opp, not the opp
     // row's Status column. Look up the matching prospect in the Table View
-    // data and pull its account-level status. If that status is Client,
-    // also populate Current Client Scope with the company's active services.
+    // data and pull its account-level status. Also auto-populate Current
+    // Scope with the company's active services, and Client Manager with
+    // the CDM on the prospect record if we have one.
     const accountName = (opp?.['Account'] || '').trim();
     const matchedProspect = matchProspectByName(accountName, prospects);
     if (matchedProspect?.status) {
       nextValues.status = matchedProspect.status;
-      if (matchedProspect.status === 'Client') {
-        nextValues.currentClientScope = currentServicesFor(matchedProspect).join(', ');
-      } else {
-        nextValues.currentClientScope = '';
-      }
+    }
+    if (matchedProspect) {
+      const active = currentServicesFor(matchedProspect);
+      if (active.length > 0) nextValues.currentScope = active.join(', ');
+      const cdm = (matchedProspect.cdm || '').trim();
+      if (cdm && !nextValues.clientManager) nextValues.clientManager = cdm;
     }
     // Stage must always resolve to a BFO value. Try the opp's Stage column
     // first; if it's already a BFO name ('3 - Qualify Opportunity' etc.)
