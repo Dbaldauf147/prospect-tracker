@@ -45,6 +45,7 @@ export const DEFAULT_FORM_TEMPLATE = {
       key: 'ourQuestions',
       label: 'Questions to Ask Them',
       group: 'Questions',
+      reorderable: true,
       columns: [
         { key: 'service', label: 'Service' },
         { key: 'question', label: 'Question' },
@@ -585,6 +586,20 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     set({ tables: { ...formData.tables, ourQuestions: [...populated, ...additions] } });
   }, [formData.fieldValues?.scope]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Always keep at least one empty row at the bottom of Questions to
+  // Ask Them so the user can always type a new question without having
+  // to go find an 'add row' button.
+  useEffect(() => {
+    const rows = formData.tables?.ourQuestions || [];
+    const last = rows[rows.length - 1];
+    const lastIsEmpty = !last || (!(last.service || '').trim() && !(last.question || '').trim());
+    if (lastIsEmpty) return;
+    const def = template.tables.find(t => t.key === 'ourQuestions');
+    if (!def) return;
+    const empty = Object.fromEntries(def.columns.map(c => [c.key, '']));
+    set({ tables: { ...formData.tables, ourQuestions: [...rows, empty] } });
+  }, [formData.tables?.ourQuestions]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const updateTableCell = (tableKey, rowIdx, colKey, val) => {
     const rows = [...(formData.tables[tableKey] || [])];
     rows[rowIdx] = { ...rows[rowIdx], [colKey]: val };
@@ -612,6 +627,16 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
   const removeTableRow = (tableKey, rowIdx) => {
     const rows = [...(formData.tables[tableKey] || [])];
     rows.splice(rowIdx, 1);
+    set({ tables: { ...formData.tables, [tableKey]: rows } });
+  };
+
+  const moveTableRow = (tableKey, rowIdx, delta) => {
+    const rows = [...(formData.tables[tableKey] || [])];
+    const target = rowIdx + delta;
+    if (target < 0 || target >= rows.length) return;
+    const tmp = rows[rowIdx];
+    rows[rowIdx] = rows[target];
+    rows[target] = tmp;
     set({ tables: { ...formData.tables, [tableKey]: rows } });
   };
 
@@ -760,12 +785,32 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                     );
                   })}
                   <td style={sx.td}>
-                    <button
-                      type="button"
-                      style={sx.rowBtn}
-                      title="Remove row"
-                      onClick={() => removeTableRow(t.key, rIdx)}
-                    >×</button>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0 }}>
+                      {t.reorderable && (
+                        <>
+                          <button
+                            type="button"
+                            style={{ ...sx.rowBtn, color: '#64748B', padding: '0 3px', fontSize: '0.78rem' }}
+                            title="Move up"
+                            disabled={rIdx === 0}
+                            onClick={() => moveTableRow(t.key, rIdx, -1)}
+                          >↑</button>
+                          <button
+                            type="button"
+                            style={{ ...sx.rowBtn, color: '#64748B', padding: '0 3px', fontSize: '0.78rem' }}
+                            title="Move down"
+                            disabled={rIdx >= (formData.tables[t.key] || []).length - 1}
+                            onClick={() => moveTableRow(t.key, rIdx, 1)}
+                          >↓</button>
+                        </>
+                      )}
+                      <button
+                        type="button"
+                        style={sx.rowBtn}
+                        title="Remove row"
+                        onClick={() => removeTableRow(t.key, rIdx)}
+                      >×</button>
+                    </div>
                   </td>
                 </tr>
               ))}
