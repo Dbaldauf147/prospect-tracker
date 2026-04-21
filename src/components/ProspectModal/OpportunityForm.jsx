@@ -607,9 +607,6 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                   : '';
                 const tooltip = `${a.email}${a.role ? ' · ROLE=' + a.role : ''}${rawSummary ? ' · ' + rawSummary : ''}`;
                 const title = a.match?.jobtitle || '';
-                // Pull notes from the contact's note record (same source the
-                // Contacts table on this popup writes to), with HubSpot-property
-                // fallbacks.
                 const contactId = a.match?.id || a.match?.vid;
                 const contactNote = (contactId && contactNotes[contactId])
                   || a.match?.notes
@@ -617,56 +614,67 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                   || a.match?.message
                   || '';
                 const linkedinUrl = a.match?.hs_linkedin_url || a.match?.linkedin_url || a.match?.hs_linkedinid || '';
-                const nameNode = (
-                  <span style={{ fontWeight: 600, fontSize: '0.8rem', color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {a.name || a.email || '(unknown)'}
-                  </span>
-                );
+                const wrap = { overflowWrap: 'anywhere', wordBreak: 'break-word', whiteSpace: 'pre-wrap' };
                 return (
-                  <div key={i} title={tooltip} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', padding: '0.4rem 0.5rem', background: matched ? '#F0FDF4' : '#FEF2F2', border: '1px solid', borderColor: matched ? '#BBF7D0' : '#FECACA', borderRadius: 4 }}>
+                  <div
+                    key={i}
+                    title={tooltip}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'auto minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.4fr) auto',
+                      columnGap: '0.5rem',
+                      alignItems: 'start',
+                      padding: '0.4rem 0.5rem',
+                      background: matched ? '#F0FDF4' : '#FEF2F2',
+                      border: '1px solid',
+                      borderColor: matched ? '#BBF7D0' : '#FECACA',
+                      borderRadius: 4,
+                    }}
+                  >
                     <span style={{ color: matched ? '#15803D' : '#B91C1C', fontWeight: 700, fontSize: '0.9rem', paddingTop: 2 }}>{matched ? '✓' : '✗'}</span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap', minWidth: 0 }}>
-                        {linkedinUrl ? (
-                          <a
-                            href={linkedinUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                            style={{ fontWeight: 600, fontSize: '0.8rem', color: '#0A66C2', textDecoration: 'none' }}
-                            title="Open LinkedIn profile"
-                          >
-                            {a.name || a.email || '(unknown)'}
-                          </a>
-                        ) : nameNode}
-                        <span style={{
-                          fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.04em',
-                          textTransform: 'uppercase',
-                          padding: '1px 6px', borderRadius: 999,
-                          background: a.required ? '#FEE2E2' : '#E0E7FF',
-                          color: a.required ? '#B91C1C' : '#3730A3',
-                        }}>{a.required ? 'Required' : 'Optional'}</span>
-                      </div>
-                      <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2 }}>
-                        {title || <span style={{ fontStyle: 'italic', color: '#94A3B8' }}>{matched ? 'no title' : 'not in HubSpot'}</span>}
-                        {a.matchedOtherCompany ? ` · at ${a.matchedCompany}` : ''}
-                      </div>
-                      {contactNote && (
-                        <div style={{ fontSize: '0.72rem', color: '#334155', marginTop: 3, whiteSpace: 'pre-wrap' }}>
-                          {contactNote}
-                        </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap', minWidth: 0 }}>
+                      {linkedinUrl ? (
+                        <a
+                          href={linkedinUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          style={{ fontWeight: 600, fontSize: '0.8rem', color: '#0A66C2', textDecoration: 'none', ...wrap }}
+                          title="Open LinkedIn profile"
+                        >
+                          {a.name || a.email || '(unknown)'}
+                        </a>
+                      ) : (
+                        <span style={{ fontWeight: 600, fontSize: '0.8rem', color: '#1E293B', ...wrap }}>
+                          {a.name || a.email || '(unknown)'}
+                        </span>
+                      )}
+                      <span style={{
+                        fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.04em',
+                        textTransform: 'uppercase',
+                        padding: '1px 6px', borderRadius: 999,
+                        background: a.required ? '#FEE2E2' : '#E0E7FF',
+                        color: a.required ? '#B91C1C' : '#3730A3',
+                      }}>{a.required ? 'Required' : 'Optional'}</span>
+                    </div>
+                    <div style={{ fontSize: '0.72rem', color: '#475569', paddingTop: 3, ...wrap }}>
+                      {title || <span style={{ fontStyle: 'italic', color: '#94A3B8' }}>{matched ? '—' : 'not in HubSpot'}</span>}
+                    </div>
+                    <div style={{ fontSize: '0.72rem', color: '#334155', paddingTop: 3, ...wrap }}>
+                      {contactNote || <span style={{ color: '#94A3B8' }}>—</span>}
+                    </div>
+                    <div>
+                      {!matched && a.email && onCreateContact && (
+                        <button
+                          type="button"
+                          style={sx.btn}
+                          disabled={creatingEmail === a.email}
+                          onClick={() => handleCreateAttendeeContact(a)}
+                        >
+                          {creatingEmail === a.email ? 'Adding…' : 'Add to HubSpot'}
+                        </button>
                       )}
                     </div>
-                    {!matched && a.email && onCreateContact && (
-                      <button
-                        type="button"
-                        style={sx.btn}
-                        disabled={creatingEmail === a.email}
-                        onClick={() => handleCreateAttendeeContact(a)}
-                      >
-                        {creatingEmail === a.email ? 'Adding…' : 'Add to HubSpot'}
-                      </button>
-                    )}
                   </div>
                 );
               };
@@ -677,6 +685,22 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                 if (req === 0) return `${list.length} optional`;
                 return `${req} required · ${opt} optional`;
               };
+              const columnHeader = (
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'auto minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.4fr) auto',
+                  columnGap: '0.5rem',
+                  padding: '0 0.5rem 0.25rem',
+                  fontSize: '0.62rem', fontWeight: 700,
+                  color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em',
+                }}>
+                  <span style={{ width: 12 }} />
+                  <span>Name</span>
+                  <span>Title</span>
+                  <span>Notes</span>
+                  <span />
+                </div>
+              );
               const customerHeading = (companyName || 'Customer').trim() || 'Customer';
               return (
                 <div>
@@ -693,6 +717,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                         : (
                           <>
                             <div style={{ fontSize: '0.68rem', color: '#64748B', marginBottom: '0.3rem' }}>{countLine(seAttendees)}</div>
+                            {columnHeader}
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
                               {seAttendees.map(renderAttendee)}
                             </div>
@@ -708,6 +733,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                         : (
                           <>
                             <div style={{ fontSize: '0.68rem', color: '#64748B', marginBottom: '0.3rem' }}>{countLine(customerAttendees)}</div>
+                            {columnHeader}
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
                               {customerAttendees.map(renderAttendee)}
                             </div>
