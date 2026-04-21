@@ -1045,21 +1045,10 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     if (!rows.length) return;
     const parsed = Math.max(0, Number(newMinutes) || 0);
     rows[rowIdx] = { ...rows[rowIdx], duration: parsed === 0 ? '' : String(parsed) };
-    if (meetingTotalMinutes > 0) {
-      let usedBeforeAndAt = 0;
-      for (let i = 0; i <= rowIdx; i++) usedBeforeAndAt += Number(rows[i]?.duration) || 0;
-      const remainAfter = Math.max(0, meetingTotalMinutes - usedBeforeAndAt);
-      if (remainAfter > 0) {
-        if (rowIdx + 1 >= rows.length) {
-          rows.push({ subject: '', speaker: '', startTime: '', duration: String(remainAfter), slides: '' });
-        } else {
-          rows[rowIdx + 1] = { ...rows[rowIdx + 1], duration: String(remainAfter) };
-          for (let i = rowIdx + 2; i < rows.length; i++) {
-            rows[i] = { ...rows[i], duration: '' };
-          }
-        }
-      }
-    }
+    // Just update the single row. The section-title counter shows
+    // "{sum} / {total} min · over" in red when agendaSum exceeds the
+    // meeting duration, which is enough of a signal without silently
+    // redistributing other rows' minutes.
     set({ tables: { ...formData.tables, agenda: rows } });
   }
 
