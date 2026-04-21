@@ -1311,26 +1311,23 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
 
       // Estimate how many visible rows a cell will take given its text and
       // column width (Excel character-width units). Used to set row.height
-      // so wrapped text is fully visible instead of being clipped. The
-      // ratio is deliberately conservative — word-wrapping at space
-      // boundaries produces fewer chars per line than strict char-count,
-      // and Nunito Sans 10pt is wider than Calibri 11pt (Excel default),
-      // so we under-pack.
+      // so wrapped text is fully visible without leaving excess empty
+      // space. Nunito Sans 10pt is slightly narrower than Excel's default
+      // Calibri 11pt, so ~1.2 chars fit per column-width unit in practice.
       const estimateWrappedLines = (text, colUnits) => {
         if (!text) return 1;
         const s = String(text);
         const explicit = s.split('\n');
         let lines = 0;
-        // ~0.95 avg chars per column unit at 10pt Nunito Sans, then trim
-        // for word-boundary wrap inefficiency.
-        const perLine = Math.max(10, Math.floor(colUnits * 0.85));
+        const perLine = Math.max(8, Math.floor(colUnits * 1.2));
         for (const line of explicit) {
           lines += Math.max(1, Math.ceil((line.length || 1) / perLine));
         }
         return lines;
       };
-      // 18 pt per line of 10pt wrapped text (Excel adds leading + padding).
-      const rowHeightForLines = (lines) => Math.min(750, Math.max(20, lines * 18));
+      // ~14pt per wrapped line of 10pt text (matches Excel's native
+      // auto-fit), with a 16pt floor so single-line rows stay tight.
+      const rowHeightForLines = (lines) => Math.min(600, Math.max(16, lines * 14));
 
       // Row 1: "SE ADVISORY SERVICES" wordmark. SE is green, the rest
       // is dark gray — rendered as a rich-text cell on a white background.
