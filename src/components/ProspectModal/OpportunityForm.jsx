@@ -373,6 +373,27 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     }
   }, [formData.fieldValues?.stage]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Self-heal: whenever the Stage maps to a known meeting template and the
+  // Intent/End In Mind fields are empty, auto-populate them. This covers
+  // forms created before the template mapping shipped — users don't need
+  // to re-link the opportunity.
+  useEffect(() => {
+    const stage = formData.fieldValues?.stage;
+    if (!stage) return;
+    const tmpl = meetingTemplateFor(stage);
+    if (!tmpl) return;
+    const displayCompany = (companyName || 'the customer').trim();
+    const nextIntent = tmpl.intent.replaceAll('{company}', displayCompany);
+    const nextEnd = tmpl.endInMind.replaceAll('{company}', displayCompany);
+    const currentIntent = formData.fieldValues?.intent || '';
+    const currentEnd = formData.fieldValues?.endInMind || '';
+    const updates = {};
+    if (!currentIntent.trim()) updates.intent = nextIntent;
+    if (!currentEnd.trim()) updates.endInMind = nextEnd;
+    if (Object.keys(updates).length === 0) return;
+    set({ fieldValues: { ...formData.fieldValues, ...updates } });
+  }, [formData.fieldValues?.stage, companyName]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const updateTableCell = (tableKey, rowIdx, colKey, val) => {
     const rows = [...(formData.tables[tableKey] || [])];
     rows[rowIdx] = { ...rows[rowIdx], [colKey]: val };
