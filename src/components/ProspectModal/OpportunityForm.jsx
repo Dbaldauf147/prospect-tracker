@@ -47,6 +47,15 @@ export const DEFAULT_FORM_TEMPLATE = {
       ],
     },
     {
+      key: 'meetingNotes',
+      label: 'Meeting Notes',
+      columns: [
+        { key: 'issue', label: 'Issue' },
+        { key: 'evidence', label: 'Evidence' },
+        { key: 'impact', label: 'Impact' },
+      ],
+    },
+    {
       key: 'actionItems',
       label: 'Action Items / Next Steps',
       columns: [
