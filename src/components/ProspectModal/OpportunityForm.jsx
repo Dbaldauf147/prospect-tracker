@@ -600,6 +600,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
               )}
             </div>
             {totalAttendees > 0 && (() => {
+              const GRID_COLS = 'auto minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.8fr) minmax(0, 1.4fr) auto';
               const renderAttendee = (a, i) => {
                 const matched = !!a.match;
                 const rawSummary = a.rawParams
@@ -614,6 +615,9 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                   || a.match?.message
                   || '';
                 const linkedinUrl = a.match?.hs_linkedin_url || a.match?.linkedin_url || a.match?.hs_linkedinid || '';
+                const city = (a.match?.city || '').trim();
+                const country = (a.match?.country || '').trim();
+                const cityCountry = [city, country].filter(Boolean).join(', ');
                 const wrap = { overflowWrap: 'anywhere', wordBreak: 'break-word', whiteSpace: 'pre-wrap' };
                 return (
                   <div
@@ -621,7 +625,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                     title={tooltip}
                     style={{
                       display: 'grid',
-                      gridTemplateColumns: 'auto minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.4fr) auto',
+                      gridTemplateColumns: GRID_COLS,
                       columnGap: '0.5rem',
                       alignItems: 'start',
                       padding: '0.4rem 0.5rem',
@@ -632,7 +636,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                     }}
                   >
                     <span style={{ color: matched ? '#15803D' : '#B91C1C', fontWeight: 700, fontSize: '0.9rem', paddingTop: 2 }}>{matched ? '✓' : '✗'}</span>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap', minWidth: 0 }}>
+                    <div style={{ minWidth: 0 }}>
                       {linkedinUrl ? (
                         <a
                           href={linkedinUrl}
@@ -649,16 +653,12 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                           {a.name || a.email || '(unknown)'}
                         </span>
                       )}
-                      <span style={{
-                        fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.04em',
-                        textTransform: 'uppercase',
-                        padding: '1px 6px', borderRadius: 999,
-                        background: a.required ? '#FEE2E2' : '#E0E7FF',
-                        color: a.required ? '#B91C1C' : '#3730A3',
-                      }}>{a.required ? 'Required' : 'Optional'}</span>
                     </div>
                     <div style={{ fontSize: '0.72rem', color: '#475569', paddingTop: 3, ...wrap }}>
                       {title || <span style={{ fontStyle: 'italic', color: '#94A3B8' }}>{matched ? '—' : 'not in HubSpot'}</span>}
+                    </div>
+                    <div style={{ fontSize: '0.72rem', color: '#475569', paddingTop: 3, ...wrap }}>
+                      {cityCountry || <span style={{ color: '#94A3B8' }}>—</span>}
                     </div>
                     <div style={{ fontSize: '0.72rem', color: '#334155', paddingTop: 3, ...wrap }}>
                       {contactNote || <span style={{ color: '#94A3B8' }}>—</span>}
@@ -688,7 +688,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
               const columnHeader = (
                 <div style={{
                   display: 'grid',
-                  gridTemplateColumns: 'auto minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.4fr) auto',
+                  gridTemplateColumns: 'auto minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.8fr) minmax(0, 1.4fr) auto',
                   columnGap: '0.5rem',
                   padding: '0 0.5rem 0.25rem',
                   fontSize: '0.62rem', fontWeight: 700,
@@ -697,10 +697,45 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                   <span style={{ width: 12 }} />
                   <span>Name</span>
                   <span>Title</span>
+                  <span>City, Country</span>
                   <span>Notes</span>
                   <span />
                 </div>
               );
+              const renderGroupedList = (list) => {
+                const req = list.filter(a => a.required);
+                const opt = list.filter(a => !a.required);
+                const subHeader = (label, count, color, bg) => (
+                  <div style={{
+                    marginTop: '0.35rem', marginBottom: '0.25rem',
+                    fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.04em',
+                    textTransform: 'uppercase',
+                    color, background: bg, padding: '2px 8px', borderRadius: 4,
+                    display: 'inline-block',
+                  }}>{label} · {count}</div>
+                );
+                return (
+                  <div>
+                    {columnHeader}
+                    {req.length > 0 && (
+                      <>
+                        {subHeader('Required', req.length, '#B91C1C', '#FEE2E2')}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                          {req.map(renderAttendee)}
+                        </div>
+                      </>
+                    )}
+                    {opt.length > 0 && (
+                      <>
+                        {subHeader('Optional', opt.length, '#3730A3', '#E0E7FF')}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                          {opt.map(renderAttendee)}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              };
               const customerHeading = (companyName || 'Customer').trim() || 'Customer';
               return (
                 <div>
@@ -717,10 +752,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                         : (
                           <>
                             <div style={{ fontSize: '0.68rem', color: '#64748B', marginBottom: '0.3rem' }}>{countLine(seAttendees)}</div>
-                            {columnHeader}
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                              {seAttendees.map(renderAttendee)}
-                            </div>
+                            {renderGroupedList(seAttendees)}
                           </>
                         )}
                     </div>
@@ -733,10 +765,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                         : (
                           <>
                             <div style={{ fontSize: '0.68rem', color: '#64748B', marginBottom: '0.3rem' }}>{countLine(customerAttendees)}</div>
-                            {columnHeader}
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                              {customerAttendees.map(renderAttendee)}
-                            </div>
+                            {renderGroupedList(customerAttendees)}
                           </>
                         )}
                     </div>
