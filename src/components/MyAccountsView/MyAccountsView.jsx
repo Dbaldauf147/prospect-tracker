@@ -1444,16 +1444,38 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     // shows up in My Accounts. This surfaces deals happening on companies
     // that aren't yet in the Table View.
     let oppsOnlyAdded = 0;
-    // Diagnostic: dump everything we can see about URW / Unibail-style accounts
-    // so the user can confirm why it is/isn't showing up.
-    const URW_RX = /(urw|unibail|rodamco|westfield)/i;
-    const urwProspects = prospects.filter(p => URW_RX.test(p.company || ''));
-    const urwOppsKeys = Object.keys(totalOppsByAccount).filter(k => URW_RX.test(k));
-    if (urwProspects.length > 0 || urwOppsKeys.length > 0) {
+    // Diagnostic: dump everything we can see about specific accounts the
+    // user has asked about so we can confirm why they're (not) showing.
+    const DEBUG_RX = /(urw|unibail|rodamco|westfield|\bara\b|ara\s*partners)/i;
+    const debugProspects = prospects.filter(p => DEBUG_RX.test(p.company || ''));
+    const debugOppsKeys = Object.keys(totalOppsByAccount).filter(k => DEBUG_RX.test(k));
+    const renderedAccountNamesLower = new Set([...t1, ...t2].map(e => (e.company || '').toLowerCase()));
+    if (debugProspects.length > 0 || debugOppsKeys.length > 0) {
       // eslint-disable-next-line no-console
-      console.log('[MyAccountsView] URW/Unibail diagnostics:', {
-        prospects: urwProspects.map(p => ({ company: p.company, cdm: p.cdm, status: p.status, tier: p.tier })),
-        oppsAccounts: urwOppsKeys.map(k => ({ key: k, count: totalOppsByAccount[k], display: displayNameByAccount[k] })),
+      console.log('[MyAccountsView] debug-account diagnostics:', {
+        prospects: debugProspects.map(p => {
+          const inList = renderedAccountNamesLower.has((p.company || '').toLowerCase());
+          const compLower = (p.company || '').toLowerCase();
+          let openHits = 0;
+          for (const [oc, oCount] of Object.entries(openOppsByAccount)) {
+            if (oCount > 0 && companiesMatch(compLower, oc)) openHits += oCount;
+          }
+          return {
+            company: p.company,
+            cdm: p.cdm,
+            status: p.status,
+            tier: p.tier,
+            isBaldauf: ((p.cdm || '').toLowerCase().includes('baldauf')),
+            openOppsForCompany: openHits,
+            isInRenderedList: inList,
+          };
+        }),
+        oppsAccounts: debugOppsKeys.map(k => ({
+          key: k,
+          total: totalOppsByAccount[k],
+          open: openOppsByAccount[k] || 0,
+          display: displayNameByAccount[k],
+        })),
       });
     }
 
@@ -1463,9 +1485,9 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       // matches the prospect-path filter above — no closed-only accounts.
       if (!openOppsByAccount[accountLower]) continue;
       const displayNameRaw = displayNameByAccount[accountLower] || accountLower;
-      const urwInteresting = URW_RX.test(displayNameRaw);
+      const debugInteresting = DEBUG_RX.test(displayNameRaw);
       if (isDismissed(displayNameRaw)) {
-        if (urwInteresting) console.log('[MyAccountsView] URW skipped by isDismissed:', displayNameRaw);
+        if (debugInteresting) console.log('[MyAccountsView] debug skipped by isDismissed:', displayNameRaw);
         continue;
       }
       // Skip if any prospect we've already included matches this opps account
@@ -1474,8 +1496,8 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       for (const p of prospects) {
         if (companiesMatch(p.company, displayNameRaw)) { matched = true; matchedProspect = p; break; }
       }
-      if (urwInteresting) {
-        console.log('[MyAccountsView] URW opps-only decision:', {
+      if (debugInteresting) {
+        console.log('[MyAccountsView] debug opps-only decision:', {
           account: displayNameRaw,
           matched,
           matchedProspect: matchedProspect ? { company: matchedProspect.company, cdm: matchedProspect.cdm } : null,
