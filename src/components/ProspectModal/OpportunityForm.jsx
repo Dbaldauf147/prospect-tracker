@@ -591,101 +591,236 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     }
   }
 
-  // ---- Export to Excel ----
+  // ---- Export to Excel with Schneider Electric branding ----
   const exportExcel = async () => {
     try {
       const { Workbook } = await import('exceljs');
+
+      // Schneider Electric brand palette (matches Portfolio Companies export)
+      const SE_GREEN = 'FF3DCD58';      // Life is On green (title band)
+      const SE_GREEN_DARK = 'FF009530'; // Section / table header band
+      const SE_TEXT_DARK = 'FF1E293B';
+      const SE_SURFACE = 'FFF6F9F4';    // Zebra / field-label surface
+      const SE_BORDER = 'FFD4DDE1';
+      const SE_MUTED = 'FF64748B';
+
+      const thin = { style: 'thin', color: { argb: SE_BORDER } };
+      const borderAll = { top: thin, bottom: thin, left: thin, right: thin };
+
       const wb = new Workbook();
-      wb.creator = 'Prospect Tracker';
+      wb.creator = 'Schneider Electric · Prospect Tracker';
       wb.created = new Date();
       const ws = wb.addWorksheet('Opportunity', {
-        views: [{ state: 'frozen', ySplit: 1 }],
+        properties: { tabColor: { argb: SE_GREEN } },
+        views: [{ state: 'frozen', ySplit: 2 }],
       });
-      ws.columns = [{ width: 28 }, { width: 60 }];
+      // Wide enough for label + long values and for a 5-col Agenda table.
+      const colWidths = [26, 22, 22, 22, 22];
+      ws.columns = colWidths.map(w => ({ width: w }));
+      const SPAN = colWidths.length;
 
-      const HEADER_FILL = 'FF009530';
-      const BORDER = { style: 'thin', color: { argb: 'FFD4DDE1' } };
+      // Row 1: "Schneider Electric" title band
+      ws.mergeCells(1, 1, 1, SPAN);
+      const titleCell = ws.getCell(1, 1);
+      titleCell.value = 'Schneider Electric';
+      titleCell.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
+      titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN } };
+      titleCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(1).height = 30;
 
+      // Row 2: Subtitle — "{Company} · Opportunity Prep"
+      ws.mergeCells(2, 1, 2, SPAN);
+      const subCell = ws.getCell(2, 1);
+      const subPieces = [companyName || 'Opportunity', 'Opportunity Prep'];
+      if (formData.linkedOppName) subPieces.push(formData.linkedOppName);
+      subCell.value = subPieces.join('  ·  ');
+      subCell.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_MUTED } };
+      subCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(2).height = 20;
+
+      // Helpers — all operate on the already-established column layout.
       const addSectionHeader = (text) => {
-        const row = ws.addRow([text, '']);
-        ws.mergeCells(row.number, 1, row.number, 2);
-        const cell = row.getCell(1);
-        cell.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: 'FFFFFFFF' } };
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_FILL } };
-        cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-        row.height = 22;
+        const row = ws.addRow([]);
+        ws.mergeCells(row.number, 1, row.number, SPAN);
+        const c = ws.getCell(row.number, 1);
+        c.value = text;
+        c.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: 'FFFFFFFF' } };
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+        c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        c.border = borderAll;
+        row.height = 24;
       };
 
       const addFieldRow = (label, value) => {
-        const row = ws.addRow([label, value]);
-        row.getCell(1).font = { name: 'Nunito Sans', bold: true, size: 10 };
-        row.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF6F9F4' } };
-        row.getCell(1).alignment = { vertical: 'top', horizontal: 'left', indent: 1 };
-        row.getCell(2).font = { name: 'Nunito Sans', size: 10 };
-        row.getCell(2).alignment = { vertical: 'top', horizontal: 'left', wrapText: true };
-        row.getCell(1).border = { top: BORDER, bottom: BORDER, left: BORDER, right: BORDER };
-        row.getCell(2).border = { top: BORDER, bottom: BORDER, left: BORDER, right: BORDER };
+        const row = ws.addRow([]);
+        // Label cell
+        const labelCell = ws.getCell(row.number, 1);
+        labelCell.value = label;
+        labelCell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_TEXT_DARK } };
+        labelCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_SURFACE } };
+        labelCell.alignment = { vertical: 'top', horizontal: 'left', indent: 1, wrapText: true };
+        labelCell.border = borderAll;
+        // Value cell (merged across remaining columns)
+        ws.mergeCells(row.number, 2, row.number, SPAN);
+        const valCell = ws.getCell(row.number, 2);
+        valCell.value = (value === '' || value == null) ? null : String(value);
+        valCell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+        valCell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
+        valCell.border = borderAll;
+        // Taller row for free-form text fields
+        const lines = String(value || '').split('\n').length;
+        row.height = Math.min(120, 18 + Math.max(0, lines - 1) * 14);
       };
 
-      // Title
-      const titleRow = ws.addRow([`${companyName || 'Opportunity'}`, '']);
-      ws.mergeCells(titleRow.number, 1, titleRow.number, 2);
-      const titleCell = titleRow.getCell(1);
-      titleCell.value = `${companyName || 'Opportunity'}`;
-      titleCell.font = { name: 'Nunito Sans', bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
-      titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF3DCD58' } };
-      titleCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-      titleRow.height = 28;
+      const addBlankRow = () => { ws.addRow([]); };
 
-      ws.addRow([]);
+      const addSubheading = (text) => {
+        const row = ws.addRow([]);
+        ws.mergeCells(row.number, 1, row.number, SPAN);
+        const c = ws.getCell(row.number, 1);
+        c.value = text;
+        c.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_TEXT_DARK } };
+        c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        row.height = 18;
+      };
+
+      const addTable = (title, columns, rows, widths) => {
+        addSectionHeader(title);
+        // Resize columns to fit this table. We restore generous defaults
+        // after each table so later sections can reflow.
+        const usable = Math.min(columns.length, SPAN);
+        if (widths) {
+          for (let i = 0; i < usable; i++) ws.getColumn(i + 1).width = widths[i] || colWidths[i] || 20;
+        }
+        // Header row
+        const hRow = ws.addRow(columns.map(c => c.label).concat(Array(Math.max(0, SPAN - columns.length)).fill('')));
+        for (let i = 1; i <= SPAN; i++) {
+          const cell = hRow.getCell(i);
+          if (i <= columns.length) {
+            cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+            cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+            cell.border = borderAll;
+          } else {
+            cell.border = borderAll;
+          }
+        }
+        hRow.height = 22;
+        // Data rows
+        const dataRows = rows.length > 0 ? rows : [{}];
+        dataRows.forEach((r, idx) => {
+          const values = columns.map(c => r[c.key] != null ? r[c.key] : '');
+          const row = ws.addRow(values.concat(Array(Math.max(0, SPAN - values.length)).fill('')));
+          const zebra = idx % 2 === 1;
+          for (let i = 1; i <= SPAN; i++) {
+            const cell = row.getCell(i);
+            cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+            cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true };
+            cell.border = borderAll;
+            if (zebra) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_SURFACE } };
+          }
+          row.height = 20;
+        });
+      };
+
+      // --- Meeting (imported from .ics) --------------------------------
+      if (formData.meeting) {
+        addBlankRow();
+        addSectionHeader('Meeting');
+        addFieldRow('Subject', formData.meeting.subject || '');
+        addFieldRow('When', (() => {
+          try { return formData.meeting.start ? new Date(formData.meeting.start).toLocaleString() : ''; } catch { return ''; }
+        })());
+        addFieldRow('Ends', (() => {
+          try { return formData.meeting.end ? new Date(formData.meeting.end).toLocaleString() : ''; } catch { return ''; }
+        })());
+        const mins = formData.meeting.durationMinutes;
+        if (mins != null) {
+          const h = Math.floor(mins / 60), m = mins % 60;
+          addFieldRow('Duration', m === 0 ? `${h}h` : h === 0 ? `${m} min` : `${h}h ${m}m`);
+        }
+        if (formData.meeting.location) addFieldRow('Location', formData.meeting.location);
+        if (formData.meeting.organizer) addFieldRow('Organizer',
+          [formData.meeting.organizer.name, formData.meeting.organizer.email && `<${formData.meeting.organizer.email}>`].filter(Boolean).join(' ')
+        );
+
+        // Attendees broken into SE and Customer buckets, same way the UI shows them.
+        const writeAttendeeBucket = (heading, list) => {
+          if (!list?.length) return;
+          addSubheading(heading);
+          const isSE = /Schneider/i.test(heading);
+          const dansAskMap = dansAsks || {};
+          const cols = isSE
+            ? [
+                { key: 'name', label: 'Name' },
+                { key: 'required', label: 'Required?' },
+                { key: 'ask', label: "Dan's Ask" },
+              ]
+            : [
+                { key: 'name', label: 'Name' },
+                { key: 'required', label: 'Required?' },
+                { key: 'jobtitle', label: 'Title' },
+                { key: 'location', label: 'City, Country' },
+                { key: 'note', label: 'Notes' },
+              ];
+          const data = list.map(a => {
+            const base = {
+              name: a.name || a.email || '',
+              required: a.required ? 'Required' : 'Optional',
+            };
+            if (isSE) {
+              base.ask = (a.email && dansAskMap[a.email.toLowerCase()]) || '';
+            } else {
+              const city = (a.match?.city || '').trim();
+              const country = (a.match?.country || '').trim();
+              const noteSrc = (a.match?.id && contactNotes[a.match.id]) || a.match?.notes || a.match?.hs_content_membership_notes || a.match?.message || '';
+              base.jobtitle = a.match?.jobtitle || '';
+              base.location = [city, country].filter(Boolean).join(', ');
+              base.note = noteSrc;
+            }
+            return base;
+          });
+          const widths = isSE ? [26, 14, 42] : [24, 12, 24, 20, 30];
+          addTable(heading, cols, data, widths);
+        };
+        writeAttendeeBucket('Schneider Electric Attendees', seAttendees);
+        writeAttendeeBucket((companyName || 'Customer') + ' Attendees', customerAttendees);
+        // Restore default column widths after per-table overrides
+        colWidths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+      }
+
+      // --- Meeting Prep (free-form) -----------------------------------
+      addBlankRow();
       addSectionHeader('Meeting Prep');
       addFieldRow('PPT Link', formData.fieldValues.pptLink || '');
       addFieldRow('Context', formData.fieldValues.context || '');
       addFieldRow('Intent', formData.fieldValues.intent || '');
       addFieldRow('End In Mind', formData.fieldValues.endInMind || '');
 
-      ws.addRow([]);
+      // --- Details (structured fields) --------------------------------
+      addBlankRow();
       addSectionHeader('Details');
       for (const f of template.fields) {
+        if (f.showWhenStatus && formData.fieldValues.status !== f.showWhenStatus) continue;
         addFieldRow(f.label, formData.fieldValues[f.key] || '');
       }
 
+      // --- Tables (Agenda, Questions, Action Items, Risks) ------------
       for (const t of template.tables) {
-        ws.addRow([]);
-        addSectionHeader(t.label);
-        // Table header
-        const hRow = ws.addRow(t.columns.map(c => c.label));
-        // Extend worksheet columns to accommodate table
-        while (ws.columnCount < t.columns.length) {
-          ws.getColumn(ws.columnCount + 1).width = 22;
-        }
-        hRow.eachCell((cell, col) => {
-          if (col > t.columns.length) return;
-          cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
-          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEADER_FILL } };
-          cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-          cell.border = { top: BORDER, bottom: BORDER, left: BORDER, right: BORDER };
-        });
-        const rows = formData.tables[t.key] || [];
-        for (const r of rows) {
-          const values = t.columns.map(c => r[c.key] || '');
-          const row = ws.addRow(values);
-          row.eachCell((cell, col) => {
-            if (col > t.columns.length) return;
-            cell.font = { name: 'Nunito Sans', size: 10 };
-            cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true };
-            cell.border = { top: BORDER, bottom: BORDER, left: BORDER, right: BORDER };
-          });
-        }
+        addBlankRow();
+        const widths = colWidths.slice(0, t.columns.length);
+        addTable(t.label, t.columns, formData.tables[t.key] || [], widths);
+        // Restore defaults for next block
+        colWidths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
       }
 
       const buf = await wb.xlsx.writeBuffer();
       const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
       const url = URL.createObjectURL(blob);
-      const safeName = (companyName || 'Opportunity').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 60);
+      const safeCompany = (companyName || 'Opportunity').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 60);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${safeName} - Opportunity.xlsx`;
+      a.download = `${safeCompany} - Opportunity.xlsx`;
       document.body.appendChild(a);
       a.click();
       a.remove();
