@@ -8,6 +8,7 @@ import mammoth from 'mammoth/mammoth.browser';
 import { OpportunityForm } from './OpportunityForm';
 import { loadEffectiveRaClients, raClientName, raClientCm } from '../../utils/raClientsStore';
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES, COUNTRIES } from '../../data/enums';
+import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import styles from './ProspectModal.module.css';
 
 function loadOppsFromIndexedDB() {
@@ -2139,7 +2140,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           <div className={styles.grid}>
             <div style={{ gridColumn: 'span 2' }}>
               <label className={styles.label}>Company</label>
-              <input className={styles.input} value={fields.company} onChange={e => set('company', e.target.value)} placeholder="Company name" />
+              <CommitOnBlurInput className={styles.input} value={fields.company} onCommit={v => set('company', v)} placeholder="Company name" />
             </div>
 
             <div>
@@ -2183,7 +2184,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
             <div>
               <label className={styles.label}>CDM</label>
-              <input className={styles.input} value={fields.cdm} onChange={e => set('cdm', e.target.value)} />
+              <CommitOnBlurInput className={styles.input} value={fields.cdm} onCommit={v => set('cdm', v)} />
             </div>
 
             <div>
@@ -2195,22 +2196,22 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
             <div>
               <label className={styles.label}>RE AUM (billions)</label>
-              <input className={styles.input} type="number" step="0.01" value={fields.reAum ?? ''} onChange={e => set('reAum', e.target.value)} />
+              <CommitOnBlurInput className={styles.input} type="number" step="0.01" value={fields.reAum ?? ''} onCommit={v => set('reAum', v)} />
             </div>
 
             <div>
               <label className={styles.label}>PE AUM (billions)</label>
-              <input className={styles.input} type="number" step="0.01" value={fields.peAum ?? ''} onChange={e => set('peAum', e.target.value)} />
+              <CommitOnBlurInput className={styles.input} type="number" step="0.01" value={fields.peAum ?? ''} onCommit={v => set('peAum', v)} />
             </div>
 
             <div>
               <label className={styles.label}>Number of Sites</label>
-              <input className={styles.input} type="number" value={fields.numberOfSites ?? ''} onChange={e => set('numberOfSites', e.target.value)} />
+              <CommitOnBlurInput className={styles.input} type="number" value={fields.numberOfSites ?? ''} onCommit={v => set('numberOfSites', v)} />
             </div>
 
             <div>
               <label className={styles.label}>Rank</label>
-              <input className={styles.input} value={fields.rank} onChange={e => set('rank', e.target.value)} />
+              <CommitOnBlurInput className={styles.input} value={fields.rank} onCommit={v => set('rank', v)} />
             </div>
 
             <div>
@@ -2224,7 +2225,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
             <div>
               <label className={styles.label}>Website</label>
-              <input className={styles.input} value={fields.website} onChange={e => set('website', e.target.value)} placeholder="www.example.com" />
+              <CommitOnBlurInput className={styles.input} value={fields.website} onCommit={v => set('website', v)} placeholder="www.example.com" />
             </div>
 
             <div>
@@ -2344,7 +2345,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
             <div className={styles.fieldFull}>
               <label className={styles.label}>Company Notes</label>
-              <textarea className={styles.textarea} value={fields.notes} onChange={e => set('notes', e.target.value)} rows={2} />
+              <CommitOnBlurInput multiline className={styles.textarea} value={fields.notes} onCommit={v => set('notes', v)} rows={2} />
             </div>
           </div>
 

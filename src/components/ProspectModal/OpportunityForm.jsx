@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef, memo } from 'react';
 import { loadOppsFromCache, searchOpps } from '../../utils/oppsCache';
+import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 
 // Uncontrolled-ish text input / textarea that holds its own local state
 // and only propagates up on blur. Used for the heavy free-form fields
@@ -7,28 +8,6 @@ import { loadOppsFromCache, searchOpps } from '../../utils/oppsCache';
 // a re-render of the entire OpportunityForm tree. Still syncs in when
 // the parent value legitimately changes (opp-link autofill, template
 // self-heal, etc.).
-const CommitOnBlurInput = memo(function CommitOnBlurInput({ value, onCommit, multiline, type, ...rest }) {
-  const [local, setLocal] = useState(value ?? '');
-  const lastExternal = useRef(value ?? '');
-  useEffect(() => {
-    const v = value ?? '';
-    if (v !== lastExternal.current) {
-      lastExternal.current = v;
-      setLocal(v);
-    }
-  }, [value]);
-  const handleBlur = () => {
-    if (local !== lastExternal.current) {
-      lastExternal.current = local;
-      onCommit(local);
-    }
-  };
-  if (multiline) {
-    return <textarea {...rest} value={local} onChange={e => setLocal(e.target.value)} onBlur={handleBlur} />;
-  }
-  return <input type={type || 'text'} {...rest} value={local} onChange={e => setLocal(e.target.value)} onBlur={handleBlur} />;
-});
-
 // Default form schema. Edit these arrays to change the template.
 // `autofill` is the Opps sheet column whose value should populate the field
 // when an opportunity is linked.
