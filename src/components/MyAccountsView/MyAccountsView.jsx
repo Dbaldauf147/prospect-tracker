@@ -1336,13 +1336,15 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       const cdm = (p.cdm || '').toLowerCase().trim();
       const isBaldauf = cdm.includes('baldauf');
       if (!isBaldauf) {
-        // Still include if the company has any opps (open or closed)
+        // Still include if the company has an OPEN opp. Closed-only history
+        // (Sold/Not Sold) on a non-Baldauf account isn't enough to keep it
+        // in My Accounts — that's how JPMC was sneaking in.
         const compLower = (p.company || '').toLowerCase();
-        let hasAnyOpp = false;
-        for (const [oppsCompany, count] of Object.entries(totalOppsByAccount)) {
-          if (count > 0 && companiesMatch(compLower, oppsCompany)) { hasAnyOpp = true; break; }
+        let hasOpenOpp = false;
+        for (const [oppsCompany, count] of Object.entries(openOppsByAccount)) {
+          if (count > 0 && companiesMatch(compLower, oppsCompany)) { hasOpenOpp = true; break; }
         }
-        if (!hasAnyOpp) {
+        if (!hasOpenOpp) {
           skippedCdm.push({ company: p.company, cdm: p.cdm });
           continue;
         }
@@ -1429,9 +1431,10 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       }
       const statusMismatch = !p.hideStatusSuggestion && !!suggestedStatus && suggestedStatus !== p.status && p.status && p.dismissedSuggestedStatus !== suggestedStatus;
       // Hide accounts with zero open opps — UNLESS they're strategic
-      // (Tier 1 or Tier 2), which always show regardless of deal activity.
+      // (Tier 1 or Tier 2) AND owned by Baldauf. A Tier 1 account on
+      // someone else's CDM with no open opps shouldn't show on Dan's list.
       const isStrategicTier = tier === 'Tier 1' || tier === 'Tier 2';
-      if (!isStrategicTier && (!oppsCount || oppsCount === 0)) continue;
+      if (!(isStrategicTier && isBaldauf) && (!oppsCount || oppsCount === 0)) continue;
       const entry = { ...p, myTier: tier, activityCount, oppsCount, totalOpps, sources: sources.join(', '), dmFound: !!dmNames, dmNames: dmNames ? dmNames.join(', ') : '', cdmMismatch: !isBaldauf, targetNames, targetName: (targetNames || []).join(', '), targetTier, tierMismatch, otherReps, contactCount, bucketCount, suggestedStatus, statusMismatch };
       if (tier === 'Tier 1') t1.push(entry);
       else t2.push(entry); // Tier 2 and Tier 3 both go in t2 array
