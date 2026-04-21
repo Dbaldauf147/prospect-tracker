@@ -1,5 +1,8 @@
 import { useState, useMemo, useRef, useEffect, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../../firebase';
+import { useAuth } from '../../contexts/AuthContext';
 import { Badge } from '../common/Badge';
 import { DataTable } from '../common/DataTable';
 import { statusColor, formatAum } from '../../utils/formatters';
@@ -636,6 +639,7 @@ function parseXlsx(file) {
 }
 
 export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd, targetAccountsData, settings, updateSettings }) {
+  const { user } = useAuth();
   const savedView = settings?.viewFilters?.myAccounts;
   const [search, setSearch] = useState(savedView?.search || '');
   const [filters, setFilters] = useState(savedView?.filters || {});
@@ -1013,43 +1017,61 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     return counts;
   }, [prospects]);
 
-  // Load opps cache from IndexedDB (synced by Opps tab), then localStorage fallback
+  // Load opps data. Priority: IndexedDB (fresh from Opps tab) -> localStorage
+  // -> Firestore (synced across devices by Opps tab). The Firestore fallback
+  // matters when the user hasn't visited the Opps tab in this browser yet —
+  // without it, My Accounts would be missing every opps-derived company.
   const [oppsRecords, setOppsRecords] = useState([]);
   useEffect(() => {
-    (async () => {
-      // Try IndexedDB first (populated when Opps tab refreshes)
-      try {
-        const req = indexedDB.open('prospect-tracker-db', 3);
-        req.onupgradeneeded = () => {
-          const idb = req.result;
-          if (!idb.objectStoreNames.contains('target-accounts')) idb.createObjectStore('target-accounts');
-          if (!idb.objectStoreNames.contains('opps-cache')) idb.createObjectStore('opps-cache');
-          if (!idb.objectStoreNames.contains('clients-cache')) idb.createObjectStore('clients-cache');
-        };
-        req.onsuccess = () => {
-          const idb = req.result;
-          const tx = idb.transaction('opps-cache', 'readonly');
-          const store = tx.objectStore('opps-cache');
-          const getReq = store.get('data');
-          getReq.onsuccess = () => {
-            const data = getReq.result;
-            if (data?.records) { setOppsRecords(data.records); return; }
-            // Fallback to localStorage
-            try {
-              const cache = JSON.parse(localStorage.getItem('opps-cache'));
-              if (cache?.records) setOppsRecords(cache.records);
-            } catch {}
-          };
-        };
-      } catch {
-        // Fallback to localStorage
+    let cancelled = false;
+    async function loadFromIndexedDB() {
+      return new Promise((resolve) => {
         try {
-          const cache = JSON.parse(localStorage.getItem('opps-cache'));
-          if (cache?.records) setOppsRecords(cache.records);
-        } catch {}
-      }
+          const req = indexedDB.open('prospect-tracker-db', 3);
+          req.onupgradeneeded = () => {
+            const idb = req.result;
+            if (!idb.objectStoreNames.contains('target-accounts')) idb.createObjectStore('target-accounts');
+            if (!idb.objectStoreNames.contains('opps-cache')) idb.createObjectStore('opps-cache');
+            if (!idb.objectStoreNames.contains('clients-cache')) idb.createObjectStore('clients-cache');
+          };
+          req.onsuccess = () => {
+            const idb = req.result;
+            const tx = idb.transaction('opps-cache', 'readonly');
+            const store = tx.objectStore('opps-cache');
+            const getReq = store.get('data');
+            getReq.onsuccess = () => resolve(getReq.result?.records || null);
+            getReq.onerror = () => resolve(null);
+          };
+          req.onerror = () => resolve(null);
+        } catch { resolve(null); }
+      });
+    }
+    function loadFromLocalStorage() {
+      try {
+        const cache = JSON.parse(localStorage.getItem('opps-cache'));
+        return cache?.records || null;
+      } catch { return null; }
+    }
+    async function loadFromFirestore() {
+      if (!user?.uid) return null;
+      try {
+        const ref = doc(db, 'oppsData', user.uid);
+        const snap = await getDoc(ref);
+        if (!snap.exists()) return null;
+        const raw = snap.data();
+        if (!raw?.json) return null;
+        const parsed = JSON.parse(raw.json);
+        return parsed?.records || null;
+      } catch { return null; }
+    }
+    (async () => {
+      let records = await loadFromIndexedDB();
+      if (!records || records.length === 0) records = loadFromLocalStorage();
+      if (!records || records.length === 0) records = await loadFromFirestore();
+      if (!cancelled && records && records.length > 0) setOppsRecords(records);
     })();
-  }, []);
+    return () => { cancelled = true; };
+  }, [user]);
 
   const { activeOppsByAccount, totalOppsByAccount, openOppsByAccount, suggestedStatusByAccount, displayNameByAccount } = useMemo(() => {
     const active = {};
