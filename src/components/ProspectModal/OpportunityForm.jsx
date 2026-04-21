@@ -7,8 +7,11 @@ import { loadOppsFromCache, searchOpps } from '../../utils/oppsCache';
 export const DEFAULT_FORM_TEMPLATE = {
   fields: [
     { key: 'stage', label: 'Stage', type: 'text', autofill: 'Stage' },
-    { key: 'status', label: 'Status', type: 'text', autofill: 'Status' },
+    { key: 'status', label: 'Status', type: 'text' }, // populated from the linked opp's account (prospects), not the opp row
     { key: 'scope', label: 'Scope', type: 'text', autofill: 'Scope' },
+    // Only rendered when status === 'Client'. Auto-populated with the
+    // company's current active services (Sold / Renewal / In Progress).
+    { key: 'currentClientScope', label: 'Current Client Scope', type: 'textarea', showWhenStatus: 'Client' },
     { key: 'quotedAmount', label: 'Quoted Amount', type: 'text', autofill: 'Quoted Amount' },
     { key: 'startDate', label: 'Start Date', type: 'text', autofill: 'Start Date' },
     { key: 'closeDate', label: 'Close Date', type: 'text', autofill: 'Close Date' },
@@ -186,7 +189,38 @@ function formatDuration(min) {
   return m === 0 ? `${h}h` : `${h}h ${m}m`;
 }
 
-export function OpportunityForm({ value, onChange, onLinkOpp, companyName, companyContacts = [], allHubspotContacts = [], contactNotes = {}, onCreateContact }) {
+// Lightweight company-name fuzzy match. Good enough for the linked-opp
+// → account lookup (strips common corp suffixes, then compares on
+// containment with a length ratio).
+function matchProspectByName(name, prospects) {
+  if (!name || !prospects?.length) return null;
+  const strip = s => String(s || '').toLowerCase().replace(/\b(inc|llc|ltd|corp|co|lp|gmbh)\b\.?/g, '').replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+  const target = strip(name);
+  if (!target) return null;
+  let best = null;
+  for (const p of prospects) {
+    const pn = strip(p.company);
+    if (!pn) continue;
+    if (pn === target) return p;
+    const longer = pn.length >= target.length ? pn : target;
+    const shorter = pn.length >= target.length ? target : pn;
+    if (shorter.length >= 4 && shorter.length >= longer.length * 0.6 && longer.includes(shorter)) {
+      best = best || p;
+    }
+  }
+  return best;
+}
+
+function currentServicesFor(prospect) {
+  const svc = prospect?.servicesExplored || {};
+  const active = new Set(['Sold', 'Renewal', 'In Progress']);
+  return Object.entries(svc)
+    .filter(([, status]) => active.has(status))
+    .map(([name]) => name)
+    .sort();
+}
+
+export function OpportunityForm({ value, onChange, onLinkOpp, companyName, companyContacts = [], allHubspotContacts = [], contactNotes = {}, prospects = [], onCreateContact }) {
   const template = DEFAULT_FORM_TEMPLATE;
   const formData = useMemo(() => {
     const base = emptyFormData(template);
@@ -243,6 +277,20 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     for (const f of template.fields) {
       if (f.autofill && opp[f.autofill] != null) {
         nextValues[f.key] = String(opp[f.autofill]);
+      }
+    }
+    // Status is driven by the Account (company) on this opp, not the opp
+    // row's Status column. Look up the matching prospect in the Table View
+    // data and pull its account-level status. If that status is Client,
+    // also populate Current Client Scope with the company's active services.
+    const accountName = (opp?.['Account'] || '').trim();
+    const matchedProspect = matchProspectByName(accountName, prospects);
+    if (matchedProspect?.status) {
+      nextValues.status = matchedProspect.status;
+      if (matchedProspect.status === 'Client') {
+        nextValues.currentClientScope = currentServicesFor(matchedProspect).join(', ');
+      } else {
+        nextValues.currentClientScope = '';
       }
     }
     set({
@@ -899,25 +947,29 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       </div>
 
       <div style={sx.grid}>
-        {template.fields.map(f => (
-          <div key={f.key} style={f.type === 'textarea' ? { gridColumn: 'span 2' } : undefined}>
-            <div style={sx.fieldLabel}>{f.label}</div>
-            {f.type === 'textarea' ? (
-              <textarea
-                style={sx.textarea}
-                value={formData.fieldValues[f.key] || ''}
-                onChange={e => updateField(f.key, e.target.value)}
-              />
-            ) : (
-              <input
-                type={f.type === 'date' ? 'date' : 'text'}
-                style={sx.input}
-                value={formData.fieldValues[f.key] || ''}
-                onChange={e => updateField(f.key, e.target.value)}
-              />
-            )}
-          </div>
-        ))}
+        {template.fields.map(f => {
+          // Conditional fields (e.g. Current Client Scope only shows for Clients)
+          if (f.showWhenStatus && formData.fieldValues.status !== f.showWhenStatus) return null;
+          return (
+            <div key={f.key} style={f.type === 'textarea' ? { gridColumn: 'span 2' } : undefined}>
+              <div style={sx.fieldLabel}>{f.label}</div>
+              {f.type === 'textarea' ? (
+                <textarea
+                  style={sx.textarea}
+                  value={formData.fieldValues[f.key] || ''}
+                  onChange={e => updateField(f.key, e.target.value)}
+                />
+              ) : (
+                <input
+                  type={f.type === 'date' ? 'date' : 'text'}
+                  style={sx.input}
+                  value={formData.fieldValues[f.key] || ''}
+                  onChange={e => updateField(f.key, e.target.value)}
+                />
+              )}
+            </div>
+          );
+        })}
       </div>
 
       {template.tables.map(t => (
