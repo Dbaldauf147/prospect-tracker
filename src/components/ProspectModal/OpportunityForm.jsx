@@ -220,20 +220,31 @@ function currentServicesFor(prospect) {
     .sort();
 }
 
-// Map Dan's opportunity status values (from the Opps sheet's Status
-// column) to BFO stage names used in the form's Stage field.
+// Map Dan's opportunity status/stage values (as they appear in the Opps
+// sheet) to the BFO stage names displayed in the form. Lookup is
+// case-insensitive and whitespace-tolerant.
 const DAN_STATUS_TO_BFO_STAGE = {
-  'Agreement Sent': '6 - Negotiate to Win',
-  'Contracting': '5 - Prepare & Bid',
-  'Quoted': '5 - Prepare & Bid',
-  'Quoting': '4 - Influence and Develop',
-  'Lead': '3 - Qualify Opportunity',
-  'Qualifying': '4 - Influence and Develop',
+  'agreement sent': '6 - Negotiate to Win',
+  'contracting': '5 - Prepare & Bid',
+  'quoted': '5 - Prepare & Bid',
+  'quoting': '4 - Influence and Develop',
+  'lead': '3 - Qualify Opportunity',
+  'qualifying': '4 - Influence and Develop',
 };
 
-function mapDanStatusToBfoStage(status) {
-  if (!status) return '';
-  return DAN_STATUS_TO_BFO_STAGE[String(status).trim()] || '';
+function mapDanStatusToBfoStage(raw) {
+  if (!raw) return '';
+  const key = String(raw).trim().toLowerCase().replace(/\s+/g, ' ');
+  return DAN_STATUS_TO_BFO_STAGE[key] || '';
+}
+
+// If a value already looks like a BFO stage (e.g. "3 - Qualify Opportunity"),
+// keep it as-is. Otherwise return the mapped BFO value, or '' if no match.
+function toBfoStage(raw) {
+  if (!raw) return '';
+  const trimmed = String(raw).trim();
+  if (/^\d+\s*-/.test(trimmed)) return trimmed; // already BFO
+  return mapDanStatusToBfoStage(trimmed);
 }
 
 export function OpportunityForm({ value, onChange, onLinkOpp, companyName, companyContacts = [], allHubspotContacts = [], contactNotes = {}, prospects = [], onCreateContact }) {
@@ -311,16 +322,23 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       }
     }
     // Stage must always resolve to a BFO value. Try the opp's Stage column
-    // first (if it's already a Dan name, convert to BFO; if it's already a
-    // BFO name, the map won't match and we fall through). Then try the
-    // Status column as a secondary source. If neither matches the lookup,
-    // keep whatever the template autofill put there.
+    // first; if it's already a BFO name ('3 - Qualify Opportunity' etc.)
+    // keep it. If it's a Dan name ('Quoted', 'Lead'), convert to BFO. Then
+    // fall back to the Status column by the same rules.
     const oppStage = (opp?.['Stage'] || '').trim();
     const oppStatus = (opp?.['Status'] || '').trim();
-    const mappedFromStage = mapDanStatusToBfoStage(oppStage);
-    const mappedFromStatus = mapDanStatusToBfoStage(oppStatus);
-    if (mappedFromStage) nextValues.stage = mappedFromStage;
-    else if (mappedFromStatus) nextValues.stage = mappedFromStatus;
+    const bfoFromStage = toBfoStage(oppStage);
+    const bfoFromStatus = toBfoStage(oppStatus);
+    const finalStage = bfoFromStage || bfoFromStatus || '';
+    // eslint-disable-next-line no-console
+    console.log('[OpportunityForm] stage mapping:', { oppStage, oppStatus, bfoFromStage, bfoFromStatus, finalStage });
+    if (finalStage) {
+      nextValues.stage = finalStage;
+    } else {
+      // No recognized value — blank it out so the user sees that nothing
+      // was matched instead of a Dan value that looks BFO-like.
+      nextValues.stage = oppStage || '';
+    }
 
     // Friendly display label for the linked BFO opportunity — used as the
     // hyperlink anchor text. Prefer Account + first service from Scope.
