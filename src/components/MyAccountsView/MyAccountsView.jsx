@@ -1378,8 +1378,10 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         }
       }
       const bucketCount = bucketsSeen.size;
-      // Suggested status based on opps data (fuzzy match company names)
-      let suggestedStatus = 'Inside Sales'; // default: no opps
+      // Suggested status based on opps data (fuzzy match company names).
+      // Only suggest when we actually find opps for this company — no match
+      // means no data to base a suggestion on, so we stay silent.
+      let suggestedStatus = '';
       for (const name of allCompanyNames) {
         // Try exact match first
         if (suggestedStatusByAccount[name]) { suggestedStatus = suggestedStatusByAccount[name]; break; }
@@ -1390,7 +1392,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         }
         if (found) break;
       }
-      const statusMismatch = !p.hideStatusSuggestion && suggestedStatus !== p.status && p.status && p.dismissedSuggestedStatus !== suggestedStatus;
+      const statusMismatch = !p.hideStatusSuggestion && !!suggestedStatus && suggestedStatus !== p.status && p.status && p.dismissedSuggestedStatus !== suggestedStatus;
       const entry = { ...p, myTier: tier, activityCount, oppsCount, totalOpps, sources: sources.join(', '), dmFound: !!dmNames, dmNames: dmNames ? dmNames.join(', ') : '', cdmMismatch: !isBaldauf, targetNames, targetName: (targetNames || []).join(', '), targetTier, tierMismatch, otherReps, contactCount, bucketCount, suggestedStatus, statusMismatch };
       if (tier === 'Tier 1') t1.push(entry);
       else t2.push(entry); // Tier 2 and Tier 3 both go in t2 array
