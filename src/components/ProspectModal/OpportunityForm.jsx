@@ -486,16 +486,17 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
         onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setIsDraggingMeeting(true); }}
         onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setIsDraggingMeeting(false); }}
         onDrop={handleMeetingDrop}
-        onClick={() => fileInputRef.current?.click()}
+        onClick={formData.meeting ? undefined : () => fileInputRef.current?.click()}
         style={{
-          border: isDraggingMeeting ? '2px dashed #009530' : '2px dashed #CBD5E1',
-          background: isDraggingMeeting ? '#F0FDF4' : '#FAFAFA',
-          borderRadius: 6,
-          padding: formData.meeting ? '0.5rem 0.75rem' : '0.85rem 0.85rem',
+          border: isDraggingMeeting ? '3px dashed #009530' : '3px dashed #3DCD58',
+          background: isDraggingMeeting ? '#DCFCE7' : '#F0FDF4',
+          borderRadius: 10,
+          padding: formData.meeting ? '0.75rem 1rem' : '1.5rem 1rem',
           textAlign: formData.meeting ? 'left' : 'center',
-          fontSize: '0.78rem',
-          color: '#64748B',
+          fontSize: '0.85rem',
+          color: '#1E293B',
           cursor: formData.meeting ? 'default' : 'pointer',
+          transition: 'background 0.15s, border-color 0.15s',
         }}
       >
         <input
@@ -507,13 +508,23 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
         />
         {!formData.meeting && (
           <>
-            <div style={{ fontWeight: 600, color: '#475569', marginBottom: 4 }}>
-              Drag an Outlook meeting (.ics) here for meeting prep
+            <div style={{ fontWeight: 700, color: '#15803D', fontSize: '0.95rem', marginBottom: '0.25rem' }}>
+              {isDraggingMeeting ? 'Drop the meeting file to import' : 'Drag an Outlook meeting (.ics) here'}
             </div>
-            <div>
-              Pulls the subject, time, duration, and attendees. Unmatched
-              attendees can be added as HubSpot contacts.
+            <div style={{ color: '#475569', marginBottom: '0.6rem' }}>
+              Pulls subject, time, duration, location, and attendees. Unmatched attendees can be added to HubSpot in one click.
             </div>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}
+              style={{
+                fontSize: '0.8rem', padding: '0.4rem 0.9rem', border: 'none',
+                background: '#009530', color: '#fff', borderRadius: 6, cursor: 'pointer',
+                fontFamily: 'inherit', fontWeight: 600,
+              }}
+            >
+              Choose .ics file…
+            </button>
           </>
         )}
         {formData.meeting && (
