@@ -47,6 +47,14 @@ export const DEFAULT_FORM_TEMPLATE = {
       ],
     },
     {
+      key: 'risks',
+      label: 'Yellow Lights',
+      columns: [
+        { key: 'item', label: 'What Yellow Lights Might Arise' },
+        { key: 'notes', label: 'How Will You Respond?' },
+      ],
+    },
+    {
       key: 'meetingNotes',
       label: 'Key Issues',
       underField: 'summary', // rendered inline beneath the Meeting Summary / Notes field
@@ -64,14 +72,6 @@ export const DEFAULT_FORM_TEMPLATE = {
         { key: 'owner', label: 'Owner' },
         { key: 'due', label: 'Due Date' },
         { key: 'status', label: 'Status' },
-      ],
-    },
-    {
-      key: 'risks',
-      label: 'Risks / Open Items',
-      columns: [
-        { key: 'item', label: 'Item' },
-        { key: 'notes', label: 'Notes' },
       ],
     },
   ],
