@@ -260,6 +260,17 @@ function formatDuration(min) {
 // Lightweight company-name fuzzy match. Good enough for the linked-opp
 // → account lookup (strips common corp suffixes, then compares on
 // containment with a length ratio).
+// Prefer the live HubSpot contact's name over whatever was parsed from
+// the ICS/manual entry, so edits made in the contact table propagate to
+// the form immediately.
+function displayAttendeeName(a) {
+  const fn = (a?.match?.firstname || '').trim();
+  const ln = (a?.match?.lastname || '').trim();
+  const combined = [fn, ln].filter(Boolean).join(' ');
+  if (combined) return combined;
+  return a?.name || a?.email || '(unknown)';
+}
+
 function matchProspectByName(name, prospects) {
   if (!name || !prospects?.length) return null;
   const strip = s => String(s || '').toLowerCase().replace(/\b(inc|llc|ltd|corp|co|lp|gmbh)\b\.?/g, '').replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
@@ -932,7 +943,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     // Required first, optional after, alphabetical within each group.
     const sorter = (a, b) => {
       if (!!a.required !== !!b.required) return a.required ? -1 : 1;
-      return (a.name || a.email || '').localeCompare(b.name || b.email || '');
+      return displayAttendeeName(a).localeCompare(displayAttendeeName(b));
     };
     se.sort(sorter);
     cust.sort(sorter);
@@ -999,8 +1010,8 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
   // organization rather than a specific person.
   const agendaSpeakerGroups = useMemo(() => {
     const opts = [];
-    const se = (seAttendees || []).map(a => a.name || a.email).filter(Boolean);
-    const cust = (customerAttendees || []).map(a => a.name || a.email).filter(Boolean);
+    const se = (seAttendees || []).map(a => displayAttendeeName(a)).filter(n => n && n !== '(unknown)');
+    const cust = (customerAttendees || []).map(a => displayAttendeeName(a)).filter(n => n && n !== '(unknown)');
     const customerLabel = companyName || 'Customer';
     if (se.length > 0 || true) {
       opts.push({ label: 'Schneider Electric', items: ['Schneider Electric', ...se] });
@@ -1363,7 +1374,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
           const se = seAttendees[i];
           const seVals = se
             ? [
-                se.name || se.email || '',
+                displayAttendeeName(se),
                 se.required ? 'Required' : 'Optional',
                 (se.email && dansAskMap[se.email.toLowerCase()]) || '',
                 '',
@@ -1393,7 +1404,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
             const country = (cust.match?.country || '').trim();
             const noteSrc = (cust.match?.id && contactNotes[cust.match.id]) || cust.match?.notes || cust.match?.hs_content_membership_notes || cust.match?.message || '';
             custVals = [
-              cust.name || cust.email || '',
+              displayAttendeeName(cust),
               cust.required ? 'Required' : 'Optional',
               cust.match?.jobtitle || '',
               [city, country].filter(Boolean).join(', '),
@@ -1704,11 +1715,11 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                           style={{ fontWeight: 600, fontSize: '0.8rem', color: '#0A66C2', textDecoration: 'none', ...wrap }}
                           title="Open LinkedIn profile"
                         >
-                          {a.name || a.email || '(unknown)'}
+                          {displayAttendeeName(a)}
                         </a>
                       ) : (
                         <span style={{ fontWeight: 600, fontSize: '0.8rem', color: '#1E293B', ...wrap }}>
-                          {a.name || a.email || '(unknown)'}
+                          {displayAttendeeName(a)}
                         </span>
                       )}
                     </div>
@@ -1808,11 +1819,11 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                           style={{ fontWeight: 600, fontSize: '0.8rem', color: '#0A66C2', textDecoration: 'none', ...wrap }}
                           title="Open LinkedIn profile"
                         >
-                          {a.name || a.email || '(unknown)'}
+                          {displayAttendeeName(a)}
                         </a>
                       ) : (
                         <span style={{ fontWeight: 600, fontSize: '0.8rem', color: '#1E293B', ...wrap }}>
-                          {a.name || a.email || '(unknown)'}
+                          {displayAttendeeName(a)}
                         </span>
                       )}
                     </div>
