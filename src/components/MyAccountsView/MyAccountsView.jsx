@@ -1027,15 +1027,13 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     async function loadFromIndexedDB() {
       return new Promise((resolve) => {
         try {
-          const req = indexedDB.open('prospect-tracker-db', 3);
-          req.onupgradeneeded = () => {
-            const idb = req.result;
-            if (!idb.objectStoreNames.contains('target-accounts')) idb.createObjectStore('target-accounts');
-            if (!idb.objectStoreNames.contains('opps-cache')) idb.createObjectStore('opps-cache');
-            if (!idb.objectStoreNames.contains('clients-cache')) idb.createObjectStore('clients-cache');
-          };
+          // Version-agnostic open so the settings-backups bump doesn't
+          // throw VersionError here (which previously meant MyAccountsView
+          // silently fell through to an empty/stale Firestore copy).
+          const req = indexedDB.open('prospect-tracker-db');
           req.onsuccess = () => {
             const idb = req.result;
+            if (!idb.objectStoreNames.contains('opps-cache')) return resolve(null);
             const tx = idb.transaction('opps-cache', 'readonly');
             const store = tx.objectStore('opps-cache');
             const getReq = store.get('data');

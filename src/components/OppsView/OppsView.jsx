@@ -12,15 +12,30 @@ const DB_VERSION = 3; // bump version to add clients-cache store
 
 function openDB() {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains('target-accounts')) db.createObjectStore('target-accounts');
-      if (!db.objectStoreNames.contains(DB_STORE)) db.createObjectStore(DB_STORE);
-      if (!db.objectStoreNames.contains('clients-cache')) db.createObjectStore('clients-cache');
+    // Open without a specific version to avoid VersionError when another
+    // part of the app (e.g. settings-backups) has upgraded the DB past our
+    // local DB_VERSION constant. If our stores don't exist yet we do a
+    // version+1 upgrade in a second open call.
+    const initial = indexedDB.open(DB_NAME);
+    initial.onsuccess = () => {
+      const db = initial.result;
+      const missing = ['target-accounts', DB_STORE, 'clients-cache'].filter(
+        (s) => !db.objectStoreNames.contains(s)
+      );
+      if (missing.length === 0) return resolve(db);
+      const v = db.version + 1;
+      db.close();
+      const upgrade = indexedDB.open(DB_NAME, v);
+      upgrade.onupgradeneeded = () => {
+        const udb = upgrade.result;
+        for (const s of missing) {
+          if (!udb.objectStoreNames.contains(s)) udb.createObjectStore(s);
+        }
+      };
+      upgrade.onsuccess = () => resolve(upgrade.result);
+      upgrade.onerror = () => reject(upgrade.error);
     };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+    initial.onerror = () => reject(initial.error);
   });
 }
 
