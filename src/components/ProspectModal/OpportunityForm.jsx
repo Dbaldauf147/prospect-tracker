@@ -1380,18 +1380,29 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       // Estimate how many visible rows a cell will take given its text and
       // column width (Excel character-width units). Used to set row.height
       // so wrapped text is fully visible without leaving excess empty
-      // space. Nunito Sans 10pt is slightly narrower than Excel's default
-      // Calibri 11pt, so ~1.2 chars fit per column-width unit in practice.
+      // space. Nunito Sans 10pt is ~0.67x the width of Excel's default
+      // Calibri 11pt, so ~1.5 chars fit per column-width unit in practice.
+      //
+      // Also normalizes whitespace so copy-pasted HubSpot notes (trailing
+      // newlines, triple-blank-line paragraph breaks, stray \r chars)
+      // don't inflate the line count past what Excel will actually render.
       const estimateWrappedLines = (text, colUnits) => {
         if (!text) return 1;
-        const s = String(text);
+        const s = String(text)
+          .replace(/\r/g, '')
+          .replace(/[ \t]+\n/g, '\n')     // strip trailing spaces on wrap
+          .replace(/\n{3,}/g, '\n\n')     // collapse >2 blank lines
+          .replace(/^\s+|\s+$/g, '');     // trim outer whitespace
+        if (!s) return 1;
         const explicit = s.split('\n');
         let lines = 0;
-        const perLine = Math.max(8, Math.floor(colUnits * 1.2));
+        const perLine = Math.max(8, Math.floor(colUnits * 1.5));
         for (const line of explicit) {
-          lines += Math.max(1, Math.ceil((line.length || 1) / perLine));
+          const len = line.length;
+          if (len === 0) { lines += 1; continue; }
+          lines += Math.ceil(len / perLine);
         }
-        return lines;
+        return Math.max(1, lines);
       };
       // ~14pt per wrapped line of 10pt text (matches Excel's native
       // auto-fit), with a 16pt floor so single-line rows stay tight.
