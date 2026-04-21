@@ -67,6 +67,7 @@ export const DEFAULT_FORM_TEMPLATE = {
       label: 'Questions to Ask Them',
       group: 'Questions',
       columns: [
+        { key: 'service', label: 'Service' },
         { key: 'question', label: 'Question' },
       ],
     },
