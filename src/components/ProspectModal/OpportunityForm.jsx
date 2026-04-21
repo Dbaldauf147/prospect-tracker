@@ -558,6 +558,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       ws.addRow([]);
       addSectionHeader('Meeting Prep');
       addFieldRow('PPT Link', formData.fieldValues.pptLink || '');
+      addFieldRow('Context', formData.fieldValues.context || '');
       addFieldRow('Intent', formData.fieldValues.intent || '');
       addFieldRow('End In Mind', formData.fieldValues.endInMind || '');
 
@@ -1073,6 +1074,16 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
           onChange={e => updateField('pptLink', e.target.value)}
           placeholder="Paste the PowerPoint URL (SharePoint, OneDrive, etc.)"
           style={sx.input}
+        />
+      </div>
+
+      <div>
+        <div style={sx.fieldLabel}>Context</div>
+        <textarea
+          style={{ ...sx.textarea, minHeight: '90px' }}
+          value={formData.fieldValues.context || ''}
+          onChange={e => updateField('context', e.target.value)}
+          placeholder="Background and context for this meeting — what led up to it, who introduced us, relevant history, recent news about the account, etc."
         />
       </div>
 
