@@ -47,8 +47,8 @@ export const DEFAULT_FORM_TEMPLATE = {
       group: 'Questions',
       reorderable: true,
       columns: [
-        { key: 'service', label: 'Service' },
-        { key: 'question', label: 'Question' },
+        { key: 'service', label: 'Service', widthRatio: 0.25 },
+        { key: 'question', label: 'Question', widthRatio: 0.75 },
       ],
     },
     {
@@ -56,16 +56,18 @@ export const DEFAULT_FORM_TEMPLATE = {
       label: 'Questions They Might Ask',
       group: 'Questions',
       columns: [
-        { key: 'question', label: 'Their Question' },
-        { key: 'response', label: 'Our Response' },
+        { key: 'service', label: 'Service', widthRatio: 0.25 },
+        { key: 'question', label: 'Their Question', widthRatio: 0.375 },
+        { key: 'response', label: 'Our Response', widthRatio: 0.375 },
       ],
     },
     {
       key: 'risks',
       label: 'Yellow Lights',
       columns: [
-        { key: 'item', label: 'What Yellow Lights Might Arise' },
-        { key: 'notes', label: 'How Will You Respond?' },
+        { key: 'service', label: 'Service', widthRatio: 0.25 },
+        { key: 'item', label: 'What Yellow Lights Might Arise', widthRatio: 0.375 },
+        { key: 'notes', label: 'How Will You Respond?', widthRatio: 0.375 },
       ],
     },
     {
@@ -624,10 +626,10 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
 
     const existingRows = formData.tables?.theirQuestions || [];
     const populated = existingRows.filter(r =>
-      (r.question || '').trim() || (r.response || '').trim()
+      (r.service || '').trim() || (r.question || '').trim() || (r.response || '').trim()
     );
     const existingKeys = new Set(
-      populated.map(r => (r.question || '').trim().toLowerCase())
+      populated.map(r => `${(r.service || '').toLowerCase().trim()}::${(r.question || '').trim().toLowerCase()}`)
     );
 
     const additions = [];
@@ -635,9 +637,9 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       const canned = SERVICE_THEIR_QUESTIONS[svc.toLowerCase()];
       if (!canned) continue;
       for (const pair of canned) {
-        const k = (pair.question || '').trim().toLowerCase();
-        if (!k || existingKeys.has(k)) continue;
-        additions.push({ question: pair.question, response: pair.response });
+        const k = `${svc.toLowerCase()}::${(pair.question || '').trim().toLowerCase()}`;
+        if (!(pair.question || '').trim() || existingKeys.has(k)) continue;
+        additions.push({ service: svc, question: pair.question, response: pair.response });
         existingKeys.add(k);
       }
     }
@@ -769,7 +771,13 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
             <thead>
               <tr>
                 {t.columns.map(c => (
-                  <th key={c.key} style={sx.th}>{c.label}</th>
+                  <th
+                    key={c.key}
+                    style={{
+                      ...sx.th,
+                      ...(c.widthRatio ? { width: `${Math.round(c.widthRatio * 100)}%` } : {}),
+                    }}
+                  >{c.label}</th>
                 ))}
                 <th style={{ ...sx.th, width: 30 }}></th>
               </tr>
@@ -1480,15 +1488,38 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       const addTable = (title, columns, rows /*, widths unused */) => {
         addSectionHeader(title);
         // Distribute the SPAN worksheet columns across this table's columns
-        // so the whole table fills the full page width. A 1-column table
-        // occupies all SPAN cols; a 2-col table is 5+5; 3-col is 3/3/4; etc.
+        // so the whole table fills the full page width. Columns can declare
+        // a widthRatio (e.g. 0.25 for a Service column); any missing ratios
+        // default to equal shares of whatever is left. Widths are then
+        // rounded to whole worksheet-column slots, with any remainder going
+        // to the widest column so narrow columns don't swell unexpectedly.
         const numCols = columns.length;
-        const base = Math.floor(SPAN / numCols);
-        const rem = SPAN - base * numCols;
+        const explicit = columns.map(c => (typeof c.widthRatio === 'number' ? c.widthRatio : null));
+        const explicitSum = explicit.reduce((a, r) => a + (r || 0), 0);
+        const unspecifiedCount = explicit.filter(r => r == null).length;
+        const remainder = Math.max(0, 1 - explicitSum);
+        const defaultShare = unspecifiedCount > 0 ? remainder / unspecifiedCount : 0;
+        const ratios = explicit.map(r => (r == null ? defaultShare : r));
+        const ratioSum = ratios.reduce((a, b) => a + b, 0) || 1;
+        const widths = ratios.map(r => Math.max(1, Math.floor((r / ratioSum) * SPAN)));
+        let used = widths.reduce((a, b) => a + b, 0);
+        while (used > SPAN) {
+          let maxIdx = 0;
+          for (let i = 1; i < numCols; i++) if (widths[i] > widths[maxIdx]) maxIdx = i;
+          if (widths[maxIdx] <= 1) break;
+          widths[maxIdx]--;
+          used--;
+        }
+        while (used < SPAN) {
+          let maxIdx = 0;
+          for (let i = 1; i < numCols; i++) if (ratios[i] > ratios[maxIdx]) maxIdx = i;
+          widths[maxIdx]++;
+          used++;
+        }
         const slots = [];
         let cur = 1;
         for (let i = 0; i < numCols; i++) {
-          const w = base + (i < rem ? 1 : 0);
+          const w = widths[i];
           slots.push({ start: cur, end: cur + w - 1 });
           cur += w;
         }
