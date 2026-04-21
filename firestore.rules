@@ -43,6 +43,14 @@ service cloud.firestore {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
 
+    // Audit log: append-only. Authenticated users may create entries
+    // stamped with their own uid. No read/update/delete from the client;
+    // admin inspection goes through Firebase Console.
+    match /auditLog/{docId} {
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow read, update, delete: if false;
+    }
+
     // Default deny all other access
     match /{document=**} {
       allow read, write: if false;
