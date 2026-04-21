@@ -781,19 +781,19 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
 
   // --- Smart Agenda helpers (must live after seAttendees/customerAttendees
   //     are defined — they're used by renderTables via closure). --------
+  // Each company name is included at the top of its own optgroup as a
+  // pickable "team" option so a row can be attributed to the whole
+  // organization rather than a specific person.
   const agendaSpeakerGroups = useMemo(() => {
     const opts = [];
-    if (seAttendees?.length) {
-      opts.push({
-        label: 'Schneider Electric',
-        items: seAttendees.map(a => a.name || a.email).filter(Boolean),
-      });
+    const se = (seAttendees || []).map(a => a.name || a.email).filter(Boolean);
+    const cust = (customerAttendees || []).map(a => a.name || a.email).filter(Boolean);
+    const customerLabel = companyName || 'Customer';
+    if (se.length > 0 || true) {
+      opts.push({ label: 'Schneider Electric', items: ['Schneider Electric', ...se] });
     }
-    if (customerAttendees?.length) {
-      opts.push({
-        label: companyName || 'Customer',
-        items: customerAttendees.map(a => a.name || a.email).filter(Boolean),
-      });
+    if (cust.length > 0 || companyName) {
+      opts.push({ label: customerLabel, items: [customerLabel, ...cust] });
     }
     return opts;
   }, [seAttendees, customerAttendees, companyName]);
