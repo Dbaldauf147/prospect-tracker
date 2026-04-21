@@ -548,7 +548,7 @@ function StatusMismatchWarning({ row, onUpdate }) {
                 background: '#fff', color: 'var(--color-text)', fontSize: '0.72rem', fontWeight: 600,
                 cursor: 'pointer', fontFamily: 'inherit',
               }}
-            >Convert My Account status to Table View status</button>
+            >Update Table View Status</button>
             <button
               onClick={() => { onUpdate(row.id, { dismissedSuggestedStatus: row.suggestedStatus }); setOpen(false); }}
               title="Dismiss this specific suggestion for now. It will reappear if the suggested status changes."
