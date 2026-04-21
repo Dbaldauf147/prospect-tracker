@@ -1428,6 +1428,9 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         if (found) break;
       }
       const statusMismatch = !p.hideStatusSuggestion && !!suggestedStatus && suggestedStatus !== p.status && p.status && p.dismissedSuggestedStatus !== suggestedStatus;
+      // Hide accounts with zero opps of any kind — My Accounts is only for
+      // companies where there's active or historical deal activity.
+      if (!totalOpps || totalOpps === 0) continue;
       const entry = { ...p, myTier: tier, activityCount, oppsCount, totalOpps, sources: sources.join(', '), dmFound: !!dmNames, dmNames: dmNames ? dmNames.join(', ') : '', cdmMismatch: !isBaldauf, targetNames, targetName: (targetNames || []).join(', '), targetTier, tierMismatch, otherReps, contactCount, bucketCount, suggestedStatus, statusMismatch };
       if (tier === 'Tier 1') t1.push(entry);
       else t2.push(entry); // Tier 2 and Tier 3 both go in t2 array
