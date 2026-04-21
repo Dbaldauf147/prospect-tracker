@@ -23,8 +23,7 @@ export const DEFAULT_FORM_TEMPLATE = {
       smartAgenda: true, // unlocks speaker picker + time-balance behavior
       columns: [
         { key: 'subject', label: 'Subject' },
-        { key: 'speaker', label: 'Speaker 1', attendeePicker: true },
-        { key: 'speaker2', label: 'Speaker 2', attendeePicker: true },
+        { key: 'speaker', label: 'Speaker(s)', attendeePicker: true, multi: true },
         { key: 'startTime', label: 'Time' },
         { key: 'duration', label: 'Minutes' },
         { key: 'slides', label: 'Slides / Software' },
@@ -534,6 +533,54 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                     if (c.attendeePicker) {
                       const val = row[c.key] || '';
                       const knownOptions = agendaSpeakerGroups.flatMap(g => g.items);
+                      // Multi-select: value is stored as 'Name A / Name B'.
+                      // A second <select> appears below the first as soon as
+                      // the first has a value; picking a second name appends
+                      // it to the existing value with ' / '. Picking the
+                      // blank '—' removes that slot.
+                      if (c.multi) {
+                        const parts = val ? val.split(' / ').map(s => s.trim()).filter(Boolean) : [];
+                        const updateSlot = (idx, nextName) => {
+                          const next = [...parts];
+                          if (nextName) {
+                            if (idx >= next.length) next.push(nextName);
+                            else next[idx] = nextName;
+                          } else {
+                            if (idx < next.length) next.splice(idx, 1);
+                          }
+                          // Dedupe (keep first occurrence)
+                          const seen = new Set();
+                          const uniq = next.filter(n => (seen.has(n) ? false : (seen.add(n), true)));
+                          updateTableCell(t.key, rIdx, c.key, uniq.join(' / '));
+                        };
+                        // Render slots: existing names + one empty trailing slot
+                        const slots = [...parts, ''];
+                        return (
+                          <td key={c.key} style={sx.td}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                              {slots.map((slotVal, idx) => {
+                                const isCustomSlot = slotVal && !knownOptions.includes(slotVal);
+                                return (
+                                  <select
+                                    key={idx}
+                                    style={sx.cellInput}
+                                    value={slotVal}
+                                    onChange={e => updateSlot(idx, e.target.value)}
+                                  >
+                                    <option value="">—</option>
+                                    {agendaSpeakerGroups.map(g => (
+                                      <optgroup key={g.label} label={g.label}>
+                                        {g.items.map(name => <option key={name} value={name}>{name}</option>)}
+                                      </optgroup>
+                                    ))}
+                                    {isCustomSlot && <option value={slotVal}>{slotVal}</option>}
+                                  </select>
+                                );
+                              })}
+                            </div>
+                          </td>
+                        );
+                      }
                       const isCustom = val && !knownOptions.includes(val);
                       return (
                         <td key={c.key} style={sx.td}>
