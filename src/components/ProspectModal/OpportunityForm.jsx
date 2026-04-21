@@ -527,6 +527,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
 
       ws.addRow([]);
       addSectionHeader('Meeting Prep');
+      addFieldRow('PPT Link', formData.fieldValues.pptLink || '');
       addFieldRow('Intent', formData.fieldValues.intent || '');
       addFieldRow('End In Mind', formData.fieldValues.endInMind || '');
 
@@ -1023,6 +1024,28 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
 
       {/* Free-form meeting-prep buckets that sit between the imported
           meeting data and the structured opportunity form fields. */}
+      <div>
+        <div style={sx.fieldLabel}>
+          PPT Link
+          {formData.fieldValues.pptLink && (
+            <a
+              href={/^https?:\/\//i.test(formData.fieldValues.pptLink) ? formData.fieldValues.pptLink : `https://${formData.fieldValues.pptLink}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ marginLeft: '0.4rem', color: '#0A66C2', fontWeight: 600, textDecoration: 'none' }}
+              title="Open PPT link"
+            >Open ↗</a>
+          )}
+        </div>
+        <input
+          type="text"
+          value={formData.fieldValues.pptLink || ''}
+          onChange={e => updateField('pptLink', e.target.value)}
+          placeholder="Paste the PowerPoint URL (SharePoint, OneDrive, etc.)"
+          style={sx.input}
+        />
+      </div>
+
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
         <div>
           <div style={sx.fieldLabel}>Intent</div>
