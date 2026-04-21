@@ -286,6 +286,54 @@ function toBfoStage(raw) {
   return mapDanStatusToBfoStage(trimmed);
 }
 
+// Pre-filled Intent + Meeting Goal (End In Mind) per Dan's sales stage.
+// On opp-link we look up the stage, substitute {company} with the linked
+// account name, and write the text into the form's Intent / End In Mind
+// boxes. Lowercased keys so we can match case-insensitively.
+const STAGE_MEETING_TEMPLATES = {
+  'lead': {
+    intent: 'Confirm {company} is a fit and determine if further partnership exploration is warranted.',
+    endInMind: 'By the end of our meeting, {company} will understand what we do and whether it could apply to a current priorities. They will have enough information to decide, yes or no, if a deeper qualifying conversation is worth their time.',
+  },
+  'qualifying': {
+    intent: 'Verify a real, funded, timely opportunity exists with {company}.',
+    endInMind: 'By the end of our meeting, {company} will have shared their business problem, validated it against our solutions, and have a clear view of whether or not it makes sense to get a proposal from us to help determine if this is worth pursuing.',
+  },
+  'quoting': {
+    intent: 'Gather inputs from {company} needed to build an accurate quote.',
+    endInMind: 'By the end of our meeting, {company} will have confirmed their requirements, pricing parameters, and who needs to review the proposal. They will feel confident the quote they receive will reflect what they actually need.',
+  },
+  'quoted': {
+    intent: 'Walk {company} through the proposal and ensure it meets their requirements.',
+    endInMind: 'By the end of our meeting, {company} will have understood the proposal and had their questions addressed so they can decide whether to move forward to contracting or end the exploration here.',
+  },
+  'contracting': {
+    intent: 'Help {company} get through their internal review process quickly and confidently so they can start realizing value from SE solutions.',
+    endInMind: 'By the end of our meeting, {company} will have a clear path through their legal, procurement, and security review, with open items and a target signature date agreed.',
+  },
+  'agreement sent': {
+    intent: 'Give {company} everything they need to sign with confidence and feel ready for a smooth onboarding.',
+    endInMind: 'By the end of our meeting, {company} will have answered any final questions and be aligned on what happens after signature.',
+  },
+};
+
+// Match a raw stage value to a template. Tries the Dan name exactly, then
+// falls back to the BFO-shaped name by reverse-mapping through
+// DAN_STATUS_TO_BFO_STAGE.
+function meetingTemplateFor(rawStage) {
+  if (!rawStage) return null;
+  const key = String(rawStage).trim().toLowerCase().replace(/\s+/g, ' ');
+  if (STAGE_MEETING_TEMPLATES[key]) return STAGE_MEETING_TEMPLATES[key];
+  // Reverse-map: e.g. raw = "4 - Influence and Develop" might correspond to
+  // multiple Dan stages; pick the first that exists in the template map.
+  for (const [danKey, bfoVal] of Object.entries(DAN_STATUS_TO_BFO_STAGE)) {
+    if (String(bfoVal).toLowerCase() === key && STAGE_MEETING_TEMPLATES[danKey]) {
+      return STAGE_MEETING_TEMPLATES[danKey];
+    }
+  }
+  return null;
+}
+
 export function OpportunityForm({ value, onChange, onLinkOpp, companyName, companyContacts = [], allHubspotContacts = [], contactNotes = {}, prospects = [], onCreateContact }) {
   const template = DEFAULT_FORM_TEMPLATE;
   const formData = useMemo(() => {
@@ -503,6 +551,20 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       // No recognized value — blank it out so the user sees that nothing
       // was matched instead of a Dan value that looks BFO-like.
       nextValues.stage = oppStage || '';
+    }
+
+    // Prefill Intent / End In Mind from the stage-specific meeting template
+    // so every form starts with the right customer-facing framing. We match
+    // on the Dan name first (oppStage or oppStatus, whichever the Opps sheet
+    // uses), then fall back to the BFO value we just resolved.
+    const templateMatch =
+      meetingTemplateFor(oppStage) ||
+      meetingTemplateFor(oppStatus) ||
+      meetingTemplateFor(finalStage);
+    if (templateMatch) {
+      const displayCompany = (opp?.['Account'] || companyName || 'the customer').trim();
+      nextValues.intent = templateMatch.intent.replaceAll('{company}', displayCompany);
+      nextValues.endInMind = templateMatch.endInMind.replaceAll('{company}', displayCompany);
     }
 
     // Friendly display label for the linked BFO opportunity — used as the
