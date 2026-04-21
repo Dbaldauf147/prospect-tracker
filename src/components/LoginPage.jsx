@@ -9,6 +9,7 @@ export function LoginPage({ onSignIn, onSignInWithEmail, onCreateAccount, onRese
   const [googleSigningIn, setGoogleSigningIn] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [resetMessage, setResetMessage] = useState(null);
+  const [showPassword, setShowPassword] = useState(false);
 
   async function handleGoogleClick() {
     if (googleSigningIn) return;
@@ -69,13 +70,35 @@ export function LoginPage({ onSignIn, onSignInWithEmail, onCreateAccount, onRese
             onChange={e => setEmail(e.target.value)}
             style={{ padding: '0.5rem 0.75rem', border: '1px solid #D1D5DB', borderRadius: '6px', fontSize: '0.85rem', fontFamily: 'inherit' }}
           />
-          <input
-            type="password"
-            placeholder="Password"
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-            style={{ padding: '0.5rem 0.75rem', border: '1px solid #D1D5DB', borderRadius: '6px', fontSize: '0.85rem', fontFamily: 'inherit' }}
-          />
+          <div style={{ position: 'relative' }}>
+            <input
+              type={showPassword ? 'text' : 'password'}
+              placeholder="Password"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              style={{ width: '100%', padding: '0.5rem 3.2rem 0.5rem 0.75rem', border: '1px solid #D1D5DB', borderRadius: '6px', fontSize: '0.85rem', fontFamily: 'inherit', boxSizing: 'border-box' }}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword(s => !s)}
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
+              style={{
+                position: 'absolute',
+                top: '50%',
+                right: '8px',
+                transform: 'translateY(-50%)',
+                background: 'none',
+                border: 'none',
+                color: '#6B7280',
+                fontSize: '0.72rem',
+                cursor: 'pointer',
+                padding: '2px 6px',
+                fontFamily: 'inherit',
+              }}
+            >
+              {showPassword ? 'Hide' : 'Show'}
+            </button>
+          </div>
           <button
             type="submit"
             disabled={submitting || !email.trim() || !password}
