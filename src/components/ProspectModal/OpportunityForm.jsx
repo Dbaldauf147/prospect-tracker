@@ -367,6 +367,36 @@ function meetingTemplateFor(rawStage) {
   return null;
 }
 
+// Canned 'Questions to Ask Them' for each service. When the user puts a
+// service in the 'Scope Being Explored' field, these questions are
+// auto-added to the ourQuestions table (skipping duplicates).
+const SERVICE_QUESTIONS = {
+  'bill payment': [
+    'Can you tell us a bit more about our current bill payment program?',
+    'How many utility accounts are you managing each month?',
+    "How often do you catch billing errors, and what's your process when you do?",
+    'Have you ever been hit with late fees or service disruptions? How did that come about?',
+    'What does your approval workflow look like, and where does it tend to get stuck?',
+  ],
+  'budgets': [
+    'How do you build your energy budget today? Is it based on prior year actuals, a rate forecast, or something else?',
+    "How do you account for weather variability, rate changes, or new sites when you're forecasting?",
+    'How close did your actuals come to budget last year, and where were the biggest misses?',
+    'How many reforecasts do you do per year?',
+  ],
+  'rate optimization': [
+    'How often do you screen for new regulated rate opportunities?',
+    'What kind of regulated rate savings have you seen over the past several years?',
+  ],
+  'microgrid advisor': [
+    'Do they already have batteries in place? If so, where?',
+    'What is their main objective they are trying to solve for?',
+    "If they don't have batteries in place, what are they looking for? Just BESS or any sort of MG?",
+    'How do they plan to fund?',
+    'What is their lead time objective?',
+  ],
+};
+
 export function OpportunityForm({ value, onChange, onLinkOpp, companyName, companyContacts = [], allHubspotContacts = [], contactNotes = {}, prospects = [], onCreateContact }) {
   const template = DEFAULT_FORM_TEMPLATE;
 
@@ -516,6 +546,44 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     if (Object.keys(updates).length === 0) return;
     set({ fieldValues: { ...fv, ...updates } });
   }, [companyName, prospects, formData.fieldValues?.companyWebsite, formData.fieldValues?.currentScope, formData.fieldValues?.clientManager, formData.fieldValues?.currentClientScope]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Self-heal: for every service listed in Scope Being Explored, add its
+  // canned 'Questions to Ask Them' to the ourQuestions table if not
+  // already present. Existing rows (including manually added or edited
+  // ones) are preserved. Removing a service from the scope does NOT
+  // remove its questions — user can delete those rows manually.
+  useEffect(() => {
+    const scope = (formData.fieldValues?.scope || '').trim();
+    if (!scope) return;
+    const services = scope.split(',').map(s => s.trim()).filter(Boolean);
+    if (services.length === 0) return;
+
+    const existingRows = formData.tables?.ourQuestions || [];
+    // Keep populated rows, drop fully-empty trailing ones so we don't
+    // interleave new auto-fills with blank user-typing placeholders.
+    const populated = existingRows.filter(r =>
+      (r.service || '').trim() || (r.question || '').trim()
+    );
+    const existingKeys = new Set(
+      populated.map(r => `${(r.service || '').toLowerCase().trim()}::${(r.question || '').trim()}`)
+    );
+
+    const additions = [];
+    for (const svc of services) {
+      const key = svc.toLowerCase();
+      const canned = SERVICE_QUESTIONS[key];
+      if (!canned) continue;
+      for (const q of canned) {
+        const k = `${key}::${q}`;
+        if (existingKeys.has(k)) continue;
+        additions.push({ service: svc, question: q });
+        existingKeys.add(k);
+      }
+    }
+    if (additions.length === 0) return;
+
+    set({ tables: { ...formData.tables, ourQuestions: [...populated, ...additions] } });
+  }, [formData.fieldValues?.scope]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const updateTableCell = (tableKey, rowIdx, colKey, val) => {
     const rows = [...(formData.tables[tableKey] || [])];
