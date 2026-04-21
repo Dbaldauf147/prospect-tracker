@@ -566,7 +566,7 @@ function StatusMismatchWarning({ row, onUpdate }) {
   );
 }
 
-function TierMismatchWarning({ row, onDismiss }) {
+function TierMismatchWarning({ row, onApply, onDismiss }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   useEffect(() => {
@@ -588,22 +588,32 @@ function TierMismatchWarning({ row, onDismiss }) {
           style={{
             position: 'absolute', top: '100%', left: 0, zIndex: 50, marginTop: '4px',
             background: '#fff', border: '1px solid var(--color-border)', borderRadius: '8px',
-            boxShadow: '0 4px 12px rgba(0,0,0,0.15)', padding: '0.6rem 0.8rem', minWidth: '200px',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.15)', padding: '0.6rem 0.8rem', minWidth: '220px',
           }}
         >
           <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text)', marginBottom: '0.3rem' }}>Tier Mismatch</div>
           <div style={{ fontSize: '0.7rem', color: 'var(--color-text-secondary)', marginBottom: '0.5rem' }}>
-            Your tier: <strong>{row.myTier}</strong><br/>
+            Your tier: <strong>{row.myTier || '—'}</strong><br/>
             Target Accounts says: <strong>{row.targetTier}</strong>
           </div>
-          <button
-            onClick={() => { onDismiss(); setOpen(false); }}
-            style={{
-              width: '100%', padding: '0.35rem 0.6rem', border: 'none', borderRadius: '6px',
-              background: 'var(--color-accent)', color: '#fff', fontSize: '0.72rem', fontWeight: 600,
-              cursor: 'pointer', fontFamily: 'inherit',
-            }}
-          >Dismiss</button>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+            <button
+              onClick={() => { onApply(); setOpen(false); }}
+              style={{
+                padding: '0.4rem 0.6rem', border: 'none', borderRadius: '6px',
+                background: 'var(--color-accent)', color: '#fff', fontSize: '0.72rem', fontWeight: 600,
+                cursor: 'pointer', fontFamily: 'inherit',
+              }}
+            >Update to {row.targetTier}</button>
+            <button
+              onClick={() => { onDismiss(); setOpen(false); }}
+              style={{
+                padding: '0.4rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px',
+                background: 'var(--color-surface)', color: 'var(--color-text-secondary)', fontSize: '0.72rem', fontWeight: 600,
+                cursor: 'pointer', fontFamily: 'inherit',
+              }}
+            >Dismiss</button>
+          </div>
         </div>
       )}
     </span>
@@ -1592,7 +1602,11 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         return { ...col, render: (row) => (
           <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
             <InlineCell row={row} field="tier" value={row.myTier} onUpdate={onUpdate} options={TIERS} />
-            {row.tierMismatch && <TierMismatchWarning row={row} onDismiss={() => onUpdate(row.id, { ignoreTierMismatch: true })} />}
+            {row.tierMismatch && <TierMismatchWarning
+              row={row}
+              onApply={() => onUpdate(row.id, { tier: row.targetTier })}
+              onDismiss={() => onUpdate(row.id, { ignoreTierMismatch: true })}
+            />}
           </span>
         )};
       }
