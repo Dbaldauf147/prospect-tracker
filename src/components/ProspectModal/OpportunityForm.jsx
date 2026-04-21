@@ -53,7 +53,7 @@ export const DEFAULT_FORM_TEMPLATE = {
         { key: 'subject', label: 'Subject' },
         { key: 'speaker', label: 'Speaker(s)', attendeePicker: true, multi: true },
         { key: 'startTime', label: 'Time' },
-        { key: 'duration', label: 'Minutes' },
+        { key: 'duration', label: 'Minutes', numeric: true, numFmt: '0' },
         { key: 'slides', label: 'Slides / Software' },
       ],
     },
@@ -1085,16 +1085,14 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
         properties: { tabColor: { argb: SE_GREEN } },
         views: [{ state: 'frozen', ySplit: 3 }],
       });
-      // 10-column sheet so SE and customer attendee tables can sit
-      // side-by-side like they do in the form. Left half (1-4) for SE,
-      // col 5 is a narrow gap, right half (6-10) for the customer side.
-      // Other sections just span all 10 columns.
-      const colWidths = [28, 16, 40, 20, 4, 26, 14, 26, 22, 34];
+      // 10-column sheet with uniform widths so any N-column table splits
+      // the full page width into visually balanced slots (1-col = full
+      // width, 2-col = 5/5, 3-col = 3/3/4, 4-col = 3/3/2/2, 5-col = 2/2/
+      // 2/2/2). The attendees section uses cols 1-4 for SE and cols 6-10
+      // for the customer side, with col 5 as a visual gap.
+      const colWidths = [24, 24, 24, 24, 24, 24, 24, 24, 24, 24];
       ws.columns = colWidths.map(w => ({ width: w }));
       const SPAN = colWidths.length;
-      const LEFT_COLS = [0, 1, 2, 3];   // 1-based: cols 1..4 (SE table)
-      const GAP_COL = 4;                // col 5 is the visual gap
-      const RIGHT_COLS = [5, 6, 7, 8, 9]; // 1-based: cols 6..10 (customer table)
 
       // Estimate how many visible rows a cell will take given its text and
       // column width (Excel character-width units). Used to set row.height
@@ -1207,47 +1205,70 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
         row.height = 18;
       };
 
-      const addTable = (title, columns, rows, widths) => {
+      const addTable = (title, columns, rows /*, widths unused */) => {
         addSectionHeader(title);
-        // Resize columns to fit this table. We restore generous defaults
-        // after each table so later sections can reflow.
-        const usable = Math.min(columns.length, SPAN);
-        if (widths) {
-          for (let i = 0; i < usable; i++) ws.getColumn(i + 1).width = widths[i] || colWidths[i] || 20;
+        // Distribute the SPAN worksheet columns across this table's columns
+        // so the whole table fills the full page width. A 1-column table
+        // occupies all SPAN cols; a 2-col table is 5+5; 3-col is 3/3/4; etc.
+        const numCols = columns.length;
+        const base = Math.floor(SPAN / numCols);
+        const rem = SPAN - base * numCols;
+        const slots = [];
+        let cur = 1;
+        for (let i = 0; i < numCols; i++) {
+          const w = base + (i < rem ? 1 : 0);
+          slots.push({ start: cur, end: cur + w - 1 });
+          cur += w;
         }
+        const slotUnits = (slot) => {
+          let u = 0;
+          for (let k = slot.start - 1; k <= slot.end - 1; k++) u += colWidths[k] || 0;
+          return u;
+        };
+
         // Header row
-        const hRow = ws.addRow(columns.map(c => c.label).concat(Array(Math.max(0, SPAN - columns.length)).fill('')));
-        for (let i = 1; i <= SPAN; i++) {
-          const cell = hRow.getCell(i);
-          if (i <= columns.length) {
-            cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
-            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
-            cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
-            cell.border = borderAll;
-          } else {
-            cell.border = borderAll;
+        const hRow = ws.addRow([]);
+        slots.forEach((slot, i) => {
+          const c = ws.getCell(hRow.number, slot.start);
+          c.value = columns[i].label;
+          c.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+          c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+          c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+          c.border = borderAll;
+          if (slot.end > slot.start) {
+            ws.mergeCells(hRow.number, slot.start, hRow.number, slot.end);
           }
-        }
+        });
         hRow.height = 22;
+
         // Data rows
         const dataRows = rows.length > 0 ? rows : [{}];
         dataRows.forEach((r, idx) => {
-          const values = columns.map(c => r[c.key] != null ? r[c.key] : '');
-          const row = ws.addRow(values.concat(Array(Math.max(0, SPAN - values.length)).fill('')));
+          const dRow = ws.addRow([]);
           const zebra = idx % 2 === 1;
           let maxLines = 1;
-          for (let i = 1; i <= SPAN; i++) {
-            const cell = row.getCell(i);
-            cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-            cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true };
-            cell.border = borderAll;
-            if (zebra) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_SURFACE } };
-            if (i <= columns.length) {
-              const w = (widths && widths[i - 1]) || colWidths[i - 1] || 20;
-              maxLines = Math.max(maxLines, estimateWrappedLines(values[i - 1], w));
+          slots.forEach((slot, i) => {
+            const col = columns[i];
+            const raw = r[col.key];
+            const c = ws.getCell(dRow.number, slot.start);
+            // Agenda minutes should be a real number in the sheet, not text.
+            if (col.numeric) {
+              const n = (raw === '' || raw == null) ? null : Number(raw);
+              c.value = (n != null && !isNaN(n)) ? n : null;
+              if (col.numFmt) c.numFmt = col.numFmt;
+            } else {
+              c.value = (raw === '' || raw == null) ? null : raw;
             }
-          }
-          row.height = rowHeightForLines(maxLines);
+            c.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+            c.alignment = { vertical: 'top', horizontal: col.numeric ? 'right' : 'left', wrapText: true, indent: col.numeric ? 0 : 1 };
+            c.border = borderAll;
+            if (zebra) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_SURFACE } };
+            if (slot.end > slot.start) {
+              ws.mergeCells(dRow.number, slot.start, dRow.number, slot.end);
+            }
+            maxLines = Math.max(maxLines, estimateWrappedLines(raw, slotUnits(slot)));
+          });
+          dRow.height = rowHeightForLines(maxLines);
         });
       };
 
