@@ -92,12 +92,24 @@ function parseIcs(text) {
     // raw looks like "mailto:a@b.com". CN=... is in params.
     const email = (raw || '').replace(/^mailto:/i, '').trim();
     let cn = '';
+    let role = '';
     for (const p of params) {
       const [k, v] = p.split('=');
-      if (k && k.toUpperCase() === 'CN') cn = (v || '').replace(/^"|"$/g, '');
+      if (!k) continue;
+      const K = k.toUpperCase();
+      if (K === 'CN') cn = (v || '').replace(/^"|"$/g, '');
+      else if (K === 'ROLE') role = (v || '').toUpperCase();
     }
     if (!email && !cn) return null;
-    return { name: cn || email, email };
+    // Classify ROLE into required/optional. iCal roles:
+    //   CHAIR              -> required (organizer/facilitator)
+    //   REQ-PARTICIPANT    -> required (default)
+    //   OPT-PARTICIPANT    -> optional
+    //   NON-PARTICIPANT    -> informational / fyi
+    let required = true;
+    if (role === 'OPT-PARTICIPANT') required = false;
+    else if (role === 'NON-PARTICIPANT') required = false;
+    return { name: cn || email, email, required, role: role || 'REQ-PARTICIPANT' };
   };
 
   for (const rawLine of lines) {
@@ -274,13 +286,14 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
 
   const clearMeeting = () => set({ meeting: null });
 
-  // Attendee matching: case-insensitive email lookup against ALL HubSpot
-  // contacts (not just this company's), so internal colleagues and cross-
-  // company attendees both surface as "matched" with their actual company
-  // shown. Fall back to companyContacts if the full list wasn't supplied.
-  const meetingAttendees = useMemo(() => {
+  // Attendee matching + SE vs Customer bucketing. SE is anyone on an
+  // @se.com address (case-insensitive, matches subdomains too). Everyone
+  // else is grouped under the current customer company. We also track
+  // each attendee's required/optional role from the ICS.
+  const { seAttendees, customerAttendees } = useMemo(() => {
     const mt = formData.meeting;
-    if (!mt?.attendees?.length) return [];
+    const empty = { seAttendees: [], customerAttendees: [] };
+    if (!mt?.attendees?.length) return empty;
     const byEmail = new Map();
     const pool = (allHubspotContacts && allHubspotContacts.length > 0) ? allHubspotContacts : companyContacts;
     for (const c of pool) {
@@ -288,14 +301,28 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       if (em && !byEmail.has(em)) byEmail.set(em, c);
     }
     const thisCompany = (companyName || '').toLowerCase().trim();
-    return mt.attendees.map(a => {
+    const se = [];
+    const cust = [];
+    for (const a of mt.attendees) {
       const em = (a.email || '').toLowerCase().trim();
       const match = em ? byEmail.get(em) : null;
       const matchedCompany = (match?.company || '').trim();
       const matchedOtherCompany = !!matchedCompany && matchedCompany.toLowerCase() !== thisCompany;
-      return { ...a, match, matchedCompany, matchedOtherCompany };
-    });
+      const enriched = { ...a, match, matchedCompany, matchedOtherCompany };
+      const isSE = /@(se\.com|schneider-electric\.com)$/i.test(em);
+      if (isSE) se.push(enriched); else cust.push(enriched);
+    }
+    // Required first, optional after, alphabetical within each group.
+    const sorter = (a, b) => {
+      if (!!a.required !== !!b.required) return a.required ? -1 : 1;
+      return (a.name || a.email || '').localeCompare(b.name || b.email || '');
+    };
+    se.sort(sorter);
+    cust.sort(sorter);
+    return { seAttendees: se, customerAttendees: cust };
   }, [formData.meeting, allHubspotContacts, companyContacts, companyName]);
+
+  const totalAttendees = (seAttendees?.length || 0) + (customerAttendees?.length || 0);
 
   const [creatingEmail, setCreatingEmail] = useState(null); // email currently being created
 
@@ -558,42 +585,91 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                 </div>
               )}
             </div>
-            {meetingAttendees.length > 0 && (
-              <div>
-                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: '0.3rem' }}>
-                  Attendees ({meetingAttendees.length})
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                  {meetingAttendees.map((a, i) => {
-                    const matched = !!a.match;
-                    return (
-                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.3rem 0.5rem', background: matched ? '#F0FDF4' : '#FEF2F2', border: '1px solid', borderColor: matched ? '#BBF7D0' : '#FECACA', borderRadius: 4 }}>
-                        <span style={{ color: matched ? '#15803D' : '#B91C1C', fontWeight: 700, fontSize: '0.9rem' }}>{matched ? '✓' : '✗'}</span>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontWeight: 600, fontSize: '0.8rem', color: '#1E293B' }}>{a.name || a.email || '(unknown)'}</div>
-                          <div style={{ fontSize: '0.72rem', color: '#64748B' }}>
-                            {a.email}
-                            {matched
-                              ? ` · matched in HubSpot${a.match?.jobtitle ? ` · ${a.match.jobtitle}` : ''}${a.matchedOtherCompany ? ` · at ${a.matchedCompany}` : ''}`
-                              : ' · not in HubSpot'}
-                          </div>
-                        </div>
-                        {!matched && a.email && onCreateContact && (
-                          <button
-                            type="button"
-                            style={sx.btn}
-                            disabled={creatingEmail === a.email}
-                            onClick={() => handleCreateAttendeeContact(a)}
-                          >
-                            {creatingEmail === a.email ? 'Adding…' : 'Add to HubSpot'}
-                          </button>
-                        )}
+            {totalAttendees > 0 && (() => {
+              const renderAttendee = (a, i) => {
+                const matched = !!a.match;
+                return (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.3rem 0.5rem', background: matched ? '#F0FDF4' : '#FEF2F2', border: '1px solid', borderColor: matched ? '#BBF7D0' : '#FECACA', borderRadius: 4 }}>
+                    <span style={{ color: matched ? '#15803D' : '#B91C1C', fontWeight: 700, fontSize: '0.9rem' }}>{matched ? '✓' : '✗'}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}>
+                        <span style={{ fontWeight: 600, fontSize: '0.8rem', color: '#1E293B' }}>{a.name || a.email || '(unknown)'}</span>
+                        <span style={{
+                          fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.04em',
+                          textTransform: 'uppercase',
+                          padding: '1px 6px', borderRadius: 999,
+                          background: a.required ? '#FEE2E2' : '#E0E7FF',
+                          color: a.required ? '#B91C1C' : '#3730A3',
+                        }}>{a.required ? 'Required' : 'Optional'}</span>
                       </div>
-                    );
-                  })}
+                      <div style={{ fontSize: '0.72rem', color: '#64748B' }}>
+                        {a.email}
+                        {matched
+                          ? ` · matched in HubSpot${a.match?.jobtitle ? ` · ${a.match.jobtitle}` : ''}${a.matchedOtherCompany ? ` · at ${a.matchedCompany}` : ''}`
+                          : ' · not in HubSpot'}
+                      </div>
+                    </div>
+                    {!matched && a.email && onCreateContact && (
+                      <button
+                        type="button"
+                        style={sx.btn}
+                        disabled={creatingEmail === a.email}
+                        onClick={() => handleCreateAttendeeContact(a)}
+                      >
+                        {creatingEmail === a.email ? 'Adding…' : 'Add to HubSpot'}
+                      </button>
+                    )}
+                  </div>
+                );
+              };
+              const countLine = (list) => {
+                const req = list.filter(a => a.required).length;
+                const opt = list.length - req;
+                if (opt === 0) return `${list.length} required`;
+                if (req === 0) return `${list.length} optional`;
+                return `${req} required · ${opt} optional`;
+              };
+              const customerHeading = (companyName || 'Customer').trim() || 'Customer';
+              return (
+                <div>
+                  <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: '0.3rem' }}>
+                    Attendees ({totalAttendees})
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                    <div>
+                      <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1E293B', marginBottom: '0.25rem' }}>
+                        Schneider Electric <span style={{ color: '#64748B', fontWeight: 500 }}>({seAttendees.length})</span>
+                      </div>
+                      {seAttendees.length === 0
+                        ? <div style={{ fontSize: '0.72rem', color: '#94A3B8', fontStyle: 'italic' }}>No Schneider attendees</div>
+                        : (
+                          <>
+                            <div style={{ fontSize: '0.68rem', color: '#64748B', marginBottom: '0.3rem' }}>{countLine(seAttendees)}</div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                              {seAttendees.map(renderAttendee)}
+                            </div>
+                          </>
+                        )}
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1E293B', marginBottom: '0.25rem' }}>
+                        {customerHeading} <span style={{ color: '#64748B', fontWeight: 500 }}>({customerAttendees.length})</span>
+                      </div>
+                      {customerAttendees.length === 0
+                        ? <div style={{ fontSize: '0.72rem', color: '#94A3B8', fontStyle: 'italic' }}>No {customerHeading} attendees</div>
+                        : (
+                          <>
+                            <div style={{ fontSize: '0.68rem', color: '#64748B', marginBottom: '0.3rem' }}>{countLine(customerAttendees)}</div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                              {customerAttendees.map(renderAttendee)}
+                            </div>
+                          </>
+                        )}
+                    </div>
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
           </div>
         )}
         {meetingError && (
