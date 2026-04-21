@@ -1041,17 +1041,20 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     })();
   }, []);
 
-  const { activeOppsByAccount, totalOppsByAccount, openOppsByAccount, suggestedStatusByAccount } = useMemo(() => {
+  const { activeOppsByAccount, totalOppsByAccount, openOppsByAccount, suggestedStatusByAccount, displayNameByAccount } = useMemo(() => {
     const active = {};
     const total = {};
     const open = {}; // non-closed, non-invalid opps (for Tier 3 inclusion)
     const stagesByAccount = {};
-    if (oppsRecords.length === 0) return { activeOppsByAccount: active, totalOppsByAccount: total, openOppsByAccount: open, suggestedStatusByAccount: {} };
+    const displayName = {}; // lowercase key -> original-case name (first seen)
+    if (oppsRecords.length === 0) return { activeOppsByAccount: active, totalOppsByAccount: total, openOppsByAccount: open, suggestedStatusByAccount: {}, displayNameByAccount: displayName };
     const closedStages = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
     for (const r of oppsRecords) {
-      const account = (r['Account'] || '').toLowerCase();
+      const rawAccount = (r['Account'] || '').trim();
+      const account = rawAccount.toLowerCase();
       const stage = (r['Stage'] || '').trim();
       if (!account) continue;
+      if (!displayName[account]) displayName[account] = rawAccount;
 
       // Track stage breakdown for status suggestion
       if (!stagesByAccount[account]) stagesByAccount[account] = { sold: 0, notSold: 0, active: 0 };
@@ -1103,7 +1106,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     const soldOpps = oppsRecords.filter(r => (r['Stage'] || '').toLowerCase().includes('sold') || (r['Stage'] || '').toLowerCase().includes('won'));
     console.log('All Sold/Won opps:', soldOpps.map(r => `"${r['Account']}" Stage="${r['Stage']}"`));
 
-    return { activeOppsByAccount: active, totalOppsByAccount: total, openOppsByAccount: open, suggestedStatusByAccount: suggested };
+    return { activeOppsByAccount: active, totalOppsByAccount: total, openOppsByAccount: open, suggestedStatusByAccount: suggested, displayNameByAccount: displayName };
   }, [oppsRecords]);
 
   // Dismissed companies — companies the user manually deleted that should not be auto-recreated
@@ -1400,12 +1403,59 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       counts[s] = (counts[s] || 0) + 1;
     }
 
+    // Second pass: any company in the Opps sheet with 1+ opps that isn't
+    // already covered by a prospect gets a synthetic Tier 3 entry so it
+    // shows up in My Accounts. This surfaces deals happening on companies
+    // that aren't yet in the Table View.
+    let oppsOnlyAdded = 0;
+    for (const [accountLower, count] of Object.entries(totalOppsByAccount)) {
+      if (!count || count < 1) continue;
+      const displayNameRaw = displayNameByAccount[accountLower] || accountLower;
+      if (isDismissed(displayNameRaw)) continue;
+      // Skip if any prospect we've already included matches this opps account
+      let matched = false;
+      for (const p of prospects) {
+        if (companiesMatch(p.company, displayNameRaw)) { matched = true; break; }
+      }
+      if (matched) continue;
+
+      const oppsCount = activeOppsByAccount[accountLower] || 0;
+      const suggestedStatus = suggestedStatusByAccount[accountLower] || '';
+      const entry = {
+        id: `opps-only:${accountLower}`,
+        company: displayNameRaw,
+        status: '',
+        cdm: '',
+        tier: 'Tier 3',
+        myTier: 'Tier 3',
+        activityCount: 0,
+        oppsCount,
+        totalOpps: count,
+        sources: 'Opps Sheet',
+        dmFound: false,
+        dmNames: '',
+        cdmMismatch: false,
+        targetNames: [],
+        targetName: '',
+        targetTier: '',
+        tierMismatch: false,
+        otherReps: [],
+        contactCount: 0,
+        bucketCount: 0,
+        suggestedStatus,
+        statusMismatch: false, // no stored status to compare against
+        _oppsOnly: true,
+      };
+      t2.push(entry);
+      oppsOnlyAdded++;
+    }
+
     const all = [...t1, ...t2];
     all.sort((a, b) => (a.company || '').localeCompare(b.company || ''));
     if (skippedCdm.length > 0) console.log('My Accounts: skipped (CDM not Baldauf):', skippedCdm);
-    console.log(`My Accounts: ${t1.length} Tier 1, ${t2.length} Tier 2`);
+    console.log(`My Accounts: ${t1.length} Tier 1, ${t2.length} Tier 2 (incl ${oppsOnlyAdded} opps-only)`);
     return { tier1: t1, tier2: t2, allAccounts: all, statusCounts: counts };
-  }, [prospects, targetMap, targetAccounts, allTargetReps, activityByCompany, activeOppsByAccount, totalOppsByAccount, suggestedStatusByAccount, hubspotCompanies, targetCompanies, decisionMakerByCompany, contactCountByCompany, bucketsByCompany, divisionsMap]);
+  }, [prospects, targetMap, targetAccounts, allTargetReps, activityByCompany, activeOppsByAccount, totalOppsByAccount, suggestedStatusByAccount, displayNameByAccount, hubspotCompanies, targetCompanies, decisionMakerByCompany, contactCountByCompany, bucketsByCompany, divisionsMap]);
 
   const clientCount = statusCounts['Client'] || 0;
   const tier3Count = allAccounts.filter(a => a.myTier === 'Tier 3').length;
