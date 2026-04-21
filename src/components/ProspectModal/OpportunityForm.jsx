@@ -168,7 +168,7 @@ function formatDuration(min) {
   return m === 0 ? `${h}h` : `${h}h ${m}m`;
 }
 
-export function OpportunityForm({ value, onChange, onLinkOpp, companyName, companyContacts = [], onCreateContact }) {
+export function OpportunityForm({ value, onChange, onLinkOpp, companyName, companyContacts = [], allHubspotContacts = [], onCreateContact }) {
   const template = DEFAULT_FORM_TEMPLATE;
   const formData = useMemo(() => {
     const base = emptyFormData(template);
@@ -274,21 +274,28 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
 
   const clearMeeting = () => set({ meeting: null });
 
-  // Attendee matching against companyContacts (case-insensitive email).
+  // Attendee matching: case-insensitive email lookup against ALL HubSpot
+  // contacts (not just this company's), so internal colleagues and cross-
+  // company attendees both surface as "matched" with their actual company
+  // shown. Fall back to companyContacts if the full list wasn't supplied.
   const meetingAttendees = useMemo(() => {
     const mt = formData.meeting;
     if (!mt?.attendees?.length) return [];
     const byEmail = new Map();
-    for (const c of companyContacts) {
+    const pool = (allHubspotContacts && allHubspotContacts.length > 0) ? allHubspotContacts : companyContacts;
+    for (const c of pool) {
       const em = (c.email || '').toLowerCase().trim();
-      if (em) byEmail.set(em, c);
+      if (em && !byEmail.has(em)) byEmail.set(em, c);
     }
+    const thisCompany = (companyName || '').toLowerCase().trim();
     return mt.attendees.map(a => {
       const em = (a.email || '').toLowerCase().trim();
       const match = em ? byEmail.get(em) : null;
-      return { ...a, match };
+      const matchedCompany = (match?.company || '').trim();
+      const matchedOtherCompany = !!matchedCompany && matchedCompany.toLowerCase() !== thisCompany;
+      return { ...a, match, matchedCompany, matchedOtherCompany };
     });
-  }, [formData.meeting, companyContacts]);
+  }, [formData.meeting, allHubspotContacts, companyContacts, companyName]);
 
   const [creatingEmail, setCreatingEmail] = useState(null); // email currently being created
 
@@ -564,7 +571,12 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                         <span style={{ color: matched ? '#15803D' : '#B91C1C', fontWeight: 700, fontSize: '0.9rem' }}>{matched ? '✓' : '✗'}</span>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ fontWeight: 600, fontSize: '0.8rem', color: '#1E293B' }}>{a.name || a.email || '(unknown)'}</div>
-                          <div style={{ fontSize: '0.72rem', color: '#64748B' }}>{a.email}{matched ? ` · matched HubSpot contact${a.match?.jobtitle ? ` (${a.match.jobtitle})` : ''}` : ' · not in HubSpot'}</div>
+                          <div style={{ fontSize: '0.72rem', color: '#64748B' }}>
+                            {a.email}
+                            {matched
+                              ? ` · matched in HubSpot${a.match?.jobtitle ? ` · ${a.match.jobtitle}` : ''}${a.matchedOtherCompany ? ` · at ${a.matchedCompany}` : ''}`
+                              : ' · not in HubSpot'}
+                          </div>
                         </div>
                         {!matched && a.email && onCreateContact && (
                           <button
