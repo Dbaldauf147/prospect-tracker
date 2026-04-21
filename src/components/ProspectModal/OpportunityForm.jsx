@@ -747,8 +747,10 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
   // each attendee's required/optional role from the ICS.
   const { seAttendees, customerAttendees } = useMemo(() => {
     const mt = formData.meeting;
+    const ics = mt?.attendees || [];
+    const manual = mt?.manualAttendees || [];
     const empty = { seAttendees: [], customerAttendees: [] };
-    if (!mt?.attendees?.length) return empty;
+    if (ics.length === 0 && manual.length === 0) return empty;
     const byEmail = new Map();
     const pool = (allHubspotContacts && allHubspotContacts.length > 0) ? allHubspotContacts : companyContacts;
     for (const c of pool) {
@@ -758,13 +760,22 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     const thisCompany = (companyName || '').toLowerCase().trim();
     const se = [];
     const cust = [];
-    for (const a of mt.attendees) {
+    const seen = new Set();
+    for (const a of [...ics, ...manual]) {
       const em = (a.email || '').toLowerCase().trim();
+      const key = em || `name:${(a.name || '').toLowerCase().trim()}`;
+      if (seen.has(key)) continue; // dedupe if same email/name on both sides
+      seen.add(key);
       const match = em ? byEmail.get(em) : null;
       const matchedCompany = (match?.company || '').trim();
       const matchedOtherCompany = !!matchedCompany && matchedCompany.toLowerCase() !== thisCompany;
       const enriched = { ...a, match, matchedCompany, matchedOtherCompany };
-      const isSE = /@(se\.com|schneider-electric\.com)$/i.test(em);
+      // Explicit bucket on manual attendees wins; otherwise fall back to
+      // email-domain detection for @se.com / @schneider-electric.com.
+      let isSE;
+      if (a.bucket === 'se') isSE = true;
+      else if (a.bucket === 'customer') isSE = false;
+      else isSE = /@(se\.com|schneider-electric\.com)$/i.test(em);
       if (isSE) se.push(enriched); else cust.push(enriched);
     }
     // Required first, optional after, alphabetical within each group.
@@ -778,6 +789,57 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
   }, [formData.meeting, allHubspotContacts, companyContacts, companyName]);
 
   const totalAttendees = (seAttendees?.length || 0) + (customerAttendees?.length || 0);
+
+  // --- Manual attendees -------------------------------------------------
+  // Users can add attendees on top of those imported from Outlook. Stored
+  // under meeting.manualAttendees so they survive ICS re-imports (re-import
+  // replaces meeting.attendees but we preserve manualAttendees separately
+  // when the user chooses to re-drop a .ics).
+  const [addingTo, setAddingTo] = useState(null); // 'se' | 'customer' | null
+  const [draftName, setDraftName] = useState('');
+  const [draftEmail, setDraftEmail] = useState('');
+  const [draftRequired, setDraftRequired] = useState(true);
+
+  function openAddAttendee(bucket) {
+    setAddingTo(bucket);
+    setDraftName('');
+    setDraftEmail('');
+    setDraftRequired(true);
+  }
+  function cancelAddAttendee() {
+    setAddingTo(null);
+    setDraftName('');
+    setDraftEmail('');
+  }
+  function commitAddAttendee() {
+    const name = draftName.trim();
+    const email = draftEmail.trim();
+    if (!name && !email) { setAddingTo(null); return; }
+    const bucket = addingTo;
+    const mt = formData.meeting || { subject: '', start: null, end: null, durationMinutes: null, location: '', organizer: null, attendees: [], manualAttendees: [] };
+    const manual = Array.isArray(mt.manualAttendees) ? mt.manualAttendees : [];
+    const next = {
+      ...mt,
+      manualAttendees: [
+        ...manual,
+        { name: name || email, email, required: !!draftRequired, bucket, source: 'manual' },
+      ],
+    };
+    set({ meeting: next });
+    setAddingTo(null);
+    setDraftName('');
+    setDraftEmail('');
+  }
+  function removeManualAttendee(a) {
+    const mt = formData.meeting || {};
+    const manual = (mt.manualAttendees || []).filter(x => {
+      if (x.source !== 'manual') return true;
+      if (x.email && a.email && x.email.toLowerCase() === a.email.toLowerCase()) return false;
+      if (!x.email && !a.email && (x.name || '') === (a.name || '')) return false;
+      return true;
+    });
+    set({ meeting: { ...mt, manualAttendees: manual } });
+  }
 
   // --- Smart Agenda helpers (must live after seAttendees/customerAttendees
   //     are defined — they're used by renderTables via closure). --------
@@ -1245,6 +1307,21 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
             >
               Choose .ics file…
             </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                set({ meeting: { subject: '', start: null, end: null, durationMinutes: null, location: '', organizer: null, attendees: [], manualAttendees: [] } });
+              }}
+              style={{
+                marginLeft: '0.5rem',
+                fontSize: '0.8rem', padding: '0.4rem 0.9rem', border: '1px solid #CBD5E1',
+                background: '#fff', color: '#475569', borderRadius: 6, cursor: 'pointer',
+                fontFamily: 'inherit', fontWeight: 600,
+              }}
+            >
+              Add attendees manually
+            </button>
           </>
         )}
         {formData.meeting && (
@@ -1515,6 +1592,36 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                 );
               };
               const customerHeading = (companyName || 'Customer').trim() || 'Customer';
+              const addForm = (bucket) => (addingTo === bucket) && (
+                <div style={{ marginTop: '0.4rem', padding: '0.4rem 0.5rem', background: '#F8FAFC', border: '1px solid #CBD5E1', borderRadius: 4 }}>
+                  <input
+                    autoFocus
+                    value={draftName}
+                    onChange={e => setDraftName(e.target.value)}
+                    placeholder="Name"
+                    style={{ ...sx.cellInput, fontSize: '0.78rem', padding: '0.25rem 0.4rem', background: '#fff', border: '1px solid #CBD5E1', borderRadius: 3, marginBottom: 4 }}
+                  />
+                  <input
+                    value={draftEmail}
+                    onChange={e => setDraftEmail(e.target.value)}
+                    placeholder="Email (optional)"
+                    style={{ ...sx.cellInput, fontSize: '0.78rem', padding: '0.25rem 0.4rem', background: '#fff', border: '1px solid #CBD5E1', borderRadius: 3, marginBottom: 4 }}
+                  />
+                  <label style={{ fontSize: '0.7rem', color: '#64748B', display: 'inline-flex', alignItems: 'center', gap: 4, marginRight: 8 }}>
+                    <input type="checkbox" checked={draftRequired} onChange={e => setDraftRequired(e.target.checked)} />
+                    Required
+                  </label>
+                  <button type="button" style={{ ...sx.primaryBtn, fontSize: '0.7rem', padding: '0.2rem 0.55rem' }} onClick={commitAddAttendee}>Add</button>
+                  <button type="button" style={{ ...sx.btn, fontSize: '0.7rem', padding: '0.2rem 0.55rem', marginLeft: 4 }} onClick={cancelAddAttendee}>Cancel</button>
+                </div>
+              );
+              const addButton = (bucket) => addingTo !== bucket && (
+                <button
+                  type="button"
+                  onClick={() => openAddAttendee(bucket)}
+                  style={{ ...sx.btn, fontSize: '0.68rem', padding: '0.2rem 0.5rem', marginTop: '0.35rem' }}
+                >+ Add attendee</button>
+              );
               return (
                 <div>
                   <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: '0.3rem' }}>
@@ -1533,6 +1640,8 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                             {renderSeGrouped(seAttendees)}
                           </>
                         )}
+                      {addButton('se')}
+                      {addForm('se')}
                     </div>
                     <div>
                       <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1E293B', marginBottom: '0.25rem' }}>
@@ -1546,6 +1655,8 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                             {renderGroupedList(customerAttendees)}
                           </>
                         )}
+                      {addButton('customer')}
+                      {addForm('customer')}
                     </div>
                   </div>
                 </div>
