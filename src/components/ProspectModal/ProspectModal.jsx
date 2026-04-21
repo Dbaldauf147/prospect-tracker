@@ -2416,9 +2416,17 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                               style={{ padding: '0.1rem 0.3rem', fontSize: '0.78rem', fontWeight: 600, border: '1px solid #009530', borderRadius: 3, background: '#fff', width: 140, fontFamily: 'inherit' }}
                             />
                           ) : (
-                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                              {note.title || 'New form'}
-                            </span>
+                            <>
+                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                {note.title || 'New form'}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); startInlineRename(note.id, note.title); }}
+                                title="Rename tab"
+                                style={{ background: 'transparent', border: 'none', color: '#94A3B8', fontSize: '0.75rem', cursor: 'pointer', padding: '0 0.2rem', lineHeight: 1 }}
+                              >✎</button>
+                            </>
                           )}
                           <button
                             type="button"
@@ -2482,7 +2490,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         </select>
                         <button
                           type="button"
-                          onClick={() => renameOpportunity(selectedOpp.id)}
+                          onClick={() => startInlineRename(selectedOpp.id, selectedOpp.title)}
                           style={{ fontSize: '0.72rem', padding: '0.25rem 0.5rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 4, cursor: 'pointer' }}
                         >
                           Rename
