@@ -398,6 +398,31 @@ const SERVICE_QUESTIONS = {
   ],
 };
 
+// Canned 'Questions They Might Ask' per service, paired with a suggested
+// 'Our Response'. Auto-added to the theirQuestions table when the service
+// appears in Scope Being Explored. Responses may be blank — those rows
+// seed the prompt but leave the answer for Dan to craft in the moment.
+const SERVICE_THEIR_QUESTIONS = {
+  'bill payment': [
+    { question: "What's your process for onboarding new sites or accounts?", response: '' },
+    { question: 'Do you integrate with our ERP/AP system, or will we need to manually import data?', response: '' },
+    { question: 'What does the approval workflow look like on our end — can we customize it?', response: '' },
+    { question: 'How do you handle exceptions, disputes, and bills that fall outside normal parameters?', response: '' },
+  ],
+  'budgets': [
+    { question: "What's your forecasting methodology, and how accurate have you been historically?", response: '' },
+    { question: 'How do you handle weather normalization and rate volatility?', response: '' },
+    { question: 'How do you factor in our operational changes — new sites, closures, expansions?', response: '' },
+    { question: 'Can you model "what-if" scenarios for us?', response: '' },
+  ],
+  'rate optimization': [
+    { question: 'Do you scan all sites and rate schedules?', response: "With our hunting license approach, we only go after utilities where we have a good chance of finding savings. You would not want to pay us to search where it doesn't make sense." },
+    { question: 'How often do you scan for new rates?', response: '' },
+    { question: "What's a typical savings percentage you find for companies like ours?", response: '' },
+    { question: 'Who handles the actual rate switch — you or us?', response: '' },
+  ],
+};
+
 export function OpportunityForm({ value, onChange, onLinkOpp, companyName, companyContacts = [], allHubspotContacts = [], contactNotes = {}, contactReportsTo = {}, prospects = [], onCreateContact }) {
   const template = DEFAULT_FORM_TEMPLATE;
 
@@ -584,6 +609,41 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     if (additions.length === 0) return;
 
     set({ tables: { ...formData.tables, ourQuestions: [...populated, ...additions] } });
+  }, [formData.fieldValues?.scope]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Self-heal: mirror the ourQuestions auto-fill for theirQuestions —
+  // every service in Scope Being Explored seeds a set of likely customer
+  // questions (with suggested responses) into the 'Questions They Might
+  // Ask' table. Dedup by question text so re-saving or re-linking doesn't
+  // pile on duplicates.
+  useEffect(() => {
+    const scope = (formData.fieldValues?.scope || '').trim();
+    if (!scope) return;
+    const services = scope.split(',').map(s => s.trim()).filter(Boolean);
+    if (services.length === 0) return;
+
+    const existingRows = formData.tables?.theirQuestions || [];
+    const populated = existingRows.filter(r =>
+      (r.question || '').trim() || (r.response || '').trim()
+    );
+    const existingKeys = new Set(
+      populated.map(r => (r.question || '').trim().toLowerCase())
+    );
+
+    const additions = [];
+    for (const svc of services) {
+      const canned = SERVICE_THEIR_QUESTIONS[svc.toLowerCase()];
+      if (!canned) continue;
+      for (const pair of canned) {
+        const k = (pair.question || '').trim().toLowerCase();
+        if (!k || existingKeys.has(k)) continue;
+        additions.push({ question: pair.question, response: pair.response });
+        existingKeys.add(k);
+      }
+    }
+    if (additions.length === 0) return;
+
+    set({ tables: { ...formData.tables, theirQuestions: [...populated, ...additions] } });
   }, [formData.fieldValues?.scope]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Always keep at least one empty row at the bottom of Questions to
