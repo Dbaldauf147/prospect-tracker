@@ -23,7 +23,8 @@ export const DEFAULT_FORM_TEMPLATE = {
       smartAgenda: true, // unlocks speaker picker + time-balance behavior
       columns: [
         { key: 'subject', label: 'Subject' },
-        { key: 'speaker', label: 'Speaker', attendeePicker: true },
+        { key: 'speaker', label: 'Speaker 1', attendeePicker: true },
+        { key: 'speaker2', label: 'Speaker 2', attendeePicker: true },
         { key: 'startTime', label: 'Time' },
         { key: 'duration', label: 'Minutes' },
         { key: 'slides', label: 'Slides / Software' },
