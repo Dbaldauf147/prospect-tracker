@@ -67,6 +67,7 @@ export const DEFAULT_FORM_TEMPLATE = {
     {
       key: 'actionItems',
       label: 'Action Items / Next Steps',
+      underField: 'summary', // nests directly under Key Issues beneath Meeting Summary / Notes
       columns: [
         { key: 'item', label: 'Action Item' },
         { key: 'owner', label: 'Owner' },
@@ -407,6 +408,17 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
   const updateTableCell = (tableKey, rowIdx, colKey, val) => {
     const rows = [...(formData.tables[tableKey] || [])];
     rows[rowIdx] = { ...rows[rowIdx], [colKey]: val };
+    // Auto-append an empty row when the user starts filling in the last row
+    // so the user never has to click '+ Add row'.
+    if (rowIdx === rows.length - 1) {
+      const touched = Object.values(rows[rowIdx] || {}).some(v => v != null && String(v).trim() !== '');
+      if (touched) {
+        const tableDef = template.tables.find(t => t.key === tableKey);
+        if (tableDef) {
+          rows.push(Object.fromEntries(tableDef.columns.map(c => [c.key, ''])));
+        }
+      }
+    }
     set({ tables: { ...formData.tables, [tableKey]: rows } });
   };
 
@@ -567,9 +579,6 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
               );
             })()}
           </table>
-          <button type="button" style={{ ...sx.btn, marginTop: '0.35rem' }} onClick={() => addTableRow(t.key)}>
-            + Add row
-          </button>
         </div>
       );
     });
