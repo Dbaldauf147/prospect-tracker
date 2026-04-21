@@ -315,11 +315,21 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     const oppStatusForStage = (opp?.['Status'] || '').trim();
     const mappedStage = mapDanStatusToBfoStage(oppStatusForStage);
     if (mappedStage) nextValues.stage = mappedStage;
-    set({
+
+    const nextFormData = {
+      ...formData,
       fieldValues: nextValues,
       linkedBfoLink: opp['BFO Link'] || null,
-    });
-    if (onLinkOpp) onLinkOpp(opp);
+    };
+    // Single write through the parent. Previously we did
+    //   set(...)  -> updateOpportunityFormData (write 1)
+    //   onLinkOpp -> applySuggestedTitle (write 2)
+    // and write 2 used a stale companyOppsData closure that silently
+    // overwrote write 1's formData, so all the freshly linked fields
+    // disappeared. Now the parent gets the full delta and commits
+    // formData + title in one atomic writeCompanyOpps.
+    if (onLinkOpp) onLinkOpp(opp, nextFormData);
+    else onChange(nextFormData);
     setPickerOpen(false);
     setSearch('');
   };

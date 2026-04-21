@@ -2599,10 +2599,25 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         <OpportunityForm
                           value={selectedOpp.formData}
                           onChange={(next) => updateOpportunityFormData(selectedOpp.id, next)}
-                          onLinkOpp={(opp) => {
+                          onLinkOpp={(opp, nextFormData) => {
+                            // Combined write: formData + auto-rename in a
+                            // single writeCompanyOpps, so neither overwrites
+                            // the other (race we used to hit with two sequential writes).
                             const scope = String(opp?.['Scope'] || '').trim();
-                            const first = scope.split(',').map(s => s.trim()).filter(Boolean)[0];
-                            if (first) applySuggestedTitle(selectedOpp.id, first);
+                            const firstService = scope.split(',').map(s => s.trim()).filter(Boolean)[0];
+                            const now = Date.now();
+                            writeCompanyOpps({
+                              buckets: companyOppsData.buckets || [],
+                              opportunities: (companyOppsData.opportunities || []).map(o => {
+                                if (o.id !== selectedOpp.id) return o;
+                                const next = { ...o, formData: nextFormData || o.formData, updatedAt: now };
+                                if (firstService && o.titleAuto !== false) {
+                                  next.title = firstService;
+                                  next.titleAuto = true;
+                                }
+                                return next;
+                              }),
+                            });
                           }}
                           companyName={fields.company}
                           companyContacts={companyContacts}
