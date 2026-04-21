@@ -235,7 +235,19 @@ const DAN_STATUS_TO_BFO_STAGE = {
 function mapDanStatusToBfoStage(raw) {
   if (!raw) return '';
   const key = String(raw).trim().toLowerCase().replace(/\s+/g, ' ');
-  return DAN_STATUS_TO_BFO_STAGE[key] || '';
+  // Exact match first
+  if (DAN_STATUS_TO_BFO_STAGE[key]) return DAN_STATUS_TO_BFO_STAGE[key];
+  // Prefix match so values like "Qualifying (Discovery)" or "Lead — New"
+  // still resolve to their BFO stage. Longest prefix wins.
+  let bestKey = '';
+  let bestVal = '';
+  for (const [danKey, bfoValue] of Object.entries(DAN_STATUS_TO_BFO_STAGE)) {
+    if (key.startsWith(danKey) && danKey.length > bestKey.length) {
+      bestKey = danKey;
+      bestVal = bfoValue;
+    }
+  }
+  return bestVal;
 }
 
 // If a value already looks like a BFO stage (e.g. "3 - Qualify Opportunity"),
@@ -268,6 +280,23 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
   const updateField = (key, val) => {
     set({ fieldValues: { ...formData.fieldValues, [key]: val } });
   };
+
+  // Self-heal: if the stored Stage field still has a Dan value (because it
+  // was written before the Dan->BFO mapping shipped), convert it to the BFO
+  // equivalent on first render. Runs only when the value actually needs
+  // changing, so no loop.
+  useEffect(() => {
+    const current = formData.fieldValues?.stage;
+    if (!current) return;
+    const trimmed = String(current).trim();
+    if (/^\d+\s*-/.test(trimmed)) return; // already BFO, leave alone
+    const converted = mapDanStatusToBfoStage(trimmed);
+    if (converted && converted !== current) {
+      // eslint-disable-next-line no-console
+      console.log('[OpportunityForm] auto-converting stale Stage value', current, '->', converted);
+      updateField('stage', converted);
+    }
+  }, [formData.fieldValues?.stage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const updateTableCell = (tableKey, rowIdx, colKey, val) => {
     const rows = [...(formData.tables[tableKey] || [])];
