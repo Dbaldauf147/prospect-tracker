@@ -256,12 +256,37 @@ export default async function handler(req, res) {
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ properties }),
       });
-      if (!createRes.ok) {
-        const text = await createRes.text();
-        throw new Error(`Create failed ${createRes.status}: ${text.slice(0, 300)}`);
+      if (createRes.ok) {
+        const created = await createRes.json();
+        return res.json({ success: true, contact: { id: created.id, ...created.properties } });
       }
-      const created = await createRes.json();
-      return res.json({ success: true, contact: { id: created.id, ...created.properties } });
+      // HubSpot returns 409 CONFLICT when a contact with that email already
+      // exists. Recover by fetching the existing contact and returning it so
+      // the caller can just pick up where it would have. This is the desired
+      // behavior for the meeting-attendee flow — the goal is "have this
+      // contact available," and it already is.
+      if (createRes.status === 409) {
+        const errText = await createRes.text();
+        const idMatch = errText.match(/Existing ID:\s*(\d+)/);
+        if (idMatch) {
+          const existingId = idMatch[1];
+          const props = 'email,firstname,lastname,jobtitle,phone,company,city,state,country,hs_linkedin_url,hs_linkedinid';
+          const getRes = await fetch(`${BASE}/crm/v3/objects/contacts/${existingId}?properties=${encodeURIComponent(props)}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (getRes.ok) {
+            const got = await getRes.json();
+            return res.json({
+              success: true,
+              alreadyExisted: true,
+              contact: { id: got.id, ...got.properties },
+            });
+          }
+        }
+        throw new Error(`Contact already exists but could not be fetched: ${errText.slice(0, 300)}`);
+      }
+      const text = await createRes.text();
+      throw new Error(`Create failed ${createRes.status}: ${text.slice(0, 300)}`);
     }
 
     if (action === 'update-contact' && req.method === 'POST') {

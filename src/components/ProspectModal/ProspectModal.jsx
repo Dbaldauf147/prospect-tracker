@@ -2546,14 +2546,28 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                 alert('Failed to create HubSpot contact' + (data.error ? `: ${data.error}` : ''));
                                 return;
                               }
+                              // Upsert into the local HubSpot cache: if a
+                              // contact with this id (or email) is already
+                              // there, replace it; otherwise append. This
+                              // handles the 409-recovered path where the
+                              // server returned an existing contact.
                               try {
-                                const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
-                                if (cache?.contacts) {
-                                  cache.contacts.push(data.contact);
-                                  localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache));
-                                  window.dispatchEvent(new Event('hubspot-cache-updated'));
-                                }
+                                const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache')) || {};
+                                const list = Array.isArray(cache.contacts) ? cache.contacts : [];
+                                const incomingEmail = (data.contact.email || '').toLowerCase();
+                                const idx = list.findIndex(c =>
+                                  (c.id && c.id === data.contact.id) ||
+                                  (incomingEmail && (c.email || '').toLowerCase() === incomingEmail)
+                                );
+                                if (idx >= 0) list[idx] = { ...list[idx], ...data.contact };
+                                else list.push(data.contact);
+                                cache.contacts = list;
+                                localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache));
+                                window.dispatchEvent(new Event('hubspot-cache-updated'));
                               } catch {}
+                              if (data.alreadyExisted) {
+                                console.log(`HubSpot contact already existed (id ${data.contact.id}); pulled into local cache.`);
+                              }
                             } catch (err) {
                               alert('Failed to create HubSpot contact: ' + (err.message || err));
                             }
