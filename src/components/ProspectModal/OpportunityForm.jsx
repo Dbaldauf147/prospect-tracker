@@ -1038,7 +1038,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
               <div style={sx.fieldLabel}>
                 {f.label}
                 {notCurrentClient && (
-                  <span style={{ marginLeft: '0.4rem', color: '#B91C1C', fontWeight: 700 }}>
+                  <span style={{ marginLeft: '0.4rem' }}>
                     – Not Current Client
                   </span>
                 )}
