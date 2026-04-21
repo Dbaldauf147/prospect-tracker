@@ -79,7 +79,7 @@ function App() {
     filtered, searchTerm, setSearchTerm,
     filters, filterOptions, toggleFilter, clearFilters, loadSavedFilter, activeFilterCount,
     sortConfig, toggleSort,
-  } = useFilters(prospects);
+  } = useFilters(prospects, settings, updateSettings);
 
   const [view, setView] = useState('accounts');
   const [modal, setModal] = useState(null); // null | { prospect, isNew }

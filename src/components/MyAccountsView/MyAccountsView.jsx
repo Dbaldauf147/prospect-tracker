@@ -615,12 +615,43 @@ function parseXlsx(file) {
 }
 
 export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd, targetAccountsData, settings, updateSettings }) {
-  const [search, setSearch] = useState('');
-  const [filters, setFilters] = useState({});
+  const savedView = settings?.viewFilters?.myAccounts;
+  const [search, setSearch] = useState(savedView?.search || '');
+  const [filters, setFilters] = useState(savedView?.filters || {});
   const [expandedBucket, setExpandedBucket] = useState(null);
-  const [bucketFilter, setBucketFilter] = useState(null); // 'tier1' | 'tier2' | 'client' | 'pipeline' | null
+  const [bucketFilter, setBucketFilter] = useState(savedView?.bucketFilter ?? null); // 'tier1' | 'tier2' | 'client' | 'pipeline' | null
   const [hqLookupRunning, setHqLookupRunning] = useState(false);
-  const [inactiveMode, setInactiveMode] = useState('hide'); // 'hide' | 'only' | 'show'
+  const [inactiveMode, setInactiveMode] = useState(savedView?.inactiveMode || 'hide'); // 'hide' | 'only' | 'show'
+
+  // Hydrate filter state once settings arrive after login, then debounce-persist changes.
+  const viewHydratedRef = useRef(!!savedView);
+  useEffect(() => {
+    if (viewHydratedRef.current) return;
+    const s = settings?.viewFilters?.myAccounts;
+    if (s) {
+      if (s.search != null) setSearch(s.search);
+      if (s.filters) setFilters(s.filters);
+      if (s.bucketFilter !== undefined) setBucketFilter(s.bucketFilter);
+      if (s.inactiveMode) setInactiveMode(s.inactiveMode);
+      viewHydratedRef.current = true;
+    }
+  }, [settings]);
+  const viewSaveTimerRef = useRef(null);
+  useEffect(() => {
+    if (!updateSettings || !viewHydratedRef.current) return;
+    clearTimeout(viewSaveTimerRef.current);
+    viewSaveTimerRef.current = setTimeout(() => {
+      const current = settings?.viewFilters || {};
+      updateSettings({
+        viewFilters: {
+          ...current,
+          myAccounts: { search, filters, bucketFilter, inactiveMode },
+        },
+      });
+    }, 600);
+    return () => clearTimeout(viewSaveTimerRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, filters, bucketFilter, inactiveMode]);
   const hideMismatch = settings.hideMismatch ?? false;
   const targetMap = settings.targetMap || {};
   const hqRegionMap = settings.hqRegionMap || {};

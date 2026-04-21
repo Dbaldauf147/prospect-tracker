@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 
 // Array fields where filter checks membership (OR within the array)
 const ARRAY_FIELDS = new Set(['frameworks', 'assetTypes']);
@@ -16,14 +16,46 @@ export const FILTER_COLUMNS = [
   { key: 'assetTypes', label: 'Asset Types' },
 ];
 
-export function useFilters(prospects) {
-  const [searchTerm, setSearchTerm] = useState('');
-  const [filters, setFilters] = useState(() => {
-    const init = {};
-    for (const col of FILTER_COLUMNS) init[col.key] = [];
-    return init;
-  });
-  const [sortConfig, setSortConfig] = useState({ key: 'company', direction: 'asc' });
+function emptyFilters() {
+  const init = {};
+  for (const col of FILTER_COLUMNS) init[col.key] = [];
+  return init;
+}
+
+export function useFilters(prospects, settings, updateSettings) {
+  const saved = settings?.viewFilters?.tableView;
+  const [searchTerm, setSearchTerm] = useState(saved?.searchTerm || '');
+  const [filters, setFilters] = useState(() => ({ ...emptyFilters(), ...(saved?.filters || {}) }));
+  const [sortConfig, setSortConfig] = useState(saved?.sortConfig || { key: 'company', direction: 'asc' });
+
+  const hydratedRef = useRef(!!saved);
+  useEffect(() => {
+    if (hydratedRef.current || !settings) return;
+    const s = settings.viewFilters?.tableView;
+    if (s) {
+      if (s.searchTerm != null) setSearchTerm(s.searchTerm);
+      if (s.filters) setFilters({ ...emptyFilters(), ...s.filters });
+      if (s.sortConfig) setSortConfig(s.sortConfig);
+    }
+    hydratedRef.current = true;
+  }, [settings]);
+
+  const saveTimerRef = useRef(null);
+  useEffect(() => {
+    if (!updateSettings || !hydratedRef.current) return;
+    clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      const current = settings?.viewFilters || {};
+      updateSettings({
+        viewFilters: {
+          ...current,
+          tableView: { searchTerm, filters, sortConfig },
+        },
+      });
+    }, 600);
+    return () => clearTimeout(saveTimerRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchTerm, filters, sortConfig]);
 
   // Build unique options for each filterable column from the actual data
   const filterOptions = useMemo(() => {

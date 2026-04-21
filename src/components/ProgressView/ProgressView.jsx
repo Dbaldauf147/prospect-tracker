@@ -413,14 +413,25 @@ export function ProgressView({ prospects, settings }) {
     };
   }, [prospects, settings, oppsRecordsState]);
 
-  // Auto-save snapshot if current week hasn't been saved yet
+  // Auto-save the current week whenever the snapshot numbers settle.
+  // Re-fires on any snapshot-number change (not just mount) so the last
+  // visit of the week "locks in" the final state even if the user never
+  // clicks Save. Debounced so a single mount with streaming data doesn't
+  // hammer Firestore.
   useEffect(() => {
-    if (!user?.uid || loading || !historyLoaded || !currentSnapshot.t1Total) return;
-    const alreadySaved = history.find(h => h.week === currentSnapshot.week);
-    if (!alreadySaved) {
-      saveSnapshot();
-    }
-  }, [user, loading, historyLoaded, currentSnapshot.week, history.length]);
+    if (!user?.uid || loading || !historyLoaded) return;
+    if (!currentSnapshot.t1Total) return; // prospects still loading
+    const t = setTimeout(() => { saveSnapshot(); }, 800);
+    return () => clearTimeout(t);
+  }, [
+    user?.uid, loading, historyLoaded,
+    currentSnapshot.week,
+    currentSnapshot.t1Total, currentSnapshot.t2Total, currentSnapshot.t3Total,
+    currentSnapshot.t1WithContacts, currentSnapshot.t2WithContacts,
+    currentSnapshot.t1WithDM, currentSnapshot.t2WithDM,
+    currentSnapshot.t1Connected, currentSnapshot.t2Connected,
+    currentSnapshot.t1Inactive, currentSnapshot.t2Inactive,
+  ]);
 
   // Save current week snapshot — re-reads Firestore first to avoid overwriting
   // entries saved from another device or missed by a failed load.
