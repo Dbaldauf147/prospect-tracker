@@ -13,9 +13,6 @@ export const DEFAULT_FORM_TEMPLATE = {
     // Only rendered when status === 'Client'. Auto-populated with the
     // company's current active services (Sold / Renewal / In Progress).
     { key: 'currentClientScope', label: 'Current Client Scope', type: 'textarea', showWhenStatus: 'Client' },
-    { key: 'quotedAmount', label: 'Quoted Amount', type: 'text', autofill: 'Quoted Amount' },
-    { key: 'startDate', label: 'Start Date', type: 'text', autofill: 'Start Date' },
-    { key: 'closeDate', label: 'Close Date', type: 'text', autofill: 'Close Date' },
     { key: 'summary', label: 'Meeting Summary / Notes', type: 'textarea' },
     { key: 'nextSteps', label: 'Next Steps', type: 'textarea' },
   ],
