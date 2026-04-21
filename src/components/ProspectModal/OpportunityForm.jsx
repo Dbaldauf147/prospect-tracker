@@ -1337,6 +1337,14 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
           const zebra = i % 2 === 1;
           let maxLines = 1;
 
+          // Helper: normalize a LinkedIn URL from any of the three props
+          // HubSpot uses for it. Adds https:// prefix if missing.
+          const liUrlFor = (att) => {
+            const raw = (att?.match?.hs_linkedin_url || att?.match?.linkedin_url || att?.match?.hs_linkedinid || '').trim();
+            if (!raw) return '';
+            return /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+          };
+
           const se = seAttendees[i];
           const seVals = se
             ? [
@@ -1346,10 +1354,17 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                 '',
               ]
             : ['', '', '', ''];
+          const seLink = liUrlFor(se);
           for (let c = 0; c < 4; c++) {
             const cell = dRow.getCell(c + 1);
-            cell.value = seVals[c];
-            cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+            // Column 0 is Name — hyperlink to LinkedIn when we have it.
+            if (c === 0 && seLink && seVals[0]) {
+              cell.value = { text: seVals[0], hyperlink: seLink };
+              cell.font = { name: 'Nunito Sans', size: 10, color: { argb: 'FF0A66C2' }, underline: true };
+            } else {
+              cell.value = seVals[c];
+              cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+            }
             cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true };
             cell.border = borderAll;
             if (zebra) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_SURFACE } };
@@ -1372,10 +1387,17 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
           } else {
             custVals = ['', '', '', '', ''];
           }
+          const custLink = liUrlFor(cust);
           for (let c = 0; c < 5; c++) {
             const cell = dRow.getCell(c + 6);
-            cell.value = custVals[c];
-            cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+            // Column 0 of the customer block is Name — hyperlink to LinkedIn when we have it.
+            if (c === 0 && custLink && custVals[0]) {
+              cell.value = { text: custVals[0], hyperlink: custLink };
+              cell.font = { name: 'Nunito Sans', size: 10, color: { argb: 'FF0A66C2' }, underline: true };
+            } else {
+              cell.value = custVals[c];
+              cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+            }
             cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true };
             cell.border = borderAll;
             if (zebra) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_SURFACE } };
