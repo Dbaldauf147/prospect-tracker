@@ -2529,6 +2529,35 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             if (first) applySuggestedTitle(selectedOpp.id, first);
                           }}
                           companyName={fields.company}
+                          companyContacts={companyContacts}
+                          onCreateContact={async ({ email, firstname, lastname }) => {
+                            try {
+                              const properties = { email };
+                              if (firstname) properties.firstname = firstname;
+                              if (lastname) properties.lastname = lastname;
+                              if (fields.company) properties.company = fields.company;
+                              const res = await fetch('/api/hubspot?action=create-contact', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ properties }),
+                              });
+                              const data = await res.json();
+                              if (!data.success || !data.contact) {
+                                alert('Failed to create HubSpot contact' + (data.error ? `: ${data.error}` : ''));
+                                return;
+                              }
+                              try {
+                                const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
+                                if (cache?.contacts) {
+                                  cache.contacts.push(data.contact);
+                                  localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache));
+                                  window.dispatchEvent(new Event('hubspot-cache-updated'));
+                                }
+                              } catch {}
+                            } catch (err) {
+                              alert('Failed to create HubSpot contact: ' + (err.message || err));
+                            }
+                          }}
                         />
                       ) : (
                         <div className="opportunity-notes-editor">
@@ -2557,13 +2586,6 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     // Overview — buckets + opportunity cards
                     <div>
                       <div style={{ marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
-                        <button
-                          type="button"
-                          onClick={addBucket}
-                          style={{ fontSize: '0.75rem', padding: '0.3rem 0.7rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 4, cursor: 'pointer' }}
-                        >
-                          + Bucket
-                        </button>
                         <div style={{ flex: 1 }} />
                         <input
                           ref={templateFileInputRef}

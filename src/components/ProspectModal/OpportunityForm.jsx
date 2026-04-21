@@ -50,10 +50,125 @@ function emptyFormData(template = DEFAULT_FORM_TEMPLATE) {
       Object.fromEntries(t.columns.map(c => [c.key, '']))
     );
   }
-  return { fieldValues, tables, linkedBfoLink: null };
+  return { fieldValues, tables, linkedBfoLink: null, meeting: null };
 }
 
-export function OpportunityForm({ value, onChange, onLinkOpp, companyName }) {
+// ---- .ics parser --------------------------------------------------------
+// Unfolds wrapped lines per RFC 5545 (continuation lines start with space/tab),
+// then splits PROPERTY;PARAM=VAL:VALUE rows. Returns { subject, start, end,
+// durationMinutes, location, organizer, attendees }.
+function parseIcs(text) {
+  if (!text) return null;
+  // Unfold continuation lines
+  const unfolded = text.replace(/\r\n/g, '\n').replace(/\n[ \t]/g, '');
+  const lines = unfolded.split('\n');
+  const attendees = [];
+  let subject = '';
+  let location = '';
+  let organizer = null;
+  let dtStart = null;
+  let dtEnd = null;
+  let duration = null;
+  let inEvent = false;
+
+  const unescape = (s) => (s || '').replace(/\\n/gi, '\n').replace(/\\,/g, ',').replace(/\\;/g, ';').replace(/\\\\/g, '\\');
+
+  const parseIcsDate = (val, params) => {
+    if (!val) return null;
+    // Forms: 20260420T140000Z | 20260420T140000 | 20260420
+    const m = val.match(/^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})(Z)?)?$/);
+    if (!m) return null;
+    const [, y, mo, d, h = '00', mi = '00', s = '00', z] = m;
+    const hasTime = !!val.includes('T');
+    if (z || !hasTime) {
+      // UTC or date-only
+      return new Date(Date.UTC(+y, +mo - 1, +d, +h, +mi, +s));
+    }
+    // Floating or TZID-scoped: best-effort treat as local time
+    return new Date(+y, +mo - 1, +d, +h, +mi, +s);
+  };
+
+  const parsePerson = (raw, params) => {
+    // raw looks like "mailto:a@b.com". CN=... is in params.
+    const email = (raw || '').replace(/^mailto:/i, '').trim();
+    let cn = '';
+    for (const p of params) {
+      const [k, v] = p.split('=');
+      if (k && k.toUpperCase() === 'CN') cn = (v || '').replace(/^"|"$/g, '');
+    }
+    if (!email && !cn) return null;
+    return { name: cn || email, email };
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    if (line === 'BEGIN:VEVENT') { inEvent = true; continue; }
+    if (line === 'END:VEVENT') { inEvent = false; continue; }
+    if (!inEvent) continue;
+    const colon = line.indexOf(':');
+    if (colon < 0) continue;
+    const left = line.slice(0, colon);
+    const value = line.slice(colon + 1);
+    const [prop, ...params] = left.split(';');
+    const propUpper = prop.toUpperCase();
+    switch (propUpper) {
+      case 'SUMMARY': subject = unescape(value); break;
+      case 'LOCATION': location = unescape(value); break;
+      case 'DTSTART': dtStart = parseIcsDate(value, params); break;
+      case 'DTEND': dtEnd = parseIcsDate(value, params); break;
+      case 'DURATION': duration = value; break;
+      case 'ORGANIZER': {
+        const p = parsePerson(value, params);
+        if (p) organizer = p;
+        break;
+      }
+      case 'ATTENDEE': {
+        const p = parsePerson(value, params);
+        if (p) attendees.push(p);
+        break;
+      }
+      default: break;
+    }
+  }
+
+  let durationMinutes = null;
+  if (dtStart && dtEnd) {
+    durationMinutes = Math.round((dtEnd.getTime() - dtStart.getTime()) / 60000);
+  } else if (duration) {
+    // Parse ISO 8601 duration like PT1H30M
+    const m = duration.match(/^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?)?/);
+    if (m) durationMinutes = (+(m[1] || 0)) * 1440 + (+(m[2] || 0)) * 60 + (+(m[3] || 0));
+  }
+
+  return {
+    subject,
+    start: dtStart ? dtStart.toISOString() : null,
+    end: dtEnd ? dtEnd.toISOString() : null,
+    durationMinutes,
+    location,
+    organizer,
+    attendees,
+  };
+}
+
+function formatDateTime(iso) {
+  if (!iso) return '';
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+  } catch { return iso; }
+}
+
+function formatDuration(min) {
+  if (min == null) return '';
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return m === 0 ? `${h}h` : `${h}h ${m}m`;
+}
+
+export function OpportunityForm({ value, onChange, onLinkOpp, companyName, companyContacts = [], onCreateContact }) {
   const template = DEFAULT_FORM_TEMPLATE;
   const formData = useMemo(() => {
     const base = emptyFormData(template);
@@ -64,6 +179,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName }) {
         template.tables.map(t => [t.key, (value.tables && value.tables[t.key]) || base.tables[t.key]])
       ),
       linkedBfoLink: value.linkedBfoLink || null,
+      meeting: value.meeting || null,
     };
   }, [value, template]);
 
@@ -121,6 +237,78 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName }) {
   };
 
   const unlinkOpp = () => set({ linkedBfoLink: null });
+
+  // ---- Meeting drop zone (drag an Outlook .ics into this form) -----------
+  const [isDraggingMeeting, setIsDraggingMeeting] = useState(false);
+  const [meetingError, setMeetingError] = useState('');
+  const fileInputRef = useRef(null);
+
+  async function ingestMeetingFile(file) {
+    setMeetingError('');
+    if (!file) return;
+    const name = (file.name || '').toLowerCase();
+    if (!name.endsWith('.ics')) {
+      setMeetingError(`${file.name || 'File'} is not a .ics meeting file. Drag an .ics export from Outlook (from the Calendar view or "Save as .ics" on a meeting).`);
+      return;
+    }
+    try {
+      const text = await file.text();
+      const parsed = parseIcs(text);
+      if (!parsed || (!parsed.subject && !parsed.start)) {
+        setMeetingError('Could not parse that .ics file.');
+        return;
+      }
+      set({ meeting: parsed });
+    } catch (err) {
+      setMeetingError('Failed to read meeting file: ' + (err.message || err));
+    }
+  }
+
+  function handleMeetingDrop(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingMeeting(false);
+    const files = Array.from(e.dataTransfer?.files || []);
+    if (files.length > 0) ingestMeetingFile(files[0]);
+  }
+
+  const clearMeeting = () => set({ meeting: null });
+
+  // Attendee matching against companyContacts (case-insensitive email).
+  const meetingAttendees = useMemo(() => {
+    const mt = formData.meeting;
+    if (!mt?.attendees?.length) return [];
+    const byEmail = new Map();
+    for (const c of companyContacts) {
+      const em = (c.email || '').toLowerCase().trim();
+      if (em) byEmail.set(em, c);
+    }
+    return mt.attendees.map(a => {
+      const em = (a.email || '').toLowerCase().trim();
+      const match = em ? byEmail.get(em) : null;
+      return { ...a, match };
+    });
+  }, [formData.meeting, companyContacts]);
+
+  const [creatingEmail, setCreatingEmail] = useState(null); // email currently being created
+
+  async function handleCreateAttendeeContact(att) {
+    if (!onCreateContact || !att.email) return;
+    setCreatingEmail(att.email);
+    try {
+      // Split "First Last" naively; HubSpot accepts firstname/lastname
+      const name = (att.name || '').trim();
+      let firstname = '', lastname = '';
+      if (name && name !== att.email) {
+        const parts = name.split(/\s+/);
+        firstname = parts[0] || '';
+        lastname = parts.slice(1).join(' ') || '';
+      }
+      await onCreateContact({ email: att.email, firstname, lastname });
+    } finally {
+      setCreatingEmail(null);
+    }
+  }
 
   // ---- Export to Excel ----
   const exportExcel = async () => {
@@ -291,6 +479,105 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName }) {
         )}
         <div style={{ flex: 1 }} />
         <button type="button" style={sx.primaryBtn} onClick={exportExcel}>Export Excel</button>
+      </div>
+
+      {/* Meeting drop zone — drag an Outlook .ics file in to auto-fill */}
+      <div
+        onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setIsDraggingMeeting(true); }}
+        onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setIsDraggingMeeting(false); }}
+        onDrop={handleMeetingDrop}
+        onClick={() => fileInputRef.current?.click()}
+        style={{
+          border: isDraggingMeeting ? '2px dashed #009530' : '2px dashed #CBD5E1',
+          background: isDraggingMeeting ? '#F0FDF4' : '#FAFAFA',
+          borderRadius: 6,
+          padding: formData.meeting ? '0.5rem 0.75rem' : '0.85rem 0.85rem',
+          textAlign: formData.meeting ? 'left' : 'center',
+          fontSize: '0.78rem',
+          color: '#64748B',
+          cursor: formData.meeting ? 'default' : 'pointer',
+        }}
+      >
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".ics,text/calendar"
+          style={{ display: 'none' }}
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) ingestMeetingFile(f); e.target.value = ''; }}
+        />
+        {!formData.meeting && (
+          <>
+            <div style={{ fontWeight: 600, color: '#475569', marginBottom: 4 }}>
+              Drag an Outlook meeting (.ics) here for meeting prep
+            </div>
+            <div>
+              Pulls the subject, time, duration, and attendees. Unmatched
+              attendees can be added as HubSpot contacts.
+            </div>
+          </>
+        )}
+        {formData.meeting && (
+          <div onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+              <div style={{ fontWeight: 600, color: '#1E293B', fontSize: '0.88rem' }}>
+                {formData.meeting.subject || '(no subject)'}
+              </div>
+              <div style={{ flex: 1 }} />
+              <button type="button" style={sx.btn} onClick={() => fileInputRef.current?.click()}>
+                Replace
+              </button>
+              <button type="button" style={sx.btn} onClick={clearMeeting}>Clear</button>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.35rem 0.75rem', fontSize: '0.78rem', color: '#475569', marginBottom: '0.5rem' }}>
+              <div><strong>When:</strong> {formatDateTime(formData.meeting.start) || '—'}</div>
+              <div><strong>Duration:</strong> {formatDuration(formData.meeting.durationMinutes) || '—'}</div>
+              <div><strong>Ends:</strong> {formatDateTime(formData.meeting.end) || '—'}</div>
+              <div><strong>Location:</strong> {formData.meeting.location || '—'}</div>
+              {formData.meeting.organizer && (
+                <div style={{ gridColumn: 'span 2' }}>
+                  <strong>Organizer:</strong> {formData.meeting.organizer.name}
+                  {formData.meeting.organizer.email ? ` <${formData.meeting.organizer.email}>` : ''}
+                </div>
+              )}
+            </div>
+            {meetingAttendees.length > 0 && (
+              <div>
+                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: '0.3rem' }}>
+                  Attendees ({meetingAttendees.length})
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                  {meetingAttendees.map((a, i) => {
+                    const matched = !!a.match;
+                    return (
+                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.3rem 0.5rem', background: matched ? '#F0FDF4' : '#FEF2F2', border: '1px solid', borderColor: matched ? '#BBF7D0' : '#FECACA', borderRadius: 4 }}>
+                        <span style={{ color: matched ? '#15803D' : '#B91C1C', fontWeight: 700, fontSize: '0.9rem' }}>{matched ? '✓' : '✗'}</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 600, fontSize: '0.8rem', color: '#1E293B' }}>{a.name || a.email || '(unknown)'}</div>
+                          <div style={{ fontSize: '0.72rem', color: '#64748B' }}>{a.email}{matched ? ` · matched HubSpot contact${a.match?.jobtitle ? ` (${a.match.jobtitle})` : ''}` : ' · not in HubSpot'}</div>
+                        </div>
+                        {!matched && a.email && onCreateContact && (
+                          <button
+                            type="button"
+                            style={sx.btn}
+                            disabled={creatingEmail === a.email}
+                            onClick={() => handleCreateAttendeeContact(a)}
+                          >
+                            {creatingEmail === a.email ? 'Adding…' : 'Add to HubSpot'}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+        {meetingError && (
+          <div onClick={(e) => e.stopPropagation()} style={{ marginTop: '0.5rem', color: '#B91C1C', fontSize: '0.75rem' }}>
+            {meetingError}
+          </div>
+        )}
       </div>
 
       <div style={sx.grid}>
