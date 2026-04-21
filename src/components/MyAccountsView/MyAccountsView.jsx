@@ -1428,9 +1428,10 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         if (found) break;
       }
       const statusMismatch = !p.hideStatusSuggestion && !!suggestedStatus && suggestedStatus !== p.status && p.status && p.dismissedSuggestedStatus !== suggestedStatus;
-      // Hide accounts with zero opps of any kind — My Accounts is only for
-      // companies where there's active or historical deal activity.
-      if (!totalOpps || totalOpps === 0) continue;
+      // Hide accounts whose 'Opps' column (open / active, i.e. oppsCount)
+      // would render 0. Closed-only accounts (totalOpps > 0 but oppsCount
+      // == 0) are not worth surfacing in My Accounts.
+      if (!oppsCount || oppsCount === 0) continue;
       const entry = { ...p, myTier: tier, activityCount, oppsCount, totalOpps, sources: sources.join(', '), dmFound: !!dmNames, dmNames: dmNames ? dmNames.join(', ') : '', cdmMismatch: !isBaldauf, targetNames, targetName: (targetNames || []).join(', '), targetTier, tierMismatch, otherReps, contactCount, bucketCount, suggestedStatus, statusMismatch };
       if (tier === 'Tier 1') t1.push(entry);
       else t2.push(entry); // Tier 2 and Tier 3 both go in t2 array
@@ -1458,6 +1459,9 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
 
     for (const [accountLower, count] of Object.entries(totalOppsByAccount)) {
       if (!count || count < 1) continue;
+      // Require an open opp (non-closed) for the opps-only surface so it
+      // matches the prospect-path filter above — no closed-only accounts.
+      if (!openOppsByAccount[accountLower]) continue;
       const displayNameRaw = displayNameByAccount[accountLower] || accountLower;
       const urwInteresting = URW_RX.test(displayNameRaw);
       if (isDismissed(displayNameRaw)) {
