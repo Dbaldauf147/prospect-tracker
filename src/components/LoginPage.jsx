@@ -6,6 +6,17 @@ export function LoginPage({ onSignIn, onSignInWithEmail, onCreateAccount, error 
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [isCreateMode, setIsCreateMode] = useState(false);
+  const [googleSigningIn, setGoogleSigningIn] = useState(false);
+
+  async function handleGoogleClick() {
+    if (googleSigningIn) return;
+    setGoogleSigningIn(true);
+    try {
+      await onSignIn();
+    } finally {
+      setGoogleSigningIn(false);
+    }
+  }
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -69,9 +80,14 @@ export function LoginPage({ onSignIn, onSignInWithEmail, onCreateAccount, error 
           <div style={{ flex: 1, height: '1px', background: '#D1D5DB' }} />
         </div>
 
-        <button className={styles.googleBtn} onClick={onSignIn}>
+        <button
+          className={styles.googleBtn}
+          onClick={handleGoogleClick}
+          disabled={googleSigningIn || submitting}
+          style={googleSigningIn || submitting ? { opacity: 0.6, cursor: 'wait' } : undefined}
+        >
           <span className={styles.googleIcon}>G</span>
-          Sign in with Google
+          {googleSigningIn ? 'Opening Google…' : 'Sign in with Google'}
         </button>
         {error && <p className={styles.error}>{error}</p>}
       </div>

@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { onAuthStateChanged, signInWithPopup, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db, googleProvider } from '../firebase';
@@ -57,15 +57,24 @@ export function AuthProvider({ children }) {
   }, []);
 
   const [authError, setAuthError] = useState(null);
+  const googleSignInPendingRef = useRef(false);
 
   async function signInWithGoogle() {
+    if (googleSignInPendingRef.current) return; // a popup is already open
+    googleSignInPendingRef.current = true;
     try {
       setAuthError(null);
       const result = await signInWithPopup(auth, googleProvider);
       await logAction(result.user, 'login', { method: 'google' });
     } catch (err) {
+      // Benign — a new popup opened while an old one was pending. Don't show.
+      if (err?.code === 'auth/cancelled-popup-request') return;
+      // User dismissed the popup — silent, they'll try again.
+      if (err?.code === 'auth/popup-closed-by-user') return;
       console.error('Google sign-in error:', err);
       setAuthError(err.message || 'Sign-in failed');
+    } finally {
+      googleSignInPendingRef.current = false;
     }
   }
 
