@@ -93,23 +93,33 @@ function parseIcs(text) {
     const email = (raw || '').replace(/^mailto:/i, '').trim();
     let cn = '';
     let role = '';
+    const rawParams = {};
     for (const p of params) {
-      const [k, v] = p.split('=');
+      const eq = p.indexOf('=');
+      if (eq < 0) continue;
+      const k = p.slice(0, eq).trim();
+      const v = p.slice(eq + 1).trim().replace(/^"|"$/g, '');
       if (!k) continue;
       const K = k.toUpperCase();
-      if (K === 'CN') cn = (v || '').replace(/^"|"$/g, '');
-      else if (K === 'ROLE') role = (v || '').toUpperCase();
+      rawParams[K] = v;
+      if (K === 'CN') cn = v;
+      else if (K === 'ROLE') role = v.toUpperCase();
     }
     if (!email && !cn) return null;
-    // Classify ROLE into required/optional. iCal roles:
-    //   CHAIR              -> required (organizer/facilitator)
-    //   REQ-PARTICIPANT    -> required (default)
-    //   OPT-PARTICIPANT    -> optional
-    //   NON-PARTICIPANT    -> informational / fyi
+    // Classify required/optional. Primary source is iCal ROLE:
+    //   CHAIR, REQ-PARTICIPANT -> required
+    //   OPT-PARTICIPANT, NON-PARTICIPANT -> optional
+    // Some Outlook exports omit ROLE and instead use Microsoft extensions
+    // like X-MICROSOFT-CDO-ATTENDEETYPE (1=required, 2=optional, 3=resource)
+    // or X-MICROSOFT-ATTENDEE-REQUEST.
     let required = true;
-    if (role === 'OPT-PARTICIPANT') required = false;
-    else if (role === 'NON-PARTICIPANT') required = false;
-    return { name: cn || email, email, required, role: role || 'REQ-PARTICIPANT' };
+    if (role === 'OPT-PARTICIPANT' || role === 'NON-PARTICIPANT') {
+      required = false;
+    } else if (!role) {
+      const msType = rawParams['X-MICROSOFT-CDO-ATTENDEETYPE'] || rawParams['X-MS-OLK-ATTENDEETYPE'];
+      if (msType === '2' || msType === '3') required = false;
+    }
+    return { name: cn || email, email, required, role: role || 'REQ-PARTICIPANT', rawParams };
   };
 
   for (const rawLine of lines) {
@@ -269,6 +279,14 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       if (!parsed || (!parsed.subject && !parsed.start)) {
         setMeetingError('Could not parse that .ics file.');
         return;
+      }
+      // Diagnostic: surfaces the role + raw params per attendee so we can
+      // figure out which field Outlook is using for required/optional.
+      if (parsed.attendees?.length) {
+        // eslint-disable-next-line no-console
+        console.log('[OpportunityForm] parsed attendees:', parsed.attendees.map(a => ({
+          name: a.name, email: a.email, required: a.required, role: a.role, rawParams: a.rawParams,
+        })));
       }
       set({ meeting: parsed });
     } catch (err) {
@@ -588,8 +606,12 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
             {totalAttendees > 0 && (() => {
               const renderAttendee = (a, i) => {
                 const matched = !!a.match;
+                const rawSummary = a.rawParams
+                  ? Object.entries(a.rawParams).map(([k, v]) => `${k}=${v}`).join('; ')
+                  : '';
+                const tooltip = `ROLE=${a.role || '(none)'}${rawSummary ? ' · ' + rawSummary : ''}`;
                 return (
-                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.3rem 0.5rem', background: matched ? '#F0FDF4' : '#FEF2F2', border: '1px solid', borderColor: matched ? '#BBF7D0' : '#FECACA', borderRadius: 4 }}>
+                  <div key={i} title={tooltip} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.3rem 0.5rem', background: matched ? '#F0FDF4' : '#FEF2F2', border: '1px solid', borderColor: matched ? '#BBF7D0' : '#FECACA', borderRadius: 4 }}>
                     <span style={{ color: matched ? '#15803D' : '#B91C1C', fontWeight: 700, fontSize: '0.9rem' }}>{matched ? '✓' : '✗'}</span>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}>
@@ -605,7 +627,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                       <div style={{ fontSize: '0.72rem', color: '#64748B' }}>
                         {a.email}
                         {matched
-                          ? ` · matched in HubSpot${a.match?.jobtitle ? ` · ${a.match.jobtitle}` : ''}${a.matchedOtherCompany ? ` · at ${a.matchedCompany}` : ''}`
+                          ? `${a.match?.jobtitle ? ` · ${a.match.jobtitle}` : ''}${a.matchedOtherCompany ? ` · at ${a.matchedCompany}` : ''}`
                           : ' · not in HubSpot'}
                       </div>
                     </div>
