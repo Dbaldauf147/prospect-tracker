@@ -43,7 +43,7 @@ function FilterDrop({ label, options, selected, onToggle }) {
 
 const DB_NAME = 'prospect-tracker-db';
 const STORE_NAME = 'target-accounts';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -52,6 +52,7 @@ function openDB() {
       const db = req.result;
       if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME);
       if (!db.objectStoreNames.contains('opps-cache')) db.createObjectStore('opps-cache');
+      if (!db.objectStoreNames.contains('clients-cache')) db.createObjectStore('clients-cache');
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);

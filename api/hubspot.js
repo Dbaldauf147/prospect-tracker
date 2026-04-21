@@ -315,7 +315,8 @@ export default async function handler(req, res) {
         if (c.properties.email) emailMap.set(c.properties.email.toLowerCase(), c.id);
       }
 
-      let created = 0, updated = 0, errors = [];
+      let created = 0, updated = 0, errors = [], notesCreated = 0, notesFailed = 0;
+      const results = [];
 
       for (const contact of contacts) {
         const props = {};
@@ -329,6 +330,8 @@ export default async function handler(req, res) {
         if (contact.city) props.city = contact.city;
         if (contact.state) props.state = contact.state;
         if (contact.country) props.country = contact.country;
+        if (contact.dans_tags) props.dans_tags = contact.dans_tags;
+        const noteBody = (contact.notes || '').toString().trim();
 
         if (!props.email) {
           errors.push(`Skipped contact without email: ${contact.firstname || ''} ${contact.lastname || ''}`);
@@ -336,10 +339,10 @@ export default async function handler(req, res) {
         }
 
         const existingId = emailMap.get(props.email.toLowerCase());
+        let contactId = null;
 
         try {
           if (existingId) {
-            // Update existing
             const updateRes = await fetch(`${BASE}/crm/v3/objects/contacts/${existingId}`, {
               method: 'PATCH',
               headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -350,9 +353,9 @@ export default async function handler(req, res) {
               errors.push(`Failed to update ${props.email}: ${text.slice(0, 100)}`);
             } else {
               updated++;
+              contactId = existingId;
             }
           } else {
-            // Create new
             const createRes = await fetch(`${BASE}/crm/v3/objects/contacts`, {
               method: 'POST',
               headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -362,7 +365,35 @@ export default async function handler(req, res) {
               const text = await createRes.text();
               errors.push(`Failed to create ${props.email}: ${text.slice(0, 100)}`);
             } else {
+              const createJson = await createRes.json();
+              contactId = createJson?.id;
               created++;
+            }
+          }
+
+          if (contactId) {
+            results.push({ email: props.email, id: contactId });
+            // Attach note if provided
+            if (noteBody) {
+              try {
+                const noteRes = await fetch(`${BASE}/crm/v3/objects/notes`, {
+                  method: 'POST',
+                  headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    properties: { hs_note_body: noteBody, hs_timestamp: new Date().toISOString() },
+                    associations: [{ to: { id: contactId }, types: [{ associationCategory: 'HUBSPOT_DEFINED', associationTypeId: 202 }] }],
+                  }),
+                });
+                if (noteRes.ok) notesCreated++;
+                else {
+                  notesFailed++;
+                  const text = await noteRes.text();
+                  errors.push(`Note failed for ${props.email}: ${text.slice(0, 100)}`);
+                }
+              } catch (noteErr) {
+                notesFailed++;
+                errors.push(`Note error for ${props.email}: ${noteErr.message}`);
+              }
             }
           }
         } catch (err) {
@@ -370,7 +401,7 @@ export default async function handler(req, res) {
         }
       }
 
-      return res.json({ success: true, created, updated, errors, total: contacts.length });
+      return res.json({ success: true, created, updated, errors, total: contacts.length, results, notesCreated, notesFailed });
     }
 
     if (action === 'properties') {

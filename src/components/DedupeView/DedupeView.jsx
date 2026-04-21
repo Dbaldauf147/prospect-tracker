@@ -177,7 +177,7 @@ export function DedupeView() {
     setData(prev => {
       if (!prev) return prev;
       const updated = { ...prev, contacts: prev.contacts.filter(c => !deleteIds.has(c.id)) };
-      localStorage.setItem(CACHE_KEY, JSON.stringify(updated));
+      try { localStorage.setItem(CACHE_KEY, JSON.stringify(updated)); } catch (err) { console.warn('DedupeView cache write skipped (quota):', err?.message || err); }
       return updated;
     });
 

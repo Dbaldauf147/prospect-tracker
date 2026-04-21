@@ -22,7 +22,11 @@ export function EmailCampaignView() {
         const snap = await getDoc(ref);
         if (snap.exists()) {
           const data = snap.data();
-          setSavedCampaigns(data.campaigns || []);
+          const campaigns = data.campaigns || [];
+          console.log(`Loaded ${campaigns.length} saved campaigns from Firestore`);
+          setSavedCampaigns(campaigns);
+        } else {
+          console.log('No saved campaigns found in Firestore');
         }
       } catch (err) { console.error('Failed to load campaigns:', err); }
     })();
@@ -30,11 +34,18 @@ export function EmailCampaignView() {
 
   async function saveCampaigns(campaigns) {
     setSavedCampaigns(campaigns);
-    if (!user?.uid) return;
+    if (!user?.uid) {
+      console.error('Cannot save campaigns: no user');
+      return;
+    }
     try {
       const ref = doc(db, 'emailCampaigns', user.uid);
       await setDoc(ref, { campaigns, updatedAt: new Date().toISOString() });
-    } catch (err) { console.error('Failed to save campaigns:', err); }
+      console.log(`Saved ${campaigns.length} campaigns to Firestore`);
+    } catch (err) {
+      console.error('Failed to save campaigns:', err);
+      setError('Failed to save campaign: ' + (err.message || 'Unknown error'));
+    }
   }
 
   async function handleSearch() {

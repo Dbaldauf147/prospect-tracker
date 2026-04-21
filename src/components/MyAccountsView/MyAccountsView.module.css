@@ -550,3 +550,7 @@
   color: var(--color-text-muted);
   margin-top: 0.15rem;
 }
+
+.fadedRow td {
+  opacity: 0.45;
+}
