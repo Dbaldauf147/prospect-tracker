@@ -1451,8 +1451,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     const debugOppsKeys = Object.keys(totalOppsByAccount).filter(k => DEBUG_RX.test(k));
     const renderedAccountNamesLower = new Set([...t1, ...t2].map(e => (e.company || '').toLowerCase()));
     if (debugProspects.length > 0 || debugOppsKeys.length > 0) {
-      // eslint-disable-next-line no-console
-      console.log('[MyAccountsView] debug-account diagnostics:', {
+      const payload = {
         prospects: debugProspects.map(p => {
           const inList = renderedAccountNamesLower.has((p.company || '').toLowerCase());
           const compLower = (p.company || '').toLowerCase();
@@ -1476,7 +1475,13 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
           open: openOppsByAccount[k] || 0,
           display: displayNameByAccount[k],
         })),
-      });
+      };
+      // eslint-disable-next-line no-console
+      console.log('[MyAccountsView] debug-account diagnostics:', payload);
+      // Inline JSON so the user doesn't have to expand the Object in the
+      // console — the full contents appear in the log line itself.
+      // eslint-disable-next-line no-console
+      console.log('[MyAccountsView] debug-account JSON:', JSON.stringify(payload, null, 2));
     }
 
     for (const [accountLower, count] of Object.entries(totalOppsByAccount)) {
