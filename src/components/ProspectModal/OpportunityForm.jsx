@@ -640,6 +640,46 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     set({ tables: { ...formData.tables, [tableKey]: rows } });
   };
 
+  // HTML5 drag-and-drop reorder for reorderable tables. dragRowRef
+  // remembers the grabbed row between dragStart and drop.
+  const dragRowRef = useRef(null);
+  const [dragOverKey, setDragOverKey] = useState(null); // `${tableKey}:${rowIdx}` — for hover highlight
+
+  const handleRowDragStart = (tableKey, rIdx) => (e) => {
+    dragRowRef.current = { tableKey, rIdx };
+    try {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', String(rIdx));
+    } catch {}
+  };
+  const handleRowDragOver = (tableKey, rIdx) => (e) => {
+    const drag = dragRowRef.current;
+    if (!drag || drag.tableKey !== tableKey) return;
+    e.preventDefault();
+    try { e.dataTransfer.dropEffect = 'move'; } catch {}
+    const key = `${tableKey}:${rIdx}`;
+    if (dragOverKey !== key) setDragOverKey(key);
+  };
+  const handleRowDragLeave = () => setDragOverKey(null);
+  const handleRowDrop = (tableKey, rIdx) => (e) => {
+    e.preventDefault();
+    const drag = dragRowRef.current;
+    dragRowRef.current = null;
+    setDragOverKey(null);
+    if (!drag || drag.tableKey !== tableKey) return;
+    if (drag.rIdx === rIdx) return;
+    const rows = [...(formData.tables[tableKey] || [])];
+    if (drag.rIdx < 0 || drag.rIdx >= rows.length) return;
+    const [moved] = rows.splice(drag.rIdx, 1);
+    const insertAt = drag.rIdx < rIdx ? rIdx - 1 : rIdx;
+    rows.splice(Math.max(0, Math.min(rows.length, insertAt)), 0, moved);
+    set({ tables: { ...formData.tables, [tableKey]: rows } });
+  };
+  const handleRowDragEnd = () => {
+    dragRowRef.current = null;
+    setDragOverKey(null);
+  };
+
   // Smart Agenda helpers are defined further below, AFTER seAttendees /
   // customerAttendees are computed. Declaring them here would hit a TDZ
   // on module load because this closure reads those bindings.
@@ -676,7 +716,19 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
             </thead>
             <tbody>
               {(formData.tables[t.key] || []).map((row, rIdx) => (
-                <tr key={rIdx}>
+                <tr
+                  key={rIdx}
+                  draggable={t.reorderable || undefined}
+                  onDragStart={t.reorderable ? handleRowDragStart(t.key, rIdx) : undefined}
+                  onDragOver={t.reorderable ? handleRowDragOver(t.key, rIdx) : undefined}
+                  onDragLeave={t.reorderable ? handleRowDragLeave : undefined}
+                  onDrop={t.reorderable ? handleRowDrop(t.key, rIdx) : undefined}
+                  onDragEnd={t.reorderable ? handleRowDragEnd : undefined}
+                  style={t.reorderable ? {
+                    cursor: 'grab',
+                    background: dragOverKey === `${t.key}:${rIdx}` ? '#EFF6FF' : undefined,
+                  } : undefined}
+                >
                   {t.columns.map(c => {
                     // Any column flagged attendeePicker renders as a grouped
                     // dropdown sourced from the imported meeting's attendees
@@ -788,6 +840,10 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0 }}>
                       {t.reorderable && (
                         <>
+                          <span
+                            title="Drag to reorder"
+                            style={{ color: '#94A3B8', cursor: 'grab', fontSize: '0.9rem', lineHeight: 1, padding: '0 4px', userSelect: 'none' }}
+                          >⋮⋮</span>
                           <button
                             type="button"
                             style={{ ...sx.rowBtn, color: '#64748B', padding: '0 3px', fontSize: '0.78rem' }}
