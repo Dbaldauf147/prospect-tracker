@@ -36,6 +36,10 @@ export const DEFAULT_FORM_TEMPLATE = {
   fields: [
     { key: 'stage', label: 'Stage', type: 'text', autofill: 'Stage' },
     { key: 'status', label: 'Status', type: 'text' }, // populated from the linked opp's account (prospects), not the opp row
+    // Auto-populated from the matched prospect's website field; rendered
+    // as a clickable link in the form header and as a hyperlink in the
+    // Excel export.
+    { key: 'companyWebsite', label: 'Company Website', type: 'text', isLink: true },
     { key: 'scope', label: 'Scope', type: 'text', autofill: 'Scope' },
     { key: 'region', label: 'Region', type: 'select', options: ['EU', 'Global', 'NAM', 'APAC', 'LATAM'] },
     // Only rendered when status === 'Client'. Auto-populated with the
@@ -485,6 +489,17 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     if (Object.keys(updates).length === 0) return;
     set({ fieldValues: { ...formData.fieldValues, ...updates } });
   }, [formData.fieldValues?.stage, companyName]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Self-heal: fill Company Website from the matching prospect's website
+  // when the field is still empty. Doesn't overwrite manual edits.
+  useEffect(() => {
+    const current = (formData.fieldValues?.companyWebsite || '').trim();
+    if (current) return;
+    const match = matchProspectByName(companyName, prospects);
+    const url = (match?.website || '').trim();
+    if (!url) return;
+    set({ fieldValues: { ...formData.fieldValues, companyWebsite: url } });
+  }, [companyName, prospects, formData.fieldValues?.companyWebsite]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const updateTableCell = (tableKey, rowIdx, colKey, val) => {
     const rows = [...(formData.tables[tableKey] || [])];
@@ -1425,7 +1440,13 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       addSectionHeader('Details');
       for (const f of template.fields) {
         if (f.showWhenStatus && formData.fieldValues.status !== f.showWhenStatus) continue;
-        addFieldRow(f.label, formData.fieldValues[f.key] || '');
+        const raw = (formData.fieldValues[f.key] || '').trim ? (formData.fieldValues[f.key] || '').trim() : (formData.fieldValues[f.key] || '');
+        if (f.isLink && raw) {
+          const href = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+          addFieldRow(f.label, raw, href);
+        } else {
+          addFieldRow(f.label, raw);
+        }
       }
 
       // --- Tables (Agenda, Questions, Action Items, Risks) ------------
@@ -2039,6 +2060,15 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                   <span style={{ marginLeft: '0.4rem' }}>
                     – Not Current Client
                   </span>
+                )}
+                {f.isLink && formData.fieldValues[f.key] && (
+                  <a
+                    href={/^https?:\/\//i.test(formData.fieldValues[f.key]) ? formData.fieldValues[f.key] : `https://${formData.fieldValues[f.key]}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ marginLeft: '0.4rem', color: '#0A66C2', fontWeight: 600, textDecoration: 'none' }}
+                    title={`Open ${f.label}`}
+                  >Open ↗</a>
                 )}
               </div>
               {f.type === 'textarea' ? (
