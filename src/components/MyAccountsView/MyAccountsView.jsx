@@ -539,7 +539,7 @@ function StatusMismatchWarning({ row, onUpdate }) {
                 background: 'var(--color-accent)', color: '#fff', fontSize: '0.72rem', fontWeight: 600,
                 cursor: 'pointer', fontFamily: 'inherit',
               }}
-            >Update Table View</button>
+            >Import Table View Status</button>
             <button
               onClick={() => { onUpdate(row.id, { hideStatusSuggestion: true }); setOpen(false); }}
               title="Keep the Table View status as-is and stop suggesting changes for this company"
