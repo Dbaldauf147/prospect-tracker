@@ -1286,7 +1286,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
               c.value = (raw === '' || raw == null) ? null : raw;
             }
             c.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-            c.alignment = { vertical: 'top', horizontal: col.numeric ? 'right' : 'left', wrapText: true, indent: col.numeric ? 0 : 1 };
+            c.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
             c.border = borderAll;
             if (zebra) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_SURFACE } };
             if (slot.end > slot.start) {
