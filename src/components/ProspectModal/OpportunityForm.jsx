@@ -1020,6 +1020,20 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     set({ meeting: { ...mt, manualAttendees: manual } });
   }
 
+  // Unified remove for ICS-imported AND manually added attendees. Matches
+  // by email (case-insensitive) when present, else by name.
+  function removeAttendee(a) {
+    const mt = formData.meeting || {};
+    const sameAttendee = (x) => {
+      if (a.email && x.email && x.email.toLowerCase() === a.email.toLowerCase()) return true;
+      if (!a.email && !x.email && (x.name || '') === (a.name || '')) return true;
+      return false;
+    };
+    const attendees = (mt.attendees || []).filter(x => !sameAttendee(x));
+    const manualAttendees = (mt.manualAttendees || []).filter(x => !sameAttendee(x));
+    set({ meeting: { ...mt, attendees, manualAttendees } });
+  }
+
   // --- Smart Agenda helpers (must live after seAttendees/customerAttendees
   //     are defined — they're used by renderTables via closure). --------
   // Each company name is included at the top of its own optgroup as a
@@ -1738,7 +1752,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                     <div style={{ fontSize: '0.72rem', color: '#334155', paddingTop: 3, ...wrap }}>
                       {contactNote || <span style={{ color: '#94A3B8' }}>—</span>}
                     </div>
-                    <div>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
                       {!matched && a.email && onCreateContact && (
                         <button
                           type="button"
@@ -1749,6 +1763,12 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                           {creatingEmail === a.email ? 'Adding…' : 'Add to HubSpot'}
                         </button>
                       )}
+                      <button
+                        type="button"
+                        onClick={() => removeAttendee(a)}
+                        title="Remove attendee"
+                        style={{ background: 'transparent', border: 'none', color: '#94A3B8', fontSize: '1rem', fontWeight: 700, cursor: 'pointer', padding: '0 0.25rem', lineHeight: 1 }}
+                      >×</button>
                     </div>
                   </div>
                 );
@@ -1778,8 +1798,8 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                 </div>
               );
               // Dedicated renderer for Schneider Electric attendees: just
-              // name + free-text "Dan's Ask" column. No title/city/notes.
-              const SE_GRID = 'auto minmax(0, 1fr) minmax(0, 2fr)';
+              // name + free-text "Dan's Ask" column + remove button.
+              const SE_GRID = 'auto minmax(0, 1fr) minmax(0, 2fr) auto';
               const seColumnHeader = (
                 <div style={{
                   display: 'grid', gridTemplateColumns: SE_GRID, columnGap: '0.5rem',
@@ -1790,6 +1810,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                   <span style={{ width: 12 }} />
                   <span>Name</span>
                   <span>Dan&apos;s Ask</span>
+                  <span />
                 </div>
               );
               const renderSeAttendee = (a, i) => {
@@ -1851,6 +1872,12 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                         minHeight: '1.6rem',
                       }}
                     />
+                    <button
+                      type="button"
+                      onClick={() => removeAttendee(a)}
+                      title="Remove attendee"
+                      style={{ background: 'transparent', border: 'none', color: '#94A3B8', fontSize: '1rem', fontWeight: 700, cursor: 'pointer', padding: '0 0.35rem', lineHeight: 1 }}
+                    >×</button>
                   </div>
                 );
               };
