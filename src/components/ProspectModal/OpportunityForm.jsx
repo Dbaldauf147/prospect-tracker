@@ -256,6 +256,16 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
 
   const unlinkOpp = () => set({ linkedBfoLink: null });
 
+  // "Dan's Ask" — per-SE-attendee free text stored under the meeting
+  // object, keyed by lowercased email so it survives ICS re-imports.
+  const dansAsks = (formData.meeting?.dansAsks) || {};
+  const updateDansAsk = (email, text) => {
+    if (!email) return;
+    const next = { ...(formData.meeting || {}) };
+    next.dansAsks = { ...(next.dansAsks || {}), [email.toLowerCase()]: text };
+    set({ meeting: next });
+  };
+
   // ---- Meeting drop zone (drag an Outlook .ics into this form) -----------
   const [isDraggingMeeting, setIsDraggingMeeting] = useState(false);
   const [meetingError, setMeetingError] = useState('');
@@ -702,6 +712,112 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                   <span />
                 </div>
               );
+              // Dedicated renderer for Schneider Electric attendees: just
+              // name + free-text "Dan's Ask" column. No title/city/notes.
+              const SE_GRID = 'auto minmax(0, 1fr) minmax(0, 2fr)';
+              const seColumnHeader = (
+                <div style={{
+                  display: 'grid', gridTemplateColumns: SE_GRID, columnGap: '0.5rem',
+                  padding: '0 0.5rem 0.25rem',
+                  fontSize: '0.62rem', fontWeight: 700,
+                  color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em',
+                }}>
+                  <span style={{ width: 12 }} />
+                  <span>Name</span>
+                  <span>Dan&apos;s Ask</span>
+                </div>
+              );
+              const renderSeAttendee = (a, i) => {
+                const matched = !!a.match;
+                const linkedinUrl = a.match?.hs_linkedin_url || a.match?.linkedin_url || a.match?.hs_linkedinid || '';
+                const rawSummary = a.rawParams
+                  ? Object.entries(a.rawParams).map(([k, v]) => `${k}=${v}`).join('; ')
+                  : '';
+                const tooltip = `${a.email}${a.role ? ' · ROLE=' + a.role : ''}${rawSummary ? ' · ' + rawSummary : ''}`;
+                const ask = (a.email && dansAsks[a.email.toLowerCase()]) || '';
+                const wrap = { overflowWrap: 'anywhere', wordBreak: 'break-word' };
+                return (
+                  <div
+                    key={i}
+                    title={tooltip}
+                    style={{
+                      display: 'grid', gridTemplateColumns: SE_GRID, columnGap: '0.5rem',
+                      alignItems: 'center',
+                      padding: '0.4rem 0.5rem',
+                      background: matched ? '#F0FDF4' : '#FEF2F2',
+                      border: '1px solid', borderColor: matched ? '#BBF7D0' : '#FECACA',
+                      borderRadius: 4,
+                    }}
+                  >
+                    <span style={{ color: matched ? '#15803D' : '#B91C1C', fontWeight: 700, fontSize: '0.9rem' }}>{matched ? '✓' : '✗'}</span>
+                    <div style={{ minWidth: 0 }}>
+                      {linkedinUrl ? (
+                        <a
+                          href={linkedinUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          style={{ fontWeight: 600, fontSize: '0.8rem', color: '#0A66C2', textDecoration: 'none', ...wrap }}
+                          title="Open LinkedIn profile"
+                        >
+                          {a.name || a.email || '(unknown)'}
+                        </a>
+                      ) : (
+                        <span style={{ fontWeight: 600, fontSize: '0.8rem', color: '#1E293B', ...wrap }}>
+                          {a.name || a.email || '(unknown)'}
+                        </span>
+                      )}
+                    </div>
+                    <textarea
+                      value={ask}
+                      onChange={e => updateDansAsk(a.email, e.target.value)}
+                      rows={1}
+                      placeholder="What do you want to ask / bring up with them?"
+                      style={{
+                        width: '100%',
+                        fontSize: '0.72rem',
+                        padding: '0.25rem 0.4rem',
+                        border: '1px solid #CBD5E1',
+                        borderRadius: 3,
+                        fontFamily: 'inherit',
+                        background: '#fff',
+                        resize: 'vertical',
+                        minHeight: '1.6rem',
+                      }}
+                    />
+                  </div>
+                );
+              };
+              const renderSeGrouped = (list) => {
+                const req = list.filter(a => a.required);
+                const opt = list.filter(a => !a.required);
+                const subHeader = (label, count, color, bg) => (
+                  <div style={{
+                    marginTop: '0.35rem', marginBottom: '0.25rem',
+                    fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.04em',
+                    textTransform: 'uppercase',
+                    color, background: bg, padding: '2px 8px', borderRadius: 4,
+                    display: 'inline-block',
+                  }}>{label} · {count}</div>
+                );
+                return (
+                  <div>
+                    {seColumnHeader}
+                    {req.length > 0 && (<>
+                      {subHeader('Required', req.length, '#B91C1C', '#FEE2E2')}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                        {req.map(renderSeAttendee)}
+                      </div>
+                    </>)}
+                    {opt.length > 0 && (<>
+                      {subHeader('Optional', opt.length, '#3730A3', '#E0E7FF')}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                        {opt.map(renderSeAttendee)}
+                      </div>
+                    </>)}
+                  </div>
+                );
+              };
               const renderGroupedList = (list) => {
                 const req = list.filter(a => a.required);
                 const opt = list.filter(a => !a.required);
@@ -752,7 +868,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                         : (
                           <>
                             <div style={{ fontSize: '0.68rem', color: '#64748B', marginBottom: '0.3rem' }}>{countLine(seAttendees)}</div>
-                            {renderGroupedList(seAttendees)}
+                            {renderSeGrouped(seAttendees)}
                           </>
                         )}
                     </div>
