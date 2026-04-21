@@ -530,19 +530,30 @@ function StatusMismatchWarning({ row, onUpdate }) {
             Current: <strong>{row.status}</strong><br/>
             Opps suggests: <strong>{row.suggestedStatus}</strong>
           </div>
-          <div style={{ display: 'flex', gap: '0.4rem' }}>
+          <div style={{ display: 'flex', gap: '0.4rem', flexDirection: 'column' }}>
             <button
               onClick={() => { onUpdate(row.id, { status: row.suggestedStatus }); setOpen(false); }}
+              title="Take the opps-derived My Accounts status and write it into the Table View row"
               style={{
-                flex: 1, padding: '0.35rem 0.6rem', border: 'none', borderRadius: '6px',
+                padding: '0.4rem 0.6rem', border: 'none', borderRadius: '6px',
                 background: 'var(--color-accent)', color: '#fff', fontSize: '0.72rem', fontWeight: 600,
                 cursor: 'pointer', fontFamily: 'inherit',
               }}
             >Update Table View</button>
             <button
-              onClick={() => { onUpdate(row.id, { dismissedSuggestedStatus: row.suggestedStatus }); setOpen(false); }}
+              onClick={() => { onUpdate(row.id, { hideStatusSuggestion: true }); setOpen(false); }}
+              title="Keep the Table View status as-is and stop suggesting changes for this company"
               style={{
-                flex: 1, padding: '0.35rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px',
+                padding: '0.4rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px',
+                background: '#fff', color: 'var(--color-text)', fontSize: '0.72rem', fontWeight: 600,
+                cursor: 'pointer', fontFamily: 'inherit',
+              }}
+            >Convert My Account status to Table View status</button>
+            <button
+              onClick={() => { onUpdate(row.id, { dismissedSuggestedStatus: row.suggestedStatus }); setOpen(false); }}
+              title="Dismiss this specific suggestion for now. It will reappear if the suggested status changes."
+              style={{
+                padding: '0.4rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px',
                 background: 'var(--color-surface)', color: 'var(--color-text-secondary)', fontSize: '0.72rem', fontWeight: 600,
                 cursor: 'pointer', fontFamily: 'inherit',
               }}
@@ -1348,7 +1359,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         }
         if (found) break;
       }
-      const statusMismatch = suggestedStatus !== p.status && p.status && p.dismissedSuggestedStatus !== suggestedStatus;
+      const statusMismatch = !p.hideStatusSuggestion && suggestedStatus !== p.status && p.status && p.dismissedSuggestedStatus !== suggestedStatus;
       const entry = { ...p, myTier: tier, activityCount, oppsCount, totalOpps, sources: sources.join(', '), dmFound: !!dmNames, dmNames: dmNames ? dmNames.join(', ') : '', cdmMismatch: !isBaldauf, targetNames, targetName: (targetNames || []).join(', '), targetTier, tierMismatch, otherReps, contactCount, bucketCount, suggestedStatus, statusMismatch };
       if (tier === 'Tier 1') t1.push(entry);
       else t2.push(entry); // Tier 2 and Tier 3 both go in t2 array
