@@ -18,6 +18,17 @@ export const DEFAULT_FORM_TEMPLATE = {
   ],
   tables: [
     {
+      key: 'agenda',
+      label: 'Agenda',
+      columns: [
+        { key: 'subject', label: 'Subject' },
+        { key: 'speaker', label: 'Speaker' },
+        { key: 'startTime', label: 'Start Time' },
+        { key: 'duration', label: 'Time for Presenting' },
+        { key: 'slides', label: 'Slides / Software' },
+      ],
+    },
+    {
       key: 'ourQuestions',
       label: 'Questions to Ask Them',
       group: 'Questions',
