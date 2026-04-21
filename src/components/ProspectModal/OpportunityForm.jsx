@@ -1163,7 +1163,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
         row.height = 24;
       };
 
-      const addFieldRow = (label, value) => {
+      const addFieldRow = (label, value, hyperlink) => {
         const row = ws.addRow([]);
         // Label cell
         const labelCell = ws.getCell(row.number, 1);
@@ -1175,8 +1175,17 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
         // Value cell (merged across remaining columns)
         ws.mergeCells(row.number, 2, row.number, SPAN);
         const valCell = ws.getCell(row.number, 2);
-        valCell.value = (value === '' || value == null) ? null : String(value);
-        valCell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+        const displayText = (value === '' || value == null) ? null : String(value);
+        if (hyperlink) {
+          // Clickable link — Excel styles it blue + underline automatically
+          // from the 'hyperlink' type, but we set font explicitly for
+          // consistency across viewers.
+          valCell.value = { text: displayText || hyperlink, hyperlink };
+          valCell.font = { name: 'Nunito Sans', size: 10, color: { argb: 'FF0A66C2' }, underline: true };
+        } else {
+          valCell.value = displayText;
+          valCell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+        }
         valCell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
         valCell.border = borderAll;
         // Size the row so wrapped content isn't clipped. The merged value
@@ -1359,8 +1368,12 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       // --- Meeting Prep (free-form) -----------------------------------
       addBlankRow();
       addSectionHeader('Meeting Prep');
-      addFieldRow('PPT Link', formData.fieldValues.pptLink || '');
-      addFieldRow('Context', formData.fieldValues.context || '');
+      {
+        const raw = (formData.fieldValues.pptLink || '').trim();
+        const href = raw ? (/^https?:\/\//i.test(raw) ? raw : `https://${raw}`) : '';
+        addFieldRow('PPT Link', raw, href);
+      }
+      addFieldRow('Call Context', formData.fieldValues.context || '');
       addFieldRow('Intent', formData.fieldValues.intent || '');
       addFieldRow('End In Mind', formData.fieldValues.endInMind || '');
 
@@ -1929,7 +1942,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       </div>
 
       <div>
-        <div style={sx.fieldLabel}>Context</div>
+        <div style={sx.fieldLabel}>Call Context</div>
         <CommitOnBlurInput
           multiline
           style={{ ...sx.textarea, minHeight: '90px' }}
