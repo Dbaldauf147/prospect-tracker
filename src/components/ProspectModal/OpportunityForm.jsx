@@ -48,7 +48,7 @@ export const DEFAULT_FORM_TEMPLATE = {
     },
     {
       key: 'actionItems',
-      label: 'Action Items',
+      label: 'Action Items / Next Steps',
       columns: [
         { key: 'item', label: 'Action Item' },
         { key: 'owner', label: 'Owner' },
