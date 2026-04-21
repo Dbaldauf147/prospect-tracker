@@ -344,61 +344,9 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     set({ tables: { ...formData.tables, [tableKey]: rows } });
   };
 
-  // --- Smart Agenda helpers -----------------------------------------
-  // Speaker dropdown options = meeting attendees bucketed into SE and
-  // customer groups. Reloaded each render since formData.meeting changes.
-  const agendaSpeakerGroups = useMemo(() => {
-    const opts = [];
-    if (seAttendees?.length) {
-      opts.push({
-        label: 'Schneider Electric',
-        items: seAttendees.map(a => a.name || a.email).filter(Boolean),
-      });
-    }
-    if (customerAttendees?.length) {
-      opts.push({
-        label: companyName || 'Customer',
-        items: customerAttendees.map(a => a.name || a.email).filter(Boolean),
-      });
-    }
-    return opts;
-  }, [seAttendees, customerAttendees, companyName]);
-
-  const meetingTotalMinutes = formData.meeting?.durationMinutes || 0;
-
-  // When the user edits a row's duration, the row after the edited one
-  // gets the leftover minutes so the agenda always sums to the meeting
-  // length. Other rows keep their manually-entered values.
-  function updateAgendaDuration(rowIdx, newMinutes) {
-    const rows = [...(formData.tables.agenda || [])];
-    if (!rows.length) return;
-    const parsed = Math.max(0, Number(newMinutes) || 0);
-    rows[rowIdx] = { ...rows[rowIdx], duration: parsed === 0 ? '' : String(parsed) };
-    if (meetingTotalMinutes > 0) {
-      let usedBeforeAndAt = 0;
-      for (let i = 0; i <= rowIdx; i++) usedBeforeAndAt += Number(rows[i]?.duration) || 0;
-      const remainAfter = Math.max(0, meetingTotalMinutes - usedBeforeAndAt);
-      // Spill the remainder into the NEXT row. If there is no next row,
-      // append one so the user sees the remaining time rather than losing it.
-      if (remainAfter > 0) {
-        if (rowIdx + 1 >= rows.length) {
-          rows.push({ subject: '', speaker: '', startTime: '', duration: String(remainAfter), slides: '' });
-        } else {
-          rows[rowIdx + 1] = { ...rows[rowIdx + 1], duration: String(remainAfter) };
-          // Zero out everything past the "next" row so totals still add up.
-          for (let i = rowIdx + 2; i < rows.length; i++) {
-            rows[i] = { ...rows[i], duration: '' };
-          }
-        }
-      }
-    }
-    set({ tables: { ...formData.tables, agenda: rows } });
-  }
-
-  const agendaSum = useMemo(() => {
-    const rows = formData.tables.agenda || [];
-    return rows.reduce((s, r) => s + (Number(r?.duration) || 0), 0);
-  }, [formData.tables.agenda]);
+  // Smart Agenda helpers are defined further below, AFTER seAttendees /
+  // customerAttendees are computed. Declaring them here would hit a TDZ
+  // on module load because this closure reads those bindings.
 
   function renderTables(list) {
     return list.map((t, idx) => {
@@ -675,6 +623,55 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
   }, [formData.meeting, allHubspotContacts, companyContacts, companyName]);
 
   const totalAttendees = (seAttendees?.length || 0) + (customerAttendees?.length || 0);
+
+  // --- Smart Agenda helpers (must live after seAttendees/customerAttendees
+  //     are defined — they're used by renderTables via closure). --------
+  const agendaSpeakerGroups = useMemo(() => {
+    const opts = [];
+    if (seAttendees?.length) {
+      opts.push({
+        label: 'Schneider Electric',
+        items: seAttendees.map(a => a.name || a.email).filter(Boolean),
+      });
+    }
+    if (customerAttendees?.length) {
+      opts.push({
+        label: companyName || 'Customer',
+        items: customerAttendees.map(a => a.name || a.email).filter(Boolean),
+      });
+    }
+    return opts;
+  }, [seAttendees, customerAttendees, companyName]);
+
+  const meetingTotalMinutes = formData.meeting?.durationMinutes || 0;
+
+  function updateAgendaDuration(rowIdx, newMinutes) {
+    const rows = [...(formData.tables.agenda || [])];
+    if (!rows.length) return;
+    const parsed = Math.max(0, Number(newMinutes) || 0);
+    rows[rowIdx] = { ...rows[rowIdx], duration: parsed === 0 ? '' : String(parsed) };
+    if (meetingTotalMinutes > 0) {
+      let usedBeforeAndAt = 0;
+      for (let i = 0; i <= rowIdx; i++) usedBeforeAndAt += Number(rows[i]?.duration) || 0;
+      const remainAfter = Math.max(0, meetingTotalMinutes - usedBeforeAndAt);
+      if (remainAfter > 0) {
+        if (rowIdx + 1 >= rows.length) {
+          rows.push({ subject: '', speaker: '', startTime: '', duration: String(remainAfter), slides: '' });
+        } else {
+          rows[rowIdx + 1] = { ...rows[rowIdx + 1], duration: String(remainAfter) };
+          for (let i = rowIdx + 2; i < rows.length; i++) {
+            rows[i] = { ...rows[i], duration: '' };
+          }
+        }
+      }
+    }
+    set({ tables: { ...formData.tables, agenda: rows } });
+  }
+
+  const agendaSum = useMemo(() => {
+    const rows = formData.tables.agenda || [];
+    return rows.reduce((s, r) => s + (Number(r?.duration) || 0), 0);
+  }, [formData.tables.agenda]);
 
   const [creatingEmail, setCreatingEmail] = useState(null); // email currently being created
 
