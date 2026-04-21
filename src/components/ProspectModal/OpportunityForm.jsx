@@ -9,6 +9,7 @@ export const DEFAULT_FORM_TEMPLATE = {
     { key: 'stage', label: 'Stage', type: 'text', autofill: 'Stage' },
     { key: 'status', label: 'Status', type: 'text' }, // populated from the linked opp's account (prospects), not the opp row
     { key: 'scope', label: 'Scope', type: 'text', autofill: 'Scope' },
+    { key: 'region', label: 'Region', type: 'select', options: ['EU', 'Global', 'NAM', 'APAC', 'LATAM'] },
     // Only rendered when status === 'Client'. Auto-populated with the
     // company's current active services (Sold / Renewal / In Progress).
     { key: 'currentClientScope', label: 'Current Client Scope', type: 'textarea', showWhenStatus: 'Client' },
@@ -1119,6 +1120,15 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                   value={formData.fieldValues[f.key] || ''}
                   onChange={e => updateField(f.key, e.target.value)}
                 />
+              ) : f.type === 'select' ? (
+                <select
+                  style={sx.input}
+                  value={formData.fieldValues[f.key] || ''}
+                  onChange={e => updateField(f.key, e.target.value)}
+                >
+                  <option value="">—</option>
+                  {(f.options || []).map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
               ) : (
                 <input
                   type={f.type === 'date' ? 'date' : 'text'}
