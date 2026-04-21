@@ -37,6 +37,18 @@ export function ClientsView({ prospects = [], onSelectProspect }) {
   const activeCount = baldaufProspects.filter(p => p.status === 'Client').length;
   const oldCount = baldaufProspects.filter(p => p.status === 'Old Client').length;
 
+  // Diagnostic counts for the empty state.
+  const totalProspects = prospects.length;
+  const allClients = useMemo(() => prospects.filter(p => p.status === 'Client').length, [prospects]);
+  const uniqueCdms = useMemo(() => {
+    const s = new Set();
+    for (const p of prospects) {
+      const v = (p.cdm || '').trim();
+      if (v) s.add(v);
+    }
+    return Array.from(s).sort();
+  }, [prospects]);
+
   const rows = useMemo(() => filtered.map(c => ({
     ...c,
     id: c.id,
@@ -125,10 +137,31 @@ export function ClientsView({ prospects = [], onSelectProspect }) {
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
         {clients.length === 0 ? (
-          <div style={{ margin: '0 1.25rem', padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
-            <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>No Baldauf clients found</div>
-            <div style={{ fontSize: '0.78rem' }}>
+          <div style={{ margin: '0 1.25rem', padding: '1.25rem', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
+            <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem', textAlign: 'center' }}>No Baldauf clients found</div>
+            <div style={{ fontSize: '0.78rem', marginBottom: '0.75rem', textAlign: 'center' }}>
               Set a prospect&apos;s <strong>CDM</strong> to Baldauf and <strong>Status</strong> to <code>Client</code> in My Accounts to list it here.
+            </div>
+            <div style={{ fontSize: '0.72rem', background: '#F8FAFC', padding: '0.6rem 0.8rem', borderRadius: 6, color: '#334155' }}>
+              <div><strong>Diagnostic:</strong></div>
+              <div>Total prospects loaded: {totalProspects}</div>
+              <div>Prospects with CDM containing &quot;baldauf&quot;: {baldaufProspects.length}</div>
+              <div>Prospects with Status = Client: {allClients}</div>
+              <div>Baldauf + Client: {activeCount}</div>
+              {totalProspects === 0 && (
+                <div style={{ color: '#B91C1C', marginTop: '0.5rem' }}>
+                  Prospects haven&apos;t loaded yet. If this sticks, check your network / login.
+                </div>
+              )}
+              {totalProspects > 0 && baldaufProspects.length === 0 && uniqueCdms.length > 0 && (
+                <div style={{ marginTop: '0.5rem' }}>
+                  <div>No CDM value contains &quot;baldauf&quot;. Unique CDMs in your data:</div>
+                  <div style={{ fontFamily: 'monospace', fontSize: '0.7rem', marginTop: '0.25rem', maxHeight: '120px', overflow: 'auto', background: '#fff', padding: '0.4rem', borderRadius: 4 }}>
+                    {uniqueCdms.slice(0, 40).map((c, i) => <div key={i}>{c}</div>)}
+                    {uniqueCdms.length > 40 && <div>… and {uniqueCdms.length - 40} more</div>}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         ) : (
