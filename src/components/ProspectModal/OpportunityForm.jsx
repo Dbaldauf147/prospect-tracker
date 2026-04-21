@@ -358,28 +358,21 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
   const flushTimerRef = useRef(null);
   const pendingRef = useRef(null);
 
-  // Accept a new parent value when it's meaningfully different from what
-  // we currently hold (e.g. the user linked a new opp, or opened a
-  // different form tab).
+  // Accept a new parent value when the reference actually changed.
+  // Reference equality is enough — we never overwrite localValue with the
+  // same object, so if reference differs it's a genuinely new value from
+  // the parent (opp link, tab switch, etc.).
   useEffect(() => {
     if (value === lastAcceptedRef.current) return;
-    // If the incoming value matches what we're about to flush, just accept it.
-    let same = false;
-    try { same = JSON.stringify(value) === JSON.stringify(localValue); } catch {}
     lastAcceptedRef.current = value;
-    if (!same) {
-      setLocalValue(value);
-      // Drop any pending flush — parent is now authoritative.
-      if (flushTimerRef.current) { clearTimeout(flushTimerRef.current); flushTimerRef.current = null; pendingRef.current = null; }
-    }
-  }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
+    setLocalValue(value);
+    if (flushTimerRef.current) { clearTimeout(flushTimerRef.current); flushTimerRef.current = null; pendingRef.current = null; }
+  }, [value]);
 
   // Debounced flush: after 350ms without new edits, push localValue up.
+  // Reference comparison only — stringify on every keystroke was slow.
   useEffect(() => {
-    // Don't flush if we're already in sync with the parent.
-    let same = false;
-    try { same = JSON.stringify(localValue) === JSON.stringify(lastAcceptedRef.current); } catch {}
-    if (same) return;
+    if (localValue === lastAcceptedRef.current) return;
     if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
     pendingRef.current = localValue;
     flushTimerRef.current = setTimeout(() => {
