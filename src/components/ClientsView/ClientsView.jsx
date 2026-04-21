@@ -6,15 +6,9 @@ function getServicesCount(p) {
   return Object.values(svc).filter(v => v && v !== '-').length;
 }
 
-// Strict-ish match for Dan Baldauf so unrelated Baldaufs don't sneak in.
-// Accepts "Dan Baldauf", "Baldauf, Dan", "Baldauf Dan", "D. Baldauf",
-// "Dan.Baldauf", etc.
+// Match CDM values that contain the phrase "Dan Baldauf" (case-insensitive).
 function isBaldauf(cdm) {
-  const v = (cdm || '').toLowerCase().trim();
-  if (!v) return false;
-  if (!v.includes('baldauf')) return false;
-  // Must also include a Dan token (dan, d., d-, d_)
-  return /\bdan\b/.test(v) || /\bd\b/.test(v) || /\bd\./.test(v);
+  return (cdm || '').toLowerCase().includes('dan baldauf');
 }
 
 export function ClientsView({ prospects = [], onSelectProspect }) {
@@ -140,6 +134,11 @@ export function ClientsView({ prospects = [], onSelectProspect }) {
         <span style={{ fontSize: '0.72rem', color: '#64748B' }}>
           {filtered.length} of {activeCount}{showOld ? ` active · ${oldCount} old` : ''}
         </span>
+      </div>
+
+      {/* Always-visible diagnostic strip so 'blank page' is never actually blank. */}
+      <div style={{ padding: '0 1.25rem 0.5rem', fontSize: '0.68rem', color: '#64748B', flexShrink: 0 }}>
+        Loaded {totalProspects} prospects · {baldaufProspects.length} have CDM containing &quot;Dan Baldauf&quot; · {allClients} are Status=Client · showing {clients.length}
       </div>
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
