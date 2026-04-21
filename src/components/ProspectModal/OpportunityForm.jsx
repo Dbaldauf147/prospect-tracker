@@ -48,7 +48,7 @@ export const DEFAULT_FORM_TEMPLATE = {
     },
     {
       key: 'meetingNotes',
-      label: 'Meeting Notes',
+      label: 'Key Issues',
       underField: 'summary', // rendered inline beneath the Meeting Summary / Notes field
       columns: [
         { key: 'issue', label: 'Issue' },
