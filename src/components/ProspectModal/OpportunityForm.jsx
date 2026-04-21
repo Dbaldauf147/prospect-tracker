@@ -1,5 +1,33 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, memo } from 'react';
 import { loadOppsFromCache, searchOpps } from '../../utils/oppsCache';
+
+// Uncontrolled-ish text input / textarea that holds its own local state
+// and only propagates up on blur. Used for the heavy free-form fields
+// (summary, intent, context, table cells…) so keystrokes don't trigger
+// a re-render of the entire OpportunityForm tree. Still syncs in when
+// the parent value legitimately changes (opp-link autofill, template
+// self-heal, etc.).
+const CommitOnBlurInput = memo(function CommitOnBlurInput({ value, onCommit, multiline, type, ...rest }) {
+  const [local, setLocal] = useState(value ?? '');
+  const lastExternal = useRef(value ?? '');
+  useEffect(() => {
+    const v = value ?? '';
+    if (v !== lastExternal.current) {
+      lastExternal.current = v;
+      setLocal(v);
+    }
+  }, [value]);
+  const handleBlur = () => {
+    if (local !== lastExternal.current) {
+      lastExternal.current = local;
+      onCommit(local);
+    }
+  };
+  if (multiline) {
+    return <textarea {...rest} value={local} onChange={e => setLocal(e.target.value)} onBlur={handleBlur} />;
+  }
+  return <input type={type || 'text'} {...rest} value={local} onChange={e => setLocal(e.target.value)} onBlur={handleBlur} />;
+});
 
 // Default form schema. Edit these arrays to change the template.
 // `autofill` is the Opps sheet column whose value should populate the field
@@ -624,10 +652,10 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                     }
                     return (
                       <td key={c.key} style={sx.td}>
-                        <input
+                        <CommitOnBlurInput
                           style={sx.cellInput}
                           value={row[c.key] || ''}
-                          onChange={e => updateTableCell(t.key, rIdx, c.key, e.target.value)}
+                          onCommit={v => updateTableCell(t.key, rIdx, c.key, v)}
                         />
                       </td>
                     );
@@ -1707,9 +1735,10 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                         </span>
                       )}
                     </div>
-                    <textarea
+                    <CommitOnBlurInput
+                      multiline
                       value={ask}
-                      onChange={e => updateDansAsk(a.email, e.target.value)}
+                      onCommit={v => updateDansAsk(a.email, v)}
                       rows={1}
                       placeholder="What do you want to ask / bring up with them?"
                       style={{
@@ -1886,10 +1915,10 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
             >Open ↗</a>
           )}
         </div>
-        <input
+        <CommitOnBlurInput
           type="text"
           value={formData.fieldValues.pptLink || ''}
-          onChange={e => updateField('pptLink', e.target.value)}
+          onCommit={v => updateField('pptLink', v)}
           placeholder="Paste the PowerPoint URL (SharePoint, OneDrive, etc.)"
           style={sx.input}
         />
@@ -1897,10 +1926,11 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
 
       <div>
         <div style={sx.fieldLabel}>Context</div>
-        <textarea
+        <CommitOnBlurInput
+          multiline
           style={{ ...sx.textarea, minHeight: '90px' }}
           value={formData.fieldValues.context || ''}
-          onChange={e => updateField('context', e.target.value)}
+          onCommit={v => updateField('context', v)}
           placeholder="Background and context for this meeting — what led up to it, who introduced us, relevant history, recent news about the account, etc."
         />
       </div>
@@ -1908,19 +1938,21 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
         <div>
           <div style={sx.fieldLabel}>Intent</div>
-          <textarea
+          <CommitOnBlurInput
+            multiline
             style={sx.textarea}
             value={formData.fieldValues.intent || ''}
-            onChange={e => updateField('intent', e.target.value)}
+            onCommit={v => updateField('intent', v)}
             placeholder="Why are we having this meeting? What do we hope to walk in and accomplish?"
           />
         </div>
         <div>
           <div style={sx.fieldLabel}>End In Mind</div>
-          <textarea
+          <CommitOnBlurInput
+            multiline
             style={sx.textarea}
             value={formData.fieldValues.endInMind || ''}
-            onChange={e => updateField('endInMind', e.target.value)}
+            onCommit={v => updateField('endInMind', v)}
             placeholder="What does a successful outcome look like? What do we want them to do next?"
           />
         </div>
@@ -1950,10 +1982,11 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                 )}
               </div>
               {f.type === 'textarea' ? (
-                <textarea
+                <CommitOnBlurInput
+                  multiline
                   style={sx.textarea}
                   value={formData.fieldValues[f.key] || ''}
-                  onChange={e => updateField(f.key, e.target.value)}
+                  onCommit={v => updateField(f.key, v)}
                 />
               ) : f.type === 'select' ? (
                 <select
@@ -1965,11 +1998,11 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                   {(f.options || []).map(o => <option key={o} value={o}>{o}</option>)}
                 </select>
               ) : (
-                <input
+                <CommitOnBlurInput
                   type={f.type === 'date' ? 'date' : 'text'}
                   style={sx.input}
                   value={formData.fieldValues[f.key] || ''}
-                  onChange={e => updateField(f.key, e.target.value)}
+                  onCommit={v => updateField(f.key, v)}
                 />
               )}
               {nestedTables.length > 0 && (
