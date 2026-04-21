@@ -49,7 +49,7 @@ function emptyFormData(template = DEFAULT_FORM_TEMPLATE) {
       Object.fromEntries(t.columns.map(c => [c.key, '']))
     );
   }
-  return { fieldValues, tables, linkedBfoLink: null, meeting: null };
+  return { fieldValues, tables, linkedBfoLink: null, linkedOppName: null, meeting: null };
 }
 
 // ---- .ics parser --------------------------------------------------------
@@ -247,6 +247,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
         template.tables.map(t => [t.key, (value.tables && value.tables[t.key]) || base.tables[t.key]])
       ),
       linkedBfoLink: value.linkedBfoLink || null,
+      linkedOppName: value.linkedOppName || null,
       meeting: value.meeting || null,
     };
   }, [value, template]);
@@ -309,17 +310,29 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
         nextValues.currentClientScope = '';
       }
     }
-    // Stage comes from mapping the opp's Status (Dan's internal status name)
-    // to a BFO stage. Falls back to the opp's own Stage column if the Status
-    // isn't in the lookup table.
-    const oppStatusForStage = (opp?.['Status'] || '').trim();
-    const mappedStage = mapDanStatusToBfoStage(oppStatusForStage);
-    if (mappedStage) nextValues.stage = mappedStage;
+    // Stage must always resolve to a BFO value. Try the opp's Stage column
+    // first (if it's already a Dan name, convert to BFO; if it's already a
+    // BFO name, the map won't match and we fall through). Then try the
+    // Status column as a secondary source. If neither matches the lookup,
+    // keep whatever the template autofill put there.
+    const oppStage = (opp?.['Stage'] || '').trim();
+    const oppStatus = (opp?.['Status'] || '').trim();
+    const mappedFromStage = mapDanStatusToBfoStage(oppStage);
+    const mappedFromStatus = mapDanStatusToBfoStage(oppStatus);
+    if (mappedFromStage) nextValues.stage = mappedFromStage;
+    else if (mappedFromStatus) nextValues.stage = mappedFromStatus;
+
+    // Friendly display label for the linked BFO opportunity — used as the
+    // hyperlink anchor text. Prefer Account + first service from Scope.
+    const scopeStr = String(opp?.['Scope'] || '').trim();
+    const firstScope = scopeStr.split(',').map(s => s.trim()).filter(Boolean)[0] || '';
+    const linkedOppName = [opp?.['Account'] || '', firstScope].filter(Boolean).join(' — ');
 
     const nextFormData = {
       ...formData,
       fieldValues: nextValues,
       linkedBfoLink: opp['BFO Link'] || null,
+      linkedOppName: linkedOppName || null,
     };
     // Single write through the parent. Previously we did
     //   set(...)  -> updateOpportunityFormData (write 1)
@@ -334,7 +347,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     setSearch('');
   };
 
-  const unlinkOpp = () => set({ linkedBfoLink: null });
+  const unlinkOpp = () => set({ linkedBfoLink: null, linkedOppName: null });
 
   // "Dan's Ask" — per-SE-attendee free text stored under the meeting
   // object, keyed by lowercased email so it survives ICS re-imports.
@@ -495,6 +508,11 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       titleRow.height = 28;
 
       ws.addRow([]);
+      addSectionHeader('Meeting Prep');
+      addFieldRow('Intent', formData.fieldValues.intent || '');
+      addFieldRow('End In Mind', formData.fieldValues.endInMind || '');
+
+      ws.addRow([]);
       addSectionHeader('Details');
       for (const f of template.fields) {
         addFieldRow(f.label, formData.fieldValues[f.key] || '');
@@ -609,8 +627,15 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
         </div>
         {formData.linkedBfoLink && (
           <>
-            <span style={{ fontSize: '0.7rem', color: '#64748B' }}>
-              Linked to BFO: <code>{formData.linkedBfoLink}</code>
+            <span style={{ fontSize: '0.75rem', color: '#64748B' }}>
+              Linked:{' '}
+              <a
+                href={formData.linkedBfoLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Open in BFO"
+                style={{ color: '#0A66C2', fontWeight: 600, textDecoration: 'none' }}
+              >{formData.linkedOppName || 'Open in BFO'}</a>
             </span>
             <button type="button" style={sx.btn} onClick={unlinkOpp}>Unlink</button>
           </>
@@ -978,13 +1003,46 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
         )}
       </div>
 
+      {/* Free-form meeting-prep buckets that sit between the imported
+          meeting data and the structured opportunity form fields. */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+        <div>
+          <div style={sx.fieldLabel}>Intent</div>
+          <textarea
+            style={sx.textarea}
+            value={formData.fieldValues.intent || ''}
+            onChange={e => updateField('intent', e.target.value)}
+            placeholder="Why are we having this meeting? What do we hope to walk in and accomplish?"
+          />
+        </div>
+        <div>
+          <div style={sx.fieldLabel}>End In Mind</div>
+          <textarea
+            style={sx.textarea}
+            value={formData.fieldValues.endInMind || ''}
+            onChange={e => updateField('endInMind', e.target.value)}
+            placeholder="What does a successful outcome look like? What do we want them to do next?"
+          />
+        </div>
+      </div>
+
       <div style={sx.grid}>
         {template.fields.map(f => {
           // Conditional fields (e.g. Current Client Scope only shows for Clients)
           if (f.showWhenStatus && formData.fieldValues.status !== f.showWhenStatus) return null;
+          const isStatus = f.key === 'status';
+          const statusValue = formData.fieldValues.status || '';
+          const notCurrentClient = isStatus && statusValue && statusValue !== 'Client';
           return (
             <div key={f.key} style={f.type === 'textarea' ? { gridColumn: 'span 2' } : undefined}>
-              <div style={sx.fieldLabel}>{f.label}</div>
+              <div style={sx.fieldLabel}>
+                {f.label}
+                {notCurrentClient && (
+                  <span style={{ marginLeft: '0.4rem', color: '#B91C1C', fontWeight: 700 }}>
+                    – Not Current Client
+                  </span>
+                )}
+              </div>
               {f.type === 'textarea' ? (
                 <textarea
                   style={sx.textarea}
