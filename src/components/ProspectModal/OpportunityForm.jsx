@@ -24,7 +24,7 @@ export const DEFAULT_FORM_TEMPLATE = {
       columns: [
         { key: 'subject', label: 'Subject' },
         { key: 'speaker', label: 'Speaker' },
-        { key: 'startTime', label: 'Start Time' },
+        { key: 'startTime', label: 'Time' },
         { key: 'duration', label: 'Minutes' },
         { key: 'slides', label: 'Slides / Software' },
       ],
@@ -527,31 +527,48 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                 </tr>
               ))}
             </tbody>
+            {t.smartAgenda && meetingStartIso && (() => {
+              let endText = '';
+              try {
+                const d = new Date(meetingStartIso);
+                d.setMinutes(d.getMinutes() + agendaSum);
+                endText = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+              } catch {}
+              const scheduledEnd = formData.meeting?.end
+                ? (() => { try { return new Date(formData.meeting.end).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); } catch { return ''; } })()
+                : '';
+              const mismatch = scheduledEnd && endText && scheduledEnd !== endText;
+              const timeColIndex = t.columns.findIndex(c => c.key === 'startTime');
+              return (
+                <tfoot>
+                  <tr>
+                    {t.columns.map((c, i) => {
+                      if (i === Math.max(0, timeColIndex - 1)) {
+                        return (
+                          <td key={c.key} style={{ ...sx.td, padding: '0.35rem 0.5rem', textAlign: 'right', fontSize: '0.72rem', color: '#15803D', fontWeight: 700 }}>
+                            Meeting ends:
+                          </td>
+                        );
+                      }
+                      if (i === timeColIndex) {
+                        return (
+                          <td key={c.key} style={{ ...sx.td, padding: '0.4rem 0.5rem', background: mismatch ? '#FEF2F2' : '#F0FDF4', color: mismatch ? '#B91C1C' : '#15803D', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                            {endText || '—'}
+                            {mismatch && <div style={{ fontSize: '0.65rem', fontWeight: 500, color: '#B91C1C', marginTop: 1 }}>invite: {scheduledEnd}</div>}
+                          </td>
+                        );
+                      }
+                      return <td key={c.key} style={{ ...sx.td, padding: '0.35rem 0.5rem' }}></td>;
+                    })}
+                    <td style={sx.td}></td>
+                  </tr>
+                </tfoot>
+              );
+            })()}
           </table>
           <button type="button" style={{ ...sx.btn, marginTop: '0.35rem' }} onClick={() => addTableRow(t.key)}>
             + Add row
           </button>
-          {t.smartAgenda && meetingStartIso && (() => {
-            let total = 0;
-            try {
-              const d = new Date(meetingStartIso);
-              d.setMinutes(d.getMinutes() + agendaSum);
-              total = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-            } catch {}
-            const scheduledEnd = formData.meeting?.end
-              ? (() => { try { return new Date(formData.meeting.end).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); } catch { return ''; } })()
-              : '';
-            return (
-              <div style={{ marginTop: '0.5rem', padding: '0.45rem 0.6rem', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 4, fontSize: '0.78rem', color: '#15803D', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-                <span><strong>Meeting ends:</strong> {total || '—'}</span>
-                {scheduledEnd && total && scheduledEnd !== total && (
-                  <span style={{ color: '#B91C1C' }}>
-                    (invite says {scheduledEnd})
-                  </span>
-                )}
-              </div>
-            );
-          })()}
         </div>
       );
     });
