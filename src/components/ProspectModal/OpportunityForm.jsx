@@ -186,7 +186,7 @@ function formatDuration(min) {
   return m === 0 ? `${h}h` : `${h}h ${m}m`;
 }
 
-export function OpportunityForm({ value, onChange, onLinkOpp, companyName, companyContacts = [], allHubspotContacts = [], onCreateContact }) {
+export function OpportunityForm({ value, onChange, onLinkOpp, companyName, companyContacts = [], allHubspotContacts = [], contactNotes = {}, onCreateContact }) {
   const template = DEFAULT_FORM_TEMPLATE;
   const formData = useMemo(() => {
     const base = emptyFormData(template);
@@ -255,14 +255,6 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
   };
 
   const unlinkOpp = () => set({ linkedBfoLink: null });
-
-  const attendeeNotes = (formData.meeting?.attendeeNotes) || {};
-  const updateAttendeeNote = (email, note) => {
-    if (!email) return;
-    const next = { ...(formData.meeting || {}) };
-    next.attendeeNotes = { ...(next.attendeeNotes || {}), [email.toLowerCase()]: note };
-    set({ meeting: next });
-  };
 
   // ---- Meeting drop zone (drag an Outlook .ics into this form) -----------
   const [isDraggingMeeting, setIsDraggingMeeting] = useState(false);
@@ -615,13 +607,38 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                   : '';
                 const tooltip = `${a.email}${a.role ? ' · ROLE=' + a.role : ''}${rawSummary ? ' · ' + rawSummary : ''}`;
                 const title = a.match?.jobtitle || '';
-                const note = (a.email && attendeeNotes[a.email.toLowerCase()]) || '';
+                // Pull notes from the contact's note record (same source the
+                // Contacts table on this popup writes to), with HubSpot-property
+                // fallbacks.
+                const contactId = a.match?.id || a.match?.vid;
+                const contactNote = (contactId && contactNotes[contactId])
+                  || a.match?.notes
+                  || a.match?.hs_content_membership_notes
+                  || a.match?.message
+                  || '';
+                const linkedinUrl = a.match?.hs_linkedin_url || a.match?.linkedin_url || a.match?.hs_linkedinid || '';
+                const nameNode = (
+                  <span style={{ fontWeight: 600, fontSize: '0.8rem', color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {a.name || a.email || '(unknown)'}
+                  </span>
+                );
                 return (
                   <div key={i} title={tooltip} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', padding: '0.4rem 0.5rem', background: matched ? '#F0FDF4' : '#FEF2F2', border: '1px solid', borderColor: matched ? '#BBF7D0' : '#FECACA', borderRadius: 4 }}>
                     <span style={{ color: matched ? '#15803D' : '#B91C1C', fontWeight: 700, fontSize: '0.9rem', paddingTop: 2 }}>{matched ? '✓' : '✗'}</span>
-                    <div style={{ flex: 1, minWidth: 0, display: 'grid', gridTemplateColumns: '1fr 1.25fr', columnGap: '0.5rem', rowGap: '0.2rem', alignItems: 'center' }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap', minWidth: 0 }}>
-                        <span style={{ fontWeight: 600, fontSize: '0.8rem', color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.name || a.email || '(unknown)'}</span>
+                        {linkedinUrl ? (
+                          <a
+                            href={linkedinUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            style={{ fontWeight: 600, fontSize: '0.8rem', color: '#0A66C2', textDecoration: 'none' }}
+                            title="Open LinkedIn profile"
+                          >
+                            {a.name || a.email || '(unknown)'}
+                          </a>
+                        ) : nameNode}
                         <span style={{
                           fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.04em',
                           textTransform: 'uppercase',
@@ -630,17 +647,15 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                           color: a.required ? '#B91C1C' : '#3730A3',
                         }}>{a.required ? 'Required' : 'Optional'}</span>
                       </div>
-                      <input
-                        value={note}
-                        onChange={e => updateAttendeeNote(a.email, e.target.value)}
-                        placeholder="Notes for prep…"
-                        style={{ fontSize: '0.72rem', padding: '0.2rem 0.4rem', border: '1px solid #CBD5E1', borderRadius: 3, fontFamily: 'inherit', background: '#fff' }}
-                      />
-                      <div style={{ fontSize: '0.72rem', color: '#64748B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2 }}>
                         {title || <span style={{ fontStyle: 'italic', color: '#94A3B8' }}>{matched ? 'no title' : 'not in HubSpot'}</span>}
                         {a.matchedOtherCompany ? ` · at ${a.matchedCompany}` : ''}
                       </div>
-                      <div />
+                      {contactNote && (
+                        <div style={{ fontSize: '0.72rem', color: '#334155', marginTop: 3, whiteSpace: 'pre-wrap' }}>
+                          {contactNote}
+                        </div>
+                      )}
                     </div>
                     {!matched && a.email && onCreateContact && (
                       <button
