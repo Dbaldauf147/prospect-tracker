@@ -454,6 +454,14 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                         </td>
                       );
                     }
+                    if (t.smartAgenda && c.key === 'startTime') {
+                      const computed = computeAgendaStartTime(rIdx);
+                      return (
+                        <td key={c.key} style={{ ...sx.td, padding: '0.4rem 0.5rem', color: '#334155', background: '#F8FAFC', fontVariantNumeric: 'tabular-nums' }}>
+                          {computed || <span style={{ color: '#94A3B8' }}>—</span>}
+                        </td>
+                      );
+                    }
                     if (t.smartAgenda && c.key === 'duration') {
                       return (
                         <td key={c.key} style={sx.td}>
@@ -706,6 +714,22 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
   }, [seAttendees, customerAttendees, companyName]);
 
   const meetingTotalMinutes = formData.meeting?.durationMinutes || 0;
+  const meetingStartIso = formData.meeting?.start || '';
+
+  // Compute the start time for agenda row N as: meeting.start + sum of
+  // durations for rows 0..N-1. Returns a short time string like "2:05 PM"
+  // or '' if the meeting has no start time.
+  function computeAgendaStartTime(rowIdx) {
+    if (!meetingStartIso) return '';
+    const rows = formData.tables.agenda || [];
+    let priorSum = 0;
+    for (let i = 0; i < rowIdx; i++) priorSum += Number(rows[i]?.duration) || 0;
+    try {
+      const d = new Date(meetingStartIso);
+      d.setMinutes(d.getMinutes() + priorSum);
+      return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    } catch { return ''; }
+  }
 
   function updateAgendaDuration(rowIdx, newMinutes) {
     const rows = [...(formData.tables.agenda || [])];
@@ -973,7 +997,24 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       for (const t of template.tables) {
         addBlankRow();
         const widths = colWidths.slice(0, t.columns.length);
-        addTable(t.label, t.columns, formData.tables[t.key] || [], widths);
+        let tableRows = formData.tables[t.key] || [];
+        // For the Smart Agenda, backfill each row's Start Time from the
+        // meeting's start + the sum of prior durations so the exported
+        // sheet shows real clock times instead of blanks.
+        if (t.smartAgenda && meetingStartIso) {
+          let priorSum = 0;
+          tableRows = tableRows.map((r) => {
+            const out = { ...r };
+            try {
+              const d = new Date(meetingStartIso);
+              d.setMinutes(d.getMinutes() + priorSum);
+              out.startTime = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+            } catch {}
+            priorSum += Number(r?.duration) || 0;
+            return out;
+          });
+        }
+        addTable(t.label, t.columns, tableRows, widths);
         // Restore defaults for next block
         colWidths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
       }
