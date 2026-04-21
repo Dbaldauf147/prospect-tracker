@@ -2375,7 +2375,17 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       return (
                         <div
                           key={note.id}
-                          onClick={() => setSelectedOppId(note.id)}
+                          onClick={(e) => {
+                            // Single click activates; double click renames.
+                            // e.detail === 2 fires on the *second* click of a
+                            // double-click so we can branch reliably.
+                            if (e.detail === 2) {
+                              e.preventDefault();
+                              startInlineRename(note.id, note.title);
+                            } else {
+                              setSelectedOppId(note.id);
+                            }
+                          }}
                           style={{
                             display: 'flex', alignItems: 'center', gap: '0.3rem',
                             padding: '0.35rem 0.6rem 0.35rem 0.75rem',
@@ -2391,6 +2401,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             top: 1,
                             minWidth: 120, maxWidth: 220,
                             whiteSpace: 'nowrap',
+                            userSelect: 'none',
                           }}
                           title={renamingOppId === note.id ? 'Editing name' : (note.title || 'New form') + ' · double-click to rename'}
                         >
@@ -2405,10 +2416,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                               style={{ padding: '0.1rem 0.3rem', fontSize: '0.78rem', fontWeight: 600, border: '1px solid #009530', borderRadius: 3, background: '#fff', width: 140, fontFamily: 'inherit' }}
                             />
                           ) : (
-                            <span
-                              style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}
-                              onDoubleClick={(e) => { e.stopPropagation(); startInlineRename(note.id, note.title); }}
-                            >
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
                               {note.title || 'New form'}
                             </span>
                           )}
@@ -2451,9 +2459,16 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                           />
                         ) : (
                           <span
-                            style={{ fontWeight: 600, fontSize: '0.9rem', flex: 1, cursor: 'text' }}
+                            style={{ fontWeight: 600, fontSize: '0.9rem', flex: 1, cursor: 'pointer', padding: '0.15rem 0.25rem', borderRadius: 3 }}
                             title="Double-click to rename"
-                            onDoubleClick={() => startInlineRename(selectedOpp.id, selectedOpp.title)}
+                            onMouseEnter={(e) => { e.currentTarget.style.background = '#F1F5F9'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                            onClick={(e) => {
+                              if (e.detail === 2) {
+                                e.preventDefault();
+                                startInlineRename(selectedOpp.id, selectedOpp.title);
+                              }
+                            }}
                           >{selectedOpp.title}</span>
                         )}
                         <select
