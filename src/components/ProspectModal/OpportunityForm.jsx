@@ -23,7 +23,7 @@ export const DEFAULT_FORM_TEMPLATE = {
       smartAgenda: true, // unlocks speaker picker + time-balance behavior
       columns: [
         { key: 'subject', label: 'Subject' },
-        { key: 'speaker', label: 'Speaker' },
+        { key: 'speaker', label: 'Speaker', attendeePicker: true },
         { key: 'startTime', label: 'Time' },
         { key: 'duration', label: 'Minutes' },
         { key: 'slides', label: 'Slides / Software' },
@@ -70,9 +70,7 @@ export const DEFAULT_FORM_TEMPLATE = {
       underField: 'summary', // nests directly under Key Issues beneath Meeting Summary / Notes
       columns: [
         { key: 'item', label: 'Action Item' },
-        { key: 'owner', label: 'Owner' },
-        { key: 'due', label: 'Due Date' },
-        { key: 'status', label: 'Status' },
+        { key: 'owner', label: 'Owner', attendeePicker: true },
       ],
     },
   ],
@@ -473,9 +471,11 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
               {(formData.tables[t.key] || []).map((row, rIdx) => (
                 <tr key={rIdx}>
                   {t.columns.map(c => {
-                    // Smart Agenda: speaker column becomes a grouped picker,
-                    // duration column routes through updateAgendaDuration.
-                    if (t.smartAgenda && c.key === 'speaker') {
+                    // Any column flagged attendeePicker renders as a grouped
+                    // dropdown sourced from the imported meeting's attendees
+                    // (Schneider Electric group + Customer group). Used by
+                    // the Agenda Speaker column and Action Items Owner.
+                    if (c.attendeePicker) {
                       const val = row[c.key] || '';
                       const knownOptions = agendaSpeakerGroups.flatMap(g => g.items);
                       const isCustom = val && !knownOptions.includes(val);
