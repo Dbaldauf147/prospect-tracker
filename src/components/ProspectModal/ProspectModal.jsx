@@ -1855,10 +1855,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     const esc = s => String(s || '')
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     const introLine = `Thanks again for the conversation${fields.company ? ` about ${esc(fields.company)}` : ''}${selectedOpp.title ? ` (${esc(selectedOpp.title)})` : ''}. Below is a recap of the follow-up items:`;
+    // Outlook collapses bare <ul>/<li> styling, so set list-style-type,
+    // margin, and padding inline to force visible bullets in the rendered
+    // draft. Owner is suffixed after an em-dash so it reads clearly even if
+    // the styled span gets stripped.
     const itemsHtml = items.length > 0
-      ? `<ul>${items.map(i => `<li>${esc(i.text)}${i.owner ? ` <span style="color:#64748B">(${esc(i.owner)})</span>` : ''}</li>`).join('')}</ul>`
+      ? `<ul style="margin: 0 0 12px 24px; padding: 0; list-style-type: disc;">${items.map(i => `<li style="margin: 3px 0; line-height: 1.45;">${esc(i.text)}${i.owner ? ` &mdash; <span style="color:#64748B;"><strong>Owner:</strong> ${esc(i.owner)}</span>` : ''}</li>`).join('')}</ul>`
       : '<p><em>(No Action Items / Next Steps captured on the form yet.)</em></p>';
-    const htmlContent = `<html><body><p>Hi,</p><p>${introLine}</p>${itemsHtml}<p>Let me know if I've missed anything or you'd like to dig deeper on any of these.</p><p>Thanks,</p></body></html>`;
+    const htmlContent = `<html><body style="font-family: Arial, sans-serif; font-size: 10pt; color: #1E293B;"><p>Hi,</p><p>${introLine}</p>${itemsHtml}<p>Let me know if I've missed anything or you'd like to dig deeper on any of these.</p><p>Thanks,</p></body></html>`;
 
     const toHeader = recipients.join(', ');
     const eml = [
@@ -2355,11 +2359,18 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       return (
                         <div
                           key={note.id}
-                          onClick={() => setSelectedOppId(note.id)}
-                          onDoubleClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            startInlineRename(note.id, note.title);
+                          // Listen on mousedown so we can enter rename mode BEFORE
+                          // the second click's default action (text selection /
+                          // focus shift) fires, which was previously committing
+                          // and tearing the input down between renders.
+                          onMouseDown={(e) => {
+                            if (e.detail >= 2) {
+                              e.preventDefault();
+                              startInlineRename(note.id, note.title);
+                            }
+                          }}
+                          onClick={() => {
+                            if (renamingOppId !== note.id) setSelectedOppId(note.id);
                           }}
                           style={{
                             display: 'flex', alignItems: 'center', gap: '0.3rem',
@@ -2446,10 +2457,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             title="Double-click to rename"
                             onMouseEnter={(e) => { e.currentTarget.style.background = '#F1F5F9'; }}
                             onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                            onDoubleClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              startInlineRename(selectedOpp.id, selectedOpp.title);
+                            onMouseDown={(e) => {
+                              if (e.detail >= 2) {
+                                e.preventDefault();
+                                startInlineRename(selectedOpp.id, selectedOpp.title);
+                              }
                             }}
                           >{selectedOpp.title}</span>
                         )}
