@@ -3541,6 +3541,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                           };
                         }
                         cell.alignment = { vertical: 'middle', horizontal: i === 0 ? 'center' : 'left', wrapText: false };
+                        // Light SE-green wash on deep-dive rows; the year-column
+                        // override below can still replace it with its recency tint.
+                        if (isFrameRow) {
+                          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDCFCE7' } };
+                        }
                         // Number formats
                         if (i === 0 || i === 7) cell.numFmt = '0';
                         if (i === 3 || i === 4) cell.numFmt = '#,##0';
