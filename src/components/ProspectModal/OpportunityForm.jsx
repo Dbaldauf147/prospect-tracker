@@ -74,6 +74,7 @@ export const DEFAULT_FORM_TEMPLATE = {
       key: 'meetingNotes',
       label: 'Key Issues',
       underField: 'summary', // rendered inline beneath the Meeting Summary / Notes field
+      starrable: true, // star-to-promote: one row at a time bubbles to the top
       columns: [
         { key: 'issue', label: 'Issue' },
         { key: 'evidence', label: 'Evidence' },
@@ -813,6 +814,23 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     set({ tables: { ...formData.tables, [tableKey]: rows } });
   };
 
+  // Star / prioritize a row. Starring promotes the row to the top of the
+  // table and un-stars every sibling so the "top issue" is unambiguous.
+  // Clicking a filled star un-stars it in place (without moving rows).
+  const toggleRowStar = (tableKey, rowIdx) => {
+    const rows = [...(formData.tables[tableKey] || [])];
+    if (!rows[rowIdx]) return;
+    if (rows[rowIdx].starred) {
+      rows[rowIdx] = { ...rows[rowIdx], starred: false };
+      set({ tables: { ...formData.tables, [tableKey]: rows } });
+      return;
+    }
+    const cleared = rows.map(r => (r?.starred ? { ...r, starred: false } : r));
+    const [picked] = cleared.splice(rowIdx, 1);
+    cleared.unshift({ ...picked, starred: true });
+    set({ tables: { ...formData.tables, [tableKey]: cleared } });
+  };
+
   // HTML5 drag-and-drop reorder for reorderable tables. dragRowRef
   // remembers the grabbed row between dragStart and drop.
   const dragRowRef = useRef(null);
@@ -881,6 +899,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
           <table style={sx.table}>
             <thead>
               <tr>
+                {t.starrable && <th style={{ ...sx.th, width: 28 }} title="Star the top issue"></th>}
                 {t.columns.map(c => (
                   <th
                     key={c.key}
@@ -903,11 +922,26 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                   onDragLeave={t.reorderable ? handleRowDragLeave : undefined}
                   onDrop={t.reorderable ? handleRowDrop(t.key, rIdx) : undefined}
                   onDragEnd={t.reorderable ? handleRowDragEnd : undefined}
-                  style={t.reorderable ? {
-                    cursor: 'grab',
-                    background: dragOverKey === `${t.key}:${rIdx}` ? '#EFF6FF' : undefined,
-                  } : undefined}
+                  style={{
+                    ...(t.reorderable ? { cursor: 'grab' } : {}),
+                    ...(t.starrable && row?.starred ? { background: '#FEF3C7' } : {}),
+                    ...(dragOverKey === `${t.key}:${rIdx}` ? { background: '#EFF6FF' } : {}),
+                  }}
                 >
+                  {t.starrable && (
+                    <td style={{ ...sx.td, textAlign: 'center', padding: '0.3rem 0.2rem' }}>
+                      <button
+                        type="button"
+                        onClick={() => toggleRowStar(t.key, rIdx)}
+                        title={row?.starred ? 'Unstar — remove priority' : 'Star as the top issue (moves to top)'}
+                        style={{
+                          background: 'transparent', border: 'none', cursor: 'pointer',
+                          padding: '0 2px', lineHeight: 1, fontSize: '1rem',
+                          color: row?.starred ? '#F59E0B' : '#CBD5E1',
+                        }}
+                      >{row?.starred ? '★' : '☆'}</button>
+                    </td>
+                  )}
                   {t.columns.map(c => {
                     // Any column flagged attendeePicker renders as a grouped
                     // dropdown sourced from the imported meeting's attendees
