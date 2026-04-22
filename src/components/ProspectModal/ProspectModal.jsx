@@ -3495,7 +3495,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     // first) get a thicker SE-green frame so the reader sees
                     // at a glance which firms are the "selected" top 5.
                     const TOP_N = Math.min(5, data.length);
-                    const topBorder = { style: 'medium', color: { argb: SE_GREEN_DARK } };
+                    const frameBorder = { style: 'medium', color: { argb: SE_GREEN_DARK } };
                     const thinBorder = { style: 'thin', color: { argb: SE_BORDER } };
                     data.forEach((vals, idx) => {
                       const row = ws.getRow(4 + idx);
@@ -3508,12 +3508,23 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
                         const isFirstCol = i === 0;
                         const isLastCol = i === headers.length - 1;
-                        cell.border = {
-                          top: isFirstTopRow ? topBorder : undefined,
-                          bottom: isLastTopRow ? topBorder : thinBorder,
-                          left: isTop && isFirstCol ? topBorder : thinBorder,
-                          right: isTop && isLastCol ? topBorder : thinBorder,
-                        };
+                        // Explicit all-sides borders: leaving `top` undefined on
+                        // middle/last rows previously suppressed the frame's
+                        // left/right/bottom edges in some Excel viewers.
+                        if (isTop) {
+                          cell.border = {
+                            top: isFirstTopRow ? frameBorder : thinBorder,
+                            bottom: isLastTopRow ? frameBorder : thinBorder,
+                            left: isFirstCol ? frameBorder : thinBorder,
+                            right: isLastCol ? frameBorder : thinBorder,
+                          };
+                        } else {
+                          cell.border = {
+                            bottom: thinBorder,
+                            left: thinBorder,
+                            right: thinBorder,
+                          };
+                        }
                         cell.alignment = { vertical: 'middle', horizontal: i === 0 ? 'center' : 'left', wrapText: false };
                         // Number formats
                         if (i === 0 || i === 7) cell.numFmt = '0';
