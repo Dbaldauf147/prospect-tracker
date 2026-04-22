@@ -2,12 +2,15 @@ import { useState } from 'react';
 import { RAClientsView } from '../RAClientsView/RAClientsView';
 import { TargetAccountsView } from '../TargetAccountsView/TargetAccountsView';
 import { RECAClientsView } from '../RECAClientsView/RECAClientsView';
+import { UploadedListView } from '../UploadedListView/UploadedListView';
 import styles from './ListsView.module.css';
 
 const SUBTABS = [
   { key: 'raclients', label: 'RA Clients' },
   { key: 'targets', label: 'Target Accounts' },
   { key: 'recaclients', label: 'RECA Clients' },
+  { key: 'csrd', label: 'CSRD' },
+  { key: 'cdp', label: 'CDP' },
 ];
 
 function DataSourceLink({ storageKey }) {
@@ -106,6 +109,24 @@ export function ListsView({ onTargetAccountsLoaded }) {
         {subtab === 'raclients' && <RAClientsView />}
         {subtab === 'targets' && <TargetAccountsView onDataLoaded={onTargetAccountsLoaded} />}
         {subtab === 'recaclients' && <RECAClientsView />}
+        {subtab === 'csrd' && (
+          <UploadedListView
+            storageKey="csrd-list-override"
+            tableIdPrefix="csrd-list"
+            title="CSRD"
+            singular="company"
+            plural="companies"
+          />
+        )}
+        {subtab === 'cdp' && (
+          <UploadedListView
+            storageKey="cdp-list-override"
+            tableIdPrefix="cdp-list"
+            title="CDP"
+            singular="company"
+            plural="companies"
+          />
+        )}
       </div>
     </div>
   );
