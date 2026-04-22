@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -131,6 +131,16 @@ export function OppsView() {
   const [dateTo, setDateTo] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [activityFilter, setActivityFilter] = useState('all');
+  // First time the user opens the By Service tab, flip the Show filter to
+  // "Active only" since that's the useful default for that view. A ref so
+  // we only auto-apply once and don't clobber later deliberate changes.
+  const servicesDefaultAppliedRef = useRef(false);
+  useEffect(() => {
+    if (activeTab === 'services' && !servicesDefaultAppliedRef.current) {
+      servicesDefaultAppliedRef.current = true;
+      setActivityFilter(prev => (prev === 'all' ? 'active' : prev));
+    }
+  }, [activeTab]);
   const [hiddenServices, setHiddenServices] = useState(() => {
     try { return new Set(JSON.parse(localStorage.getItem('opps-services-hidden')) || []); }
     catch { return new Set(); }
