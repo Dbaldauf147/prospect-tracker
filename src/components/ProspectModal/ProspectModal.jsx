@@ -1739,36 +1739,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     });
   }, [companyOppsData, writeCompanyOpps]);
 
-  // Non-prompting rename used by the inline double-click editors (tab strip
-  // and the title next to the Hide button).
-  const renameOpportunityTo = useCallback((oppId, nextTitle) => {
-    const trimmed = (nextTitle || '').trim();
-    const current = (companyOppsData.opportunities || []).find(o => o.id === oppId);
-    if (!current) return;
-    if (!trimmed || trimmed === current.title) return;
-    writeCompanyOpps({
-      buckets: companyOppsData.buckets || [],
-      opportunities: (companyOppsData.opportunities || []).map(o =>
-        o.id === oppId ? { ...o, title: trimmed, titleAuto: false, updatedAt: Date.now() } : o
-      ),
-    });
-  }, [companyOppsData, writeCompanyOpps]);
-
-  const [renamingOppId, setRenamingOppId] = useState(null);
-  const [renamingDraft, setRenamingDraft] = useState('');
-  const startInlineRename = useCallback((id, currentTitle) => {
-    setRenamingOppId(id);
-    setRenamingDraft(currentTitle || '');
-  }, []);
-  const commitInlineRename = useCallback(() => {
-    if (renamingOppId) renameOpportunityTo(renamingOppId, renamingDraft);
-    setRenamingOppId(null);
-    setRenamingDraft('');
-  }, [renamingOppId, renamingDraft, renameOpportunityTo]);
-  const cancelInlineRename = useCallback(() => {
-    setRenamingOppId(null);
-    setRenamingDraft('');
-  }, []);
+  // Inline-rename plumbing was swapped out for window.prompt via
+  // renameOpportunity — see the tab strip below. Focus/blur races between
+  // the double-click and the mounted input were silently committing the
+  // empty draft before the user could type.
 
   const deleteOpportunity = useCallback((oppId) => {
     const opp = (companyOppsData.opportunities || []).find(o => o.id === oppId);
@@ -1811,14 +1785,17 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     // Source follow-up items from the Form's "Action Items / Next Steps"
     // table (rows with a non-empty `item`). Each row's Owner is shown in
     // parens after the action so the reader sees who's on the hook.
-    const actionRows = Array.isArray(selectedOpp?.formData?.tables?.actionItems)
-      ? selectedOpp.formData.tables.actionItems
-      : [];
+    // Pull Action Items / Next Steps rows. Fall back across possible keys
+    // (item/text/action/description/title) so a legacy row shape still
+    // surfaces content instead of silently being filtered out.
+    const actionTables = selectedOpp?.formData?.tables || {};
+    const actionRows = Array.isArray(actionTables.actionItems)
+      ? actionTables.actionItems
+      : (Array.isArray(actionTables.nextSteps) ? actionTables.nextSteps : []);
+    const pickText = (r) => String(r?.item ?? r?.text ?? r?.action ?? r?.description ?? r?.title ?? '').trim();
+    const pickOwner = (r) => String(r?.owner ?? r?.assignee ?? r?.who ?? '').trim();
     const items = actionRows
-      .map(r => ({
-        text: String(r?.item || '').trim(),
-        owner: String(r?.owner || '').trim(),
-      }))
+      .map(r => ({ text: pickText(r), owner: pickOwner(r) }))
       .filter(i => i.text);
 
     // Recipients: reply-all behavior — union of the opportunity's linked
@@ -1862,7 +1839,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     const itemsHtml = items.length > 0
       ? `<ul style="margin: 0 0 12px 24px; padding: 0; list-style-type: disc;">${items.map(i => `<li style="margin: 3px 0; line-height: 1.45;">${esc(i.text)}${i.owner ? ` &mdash; <span style="color:#64748B;"><strong>Owner:</strong> ${esc(i.owner)}</span>` : ''}</li>`).join('')}</ul>`
       : '<p><em>(No Action Items / Next Steps captured on the form yet.)</em></p>';
-    const htmlContent = `<html><body style="font-family: Arial, sans-serif; font-size: 10pt; color: #1E293B;"><p>Hi,</p><p>${introLine}</p>${itemsHtml}<p>Let me know if I've missed anything or you'd like to dig deeper on any of these.</p><p>Thanks,</p></body></html>`;
+    // Append the saved email signature (from the Draft Emails page /
+    // settings.emailSignature) so the draft is ready to send, not a stub.
+    const signatureHtml = String(settings?.emailSignature || '').trim();
+    const signatureBlock = signatureHtml ? `<br><div>${signatureHtml}</div>` : '';
+    const htmlContent = `<html><body style="font-family: Arial, sans-serif; font-size: 10pt; color: #1E293B;"><p>Hi,</p><p>${introLine}</p>${itemsHtml}<p>Let me know if I've missed anything or you'd like to dig deeper on any of these.</p><p>Thanks,</p>${signatureBlock}</body></html>`;
 
     const toHeader = recipients.join(', ');
     const eml = [
@@ -1887,7 +1868,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }, [selectedOpp, companyContacts, fields.company]);
+  }, [selectedOpp, companyContacts, fields.company, settings?.emailSignature]);
 
   const downloadOppAsDocx = useCallback(async () => {
     if (!selectedOpp) return;
@@ -2359,19 +2340,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       return (
                         <div
                           key={note.id}
-                          // Listen on mousedown so we can enter rename mode BEFORE
-                          // the second click's default action (text selection /
-                          // focus shift) fires, which was previously committing
-                          // and tearing the input down between renders.
-                          onMouseDown={(e) => {
-                            if (e.detail >= 2) {
-                              e.preventDefault();
-                              startInlineRename(note.id, note.title);
-                            }
-                          }}
-                          onClick={() => {
-                            if (renamingOppId !== note.id) setSelectedOppId(note.id);
-                          }}
+                          onClick={() => setSelectedOppId(note.id)}
+                          onDoubleClick={(e) => { e.preventDefault(); e.stopPropagation(); renameOpportunity(note.id); }}
                           style={{
                             display: 'flex', alignItems: 'center', gap: '0.3rem',
                             padding: '0.35rem 0.6rem 0.35rem 0.75rem',
@@ -2389,31 +2359,17 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             whiteSpace: 'nowrap',
                             userSelect: 'none',
                           }}
-                          title={renamingOppId === note.id ? 'Editing name' : (note.title || 'New form') + ' · double-click to rename'}
+                          title={(note.title || 'New form') + ' · double-click or ✎ to rename'}
                         >
-                          {renamingOppId === note.id ? (
-                            <input
-                              value={renamingDraft}
-                              onChange={e => setRenamingDraft(e.target.value)}
-                              onBlur={commitInlineRename}
-                              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commitInlineRename(); } if (e.key === 'Escape') cancelInlineRename(); }}
-                              onClick={e => e.stopPropagation()}
-                              autoFocus
-                              style={{ padding: '0.1rem 0.3rem', fontSize: '0.78rem', fontWeight: 600, border: '1px solid #009530', borderRadius: 3, background: '#fff', width: 140, fontFamily: 'inherit' }}
-                            />
-                          ) : (
-                            <>
-                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                {note.title || 'New form'}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={(e) => { e.stopPropagation(); startInlineRename(note.id, note.title); }}
-                                title="Rename tab"
-                                style={{ background: 'transparent', border: 'none', color: '#94A3B8', fontSize: '0.75rem', cursor: 'pointer', padding: '0 0.2rem', lineHeight: 1 }}
-                              >✎</button>
-                            </>
-                          )}
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {note.title || 'New form'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); renameOpportunity(note.id); }}
+                            title="Rename tab"
+                            style={{ background: 'transparent', border: 'none', color: '#94A3B8', fontSize: '0.75rem', cursor: 'pointer', padding: '0 0.2rem', lineHeight: 1 }}
+                          >✎</button>
                           <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); deleteOpportunity(note.id); }}
@@ -2442,29 +2398,13 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         >
                           Hide
                         </button>
-                        {renamingOppId === selectedOpp.id ? (
-                          <input
-                            value={renamingDraft}
-                            onChange={e => setRenamingDraft(e.target.value)}
-                            onBlur={commitInlineRename}
-                            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commitInlineRename(); } if (e.key === 'Escape') cancelInlineRename(); }}
-                            autoFocus
-                            style={{ fontWeight: 600, fontSize: '0.9rem', flex: 1, padding: '0.2rem 0.4rem', border: '1px solid #009530', borderRadius: 4, fontFamily: 'inherit' }}
-                          />
-                        ) : (
-                          <span
-                            style={{ fontWeight: 600, fontSize: '0.9rem', flex: 1, cursor: 'pointer', padding: '0.15rem 0.25rem', borderRadius: 3 }}
-                            title="Double-click to rename"
-                            onMouseEnter={(e) => { e.currentTarget.style.background = '#F1F5F9'; }}
-                            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                            onMouseDown={(e) => {
-                              if (e.detail >= 2) {
-                                e.preventDefault();
-                                startInlineRename(selectedOpp.id, selectedOpp.title);
-                              }
-                            }}
-                          >{selectedOpp.title}</span>
-                        )}
+                        <span
+                          style={{ fontWeight: 600, fontSize: '0.9rem', flex: 1, cursor: 'pointer', padding: '0.15rem 0.25rem', borderRadius: 3 }}
+                          title="Double-click to rename"
+                          onMouseEnter={(e) => { e.currentTarget.style.background = '#F1F5F9'; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                          onDoubleClick={() => renameOpportunity(selectedOpp.id)}
+                        >{selectedOpp.title}</span>
                         <select
                           value={selectedOpp.bucketId}
                           onChange={e => moveOpportunity(selectedOpp.id, e.target.value)}
@@ -2476,7 +2416,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         </select>
                         <button
                           type="button"
-                          onClick={() => startInlineRename(selectedOpp.id, selectedOpp.title)}
+                          onClick={() => renameOpportunity(selectedOpp.id)}
                           style={{ fontSize: '0.72rem', padding: '0.25rem 0.5rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 4, cursor: 'pointer' }}
                         >
                           Rename
