@@ -1821,14 +1821,35 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       }))
       .filter(i => i.text);
 
+    // Recipients: reply-all behavior — union of the opportunity's linked
+    // contacts and everyone on the imported meeting (organizer + ICS
+    // attendees + manual additions), deduped by lowercased email.
     const linkedIds = new Set((selectedOpp.contactIds || []).map(String));
-    const recipients = (companyContacts || [])
+    const recipientMap = new Map();
+    const addEmail = (email) => {
+      const e = String(email || '').trim();
+      if (!e) return;
+      const key = e.toLowerCase();
+      if (!recipientMap.has(key)) recipientMap.set(key, e);
+    };
+    (companyContacts || [])
       .filter(c => linkedIds.has(String(c.id || c.vid)))
-      .map(c => c.email)
-      .filter(Boolean);
+      .forEach(c => addEmail(c.email));
+    const meeting = selectedOpp?.formData?.meeting;
+    if (meeting) {
+      if (meeting.organizer?.email) addEmail(meeting.organizer.email);
+      for (const a of (meeting.attendees || [])) addEmail(a?.email);
+      for (const a of (meeting.manualAttendees || [])) addEmail(a?.email);
+    }
+    const recipients = [...recipientMap.values()];
 
+    // Subject mirrors a reply-all to the original meeting when one is
+    // attached; otherwise we fall back to the company/opp title.
+    const meetingSubject = String(meeting?.subject || '').trim();
     const titleBit = selectedOpp.title ? ` — ${selectedOpp.title}` : '';
-    const subject = `Follow-up — ${fields.company || 'our conversation'}${titleBit}`;
+    const subject = meetingSubject
+      ? (/^re:\s/i.test(meetingSubject) ? meetingSubject : `Re: ${meetingSubject}`)
+      : `Follow-up — ${fields.company || 'our conversation'}${titleBit}`;
 
     // Build the HTML body — bulleted list for the to-do items.
     const esc = s => String(s || '')
