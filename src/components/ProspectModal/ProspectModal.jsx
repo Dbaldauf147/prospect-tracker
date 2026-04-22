@@ -413,6 +413,7 @@ function industryTier(industry) {
 const PORTFOLIO_FIELD_OPTIONS = [
   { key: '', label: '— Ignore this column —' },
   { key: 'companyName', label: 'Company Name (required)' },
+  { key: 'opportunityScore', label: 'Opportunity Score (0-100)' },
   { key: 'sector', label: 'Sector' },
   { key: 'subsector', label: 'Subsector' },
   { key: 'subsectorScore', label: 'Subsector Score (1-10)' },
@@ -430,6 +431,13 @@ const PORTFOLIO_FIELD_OPTIONS = [
 ];
 
 function computePortfolioFitScore(row, maxEnergy, maxSites, yearRange) {
+  // If the uploaded file carries an Opportunity Score column, use that
+  // verbatim — the methodology-tab formula below is then just reference
+  // material for how the uploader is expected to have scored the rows.
+  if (row.opportunityScore != null && row.opportunityScore !== '') {
+    const uploaded = Number(row.opportunityScore);
+    if (Number.isFinite(uploaded)) return Math.round(uploaded);
+  }
   // Sector fit precedence:
   //   1. Subsector Score — only used when BOTH a Subsector label and a
   //      numeric Subsector Score are present.
@@ -1203,6 +1211,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       const headers = Object.keys(data[0]);
       const patterns = {
         companyName: ['companyname', 'company'],
+        // Opportunity score before the fit-score patterns so a header literally
+        // named "Opportunity Score" doesn't get swallowed by sectorScore.
+        opportunityScore: ['opportunityscore', 'oppscore'],
         // Subsector before sector so a header literally named "Subsector Score"
         // wins over the broader "sector" / "score" patterns.
         subsectorScore: ['subsectorscore', 'subsectorfit', 'subsectorrating'],
@@ -5099,7 +5110,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               .map(r => {
                 const out = {
                   companyName: '', sector: '', subsector: '',
-                  sectorScore: '', subsectorScore: '',
+                  sectorScore: '', subsectorScore: '', opportunityScore: '',
                   hqCity: '', hqCountry: '',
                   energyGwh: '', siteCount: '', pcDescription: '', acquisitionYear: '',
                   notes: '',
