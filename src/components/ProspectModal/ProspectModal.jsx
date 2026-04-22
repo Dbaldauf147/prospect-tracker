@@ -7,7 +7,7 @@ import { asBlob as htmlToDocxBlob } from 'html-docx-js-typescript';
 import mammoth from 'mammoth/mammoth.browser';
 import { OpportunityForm } from './OpportunityForm';
 import { loadEffectiveRaClients, raClientName, raClientCm } from '../../utils/raClientsStore';
-import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES, COUNTRIES } from '../../data/enums';
+import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES, COUNTRIES, US_STATES } from '../../data/enums';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import styles from './ProspectModal.module.css';
 
@@ -754,7 +754,13 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
           <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>Company</label><input style={inputStyle} value={f.company} onChange={e => set('company', e.target.value)} /></div>
           <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>LinkedIn URL</label><input style={inputStyle} value={f.hs_linkedin_url} onChange={e => set('hs_linkedin_url', e.target.value)} /></div>
           <div><label style={labelStyle}>City</label><input style={inputStyle} value={f.city} onChange={e => set('city', e.target.value)} /></div>
-          <div><label style={labelStyle}>State</label><input style={inputStyle} value={f.state} onChange={e => set('state', e.target.value)} /></div>
+          <div>
+            <label style={labelStyle}>State</label>
+            <input style={inputStyle} list="state-list" value={f.state} onChange={e => set('state', e.target.value)} placeholder="Start typing..." />
+            <datalist id="state-list">
+              {US_STATES.map(s => <option key={s} value={s} />)}
+            </datalist>
+          </div>
           <div style={{ gridColumn: 'span 2' }}>
             <label style={labelStyle}>Country</label>
             <input style={inputStyle} list="country-list" value={f.country} onChange={e => set('country', e.target.value)} placeholder="Start typing..." />
