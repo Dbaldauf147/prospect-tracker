@@ -1832,12 +1832,13 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     const esc = s => String(s || '')
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     const introLine = `Thanks again for the conversation${fields.company ? ` about ${esc(fields.company)}` : ''}${selectedOpp.title ? ` (${esc(selectedOpp.title)})` : ''}. Below is a recap of the follow-up items:`;
-    // Outlook collapses bare <ul>/<li> styling, so set list-style-type,
-    // margin, and padding inline to force visible bullets in the rendered
-    // draft. Owner is suffixed after an em-dash so it reads clearly even if
-    // the styled span gets stripped.
+    // Outlook's .eml → draft workflow strips <ul>/<li> styling when
+    // converting the HTML into its internal compose format, so bullets
+    // disappear even though the source markup is correct. Render each
+    // action item as a standalone <div> with a literal bullet character
+    // so Outlook always shows it regardless of list-style handling.
     const itemsHtml = items.length > 0
-      ? `<ul style="margin: 0 0 12px 24px; padding: 0; list-style-type: disc;">${items.map(i => `<li style="margin: 3px 0; line-height: 1.45;">${esc(i.text)}${i.owner ? ` &mdash; <span style="color:#64748B;"><strong>Owner:</strong> ${esc(i.owner)}</span>` : ''}</li>`).join('')}</ul>`
+      ? items.map(i => `<div style="margin: 4px 0; line-height: 1.45;">&#8226;&nbsp;&nbsp;${esc(i.text)}${i.owner ? ` &mdash; <span style="color:#64748B;"><strong>Owner:</strong> ${esc(i.owner)}</span>` : ''}</div>`).join('')
       : '<p><em>(No Action Items / Next Steps captured on the form yet.)</em></p>';
     // Append the saved email signature (from the Draft Emails page /
     // settings.emailSignature) so the draft is ready to send, not a stub.
