@@ -1842,32 +1842,32 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       ? items.map(i => `<div style="margin: 4px 0; line-height: 1.45;">&#8226;&nbsp;&nbsp;${esc(i.text)}${i.owner ? ` &mdash; <span style="color:#64748B;"><strong>Owner:</strong> ${esc(i.owner)}</span>` : ''}</div>`).join('')
       : '<p><em>(No Action Items / Next Steps captured on the form yet.)</em></p>';
     // Append the saved email signature (from the Draft Emails page /
-    // settings.emailSignature). If the user never explicitly saved a
-    // signature we still have the shared DEFAULT_EMAIL_SIGNATURE block to
-    // fall back on — Draft Emails uses it as its own default, so the
-    // follow-up draft stays consistent with the compose UI.
+    // settings.emailSignature). Fall back to the shared default so users
+    // who never edited their signature still get one.
     const storedSig = String(settings?.emailSignature || '').trim();
     const signatureHtml = storedSig || DEFAULT_EMAIL_SIGNATURE;
-    const signatureBlock = signatureHtml ? `<br><div>${signatureHtml}</div>` : '';
-    const htmlContent = `<html><body style="font-family: Arial, sans-serif; font-size: 10pt; color: #1E293B;"><p>Hi,</p><p>${introLine}</p>${itemsHtml}<p>Let me know if I've missed anything or you'd like to dig deeper on any of these.</p><p>Thanks,</p>${signatureBlock}</body></html>`;
+    const signatureBlock = signatureHtml ? `\n<br>\n<div>\n${signatureHtml}\n</div>` : '';
+    // Mirror the Draft Emails page's proven .eml format:
+    //   • MSO-flavored <html> wrapper so Outlook opens it cleanly.
+    //   • Body wrapped in an Aptos/Calibri/Arial div at 12pt.
+    //   • \n inserted after </p> / </div> close tags — Outlook's MIME
+    //     parser misrenders very long single-line HTML, and line-folding
+    //     keeps each line under the RFC 5322 998-char cap without forcing
+    //     base64.
+    let body = `<p>Hi,</p><p>${introLine}</p>${itemsHtml}<p>Let me know if I've missed anything or you'd like to dig deeper on any of these.</p><p>Thanks,</p>`;
+    body = body.replace(/<\/p>/gi, '</p>\n').replace(/<\/div>/gi, '</div>\n');
+    const htmlContent = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">\n<head>\n<!--[if gte mso 9]><xml><w:WordDocument><w:DontHyphenate/><w:DoNotHyphenateCaps/></w:WordDocument></xml><![endif]-->\n</head>\n<body style="margin:0;padding:0;">\n<div style="font-family:Aptos,Calibri,Arial,sans-serif;font-size:12pt;">\n${body}\n</div>${signatureBlock}\n</body>\n</html>`;
 
     const toHeader = recipients.join(', ');
-    // Outlook's .eml parser follows RFC 5322's 998-char line cap and silently
-    // truncates or mangles HTML bodies that exceed it in a single line. Our
-    // body grows past that cap once the signature block is appended, so
-    // encode the HTML as base64 and wrap at 76 chars — Outlook renders the
-    // full document (bullets + signature) reliably in that form.
-    const utf8Body = unescape(encodeURIComponent(htmlContent));
-    const bodyBase64 = (btoa(utf8Body).match(/.{1,76}/g) || []).join('\r\n');
     const eml = [
       'MIME-Version: 1.0',
       `Subject: ${subject}`,
       toHeader ? `To: ${toHeader}` : null,
       'X-Unsent: 1',
       'Content-Type: text/html; charset=UTF-8',
-      'Content-Transfer-Encoding: base64',
+      'Content-Transfer-Encoding: 8bit',
       '',
-      bodyBase64,
+      htmlContent,
     ].filter(Boolean).join('\r\n');
 
     const safeName = (selectedOpp.title || fields.company || 'follow-up')
