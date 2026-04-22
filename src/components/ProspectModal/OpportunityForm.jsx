@@ -79,7 +79,7 @@ export const DEFAULT_FORM_TEMPLATE = {
       columns: [
         { key: 'issue', label: 'Issue - Capture all issues (What else is there?)' },
         { key: 'evidence', label: 'Evidence - How does this show up today?', bulletList: true },
-        { key: 'impact', label: 'Impact - What does that cost you? How much time are you spending on that?' },
+        { key: 'impact', label: 'Impact - What does that cost you? How much time are you spending on that?', bulletList: true },
       ],
     },
     {
