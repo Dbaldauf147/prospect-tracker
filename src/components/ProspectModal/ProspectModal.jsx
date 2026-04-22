@@ -2398,13 +2398,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         >
                           Hide
                         </button>
-                        <span
-                          style={{ fontWeight: 600, fontSize: '0.9rem', flex: 1, cursor: 'pointer', padding: '0.15rem 0.25rem', borderRadius: 3 }}
-                          title="Double-click to rename"
-                          onMouseEnter={(e) => { e.currentTarget.style.background = '#F1F5F9'; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                          onDoubleClick={() => renameOpportunity(selectedOpp.id)}
-                        >{selectedOpp.title}</span>
+                        <div style={{ flex: 1 }} />
                         <select
                           value={selectedOpp.bucketId}
                           onChange={e => moveOpportunity(selectedOpp.id, e.target.value)}
