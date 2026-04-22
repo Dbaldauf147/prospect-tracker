@@ -11,10 +11,13 @@ import { useState, useEffect, useRef, memo } from 'react';
 //   onCommit    — called with the new value on blur (and on Enter for <input>)
 //   multiline   — render a <textarea> instead of an <input>
 //   autoGrow    — when multiline, auto-resize the textarea to fit its content
+//   bulletList  — multiline: focusing an empty cell inserts "• " and Enter
+//                 inserts "\n• " at the cursor so the user gets a running
+//                 bullet list without typing the glyph themselves.
 //   type        — input type (default 'text'); ignored when multiline
 //   ...rest     — forwarded to the underlying element (style, placeholder, etc.)
 export const CommitOnBlurInput = memo(function CommitOnBlurInput({
-  value, onCommit, multiline, autoGrow, type, onKeyDown, style, ...rest
+  value, onCommit, multiline, autoGrow, bulletList, type, onKeyDown, onFocus, style, ...rest
 }) {
   const [local, setLocal] = useState(value ?? '');
   const lastExternal = useRef(value ?? '');
@@ -46,10 +49,40 @@ export const CommitOnBlurInput = memo(function CommitOnBlurInput({
     }
   };
   const handleKey = (e) => {
+    if (bulletList && multiline && e.key === 'Enter') {
+      e.preventDefault();
+      const el = e.currentTarget;
+      const start = el.selectionStart;
+      const end = el.selectionEnd;
+      const insertion = '\n• ';
+      const next = local.slice(0, start) + insertion + local.slice(end);
+      setLocal(next);
+      // Defer cursor placement until after React has written the new value.
+      requestAnimationFrame(() => {
+        if (el && el.isConnected) {
+          const pos = start + insertion.length;
+          el.selectionStart = el.selectionEnd = pos;
+        }
+      });
+      return;
+    }
     if (!multiline && e.key === 'Enter') {
       e.currentTarget.blur();
     }
     if (onKeyDown) onKeyDown(e);
+  };
+
+  const handleFocus = (e) => {
+    if (bulletList && multiline && !local) {
+      setLocal('• ');
+      requestAnimationFrame(() => {
+        const el = taRef.current;
+        if (el && el.isConnected) {
+          el.selectionStart = el.selectionEnd = 2;
+        }
+      });
+    }
+    if (onFocus) onFocus(e);
   };
 
   if (multiline) {
@@ -63,6 +96,7 @@ export const CommitOnBlurInput = memo(function CommitOnBlurInput({
         style={effectiveStyle}
         value={local}
         onChange={e => setLocal(e.target.value)}
+        onFocus={handleFocus}
         onBlur={handleBlur}
         onKeyDown={handleKey}
       />

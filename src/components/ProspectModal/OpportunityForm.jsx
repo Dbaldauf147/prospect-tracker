@@ -75,9 +75,10 @@ export const DEFAULT_FORM_TEMPLATE = {
       label: 'Key Issues',
       underField: 'summary', // rendered inline beneath the Meeting Summary / Notes field
       starrable: true, // star-to-promote: one row at a time bubbles to the top
+      wrapCells: true, // long-form note taking — textareas that grow with content
       columns: [
         { key: 'issue', label: 'Issue - Capture all issues (What else is there?)' },
-        { key: 'evidence', label: 'Evidence - How does this show up today?' },
+        { key: 'evidence', label: 'Evidence - How does this show up today?', bulletList: true },
         { key: 'impact', label: 'Impact - What does that cost you? How much time are you spending on that?' },
       ],
     },
@@ -1040,9 +1041,12 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                       );
                     }
                     return (
-                      <td key={c.key} style={sx.td}>
+                      <td key={c.key} style={{ ...sx.td, ...(t.wrapCells ? { verticalAlign: 'top' } : {}) }}>
                         <CommitOnBlurInput
-                          style={sx.cellInput}
+                          multiline={t.wrapCells || undefined}
+                          autoGrow={t.wrapCells || undefined}
+                          bulletList={c.bulletList || undefined}
+                          style={t.wrapCells ? { ...sx.cellInput, resize: 'none', minHeight: '1.8em', lineHeight: 1.4, whiteSpace: 'pre-wrap', wordBreak: 'break-word' } : sx.cellInput}
                           value={row[c.key] || ''}
                           onCommit={v => updateTableCell(t.key, rIdx, c.key, v)}
                         />
