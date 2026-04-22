@@ -3491,30 +3491,45 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     });
                     headerRow.height = 30;
 
-                    // Data rows. The first 5 (already sorted highest-score
-                    // first) get a thicker SE-green frame so the reader sees
-                    // at a glance which firms are the "selected" top 5.
-                    const TOP_N = Math.min(5, data.length);
+                    // Data rows. Any row whose Company Name appears on the
+                    // Top 5 Deep Dives tab gets a medium SE-green frame so
+                    // the reader sees at a glance which firms were selected
+                    // for deep dives. Rows aren't guaranteed contiguous, so
+                    // each match carries its own full 4-sided frame.
                     const frameBorder = { style: 'medium', color: { argb: SE_GREEN_DARK } };
                     const thinBorder = { style: 'thin', color: { argb: SE_BORDER } };
+                    const deepDiveNames = (() => {
+                      const t5 = fields.portfolioTopFive;
+                      if (!t5 || !Array.isArray(t5.rows) || !Array.isArray(t5.headers)) return new Set();
+                      const nameColIdx = t5.headers.findIndex(h => {
+                        const s = String(h || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+                        return s.includes('company') || s === 'name' || s.includes('portfolio');
+                      });
+                      const col = nameColIdx >= 0 ? nameColIdx : 1;
+                      const set = new Set();
+                      for (const r of t5.rows) {
+                        const v = String(r?.[col] ?? '').trim().toLowerCase();
+                        if (v) set.add(v);
+                      }
+                      return set;
+                    })();
                     data.forEach((vals, idx) => {
                       const row = ws.getRow(4 + idx);
-                      const isTop = idx < TOP_N;
-                      const isFirstTopRow = isTop && idx === 0;
-                      const isLastTopRow = isTop && idx === TOP_N - 1;
+                      const companyKey = String(vals[1] ?? '').trim().toLowerCase();
+                      const isFrameRow = companyKey && deepDiveNames.has(companyKey);
                       vals.forEach((v, i) => {
                         const cell = row.getCell(i + 1);
                         cell.value = v === '' || v == null ? null : v;
                         cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
                         const isFirstCol = i === 0;
                         const isLastCol = i === headers.length - 1;
-                        // Explicit all-sides borders: leaving `top` undefined on
-                        // middle/last rows previously suppressed the frame's
-                        // left/right/bottom edges in some Excel viewers.
-                        if (isTop) {
+                        // Each framed row is its own standalone rectangle —
+                        // top + bottom are medium on every cell, left/right
+                        // medium only at the row's outer columns.
+                        if (isFrameRow) {
                           cell.border = {
-                            top: isFirstTopRow ? frameBorder : thinBorder,
-                            bottom: isLastTopRow ? frameBorder : thinBorder,
+                            top: frameBorder,
+                            bottom: frameBorder,
                             left: isFirstCol ? frameBorder : thinBorder,
                             right: isLastCol ? frameBorder : thinBorder,
                           };
