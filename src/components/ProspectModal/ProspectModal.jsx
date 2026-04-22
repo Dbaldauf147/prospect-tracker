@@ -8,6 +8,7 @@ import mammoth from 'mammoth/mammoth.browser';
 import { OpportunityForm } from './OpportunityForm';
 import { loadEffectiveRaClients, raClientName, raClientCm } from '../../utils/raClientsStore';
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES, COUNTRIES, US_STATES } from '../../data/enums';
+import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import styles from './ProspectModal.module.css';
 
@@ -1841,8 +1842,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       ? items.map(i => `<div style="margin: 4px 0; line-height: 1.45;">&#8226;&nbsp;&nbsp;${esc(i.text)}${i.owner ? ` &mdash; <span style="color:#64748B;"><strong>Owner:</strong> ${esc(i.owner)}</span>` : ''}</div>`).join('')
       : '<p><em>(No Action Items / Next Steps captured on the form yet.)</em></p>';
     // Append the saved email signature (from the Draft Emails page /
-    // settings.emailSignature) so the draft is ready to send, not a stub.
-    const signatureHtml = String(settings?.emailSignature || '').trim();
+    // settings.emailSignature). If the user never explicitly saved a
+    // signature we still have the shared DEFAULT_EMAIL_SIGNATURE block to
+    // fall back on — Draft Emails uses it as its own default, so the
+    // follow-up draft stays consistent with the compose UI.
+    const storedSig = String(settings?.emailSignature || '').trim();
+    const signatureHtml = storedSig || DEFAULT_EMAIL_SIGNATURE;
     const signatureBlock = signatureHtml ? `<br><div>${signatureHtml}</div>` : '';
     const htmlContent = `<html><body style="font-family: Arial, sans-serif; font-size: 10pt; color: #1E293B;"><p>Hi,</p><p>${introLine}</p>${itemsHtml}<p>Let me know if I've missed anything or you'd like to dig deeper on any of these.</p><p>Thanks,</p>${signatureBlock}</body></html>`;
 

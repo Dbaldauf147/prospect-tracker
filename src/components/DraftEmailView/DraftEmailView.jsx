@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
 import { secureSet, secureGet, secureClear } from '../../utils/secureStorage';
+import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import styles from './DraftEmailView.module.css';
 
 function TagContactPicker({ allContacts, selectedContacts, onAdd, onRemove, onBulkAdd, onBulkRemove }) {
@@ -195,7 +196,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
   });
   const [draftCcInput, setDraftCcInput] = useState('');
   const [showDraftCcSuggestions, setShowDraftCcSuggestions] = useState(false);
-  const DEFAULT_SIGNATURE = '<table cellpadding="0" cellspacing="0" border="0" style="font-family: Arial, sans-serif; font-size: 7.5pt; color: #5F5F5F; line-height: 1.5;"><tbody><tr><td style="vertical-align: top;"><table cellpadding="0" cellspacing="0" border="0" style="font-family: Arial, sans-serif; font-size: 7.5pt; color: #5F5F5F;"><tbody><tr><td colspan="3" style="font-family: Arial, sans-serif; padding-bottom: 2px;"><strong style="color: #82C168; font-size: 10pt; font-family: Arial, sans-serif;">Dan Baldauf</strong></td></tr><tr><td style="vertical-align: top; padding-right: 24px; font-family: Arial, sans-serif;">Senior Manager<br>Schneider Electric Advisory<br>Services</td><td style="vertical-align: top; padding-right: 24px; white-space: nowrap; font-family: Arial, sans-serif;">C&nbsp; +1 (917) 787 1701<br>E&nbsp; <a href="mailto:daniel.baldauf@se.com" style="color: #0000EE; text-decoration: underline; font-size: 7.5pt; font-family: Arial, sans-serif;">daniel.baldauf@se.com</a></td><td style="vertical-align: top; white-space: nowrap; text-align: right; font-family: Arial, sans-serif;">1216 Broadway<br>New York, NY<br>10001 USA</td></tr><tr><td colspan="3" style="padding-top: 8px; font-family: Arial, sans-serif; font-size: 9pt;">Here is a <a href="https://outlook.office.com/bookwithme/user/466302b21b9e46f08ce1a412c14e5573%40se.com/meetingtype/SVRwCe7HMUGxuT6WGxi68g2?anonymous&amp;ismsaljsauthenabled" style="color: #0000EE; text-decoration: underline; font-size: 9pt; font-family: Arial, sans-serif;">link</a> to schedule a meeting on my calendar</td></tr></tbody></table></td></tr></tbody></table>';
+  const DEFAULT_SIGNATURE = DEFAULT_EMAIL_SIGNATURE;
   const [signature, setSignature] = useState(() => DEFAULT_SIGNATURE);
   // Sync signature from Firestore when settings load
   useEffect(() => {
