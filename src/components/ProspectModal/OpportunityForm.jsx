@@ -107,7 +107,80 @@ function emptyFormData(template = DEFAULT_FORM_TEMPLATE) {
 // ---- .ics parser --------------------------------------------------------
 // Unfolds wrapped lines per RFC 5545 (continuation lines start with space/tab),
 // then splits PROPERTY;PARAM=VAL:VALUE rows. Returns { subject, start, end,
-// durationMinutes, location, organizer, attendees }.
+// durationMinutes, location, organizer, attendees, sourceTimeZone }.
+const EASTERN_TZ = 'America/New_York';
+
+// Outlook emits TZID values using Microsoft's Windows timezone names rather
+// than IANA IDs, so map the common ones. Anything not here falls through to
+// the raw TZID (which Intl will accept if it's already IANA).
+const WIN_TO_IANA_TZ = {
+  'Eastern Standard Time': 'America/New_York',
+  'Central Standard Time': 'America/Chicago',
+  'Mountain Standard Time': 'America/Denver',
+  'US Mountain Standard Time': 'America/Phoenix',
+  'Pacific Standard Time': 'America/Los_Angeles',
+  'Alaskan Standard Time': 'America/Anchorage',
+  'Hawaiian Standard Time': 'Pacific/Honolulu',
+  'Atlantic Standard Time': 'America/Halifax',
+  'Newfoundland Standard Time': 'America/St_Johns',
+  'GMT Standard Time': 'Europe/London',
+  'Greenwich Standard Time': 'Atlantic/Reykjavik',
+  'W. Europe Standard Time': 'Europe/Berlin',
+  'Central Europe Standard Time': 'Europe/Budapest',
+  'Romance Standard Time': 'Europe/Paris',
+  'Central European Standard Time': 'Europe/Warsaw',
+  'E. Europe Standard Time': 'Europe/Bucharest',
+  'GTB Standard Time': 'Europe/Athens',
+  'FLE Standard Time': 'Europe/Kyiv',
+  'Russian Standard Time': 'Europe/Moscow',
+  'Turkey Standard Time': 'Europe/Istanbul',
+  'Israel Standard Time': 'Asia/Jerusalem',
+  'Arabian Standard Time': 'Asia/Dubai',
+  'India Standard Time': 'Asia/Kolkata',
+  'China Standard Time': 'Asia/Shanghai',
+  'Singapore Standard Time': 'Asia/Singapore',
+  'Tokyo Standard Time': 'Asia/Tokyo',
+  'Korea Standard Time': 'Asia/Seoul',
+  'AUS Eastern Standard Time': 'Australia/Sydney',
+  'W. Australia Standard Time': 'Australia/Perth',
+  'New Zealand Standard Time': 'Pacific/Auckland',
+  'South Africa Standard Time': 'Africa/Johannesburg',
+  'UTC': 'UTC',
+};
+
+function resolveTimeZone(tzid) {
+  if (!tzid) return null;
+  const clean = String(tzid).replace(/^"|"$/g, '').trim();
+  if (!clean) return null;
+  return WIN_TO_IANA_TZ[clean] || clean;
+}
+
+function getTimezoneOffsetMs(timeZone, date) {
+  try {
+    const fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone, hourCycle: 'h23',
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+    });
+    const parts = fmt.formatToParts(date).reduce((acc, p) => {
+      if (p.type !== 'literal') acc[p.type] = p.value;
+      return acc;
+    }, {});
+    const asUTC = Date.UTC(
+      +parts.year, +parts.month - 1, +parts.day,
+      +parts.hour, +parts.minute, +parts.second
+    );
+    return asUTC - date.getTime();
+  } catch { return 0; }
+}
+
+// Converts a wall-clock time expressed in `timeZone` into a real UTC Date.
+function wallTimeInZoneToUTC(y, moOneBased, d, h, mi, s, timeZone) {
+  const guess = Date.UTC(y, moOneBased - 1, d, h, mi, s);
+  const offset = getTimezoneOffsetMs(timeZone, new Date(guess));
+  return new Date(guess - offset);
+}
+
 function parseIcs(text) {
   if (!text) return null;
   // Unfold continuation lines
@@ -121,6 +194,7 @@ function parseIcs(text) {
   let dtEnd = null;
   let duration = null;
   let inEvent = false;
+  let sourceTzidRaw = null;
 
   const unescape = (s) => (s || '').replace(/\\n/gi, '\n').replace(/\\,/g, ',').replace(/\\;/g, ';').replace(/\\\\/g, '\\');
 
@@ -135,7 +209,15 @@ function parseIcs(text) {
       // UTC or date-only
       return new Date(Date.UTC(+y, +mo - 1, +d, +h, +mi, +s));
     }
-    // Floating or TZID-scoped: best-effort treat as local time
+    // Look for a TZID=... parameter on this property.
+    const tzidParam = (params || []).find(p => /^tzid=/i.test(p));
+    if (tzidParam) {
+      const tzid = resolveTimeZone(tzidParam.slice(tzidParam.indexOf('=') + 1));
+      if (tzid) {
+        try { return wallTimeInZoneToUTC(+y, +mo, +d, +h, +mi, +s, tzid); } catch {}
+      }
+    }
+    // Floating — fall back to treating as local time (pre-existing behavior).
     return new Date(+y, +mo - 1, +d, +h, +mi, +s);
   };
 
@@ -188,7 +270,15 @@ function parseIcs(text) {
     switch (propUpper) {
       case 'SUMMARY': subject = unescape(value); break;
       case 'LOCATION': location = unescape(value); break;
-      case 'DTSTART': dtStart = parseIcsDate(value, params); break;
+      case 'DTSTART': {
+        dtStart = parseIcsDate(value, params);
+        if (!sourceTzidRaw) {
+          const tzParam = params.find(p => /^tzid=/i.test(p));
+          if (tzParam) sourceTzidRaw = tzParam.slice(tzParam.indexOf('=') + 1).replace(/^"|"$/g, '').trim();
+          else if (/z$/i.test(value)) sourceTzidRaw = 'UTC';
+        }
+        break;
+      }
       case 'DTEND': dtEnd = parseIcsDate(value, params); break;
       case 'DURATION': duration = value; break;
       case 'ORGANIZER': {
@@ -222,15 +312,33 @@ function parseIcs(text) {
     location,
     organizer,
     attendees,
+    sourceTimeZone: sourceTzidRaw || null,
   };
 }
 
+// All meeting times render in Eastern (America/New_York) regardless of the
+// browser's locale so the team sees a single consistent clock. The source
+// timezone from the invite is noted separately in the UI.
 function formatDateTime(iso) {
   if (!iso) return '';
   try {
-    const d = new Date(iso);
-    return d.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+    return new Date(iso).toLocaleString('en-US', {
+      timeZone: EASTERN_TZ,
+      weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
+      hour: 'numeric', minute: '2-digit',
+      timeZoneName: 'short',
+    });
   } catch { return iso; }
+}
+
+function formatEasternTime(iso) {
+  if (!iso) return '';
+  try {
+    return new Date(iso).toLocaleTimeString('en-US', {
+      timeZone: EASTERN_TZ,
+      hour: 'numeric', minute: '2-digit',
+    });
+  } catch { return ''; }
 }
 
 function formatDuration(min) {
@@ -1318,7 +1426,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     try {
       const d = new Date(meetingStartIso);
       d.setMinutes(d.getMinutes() + priorSum);
-      return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      return formatEasternTime(d.toISOString());
     } catch { return ''; }
   }
 
@@ -1605,12 +1713,11 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
         addBlankRow();
         addSectionHeader('Meeting');
         addFieldRow('Subject', formData.meeting.subject || '');
-        addFieldRow('When', (() => {
-          try { return formData.meeting.start ? new Date(formData.meeting.start).toLocaleString() : ''; } catch { return ''; }
-        })());
-        addFieldRow('Ends', (() => {
-          try { return formData.meeting.end ? new Date(formData.meeting.end).toLocaleString() : ''; } catch { return ''; }
-        })());
+        addFieldRow('When', formatDateTime(formData.meeting.start));
+        addFieldRow('Ends', formatDateTime(formData.meeting.end));
+        if (formData.meeting.sourceTimeZone) {
+          addFieldRow('Original TZ', formData.meeting.sourceTimeZone);
+        }
         const mins = formData.meeting.durationMinutes;
         if (mins != null) {
           const h = Math.floor(mins / 60), m = mins % 60;
@@ -1811,7 +1918,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
             try {
               const d = new Date(meetingStartIso);
               d.setMinutes(d.getMinutes() + priorSum);
-              out.startTime = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+              out.startTime = formatEasternTime(d.toISOString());
             } catch {}
             priorSum += Number(r?.duration) || 0;
             return out;
@@ -2019,6 +2126,11 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
               <div><strong>Duration:</strong> {formatDuration(formData.meeting.durationMinutes) || '—'}</div>
               <div><strong>Ends:</strong> {formatDateTime(formData.meeting.end) || '—'}</div>
               <div><strong>Location:</strong> {formData.meeting.location || '—'}</div>
+              {formData.meeting.sourceTimeZone && (
+                <div style={{ gridColumn: 'span 2', fontSize: '0.72rem', color: '#64748B', fontStyle: 'italic' }}>
+                  Original timezone: {formData.meeting.sourceTimeZone}. Times shown above are in Eastern (America/New_York).
+                </div>
+              )}
               {formData.meeting.organizer && (
                 <div style={{ gridColumn: 'span 2' }}>
                   <strong>Organizer:</strong> {formData.meeting.organizer.name}
