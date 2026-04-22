@@ -1846,17 +1846,23 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     // who never edited their signature still get one.
     const storedSig = String(settings?.emailSignature || '').trim();
     const signatureHtml = storedSig || DEFAULT_EMAIL_SIGNATURE;
-    const signatureBlock = signatureHtml ? `\n<br>\n<div>\n${signatureHtml}\n</div>` : '';
-    // Mirror the Draft Emails page's proven .eml format:
-    //   • MSO-flavored <html> wrapper so Outlook opens it cleanly.
-    //   • Body wrapped in an Aptos/Calibri/Arial div at 12pt.
-    //   • \n inserted after </p> / </div> close tags — Outlook's MIME
-    //     parser misrenders very long single-line HTML, and line-folding
-    //     keeps each line under the RFC 5322 998-char cap without forcing
-    //     base64.
+    const sigBlock = signatureHtml ? `\n<br>\n<div>\n${signatureHtml}\n</div>` : '';
+    // Mirror DraftEmailView's proven .eml body byte-for-byte so the draft
+    // renders identically (including the signature). Outlook-friendly:
+    //   • MSO-flavored <html> wrapper.
+    //   • <style>ul,ol{margin:0;padding-left:1.5em;}</style> for lists.
+    //   • 12pt Aptos/Calibri/Arial body <div>.
+    //   • Signature appended outside that body <div> after a <br>.
+    //   • \n after </p></li></ul></ol></div> to keep every line under
+    //     RFC 5322's 998-char cap (so 8bit CTE works without truncation).
     let body = `<p>Hi,</p><p>${introLine}</p>${itemsHtml}<p>Let me know if I've missed anything or you'd like to dig deeper on any of these.</p><p>Thanks,</p>`;
-    body = body.replace(/<\/p>/gi, '</p>\n').replace(/<\/div>/gi, '</div>\n');
-    const htmlContent = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">\n<head>\n<!--[if gte mso 9]><xml><w:WordDocument><w:DontHyphenate/><w:DoNotHyphenateCaps/></w:WordDocument></xml><![endif]-->\n</head>\n<body style="margin:0;padding:0;">\n<div style="font-family:Aptos,Calibri,Arial,sans-serif;font-size:12pt;">\n${body}\n</div>${signatureBlock}\n</body>\n</html>`;
+    body = body
+      .replace(/<\/p>/gi, '</p>\n')
+      .replace(/<\/li>/gi, '</li>\n')
+      .replace(/<\/ul>/gi, '</ul>\n')
+      .replace(/<\/ol>/gi, '</ol>\n')
+      .replace(/<\/div>/gi, '</div>\n');
+    const htmlContent = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">\n<head>\n<!--[if gte mso 9]><xml><w:WordDocument><w:DontHyphenate/><w:DoNotHyphenateCaps/></w:WordDocument></xml><![endif]-->\n<style>\nul,ol{margin:0;padding-left:1.5em;}\n</style>\n</head>\n<body style="margin:0;padding:0;">\n<div style="font-family:Aptos,Calibri,Arial,sans-serif;font-size:12pt;">\n${body}\n</div>${sigBlock}\n</body>\n</html>`;
 
     const toHeader = recipients.join(', ');
     const eml = [
