@@ -2334,16 +2334,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       return (
                         <div
                           key={note.id}
-                          onClick={(e) => {
-                            // Single click activates; double click renames.
-                            // e.detail === 2 fires on the *second* click of a
-                            // double-click so we can branch reliably.
-                            if (e.detail === 2) {
-                              e.preventDefault();
-                              startInlineRename(note.id, note.title);
-                            } else {
-                              setSelectedOppId(note.id);
-                            }
+                          onClick={() => setSelectedOppId(note.id)}
+                          onDoubleClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            startInlineRename(note.id, note.title);
                           }}
                           style={{
                             display: 'flex', alignItems: 'center', gap: '0.3rem',
@@ -2430,11 +2425,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             title="Double-click to rename"
                             onMouseEnter={(e) => { e.currentTarget.style.background = '#F1F5F9'; }}
                             onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                            onClick={(e) => {
-                              if (e.detail === 2) {
-                                e.preventDefault();
-                                startInlineRename(selectedOpp.id, selectedOpp.title);
-                              }
+                            onDoubleClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              startInlineRename(selectedOpp.id, selectedOpp.title);
                             }}
                           >{selectedOpp.title}</span>
                         )}
