@@ -276,9 +276,9 @@ function matchProspectByName(name, prospects) {
 
 function currentServicesFor(prospect) {
   const svc = prospect?.servicesExplored || {};
-  const active = new Set(['Sold', 'Renewal', 'In Progress']);
+  // Only Sold services count as the "current scope" on this opportunity.
   return Object.entries(svc)
-    .filter(([, status]) => active.has(status))
+    .filter(([, status]) => status === 'Sold')
     .map(([name]) => name)
     .sort();
 }
@@ -565,10 +565,13 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
         if (active.length > 0) updates.currentScope = active.join(', ');
       }
     }
-    // Client Manager (from prospect's CDM)
+    // Client Manager (from prospect's CDM). If this company isn't currently
+    // a Client, fall back to the N/A label instead of leaving it blank.
     if (!(fv.clientManager || '').trim()) {
       const cdm = (match?.cdm || '').trim();
-      if (cdm) updates.clientManager = cdm;
+      const isClient = (match?.status || '').trim() === 'Client';
+      if (isClient && cdm) updates.clientManager = cdm;
+      else if (match && !isClient) updates.clientManager = 'N/A - Not a current client';
     }
 
     if (Object.keys(updates).length === 0) return;
@@ -1026,7 +1029,11 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       const active = currentServicesFor(matchedProspect);
       if (active.length > 0) nextValues.currentScope = active.join(', ');
       const cdm = (matchedProspect.cdm || '').trim();
-      if (cdm && !nextValues.clientManager) nextValues.clientManager = cdm;
+      const isClient = (matchedProspect.status || '').trim() === 'Client';
+      if (!nextValues.clientManager) {
+        if (isClient && cdm) nextValues.clientManager = cdm;
+        else if (!isClient) nextValues.clientManager = 'N/A - Not a current client';
+      }
     }
     // Stage must always resolve to a BFO value. Try the opp's Stage column
     // first; if it's already a BFO name ('3 - Qualify Opportunity' etc.)
@@ -1215,17 +1222,23 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
   const [draftName, setDraftName] = useState('');
   const [draftEmail, setDraftEmail] = useState('');
   const [draftRequired, setDraftRequired] = useState(true);
+  // Once the user picks a contact from the dropdown we hide the list until
+  // they edit the name again — avoids re-showing the suggestion they just
+  // selected.
+  const [draftPicked, setDraftPicked] = useState(false);
 
   function openAddAttendee(bucket) {
     setAddingTo(bucket);
     setDraftName('');
     setDraftEmail('');
     setDraftRequired(true);
+    setDraftPicked(false);
   }
   function cancelAddAttendee() {
     setAddingTo(null);
     setDraftName('');
     setDraftEmail('');
+    setDraftPicked(false);
   }
   function commitAddAttendee() {
     const name = draftName.trim();
@@ -1245,6 +1258,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     setAddingTo(null);
     setDraftName('');
     setDraftEmail('');
+    setDraftPicked(false);
   }
   function removeManualAttendee(a) {
     const mt = formData.meeting || {};
@@ -2270,15 +2284,65 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                 );
               };
               const customerHeading = (companyName || 'Customer').trim() || 'Customer';
+              // Customer-bucket autocomplete: suggest from the company's
+              // known HubSpot contacts, filtered by draftName and excluding
+              // those already on this meeting's customer list.
+              const existingCustEmails = new Set(
+                customerAttendees.map(a => (a.email || '').toLowerCase().trim()).filter(Boolean)
+              );
+              const contactFullName = (c) => [(c.firstname || '').trim(), (c.lastname || '').trim()].filter(Boolean).join(' ');
+              const suggestions = (() => {
+                if (addingTo !== 'customer') return [];
+                if (draftPicked) return [];
+                const list = Array.isArray(companyContacts) ? companyContacts : [];
+                if (list.length === 0) return [];
+                const q = draftName.trim().toLowerCase();
+                const tokens = q ? q.split(/\s+/).filter(Boolean) : [];
+                const filtered = list.filter(c => {
+                  const em = (c.email || '').toLowerCase().trim();
+                  if (em && existingCustEmails.has(em)) return false;
+                  if (tokens.length === 0) return true;
+                  const hay = `${(c.firstname || '')} ${(c.lastname || '')} ${(c.email || '')} ${(c.jobtitle || '')}`.toLowerCase();
+                  return tokens.every(t => hay.includes(t));
+                });
+                filtered.sort((a, b) => contactFullName(a).localeCompare(contactFullName(b)));
+                return filtered.slice(0, 8);
+              })();
+              const pickSuggestion = (c) => {
+                const full = contactFullName(c) || (c.email || '');
+                setDraftName(full);
+                setDraftEmail(c.email || '');
+                setDraftPicked(true);
+              };
               const addForm = (bucket) => (addingTo === bucket) && (
                 <div style={{ marginTop: '0.4rem', padding: '0.4rem 0.5rem', background: '#F8FAFC', border: '1px solid #CBD5E1', borderRadius: 4 }}>
                   <input
                     autoFocus
                     value={draftName}
-                    onChange={e => setDraftName(e.target.value)}
+                    onChange={e => { setDraftName(e.target.value); setDraftPicked(false); }}
                     placeholder="Name"
                     style={{ ...sx.cellInput, fontSize: '0.78rem', padding: '0.25rem 0.4rem', background: '#fff', border: '1px solid #CBD5E1', borderRadius: 3, marginBottom: 4 }}
                   />
+                  {bucket === 'customer' && suggestions.length > 0 && (
+                    <div style={{ marginBottom: 4, border: '1px solid #CBD5E1', borderRadius: 3, background: '#fff', maxHeight: 180, overflowY: 'auto' }}>
+                      {suggestions.map(c => {
+                        const full = contactFullName(c) || '(no name)';
+                        const sub = [c.jobtitle, c.email].filter(Boolean).join(' · ');
+                        return (
+                          <div
+                            key={c.id || c.vid || c.email || full}
+                            onClick={() => pickSuggestion(c)}
+                            style={{ padding: '0.25rem 0.5rem', cursor: 'pointer', borderBottom: '1px solid #F1F5F9', fontSize: '0.76rem' }}
+                            onMouseEnter={e => e.currentTarget.style.background = '#F1F5F9'}
+                            onMouseLeave={e => e.currentTarget.style.background = '#fff'}
+                          >
+                            <div style={{ fontWeight: 600, color: '#1E293B' }}>{full}</div>
+                            {sub && <div style={{ fontSize: '0.68rem', color: '#64748B' }}>{sub}</div>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                   <input
                     value={draftEmail}
                     onChange={e => setDraftEmail(e.target.value)}

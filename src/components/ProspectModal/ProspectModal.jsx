@@ -1688,22 +1688,6 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     setOpportunitiesOpen(true);
   }, [companyOppsData, writeCompanyOpps]);
 
-  // Called when the form links to an opp — auto-renames the tab to the
-  // first service in Scope (unless the user has manually renamed the tab).
-  const applySuggestedTitle = useCallback((oppId, suggested) => {
-    if (!suggested) return;
-    writeCompanyOpps({
-      buckets: companyOppsData.buckets || [],
-      opportunities: (companyOppsData.opportunities || []).map(o => {
-        if (o.id !== oppId) return o;
-        if (o.titleAuto !== false) {
-          return { ...o, title: suggested, titleAuto: true, updatedAt: Date.now() };
-        }
-        return o;
-      }),
-    });
-  }, [companyOppsData, writeCompanyOpps]);
-
   const updateOpportunityFormData = useCallback((oppId, formData) => {
     writeCompanyOpps({
       buckets: companyOppsData.buckets || [],
@@ -1726,7 +1710,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   }, [companyOppsData, writeCompanyOpps]);
 
   // Non-prompting rename used by the inline double-click editors (tab strip
-  // and the title next to the Back button).
+  // and the title next to the Hide button).
   const renameOpportunityTo = useCallback((oppId, nextTitle) => {
     const trimmed = (nextTitle || '').trim();
     const current = (companyOppsData.opportunities || []).find(o => o.id === oppId);
@@ -1774,50 +1758,6 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     });
   }, [companyOppsData, writeCompanyOpps]);
 
-  const toggleOppContact = useCallback((oppId, contactId) => {
-    const opp = (companyOppsData.opportunities || []).find(o => o.id === oppId);
-    if (!opp) return;
-    const existingIds = Array.isArray(opp.contactIds) ? opp.contactIds : [];
-    const isAdding = !existingIds.includes(contactId);
-    const nextIds = isAdding
-      ? [...existingIds, contactId]
-      : existingIds.filter(id => id !== contactId);
-
-    // When adding a contact, append a contact-info block to the opportunity's notes so
-    // the reader can see who was on the call inline with the rest of the page content.
-    let nextNotes = opp.notes || '';
-    if (isAdding) {
-      const contact = (companyContacts || []).find(c => String(c.id || c.vid) === String(contactId));
-      if (contact) {
-        const name = [contact.firstname, contact.lastname].filter(Boolean).join(' ') || contact.email || `Contact ${contactId}`;
-        const bits = [];
-        if (contact.jobtitle) bits.push(contact.jobtitle);
-        if (contact.email) bits.push(contact.email);
-        if (contact.phone) bits.push(contact.phone);
-        if (contact.city) bits.push(contact.city);
-        const rawLinkedin = contact.hs_linkedin_url || contact.linkedin_url || contact.hs_linkedinid || '';
-        if (rawLinkedin) {
-          const href = rawLinkedin.startsWith('http') ? rawLinkedin : `https://linkedin.com/in/${rawLinkedin}`;
-          bits.push(`<a href="${href}" target="_blank" rel="noopener noreferrer">LinkedIn</a>`);
-        }
-        const infoHtml = `<p><strong>${name}</strong>${bits.length ? ' — ' + bits.join(' · ') : ''}</p>`;
-        nextNotes = (nextNotes || '') + infoHtml;
-      }
-    }
-
-    writeCompanyOpps({
-      buckets: companyOppsData.buckets || [],
-      opportunities: (companyOppsData.opportunities || []).map(o => (
-        o.id !== oppId ? o : { ...o, contactIds: nextIds, notes: nextNotes, updatedAt: Date.now() }
-      )),
-    });
-
-    // Keep the currently-open editor in sync with the persisted notes.
-    if (isAdding && selectedOppId === oppId) {
-      setOppNoteDraft(nextNotes);
-    }
-  }, [companyOppsData, writeCompanyOpps, companyContacts, selectedOppId]);
-
   const handleOppNoteChange = useCallback((html) => {
     setOppNoteDraft(html);
     if (!selectedOppId) return;
@@ -1834,34 +1774,22 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const oppDocxInputRef = useRef(null);
   const oppQuillRef = useRef(null);
 
-  const insertOppTodo = useCallback(() => {
-    const quill = oppQuillRef.current?.getEditor?.();
-    if (!quill) return;
-    const sel = quill.getSelection(true);
-    const index = sel ? sel.index : quill.getLength();
-    // Insert a newline at the current caret, then format that line as a checklist item.
-    quill.insertText(index, '\n', 'user');
-    quill.setSelection(index + 1, 0, 'user');
-    quill.formatLine(index + 1, 1, 'list', 'unchecked', 'user');
-    quill.focus();
-  }, []);
-
   // Generate a follow-up email and download it as an .eml file (matches the Draft Emails
   // section pattern — double-click the downloaded file to open as a draft in Outlook).
   const openOppFollowUpEmail = useCallback(() => {
     if (!selectedOpp) return;
-    const html = oppNoteDraft || '';
-    const parser = typeof DOMParser !== 'undefined' ? new DOMParser() : null;
-    let items = [];
-    if (parser) {
-      const doc = parser.parseFromString(html, 'text/html');
-      items = Array.from(doc.querySelectorAll('li[data-list="checked"], li[data-list="unchecked"]'))
-        .map(el => ({
-          checked: el.getAttribute('data-list') === 'checked',
-          text: (el.textContent || '').trim(),
-        }))
-        .filter(i => i.text);
-    }
+    // Source follow-up items from the Form's "Action Items / Next Steps"
+    // table (rows with a non-empty `item`). Each row's Owner is shown in
+    // parens after the action so the reader sees who's on the hook.
+    const actionRows = Array.isArray(selectedOpp?.formData?.tables?.actionItems)
+      ? selectedOpp.formData.tables.actionItems
+      : [];
+    const items = actionRows
+      .map(r => ({
+        text: String(r?.item || '').trim(),
+        owner: String(r?.owner || '').trim(),
+      }))
+      .filter(i => i.text);
 
     const linkedIds = new Set((selectedOpp.contactIds || []).map(String));
     const recipients = (companyContacts || [])
@@ -1877,8 +1805,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     const introLine = `Thanks again for the conversation${fields.company ? ` about ${esc(fields.company)}` : ''}${selectedOpp.title ? ` (${esc(selectedOpp.title)})` : ''}. Below is a recap of the follow-up items:`;
     const itemsHtml = items.length > 0
-      ? `<ul>${items.map(i => `<li>${esc(i.text)}</li>`).join('')}</ul>`
-      : '<p><em>(No follow-up items captured in the notes yet.)</em></p>';
+      ? `<ul>${items.map(i => `<li>${esc(i.text)}${i.owner ? ` <span style="color:#64748B">(${esc(i.owner)})</span>` : ''}</li>`).join('')}</ul>`
+      : '<p><em>(No Action Items / Next Steps captured on the form yet.)</em></p>';
     const htmlContent = `<html><body><p>Hi,</p><p>${introLine}</p>${itemsHtml}<p>Let me know if I've missed anything or you'd like to dig deeper on any of these.</p><p>Thanks,</p></body></html>`;
 
     const toHeader = recipients.join(', ');
@@ -1904,7 +1832,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }, [selectedOpp, oppNoteDraft, companyContacts, fields.company]);
+  }, [selectedOpp, companyContacts, fields.company]);
 
   const downloadOppAsDocx = useCallback(async () => {
     if (!selectedOpp) return;
@@ -2455,7 +2383,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                           onClick={() => setSelectedOppId(null)}
                           style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 4, cursor: 'pointer' }}
                         >
-                          &larr; Back
+                          Hide
                         </button>
                         {renamingOppId === selectedOpp.id ? (
                           <input
@@ -2531,101 +2459,30 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                           Delete
                         </button>
                       </div>
-                      {/* Contacts linked to this opportunity (shows who was on the call for these notes) */}
-                      {(() => {
-                        const linkedIds = new Set(Array.isArray(selectedOpp.contactIds) ? selectedOpp.contactIds : []);
-                        const linkedContacts = companyContacts.filter(c => linkedIds.has(c.id));
-                        const unlinkedContacts = companyContacts.filter(c => !linkedIds.has(c.id));
-                        return (
-                          <div style={{ marginBottom: '0.6rem', padding: '0.5rem 0.6rem', background: '#F8FAFC', border: '1px solid var(--color-border-light)', borderRadius: 6 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: linkedContacts.length > 0 ? '0.4rem' : 0 }}>
-                              <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                                Contacts on this opportunity
-                              </span>
-                              <span style={{ fontSize: '0.7rem', color: '#94A3B8' }}>{linkedContacts.length}</span>
-                              <div style={{ flex: 1 }} />
-                              {unlinkedContacts.length > 0 ? (
-                                <select
-                                  value=""
-                                  onChange={e => { if (e.target.value) toggleOppContact(selectedOpp.id, e.target.value); }}
-                                  style={{ fontSize: '0.72rem', padding: '0.2rem 0.4rem', border: '1px solid var(--color-border)', borderRadius: 4, background: 'white' }}
-                                >
-                                  <option value="">+ Add contact…</option>
-                                  {unlinkedContacts.map(c => {
-                                    const name = [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email || `Contact ${c.id}`;
-                                    return <option key={c.id} value={c.id}>{name}{c.jobtitle ? ` — ${c.jobtitle}` : ''}</option>;
-                                  })}
-                                </select>
-                              ) : (
-                                <span style={{ fontSize: '0.7rem', color: '#94A3B8', fontStyle: 'italic' }}>
-                                  {companyContacts.length === 0 ? 'No HubSpot contacts for this company' : 'All contacts added'}
-                                </span>
-                              )}
-                            </div>
-                            {linkedContacts.length > 0 && (
-                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
-                                {linkedContacts.map(c => {
-                                  const name = [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email || `Contact ${c.id}`;
-                                  return (
-                                    <span key={c.id} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', padding: '2px 8px', background: '#E0F2FE', color: '#075985', border: '1px solid #7DD3FC', borderRadius: 999, fontSize: '0.72rem', fontWeight: 600 }}>
-                                      {name}
-                                      {c.jobtitle && <span style={{ fontWeight: 400, color: '#0369A1' }}>· {c.jobtitle}</span>}
-                                      <button
-                                        type="button"
-                                        onClick={() => toggleOppContact(selectedOpp.id, c.id)}
-                                        title="Remove from this opportunity"
-                                        style={{ background: 'none', border: 'none', padding: 0, marginLeft: 2, cursor: 'pointer', color: '#0369A1', fontSize: '0.9rem', lineHeight: 1 }}
-                                      >×</button>
-                                    </span>
-                                  );
-                                })}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })()}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.35rem', flexWrap: 'wrap' }}>
                         <button
                           type="button"
-                          onClick={insertOppTodo}
-                          title="Insert a clickable to-do box at the cursor"
-                          style={{ fontSize: '0.72rem', padding: '0.25rem 0.6rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 4, cursor: 'pointer', fontFamily: 'inherit', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}
-                        >
-                          <span style={{ display: 'inline-block', width: 12, height: 12, border: '1.5px solid #475569', borderRadius: 2 }} />
-                          Add To-Do
-                        </button>
-                        <button
-                          type="button"
                           onClick={openOppFollowUpEmail}
-                          title="Open Outlook with a follow-up email summarizing the to-do items and linked contacts"
+                          title="Open Outlook with a follow-up email summarizing the Action Items / Next Steps"
                           style={{ fontSize: '0.72rem', padding: '0.25rem 0.6rem', border: '1px solid #0078D4', background: '#EFF6FF', color: '#0078D4', borderRadius: 4, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}
                         >
                           ✉ Follow-Up Email
                         </button>
-                        <span style={{ fontSize: '0.65rem', color: '#94A3B8' }}>Click the box later to mark it complete.</span>
                       </div>
                       {selectedOpp.type === 'form' ? (
                         <OpportunityForm
                           value={selectedOpp.formData}
                           onChange={(next) => updateOpportunityFormData(selectedOpp.id, next)}
-                          onLinkOpp={(opp, nextFormData) => {
-                            // Combined write: formData + auto-rename in a
-                            // single writeCompanyOpps, so neither overwrites
-                            // the other (race we used to hit with two sequential writes).
-                            const scope = String(opp?.['Scope'] || '').trim();
-                            const firstService = scope.split(',').map(s => s.trim()).filter(Boolean)[0];
+                          onLinkOpp={(_opp, nextFormData) => {
+                            // Persist the linked formData without touching
+                            // the tab title — title is manually set by the
+                            // user and should not auto-fill from the service.
                             const now = Date.now();
                             writeCompanyOpps({
                               buckets: companyOppsData.buckets || [],
-                              opportunities: (companyOppsData.opportunities || []).map(o => {
-                                if (o.id !== selectedOpp.id) return o;
-                                const next = { ...o, formData: nextFormData || o.formData, updatedAt: now };
-                                if (firstService && o.titleAuto !== false) {
-                                  next.title = firstService;
-                                  next.titleAuto = true;
-                                }
-                                return next;
-                              }),
+                              opportunities: (companyOppsData.opportunities || []).map(o => (
+                                o.id !== selectedOpp.id ? o : { ...o, formData: nextFormData || o.formData, updatedAt: now }
+                              )),
                             });
                           }}
                           companyName={fields.company}
