@@ -3616,8 +3616,13 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     };
                     function renderAuxSheet(tabName, subtitleSuffix, rawSource, opts = {}) {
                       if (!rawSource || !Array.isArray(rawSource.headers) || rawSource.headers.length === 0) return;
-                      // Optionally drop columns whose header is literally "notes"/"note".
-                      const shouldDrop = (h) => opts.dropNotesColumn && /^\s*notes?\s*$/i.test(String(h || ''));
+                      // Optionally drop columns by header match.
+                      const shouldDrop = (h) => {
+                        const header = String(h || '');
+                        if (opts.dropNotesColumn && /^\s*notes?\s*$/i.test(header)) return true;
+                        if (opts.dropOpportunityScore && /opportunity\s*score|^\s*opp\s*score\s*$/i.test(header)) return true;
+                        return false;
+                      };
                       const keepIdx = rawSource.headers
                         .map((h, i) => ({ h, i }))
                         .filter(({ h }) => !shouldDrop(h));
@@ -3725,7 +3730,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       ws2.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: colCount } };
                       widths.forEach((w, i) => { ws2.getColumn(i + 1).width = w; });
                     }
-                    renderAuxSheet('Top 5 Overview', 'Top 5 Overview', fields.portfolioOverview, { dropNotesColumn: true, colorFitCells: true, trimTrailingNotes: true });
+                    renderAuxSheet('Top 5 Overview', 'Top 5 Overview', fields.portfolioOverview, { dropNotesColumn: true, dropOpportunityScore: true, colorFitCells: true, trimTrailingNotes: true });
                     renderAuxSheet('Top 5 Deep Dives', 'Top 5 Deep Dives', fields.portfolioTopFive, { wrapAllText: true });
 
                     // ── Methodology & Assumptions tab (hidden by default) ──
