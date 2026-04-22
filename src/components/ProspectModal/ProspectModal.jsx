@@ -1169,24 +1169,28 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       const sheet = wb.Sheets[wb.SheetNames[0]];
       const data = XLSX.utils.sheet_to_json(sheet, { defval: '' });
       if (!data.length) { alert('Uploaded file has no rows.'); return; }
-      // Look for an optional "Top 5 Deep Dives" sheet (or similar name) so the user can
-      // keep the research alongside their portfolio list and re-export both together.
-      const TOP5_SHEET_MATCHES = /top\s*5|deep\s*dive/i;
-      const topFiveName = wb.SheetNames.find(n => TOP5_SHEET_MATCHES.test(n || ''));
-      let topFive = null;
-      if (topFiveName) {
-        const t5Sheet = wb.Sheets[topFiveName];
-        // Read as 2D array so we preserve column ordering and the raw header row.
-        const aoa = XLSX.utils.sheet_to_json(t5Sheet, { header: 1, defval: '' });
-        if (aoa.length > 0) {
-          const [headerRow, ...bodyRows] = aoa;
-          topFive = {
-            sheetName: topFiveName,
-            headers: headerRow.map(h => String(h ?? '')),
-            rows: bodyRows.map(r => (headerRow.map((_, i) => r[i] ?? ''))),
-          };
-        }
+      // Also read optional "Top 5 Overview" and "Top 5 Deep Dives" sheets so the user can
+      // keep supporting research alongside the portfolio list and re-export all three together.
+      function readAoaSheet(sheetName) {
+        if (!sheetName) return null;
+        const aoa = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, defval: '' });
+        if (!aoa.length) return null;
+        const [headerRow, ...bodyRows] = aoa;
+        return {
+          sheetName,
+          headers: headerRow.map(h => String(h ?? '')),
+          rows: bodyRows.map(r => (headerRow.map((_, i) => r[i] ?? ''))),
+        };
       }
+      const overviewName = wb.SheetNames.find(n => /overview/i.test(n || ''));
+      const deepDiveName = wb.SheetNames.find(n => /deep\s*dive/i.test(n || ''));
+      // If the workbook just has a bare "Top 5" sheet (no overview/deep-dive qualifier),
+      // treat it as the deep-dive tab to preserve the pre-existing behavior.
+      const bareTop5Name = (!overviewName && !deepDiveName)
+        ? wb.SheetNames.find(n => /top\s*5/i.test(n || ''))
+        : null;
+      const overview = readAoaSheet(overviewName);
+      const topFive = readAoaSheet(deepDiveName || bareTop5Name);
       const headers = Object.keys(data[0]);
       const patterns = {
         companyName: ['companyname', 'company'],
@@ -1219,7 +1223,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         }
         mapping[h] = assigned;
       }
-      setPortfolioUpload({ fileName: file.name, headers, rows: data, mapping, file, topFive });
+      setPortfolioUpload({ fileName: file.name, headers, rows: data, mapping, file, overview, topFive });
     } catch (err) {
       alert('Failed to parse file: ' + (err.message || 'Unknown error'));
     }
@@ -3592,46 +3596,49 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       ws.getColumn(idx + 1).width = w;
                     });
 
-                    // ── Top 5 Deep Dives tab (only if the uploaded workbook carried one) ──
-                    // Mirrors the Portfolio tab's styling: green title band, subtitle, bold header row,
-                    // zebra body rows, auto-filter, frozen header.
-                    const topFive = fields.portfolioTopFive;
-                    if (topFive && Array.isArray(topFive.headers) && topFive.headers.length > 0) {
-                      const t5 = wb.addWorksheet('Top 5 Deep Dives', {
+                    // ── Aux tabs carried over from the uploaded workbook ──
+                    // "Top 5 Overview" is a quick high-level roll-up (tab 2);
+                    // "Top 5 Deep Dives" is the long-form research (tab 3).
+                    // Both share the Portfolio tab's branding.
+                    function renderAuxSheet(tabName, subtitleSuffix, source) {
+                      if (!source || !Array.isArray(source.headers) || source.headers.length === 0) return;
+                      const ws2 = wb.addWorksheet(tabName, {
                         properties: { tabColor: { argb: SE_GREEN } },
                         views: [{ state: 'frozen', ySplit: 3 }],
                       });
-                      const t5ColCount = topFive.headers.length;
-                      // Give the rightmost column extra width since "Deep Dive Narrative" wraps prose.
-                      const t5ColWidths = topFive.headers.map((h, i) => {
-                        const lower = String(h || '').toLowerCase();
-                        if (lower.includes('narrative')) return 80;
+                      const colCount = source.headers.length;
+                      // Columns whose header reads like prose get a wider column
+                      // and wrap; everything else stays compact.
+                      const isWrapCol = (h) => /narrative|description|thesis|summary/i.test(String(h || ''));
+                      const hasWrapCol = source.headers.some(isWrapCol);
+                      const widths = source.headers.map((h, i) => {
+                        if (isWrapCol(h)) return 80;
                         if (i === 0) return 6;
                         return 22;
                       });
-                      t5.columns = t5ColWidths.map(w => ({ width: w }));
+                      ws2.columns = widths.map(w => ({ width: w }));
 
                       // Row 1: Title band
-                      t5.mergeCells(1, 1, 1, t5ColCount);
-                      const t5Title = t5.getCell(1, 1);
-                      t5Title.value = 'Schneider Electric';
-                      t5Title.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
-                      t5Title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN } };
-                      t5Title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-                      t5.getRow(1).height = 30;
+                      ws2.mergeCells(1, 1, 1, colCount);
+                      const title = ws2.getCell(1, 1);
+                      title.value = 'Schneider Electric';
+                      title.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
+                      title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN } };
+                      title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+                      ws2.getRow(1).height = 30;
 
                       // Row 2: Subtitle
-                      t5.mergeCells(2, 1, 2, t5ColCount);
-                      const t5Sub = t5.getCell(2, 1);
-                      t5Sub.value = `${fields.company || 'Company'}  ·  Top 5 Deep Dives`;
-                      t5Sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: 'FF64748B' } };
-                      t5Sub.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-                      t5.getRow(2).height = 20;
+                      ws2.mergeCells(2, 1, 2, colCount);
+                      const sub = ws2.getCell(2, 1);
+                      sub.value = `${fields.company || 'Company'}  ·  ${subtitleSuffix}`;
+                      sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: 'FF64748B' } };
+                      sub.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+                      ws2.getRow(2).height = 20;
 
                       // Row 3: Column headers
-                      const t5Header = t5.getRow(3);
-                      topFive.headers.forEach((h, i) => {
-                        const cell = t5Header.getCell(i + 1);
+                      const headerRow2 = ws2.getRow(3);
+                      source.headers.forEach((h, i) => {
+                        const cell = headerRow2.getCell(i + 1);
                         cell.value = h;
                         cell.font = { name: 'Nunito Sans', bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
                         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
@@ -3643,12 +3650,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                           right: { style: 'thin', color: { argb: SE_BORDER } },
                         };
                       });
-                      t5Header.height = 30;
+                      headerRow2.height = 30;
 
                       // Data rows
-                      (topFive.rows || []).forEach((rowVals, idx) => {
-                        const row = t5.getRow(4 + idx);
-                        for (let i = 0; i < t5ColCount; i++) {
+                      (source.rows || []).forEach((rowVals, idx) => {
+                        const row = ws2.getRow(4 + idx);
+                        for (let i = 0; i < colCount; i++) {
                           const raw = rowVals[i];
                           const cell = row.getCell(i + 1);
                           cell.value = raw === '' || raw == null ? null : raw;
@@ -3658,18 +3665,16 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             left: { style: 'thin', color: { argb: SE_BORDER } },
                             right: { style: 'thin', color: { argb: SE_BORDER } },
                           };
-                          const isNarrative = String(topFive.headers[i] || '').toLowerCase().includes('narrative');
-                          cell.alignment = { vertical: 'top', horizontal: i === 0 ? 'center' : 'left', wrapText: isNarrative };
+                          cell.alignment = { vertical: 'top', horizontal: i === 0 ? 'center' : 'left', wrapText: isWrapCol(source.headers[i]) };
                         }
-                        row.height = 120;
+                        row.height = hasWrapCol ? 120 : 22;
                       });
 
-                      // Auto-filter
-                      t5.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: t5ColCount } };
-
-                      // Reapply widths after cell writes (ExcelJS sometimes recalculates).
-                      t5ColWidths.forEach((w, idx) => { t5.getColumn(idx + 1).width = w; });
+                      ws2.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: colCount } };
+                      widths.forEach((w, i) => { ws2.getColumn(i + 1).width = w; });
                     }
+                    renderAuxSheet('Top 5 Overview', 'Top 5 Overview', fields.portfolioOverview);
+                    renderAuxSheet('Top 5 Deep Dives', 'Top 5 Deep Dives', fields.portfolioTopFive);
 
                     // ── Methodology & Assumptions tab (hidden by default) ──
                     // The sheet is still included so it can be unhidden in Excel when a
@@ -5095,6 +5100,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               return;
             }
             set('portfolioCompanies', parsed);
+            if (portfolioUpload.overview) set('portfolioOverview', portfolioUpload.overview);
             if (portfolioUpload.topFive) set('portfolioTopFive', portfolioUpload.topFive);
             // Persist the original file as a downloadable attachment for this company.
             if (portfolioUpload.file) savePortfolioSourceFile(fields.company, portfolioUpload.file);
