@@ -1846,15 +1846,22 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     const htmlContent = `<html><body style="font-family: Arial, sans-serif; font-size: 10pt; color: #1E293B;"><p>Hi,</p><p>${introLine}</p>${itemsHtml}<p>Let me know if I've missed anything or you'd like to dig deeper on any of these.</p><p>Thanks,</p>${signatureBlock}</body></html>`;
 
     const toHeader = recipients.join(', ');
+    // Outlook's .eml parser follows RFC 5322's 998-char line cap and silently
+    // truncates or mangles HTML bodies that exceed it in a single line. Our
+    // body grows past that cap once the signature block is appended, so
+    // encode the HTML as base64 and wrap at 76 chars — Outlook renders the
+    // full document (bullets + signature) reliably in that form.
+    const utf8Body = unescape(encodeURIComponent(htmlContent));
+    const bodyBase64 = (btoa(utf8Body).match(/.{1,76}/g) || []).join('\r\n');
     const eml = [
       'MIME-Version: 1.0',
       `Subject: ${subject}`,
       toHeader ? `To: ${toHeader}` : null,
       'X-Unsent: 1',
       'Content-Type: text/html; charset=UTF-8',
-      'Content-Transfer-Encoding: 8bit',
+      'Content-Transfer-Encoding: base64',
       '',
-      htmlContent,
+      bodyBase64,
     ].filter(Boolean).join('\r\n');
 
     const safeName = (selectedOpp.title || fields.company || 'follow-up')
