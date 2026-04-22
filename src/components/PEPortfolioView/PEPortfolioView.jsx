@@ -1,4 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../../firebase';
+import { useAuth } from '../../contexts/AuthContext';
 
 // Closed/invalid stages from the Opps tab — these shouldn't count toward "active pipeline".
 const CLOSED_STAGES = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
@@ -23,46 +26,67 @@ function companiesMatch(a, b) {
   return false;
 }
 
-function useOppsRecords() {
+// Matches the fallback chain MyAccountsView uses: version-agnostic
+// IndexedDB open (so a settings-backups VersionError doesn't wipe us
+// out), then localStorage, then the user's Firestore oppsData doc.
+// Without the Firestore tier this view was showing "No Opps data loaded"
+// even when the other tabs had synced fine from Firestore.
+function useOppsRecords(userId) {
   const [records, setRecords] = useState([]);
   useEffect(() => {
-    try {
-      const req = indexedDB.open('prospect-tracker-db', 3);
-      req.onupgradeneeded = () => {
-        const idb = req.result;
-        if (!idb.objectStoreNames.contains('target-accounts')) idb.createObjectStore('target-accounts');
-        if (!idb.objectStoreNames.contains('opps-cache')) idb.createObjectStore('opps-cache');
-        if (!idb.objectStoreNames.contains('clients-cache')) idb.createObjectStore('clients-cache');
-      };
-      req.onsuccess = () => {
-        const idb = req.result;
-        const tx = idb.transaction('opps-cache', 'readonly');
-        const store = tx.objectStore('opps-cache');
-        const getReq = store.get('data');
-        getReq.onsuccess = () => {
-          const data = getReq.result;
-          if (data?.records) { setRecords(data.records); return; }
-          try {
-            const cache = JSON.parse(localStorage.getItem('opps-cache'));
-            if (cache?.records) setRecords(cache.records);
-          } catch { /* noop */ }
-        };
-      };
-    } catch {
+    let cancelled = false;
+    function loadFromIndexedDB() {
+      return new Promise((resolve) => {
+        try {
+          const req = indexedDB.open('prospect-tracker-db');
+          req.onsuccess = () => {
+            const idb = req.result;
+            if (!idb.objectStoreNames.contains('opps-cache')) return resolve(null);
+            const tx = idb.transaction('opps-cache', 'readonly');
+            const store = tx.objectStore('opps-cache');
+            const getReq = store.get('data');
+            getReq.onsuccess = () => resolve(getReq.result?.records || null);
+            getReq.onerror = () => resolve(null);
+          };
+          req.onerror = () => resolve(null);
+        } catch { resolve(null); }
+      });
+    }
+    function loadFromLocalStorage() {
       try {
         const cache = JSON.parse(localStorage.getItem('opps-cache'));
-        if (cache?.records) setRecords(cache.records);
-      } catch { /* noop */ }
+        return cache?.records || null;
+      } catch { return null; }
     }
-  }, []);
+    async function loadFromFirestore() {
+      if (!userId) return null;
+      try {
+        const ref = doc(db, 'oppsData', userId);
+        const snap = await getDoc(ref);
+        if (!snap.exists()) return null;
+        const raw = snap.data();
+        if (!raw?.json) return null;
+        const parsed = JSON.parse(raw.json);
+        return parsed?.records || null;
+      } catch { return null; }
+    }
+    (async () => {
+      let recs = await loadFromIndexedDB();
+      if (!recs || recs.length === 0) recs = loadFromLocalStorage();
+      if (!recs || recs.length === 0) recs = await loadFromFirestore();
+      if (!cancelled && recs && recs.length > 0) setRecords(recs);
+    })();
+    return () => { cancelled = true; };
+  }, [userId]);
   return records;
 }
 
 export function PEPortfolioView({ prospects = [], onSelectProspect }) {
+  const { user } = useAuth();
   const [showClosed, setShowClosed] = useState(false);
   const [expanded, setExpanded] = useState(() => new Set());
   const [query, setQuery] = useState('');
-  const oppsRecords = useOppsRecords();
+  const oppsRecords = useOppsRecords(user?.uid);
 
   const peFirms = useMemo(() => (
     prospects
