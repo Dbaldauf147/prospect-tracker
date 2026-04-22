@@ -3600,18 +3600,32 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     // "Top 5 Overview" is a quick high-level roll-up (tab 2);
                     // "Top 5 Deep Dives" is the long-form research (tab 3).
                     // Both share the Portfolio tab's branding.
-                    function renderAuxSheet(tabName, subtitleSuffix, source) {
-                      if (!source || !Array.isArray(source.headers) || source.headers.length === 0) return;
+                    const FIT_COLORS = {
+                      strong: { bg: 'FFDCFCE7', fg: 'FF166534' },
+                      some:   { bg: 'FFFEF9C3', fg: 'FF854D0E' },
+                      weak:   { bg: 'FFFEE2E2', fg: 'FF991B1B' },
+                    };
+                    function renderAuxSheet(tabName, subtitleSuffix, rawSource, opts = {}) {
+                      if (!rawSource || !Array.isArray(rawSource.headers) || rawSource.headers.length === 0) return;
+                      // Optionally drop columns whose header is literally "notes"/"note".
+                      const shouldDrop = (h) => opts.dropNotesColumn && /^\s*notes?\s*$/i.test(String(h || ''));
+                      const keepIdx = rawSource.headers
+                        .map((h, i) => ({ h, i }))
+                        .filter(({ h }) => !shouldDrop(h));
+                      if (keepIdx.length === 0) return;
+                      const headers = keepIdx.map(({ h }) => h);
+                      const rows = (rawSource.rows || []).map(r => keepIdx.map(({ i }) => r?.[i] ?? ''));
+
                       const ws2 = wb.addWorksheet(tabName, {
                         properties: { tabColor: { argb: SE_GREEN } },
                         views: [{ state: 'frozen', ySplit: 3 }],
                       });
-                      const colCount = source.headers.length;
+                      const colCount = headers.length;
                       // Columns whose header reads like prose get a wider column
                       // and wrap; everything else stays compact.
                       const isWrapCol = (h) => /narrative|description|thesis|summary/i.test(String(h || ''));
-                      const hasWrapCol = source.headers.some(isWrapCol);
-                      const widths = source.headers.map((h, i) => {
+                      const hasWrapCol = headers.some(isWrapCol);
+                      const widths = headers.map((h, i) => {
                         if (isWrapCol(h)) return 80;
                         if (i === 0) return 6;
                         return 22;
@@ -3637,7 +3651,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
                       // Row 3: Column headers
                       const headerRow2 = ws2.getRow(3);
-                      source.headers.forEach((h, i) => {
+                      headers.forEach((h, i) => {
                         const cell = headerRow2.getCell(i + 1);
                         cell.value = h;
                         cell.font = { name: 'Nunito Sans', bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
@@ -3653,7 +3667,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       headerRow2.height = 30;
 
                       // Data rows
-                      (source.rows || []).forEach((rowVals, idx) => {
+                      rows.forEach((rowVals, idx) => {
                         const row = ws2.getRow(4 + idx);
                         for (let i = 0; i < colCount; i++) {
                           const raw = rowVals[i];
@@ -3665,7 +3679,15 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             left: { style: 'thin', color: { argb: SE_BORDER } },
                             right: { style: 'thin', color: { argb: SE_BORDER } },
                           };
-                          cell.alignment = { vertical: 'top', horizontal: i === 0 ? 'center' : 'left', wrapText: isWrapCol(source.headers[i]) };
+                          cell.alignment = { vertical: 'top', horizontal: i === 0 ? 'center' : 'left', wrapText: opts.wrapAllText || isWrapCol(headers[i]) };
+                          // Strong / Some / Weak → green / yellow / red.
+                          if (opts.colorFitCells) {
+                            const fit = FIT_COLORS[String(raw ?? '').trim().toLowerCase()];
+                            if (fit) {
+                              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fit.bg } };
+                              cell.font = { ...cell.font, color: { argb: fit.fg }, bold: true };
+                            }
+                          }
                         }
                         row.height = hasWrapCol ? 120 : 22;
                       });
@@ -3673,8 +3695,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       ws2.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: colCount } };
                       widths.forEach((w, i) => { ws2.getColumn(i + 1).width = w; });
                     }
-                    renderAuxSheet('Top 5 Overview', 'Top 5 Overview', fields.portfolioOverview);
-                    renderAuxSheet('Top 5 Deep Dives', 'Top 5 Deep Dives', fields.portfolioTopFive);
+                    renderAuxSheet('Top 5 Overview', 'Top 5 Overview', fields.portfolioOverview, { dropNotesColumn: true, colorFitCells: true });
+                    renderAuxSheet('Top 5 Deep Dives', 'Top 5 Deep Dives', fields.portfolioTopFive, { wrapAllText: true });
 
                     // ── Methodology & Assumptions tab (hidden by default) ──
                     // The sheet is still included so it can be unhidden in Excel when a
