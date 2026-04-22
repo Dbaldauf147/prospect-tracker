@@ -3637,7 +3637,25 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         .filter(({ h }) => !shouldDrop(h));
                       if (keepIdx.length === 0) return;
                       const headers = keepIdx.map(({ h }) => h);
-                      const rows = (rawSource.rows || []).map(r => {
+                      // Optionally slice off a trailing free-text "Notes" block —
+                      // a blank row, a row whose leading text is "Notes", or a
+                      // bullet row all count as the boundary.
+                      const rawRows = rawSource.rows || [];
+                      const effectiveRows = (() => {
+                        if (!opts.trimTrailingNotes) return rawRows;
+                        const isBoundary = (r) => {
+                          const cells = Array.isArray(r) ? r : (r?.cells || []);
+                          const nonEmpty = cells.map(c => String(c ?? '').trim()).filter(s => s !== '');
+                          if (nonEmpty.length === 0) return true;
+                          const first = nonEmpty[0];
+                          if (/^notes?\s*:?\s*$/i.test(first)) return true;
+                          if (/^[•·\-*▪●◦]/.test(first)) return true;
+                          return false;
+                        };
+                        const boundary = rawRows.findIndex(isBoundary);
+                        return boundary >= 0 ? rawRows.slice(0, boundary) : rawRows;
+                      })();
+                      const rows = effectiveRows.map(r => {
                         const cells = Array.isArray(r) ? r : (r?.cells || []);
                         return keepIdx.map(({ i }) => cells[i] ?? '');
                       });
@@ -3721,7 +3739,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       ws2.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: colCount } };
                       widths.forEach((w, i) => { ws2.getColumn(i + 1).width = w; });
                     }
-                    renderAuxSheet('Top 5 Overview', 'Top 5 Overview', fields.portfolioOverview, { dropNotesColumn: true, colorFitCells: true });
+                    renderAuxSheet('Top 5 Overview', 'Top 5 Overview', fields.portfolioOverview, { dropNotesColumn: true, colorFitCells: true, trimTrailingNotes: true });
                     renderAuxSheet('Top 5 Deep Dives', 'Top 5 Deep Dives', fields.portfolioTopFive, { wrapAllText: true });
 
                     // ── Methodology & Assumptions tab (hidden by default) ──
