@@ -76,9 +76,9 @@ export const DEFAULT_FORM_TEMPLATE = {
       underField: 'summary', // rendered inline beneath the Meeting Summary / Notes field
       starrable: true, // star-to-promote: one row at a time bubbles to the top
       columns: [
-        { key: 'issue', label: 'Issue' },
-        { key: 'evidence', label: 'Evidence' },
-        { key: 'impact', label: 'Impact' },
+        { key: 'issue', label: 'Issue - Capture all issues (What else is there?)' },
+        { key: 'evidence', label: 'Evidence - How does this show up today?' },
+        { key: 'impact', label: 'Impact - What does that cost you? How much time are you spending on that?' },
       ],
     },
     {
