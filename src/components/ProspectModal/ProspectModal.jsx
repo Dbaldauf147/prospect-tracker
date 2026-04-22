@@ -3491,17 +3491,28 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     });
                     headerRow.height = 30;
 
-                    // Data rows
+                    // Data rows. The first 5 (already sorted highest-score
+                    // first) get a thicker SE-green frame so the reader sees
+                    // at a glance which firms are the "selected" top 5.
+                    const TOP_N = Math.min(5, data.length);
+                    const topBorder = { style: 'medium', color: { argb: SE_GREEN_DARK } };
+                    const thinBorder = { style: 'thin', color: { argb: SE_BORDER } };
                     data.forEach((vals, idx) => {
                       const row = ws.getRow(4 + idx);
+                      const isTop = idx < TOP_N;
+                      const isFirstTopRow = isTop && idx === 0;
+                      const isLastTopRow = isTop && idx === TOP_N - 1;
                       vals.forEach((v, i) => {
                         const cell = row.getCell(i + 1);
                         cell.value = v === '' || v == null ? null : v;
                         cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+                        const isFirstCol = i === 0;
+                        const isLastCol = i === headers.length - 1;
                         cell.border = {
-                          bottom: { style: 'thin', color: { argb: SE_BORDER } },
-                          left: { style: 'thin', color: { argb: SE_BORDER } },
-                          right: { style: 'thin', color: { argb: SE_BORDER } },
+                          top: isFirstTopRow ? topBorder : undefined,
+                          bottom: isLastTopRow ? topBorder : thinBorder,
+                          left: isTop && isFirstCol ? topBorder : thinBorder,
+                          right: isTop && isLastCol ? topBorder : thinBorder,
                         };
                         cell.alignment = { vertical: 'middle', horizontal: i === 0 ? 'center' : 'left', wrapText: false };
                         // Number formats
