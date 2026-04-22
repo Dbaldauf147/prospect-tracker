@@ -81,6 +81,23 @@ function App() {
     sortConfig, toggleSort,
   } = useFilters(prospects, settings, updateSettings);
 
+  // Global guard: stop Backspace from triggering browser back-navigation when
+  // focus isn't in a text field. Firefox/older Edge otherwise pop the user
+  // out of the app (and any open modal). Applies once for the whole app.
+  useEffect(() => {
+    function onKey(e) {
+      if (e.key !== 'Backspace') return;
+      const t = e.target;
+      if (!t) return;
+      const tag = (t.tagName || '').toLowerCase();
+      const editableInput = tag === 'input' && !/^(button|submit|reset|checkbox|radio|file|image)$/i.test(t.type || 'text');
+      const isEditable = editableInput || tag === 'textarea' || tag === 'select' || t.isContentEditable;
+      if (!isEditable) e.preventDefault();
+    }
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, []);
+
   const [view, setView] = useState('accounts');
   const [modal, setModal] = useState(null); // null | { prospect, isNew }
   const [showSync, setShowSync] = useState(false);
