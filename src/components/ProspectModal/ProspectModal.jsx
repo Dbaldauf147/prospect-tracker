@@ -1176,10 +1176,19 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         const aoa = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, defval: '' });
         if (!aoa.length) return null;
         const [headerRow, ...bodyRows] = aoa;
+        // Firestore rejects nested arrays, so wrap each row's cells inside an
+        // object. Also coerce Date/object values to strings since Firestore
+        // can't round-trip arbitrary SheetJS cell types.
+        function safeCell(v) {
+          if (v == null) return '';
+          if (v instanceof Date) return v.toISOString();
+          if (typeof v === 'object') return String(v);
+          return v;
+        }
         return {
           sheetName,
           headers: headerRow.map(h => String(h ?? '')),
-          rows: bodyRows.map(r => (headerRow.map((_, i) => r[i] ?? ''))),
+          rows: bodyRows.map(r => ({ cells: headerRow.map((_, i) => safeCell(r[i])) })),
         };
       }
       const overviewName = wb.SheetNames.find(n => /overview/i.test(n || ''));
@@ -3502,6 +3511,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     // each match carries its own full 4-sided frame.
                     const frameBorder = { style: 'medium', color: { argb: SE_GREEN_DARK } };
                     const thinBorder = { style: 'thin', color: { argb: SE_BORDER } };
+                    // Accept either the wrapped-row shape ({ cells: [...] }) or
+                    // a bare 2-D array for legacy data.
+                    const rowCells = (r) => Array.isArray(r) ? r : (r?.cells || []);
                     const deepDiveNames = (() => {
                       const t5 = fields.portfolioTopFive;
                       if (!t5 || !Array.isArray(t5.rows) || !Array.isArray(t5.headers)) return new Set();
@@ -3512,7 +3524,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       const col = nameColIdx >= 0 ? nameColIdx : 1;
                       const set = new Set();
                       for (const r of t5.rows) {
-                        const v = String(r?.[col] ?? '').trim().toLowerCase();
+                        const v = String(rowCells(r)[col] ?? '').trim().toLowerCase();
                         if (v) set.add(v);
                       }
                       return set;
@@ -3614,7 +3626,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         .filter(({ h }) => !shouldDrop(h));
                       if (keepIdx.length === 0) return;
                       const headers = keepIdx.map(({ h }) => h);
-                      const rows = (rawSource.rows || []).map(r => keepIdx.map(({ i }) => r?.[i] ?? ''));
+                      const rows = (rawSource.rows || []).map(r => {
+                        const cells = Array.isArray(r) ? r : (r?.cells || []);
+                        return keepIdx.map(({ i }) => cells[i] ?? '');
+                      });
 
                       const ws2 = wb.addWorksheet(tabName, {
                         properties: { tabColor: { argb: SE_GREEN } },

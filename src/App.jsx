@@ -161,12 +161,17 @@ function App() {
   }, [user]);
 
   const handleModalSave = useCallback(async (data, { close = true } = {}) => {
-    if (modal?.isNew) {
-      await addProspect(data);
-      setModal(null);
-    } else if (modal) {
-      await updateProspect(modal.prospect.id, data);
-      if (close) setModal(null);
+    try {
+      if (modal?.isNew) {
+        await addProspect(data);
+        setModal(null);
+      } else if (modal) {
+        await updateProspect(modal.prospect.id, data);
+        if (close) setModal(null);
+      }
+    } catch (err) {
+      console.error('Prospect save failed:', err);
+      alert(`Save failed: ${err?.message || err}. Changes are not yet persisted.`);
     }
   }, [modal, addProspect, updateProspect]);
 
