@@ -622,6 +622,50 @@ export function UploadedListView({
     return { confirmed, suggested };
   }, [rows, mapping, dismissed, prospectSuggestionFor]);
 
+  // Coverage of the user's resolved My Accounts set against this list.
+  // A My Account is considered "matched" when any list row is either
+  // confirmed-mapped to it or fuzzy-suggests it (not dismissed). Used
+  // to surface '23/132 My Accounts matched (17%)' in the header so the
+  // user sees how much of their portfolio the list touches at a glance.
+  const myAccountsCoverage = useMemo(() => {
+    // Build the account set — prefer the resolved MyAccountsView list,
+    // fall back to the Baldauf-CDM prospect pool.
+    let accountSet;
+    if (Array.isArray(myAccountNames) && myAccountNames.length > 0) {
+      accountSet = new Set(
+        myAccountNames.map(n => String(n || '').toLowerCase().trim()).filter(Boolean)
+      );
+    } else {
+      accountSet = new Set();
+      for (const p of prospects) {
+        if (!(p.cdm || '').toLowerCase().includes('baldauf')) continue;
+        const k = (p.company || '').toLowerCase().trim();
+        if (k) accountSet.add(k);
+      }
+    }
+    const total = accountSet.size;
+    if (total === 0) return { matched: 0, total: 0, pct: 0 };
+
+    const matched = new Set();
+    for (const r of rows) {
+      const mk = r.__matchKey__;
+      if (myAccountDismissed[mk]) continue;
+      const confirmedName = myAccountMapping[mk];
+      if (typeof confirmedName === 'string' && confirmedName) {
+        const key = confirmedName.toLowerCase().trim();
+        if (accountSet.has(key)) matched.add(key);
+        continue;
+      }
+      const suggestion = r.__rawName__ ? myAccountSuggestionFor(r.__rawName__) : null;
+      if (suggestion) {
+        const key = (suggestion.company || '').toLowerCase().trim();
+        if (accountSet.has(key)) matched.add(key);
+      }
+    }
+    const pct = total > 0 ? Math.round((matched.size / total) * 100) : 0;
+    return { matched: matched.size, total, pct };
+  }, [rows, myAccountNames, prospects, myAccountMapping, myAccountDismissed, myAccountSuggestionFor]);
+
   // Picker search results — top 30 prospects matching the query, or the
   // auto-suggestion + first 30 prospects when the query is empty.
   // The picker is scoped: 'myAccounts' restricts the list to the user's
@@ -670,6 +714,9 @@ export function UploadedListView({
                 · <strong style={{ color: '#166534' }}>{matchStats.confirmed}</strong> mapped
                 {matchStats.suggested > 0 && (
                   <> · <strong style={{ color: '#92400E' }}>{matchStats.suggested}</strong> suggested</>
+                )}
+                {myAccountsCoverage.total > 0 && (
+                  <> · <strong style={{ color: '#1E3A8A' }}>{myAccountsCoverage.matched}/{myAccountsCoverage.total}</strong> My Accounts matched (<strong style={{ color: '#1E3A8A' }}>{myAccountsCoverage.pct}%</strong>)</>
                 )}
               </span>
             )}
