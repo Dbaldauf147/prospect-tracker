@@ -25,16 +25,6 @@ function detectColumn(headers, patterns) {
   return '';
 }
 
-function formatRate(value) {
-  if (value == null || value === '') return null;
-  const num = typeof value === 'number' ? value : Number(String(value).replace(/[^0-9.\-]/g, ''));
-  if (!Number.isFinite(num)) return String(value);
-  if (num === 0) return '0';
-  if (Math.abs(num) < 1) return num.toFixed(4);
-  if (Math.abs(num) < 100) return num.toFixed(2);
-  return num.toLocaleString();
-}
-
 function pickZipColumn(headers) {
   if (!headers.length) return '';
   return detectColumn(headers, [/^zip\s*code$/i, /^postal\s*code$/i, /^zip$/i, /zip/i, /postal/i])
@@ -101,10 +91,12 @@ export function SitesView() {
       const buf = await file.arrayBuffer();
       const { rows, headers, sheetName } = parseBestSheet(new Uint8Array(buf));
       const mapping = {
-        zip: detectColumn(headers, [/^zip\s*code$/i, /^postal\s*code$/i, /^zip$/i, /zip/i, /postal/i]),
-        electric: detectColumn(headers, [/electric/i, /elec/i, /kwh/i]),
-        gas: detectColumn(headers, [/gas/i, /natural\s*gas/i, /therm/i]),
-        water: detectColumn(headers, [/water/i, /h2o/i]),
+        zip: detectColumn(headers, [/zip.?postal/i, /^zip\s*code$/i, /^postal\s*code$/i, /^zip$/i, /zip/i, /postal/i]),
+        commodityType: detectColumn(headers, [/commodity\s*type/i, /commodity/i, /service\s*type/i, /^type$/i]),
+        utility: detectColumn(headers, [/^utility$/i, /utility\s*(name|company|provider)/i, /provider/i, /utility/i]),
+        city: detectColumn(headers, [/^city$/i, /city/i, /municipality/i]),
+        country: detectColumn(headers, [/^country$/i, /country/i, /nation/i]),
+        uniqueLookup: detectColumn(headers, [/unique\s*lookup/i, /lookup\s*key/i, /unique\s*id/i]),
       };
       setMappingModal({ rows, headers, mapping, fileName: file.name, sheetName });
     } catch (err) {
@@ -117,52 +109,65 @@ export function SitesView() {
   async function executeUtilityImport() {
     if (!mappingModal) return;
     const { rows, mapping, fileName } = mappingModal;
-    if (!mapping.zip) { setUploadError('Zip column is required'); return; }
+    if (!mapping.zip) { setUploadError('Zip / Postal Code column is required'); return; }
+    if (!mapping.commodityType) { setUploadError('Commodity Type column is required'); return; }
+    if (!mapping.utility) { setUploadError('Utility column is required'); return; }
     setUtilityBusy(true);
     try {
-      // Build zip → { electric, gas, water }. Later rows for the same
-      // zip overwrite earlier ones — matches the user picking the first
-      // match by default, which is the common "duplicate" case in
-      // utility-rate tables (by ZIP+carrier).
+      // The file has one row per (zip, commodity) combination. Group by
+      // normalized zip and assign the utility provider to the matching
+      // commodity slot. Later rows overwrite earlier ones for the same
+      // (zip, commodity) pair — matches the "first match wins" UX in
+      // other imports.
       const zipMap = {};
       let valid = 0;
+      let unrecognizedCommodity = 0;
       for (const r of rows) {
         const zip = normalizeZip(r[mapping.zip]);
         if (!zip) continue;
-        valid++;
-        const entry = {};
-        if (mapping.electric) entry.electric = r[mapping.electric];
-        if (mapping.gas) entry.gas = r[mapping.gas];
-        if (mapping.water) entry.water = r[mapping.water];
+        const rawCommodity = String(r[mapping.commodityType] ?? '').trim().toLowerCase();
+        let commodityKey = null;
+        if (/electric|elec|power|kwh/.test(rawCommodity)) commodityKey = 'electric';
+        else if (/gas|therm|methane/.test(rawCommodity)) commodityKey = 'gas';
+        else if (/water|sewer|h2o/.test(rawCommodity)) commodityKey = 'water';
+        if (!commodityKey) { unrecognizedCommodity++; continue; }
+        const utilityName = String(r[mapping.utility] ?? '').trim();
+        if (!utilityName) continue;
+        const entry = zipMap[zip] || {};
+        entry[commodityKey] = utilityName;
+        if (mapping.city && !entry.city) {
+          const city = String(r[mapping.city] ?? '').trim();
+          if (city) entry.city = city;
+        }
+        if (mapping.country && !entry.country) {
+          const country = String(r[mapping.country] ?? '').trim();
+          if (country) entry.country = country;
+        }
         zipMap[zip] = entry;
+        valid++;
       }
       const uniqueZips = Object.keys(zipMap).length;
-      await saveUtilityRates(zipMap, {
+      const meta = {
         fileName,
         rowCount: rows.length,
         zipCount: uniqueZips,
         validRows: valid,
+        unrecognizedCommodity,
         columns: mapping,
         importedAt: Date.now(),
-      });
-      setUtility({ zipMap, meta: {
-        fileName,
-        rowCount: rows.length,
-        zipCount: uniqueZips,
-        validRows: valid,
-        columns: mapping,
-        importedAt: Date.now(),
-      }});
+      };
+      await saveUtilityRates(zipMap, meta);
+      setUtility({ zipMap, meta });
       setMappingModal(null);
     } catch (err) {
-      setUploadError(err?.message || 'Failed to save utility rates');
+      setUploadError(err?.message || 'Failed to save utility lookup');
     } finally {
       setUtilityBusy(false);
     }
   }
 
   async function handleClearUtility() {
-    if (!window.confirm('Remove the uploaded utility rates?')) return;
+    if (!window.confirm('Remove the uploaded utility lookup?')) return;
     await clearUtilityRates();
     setUtility(null);
   }
@@ -183,6 +188,8 @@ export function SitesView() {
         __electric__: match?.electric,
         __gas__: match?.gas,
         __water__: match?.water,
+        __city__: match?.city,
+        __country__: match?.country,
         __matched__: !!match,
       };
     });
@@ -212,32 +219,45 @@ export function SitesView() {
         return v == null || v === '' ? <span style={{ color: 'var(--color-text-muted)' }}>—</span> : String(v);
       },
     }));
-    const makeRate = (key, label, color) => ({
+    const makeUtilityCol = (key, label, color) => ({
       key,
       label,
-      defaultWidth: 120,
+      defaultWidth: 160,
       render: (row) => {
         if (!utility?.zipMap) {
-          return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>no rates loaded</span>;
+          return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>no utility loaded</span>;
         }
         if (!row.__matched__) {
           return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
         }
         const val = row[`__${key}__`];
         if (val == null || val === '') return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
-        const formatted = formatRate(val);
+        const text = String(val);
         return (
-          <span style={{ background: color.bg, border: `1px solid ${color.border}`, color: color.text, padding: '1px 8px', borderRadius: 999, fontSize: '0.7rem', fontWeight: 600, whiteSpace: 'nowrap' }}>
-            {formatted}
-          </span>
+          <span
+            title={`${label} · ${text}${row.__city__ ? ` · ${row.__city__}` : ''}${row.__country__ ? ` · ${row.__country__}` : ''}`}
+            style={{ background: color.bg, border: `1px solid ${color.border}`, color: color.text, padding: '1px 8px', borderRadius: 999, fontSize: '0.7rem', fontWeight: 600, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block' }}
+          >{text}</span>
         );
+      },
+    });
+    const makeLocationCol = (key, label) => ({
+      key,
+      label,
+      defaultWidth: 120,
+      render: (row) => {
+        const val = row[`__${key}__`];
+        if (!val) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
+        return <span style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)' }}>{val}</span>;
       },
     });
     return [
       ...base,
-      makeRate('electric', 'Electric', { bg: '#FEF3C7', border: '#FCD34D', text: '#92400E' }),
-      makeRate('gas', 'Gas', { bg: '#DBEAFE', border: '#93C5FD', text: '#1E3A8A' }),
-      makeRate('water', 'Water', { bg: '#DCFCE7', border: '#86EFAC', text: '#166534' }),
+      makeUtilityCol('electric', 'Electric Utility', { bg: '#FEF3C7', border: '#FCD34D', text: '#92400E' }),
+      makeUtilityCol('gas', 'Gas Utility', { bg: '#DBEAFE', border: '#93C5FD', text: '#1E3A8A' }),
+      makeUtilityCol('water', 'Water Utility', { bg: '#DCFCE7', border: '#86EFAC', text: '#166534' }),
+      makeLocationCol('city', 'Lookup City'),
+      makeLocationCol('country', 'Lookup Country'),
     ];
   }, [sitesData, zipColumn, utility]);
 
@@ -268,7 +288,7 @@ export function SitesView() {
           <div className={styles.subtitle}>
             {sitesData.length} {sitesData.length === 1 ? 'site' : 'sites'}
             {matchStats && (
-              <> · <strong style={{ color: '#166534' }}>{matchStats.matched}</strong>/{matchStats.total} matched to utility rates</>
+              <> · <strong style={{ color: '#166534' }}>{matchStats.matched}</strong>/{matchStats.total} matched to utility lookup</>
             )}
           </div>
         </div>
@@ -312,7 +332,7 @@ export function SitesView() {
         {utilMeta ? (
           <>
             <span className={styles.utilityBarLoaded}>
-              ✓ Utility rates loaded: {utilMeta.zipCount?.toLocaleString() || '?'} zip codes
+              ✓ Utility lookup loaded: {utilMeta.zipCount?.toLocaleString() || '?'} zip codes
               {utilMeta.fileName && <> · <span style={{ color: '#64748B', fontWeight: 500 }}>{utilMeta.fileName}</span></>}
             </span>
             <button
@@ -325,13 +345,13 @@ export function SitesView() {
         ) : (
           <>
             <span className={styles.utilityBarEmpty}>
-              No utility rates loaded. Upload a file with zip code + electric/gas/water columns.
+              No utility lookup loaded. Upload a file with Zip / Commodity Type / Utility columns (plus optional City / Country).
             </span>
             <button
               className={styles.utilityBarButton}
               onClick={() => utilityFileRef.current?.click()}
               disabled={utilityBusy}
-            >{utilityBusy ? 'Working…' : 'Upload Utility Rates'}</button>
+            >{utilityBusy ? 'Working…' : 'Upload Utility Lookup'}</button>
           </>
         )}
         {utilityLoaded && utility && utilMeta?.importedAt && (
@@ -366,7 +386,7 @@ export function SitesView() {
         <div style={{ padding: '2rem 1.25rem', textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>
           No sites loaded. Click <strong>Upload Sites File</strong> to add your list.
           <div style={{ marginTop: '0.5rem', fontSize: '0.78rem' }}>
-            The first column matching a "zip"/"postal" header is used to look up utility rates.
+            The first column matching a "zip"/"postal" header is used to look up utility providers.
           </div>
         </div>
       ) : (
@@ -388,22 +408,28 @@ export function SitesView() {
               <button className={styles.modalClose} onClick={() => setMappingModal(null)} disabled={utilityBusy}>×</button>
             </div>
             <p className={styles.modalHelp}>
-              {mappingModal.rows.length.toLocaleString()} rows found{mappingModal.sheetName ? ` on sheet "${mappingModal.sheetName}"` : ''}. Map at least the zip code column; the three rate columns are optional (you can load just the ones you have).
+              {mappingModal.rows.length.toLocaleString()} rows found{mappingModal.sheetName ? ` on sheet "${mappingModal.sheetName}"` : ''}. Each row is one (zip, commodity) combination. Zip / Commodity Type / Utility are required; the rest are optional.
             </p>
-            {['zip', 'electric', 'gas', 'water'].map(field => {
-              const val = mappingModal.mapping[field];
-              const required = field === 'zip';
+            {[
+              { key: 'zip', label: 'Zip / Postal Code', required: true },
+              { key: 'commodityType', label: 'Commodity Type', required: true },
+              { key: 'utility', label: 'Utility', required: true },
+              { key: 'city', label: 'City', required: false },
+              { key: 'country', label: 'Country', required: false },
+              { key: 'uniqueLookup', label: 'Unique Lookup', required: false },
+            ].map(({ key, label, required }) => {
+              const val = mappingModal.mapping[key];
               return (
-                <div key={field} className={styles.modalRow}>
+                <div key={key} className={styles.modalRow}>
                   <div className={styles.modalLabel}>
-                    {field === 'zip' ? 'Zip Code' : field.charAt(0).toUpperCase() + field.slice(1)}
+                    {label}
                     {required && <span style={{ color: '#DC2626', marginLeft: 2 }}>*</span>}
                   </div>
                   <span style={{ color: '#94A3B8', fontSize: '0.75rem' }}>→</span>
                   <select
                     className={`${styles.modalSelect} ${val ? styles.modalSelectMapped : (required ? styles.modalSelectUnmapped : '')}`}
                     value={val}
-                    onChange={e => setMappingModal(m => ({ ...m, mapping: { ...m.mapping, [field]: e.target.value } }))}
+                    onChange={e => setMappingModal(m => ({ ...m, mapping: { ...m.mapping, [key]: e.target.value } }))}
                   >
                     <option value="">— Not mapped —</option>
                     {mappingModal.headers.map(h => <option key={h} value={h}>{h}</option>)}
@@ -417,9 +443,9 @@ export function SitesView() {
               <button
                 className={styles.modalConfirm}
                 onClick={executeUtilityImport}
-                disabled={utilityBusy || !mappingModal.mapping.zip}
+                disabled={utilityBusy || !mappingModal.mapping.zip || !mappingModal.mapping.commodityType || !mappingModal.mapping.utility}
               >
-                {utilityBusy ? 'Importing…' : 'Import Rates'}
+                {utilityBusy ? 'Importing…' : 'Import Utility Lookup'}
               </button>
             </div>
           </div>
