@@ -966,7 +966,144 @@ export function SitesView() {
       widths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
     }
 
-    // Sheet 1: Raw Data (from the on-screen table — respects sort,
+    // Summary sheet: three stacked tables (Totals / Electric / Gas)
+    // sharing the same SE styling. Uses native Excel tables so each
+    // block gets its own header filter dropdowns, matching the look
+    // the user wants on the first tab.
+    function renderSummarySheet(summaryRows) {
+      const ws = wb.addWorksheet('Summary', {
+        properties: { tabColor: { argb: SE_GREEN } },
+        views: [{ state: 'frozen', ySplit: 2 }],
+      });
+      const totalsCols    = ['Company', 'Total Sites', 'States Covered', 'Total Annual Spend', 'Total Savings Low', 'Total Savings High'];
+      const electricCols  = ['Company', 'Total Sites', 'States Covered', 'Electric Deregulated Sites', 'Electric Annual Spend', 'Electric Savings Low', 'Electric Savings High'];
+      const gasCols       = ['Company', 'Total Sites', 'States Covered', 'Gas Deregulated Sites', 'Gas Annual Spend', 'Gas Savings Low', 'Gas Savings High'];
+      const maxCols = Math.max(totalsCols.length, electricCols.length, gasCols.length);
+
+      // Column widths: first few wider, rest consistent.
+      const widthFor = (colName) => {
+        const name = String(colName || '');
+        if (/company/i.test(name)) return 26;
+        if (/states covered/i.test(name)) return 28;
+        if (/spend|savings/i.test(name)) return 18;
+        if (/total sites|deregulated sites/i.test(name)) return 14;
+        return 18;
+      };
+      // Use the widest header set as the column-width reference.
+      const widthRef = [...new Set([...totalsCols, ...electricCols, ...gasCols])];
+      const baseWidths = new Array(maxCols).fill(0);
+      // Set per-position widths based on the widest table at that
+      // position; matters less since the three tables share the first
+      // three columns (Company, Total Sites, States Covered) by design.
+      for (let i = 0; i < maxCols; i++) {
+        baseWidths[i] = widthFor(widthRef[i] || electricCols[i] || gasCols[i] || totalsCols[i]);
+      }
+      ws.columns = baseWidths.map(w => ({ width: w }));
+
+      // Row 1: Title band (spans the widest block)
+      ws.mergeCells(1, 1, 1, maxCols);
+      const title = ws.getCell(1, 1);
+      title.value = 'Schneider Electric';
+      title.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
+      title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN } };
+      title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(1).height = 30;
+
+      // Row 2: Subtitle
+      ws.mergeCells(2, 1, 2, maxCols);
+      const sub = ws.getCell(2, 1);
+      sub.value = `Summary  ·  ${new Date().toLocaleDateString()}`;
+      sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: 'FF64748B' } };
+      sub.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(2).height = 20;
+
+      // Renders a single titled block starting at `startRow`. Returns
+      // the next free row so the caller can stack additional blocks
+      // below with a blank gutter row.
+      function renderBlock(startRow, cols, rows) {
+        const headerRow = ws.getRow(startRow);
+        cols.forEach((h, i) => {
+          const cell = headerRow.getCell(i + 1);
+          cell.value = h;
+          cell.font = { name: 'Nunito Sans', bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+          cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+          cell.border = {
+            top:    { style: 'thin', color: { argb: SE_BORDER } },
+            bottom: { style: 'thin', color: { argb: SE_BORDER } },
+            left:   { style: 'thin', color: { argb: SE_BORDER } },
+            right:  { style: 'thin', color: { argb: SE_BORDER } },
+          };
+        });
+        headerRow.height = 26;
+        rows.forEach((vals, rIdx) => {
+          const row = ws.getRow(startRow + 1 + rIdx);
+          for (let i = 0; i < cols.length; i++) {
+            const cell = row.getCell(i + 1);
+            const v = vals[i];
+            cell.value = v === '' || v == null ? null : v;
+            cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+            cell.alignment = { vertical: 'middle', horizontal: typeof v === 'number' ? 'right' : 'left', indent: 1 };
+            cell.border = {
+              bottom: { style: 'thin', color: { argb: SE_BORDER } },
+              left:   { style: 'thin', color: { argb: SE_BORDER } },
+              right:  { style: 'thin', color: { argb: SE_BORDER } },
+            };
+            const label = String(cols[i] || '').toLowerCase();
+            if (typeof v === 'number') {
+              if (/spend|savings/.test(label)) cell.numFmt = '"$"#,##0';
+              else if (/sites/.test(label)) cell.numFmt = '#,##0';
+            }
+          }
+          row.height = 18;
+        });
+        return startRow + 1 + rows.length;
+      }
+
+      const totalsRows = summaryRows.map(r => [
+        r.Company,
+        r['Total Sites'],
+        r['States Covered'],
+        r['Total Annual Spend'],
+        r['Total Savings Low'],
+        r['Total Savings High'],
+      ]);
+      const electricRows = summaryRows.map(r => [
+        r.Company,
+        r['Total Sites'],
+        r['States Covered'],
+        r['Electric Deregulated Sites'],
+        r['Electric Annual Spend'],
+        r['Electric Savings Low'],
+        r['Electric Savings High'],
+      ]);
+      const gasRows = summaryRows.map(r => [
+        r.Company,
+        r['Total Sites'],
+        r['States Covered'],
+        r['Gas Deregulated Sites'],
+        r['Gas Annual Spend'],
+        r['Gas Savings Low'],
+        r['Gas Savings High'],
+      ]);
+
+      // Totals block at row 3 → Electric → Gas, each separated by 2
+      // blank rows (one-cell gap + visual breathing room).
+      let next = renderBlock(3, totalsCols, totalsRows);
+      next += 2; // blank gutter
+      next = renderBlock(next, electricCols, electricRows);
+      next += 2;
+      renderBlock(next, gasCols, gasRows);
+
+      // Apply column widths authoritatively after all cells written.
+      baseWidths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+    }
+
+    // Pull Summary out of extras; render it first as a three-block sheet.
+    const summaryExtra = (extraSheets || []).find(s => s?.name === 'Summary');
+    if (summaryExtra?.rows?.length) renderSummarySheet(summaryExtra.rows);
+
+    // Sheet 2: Raw Data (from the on-screen table — respects sort,
     // visibility, and renames).
     const rawHeaders = visibleColumns.map(c => colNames[c.key] || c.label);
     const rawRows = sortedRows.map(row =>
@@ -979,10 +1116,12 @@ export function SitesView() {
     const subtitle = `Indicative Site Analysis  ·  ${new Date().toLocaleDateString()}`;
     renderSheet('Raw Data', subtitle, rawHeaders, rawRows);
 
-    // Extra sheets (Electric / Gas Overview) — come in as array of
-    // plain row objects; we key them consistently.
+    // Remaining extra sheets (Electric / Gas Overview) — come in as
+    // array of plain row objects; we key them consistently and skip
+    // the Summary since it was already rendered.
     for (const extra of extraSheets || []) {
       if (!extra?.rows?.length) continue;
+      if (extra.name === 'Summary') continue;
       const headers = Object.keys(extra.rows[0]);
       const vals = extra.rows.map(r => headers.map(h => r[h]));
       renderSheet(extra.name, `${extra.name}  ·  ${new Date().toLocaleDateString()}`, headers, vals);
