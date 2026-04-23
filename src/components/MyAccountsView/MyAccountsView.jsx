@@ -678,78 +678,10 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   const [bucketFilter, setBucketFilter] = useState(savedView?.bucketFilter ?? null); // 'tier1' | 'tier2' | 'client' | 'pipeline' | null
   const [hqLookupRunning, setHqLookupRunning] = useState(false);
   const [inactiveMode, setInactiveMode] = useState(savedView?.inactiveMode || 'hide'); // 'hide' | 'only' | 'show'
-  // companyLowerName → Set<listLabel>. Built from each list tab's
-  // confirmed My-Account mappings plus non-dismissed fuzzy suggestions
-  // against the uploaded list rows.
+  // companyLowerName → Set<listLabel>. Built further below once
+  // allAccounts is resolved; declared here so it's available while
+  // building the row entries.
   const [listFlagsByCompany, setListFlagsByCompany] = useState(() => new Map());
-
-  useEffect(() => {
-    let cancelled = false;
-    const CORP_SUFFIXES = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|oy|ab|spa|kk|pty|holdings|group|grp)\b\.?/g;
-    function normalizeListCompany(name) {
-      return String(name || '')
-        .toLowerCase()
-        .normalize('NFKD').replace(/[̀-ͯ]/g, '')
-        .replace(/&/g, ' and ')
-        .replace(CORP_SUFFIXES, ' ')
-        .replace(/[^a-z0-9]+/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-    }
-
-    (async () => {
-      const flags = new Map();
-      const addFlag = (accountName, label) => {
-        const key = String(accountName || '').toLowerCase().trim();
-        if (!key) return;
-        if (!flags.has(key)) flags.set(key, new Set());
-        flags.get(key).add(label);
-      };
-      const baldaufProspects = (prospects || []).filter(p =>
-        (p.cdm || '').toLowerCase().includes('baldauf') && (p.company || '').trim()
-      );
-
-      for (const source of LIST_FLAG_SOURCES) {
-        const mapping = safeReadMapping(`${source.storageKey}:my-accounts-mapping`);
-        const dismissed = safeReadMapping(`${source.storageKey}:my-accounts-dismissed`);
-
-        // 1. Confirmed My-Account mappings — the account name is
-        //    whatever prospect.company string the user picked in the
-        //    list tab's picker.
-        for (const company of Object.values(mapping)) {
-          if (typeof company === 'string') addFlag(company, source.label);
-        }
-
-        // 2. Non-dismissed fuzzy suggestions from the raw list rows.
-        try {
-          const listRows = await loadListFromIDB(source.storageKey);
-          if (cancelled) return;
-          if (!Array.isArray(listRows) || listRows.length === 0) continue;
-          const headers = Object.keys(listRows[0] || {});
-          const nameKey = pickListNameKey(headers);
-          if (!nameKey) continue;
-          for (const row of listRows) {
-            const rawName = String(row[nameKey] ?? '').trim();
-            if (!rawName) continue;
-            const norm = normalizeListCompany(rawName);
-            if (!norm) continue;
-            const matchKey = `name::${norm}`;
-            if (dismissed[matchKey]) continue;    // user dismissed the suggestion
-            if (mapping[matchKey]) continue;      // already handled as confirmed
-            for (const acc of baldaufProspects) {
-              if (companiesMatch(acc.company, rawName)) {
-                addFlag(acc.company, source.label);
-                break;
-              }
-            }
-          }
-        } catch {}
-      }
-
-      if (!cancelled) setListFlagsByCompany(flags);
-    })();
-    return () => { cancelled = true; };
-  }, [prospects]);
 
   // Hydrate filter state once settings arrive after login, then debounce-persist changes.
   const viewHydratedRef = useRef(!!savedView);
@@ -1538,9 +1470,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       // someone else's CDM with no open opps shouldn't show on Dan's list.
       const isStrategicTier = tier === 'Tier 1' || tier === 'Tier 2';
       if (!(isStrategicTier && isBaldauf) && (!oppsCount || oppsCount === 0)) continue;
-      const listFlagsSet = listFlagsByCompany.get((p.company || '').toLowerCase().trim());
-      const listFlags = listFlagsSet ? [...listFlagsSet] : [];
-      const entry = { ...p, myTier: tier, activityCount, oppsCount, totalOpps, sources: sources.join(', '), dmFound: !!dmNames, dmNames: dmNames ? dmNames.join(', ') : '', cdmMismatch: !isBaldauf, targetNames, targetName: (targetNames || []).join(', '), targetTier, tierMismatch, otherReps, contactCount, bucketCount, suggestedStatus, statusMismatch, listFlags };
+      const entry = { ...p, myTier: tier, activityCount, oppsCount, totalOpps, sources: sources.join(', '), dmFound: !!dmNames, dmNames: dmNames ? dmNames.join(', ') : '', cdmMismatch: !isBaldauf, targetNames, targetName: (targetNames || []).join(', '), targetTier, tierMismatch, otherReps, contactCount, bucketCount, suggestedStatus, statusMismatch };
       if (tier === 'Tier 1') t1.push(entry);
       else t2.push(entry); // Tier 2 and Tier 3 both go in t2 array
       const s = p.status || 'Unknown';
@@ -1654,10 +1584,90 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     if (skippedCdm.length > 0) console.log('My Accounts: skipped (CDM not Baldauf):', skippedCdm);
     console.log(`My Accounts: ${t1.length} Tier 1, ${t2.length} Tier 2 (incl ${oppsOnlyAdded} opps-only)`);
     return { tier1: t1, tier2: t2, allAccounts: all, statusCounts: counts };
-  }, [prospects, targetMap, targetAccounts, allTargetReps, activityByCompany, activeOppsByAccount, totalOppsByAccount, suggestedStatusByAccount, displayNameByAccount, hubspotCompanies, targetCompanies, decisionMakerByCompany, contactCountByCompany, bucketsByCompany, divisionsMap, listFlagsByCompany]);
+  }, [prospects, targetMap, targetAccounts, allTargetReps, activityByCompany, activeOppsByAccount, totalOppsByAccount, suggestedStatusByAccount, displayNameByAccount, hubspotCompanies, targetCompanies, decisionMakerByCompany, contactCountByCompany, bucketsByCompany, divisionsMap]);
 
   const clientCount = statusCounts['Client'] || 0;
   const tier3Count = allAccounts.filter(a => a.myTier === 'Tier 3').length;
+
+  // Publish the resolved My-Accounts company names to localStorage so
+  // the List tabs can filter against the exact same set (not just the
+  // broader Baldauf-CDM prospect pool). Written whenever allAccounts
+  // recomputes; any mount of UploadedListView re-reads on render.
+  useEffect(() => {
+    try {
+      const names = allAccounts.map(a => (a.company || '').trim()).filter(Boolean);
+      localStorage.setItem('my-accounts:active-names', JSON.stringify(names));
+    } catch {}
+  }, [allAccounts]);
+
+  // Build the List Flags aggregate. Runs when allAccounts changes so
+  // flags match against the exact ~132 accounts the user sees on this
+  // tab — not the broader Baldauf-CDM prospect pool.
+  useEffect(() => {
+    let cancelled = false;
+    const CORP_SUFFIXES = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|oy|ab|spa|kk|pty|holdings|group|grp)\b\.?/g;
+    function normalizeListCompany(name) {
+      return String(name || '')
+        .toLowerCase()
+        .normalize('NFKD').replace(/[̀-ͯ]/g, '')
+        .replace(/&/g, ' and ')
+        .replace(CORP_SUFFIXES, ' ')
+        .replace(/[^a-z0-9]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+    (async () => {
+      const flags = new Map();
+      const targets = allAccounts
+        .map(a => ({ company: a.company, key: (a.company || '').toLowerCase().trim() }))
+        .filter(t => t.key);
+      const addFlag = (companyKey, label) => {
+        if (!companyKey) return;
+        if (!flags.has(companyKey)) flags.set(companyKey, new Set());
+        flags.get(companyKey).add(label);
+      };
+      for (const source of LIST_FLAG_SOURCES) {
+        const mapping = safeReadMapping(`${source.storageKey}:my-accounts-mapping`);
+        const dismissed = safeReadMapping(`${source.storageKey}:my-accounts-dismissed`);
+        // 1. Confirmed My-Account mappings.
+        for (const confirmed of Object.values(mapping)) {
+          if (typeof confirmed !== 'string') continue;
+          for (const t of targets) {
+            if (companiesMatch(t.company, confirmed)) {
+              addFlag(t.key, source.label);
+              break;
+            }
+          }
+        }
+        // 2. Non-dismissed fuzzy suggestions from the uploaded list.
+        try {
+          const listRows = await loadListFromIDB(source.storageKey);
+          if (cancelled) return;
+          if (!Array.isArray(listRows) || listRows.length === 0) continue;
+          const headers = Object.keys(listRows[0] || {});
+          const nameKey = pickListNameKey(headers);
+          if (!nameKey) continue;
+          for (const row of listRows) {
+            const rawName = String(row[nameKey] ?? '').trim();
+            if (!rawName) continue;
+            const norm = normalizeListCompany(rawName);
+            if (!norm) continue;
+            const matchKey = `name::${norm}`;
+            if (dismissed[matchKey]) continue;
+            if (mapping[matchKey]) continue;
+            for (const t of targets) {
+              if (companiesMatch(t.company, rawName)) {
+                addFlag(t.key, source.label);
+                break;
+              }
+            }
+          }
+        } catch {}
+      }
+      if (!cancelled) setListFlagsByCompany(flags);
+    })();
+    return () => { cancelled = true; };
+  }, [allAccounts]);
 
   // Dynamic filter options — any visible column with ≤30 unique string values gets a filter
   const SKIP_FILTER_KEYS = new Set(['company', 'notes', 'dmNames', 'targetName', 'otherReps', 'sources', 'divisions', '_hide', 'id', 'createdAt', 'updatedAt', 'assetTypes', 'frameworks']);
@@ -1804,7 +1814,8 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       }
       if (col.key === 'listFlags') {
         return { ...col, render: (row) => {
-          const flags = row.listFlags || [];
+          const set = listFlagsByCompany.get((row.company || '').toLowerCase().trim());
+          const flags = set ? [...set] : [];
           if (!flags.length) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>—</span>;
           return (
             <span style={{ display: 'flex', gap: '3px', flexWrap: 'wrap' }}>
@@ -1923,7 +1934,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       render: (row) => <button className={styles.deleteBtn} onClick={(e) => { e.stopPropagation(); if (confirm(`Remove "${row.company}" from the database?`)) { dismissCompany(row.company); onDelete(row.id); } }} title="Remove">&#x2715;</button>,
     });
     return mapped;
-  }, [onSelect, onUpdate, allTargetNames, divisionsMap, allCompaniesForDivisions, duplicateTargetNames]);
+  }, [onSelect, onUpdate, allTargetNames, divisionsMap, allCompaniesForDivisions, duplicateTargetNames, listFlagsByCompany]);
 
   return (
     <div className={styles.wrapper}>

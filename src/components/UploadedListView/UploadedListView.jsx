@@ -369,22 +369,66 @@ export function UploadedListView({
     return { prospectsByNorm: byNorm, prospectNorms: norms };
   }, [prospects]);
 
-  // Restrict to Dan Baldauf's accounts — this is the ~100 companies that
-  // appear on the My Accounts tab.
+  // Track the MyAccountsView's resolved company-name list so suggestions
+  // target the exact ~132 accounts the user sees on that tab instead of
+  // the broader Baldauf-CDM prospect pool. MyAccountsView writes the
+  // names to localStorage; we re-read on 'storage' events so a user who
+  // had both tabs open sees fresh data.
+  const [myAccountNames, setMyAccountNames] = useState(() => {
+    try {
+      const raw = localStorage.getItem('my-accounts:active-names');
+      return raw ? (JSON.parse(raw) || null) : null;
+    } catch { return null; }
+  });
+  useEffect(() => {
+    function onStorage(e) {
+      if (e.key === 'my-accounts:active-names') {
+        try {
+          const raw = localStorage.getItem('my-accounts:active-names');
+          setMyAccountNames(raw ? (JSON.parse(raw) || null) : null);
+        } catch { setMyAccountNames(null); }
+      }
+    }
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
+  // Build the fuzzy-match index for the My Accounts column + filter.
+  // Prefer the resolved list when MyAccountsView has published it
+  // (exact 132 companies); fall back to the Baldauf-CDM prospect pool
+  // so the first-ever visit still works before My Accounts is opened.
   const { myAccountsByNorm, myAccountNorms } = useMemo(() => {
     const byNorm = new Map();
     const norms = [];
-    for (const p of prospects) {
-      if (!(p.cdm || '').toLowerCase().includes('baldauf')) continue;
-      const name = (p.company || '').trim();
-      if (!name) continue;
-      const norm = normalizeCompany(name);
-      if (!norm) continue;
-      if (!byNorm.has(norm)) byNorm.set(norm, p);
-      norms.push({ norm, prospect: p });
+    const add = (name, prospect) => {
+      const trimmed = String(name || '').trim();
+      if (!trimmed) return;
+      const norm = normalizeCompany(trimmed);
+      if (!norm) return;
+      if (!byNorm.has(norm)) byNorm.set(norm, prospect || { company: trimmed });
+      norms.push({ norm, prospect: prospect || { company: trimmed } });
+    };
+    if (Array.isArray(myAccountNames) && myAccountNames.length > 0) {
+      // Prefer resolving to a full prospect when we have one (so the
+      // picker surfaces tier / CDM metadata); fall back to a minimal
+      // { company } object when the prospect isn't in the current pool.
+      const byLower = new Map();
+      for (const p of prospects) {
+        const key = (p.company || '').toLowerCase().trim();
+        if (key) byLower.set(key, p);
+      }
+      for (const name of myAccountNames) {
+        const p = byLower.get(String(name || '').toLowerCase().trim());
+        add(name, p);
+      }
+    } else {
+      for (const p of prospects) {
+        if (!(p.cdm || '').toLowerCase().includes('baldauf')) continue;
+        add(p.company, p);
+      }
     }
     return { myAccountsByNorm: byNorm, myAccountNorms: norms };
-  }, [prospects]);
+  }, [prospects, myAccountNames]);
 
   function suggestFrom(raw, byNorm, norms) {
     const norm = normalizeCompany(raw);
@@ -580,14 +624,24 @@ export function UploadedListView({
 
   // Picker search results — top 30 prospects matching the query, or the
   // auto-suggestion + first 30 prospects when the query is empty.
-  // The picker is scoped: 'myAccounts' restricts the list to Baldauf's
-  // accounts only; 'tableView' uses every prospect.
+  // The picker is scoped: 'myAccounts' restricts the list to the user's
+  // resolved My Accounts set (exact ~132 companies when MyAccountsView
+  // has published its list to localStorage, else fall back to Baldauf
+  // CDM). 'tableView' uses every prospect.
   const pickerResults = useMemo(() => {
     if (!picker) return [];
     const q = (picker.query || '').toLowerCase().trim();
-    const source = picker.scope === 'myAccounts'
-      ? prospects.filter(p => (p.cdm || '').toLowerCase().includes('baldauf'))
-      : prospects;
+    let source;
+    if (picker.scope === 'myAccounts') {
+      if (Array.isArray(myAccountNames) && myAccountNames.length > 0) {
+        const nameSet = new Set(myAccountNames.map(n => String(n || '').toLowerCase().trim()).filter(Boolean));
+        source = prospects.filter(p => nameSet.has((p.company || '').toLowerCase().trim()));
+      } else {
+        source = prospects.filter(p => (p.cdm || '').toLowerCase().includes('baldauf'));
+      }
+    } else {
+      source = prospects;
+    }
     const suggestFn = picker.scope === 'myAccounts' ? myAccountSuggestionFor : prospectSuggestionFor;
     const auto = picker.raw ? suggestFn(picker.raw) : null;
     const list = source.filter(p => p.company && (!q || p.company.toLowerCase().includes(q)));
@@ -602,7 +656,7 @@ export function UploadedListView({
       if (out.length >= 30) break;
     }
     return out;
-  }, [picker, prospects, prospectSuggestionFor, myAccountSuggestionFor]);
+  }, [picker, prospects, prospectSuggestionFor, myAccountSuggestionFor, myAccountNames]);
 
   return (
     <div className={styles.wrapper}>
