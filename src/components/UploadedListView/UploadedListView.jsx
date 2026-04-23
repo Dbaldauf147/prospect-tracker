@@ -622,14 +622,16 @@ export function UploadedListView({
     return { confirmed, suggested };
   }, [rows, mapping, dismissed, prospectSuggestionFor]);
 
-  // Coverage of the user's resolved My Accounts set against this list.
-  // A My Account is considered "matched" when any list row is either
-  // confirmed-mapped to it or fuzzy-suggests it (not dismissed). Used
-  // to surface '23/132 My Accounts matched (17%)' in the header so the
-  // user sees how much of their portfolio the list touches at a glance.
+  // Progress tracker for the user's My-Account mapping work on this
+  // list. The numerator counts accounts that have at least one
+  // confirmed mapping; the denominator is the accounts that have any
+  // match on the list (confirmed OR non-dismissed suggestion). Once
+  // every suggestion has been confirmed (or dismissed), the percentage
+  // reads 100 % — which the user reads as "no more suggestions left
+  // to resolve".
   const myAccountsCoverage = useMemo(() => {
-    // Build the account set — prefer the resolved MyAccountsView list,
-    // fall back to the Baldauf-CDM prospect pool.
+    // Build the My Accounts set — prefer the resolved MyAccountsView
+    // list, fall back to the Baldauf-CDM prospect pool.
     let accountSet;
     if (Array.isArray(myAccountNames) && myAccountNames.length > 0) {
       accountSet = new Set(
@@ -643,27 +645,41 @@ export function UploadedListView({
         if (k) accountSet.add(k);
       }
     }
-    const total = accountSet.size;
-    if (total === 0) return { matched: 0, total: 0, pct: 0 };
+    const totalAccounts = accountSet.size;
 
-    const matched = new Set();
+    const confirmedAccounts = new Set();
+    const suggestedAccounts = new Set();
     for (const r of rows) {
       const mk = r.__matchKey__;
       if (myAccountDismissed[mk]) continue;
       const confirmedName = myAccountMapping[mk];
       if (typeof confirmedName === 'string' && confirmedName) {
         const key = confirmedName.toLowerCase().trim();
-        if (accountSet.has(key)) matched.add(key);
+        if (accountSet.has(key)) confirmedAccounts.add(key);
         continue;
       }
       const suggestion = r.__rawName__ ? myAccountSuggestionFor(r.__rawName__) : null;
       if (suggestion) {
         const key = (suggestion.company || '').toLowerCase().trim();
-        if (accountSet.has(key)) matched.add(key);
+        if (accountSet.has(key)) suggestedAccounts.add(key);
       }
     }
-    const pct = total > 0 ? Math.round((matched.size / total) * 100) : 0;
-    return { matched: matched.size, total, pct };
+    // Accounts that still have an unresolved suggestion (i.e. show a
+    // yellow chip on at least one row) count as pending — even if a
+    // different row has already been confirmed we treat that row as
+    // resolved and track per-row / per-account separately.
+    const pendingAccounts = new Set(
+      [...suggestedAccounts].filter(a => !confirmedAccounts.has(a))
+    );
+    const touched = confirmedAccounts.size + pendingAccounts.size;
+    const pct = touched > 0 ? Math.round((confirmedAccounts.size / touched) * 100) : 0;
+    return {
+      mapped: confirmedAccounts.size,
+      pending: pendingAccounts.size,
+      touched,
+      pct,
+      totalAccounts,
+    };
   }, [rows, myAccountNames, prospects, myAccountMapping, myAccountDismissed, myAccountSuggestionFor]);
 
   // Picker search results — top 30 prospects matching the query, or the
@@ -715,8 +731,21 @@ export function UploadedListView({
                 {matchStats.suggested > 0 && (
                   <> · <strong style={{ color: '#92400E' }}>{matchStats.suggested}</strong> suggested</>
                 )}
-                {myAccountsCoverage.total > 0 && (
-                  <> · <strong style={{ color: '#1E3A8A' }}>{myAccountsCoverage.matched}/{myAccountsCoverage.total}</strong> My Accounts matched (<strong style={{ color: '#1E3A8A' }}>{myAccountsCoverage.pct}%</strong>)</>
+                {myAccountsCoverage.touched > 0 && (
+                  <>
+                    {' '}·
+                    {' '}<strong style={{ color: myAccountsCoverage.pct === 100 ? '#166534' : '#1E3A8A' }}>
+                      {myAccountsCoverage.mapped}/{myAccountsCoverage.touched}
+                    </strong>{' '}
+                    My Accounts mapped (
+                    <strong style={{ color: myAccountsCoverage.pct === 100 ? '#166534' : '#1E3A8A' }}>
+                      {myAccountsCoverage.pct}%
+                    </strong>
+                    )
+                    {myAccountsCoverage.pending > 0 && (
+                      <> · <strong style={{ color: '#92400E' }}>{myAccountsCoverage.pending}</strong> still suggested</>
+                    )}
+                  </>
                 )}
               </span>
             )}
