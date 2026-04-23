@@ -279,6 +279,7 @@ export function UploadedListView({
   const [textValues, setTextValues] = useState(() => loadMapping(textValuesKey));
   const [search, setSearch] = useState('');
   const [suggestedOnly, setSuggestedOnly] = useState(false);
+  const [portfolioOnly, setPortfolioOnly] = useState(false);
   const [uploadError, setUploadError] = useState(null);
   const [uploadInfo, setUploadInfo] = useState(null); // { total, preservedTableView, preservedMyAccounts }
   const [picker, setPicker] = useState(null); // { matchKey, raw, query, scope: 'tableView' | 'myAccounts' }
@@ -305,6 +306,7 @@ export function UploadedListView({
     setTextValues(textColumn ? loadMapping(`${storageKey}:${textColumn.key}-values`) : {});
     setSearch('');
     setSuggestedOnly(false);
+    setPortfolioOnly(false);
     setUploadError(null);
     setUploadInfo(null);
     setPicker(null);
@@ -650,6 +652,12 @@ export function UploadedListView({
     return !!myAccountSuggestionFor(r.__rawName__ || '');
   }, [myAccountMapping, myAccountDismissed, myAccountSuggestionFor]);
 
+  const isPortfolioRow = useMemo(() => (r) => {
+    if (portfolioMapping[r.__matchKey__]) return true;
+    if (portfolioDismissed[r.__matchKey__]) return false;
+    return !!portfolioSuggestionFor(r.__rawName__ || '');
+  }, [portfolioMapping, portfolioDismissed, portfolioSuggestionFor]);
+
   const filtered = useMemo(() => {
     let result = rows;
     if (search.trim()) {
@@ -658,15 +666,24 @@ export function UploadedListView({
         Object.entries(r).some(([k, v]) => k !== '__matchKey__' && String(v).toLowerCase().includes(term))
       );
     }
-    if (suggestedOnly) {
-      result = result.filter(isMyAccountsRow);
+    // Filters OR together when both toggles are on so the user sees
+    // the union of everything they've flagged.
+    if (suggestedOnly || portfolioOnly) {
+      result = result.filter(r => (
+        (suggestedOnly && isMyAccountsRow(r)) ||
+        (portfolioOnly && isPortfolioRow(r))
+      ));
     }
     return result;
-  }, [search, suggestedOnly, rows, isMyAccountsRow]);
+  }, [search, suggestedOnly, portfolioOnly, rows, isMyAccountsRow, isPortfolioRow]);
 
   const myAccountsMatchCount = useMemo(
     () => rows.reduce((n, r) => n + (isMyAccountsRow(r) ? 1 : 0), 0),
     [rows, isMyAccountsRow]
+  );
+  const portfolioMatchCount = useMemo(
+    () => rows.reduce((n, r) => n + (isPortfolioRow(r) ? 1 : 0), 0),
+    [rows, isPortfolioRow]
   );
 
   async function handleUpload(e) {
@@ -1007,7 +1024,31 @@ export function UploadedListView({
             </span>
           )}
         </button>
-        {(search || suggestedOnly) && <span className={styles.resultCount}>{filtered.length} results</span>}
+        <button
+          type="button"
+          onClick={() => setPortfolioOnly(v => !v)}
+          title="Show only list rows that match a company on Portfolio Companies (live — across every prospect)"
+          style={{
+            padding: '0.35rem 0.7rem',
+            border: `1px solid ${portfolioOnly ? '#8B5CF6' : 'var(--color-border)'}`,
+            borderRadius: 6,
+            background: portfolioOnly ? '#EDE9FE' : '#fff',
+            color: portfolioOnly ? '#5B21B6' : 'var(--color-text-secondary)',
+            fontSize: '0.75rem',
+            fontWeight: 600,
+            cursor: 'pointer',
+            fontFamily: 'inherit',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          ◆ {portfolioOnly ? 'Showing Portfolio only' : 'Portfolio only'}
+          {portfolioMatchCount > 0 && (
+            <span style={{ marginLeft: 6, fontSize: '0.68rem', color: portfolioOnly ? '#5B21B6' : '#94A3B8' }}>
+              {portfolioMatchCount}
+            </span>
+          )}
+        </button>
+        {(search || suggestedOnly || portfolioOnly) && <span className={styles.resultCount}>{filtered.length} results</span>}
       </div>
       {rows.length === 0 ? (
         <div style={{ padding: '2rem 1.25rem', textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>

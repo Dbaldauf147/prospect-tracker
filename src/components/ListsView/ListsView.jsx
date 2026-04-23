@@ -164,29 +164,27 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
       }
 
       const accountNorms = [...accountSet].map(k => ({ key: k, norm: normalizeListCompany(k) })).filter(a => a.norm);
-      const exactByNorm = new Map(accountNorms.map(a => [a.norm, a.key]));
+      const accountExactByNorm = new Map(accountNorms.map(a => [a.norm, a.key]));
 
-      const result = {};
-      for (const def of listDefinitions) {
-        const mapping = safeReadMap(`${def.storageKey}:my-accounts-mapping`);
-        const dismissed = safeReadMap(`${def.storageKey}:my-accounts-dismissed`);
-        let listRows = null;
-        try {
-          listRows = await loadListFromIDB(def.storageKey);
-        } catch {}
-        if (cancelled) return;
-        if (!Array.isArray(listRows) || listRows.length === 0) {
-          result[def.key] = { mapped: 0, touched: 0, pct: 0 };
-          continue;
+      // Portfolio Companies set — union across every prospect.
+      const portfolioSet = new Set();
+      for (const p of prospects) {
+        for (const pc of (p.portfolioCompanies || [])) {
+          const k = String(pc?.companyName || '').toLowerCase().trim();
+          if (k) portfolioSet.add(k);
         }
-        const headers = Object.keys(listRows[0] || {});
-        const nameKey = pickListNameKey(headers);
-        if (!nameKey) {
-          result[def.key] = { mapped: 0, touched: 0, pct: 0 };
-          continue;
-        }
+      }
+      const portfolioNorms = [...portfolioSet]
+        .map(k => ({ key: k, norm: normalizeListCompany(k) }))
+        .filter(a => a.norm);
+      const portfolioExactByNorm = new Map(portfolioNorms.map(a => [a.norm, a.key]));
+
+      function computeForSet(listRows, mapping, dismissed, targetSet, targetNorms, exactByNorm) {
         const confirmed = new Set();
         const suggested = new Set();
+        const headers = Object.keys(listRows[0] || {});
+        const nameKey = pickListNameKey(headers);
+        if (!nameKey) return { mapped: 0, touched: 0, pct: 0 };
         for (const row of listRows) {
           const rawName = String(row[nameKey] ?? '').trim();
           if (!rawName) continue;
@@ -197,15 +195,13 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
           const confirmedName = mapping[mk];
           if (typeof confirmedName === 'string' && confirmedName) {
             const key = confirmedName.toLowerCase().trim();
-            if (accountSet.has(key)) confirmed.add(key);
+            if (targetSet.has(key)) confirmed.add(key);
             continue;
           }
-          // Exact normalized match first — fast path for the common case.
           const exact = exactByNorm.get(norm);
           if (exact) { suggested.add(exact); continue; }
-          // Substring fallback — mirrors UploadedListView's suggestFrom.
           let best = null;
-          for (const a of accountNorms) {
+          for (const a of targetNorms) {
             if (a.norm.length < 3) continue;
             if (norm.includes(a.norm) || a.norm.includes(norm)) {
               if (!best || a.norm.length < best.norm.length) best = a;
@@ -216,7 +212,31 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
         const pending = [...suggested].filter(k => !confirmed.has(k)).length;
         const touched = confirmed.size + pending;
         const pct = touched > 0 ? Math.round((confirmed.size / touched) * 100) : 0;
-        result[def.key] = { mapped: confirmed.size, touched, pct };
+        return { mapped: confirmed.size, touched, pct };
+      }
+
+      const result = {};
+      for (const def of listDefinitions) {
+        let listRows = null;
+        try {
+          listRows = await loadListFromIDB(def.storageKey);
+        } catch {}
+        if (cancelled) return;
+        if (!Array.isArray(listRows) || listRows.length === 0) {
+          result[def.key] = {
+            myAccounts: { mapped: 0, touched: 0, pct: 0 },
+            portfolio: { mapped: 0, touched: 0, pct: 0 },
+          };
+          continue;
+        }
+        const myAccountsMapping = safeReadMap(`${def.storageKey}:my-accounts-mapping`);
+        const myAccountsDismissed = safeReadMap(`${def.storageKey}:my-accounts-dismissed`);
+        const portfolioMapping = safeReadMap(`${def.storageKey}:portfolio-mapping`);
+        const portfolioDismissed = safeReadMap(`${def.storageKey}:portfolio-dismissed`);
+        result[def.key] = {
+          myAccounts: computeForSet(listRows, myAccountsMapping, myAccountsDismissed, accountSet, accountNorms, accountExactByNorm),
+          portfolio:  computeForSet(listRows, portfolioMapping,  portfolioDismissed,  portfolioSet, portfolioNorms, portfolioExactByNorm),
+        };
       }
       if (!cancelled) setCoverageByKey(result);
     })();
@@ -229,7 +249,16 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
         <div className={styles.subtabs}>
           {SUBTABS.map(t => {
             const cov = coverageByKey[t.key];
-            const complete = cov && cov.touched > 0 && cov.pct === 100;
+            // A tab flips green only when both mapping scopes are
+            // fully resolved. An empty scope (no matches) counts as
+            // trivially complete — but at least one of the two must
+            // have had matches to avoid green-flagging pristine tabs.
+            const myCov = cov?.myAccounts;
+            const portCov = cov?.portfolio;
+            const myDone = !myCov || myCov.touched === 0 || myCov.pct === 100;
+            const portDone = !portCov || portCov.touched === 0 || portCov.pct === 100;
+            const anyTouched = (myCov && myCov.touched > 0) || (portCov && portCov.touched > 0);
+            const complete = anyTouched && myDone && portDone;
             const isActive = subtab === t.key;
             // 100 %-complete tabs flip to a green scheme whether or not
             // they're the active tab — so the signal stays visible.
@@ -243,7 +272,12 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
                 key={t.key}
                 className={isActive ? styles.subtabActive : styles.subtab}
                 style={completeStyle}
-                title={complete ? `${t.label}: all ${cov.touched} My Accounts suggestions resolved` : undefined}
+                title={complete ? (() => {
+                  const parts = [];
+                  if (myCov?.touched) parts.push(`${myCov.touched} My Accounts`);
+                  if (portCov?.touched) parts.push(`${portCov.touched} Portfolio Companies`);
+                  return `${t.label}: ${parts.join(' + ')} fully mapped`;
+                })() : undefined}
                 onClick={() => setSubtab(t.key)}
               >
                 {t.label}{complete && ' ✓'}
