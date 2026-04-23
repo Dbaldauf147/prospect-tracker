@@ -49,17 +49,23 @@ function renderMappingCell({ row, scope, mapping, dismissed, suggestionFor, pros
   const handleClick = (e) => onPick(row, e.currentTarget, scope);
   const confirmTitle = scope === 'myAccounts'
     ? 'Mapped to a My Accounts company · click to change'
-    : 'Mapped to a Table View prospect · click to change';
+    : scope === 'portfolio'
+      ? 'Mapped to a Portfolio Company · click to change'
+      : 'Mapped to a Table View prospect · click to change';
   const suggestTitle = scope === 'myAccounts'
     ? 'Suggested My Accounts match · click to confirm or pick a different account'
-    : 'Suggested Table View match · click to confirm or pick a different prospect';
+    : scope === 'portfolio'
+      ? 'Suggested Portfolio Company match · click to confirm or pick a different one'
+      : 'Suggested Table View match · click to confirm or pick a different prospect';
   const emptyTitle = scope === 'myAccounts'
     ? 'Click to map to a My Accounts company'
-    : 'Click to map to a Table View prospect';
-  const confirmBg = scope === 'myAccounts' ? '#DBEAFE' : '#DCFCE7';
-  const confirmBorder = scope === 'myAccounts' ? '#93C5FD' : '#86EFAC';
-  const confirmText = scope === 'myAccounts' ? '#1E3A8A' : '#166534';
-  const confirmIcon = scope === 'myAccounts' ? '★' : '✓';
+    : scope === 'portfolio'
+      ? 'Click to map to a Portfolio Company'
+      : 'Click to map to a Table View prospect';
+  const confirmBg = scope === 'myAccounts' ? '#DBEAFE' : scope === 'portfolio' ? '#EDE9FE' : '#DCFCE7';
+  const confirmBorder = scope === 'myAccounts' ? '#93C5FD' : scope === 'portfolio' ? '#C4B5FD' : '#86EFAC';
+  const confirmText = scope === 'myAccounts' ? '#1E3A8A' : scope === 'portfolio' ? '#5B21B6' : '#166534';
+  const confirmIcon = scope === 'myAccounts' ? '★' : scope === 'portfolio' ? '◆' : '✓';
 
   if (prospect) {
     return (
@@ -152,8 +158,10 @@ function TextEditCell({ value, onChange, placeholder }) {
 
 function buildColumns(data, ctx) {
   if (!data.length) return [];
-  const { prospectsByNorm, myAccountsByNorm, prospectSuggestionFor, myAccountSuggestionFor,
+  const { prospectsByNorm, myAccountsByNorm, portfolioByNorm,
+          prospectSuggestionFor, myAccountSuggestionFor, portfolioSuggestionFor,
           mapping, dismissed, myAccountMapping, myAccountDismissed,
+          portfolioMapping, portfolioDismissed,
           textColumn, textValues, onTextChange,
           onPick, onDismiss } = ctx;
   const keys = new Set();
@@ -219,6 +227,17 @@ function buildColumns(data, ctx) {
       );
     },
   };
+  const portfolioCol = {
+    key: '__portfolioList__',
+    label: 'Portfolio Companies',
+    defaultWidth: 220,
+    render: (row) => renderMappingCell({
+      row, scope: 'portfolio',
+      mapping: portfolioMapping, dismissed: portfolioDismissed,
+      suggestionFor: portfolioSuggestionFor, prospectsByNorm: portfolioByNorm,
+      onPick, onDismiss,
+    }),
+  };
   const matchCol = {
     key: '__myAccount__',
     label: 'Table View Mapping',
@@ -230,7 +249,7 @@ function buildColumns(data, ctx) {
       onPick, onDismiss,
     }),
   };
-  return [...baseCols, ...textCol, myAccountsCol, myAccountsInfoCol, matchCol];
+  return [...baseCols, ...textCol, myAccountsCol, myAccountsInfoCol, portfolioCol, matchCol];
 }
 
 export function UploadedListView({
@@ -248,11 +267,15 @@ export function UploadedListView({
   const dismissedKey = storageKey ? `${storageKey}:account-dismissed` : '';
   const myAccountMappingKey = storageKey ? `${storageKey}:my-accounts-mapping` : '';
   const myAccountDismissedKey = storageKey ? `${storageKey}:my-accounts-dismissed` : '';
+  const portfolioMappingKey = storageKey ? `${storageKey}:portfolio-mapping` : '';
+  const portfolioDismissedKey = storageKey ? `${storageKey}:portfolio-dismissed` : '';
   const textValuesKey = storageKey && textColumn ? `${storageKey}:${textColumn.key}-values` : '';
   const [mapping, setMapping] = useState(() => loadMapping(mappingKey));
   const [dismissed, setDismissed] = useState(() => loadMapping(dismissedKey));
   const [myAccountMapping, setMyAccountMapping] = useState(() => loadMapping(myAccountMappingKey));
   const [myAccountDismissed, setMyAccountDismissed] = useState(() => loadMapping(myAccountDismissedKey));
+  const [portfolioMapping, setPortfolioMapping] = useState(() => loadMapping(portfolioMappingKey));
+  const [portfolioDismissed, setPortfolioDismissed] = useState(() => loadMapping(portfolioDismissedKey));
   const [textValues, setTextValues] = useState(() => loadMapping(textValuesKey));
   const [search, setSearch] = useState('');
   const [suggestedOnly, setSuggestedOnly] = useState(false);
@@ -277,6 +300,8 @@ export function UploadedListView({
     setDismissed(loadMapping(`${storageKey}:account-dismissed`));
     setMyAccountMapping(loadMapping(`${storageKey}:my-accounts-mapping`));
     setMyAccountDismissed(loadMapping(`${storageKey}:my-accounts-dismissed`));
+    setPortfolioMapping(loadMapping(`${storageKey}:portfolio-mapping`));
+    setPortfolioDismissed(loadMapping(`${storageKey}:portfolio-dismissed`));
     setTextValues(textColumn ? loadMapping(`${storageKey}:${textColumn.key}-values`) : {});
     setSearch('');
     setSuggestedOnly(false);
@@ -295,11 +320,13 @@ export function UploadedListView({
       if (e.key === dismissedKey) setDismissed(loadMapping(dismissedKey));
       if (e.key === myAccountMappingKey) setMyAccountMapping(loadMapping(myAccountMappingKey));
       if (e.key === myAccountDismissedKey) setMyAccountDismissed(loadMapping(myAccountDismissedKey));
+      if (e.key === portfolioMappingKey) setPortfolioMapping(loadMapping(portfolioMappingKey));
+      if (e.key === portfolioDismissedKey) setPortfolioDismissed(loadMapping(portfolioDismissedKey));
       if (textValuesKey && e.key === textValuesKey) setTextValues(loadMapping(textValuesKey));
     }
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
-  }, [mappingKey, dismissedKey, myAccountMappingKey, myAccountDismissedKey, textValuesKey]);
+  }, [mappingKey, dismissedKey, myAccountMappingKey, myAccountDismissedKey, portfolioMappingKey, portfolioDismissedKey, textValuesKey]);
 
   // Persist mapping + dismissed set back to localStorage whenever
   // either changes.
@@ -336,6 +363,22 @@ export function UploadedListView({
       window.dispatchEvent(new Event('my-accounts-coverage-changed'));
     } catch {}
   }, [myAccountDismissed, myAccountDismissedKey]);
+  useEffect(() => {
+    if (!portfolioMappingKey) return;
+    try {
+      if (Object.keys(portfolioMapping).length === 0) localStorage.removeItem(portfolioMappingKey);
+      else localStorage.setItem(portfolioMappingKey, JSON.stringify(portfolioMapping));
+      window.dispatchEvent(new Event('my-accounts-coverage-changed'));
+    } catch {}
+  }, [portfolioMapping, portfolioMappingKey]);
+  useEffect(() => {
+    if (!portfolioDismissedKey) return;
+    try {
+      if (Object.keys(portfolioDismissed).length === 0) localStorage.removeItem(portfolioDismissedKey);
+      else localStorage.setItem(portfolioDismissedKey, JSON.stringify(portfolioDismissed));
+      window.dispatchEvent(new Event('my-accounts-coverage-changed'));
+    } catch {}
+  }, [portfolioDismissed, portfolioDismissedKey]);
   useEffect(() => {
     if (!textValuesKey) return;
     try {
@@ -463,6 +506,35 @@ export function UploadedListView({
     [myAccountsByNorm, myAccountNorms]
   );
 
+  // Union of portfolio companies across every prospect. Duplicates by
+  // company name collapse to the first-seen parent so the picker
+  // stays clean — good enough for fuzzy matching, and the exact
+  // parent is always reachable by drilling into the owning prospect.
+  const { portfolioByNorm, portfolioNorms, allPortfolioCompanies } = useMemo(() => {
+    const byNorm = new Map();
+    const norms = [];
+    const all = [];
+    for (const p of prospects) {
+      const portfolio = p.portfolioCompanies || [];
+      for (const pc of portfolio) {
+        const name = String(pc?.companyName || '').trim();
+        if (!name) continue;
+        const entry = { company: name, parent: p.company, tier: p.tier, cdm: p.cdm, id: `${p.id || p.company}::${name}` };
+        const norm = normalizeCompany(name);
+        if (!norm) continue;
+        if (!byNorm.has(norm)) byNorm.set(norm, entry);
+        norms.push({ norm, prospect: entry });
+        all.push(entry);
+      }
+    }
+    return { portfolioByNorm: byNorm, portfolioNorms: norms, allPortfolioCompanies: all };
+  }, [prospects]);
+
+  const portfolioSuggestionFor = useMemo(
+    () => (raw) => suggestFrom(raw, portfolioByNorm, portfolioNorms),
+    [portfolioByNorm, portfolioNorms]
+  );
+
   const rows = useMemo(() => {
     if (!data.length) return [];
     const headers = [];
@@ -494,10 +566,14 @@ export function UploadedListView({
       : { top: 80, left: 80 };
     setPicker({ matchKey: row.__matchKey__, raw: row.__rawName__ || '', query: '', pos, width, scope });
   }
+  function mapSettersFor(scope) {
+    if (scope === 'myAccounts') return { setMap: setMyAccountMapping, setDis: setMyAccountDismissed };
+    if (scope === 'portfolio') return { setMap: setPortfolioMapping, setDis: setPortfolioDismissed };
+    return { setMap: setMapping, setDis: setDismissed };
+  }
   function confirmMapping(matchKey, prospectCompany) {
     const scope = picker?.scope || 'tableView';
-    const setMap = scope === 'myAccounts' ? setMyAccountMapping : setMapping;
-    const setDis = scope === 'myAccounts' ? setMyAccountDismissed : setDismissed;
+    const { setMap, setDis } = mapSettersFor(scope);
     setMap(prev => ({ ...prev, [matchKey]: prospectCompany }));
     // Confirming implicitly un-dismisses, so switching accounts later
     // still shows suggestions.
@@ -511,7 +587,7 @@ export function UploadedListView({
   }
   function clearMapping(matchKey) {
     const scope = picker?.scope || 'tableView';
-    const setMap = scope === 'myAccounts' ? setMyAccountMapping : setMapping;
+    const { setMap } = mapSettersFor(scope);
     setMap(prev => {
       const next = { ...prev };
       delete next[matchKey];
@@ -520,7 +596,7 @@ export function UploadedListView({
     setPicker(null);
   }
   function dismissSuggestion(matchKey, scope = 'tableView') {
-    const setDis = scope === 'myAccounts' ? setMyAccountDismissed : setDismissed;
+    const { setDis } = mapSettersFor(scope);
     setDis(prev => ({ ...prev, [matchKey]: true }));
   }
   function setTextValue(matchKey, value) {
@@ -534,14 +610,15 @@ export function UploadedListView({
 
   const columns = useMemo(
     () => buildColumns(rows, {
-      prospectsByNorm, myAccountsByNorm,
-      prospectSuggestionFor, myAccountSuggestionFor,
+      prospectsByNorm, myAccountsByNorm, portfolioByNorm,
+      prospectSuggestionFor, myAccountSuggestionFor, portfolioSuggestionFor,
       mapping, dismissed, myAccountMapping, myAccountDismissed,
+      portfolioMapping, portfolioDismissed,
       textColumn, textValues, onTextChange: setTextValue,
       onPick: openPicker, onDismiss: dismissSuggestion,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rows, prospectsByNorm, myAccountsByNorm, prospectSuggestionFor, myAccountSuggestionFor, mapping, dismissed, myAccountMapping, myAccountDismissed, textColumn, textValues]
+    [rows, prospectsByNorm, myAccountsByNorm, portfolioByNorm, prospectSuggestionFor, myAccountSuggestionFor, portfolioSuggestionFor, mapping, dismissed, myAccountMapping, myAccountDismissed, portfolioMapping, portfolioDismissed, textColumn, textValues]
   );
   const tableId = useMemo(
     () => `${tableIdPrefix}:` + columns.map(c => c.key).sort().join('|'),
@@ -555,6 +632,7 @@ export function UploadedListView({
       if (
         c.key === '__myAccountsList__' ||
         c.key === '__myAccountsInfo__' ||
+        c.key === '__portfolioList__' ||
         c.key === '__myAccount__' ||
         c.key.startsWith('__text_')
       ) keys.push(c.key);
@@ -710,6 +788,47 @@ export function UploadedListView({
     };
   }, [rows, myAccountNames, prospects, myAccountMapping, myAccountDismissed, myAccountSuggestionFor]);
 
+  // Portfolio Companies mapping progress — same denominator /
+  // numerator shape as myAccountsCoverage, but counted against the
+  // union of portfolio companies across every prospect.
+  const portfolioCoverage = useMemo(() => {
+    const portfolioSet = new Set(
+      allPortfolioCompanies
+        .map(pc => String(pc.company || '').toLowerCase().trim())
+        .filter(Boolean)
+    );
+    const totalPortfolio = portfolioSet.size;
+    if (totalPortfolio === 0) return { mapped: 0, pending: 0, touched: 0, pct: 0, totalPortfolio: 0 };
+
+    const confirmed = new Set();
+    const suggested = new Set();
+    for (const r of rows) {
+      const mk = r.__matchKey__;
+      if (portfolioDismissed[mk]) continue;
+      const confirmedName = portfolioMapping[mk];
+      if (typeof confirmedName === 'string' && confirmedName) {
+        const key = confirmedName.toLowerCase().trim();
+        if (portfolioSet.has(key)) confirmed.add(key);
+        continue;
+      }
+      const suggestion = r.__rawName__ ? portfolioSuggestionFor(r.__rawName__) : null;
+      if (suggestion) {
+        const key = (suggestion.company || '').toLowerCase().trim();
+        if (portfolioSet.has(key)) suggested.add(key);
+      }
+    }
+    const pendingSet = new Set([...suggested].filter(k => !confirmed.has(k)));
+    const touched = confirmed.size + pendingSet.size;
+    const pct = touched > 0 ? Math.round((confirmed.size / touched) * 100) : 0;
+    return {
+      mapped: confirmed.size,
+      pending: pendingSet.size,
+      touched,
+      pct,
+      totalPortfolio,
+    };
+  }, [rows, allPortfolioCompanies, portfolioMapping, portfolioDismissed, portfolioSuggestionFor]);
+
   // Picker search results — top 30 prospects matching the query, or the
   // auto-suggestion + first 30 prospects when the query is empty.
   // The picker is scoped: 'myAccounts' restricts the list to the user's
@@ -727,10 +846,16 @@ export function UploadedListView({
       } else {
         source = prospects.filter(p => (p.cdm || '').toLowerCase().includes('baldauf'));
       }
+    } else if (picker.scope === 'portfolio') {
+      source = allPortfolioCompanies;
     } else {
       source = prospects;
     }
-    const suggestFn = picker.scope === 'myAccounts' ? myAccountSuggestionFor : prospectSuggestionFor;
+    const suggestFn = picker.scope === 'myAccounts'
+      ? myAccountSuggestionFor
+      : picker.scope === 'portfolio'
+        ? portfolioSuggestionFor
+        : prospectSuggestionFor;
     const auto = picker.raw ? suggestFn(picker.raw) : null;
     const list = source.filter(p => p.company && (!q || p.company.toLowerCase().includes(q)));
     list.sort((a, b) => a.company.localeCompare(b.company));
@@ -744,7 +869,7 @@ export function UploadedListView({
       if (out.length >= 30) break;
     }
     return out;
-  }, [picker, prospects, prospectSuggestionFor, myAccountSuggestionFor, myAccountNames]);
+  }, [picker, prospects, allPortfolioCompanies, prospectSuggestionFor, myAccountSuggestionFor, portfolioSuggestionFor, myAccountNames]);
 
   return (
     <div className={styles.wrapper}>
@@ -772,6 +897,22 @@ export function UploadedListView({
                     )
                     {myAccountsCoverage.pending > 0 && (
                       <> · <strong style={{ color: '#92400E' }}>{myAccountsCoverage.pending}</strong> still suggested</>
+                    )}
+                  </>
+                )}
+                {portfolioCoverage.touched > 0 && (
+                  <>
+                    {' '}·
+                    {' '}<strong style={{ color: portfolioCoverage.pct === 100 ? '#166534' : '#5B21B6' }}>
+                      {portfolioCoverage.mapped}/{portfolioCoverage.touched}
+                    </strong>{' '}
+                    Portfolio Companies mapped (
+                    <strong style={{ color: portfolioCoverage.pct === 100 ? '#166534' : '#5B21B6' }}>
+                      {portfolioCoverage.pct}%
+                    </strong>
+                    )
+                    {portfolioCoverage.pending > 0 && (
+                      <> · <strong style={{ color: '#92400E' }}>{portfolioCoverage.pending}</strong> still suggested</>
                     )}
                   </>
                 )}
@@ -893,7 +1034,11 @@ export function UploadedListView({
             value={picker.query}
             onChange={e => setPicker(p => ({ ...p, query: e.target.value }))}
             onKeyDown={e => { if (e.key === 'Escape') setPicker(null); }}
-            placeholder={picker.scope === 'myAccounts' ? 'Search My Accounts…' : 'Search Table View prospects…'}
+            placeholder={picker.scope === 'myAccounts'
+              ? 'Search My Accounts…'
+              : picker.scope === 'portfolio'
+                ? 'Search Portfolio Companies…'
+                : 'Search Table View prospects…'}
             style={{ width: '100%', padding: '0.3rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.75rem', fontFamily: 'inherit', marginBottom: '0.25rem', boxSizing: 'border-box' }}
           />
           <div style={{ overflowY: 'auto', flex: 1 }}>
@@ -920,7 +1065,11 @@ export function UploadedListView({
               </div>
             )}
           </div>
-          {((picker.scope === 'myAccounts' ? myAccountMapping : mapping)[picker.matchKey]) && (
+          {((picker.scope === 'myAccounts'
+              ? myAccountMapping
+              : picker.scope === 'portfolio'
+                ? portfolioMapping
+                : mapping)[picker.matchKey]) && (
             <button
               type="button"
               onClick={() => clearMapping(picker.matchKey)}
