@@ -40,6 +40,7 @@ export function SitesView() {
   const [uploadError, setUploadError] = useState('');
   const [utilityBusy, setUtilityBusy] = useState(false);
   const [mappingModal, setMappingModal] = useState(null);
+  const [dragOver, setDragOver] = useState(false);
   // { rows, headers, mapping: { zip, electric, gas, water } }
   const sitesFileRef = useRef(null);
   const utilityFileRef = useRef(null);
@@ -60,19 +61,54 @@ export function SitesView() {
     return () => { cancelled = true; };
   }, []);
 
-  async function handleSitesUpload(e) {
-    const file = e.target.files?.[0];
-    e.target.value = '';
+  async function loadSitesFromFile(file) {
     if (!file) return;
     setUploadError('');
     try {
       const buf = await file.arrayBuffer();
-      const { rows } = parseBestSheet(new Uint8Array(buf));
+      // A Portfolio Companies workbook has several tabs (main portfolio,
+      // Top 5 Overview, Top 5 Deep Dives, Site List). Prefer the one
+      // that actually lists sites; fall back to the raw best-scoring
+      // sheet for spreadsheets that only contain a sites table.
+      const { rows, sheetName } = parseBestSheet(new Uint8Array(buf), {
+        preferSheetName: /site\s*list|^\s*sites?\s*$/i,
+      });
       await saveListToIDB(SITES_STORAGE_KEY, rows);
       setSitesData(rows);
+      if (sheetName && !/site/i.test(sheetName)) {
+        // Helpful nudge when we grabbed something that wasn't a sites
+        // tab — e.g. user dropped a file that has no Site List tab.
+        setUploadError(`No tab named "Site List" found — loaded sheet "${sheetName}" instead (${rows.length.toLocaleString()} rows). Rename the tab or drop a different file if that's not what you wanted.`);
+      }
     } catch (err) {
       setUploadError(err?.message || 'Failed to read the sites file');
     }
+  }
+
+  async function handleSitesUpload(e) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    await loadSitesFromFile(file);
+  }
+
+  function handleDrop(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+    const file = e.dataTransfer?.files?.[0];
+    if (file) loadSitesFromFile(file);
+  }
+  function handleDragOver(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!dragOver) setDragOver(true);
+  }
+  function handleDragLeave(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    // Ignore drag leave events that bounce between child elements.
+    if (e.currentTarget.contains(e.relatedTarget)) return;
+    setDragOver(false);
   }
 
   async function handleRemoveSites() {
@@ -281,7 +317,14 @@ export function SitesView() {
   const utilMeta = utility?.meta || null;
 
   return (
-    <div className={styles.wrapper}>
+    <div
+      className={styles.wrapper}
+      onDrop={handleDrop}
+      onDragOver={handleDragOver}
+      onDragEnter={handleDragOver}
+      onDragLeave={handleDragLeave}
+      style={dragOver ? { outline: '2px dashed var(--color-accent)', outlineOffset: -4, background: '#F0F9FF' } : undefined}
+    >
       <div className={styles.header}>
         <div>
           <h1 className={styles.title}>Utility Lookup</h1>
@@ -384,9 +427,9 @@ export function SitesView() {
         </div>
       ) : sitesData.length === 0 ? (
         <div style={{ padding: '2rem 1.25rem', textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>
-          No sites loaded. Click <strong>Upload Sites File</strong> to add your list.
+          No sites loaded. Click <strong>Upload Sites File</strong> or drop a Portfolio Companies workbook anywhere on this page — we'll pick up the <strong>Site List</strong> tab automatically.
           <div style={{ marginTop: '0.5rem', fontSize: '0.78rem' }}>
-            The first column matching a "zip"/"postal" header is used to look up utility providers.
+            The first column matching a "zip"/"postal" header drives the utility lookup.
           </div>
         </div>
       ) : (

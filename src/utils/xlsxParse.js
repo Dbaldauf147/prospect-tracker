@@ -63,8 +63,14 @@ function parseSheet(sheet, sheetName) {
 }
 
 // Parses an xlsx/csv buffer and returns the sheet with the most rows.
-// Throws with a descriptive message when no sheet has data.
-export function parseBestSheet(buffer) {
+// If `options.preferSheetName` is a regex, any sheet whose name
+// matches and parses with >0 rows wins over the raw row-count leader —
+// useful when you're looking for a specific tab (e.g. "Site List")
+// inside a multi-sheet workbook that might have a larger-but-irrelevant
+// tab next to it. Throws with a descriptive message when no sheet has
+// data.
+export function parseBestSheet(buffer, options = {}) {
+  const { preferSheetName } = options;
   const wb = XLSX.read(buffer, { type: 'array' });
   if (!wb.SheetNames?.length) throw new Error('Workbook has no sheets');
   const attempts = [];
@@ -76,6 +82,10 @@ export function parseBestSheet(buffer) {
     } catch (err) {
       attempts.push({ sheetName: name, rows: [], headers: [], reason: err?.message || 'parse error' });
     }
+  }
+  if (preferSheetName instanceof RegExp) {
+    const preferred = attempts.find(a => a.rows.length > 0 && preferSheetName.test(a.sheetName));
+    if (preferred) return preferred;
   }
   const best = attempts.reduce((a, b) => (b.rows.length > (a?.rows.length || 0) ? b : a), null);
   if (!best || best.rows.length === 0) {
