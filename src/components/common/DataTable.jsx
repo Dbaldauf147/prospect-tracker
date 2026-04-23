@@ -114,6 +114,7 @@ export function DataTable({
   rowClassName,
   rowStyle,
   emptyMessage = 'No data found',
+  exportFileName,
 }) {
   const [colWidths, setColWidths] = useState(() => loadColWidths(tableId));
   const [visibleCols, setVisibleCols] = useState(() => loadColVisible(tableId, columns.map(c => c.key)));
@@ -243,9 +244,10 @@ export function DataTable({
           const ws = XLSX.utils.json_to_sheet(data);
           ws['!cols'] = exportCols.map(col => ({ wch: Math.max((colNames[col.key] || col.label).length, 12) }));
           const wb = XLSX.utils.book_new();
-          XLSX.utils.book_append_sheet(wb, ws, (tableId || 'Export').replace(/[\\/:*?\[\]]+/g, '-').slice(0, 31));
-          const safeName = (tableId || 'export').replace(/[\\/:*?"<>|]+/g, '-');
-          XLSX.writeFile(wb, `${safeName}-${new Date().toISOString().slice(0, 10)}.xlsx`);
+          const sheetName = (exportFileName || tableId || 'Export').replace(/[\\/:*?\[\]]+/g, '-').slice(0, 31);
+          XLSX.utils.book_append_sheet(wb, ws, sheetName);
+          const safeName = (exportFileName || tableId || 'export').replace(/[\\/:*?"<>|]+/g, '-');
+          XLSX.writeFile(wb, `${safeName} - ${new Date().toISOString().slice(0, 10)}.xlsx`);
         }}>
           Export Excel
         </button>

@@ -732,6 +732,7 @@ export function SitesView() {
           rows={filtered}
           alwaysVisible={alwaysVisible}
           emptyMessage="No matching sites"
+          exportFileName="Indicative Site Analysis"
         />
       )}
 
