@@ -67,8 +67,8 @@ function renderMappingCell({ row, scope, mapping, dismissed, suggestionFor, pros
         type="button"
         data-mapping-cell={scope}
         onClick={handleClick}
-        style={{ background: confirmBg, border: `1px solid ${confirmBorder}`, borderRadius: 999, padding: '1px 8px', fontSize: '0.7rem', color: confirmText, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-        title={confirmTitle}
+        style={{ background: confirmBg, border: `1px solid ${confirmBorder}`, borderRadius: 12, padding: '2px 8px', fontSize: '0.7rem', color: confirmText, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', maxWidth: '100%', textAlign: 'left', whiteSpace: 'normal', wordBreak: 'break-word', lineHeight: 1.25 }}
+        title={`${confirmTitle} · ${prospect.company}`}
       >{confirmIcon} {prospect.company}</button>
     );
   }
@@ -77,20 +77,20 @@ function renderMappingCell({ row, scope, mapping, dismissed, suggestionFor, pros
     const suggestion = suggestionFor(row.__rawName__ || '');
     if (suggestion) {
       return (
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, maxWidth: '100%' }}>
+        <span style={{ display: 'inline-flex', alignItems: 'flex-start', gap: 2, maxWidth: '100%' }}>
           <button
             type="button"
             data-mapping-cell={scope}
             onClick={handleClick}
-            style={{ background: '#FEF3C7', border: '1px dashed #F59E0B', borderRadius: 999, padding: '1px 8px', fontSize: '0.7rem', color: '#92400E', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', maxWidth: 'calc(100% - 20px)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-            title={suggestTitle}
+            style={{ background: '#FEF3C7', border: '1px dashed #F59E0B', borderRadius: 12, padding: '2px 8px', fontSize: '0.7rem', color: '#92400E', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', maxWidth: 'calc(100% - 20px)', textAlign: 'left', whiteSpace: 'normal', wordBreak: 'break-word', lineHeight: 1.25 }}
+            title={`${suggestTitle} · ${suggestion.company}`}
           >? {suggestion.company}</button>
           <button
             type="button"
             data-mapping-cell={scope}
             onClick={e => { e.stopPropagation(); onDismiss(matchKey, scope); }}
             title="Dismiss this suggestion"
-            style={{ background: 'transparent', border: 'none', color: '#94A3B8', cursor: 'pointer', fontSize: '0.85rem', lineHeight: 1, padding: '0 4px' }}
+            style={{ background: 'transparent', border: 'none', color: '#94A3B8', cursor: 'pointer', fontSize: '0.85rem', lineHeight: 1, padding: '0 4px', flexShrink: 0 }}
             onMouseEnter={e => e.currentTarget.style.color = '#DC2626'}
             onMouseLeave={e => e.currentTarget.style.color = '#94A3B8'}
           >×</button>
