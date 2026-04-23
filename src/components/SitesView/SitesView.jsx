@@ -351,19 +351,21 @@ export function SitesView() {
 
   const siteHeaders = useMemo(() => sitesData.length ? Object.keys(sitesData[0]) : [], [sitesData]);
 
-  const pickMinConsumption = (row, candidates, toUnit) => {
-    let best = null;
-    let bestHeader = null;
+  // Pick the FIRST candidate column (in document order) that has a
+  // valid value for this row. Earlier we took the per-row minimum,
+  // but that lets a stray "1" in a later column beat the real
+  // estimate in column one. The user prefers their primary estimate
+  // column (typically labelled "Est. Natural Gas" / "Est. Electric")
+  // as the canonical value, falling through to later candidates only
+  // when the primary is blank.
+  const pickFirstConsumption = (row, candidates, toUnit) => {
     for (const { header, unit } of candidates) {
       const raw = row[header];
       const converted = toUnit(raw, unit);
       if (converted == null || !Number.isFinite(converted) || converted <= 0) continue;
-      if (best == null || converted < best) {
-        best = converted;
-        bestHeader = header;
-      }
+      return { value: converted, sourceHeader: header };
     }
-    return { value: best, sourceHeader: bestHeader };
+    return { value: null, sourceHeader: null };
   };
 
   const rows = useMemo(() => {
@@ -373,8 +375,8 @@ export function SitesView() {
       const state = match?.state || zipToState(zip);
       const electricRate = state ? stateRate(state, 'electric') : null;
       const gasRate = state ? stateRate(state, 'gas') : null;
-      const elec = pickMinConsumption(r, consumption.electric, toKwh);
-      const gas = pickMinConsumption(r, consumption.gas, toTherms);
+      const elec = pickFirstConsumption(r, consumption.electric, toKwh);
+      const gas = pickFirstConsumption(r, consumption.gas, toTherms);
       const electricCost = electricRate != null && elec.value != null ? electricRate * elec.value : null;
       const gasCost = gasRate != null && gas.value != null ? gasRate * gas.value : null;
       const totalCost = (electricCost ?? 0) + (gasCost ?? 0);
@@ -528,9 +530,9 @@ export function SitesView() {
         const text = formatMoney(val);
         let title = label;
         if (key === 'electricCost' && row.__kwh__ != null) {
-          title = `${row.__kwh__.toLocaleString()} kWh × ${formatRate(row.__electricRate__, 'electric')}${row.__kwhSource__ ? ` · min of matching columns ("${row.__kwhSource__}")` : ''}`;
+          title = `${row.__kwh__.toLocaleString()} kWh × ${formatRate(row.__electricRate__, 'electric')}${row.__kwhSource__ ? ` · from "${row.__kwhSource__}"` : ''}`;
         } else if (key === 'gasCost' && row.__therms__ != null) {
-          title = `${Math.round(row.__therms__).toLocaleString()} therms × ${formatRate(row.__gasRate__, 'gas')}${row.__thermsSource__ ? ` · min of matching columns ("${row.__thermsSource__}")` : ''}`;
+          title = `${Math.round(row.__therms__).toLocaleString()} therms × ${formatRate(row.__gasRate__, 'gas')}${row.__thermsSource__ ? ` · from "${row.__thermsSource__}"` : ''}`;
         } else if (key === 'totalCost') {
           const parts = [];
           if (row.__electricCost__ != null) parts.push(`Electric ${formatMoney(row.__electricCost__)}`);
@@ -1112,7 +1114,7 @@ export function SitesView() {
             </select>
             {detectedConsumption.electric.length > 1 && !electricColOverride && (
               <span style={{ fontSize: '0.65rem', color: '#64748B' }}>
-                (auto — min of {detectedConsumption.electric.length} cols)
+                (auto — uses first valid of {detectedConsumption.electric.length} cols)
               </span>
             )}
           </label>
@@ -1128,7 +1130,7 @@ export function SitesView() {
             </select>
             {detectedConsumption.gas.length > 1 && !gasColOverride && (
               <span style={{ fontSize: '0.65rem', color: '#64748B' }}>
-                (auto — min of {detectedConsumption.gas.length} cols)
+                (auto — uses first valid of {detectedConsumption.gas.length} cols)
               </span>
             )}
           </label>
