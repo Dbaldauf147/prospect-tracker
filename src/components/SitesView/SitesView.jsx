@@ -31,6 +31,63 @@ function pickZipColumn(headers) {
     || headers[0];
 }
 
+// Classify a utility provider as "Regulated" (monopoly market — usually
+// municipally owned, public power, or a cooperative) or "Deregulated"
+// (competitive retail market). Based on the provider name only, since
+// that's all we have in the lookup file today. Well-known municipal
+// and coop utilities that don't follow the naming conventions get an
+// explicit override so Austin Energy / LADWP / SMUD / TVA etc. are
+// classified correctly.
+const REGULATED_PATTERNS = [
+  /^city of\b/i,
+  /\bmunicipal\b/i,
+  /\b(co-?op|cooperative)\b/i,
+  /\bpublic power\b/i,
+  /\bpublic utilit(y|ies)\b/i,
+  /\b(power|electric|utility|utilities)\s+authority\b/i,
+  /\b(p\.?u\.?d\.?)\b/i, // Public Utility District
+  /\bmembership corp(oration)?\b/i, // Rural electric membership corps
+  /\belectric (membership|cooperative)\b/i,
+];
+const REGULATED_OVERRIDES = [
+  /^austin energy\b/i,
+  /^ladwp\b/i,
+  /\bdepartment of water( and|&) power\b/i,
+  /^smud\b/i,
+  /^sacramento municipal/i,
+  /^seattle city light\b/i,
+  /^tacoma power\b/i,
+  /^cps energy\b/i, // San Antonio
+  /^jea\b/i,         // Jacksonville
+  /^ouc\b/i,         // Orlando Utilities Commission
+  /^orlando utilities/i,
+  /^long island power\b/i,
+  /^lipa\b/i,
+  /^nyseg\b/i,
+  /^nebraska public power\b/i,
+  /^omaha public power\b/i,
+  /^salt river project\b/i,
+  /^srp\b/i,
+  /^colorado springs utilities\b/i,
+  /^nashville electric\b/i,
+  /^memphis light,?\s*gas/i,
+  /^knoxville utilities\b/i,
+  /^epb\b/i,                       // Chattanooga
+  /^bonneville power\b/i,
+  /^tva\b/i,
+  /^tennessee valley authority\b/i,
+  /^gainesville regional utilities\b/i,
+  /^lakeland electric\b/i,
+];
+function classifyUtility(name) {
+  if (!name) return null;
+  const str = String(name).trim();
+  if (!str) return null;
+  if (REGULATED_OVERRIDES.some(r => r.test(str))) return 'Regulated';
+  if (REGULATED_PATTERNS.some(r => r.test(str))) return 'Regulated';
+  return 'Deregulated';
+}
+
 export function SitesView() {
   const [sitesData, setSitesData] = useState([]);
   const [sitesLoaded, setSitesLoaded] = useState(false);
@@ -287,10 +344,36 @@ export function SitesView() {
         return <span style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)' }}>{val}</span>;
       },
     });
+    const makeMarketCol = (utilityKey, label) => ({
+      key: `${utilityKey}_market`,
+      label,
+      defaultWidth: 120,
+      render: (row) => {
+        if (!utility?.zipMap || !row.__matched__) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
+        const providerName = row[`__${utilityKey}__`];
+        const classification = classifyUtility(providerName);
+        if (!classification) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
+        const isRegulated = classification === 'Regulated';
+        const color = isRegulated
+          ? { bg: '#DCFCE7', border: '#86EFAC', text: '#166534' }
+          : { bg: '#FFEDD5', border: '#FDBA74', text: '#9A3412' };
+        const ruleHint = isRegulated
+          ? 'Municipal, public power, or cooperative — single-utility market.'
+          : 'Competitive retail market — customers can choose a supplier.';
+        return (
+          <span
+            title={`${label}: ${classification}. ${ruleHint} Provider: ${providerName}`}
+            style={{ background: color.bg, border: `1px solid ${color.border}`, color: color.text, padding: '1px 8px', borderRadius: 999, fontSize: '0.7rem', fontWeight: 700, whiteSpace: 'nowrap' }}
+          >{classification}</span>
+        );
+      },
+    });
     return [
       ...base,
       makeUtilityCol('electric', 'Electric Utility', { bg: '#FEF3C7', border: '#FCD34D', text: '#92400E' }),
+      makeMarketCol('electric', 'Electric Market'),
       makeUtilityCol('gas', 'Gas Utility', { bg: '#DBEAFE', border: '#93C5FD', text: '#1E3A8A' }),
+      makeMarketCol('gas', 'Gas Market'),
       makeUtilityCol('water', 'Water Utility', { bg: '#DCFCE7', border: '#86EFAC', text: '#166534' }),
       makeLocationCol('city', 'Lookup City'),
       makeLocationCol('country', 'Lookup Country'),
@@ -299,7 +382,7 @@ export function SitesView() {
 
   const alwaysVisible = useMemo(() => {
     if (!columns.length) return [];
-    return [columns[0].key, 'electric', 'gas', 'water'];
+    return [columns[0].key, 'electric', 'electric_market', 'gas', 'gas_market', 'water'];
   }, [columns]);
 
   const tableId = useMemo(
