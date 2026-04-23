@@ -345,6 +345,85 @@ const EMPTY = {
   peOwner: '',
 };
 
+// Company-name normalizer shared with the list tabs so fuzzy matching
+// lines up: lowercased, accent-stripped, punctuation removed, common
+// corporate suffixes dropped.
+const PORTFOLIO_CORP_SUFFIXES = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|oy|ab|spa|kk|pty|holdings|group|grp)\b\.?/g;
+function normalizePortfolioCompany(name) {
+  return String(name || '')
+    .toLowerCase()
+    .normalize('NFKD').replace(/[̀-ͯ]/g, '')
+    .replace(/&/g, ' and ')
+    .replace(PORTFOLIO_CORP_SUFFIXES, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Given a Top 5 Overview sheet and a sibling site-list sheet from the
+// same workbook, append a "Site Count" column to the overview whose
+// value for each row is the number of rows on the site list that match
+// the overview row's company name. Mutates `overview` in place.
+function appendSiteCountToOverview(overview, siteList) {
+  const overviewHeaders = overview.headers || [];
+  const overviewCompanyIdx = overviewHeaders.findIndex(h => {
+    const s = String(h || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    return s.includes('company') || s === 'name' || s.includes('portfolio');
+  });
+  const ovCol = overviewCompanyIdx >= 0 ? overviewCompanyIdx : 1;
+
+  const siteHeaders = siteList.headers || [];
+  const siteCompanyIdx = siteHeaders.findIndex(h => {
+    const s = String(h || '').toLowerCase();
+    return /company|parent|portfolio|owner|name/.test(s);
+  });
+  const siteCol = siteCompanyIdx >= 0 ? siteCompanyIdx : 0;
+
+  const rowCells = (r) => (Array.isArray(r) ? r : (r?.cells || []));
+
+  // Pre-compute normalized names for every top-5 company so we can do
+  // one pass over the (potentially large) site list.
+  const companies = overview.rows.map((r, i) => ({
+    idx: i,
+    norm: normalizePortfolioCompany(rowCells(r)[ovCol]),
+  })).filter(c => c.norm);
+
+  const counts = new Array(overview.rows.length).fill(0);
+  for (const siteRow of siteList.rows) {
+    const rawName = rowCells(siteRow)[siteCol];
+    const norm = normalizePortfolioCompany(rawName);
+    if (!norm) continue;
+    // Exact-normalized first, then single best substring fallback so
+    // "Blue Owl Real Estate" under the parent "Blue Owl" still counts.
+    let match = companies.find(c => c.norm === norm);
+    if (!match) {
+      let best = null;
+      for (const c of companies) {
+        if (c.norm.length < 3) continue;
+        if (norm.includes(c.norm) || c.norm.includes(norm)) {
+          if (!best || c.norm.length > best.norm.length) best = c;
+        }
+      }
+      match = best;
+    }
+    if (match) counts[match.idx]++;
+  }
+
+  // Avoid appending a second "Site Count" if one already exists — we
+  // overwrite its values instead to keep the table tidy.
+  const existingIdx = overviewHeaders.findIndex(h => /^\s*site\s*count\s*$/i.test(String(h || '')));
+  if (existingIdx >= 0) {
+    overview.rows = overview.rows.map((r, i) => {
+      const cells = rowCells(r).slice();
+      cells[existingIdx] = counts[i];
+      return { cells };
+    });
+    return;
+  }
+  overview.headers = [...overviewHeaders, 'Site Count'];
+  overview.rows = overview.rows.map((r, i) => ({ cells: [...rowCells(r), counts[i]] }));
+}
+
 // ── Inline HubSpot Contact Editor ──
 const TAG_OPTIONS = ['ESG', 'Procurement', 'Private Equity', 'Real Estate', 'Capital Planning', 'Efficiency / Renewables', 'Dan Key Target', 'Test', 'EU'];
 
@@ -1201,6 +1280,18 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         : null;
       const overview = readAoaSheet(overviewName);
       const topFive = readAoaSheet(deepDiveName || bareTop5Name);
+      // Optional "site list" sheet — any remaining sheet with "site" in
+      // its name, used to derive a per-company site count that gets
+      // appended to the Top 5 Overview as an extra column.
+      const siteListName = wb.SheetNames.find(n => {
+        const s = String(n || '').toLowerCase();
+        if (!s.includes('site')) return false;
+        return n !== overviewName && n !== deepDiveName && n !== bareTop5Name;
+      });
+      const siteList = readAoaSheet(siteListName);
+      if (overview && siteList && Array.isArray(overview.rows) && Array.isArray(siteList.rows)) {
+        appendSiteCountToOverview(overview, siteList);
+      }
       const headers = Object.keys(data[0]);
       const patterns = {
         companyName: ['companyname', 'company'],
