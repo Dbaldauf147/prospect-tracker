@@ -34,7 +34,7 @@ function pickNameKey(headers) {
   return key || headers[0];
 }
 
-function buildColumns(data, prospectsByNorm, prospectSuggestionFor, mapping, dismissed, onPick, onDismiss) {
+function buildColumns(data, prospectsByNorm, prospectSuggestionFor, myAccountSuggestionFor, mapping, dismissed, onPick, onDismiss) {
   if (!data.length) return [];
   const keys = new Set();
   for (const row of data) for (const k of Object.keys(row)) if (k !== 'id' && k !== '__matchKey__') keys.add(k);
@@ -44,9 +44,26 @@ function buildColumns(data, prospectsByNorm, prospectSuggestionFor, mapping, dis
     defaultWidth: i === 0 ? 240 : 140,
     ...(i === 0 ? { sticky: true } : {}),
   }));
+  const myAccountsCol = {
+    key: '__myAccountsList__',
+    label: 'My Accounts',
+    defaultWidth: 200,
+    render: (row) => {
+      const suggestion = myAccountSuggestionFor(row.__rawName__ || '');
+      if (!suggestion) {
+        return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>—</span>;
+      }
+      return (
+        <span
+          style={{ display: 'inline-block', background: '#DBEAFE', border: '1px solid #93C5FD', borderRadius: 999, padding: '1px 8px', fontSize: '0.7rem', color: '#1E3A8A', fontWeight: 600, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+          title={`Matches "${suggestion.company}" on My Accounts`}
+        >★ {suggestion.company}</span>
+      );
+    },
+  };
   const matchCol = {
     key: '__myAccount__',
-    label: 'My Account',
+    label: 'Table View Mapping',
     defaultWidth: 240,
     render: (row) => {
       const matchKey = row.__matchKey__;
@@ -61,7 +78,7 @@ function buildColumns(data, prospectsByNorm, prospectSuggestionFor, mapping, dis
             type="button"
             onClick={handleClick}
             style={{ background: '#DCFCE7', border: '1px solid #86EFAC', borderRadius: 999, padding: '1px 8px', fontSize: '0.7rem', color: '#166534', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-            title="Mapped to one of your accounts · click to change"
+            title="Mapped to a Table View prospect · click to change"
           >✓ {prospect.company}</button>
         );
       }
@@ -75,7 +92,7 @@ function buildColumns(data, prospectsByNorm, prospectSuggestionFor, mapping, dis
                 type="button"
                 onClick={handleClick}
                 style={{ background: '#FEF3C7', border: '1px dashed #F59E0B', borderRadius: 999, padding: '1px 8px', fontSize: '0.7rem', color: '#92400E', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', maxWidth: 'calc(100% - 20px)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                title="Suggested match · click to confirm or pick a different account"
+                title="Suggested Table View match · click to confirm or pick a different prospect"
               >? {suggestion.company}</button>
               <button
                 type="button"
@@ -94,12 +111,12 @@ function buildColumns(data, prospectsByNorm, prospectSuggestionFor, mapping, dis
           type="button"
           onClick={handleClick}
           style={{ background: 'transparent', border: '1px dashed #CBD5E1', borderRadius: 999, padding: '1px 8px', fontSize: '0.7rem', color: '#64748B', fontWeight: 400, cursor: 'pointer', fontFamily: 'inherit' }}
-          title="Click to map to one of your accounts"
+          title="Click to map to a Table View prospect"
         >— Map —</button>
       );
     },
   };
-  return [...baseCols, matchCol];
+  return [...baseCols, myAccountsCol, matchCol];
 }
 
 export function UploadedListView({
@@ -117,6 +134,7 @@ export function UploadedListView({
   const [mapping, setMapping] = useState(() => loadMapping(mappingKey));
   const [dismissed, setDismissed] = useState(() => loadMapping(dismissedKey));
   const [search, setSearch] = useState('');
+  const [suggestedOnly, setSuggestedOnly] = useState(false);
   const [uploadError, setUploadError] = useState(null);
   const [picker, setPicker] = useState(null); // { matchKey, raw, query }
   const fileInputRef = useRef(null);
@@ -136,6 +154,7 @@ export function UploadedListView({
     setMapping(loadMapping(`${storageKey}:account-mapping`));
     setDismissed(loadMapping(`${storageKey}:account-dismissed`));
     setSearch('');
+    setSuggestedOnly(false);
     setUploadError(null);
     setPicker(null);
     return () => { cancelled = true; };
@@ -178,7 +197,7 @@ export function UploadedListView({
       // Any click on a different "My Account" cell button replaces this
       // picker rather than just closing it — letting the button handler
       // run is fine, openPicker will set new state.
-      if (e.target.closest('button[title*="My Account"], button[title*="one of your accounts"], button[title*="map to one"]')) return;
+      if (e.target.closest('button[title*="Table View"], button[title*="prospect"], button[title*="map to a Table View"]')) return;
       setPicker(null);
     }
     document.addEventListener('mousedown', onDocClick);
@@ -202,16 +221,30 @@ export function UploadedListView({
     return { prospectsByNorm: byNorm, prospectNorms: norms };
   }, [prospects]);
 
-  const prospectSuggestionFor = useMemo(() => (raw) => {
+  // Restrict to Dan Baldauf's accounts — this is the ~100 companies that
+  // appear on the My Accounts tab.
+  const { myAccountsByNorm, myAccountNorms } = useMemo(() => {
+    const byNorm = new Map();
+    const norms = [];
+    for (const p of prospects) {
+      if (!(p.cdm || '').toLowerCase().includes('baldauf')) continue;
+      const name = (p.company || '').trim();
+      if (!name) continue;
+      const norm = normalizeCompany(name);
+      if (!norm) continue;
+      if (!byNorm.has(norm)) byNorm.set(norm, p);
+      norms.push({ norm, prospect: p });
+    }
+    return { myAccountsByNorm: byNorm, myAccountNorms: norms };
+  }, [prospects]);
+
+  function suggestFrom(raw, byNorm, norms) {
     const norm = normalizeCompany(raw);
     if (!norm) return null;
-    const exact = prospectsByNorm.get(norm);
+    const exact = byNorm.get(norm);
     if (exact) return exact;
-    // Substring match — prefer the shortest normalized-name prospect so
-    // short names don't swallow longer ones ("ge" shouldn't hijack "ge
-    // aerospace" if both exist in the prospect list).
     let best = null;
-    for (const { norm: pn, prospect } of prospectNorms) {
+    for (const { norm: pn, prospect } of norms) {
       if (pn === norm) return prospect;
       if (pn.length < 3) continue;
       if (norm.includes(pn) || pn.includes(norm)) {
@@ -219,7 +252,17 @@ export function UploadedListView({
       }
     }
     return best?.prospect || null;
-  }, [prospectsByNorm, prospectNorms]);
+  }
+
+  const prospectSuggestionFor = useMemo(
+    () => (raw) => suggestFrom(raw, prospectsByNorm, prospectNorms),
+    [prospectsByNorm, prospectNorms]
+  );
+
+  const myAccountSuggestionFor = useMemo(
+    () => (raw) => suggestFrom(raw, myAccountsByNorm, myAccountNorms),
+    [myAccountsByNorm, myAccountNorms]
+  );
 
   const rows = useMemo(() => {
     if (!data.length) return [];
@@ -277,9 +320,9 @@ export function UploadedListView({
   }
 
   const columns = useMemo(
-    () => buildColumns(rows, prospectsByNorm, prospectSuggestionFor, mapping, dismissed, openPicker, dismissSuggestion),
+    () => buildColumns(rows, prospectsByNorm, prospectSuggestionFor, myAccountSuggestionFor, mapping, dismissed, openPicker, dismissSuggestion),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rows, prospectsByNorm, prospectSuggestionFor, mapping, dismissed]
+    [rows, prospectsByNorm, prospectSuggestionFor, myAccountSuggestionFor, mapping, dismissed]
   );
   const tableId = useMemo(
     () => `${tableIdPrefix}:` + columns.map(c => c.key).sort().join('|'),
@@ -287,20 +330,32 @@ export function UploadedListView({
   );
   const alwaysVisible = useMemo(() => {
     const first = columns[0];
-    const last = columns[columns.length - 1];
     const keys = [];
     if (first) keys.push(first.key);
-    if (last && last.key === '__myAccount__') keys.push(last.key);
+    for (const c of columns) {
+      if (c.key === '__myAccountsList__' || c.key === '__myAccount__') keys.push(c.key);
+    }
     return keys;
   }, [columns]);
 
   const filtered = useMemo(() => {
-    if (!search.trim()) return rows;
-    const term = search.toLowerCase();
-    return rows.filter(r =>
-      Object.entries(r).some(([k, v]) => k !== '__matchKey__' && String(v).toLowerCase().includes(term))
-    );
-  }, [search, rows]);
+    let result = rows;
+    if (search.trim()) {
+      const term = search.toLowerCase();
+      result = result.filter(r =>
+        Object.entries(r).some(([k, v]) => k !== '__matchKey__' && String(v).toLowerCase().includes(term))
+      );
+    }
+    if (suggestedOnly) {
+      result = result.filter(r => !!myAccountSuggestionFor(r.__rawName__ || ''));
+    }
+    return result;
+  }, [search, suggestedOnly, rows, myAccountSuggestionFor]);
+
+  const myAccountsMatchCount = useMemo(
+    () => rows.reduce((n, r) => n + (myAccountSuggestionFor(r.__rawName__ || '') ? 1 : 0), 0),
+    [rows, myAccountSuggestionFor]
+  );
 
   async function handleUpload(e) {
     const file = e.target.files?.[0];
@@ -422,7 +477,31 @@ export function UploadedListView({
           value={search}
           onChange={e => setSearch(e.target.value)}
         />
-        {search && <span className={styles.resultCount}>{filtered.length} results</span>}
+        <button
+          type="button"
+          onClick={() => setSuggestedOnly(v => !v)}
+          title="Show only rows that match a company on My Accounts"
+          style={{
+            padding: '0.35rem 0.7rem',
+            border: `1px solid ${suggestedOnly ? '#3B82F6' : 'var(--color-border)'}`,
+            borderRadius: 6,
+            background: suggestedOnly ? '#DBEAFE' : '#fff',
+            color: suggestedOnly ? '#1E3A8A' : 'var(--color-text-secondary)',
+            fontSize: '0.75rem',
+            fontWeight: 600,
+            cursor: 'pointer',
+            fontFamily: 'inherit',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {suggestedOnly ? '★ My Accounts only' : '★ Suggested only'}
+          {myAccountsMatchCount > 0 && (
+            <span style={{ marginLeft: 6, fontSize: '0.68rem', color: suggestedOnly ? '#1E3A8A' : '#94A3B8' }}>
+              {myAccountsMatchCount}
+            </span>
+          )}
+        </button>
+        {(search || suggestedOnly) && <span className={styles.resultCount}>{filtered.length} results</span>}
       </div>
       {rows.length === 0 ? (
         <div style={{ padding: '2rem 1.25rem', textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>
