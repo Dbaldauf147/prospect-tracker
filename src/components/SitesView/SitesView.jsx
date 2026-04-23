@@ -311,12 +311,30 @@ export function SitesView() {
   // the user asked for the conservative estimate, and conservative
   // means lower consumption → lower cost.
   const detectedConsumption = useMemo(() => {
-    if (!sitesData.length) return { electric: [], gas: [] };
-    const headers = Object.keys(sitesData[0]);
-    const mk = (commodity) => detectConsumptionColumns(headers, commodity)
-      .map(header => ({ header, unit: detectConsumptionUnit(header, commodity) }));
+    if (!cleanSitesData.length) return { electric: [], gas: [] };
+    const headers = Object.keys(cleanSitesData[0]);
+    // A plausibility filter: commercial consumption is never a handful
+    // of units. If the column's max converted value sits at or below
+    // this threshold across every row, it's a flag / indicator column
+    // (e.g. "Gas" = 1/0) rather than real consumption. Drop it so the
+    // conservative-min picker doesn't grab a 1 and wipe out the
+    // actual consumption figure.
+    const PLAUSIBLE_MIN = 10;
+    const mk = (commodity) => {
+      const toUnit = commodity === 'electric' ? toKwh : toTherms;
+      return detectConsumptionColumns(headers, commodity)
+        .map(header => ({ header, unit: detectConsumptionUnit(header, commodity) }))
+        .filter(({ header, unit }) => {
+          let max = 0;
+          for (const r of cleanSitesData) {
+            const v = toUnit(r[header], unit);
+            if (typeof v === 'number' && Number.isFinite(v) && v > max) max = v;
+          }
+          return max > PLAUSIBLE_MIN;
+        });
+    };
     return { electric: mk('electric'), gas: mk('gas') };
-  }, [sitesData]);
+  }, [cleanSitesData]);
   // Active consumption columns = detection result, unless the user
   // picked explicit overrides on the header bar.
   const consumption = useMemo(() => {
