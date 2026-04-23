@@ -112,7 +112,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
       <div className={styles.content}>
         {subtab === 'raclients' && <RAClientsView />}
         {subtab === 'targets' && <TargetAccountsView onDataLoaded={onTargetAccountsLoaded} />}
-        {subtab === 'recaclients' && <RECAClientsView />}
+        {subtab === 'recaclients' && <RECAClientsView prospects={prospects} onSelectProspect={onSelectProspect} />}
         {subtab === 'csrd' && (
           <UploadedListView
             storageKey="csrd-list-override"
