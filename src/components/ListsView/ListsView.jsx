@@ -3,6 +3,7 @@ import { RAClientsView } from '../RAClientsView/RAClientsView';
 import { TargetAccountsView } from '../TargetAccountsView/TargetAccountsView';
 import { RECAClientsView } from '../RECAClientsView/RECAClientsView';
 import { SitesView } from '../SitesView/SitesView';
+import { LookupListView } from '../LookupListView/LookupListView';
 import { UploadedListView } from '../UploadedListView/UploadedListView';
 import styles from './ListsView.module.css';
 
@@ -128,7 +129,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
           />
         )}
         {subtab === 'cdp' && (
-          <UploadedListView
+          <LookupListView
             storageKey="cdp-list-override"
             tableIdPrefix="cdp-list"
             title="CDP"
