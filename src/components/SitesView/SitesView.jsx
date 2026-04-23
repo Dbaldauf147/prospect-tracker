@@ -740,6 +740,73 @@ export function SitesView() {
     return { electric: buildFor('electric'), gas: buildFor('gas') };
   }, [rows, utility, siteCompanyColumn]);
 
+  // Combined Summary: one row per (company, state) joining the
+  // electric + gas overviews side-by-side, plus per-row totals.
+  const summaryRows = useMemo(() => {
+    const byKey = new Map();
+    function ensureRow(company, state) {
+      const key = `${company}||${state}`;
+      if (!byKey.has(key)) {
+        byKey.set(key, {
+          Company: company,
+          'ST/Prov': state,
+          'Total Sites': 0,
+          'Electric Status': '',
+          'Electric Deregulated Sites': 0,
+          'Electric Annual Spend': 0,
+          'Electric Savings Low': '',
+          'Electric Savings High': '',
+          'Gas Status': '',
+          'Gas Deregulated Sites': 0,
+          'Gas Annual Spend': 0,
+          'Gas Savings Low': '',
+          'Gas Savings High': '',
+          'Total Annual Spend': 0,
+          'Total Savings Low': 0,
+          'Total Savings High': 0,
+        });
+      }
+      return byKey.get(key);
+    }
+    for (const e of overviewByCommodity.electric) {
+      const row = ensureRow(e.Company, e['ST/Prov']);
+      row['Total Sites'] = Math.max(row['Total Sites'] || 0, e['Total Sites'] || 0);
+      row['Electric Status'] = e['Deregulated Status'] || '';
+      row['Electric Deregulated Sites'] = e['Deregulated Sites'] || 0;
+      row['Electric Annual Spend'] = e['Annual Deregulated Spend'] || 0;
+      row['Electric Savings Low'] = e['Indicative Savings Low'];
+      row['Electric Savings High'] = e['Indicative Savings High'];
+    }
+    for (const g of overviewByCommodity.gas) {
+      const row = ensureRow(g.Company, g['ST/Prov']);
+      row['Total Sites'] = Math.max(row['Total Sites'] || 0, g['Total Sites'] || 0);
+      row['Gas Status'] = g['Deregulated Status'] || '';
+      row['Gas Deregulated Sites'] = g['Deregulated Sites'] || 0;
+      row['Gas Annual Spend'] = g['Annual Deregulated Spend'] || 0;
+      row['Gas Savings Low'] = g['Indicative Savings Low'];
+      row['Gas Savings High'] = g['Indicative Savings High'];
+    }
+    const toNum = (v) => (typeof v === 'number' && Number.isFinite(v)) ? v : 0;
+    const out = [];
+    for (const row of byKey.values()) {
+      const eSpend = toNum(row['Electric Annual Spend']);
+      const gSpend = toNum(row['Gas Annual Spend']);
+      row['Total Annual Spend'] = Math.round((eSpend + gSpend) * 100) / 100;
+      const eLow  = toNum(row['Electric Savings Low']);
+      const gLow  = toNum(row['Gas Savings Low']);
+      const eHigh = toNum(row['Electric Savings High']);
+      const gHigh = toNum(row['Gas Savings High']);
+      row['Total Savings Low']  = Math.round((eLow  + gLow)  * 100) / 100;
+      row['Total Savings High'] = Math.round((eHigh + gHigh) * 100) / 100;
+      out.push(row);
+    }
+    out.sort((a, b) => {
+      if (a.Company !== b.Company) return a.Company.localeCompare(b.Company);
+      return a['ST/Prov'].localeCompare(b['ST/Prov']);
+    });
+    return out;
+  }, [overviewByCommodity]);
+
   const exportExtraSheets = useMemo(() => {
     const sheets = [];
     if (overviewByCommodity.electric.length) {
@@ -748,8 +815,11 @@ export function SitesView() {
     if (overviewByCommodity.gas.length) {
       sheets.push({ name: 'Gas Overview', rows: overviewByCommodity.gas });
     }
+    if (summaryRows.length) {
+      sheets.push({ name: 'Summary', rows: summaryRows });
+    }
     return sheets;
-  }, [overviewByCommodity]);
+  }, [overviewByCommodity, summaryRows]);
 
   // Schneider Electric branded export — title band, green headers,
   // Nunito Sans everywhere, frozen header row, auto-filter, tab
