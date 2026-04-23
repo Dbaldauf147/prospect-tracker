@@ -7,8 +7,38 @@ import { Badge } from '../common/Badge';
 import { DataTable } from '../common/DataTable';
 import { statusColor, formatAum } from '../../utils/formatters';
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE } from '../../data/enums';
+import { loadList as loadListFromIDB } from '../../utils/uploadedListStore';
 import * as XLSX from 'xlsx';
 import styles from './MyAccountsView.module.css';
+
+// Every list tab on the Lists view that stores its uploaded file under
+// the UploadedListView convention. Keyed by the same storageKey the
+// consumers pass in, so we can read both the per-list confirmed
+// mappings and (when present) the full list data to pick up
+// non-dismissed fuzzy suggestions too.
+const LIST_FLAG_SOURCES = [
+  { label: 'RECA',     storageKey: 'reca-clients-override', color: { bg: '#DBEAFE', text: '#1E40AF' } },
+  { label: 'CSRD',     storageKey: 'csrd-list-override',    color: { bg: '#EDE9FE', text: '#5B21B6' } },
+  { label: 'CDP',      storageKey: 'cdp-list-override',     color: { bg: '#DCFCE7', text: '#166534' } },
+  { label: 'GRESB',    storageKey: 'gresb-list-override',   color: { bg: '#FEF3C7', text: '#92400E' } },
+  { label: 'SBT',      storageKey: 'sbt-list-override',     color: { bg: '#FCE7F3', text: '#9D174D' } },
+  { label: 'Ecovadis', storageKey: 'ecovadis-list-override', color: { bg: '#E0F2FE', text: '#075985' } },
+  { label: 'UN PRI',   storageKey: 'unpri-list-override',   color: { bg: '#F3E8FF', text: '#6B21A8' } },
+  { label: 'CA SB',    storageKey: 'casb-list-override',    color: { bg: '#FFEDD5', text: '#9A3412' } },
+];
+const LIST_FLAG_BY_LABEL = Object.fromEntries(LIST_FLAG_SOURCES.map(s => [s.label, s]));
+
+function pickListNameKey(headers) {
+  if (!headers?.length) return null;
+  const key = headers.find(k => /company|name|organi[sz]ation|signatory|entity/i.test(k));
+  return key || headers[0];
+}
+function safeReadMapping(storageKey) {
+  try {
+    const raw = localStorage.getItem(storageKey);
+    return raw ? (JSON.parse(raw) || {}) : {};
+  } catch { return {}; }
+}
 
 function InlineCell({ row, field, value, onUpdate, type, options }) {
   const [editing, setEditing] = useState(false);
@@ -215,6 +245,7 @@ const ACCOUNT_COLUMNS = [
       }}>{s}</span>)}
     </span>;
   }},
+  { key: 'listFlags', label: 'List Flags', defaultWidth: 220, render: null /* set in columns memo */ },
 ];
 
 // Fuzzy company name matching — returns true if names are "close enough"
@@ -647,6 +678,78 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   const [bucketFilter, setBucketFilter] = useState(savedView?.bucketFilter ?? null); // 'tier1' | 'tier2' | 'client' | 'pipeline' | null
   const [hqLookupRunning, setHqLookupRunning] = useState(false);
   const [inactiveMode, setInactiveMode] = useState(savedView?.inactiveMode || 'hide'); // 'hide' | 'only' | 'show'
+  // companyLowerName → Set<listLabel>. Built from each list tab's
+  // confirmed My-Account mappings plus non-dismissed fuzzy suggestions
+  // against the uploaded list rows.
+  const [listFlagsByCompany, setListFlagsByCompany] = useState(() => new Map());
+
+  useEffect(() => {
+    let cancelled = false;
+    const CORP_SUFFIXES = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|oy|ab|spa|kk|pty|holdings|group|grp)\b\.?/g;
+    function normalizeListCompany(name) {
+      return String(name || '')
+        .toLowerCase()
+        .normalize('NFKD').replace(/[̀-ͯ]/g, '')
+        .replace(/&/g, ' and ')
+        .replace(CORP_SUFFIXES, ' ')
+        .replace(/[^a-z0-9]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+
+    (async () => {
+      const flags = new Map();
+      const addFlag = (accountName, label) => {
+        const key = String(accountName || '').toLowerCase().trim();
+        if (!key) return;
+        if (!flags.has(key)) flags.set(key, new Set());
+        flags.get(key).add(label);
+      };
+      const baldaufProspects = (prospects || []).filter(p =>
+        (p.cdm || '').toLowerCase().includes('baldauf') && (p.company || '').trim()
+      );
+
+      for (const source of LIST_FLAG_SOURCES) {
+        const mapping = safeReadMapping(`${source.storageKey}:my-accounts-mapping`);
+        const dismissed = safeReadMapping(`${source.storageKey}:my-accounts-dismissed`);
+
+        // 1. Confirmed My-Account mappings — the account name is
+        //    whatever prospect.company string the user picked in the
+        //    list tab's picker.
+        for (const company of Object.values(mapping)) {
+          if (typeof company === 'string') addFlag(company, source.label);
+        }
+
+        // 2. Non-dismissed fuzzy suggestions from the raw list rows.
+        try {
+          const listRows = await loadListFromIDB(source.storageKey);
+          if (cancelled) return;
+          if (!Array.isArray(listRows) || listRows.length === 0) continue;
+          const headers = Object.keys(listRows[0] || {});
+          const nameKey = pickListNameKey(headers);
+          if (!nameKey) continue;
+          for (const row of listRows) {
+            const rawName = String(row[nameKey] ?? '').trim();
+            if (!rawName) continue;
+            const norm = normalizeListCompany(rawName);
+            if (!norm) continue;
+            const matchKey = `name::${norm}`;
+            if (dismissed[matchKey]) continue;    // user dismissed the suggestion
+            if (mapping[matchKey]) continue;      // already handled as confirmed
+            for (const acc of baldaufProspects) {
+              if (companiesMatch(acc.company, rawName)) {
+                addFlag(acc.company, source.label);
+                break;
+              }
+            }
+          }
+        } catch {}
+      }
+
+      if (!cancelled) setListFlagsByCompany(flags);
+    })();
+    return () => { cancelled = true; };
+  }, [prospects]);
 
   // Hydrate filter state once settings arrive after login, then debounce-persist changes.
   const viewHydratedRef = useRef(!!savedView);
@@ -1435,7 +1538,9 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       // someone else's CDM with no open opps shouldn't show on Dan's list.
       const isStrategicTier = tier === 'Tier 1' || tier === 'Tier 2';
       if (!(isStrategicTier && isBaldauf) && (!oppsCount || oppsCount === 0)) continue;
-      const entry = { ...p, myTier: tier, activityCount, oppsCount, totalOpps, sources: sources.join(', '), dmFound: !!dmNames, dmNames: dmNames ? dmNames.join(', ') : '', cdmMismatch: !isBaldauf, targetNames, targetName: (targetNames || []).join(', '), targetTier, tierMismatch, otherReps, contactCount, bucketCount, suggestedStatus, statusMismatch };
+      const listFlagsSet = listFlagsByCompany.get((p.company || '').toLowerCase().trim());
+      const listFlags = listFlagsSet ? [...listFlagsSet] : [];
+      const entry = { ...p, myTier: tier, activityCount, oppsCount, totalOpps, sources: sources.join(', '), dmFound: !!dmNames, dmNames: dmNames ? dmNames.join(', ') : '', cdmMismatch: !isBaldauf, targetNames, targetName: (targetNames || []).join(', '), targetTier, tierMismatch, otherReps, contactCount, bucketCount, suggestedStatus, statusMismatch, listFlags };
       if (tier === 'Tier 1') t1.push(entry);
       else t2.push(entry); // Tier 2 and Tier 3 both go in t2 array
       const s = p.status || 'Unknown';
@@ -1549,7 +1654,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     if (skippedCdm.length > 0) console.log('My Accounts: skipped (CDM not Baldauf):', skippedCdm);
     console.log(`My Accounts: ${t1.length} Tier 1, ${t2.length} Tier 2 (incl ${oppsOnlyAdded} opps-only)`);
     return { tier1: t1, tier2: t2, allAccounts: all, statusCounts: counts };
-  }, [prospects, targetMap, targetAccounts, allTargetReps, activityByCompany, activeOppsByAccount, totalOppsByAccount, suggestedStatusByAccount, displayNameByAccount, hubspotCompanies, targetCompanies, decisionMakerByCompany, contactCountByCompany, bucketsByCompany, divisionsMap]);
+  }, [prospects, targetMap, targetAccounts, allTargetReps, activityByCompany, activeOppsByAccount, totalOppsByAccount, suggestedStatusByAccount, displayNameByAccount, hubspotCompanies, targetCompanies, decisionMakerByCompany, contactCountByCompany, bucketsByCompany, divisionsMap, listFlagsByCompany]);
 
   const clientCount = statusCounts['Client'] || 0;
   const tier3Count = allAccounts.filter(a => a.myTier === 'Tier 3').length;
@@ -1697,6 +1802,26 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       if (col.key === 'targetName') {
         return { ...col, render: (row) => <TargetNamePicker values={row.targetNames || []} companyId={row.id} companyName={row.company} targetOptions={allTargetNames} onToggle={toggleTargetMapping} duplicates={duplicateTargetNames} /> };
       }
+      if (col.key === 'listFlags') {
+        return { ...col, render: (row) => {
+          const flags = row.listFlags || [];
+          if (!flags.length) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>—</span>;
+          return (
+            <span style={{ display: 'flex', gap: '3px', flexWrap: 'wrap' }}>
+              {flags.map(label => {
+                const color = LIST_FLAG_BY_LABEL[label]?.color || { bg: '#F1F5F9', text: '#334155' };
+                return (
+                  <span
+                    key={label}
+                    title={`Flagged on the ${label} list`}
+                    style={{ padding: '1px 6px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, background: color.bg, color: color.text, whiteSpace: 'nowrap' }}
+                  >{label}</span>
+                );
+              })}
+            </span>
+          );
+        }};
+      }
       if (col.key === 'divisions') {
         return { ...col, render: (row) => <DivisionPicker parentId={row.id} divisions={divisionsMap[row.id] || []} allCompanies={allCompaniesForDivisions} onAdd={addDivision} onRemove={removeDivision} rules={divisionRules[row.id] || []} onSetRule={addDivisionRule} onRemoveRule={removeDivisionRule} /> };
       }
@@ -1781,7 +1906,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         return { ...col, render: (row) => <InlineCell row={row} field="emailDomain" value={row.emailDomain} onUpdate={onUpdate} /> };
       }
       // Skip computed columns — they stay read-only
-      if (['myTier', 'activityCount', 'oppsCount', 'contactCount', 'bucketCount', 'naRegion', 'type2', 'dmFound', 'sources', 'targetName', 'otherReps', 'divisions', '_hide'].includes(col.key)) {
+      if (['myTier', 'activityCount', 'oppsCount', 'contactCount', 'bucketCount', 'naRegion', 'type2', 'dmFound', 'sources', 'targetName', 'otherReps', 'divisions', 'listFlags', '_hide'].includes(col.key)) {
         return col;
       }
       // Make any remaining columns editable as text
