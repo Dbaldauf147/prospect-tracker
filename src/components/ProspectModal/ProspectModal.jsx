@@ -3752,7 +3752,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       // Optionally drop columns by header match.
                       const shouldDrop = (h) => {
                         const header = String(h || '');
-                        if (opts.dropNotesColumn && /^\s*notes?\s*$/i.test(header)) return true;
+                        // Match any column whose header contains "notes" — some
+                        // source files name the column "Top 5 Overview — Notes"
+                        // or "Overview Notes" rather than a bare "Notes".
+                        if (opts.dropNotesColumn && /\bnotes?\b/i.test(header)) return true;
                         if (opts.dropOpportunityScore && /opportunity\s*score|^\s*opp\s*score\s*$/i.test(header)) return true;
                         return false;
                       };
@@ -3795,7 +3798,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       const hasWrapCol = headers.some(isWrapCol);
                       const widths = headers.map((h, i) => {
                         if (isWrapCol(h)) return 80;
-                        if (i === 0) return 6;
+                        if (i === 0) return 7;
                         return 22;
                       });
                       ws2.columns = widths.map(w => ({ width: w }));
