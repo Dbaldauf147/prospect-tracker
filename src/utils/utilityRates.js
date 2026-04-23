@@ -162,47 +162,52 @@ export function normalizeState(value) {
   return code || null;
 }
 
-// Detect ALL plausible consumption columns for a commodity so we can
-// pick the most conservative value per site when the source file
-// includes multiple estimates. Patterns are intentionally broad
-// because users upload a lot of variants ("kWh", "Annual Energy",
-// "Electricity Consumption", "Power Usage", "Est. Energy (GWh/yr)",
-// "Gas therms Low", etc.).
+// Detect plausible consumption columns. We match in tiers so the
+// strongest signals win and weaker ones only apply when nothing
+// better exists — critical when the sheet has a real "Annual kWh"
+// column alongside an "Energy Star Score = 1". Without tiering, the
+// conservative-min picker would grab the 1 and wipe out the real
+// 5,400,000 kWh value.
+//
+//   Tier A: header carries an explicit energy/gas unit (kWh, MWh,
+//           GWh, therms, MMBtu, Mcf, Ccf, BTU). Rock-solid signal.
+//   Tier B: header has a consumption/usage keyword paired with the
+//           commodity word (Electric Usage, Gas Consumption).
+//   Tier C: just the commodity word (Electric, Gas, Power, Energy)
+//           — last-resort fallback, ignored when A or B found
+//           anything.
 export function detectConsumptionColumns(headers, commodity) {
   if (!headers?.length) return [];
-  // NB: anchor gas on its own word so "gasoline" doesn't leak in but
-  // "Natural Gas" / "Gas Usage" / "Gas therms" all match.
-  const patterns = commodity === 'electric'
-    ? [
-        /\bk?wh\b/i,
-        /\bmwh\b/i,
-        /\bgwh\b/i,
-        /\belectric(ity|al)?\b/i,
-        /\bpower\b/i,
-        /\benergy\b/i, // "Est. Energy", "Annual Energy"
-      ]
-    : [
-        /\btherms?\b/i,
-        /\bmmbtu\b/i,
-        /\bmcf\b/i,
-        /\bccf\b/i,
-        /\bbtu\b/i,
-        /\bgas\b/i,
-        /\bnatural\s*gas\b/i,
-        /\bng\b/i, // NG as abbreviation
-      ];
-  // Skip obvious non-consumption columns even when they contain a
-  // matching keyword (cost/rate/price/etc).
-  const EXCLUDE = /\b(rate|cost|price|tariff|spend|bill|per|\$|usd|category|type|status|notes?|fit|score|tier|rank|year|acquired|name|company|city|state|zip|country|address|id|count|sites?|opportunity)\b/i;
-  const found = new Set();
+  const unitsElectric = /\b(kwh|mwh|gwh)\b/i;
+  const unitsGas = /\b(therms?|mmbtu|mcf|ccf|btu)\b/i;
+  const unitPat = commodity === 'electric' ? unitsElectric : unitsGas;
+
+  const commodityWord = commodity === 'electric'
+    ? /\b(electric(ity|al)?|power|energy|elec)\b/i
+    : /\b(natural\s*gas|gas|ng)\b/i;
+
+  const consumptionKeyword = /\b(consumption|usage|use|demand|annual|yearly|baseline|estimate(d)?|min|max|low|high|p50|p90|forecast|load)\b/i;
+
+  // Column names we don't want to ever match even if they contain
+  // energy words — these are where the 1's and 10's live.
+  const EXCLUDE = /\b(rate|cost|price|tariff|spend|bill|per|\$|usd|category|type|status|notes?|fit|score|rating|rank|tier|year|acquired|name|company|city|state|zip|country|address|id|count|sites?|opportunity|meter(s)?|intensity|sqft|sqm|density|%|percent|pct|index|ratio|number\s*of|num\s+|flag|has\b|yes|no|grade|star)\b/i;
+  // Intensity columns (kWh/sqft, therms/unit, $/unit) have a slash
+  // between units — also shouldn't count as total consumption.
+  const LOOKS_LIKE_INTENSITY = /\/\s*(sq\s*ft|sqft|sf|sqm|m2|unit|bldg|building|hr|hour|day|month|mo\.|m\b)/i;
+
+  const tiered = { A: new Set(), B: new Set(), C: new Set() };
   for (const h of headers) {
     const s = String(h);
+    if (!s.trim()) continue;
     if (EXCLUDE.test(s)) continue;
-    for (const pat of patterns) {
-      if (pat.test(s)) { found.add(h); break; }
-    }
+    if (LOOKS_LIKE_INTENSITY.test(s)) continue;
+    if (unitPat.test(s)) { tiered.A.add(h); continue; }
+    if (commodityWord.test(s) && consumptionKeyword.test(s)) { tiered.B.add(h); continue; }
+    if (commodityWord.test(s)) { tiered.C.add(h); continue; }
   }
-  return [...found];
+  if (tiered.A.size > 0) return [...tiered.A];
+  if (tiered.B.size > 0) return [...tiered.B];
+  return [...tiered.C];
 }
 
 // Backwards-compat convenience for callers that only want the first
