@@ -289,6 +289,23 @@ export function SitesView() {
     return pickZipColumn(Object.keys(sitesData[0]));
   }, [sitesData]);
 
+  // Detect the column that holds the site name so we can drop blank
+  // rows. Falls back to the sticky first column if no obvious
+  // name/site/location header shows up.
+  const siteNameColumn = useMemo(() => {
+    if (!sitesData.length) return '';
+    const headers = Object.keys(sitesData[0]);
+    const match = headers.find(h => /\b(site\s*name|site|property|location|facility|building|name)\b/i.test(String(h)));
+    return match || headers[0] || '';
+  }, [sitesData]);
+
+  // Rows that don't carry a site name are junk for this analysis —
+  // filter them out before anything else sees them.
+  const cleanSitesData = useMemo(() => {
+    if (!siteNameColumn) return sitesData;
+    return sitesData.filter(r => String(r[siteNameColumn] ?? '').trim() !== '');
+  }, [sitesData, siteNameColumn]);
+
   // Detect every plausible annual consumption column. When a site has
   // multiple candidates we pick the smallest non-null value per row —
   // the user asked for the conservative estimate, and conservative
@@ -332,7 +349,7 @@ export function SitesView() {
   };
 
   const rows = useMemo(() => {
-    return sitesData.map((r, i) => {
+    return cleanSitesData.map((r, i) => {
       const zip = zipColumn ? normalizeZip(r[zipColumn]) : '';
       const match = utility?.zipMap && zip ? utility.zipMap[zip] : null;
       const state = match?.state || zipToState(zip);
@@ -365,7 +382,7 @@ export function SitesView() {
         __matched__: !!match,
       };
     });
-  }, [sitesData, zipColumn, utility, consumption]);
+  }, [cleanSitesData, zipColumn, utility, consumption]);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return rows;
@@ -676,6 +693,129 @@ export function SitesView() {
     return sheets;
   }, [overviewByCommodity]);
 
+  // Schneider Electric branded export — title band, green headers,
+  // Nunito Sans everywhere, frozen header row, auto-filter, tab
+  // colour. One sheet per overview plus the raw-data sheet.
+  async function handleExport({ columns: visibleColumns, rows: sortedRows, colNames, extraSheets }) {
+    const { Workbook } = await import('exceljs');
+    const SE_GREEN = 'FF3DCD58';
+    const SE_GREEN_DARK = 'FF009530';
+    const SE_TEXT_DARK = 'FF1E293B';
+    const SE_BORDER = 'FFD4DDE1';
+    const MARKET_FILL = { Regulated: 'FFDCFCE7', Deregulated: 'FFFFEDD5' };
+    const MARKET_FG = { Regulated: 'FF166534', Deregulated: 'FF9A3412' };
+
+    const wb = new Workbook();
+    wb.creator = 'Schneider Electric · Prospect Tracker';
+    wb.created = new Date();
+
+    function renderSheet(wsName, subtitle, headers, rowVals, opts = {}) {
+      const ws = wb.addWorksheet(wsName, {
+        properties: { tabColor: { argb: SE_GREEN } },
+        views: [{ state: 'frozen', ySplit: 3 }],
+      });
+      const colCount = headers.length;
+      const widths = opts.widths || headers.map(h => Math.max(String(h).length + 2, 14));
+      ws.columns = widths.map(w => ({ width: w }));
+      // Row 1: Title band
+      ws.mergeCells(1, 1, 1, colCount);
+      const title = ws.getCell(1, 1);
+      title.value = 'Schneider Electric';
+      title.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
+      title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN } };
+      title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(1).height = 30;
+      // Row 2: Subtitle
+      ws.mergeCells(2, 1, 2, colCount);
+      const sub = ws.getCell(2, 1);
+      sub.value = subtitle;
+      sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: 'FF64748B' } };
+      sub.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(2).height = 20;
+      // Row 3: Headers
+      const headerRow = ws.getRow(3);
+      headers.forEach((h, i) => {
+        const cell = headerRow.getCell(i + 1);
+        cell.value = h;
+        cell.font = { name: 'Nunito Sans', bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+        cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+        cell.border = {
+          top: { style: 'thin', color: { argb: SE_BORDER } },
+          bottom: { style: 'thin', color: { argb: SE_BORDER } },
+          left: { style: 'thin', color: { argb: SE_BORDER } },
+          right: { style: 'thin', color: { argb: SE_BORDER } },
+        };
+      });
+      headerRow.height = 30;
+      // Data rows
+      rowVals.forEach((vals, rIdx) => {
+        const row = ws.getRow(4 + rIdx);
+        for (let i = 0; i < colCount; i++) {
+          const cell = row.getCell(i + 1);
+          const v = vals[i];
+          cell.value = v === '' || v == null ? null : v;
+          cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+          cell.alignment = { vertical: 'middle', horizontal: typeof v === 'number' ? 'right' : 'left', wrapText: false, indent: 1 };
+          cell.border = {
+            bottom: { style: 'thin', color: { argb: SE_BORDER } },
+            left: { style: 'thin', color: { argb: SE_BORDER } },
+            right: { style: 'thin', color: { argb: SE_BORDER } },
+          };
+          // Colour-code Regulated / Deregulated cells anywhere they appear.
+          const asText = typeof v === 'string' ? v.trim() : '';
+          if (asText === 'Regulated' || asText === 'Deregulated') {
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: MARKET_FILL[asText] } };
+            cell.font = { ...cell.font, bold: true, color: { argb: MARKET_FG[asText] } };
+          }
+          // Numeric formats for known column types
+          const label = String(headers[i] || '').toLowerCase();
+          if (typeof v === 'number') {
+            if (/spend|cost|savings/.test(label)) cell.numFmt = '"$"#,##0';
+            else if (/rate/.test(label)) cell.numFmt = '$0.000';
+            else if (/kwh|therm|consumption/.test(label)) cell.numFmt = '#,##0';
+          }
+        }
+        row.height = 18;
+      });
+      ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: colCount } };
+      widths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+    }
+
+    // Sheet 1: Raw Data (from the on-screen table — respects sort,
+    // visibility, and renames).
+    const rawHeaders = visibleColumns.map(c => colNames[c.key] || c.label);
+    const rawRows = sortedRows.map(row =>
+      visibleColumns.map(col => {
+        const v = typeof col.exportValue === 'function' ? col.exportValue(row) : row[col.key];
+        if (Array.isArray(v)) return v.join(', ');
+        return v ?? '';
+      })
+    );
+    const subtitle = `Indicative Site Analysis  ·  ${new Date().toLocaleDateString()}`;
+    renderSheet('Raw Data', subtitle, rawHeaders, rawRows);
+
+    // Extra sheets (Electric / Gas Overview) — come in as array of
+    // plain row objects; we key them consistently.
+    for (const extra of extraSheets || []) {
+      if (!extra?.rows?.length) continue;
+      const headers = Object.keys(extra.rows[0]);
+      const vals = extra.rows.map(r => headers.map(h => r[h]));
+      renderSheet(extra.name, `${extra.name}  ·  ${new Date().toLocaleDateString()}`, headers, vals);
+    }
+
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Indicative Site Analysis - ${new Date().toISOString().slice(0, 10)}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div
       className={styles.wrapper}
@@ -689,7 +829,8 @@ export function SitesView() {
         <div>
           <h1 className={styles.title}>Utility Lookup</h1>
           <div className={styles.subtitle}>
-            {sitesData.length} {sitesData.length === 1 ? 'site' : 'sites'}
+            {cleanSitesData.length} {cleanSitesData.length === 1 ? 'site' : 'sites'}
+            {sitesData.length > cleanSitesData.length && <span style={{ color: 'var(--color-text-muted)' }}> ({sitesData.length - cleanSitesData.length} blank-name row{sitesData.length - cleanSitesData.length === 1 ? '' : 's'} ignored)</span>}
             {matchStats && (
               <>
                 {' '}· <strong style={{ color: '#166534' }}>{matchStats.matched}</strong>/{matchStats.total} matched to utility lookup
@@ -856,6 +997,7 @@ export function SitesView() {
           exportFileName="Indicative Site Analysis"
           exportPrimarySheetName="Raw Data"
           exportExtraSheets={exportExtraSheets}
+          onExport={handleExport}
         />
       )}
 

@@ -120,6 +120,12 @@ export function DataTable({
   // { name, rows: [{ header: value }] }. Column widths auto-fit from
   // the row keys.
   exportExtraSheets,
+  // When provided, clicking Export Excel calls onExport with the full
+  // export context instead of running the default XLSX writer. Lets a
+  // consumer render a fully-branded workbook (Schneider Electric
+  // formatting, etc.) while reusing the table's sort / visibility /
+  // rename state.
+  onExport,
 }) {
   const [colWidths, setColWidths] = useState(() => loadColWidths(tableId));
   const [visibleCols, setVisibleCols] = useState(() => loadColVisible(tableId, columns.map(c => c.key)));
@@ -236,6 +242,15 @@ export function DataTable({
           Reset widths
         </button>
         <button className={styles.exportBtn} onClick={() => {
+          if (typeof onExport === 'function') {
+            onExport({
+              columns: visibleColumns,
+              rows: sortedRows,
+              colNames,
+              extraSheets: exportExtraSheets,
+            });
+            return;
+          }
           const exportCols = visibleColumns;
           const data = sortedRows.map(row => {
             const obj = {};
