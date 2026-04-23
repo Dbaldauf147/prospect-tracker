@@ -740,70 +740,89 @@ export function SitesView() {
     return { electric: buildFor('electric'), gas: buildFor('gas') };
   }, [rows, utility, siteCompanyColumn]);
 
-  // Combined Summary: one row per (company, state) joining the
-  // electric + gas overviews side-by-side, plus per-row totals.
+  // Combined Summary: one row per company, rolling up both electric
+  // and gas across every state the company operates in. State-level
+  // detail stays on the per-commodity overview tabs; this view is
+  // the executive roll-up.
   const summaryRows = useMemo(() => {
     const byKey = new Map();
-    function ensureRow(company, state) {
-      const key = `${company}||${state}`;
-      if (!byKey.has(key)) {
-        byKey.set(key, {
+    const toNum = (v) => (typeof v === 'number' && Number.isFinite(v)) ? v : 0;
+    function ensureRow(company) {
+      if (!byKey.has(company)) {
+        byKey.set(company, {
           Company: company,
-          'ST/Prov': state,
           'Total Sites': 0,
-          'Electric Status': '',
+          'States Covered': new Set(),
           'Electric Deregulated Sites': 0,
           'Electric Annual Spend': 0,
-          'Electric Savings Low': '',
-          'Electric Savings High': '',
-          'Gas Status': '',
+          'Electric Savings Low': 0,
+          'Electric Savings High': 0,
           'Gas Deregulated Sites': 0,
           'Gas Annual Spend': 0,
-          'Gas Savings Low': '',
-          'Gas Savings High': '',
+          'Gas Savings Low': 0,
+          'Gas Savings High': 0,
           'Total Annual Spend': 0,
           'Total Savings Low': 0,
           'Total Savings High': 0,
         });
       }
-      return byKey.get(key);
+      return byKey.get(company);
+    }
+    // Track per-company total-site counts by state so we don't
+    // double-count when a company appears in both the electric and
+    // gas overviews for the same state.
+    const siteTotalsByCompanyState = new Map();
+    function recordSites(company, state, total) {
+      const key = `${company}||${state}`;
+      if (!siteTotalsByCompanyState.has(key)) {
+        siteTotalsByCompanyState.set(key, toNum(total));
+      }
     }
     for (const e of overviewByCommodity.electric) {
-      const row = ensureRow(e.Company, e['ST/Prov']);
-      row['Total Sites'] = Math.max(row['Total Sites'] || 0, e['Total Sites'] || 0);
-      row['Electric Status'] = e['Deregulated Status'] || '';
-      row['Electric Deregulated Sites'] = e['Deregulated Sites'] || 0;
-      row['Electric Annual Spend'] = e['Annual Deregulated Spend'] || 0;
-      row['Electric Savings Low'] = e['Indicative Savings Low'];
-      row['Electric Savings High'] = e['Indicative Savings High'];
+      const row = ensureRow(e.Company);
+      row['States Covered'].add(e['ST/Prov'] || '—');
+      row['Electric Deregulated Sites'] += toNum(e['Deregulated Sites']);
+      row['Electric Annual Spend']      += toNum(e['Annual Deregulated Spend']);
+      row['Electric Savings Low']       += toNum(e['Indicative Savings Low']);
+      row['Electric Savings High']      += toNum(e['Indicative Savings High']);
+      recordSites(e.Company, e['ST/Prov'] || '—', e['Total Sites']);
     }
     for (const g of overviewByCommodity.gas) {
-      const row = ensureRow(g.Company, g['ST/Prov']);
-      row['Total Sites'] = Math.max(row['Total Sites'] || 0, g['Total Sites'] || 0);
-      row['Gas Status'] = g['Deregulated Status'] || '';
-      row['Gas Deregulated Sites'] = g['Deregulated Sites'] || 0;
-      row['Gas Annual Spend'] = g['Annual Deregulated Spend'] || 0;
-      row['Gas Savings Low'] = g['Indicative Savings Low'];
-      row['Gas Savings High'] = g['Indicative Savings High'];
+      const row = ensureRow(g.Company);
+      row['States Covered'].add(g['ST/Prov'] || '—');
+      row['Gas Deregulated Sites'] += toNum(g['Deregulated Sites']);
+      row['Gas Annual Spend']      += toNum(g['Annual Deregulated Spend']);
+      row['Gas Savings Low']       += toNum(g['Indicative Savings Low']);
+      row['Gas Savings High']      += toNum(g['Indicative Savings High']);
+      recordSites(g.Company, g['ST/Prov'] || '—', g['Total Sites']);
     }
-    const toNum = (v) => (typeof v === 'number' && Number.isFinite(v)) ? v : 0;
+    // Fold per-(company, state) site totals back into each company row.
+    for (const [key, total] of siteTotalsByCompanyState.entries()) {
+      const [company] = key.split('||');
+      const row = byKey.get(company);
+      if (row) row['Total Sites'] += total;
+    }
+
     const out = [];
     for (const row of byKey.values()) {
-      const eSpend = toNum(row['Electric Annual Spend']);
-      const gSpend = toNum(row['Gas Annual Spend']);
-      row['Total Annual Spend'] = Math.round((eSpend + gSpend) * 100) / 100;
-      const eLow  = toNum(row['Electric Savings Low']);
-      const gLow  = toNum(row['Gas Savings Low']);
-      const eHigh = toNum(row['Electric Savings High']);
-      const gHigh = toNum(row['Gas Savings High']);
-      row['Total Savings Low']  = Math.round((eLow  + gLow)  * 100) / 100;
-      row['Total Savings High'] = Math.round((eHigh + gHigh) * 100) / 100;
+      // Turn the States Covered set into a sorted count + list for
+      // the exported cell (keeps the Summary self-describing).
+      const states = [...row['States Covered']].sort();
+      row['States Covered'] = states.length
+        ? `${states.length} (${states.join(', ')})`
+        : '';
+      row['Electric Annual Spend'] = Math.round(row['Electric Annual Spend'] * 100) / 100;
+      row['Electric Savings Low']  = Math.round(row['Electric Savings Low']  * 100) / 100;
+      row['Electric Savings High'] = Math.round(row['Electric Savings High'] * 100) / 100;
+      row['Gas Annual Spend']      = Math.round(row['Gas Annual Spend']      * 100) / 100;
+      row['Gas Savings Low']       = Math.round(row['Gas Savings Low']       * 100) / 100;
+      row['Gas Savings High']      = Math.round(row['Gas Savings High']      * 100) / 100;
+      row['Total Annual Spend']    = Math.round((row['Electric Annual Spend'] + row['Gas Annual Spend']) * 100) / 100;
+      row['Total Savings Low']     = Math.round((row['Electric Savings Low']  + row['Gas Savings Low'])  * 100) / 100;
+      row['Total Savings High']    = Math.round((row['Electric Savings High'] + row['Gas Savings High']) * 100) / 100;
       out.push(row);
     }
-    out.sort((a, b) => {
-      if (a.Company !== b.Company) return a.Company.localeCompare(b.Company);
-      return a['ST/Prov'].localeCompare(b['ST/Prov']);
-    });
+    out.sort((a, b) => a.Company.localeCompare(b.Company));
     return out;
   }, [overviewByCommodity]);
 
