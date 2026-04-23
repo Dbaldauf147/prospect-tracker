@@ -3304,9 +3304,37 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               </div>
               {portfolioOpen && (() => {
                 const rows = fields.portfolioCompanies || [];
+                const savedMappings = settings.savedPortfolioMappings || {};
+                const mappingKey = (name) => String(name || '').toLowerCase().trim();
+                // Persist the user's latest RA Client Match / Target Account
+                // pick for this company so future uploads that include the
+                // same company pre-fill these columns automatically.
+                function persistMapping(companyName, patch) {
+                  const k = mappingKey(companyName);
+                  if (!k) return;
+                  const current = settings.savedPortfolioMappings || {};
+                  const prior = current[k] || {};
+                  const next = { ...prior };
+                  if ('raClientMatch' in patch) {
+                    if (patch.raClientMatch) next.raClientMatch = patch.raClientMatch;
+                    else delete next.raClientMatch;
+                  }
+                  if ('targetAccount' in patch) {
+                    if (patch.targetAccount) next.targetAccount = patch.targetAccount;
+                    else delete next.targetAccount;
+                  }
+                  next.updatedAt = Date.now();
+                  const nextMap = { ...current };
+                  if (next.raClientMatch || next.targetAccount) nextMap[k] = next;
+                  else delete nextMap[k];
+                  updateSettings({ savedPortfolioMappings: nextMap });
+                }
                 function updateRow(idx, patch) {
                   const next = rows.map((r, i) => i === idx ? { ...r, ...patch } : r);
                   set('portfolioCompanies', next);
+                  if ('raClientMatch' in patch || 'targetAccount' in patch) {
+                    persistMapping(rows[idx]?.companyName, patch);
+                  }
                 }
                 function deleteRow(idx) {
                   set('portfolioCompanies', rows.filter((_, i) => i !== idx));
@@ -4189,6 +4217,13 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                               const suggestions = raDismissed ? [] : rawSuggestions;
                               const isMatched = !!r.raClientMatch;
                               const pickerOpen = raClientPickerOpen === i;
+                              // Reused-mapping detection — show a distinct
+                              // treatment when the RA/Target value matches
+                              // what the user previously saved for that
+                              // company name.
+                              const savedForRow = savedMappings[mappingKey(r.companyName)];
+                              const raFromSaved = !!(isMatched && savedForRow && savedForRow.raClientMatch === r.raClientMatch);
+                              const targetFromSaved = !!(r.targetAccount && savedForRow && savedForRow.targetAccount === r.targetAccount);
                               return (
                               <tr key={i} style={{ borderBottom: '1px solid #F1F5F9' }}>
                                 {(() => {
@@ -4331,11 +4366,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                   <div style={{ overflow: 'hidden', padding: '0.15rem 0.25rem' }}>
                                   <button
                                     onClick={() => setRaClientPickerOpen(pickerOpen ? null : i)}
-                                    style={{ display: 'block', width: '100%', minWidth: 0, maxWidth: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.68rem', fontFamily: 'inherit', background: isMatched ? '#DCFCE7' : 'transparent', color: isMatched ? '#166534' : (suggestions.length > 0 ? '#F59E0B' : '#CBD5E1'), cursor: 'pointer', textAlign: 'left', fontWeight: isMatched ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                    title={raFromSaved ? 'Auto-filled from your saved mapping for this company' : undefined}
+                                    style={{ display: 'block', width: '100%', minWidth: 0, maxWidth: '100%', padding: '0.15rem 0.3rem', border: raFromSaved ? '1px dashed #3B82F6' : '1px solid transparent', borderRadius: '3px', fontSize: '0.68rem', fontFamily: 'inherit', background: raFromSaved ? '#DBEAFE' : (isMatched ? '#DCFCE7' : 'transparent'), color: raFromSaved ? '#1E40AF' : (isMatched ? '#166534' : (suggestions.length > 0 ? '#F59E0B' : '#CBD5E1')), cursor: 'pointer', textAlign: 'left', fontWeight: isMatched ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                                     onMouseEnter={e => e.currentTarget.style.border = '1px solid var(--color-accent)'}
-                                    onMouseLeave={e => e.currentTarget.style.border = '1px solid transparent'}
+                                    onMouseLeave={e => e.currentTarget.style.border = raFromSaved ? '1px dashed #3B82F6' : '1px solid transparent'}
                                   >
-                                    {isMatched ? `✓ ${r.raClientMatch}` : (suggestions.length > 0 ? `${suggestions.length} suggestion${suggestions.length === 1 ? '' : 's'} ▾` : '— Click to map —')}
+                                    {isMatched ? `${raFromSaved ? '★' : '✓'} ${r.raClientMatch}` : (suggestions.length > 0 ? `${suggestions.length} suggestion${suggestions.length === 1 ? '' : 's'} ▾` : '— Click to map —')}
                                   </button>
                                   </div>
                                   {pickerOpen && (() => {
@@ -4491,11 +4527,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                       <div style={{ overflow: 'hidden', padding: '0.15rem 0.25rem' }}>
                                       <button
                                         onClick={() => setTargetAccountPickerOpen(targetOpen ? null : i)}
-                                        style={{ display: 'block', width: '100%', minWidth: 0, maxWidth: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.68rem', fontFamily: 'inherit', background: hasTarget ? '#DBEAFE' : 'transparent', color: hasTarget ? '#1E40AF' : (targetSuggestions.length > 0 ? '#3B7DDD' : '#CBD5E1'), cursor: 'pointer', textAlign: 'left', fontWeight: hasTarget ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                        title={targetFromSaved ? 'Auto-filled from your saved mapping for this company' : undefined}
+                                        style={{ display: 'block', width: '100%', minWidth: 0, maxWidth: '100%', padding: '0.15rem 0.3rem', border: targetFromSaved ? '1px dashed #3B82F6' : '1px solid transparent', borderRadius: '3px', fontSize: '0.68rem', fontFamily: 'inherit', background: hasTarget ? '#DBEAFE' : 'transparent', color: hasTarget ? '#1E40AF' : (targetSuggestions.length > 0 ? '#3B7DDD' : '#CBD5E1'), cursor: 'pointer', textAlign: 'left', fontWeight: hasTarget ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                                         onMouseEnter={e => e.currentTarget.style.border = '1px solid var(--color-accent)'}
-                                        onMouseLeave={e => e.currentTarget.style.border = '1px solid transparent'}
+                                        onMouseLeave={e => e.currentTarget.style.border = targetFromSaved ? '1px dashed #3B82F6' : '1px solid transparent'}
                                       >
-                                        {hasTarget ? `✓ ${r.targetAccount}` : (targetAccountNames.length === 0 ? '— No target list loaded —' : (targetSuggestions.length > 0 ? `${targetSuggestions.length} suggestion${targetSuggestions.length === 1 ? '' : 's'} ▾` : '— Click to map —'))}
+                                        {hasTarget ? `${targetFromSaved ? '★' : '✓'} ${r.targetAccount}` : (targetAccountNames.length === 0 ? '— No target list loaded —' : (targetSuggestions.length > 0 ? `${targetSuggestions.length} suggestion${targetSuggestions.length === 1 ? '' : 's'} ▾` : '— Click to map —'))}
                                       </button>
                                       </div>
                                       {targetOpen && (() => {
@@ -5156,7 +5193,20 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             if (existing.length > 0 && !window.confirm(`Replace the current ${existing.length} portfolio compan${existing.length === 1 ? 'y' : 'ies'} with ${parsed.length} row${parsed.length === 1 ? '' : 's'} from "${fileName}"? This cannot be undone.`)) {
               return;
             }
-            set('portfolioCompanies', parsed);
+            // Auto-fill RA Client Match / Target Account from the user's saved
+            // mappings for any company name that's been seen before and didn't
+            // arrive in the upload with those fields already populated.
+            const savedMappings = settings.savedPortfolioMappings || {};
+            const withSaved = parsed.map(r => {
+              const key = (r.companyName || '').toLowerCase().trim();
+              const saved = key && savedMappings[key];
+              if (!saved) return r;
+              const out = { ...r };
+              if (!out.raClientMatch && saved.raClientMatch) out.raClientMatch = saved.raClientMatch;
+              if (!out.targetAccount && saved.targetAccount) out.targetAccount = saved.targetAccount;
+              return out;
+            });
+            set('portfolioCompanies', withSaved);
             if (portfolioUpload.overview) set('portfolioOverview', portfolioUpload.overview);
             if (portfolioUpload.topFive) set('portfolioTopFive', portfolioUpload.topFive);
             // Persist the original file as a downloadable attachment for this company.
