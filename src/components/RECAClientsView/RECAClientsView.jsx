@@ -14,6 +14,7 @@ export function RECAClientsView({ prospects = [], onSelectProspect }) {
       plural="clients"
       prospects={prospects}
       onSelectProspect={onSelectProspect}
+      textColumn={{ key: 'reca-cdm', label: 'RECA CDM', placeholder: 'Add CDM…' }}
     />
   );
 }

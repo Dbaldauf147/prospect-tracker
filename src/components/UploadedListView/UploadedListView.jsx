@@ -109,10 +109,52 @@ function renderMappingCell({ row, scope, mapping, dismissed, suggestionFor, pros
   );
 }
 
+function TextEditCell({ value, onChange, placeholder }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  function startEdit(e) {
+    e.stopPropagation();
+    setDraft(value || '');
+    setEditing(true);
+  }
+  function save() {
+    setEditing(false);
+    const next = draft.trim();
+    if ((next || '') !== (value || '')) onChange(next);
+  }
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        type="text"
+        value={draft}
+        placeholder={placeholder}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={save}
+        onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false); }}
+        onClick={e => e.stopPropagation()}
+        style={{ width: '100%', padding: '2px 6px', border: '1px solid var(--color-accent)', borderRadius: 4, fontSize: '0.75rem', fontFamily: 'inherit', boxSizing: 'border-box', background: '#fff' }}
+      />
+    );
+  }
+  return (
+    <span
+      onClick={startEdit}
+      title="Click to edit"
+      style={{ display: 'inline-block', cursor: 'text', fontSize: '0.75rem', color: value ? 'var(--color-text)' : 'var(--color-text-muted)', padding: '2px 6px', borderRadius: 4, minWidth: 80 }}
+      onMouseEnter={e => e.currentTarget.style.background = '#F8FAFC'}
+      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+    >
+      {value || placeholder || '—'}
+    </span>
+  );
+}
+
 function buildColumns(data, ctx) {
   if (!data.length) return [];
   const { prospectsByNorm, myAccountsByNorm, prospectSuggestionFor, myAccountSuggestionFor,
           mapping, dismissed, myAccountMapping, myAccountDismissed,
+          textColumn, textValues, onTextChange,
           onPick, onDismiss } = ctx;
   const keys = new Set();
   for (const row of data) for (const k of Object.keys(row)) if (k !== 'id' && k !== '__matchKey__') keys.add(k);
@@ -122,6 +164,20 @@ function buildColumns(data, ctx) {
     defaultWidth: i === 0 ? 240 : 140,
     ...(i === 0 ? { sticky: true } : {}),
   }));
+  const textCol = textColumn
+    ? [{
+        key: `__text_${textColumn.key}__`,
+        label: textColumn.label,
+        defaultWidth: 160,
+        render: (row) => (
+          <TextEditCell
+            value={textValues[row.__matchKey__] || ''}
+            placeholder={textColumn.placeholder || `Add ${textColumn.label}…`}
+            onChange={(v) => onTextChange(row.__matchKey__, v)}
+          />
+        ),
+      }]
+    : [];
   const myAccountsCol = {
     key: '__myAccountsList__',
     label: 'My Accounts',
@@ -174,7 +230,7 @@ function buildColumns(data, ctx) {
       onPick, onDismiss,
     }),
   };
-  return [...baseCols, myAccountsCol, myAccountsInfoCol, matchCol];
+  return [...baseCols, ...textCol, myAccountsCol, myAccountsInfoCol, matchCol];
 }
 
 export function UploadedListView({
@@ -185,16 +241,19 @@ export function UploadedListView({
   plural = 'entries',
   prospects = [],
   onSelectProspect,
+  textColumn, // { key: string, label: string, placeholder?: string }
 }) {
   const [store, setStore] = useState({ data: [], source: 'empty' });
   const mappingKey = storageKey ? `${storageKey}:account-mapping` : '';
   const dismissedKey = storageKey ? `${storageKey}:account-dismissed` : '';
   const myAccountMappingKey = storageKey ? `${storageKey}:my-accounts-mapping` : '';
   const myAccountDismissedKey = storageKey ? `${storageKey}:my-accounts-dismissed` : '';
+  const textValuesKey = storageKey && textColumn ? `${storageKey}:${textColumn.key}-values` : '';
   const [mapping, setMapping] = useState(() => loadMapping(mappingKey));
   const [dismissed, setDismissed] = useState(() => loadMapping(dismissedKey));
   const [myAccountMapping, setMyAccountMapping] = useState(() => loadMapping(myAccountMappingKey));
   const [myAccountDismissed, setMyAccountDismissed] = useState(() => loadMapping(myAccountDismissedKey));
+  const [textValues, setTextValues] = useState(() => loadMapping(textValuesKey));
   const [search, setSearch] = useState('');
   const [suggestedOnly, setSuggestedOnly] = useState(false);
   const [uploadError, setUploadError] = useState(null);
@@ -217,6 +276,7 @@ export function UploadedListView({
     setDismissed(loadMapping(`${storageKey}:account-dismissed`));
     setMyAccountMapping(loadMapping(`${storageKey}:my-accounts-mapping`));
     setMyAccountDismissed(loadMapping(`${storageKey}:my-accounts-dismissed`));
+    setTextValues(textColumn ? loadMapping(`${storageKey}:${textColumn.key}-values`) : {});
     setSearch('');
     setSuggestedOnly(false);
     setUploadError(null);
@@ -233,10 +293,11 @@ export function UploadedListView({
       if (e.key === dismissedKey) setDismissed(loadMapping(dismissedKey));
       if (e.key === myAccountMappingKey) setMyAccountMapping(loadMapping(myAccountMappingKey));
       if (e.key === myAccountDismissedKey) setMyAccountDismissed(loadMapping(myAccountDismissedKey));
+      if (textValuesKey && e.key === textValuesKey) setTextValues(loadMapping(textValuesKey));
     }
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
-  }, [mappingKey, dismissedKey, myAccountMappingKey, myAccountDismissedKey]);
+  }, [mappingKey, dismissedKey, myAccountMappingKey, myAccountDismissedKey, textValuesKey]);
 
   // Persist mapping + dismissed set back to localStorage whenever
   // either changes.
@@ -268,6 +329,13 @@ export function UploadedListView({
       else localStorage.setItem(myAccountDismissedKey, JSON.stringify(myAccountDismissed));
     } catch {}
   }, [myAccountDismissed, myAccountDismissedKey]);
+  useEffect(() => {
+    if (!textValuesKey) return;
+    try {
+      if (Object.keys(textValues).length === 0) localStorage.removeItem(textValuesKey);
+      else localStorage.setItem(textValuesKey, JSON.stringify(textValues));
+    } catch {}
+  }, [textValues, textValuesKey]);
 
   // Close the picker dropdown when clicking outside it.
   useEffect(() => {
@@ -404,16 +472,25 @@ export function UploadedListView({
     const setDis = scope === 'myAccounts' ? setMyAccountDismissed : setDismissed;
     setDis(prev => ({ ...prev, [matchKey]: true }));
   }
+  function setTextValue(matchKey, value) {
+    setTextValues(prev => {
+      const next = { ...prev };
+      if (!value) delete next[matchKey];
+      else next[matchKey] = value;
+      return next;
+    });
+  }
 
   const columns = useMemo(
     () => buildColumns(rows, {
       prospectsByNorm, myAccountsByNorm,
       prospectSuggestionFor, myAccountSuggestionFor,
       mapping, dismissed, myAccountMapping, myAccountDismissed,
+      textColumn, textValues, onTextChange: setTextValue,
       onPick: openPicker, onDismiss: dismissSuggestion,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rows, prospectsByNorm, myAccountsByNorm, prospectSuggestionFor, myAccountSuggestionFor, mapping, dismissed, myAccountMapping, myAccountDismissed]
+    [rows, prospectsByNorm, myAccountsByNorm, prospectSuggestionFor, myAccountSuggestionFor, mapping, dismissed, myAccountMapping, myAccountDismissed, textColumn, textValues]
   );
   const tableId = useMemo(
     () => `${tableIdPrefix}:` + columns.map(c => c.key).sort().join('|'),
@@ -424,7 +501,12 @@ export function UploadedListView({
     const keys = [];
     if (first) keys.push(first.key);
     for (const c of columns) {
-      if (c.key === '__myAccountsList__' || c.key === '__myAccountsInfo__' || c.key === '__myAccount__') keys.push(c.key);
+      if (
+        c.key === '__myAccountsList__' ||
+        c.key === '__myAccountsInfo__' ||
+        c.key === '__myAccount__' ||
+        c.key.startsWith('__text_')
+      ) keys.push(c.key);
     }
     return keys;
   }, [columns]);
