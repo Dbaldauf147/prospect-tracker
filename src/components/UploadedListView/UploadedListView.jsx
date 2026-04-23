@@ -665,7 +665,7 @@ export function UploadedListView({
         <button
           type="button"
           onClick={() => setSuggestedOnly(v => !v)}
-          title="Show only rows that match a company on My Accounts"
+          title="Show only list rows that match a company on My Accounts (live — based on current prospect data)"
           style={{
             padding: '0.35rem 0.7rem',
             border: `1px solid ${suggestedOnly ? '#3B82F6' : 'var(--color-border)'}`,
@@ -679,7 +679,7 @@ export function UploadedListView({
             whiteSpace: 'nowrap',
           }}
         >
-          {suggestedOnly ? '★ My Accounts only' : '★ Suggested only'}
+          ★ {suggestedOnly ? 'Showing My Accounts only' : 'My Accounts only'}
           {myAccountsMatchCount > 0 && (
             <span style={{ marginLeft: 6, fontSize: '0.68rem', color: suggestedOnly ? '#1E3A8A' : '#94A3B8' }}>
               {myAccountsMatchCount}
