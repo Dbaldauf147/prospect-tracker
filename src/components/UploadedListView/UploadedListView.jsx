@@ -320,6 +320,10 @@ export function UploadedListView({
     try {
       if (Object.keys(myAccountMapping).length === 0) localStorage.removeItem(myAccountMappingKey);
       else localStorage.setItem(myAccountMappingKey, JSON.stringify(myAccountMapping));
+      // Let ListsView (and anyone else watching) recompute coverage.
+      // storage events don't fire in the originating tab, so the
+      // custom bump is the reliable signal.
+      window.dispatchEvent(new Event('my-accounts-coverage-changed'));
     } catch {}
   }, [myAccountMapping, myAccountMappingKey]);
   useEffect(() => {
@@ -327,6 +331,7 @@ export function UploadedListView({
     try {
       if (Object.keys(myAccountDismissed).length === 0) localStorage.removeItem(myAccountDismissedKey);
       else localStorage.setItem(myAccountDismissedKey, JSON.stringify(myAccountDismissed));
+      window.dispatchEvent(new Event('my-accounts-coverage-changed'));
     } catch {}
   }, [myAccountDismissed, myAccountDismissedKey]);
   useEffect(() => {
