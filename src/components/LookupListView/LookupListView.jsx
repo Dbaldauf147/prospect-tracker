@@ -1,11 +1,11 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import * as XLSX from 'xlsx';
 import { DataTable } from '../common/DataTable';
 import {
   saveList as saveListToIDB,
   loadList as loadListFromIDB,
   clearList as clearListFromIDB,
 } from '../../utils/uploadedListStore';
+import { parseBestSheet } from '../../utils/xlsxParse';
 import styles from './LookupListView.module.css';
 
 const CORP_SUFFIXES = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|oy|ab|spa|kk|pty|holdings|group|grp)\b\.?/g;
@@ -222,11 +222,7 @@ export function LookupListView({
     setUploadError('');
     try {
       const buf = await file.arrayBuffer();
-      const wb = XLSX.read(buf);
-      const sheet = wb.Sheets[wb.SheetNames[0]];
-      if (!sheet) throw new Error('Workbook has no sheets');
-      const parsed = XLSX.utils.sheet_to_json(sheet, { defval: '' });
-      if (!Array.isArray(parsed) || parsed.length === 0) throw new Error('No rows parsed');
+      const { rows: parsed } = parseBestSheet(new Uint8Array(buf));
       await saveListToIDB(storageKey, parsed);
       setStore({ data: parsed, source: 'override' });
     } catch (err) {

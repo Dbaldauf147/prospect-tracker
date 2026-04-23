@@ -1,6 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import * as XLSX from 'xlsx';
 import { DataTable } from '../common/DataTable';
 import {
   saveList as saveListToIDB,
@@ -13,6 +12,7 @@ import {
   clearUtilityRates,
   normalizeZip,
 } from '../../utils/utilityRatesStore';
+import { parseBestSheet } from '../../utils/xlsxParse';
 import styles from './SitesView.module.css';
 
 const SITES_STORAGE_KEY = 'sites-list-override';
@@ -77,13 +77,9 @@ export function SitesView() {
     setUploadError('');
     try {
       const buf = await file.arrayBuffer();
-      const wb = XLSX.read(buf);
-      const sheet = wb.Sheets[wb.SheetNames[0]];
-      if (!sheet) throw new Error('Workbook has no sheets');
-      const parsed = XLSX.utils.sheet_to_json(sheet, { defval: '' });
-      if (!Array.isArray(parsed) || parsed.length === 0) throw new Error('No rows parsed');
-      await saveListToIDB(SITES_STORAGE_KEY, parsed);
-      setSitesData(parsed);
+      const { rows } = parseBestSheet(new Uint8Array(buf));
+      await saveListToIDB(SITES_STORAGE_KEY, rows);
+      setSitesData(rows);
     } catch (err) {
       setUploadError(err?.message || 'Failed to read the sites file');
     }
@@ -103,19 +99,14 @@ export function SitesView() {
     setUtilityBusy(true);
     try {
       const buf = await file.arrayBuffer();
-      const wb = XLSX.read(buf);
-      const sheet = wb.Sheets[wb.SheetNames[0]];
-      if (!sheet) throw new Error('Workbook has no sheets');
-      const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
-      if (!rows.length) throw new Error('No rows parsed');
-      const headers = Object.keys(rows[0]);
+      const { rows, headers, sheetName } = parseBestSheet(new Uint8Array(buf));
       const mapping = {
         zip: detectColumn(headers, [/^zip\s*code$/i, /^postal\s*code$/i, /^zip$/i, /zip/i, /postal/i]),
         electric: detectColumn(headers, [/electric/i, /elec/i, /kwh/i]),
         gas: detectColumn(headers, [/gas/i, /natural\s*gas/i, /therm/i]),
         water: detectColumn(headers, [/water/i, /h2o/i]),
       };
-      setMappingModal({ rows, headers, mapping, fileName: file.name });
+      setMappingModal({ rows, headers, mapping, fileName: file.name, sheetName });
     } catch (err) {
       setUploadError(err?.message || 'Failed to read the utility file');
     } finally {
@@ -397,7 +388,7 @@ export function SitesView() {
               <button className={styles.modalClose} onClick={() => setMappingModal(null)} disabled={utilityBusy}>×</button>
             </div>
             <p className={styles.modalHelp}>
-              {mappingModal.rows.length.toLocaleString()} rows found. Map at least the zip code column; the three rate columns are optional (you can load just the ones you have).
+              {mappingModal.rows.length.toLocaleString()} rows found{mappingModal.sheetName ? ` on sheet "${mappingModal.sheetName}"` : ''}. Map at least the zip code column; the three rate columns are optional (you can load just the ones you have).
             </p>
             {['zip', 'electric', 'gas', 'water'].map(field => {
               const val = mappingModal.mapping[field];

@@ -1,8 +1,8 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import * as XLSX from 'xlsx';
 import { DataTable } from '../common/DataTable';
 import { saveList as saveListToIDB, loadList as loadListFromIDB, clearList as clearListFromIDB } from '../../utils/uploadedListStore';
+import { parseBestSheet } from '../../utils/xlsxParse';
 import styles from './UploadedListView.module.css';
 
 function loadMapping(key) {
@@ -547,11 +547,7 @@ export function UploadedListView({
     setUploadError(null);
     try {
       const buf = await file.arrayBuffer();
-      const wb = XLSX.read(buf);
-      const sheet = wb.Sheets[wb.SheetNames[0]];
-      if (!sheet) throw new Error('Workbook has no sheets');
-      const parsed = XLSX.utils.sheet_to_json(sheet, { defval: '' });
-      if (!Array.isArray(parsed) || parsed.length === 0) throw new Error('No rows parsed');
+      const { rows: parsed } = parseBestSheet(new Uint8Array(buf));
       await saveListToIDB(storageKey, parsed);
       setStore({ data: parsed, source: 'override' });
     } catch (err) {
