@@ -18,6 +18,7 @@ const SUBTABS = [
   { key: 'sbt', label: 'SBT' },
   { key: 'ecovadis', label: 'Ecovadis' },
   { key: 'unpri', label: 'UN PRI' },
+  { key: 'casb', label: 'CA SB' },
 ];
 
 function DataSourceLink({ storageKey }) {
@@ -179,6 +180,17 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             title="UN PRI"
             singular="signatory"
             plural="signatories"
+            prospects={prospects}
+            onSelectProspect={onSelectProspect}
+          />
+        )}
+        {subtab === 'casb' && (
+          <UploadedListView
+            storageKey="casb-list-override"
+            tableIdPrefix="casb-list"
+            title="CA SB"
+            singular="company"
+            plural="companies"
             prospects={prospects}
             onSelectProspect={onSelectProspect}
           />
