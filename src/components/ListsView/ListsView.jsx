@@ -10,7 +10,7 @@ const SUBTABS = [
   { key: 'raclients', label: 'RA Clients' },
   { key: 'targets', label: 'Target Accounts' },
   { key: 'recaclients', label: 'RECA Clients' },
-  { key: 'sites', label: 'Sites' },
+  { key: 'sites', label: 'Utility Lookup' },
   { key: 'csrd', label: 'CSRD' },
   { key: 'cdp', label: 'CDP' },
   { key: 'gresb', label: 'GRESB' },

@@ -273,7 +273,7 @@ export function SitesView() {
     <div className={styles.wrapper}>
       <div className={styles.header}>
         <div>
-          <h1 className={styles.title}>Sites</h1>
+          <h1 className={styles.title}>Utility Lookup</h1>
           <div className={styles.subtitle}>
             {sitesData.length} {sitesData.length === 1 ? 'site' : 'sites'}
             {matchStats && (
