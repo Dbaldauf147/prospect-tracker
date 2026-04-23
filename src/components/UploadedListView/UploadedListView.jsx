@@ -34,8 +34,86 @@ function pickNameKey(headers) {
   return key || headers[0];
 }
 
-function buildColumns(data, prospectsByNorm, prospectSuggestionFor, myAccountSuggestionFor, mapping, dismissed, onPick, onDismiss) {
+const TIER_COLORS = {
+  'Tier 1': { bg: '#FEE2E2', border: '#FCA5A5', text: '#991B1B' },
+  'Tier 2': { bg: '#DBEAFE', border: '#93C5FD', text: '#1E3A8A' },
+  'Tier 3': { bg: '#F1F5F9', border: '#CBD5E1', text: '#334155' },
+};
+
+function renderMappingCell({ row, scope, mapping, dismissed, suggestionFor, prospectsByNorm, onPick, onDismiss }) {
+  const matchKey = row.__matchKey__;
+  const confirmedName = mapping[matchKey];
+  const prospect = confirmedName
+    ? prospectsByNorm.get(normalizeCompany(confirmedName))
+    : null;
+  const handleClick = (e) => onPick(row, e.currentTarget, scope);
+  const confirmTitle = scope === 'myAccounts'
+    ? 'Mapped to a My Accounts company · click to change'
+    : 'Mapped to a Table View prospect · click to change';
+  const suggestTitle = scope === 'myAccounts'
+    ? 'Suggested My Accounts match · click to confirm or pick a different account'
+    : 'Suggested Table View match · click to confirm or pick a different prospect';
+  const emptyTitle = scope === 'myAccounts'
+    ? 'Click to map to a My Accounts company'
+    : 'Click to map to a Table View prospect';
+  const confirmBg = scope === 'myAccounts' ? '#DBEAFE' : '#DCFCE7';
+  const confirmBorder = scope === 'myAccounts' ? '#93C5FD' : '#86EFAC';
+  const confirmText = scope === 'myAccounts' ? '#1E3A8A' : '#166534';
+  const confirmIcon = scope === 'myAccounts' ? '★' : '✓';
+
+  if (prospect) {
+    return (
+      <button
+        type="button"
+        data-mapping-cell={scope}
+        onClick={handleClick}
+        style={{ background: confirmBg, border: `1px solid ${confirmBorder}`, borderRadius: 999, padding: '1px 8px', fontSize: '0.7rem', color: confirmText, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+        title={confirmTitle}
+      >{confirmIcon} {prospect.company}</button>
+    );
+  }
+  const isDismissed = dismissed[matchKey];
+  if (!isDismissed) {
+    const suggestion = suggestionFor(row.__rawName__ || '');
+    if (suggestion) {
+      return (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, maxWidth: '100%' }}>
+          <button
+            type="button"
+            data-mapping-cell={scope}
+            onClick={handleClick}
+            style={{ background: '#FEF3C7', border: '1px dashed #F59E0B', borderRadius: 999, padding: '1px 8px', fontSize: '0.7rem', color: '#92400E', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', maxWidth: 'calc(100% - 20px)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+            title={suggestTitle}
+          >? {suggestion.company}</button>
+          <button
+            type="button"
+            data-mapping-cell={scope}
+            onClick={e => { e.stopPropagation(); onDismiss(matchKey, scope); }}
+            title="Dismiss this suggestion"
+            style={{ background: 'transparent', border: 'none', color: '#94A3B8', cursor: 'pointer', fontSize: '0.85rem', lineHeight: 1, padding: '0 4px' }}
+            onMouseEnter={e => e.currentTarget.style.color = '#DC2626'}
+            onMouseLeave={e => e.currentTarget.style.color = '#94A3B8'}
+          >×</button>
+        </span>
+      );
+    }
+  }
+  return (
+    <button
+      type="button"
+      data-mapping-cell={scope}
+      onClick={handleClick}
+      style={{ background: 'transparent', border: '1px dashed #CBD5E1', borderRadius: 999, padding: '1px 8px', fontSize: '0.7rem', color: '#64748B', fontWeight: 400, cursor: 'pointer', fontFamily: 'inherit' }}
+      title={emptyTitle}
+    >— Map —</button>
+  );
+}
+
+function buildColumns(data, ctx) {
   if (!data.length) return [];
+  const { prospectsByNorm, myAccountsByNorm, prospectSuggestionFor, myAccountSuggestionFor,
+          mapping, dismissed, myAccountMapping, myAccountDismissed,
+          onPick, onDismiss } = ctx;
   const keys = new Set();
   for (const row of data) for (const k of Object.keys(row)) if (k !== 'id' && k !== '__matchKey__') keys.add(k);
   const baseCols = [...keys].map((k, i) => ({
@@ -47,17 +125,41 @@ function buildColumns(data, prospectsByNorm, prospectSuggestionFor, myAccountSug
   const myAccountsCol = {
     key: '__myAccountsList__',
     label: 'My Accounts',
-    defaultWidth: 200,
+    defaultWidth: 220,
+    render: (row) => renderMappingCell({
+      row, scope: 'myAccounts',
+      mapping: myAccountMapping, dismissed: myAccountDismissed,
+      suggestionFor: myAccountSuggestionFor, prospectsByNorm: myAccountsByNorm,
+      onPick, onDismiss,
+    }),
+  };
+  const myAccountsInfoCol = {
+    key: '__myAccountsInfo__',
+    label: 'Tier / Status',
+    defaultWidth: 180,
     render: (row) => {
-      const suggestion = myAccountSuggestionFor(row.__rawName__ || '');
-      if (!suggestion) {
-        return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>—</span>;
-      }
+      const mapped = myAccountMapping[row.__matchKey__];
+      const prospect = mapped ? myAccountsByNorm.get(normalizeCompany(mapped)) : null;
+      if (!prospect) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>—</span>;
+      const tierStyle = TIER_COLORS[prospect.tier] || { bg: '#F1F5F9', border: '#CBD5E1', text: '#334155' };
       return (
-        <span
-          style={{ display: 'inline-block', background: '#DBEAFE', border: '1px solid #93C5FD', borderRadius: 999, padding: '1px 8px', fontSize: '0.7rem', color: '#1E3A8A', fontWeight: 600, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-          title={`Matches "${suggestion.company}" on My Accounts`}
-        >★ {suggestion.company}</span>
+        <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
+          {prospect.tier && (
+            <span
+              style={{ background: tierStyle.bg, border: `1px solid ${tierStyle.border}`, color: tierStyle.text, borderRadius: 999, padding: '1px 8px', fontSize: '0.65rem', fontWeight: 700, whiteSpace: 'nowrap' }}
+              title={`${prospect.company} — ${prospect.tier}`}
+            >{prospect.tier}</span>
+          )}
+          {prospect.status && (
+            <span
+              style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', color: '#475569', borderRadius: 999, padding: '1px 8px', fontSize: '0.65rem', fontWeight: 600, whiteSpace: 'nowrap' }}
+              title={`${prospect.company} — ${prospect.status}`}
+            >{prospect.status}</span>
+          )}
+          {!prospect.tier && !prospect.status && (
+            <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>—</span>
+          )}
+        </span>
       );
     },
   };
@@ -65,58 +167,14 @@ function buildColumns(data, prospectsByNorm, prospectSuggestionFor, myAccountSug
     key: '__myAccount__',
     label: 'Table View Mapping',
     defaultWidth: 240,
-    render: (row) => {
-      const matchKey = row.__matchKey__;
-      const confirmed = mapping[matchKey];
-      const prospect = confirmed
-        ? prospectsByNorm.get(normalizeCompany(confirmed))
-        : null;
-      const handleClick = (e) => onPick(row, e.currentTarget);
-      if (prospect) {
-        return (
-          <button
-            type="button"
-            onClick={handleClick}
-            style={{ background: '#DCFCE7', border: '1px solid #86EFAC', borderRadius: 999, padding: '1px 8px', fontSize: '0.7rem', color: '#166534', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-            title="Mapped to a Table View prospect · click to change"
-          >✓ {prospect.company}</button>
-        );
-      }
-      const isDismissed = dismissed[matchKey];
-      if (!isDismissed) {
-        const suggestion = prospectSuggestionFor(row.__rawName__ || '');
-        if (suggestion) {
-          return (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, maxWidth: '100%' }}>
-              <button
-                type="button"
-                onClick={handleClick}
-                style={{ background: '#FEF3C7', border: '1px dashed #F59E0B', borderRadius: 999, padding: '1px 8px', fontSize: '0.7rem', color: '#92400E', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', maxWidth: 'calc(100% - 20px)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                title="Suggested Table View match · click to confirm or pick a different prospect"
-              >? {suggestion.company}</button>
-              <button
-                type="button"
-                onClick={e => { e.stopPropagation(); onDismiss(matchKey); }}
-                title="Dismiss this suggestion"
-                style={{ background: 'transparent', border: 'none', color: '#94A3B8', cursor: 'pointer', fontSize: '0.85rem', lineHeight: 1, padding: '0 4px' }}
-                onMouseEnter={e => e.currentTarget.style.color = '#DC2626'}
-                onMouseLeave={e => e.currentTarget.style.color = '#94A3B8'}
-              >×</button>
-            </span>
-          );
-        }
-      }
-      return (
-        <button
-          type="button"
-          onClick={handleClick}
-          style={{ background: 'transparent', border: '1px dashed #CBD5E1', borderRadius: 999, padding: '1px 8px', fontSize: '0.7rem', color: '#64748B', fontWeight: 400, cursor: 'pointer', fontFamily: 'inherit' }}
-          title="Click to map to a Table View prospect"
-        >— Map —</button>
-      );
-    },
+    render: (row) => renderMappingCell({
+      row, scope: 'tableView',
+      mapping, dismissed,
+      suggestionFor: prospectSuggestionFor, prospectsByNorm,
+      onPick, onDismiss,
+    }),
   };
-  return [...baseCols, myAccountsCol, matchCol];
+  return [...baseCols, myAccountsCol, myAccountsInfoCol, matchCol];
 }
 
 export function UploadedListView({
@@ -131,12 +189,16 @@ export function UploadedListView({
   const [store, setStore] = useState({ data: [], source: 'empty' });
   const mappingKey = storageKey ? `${storageKey}:account-mapping` : '';
   const dismissedKey = storageKey ? `${storageKey}:account-dismissed` : '';
+  const myAccountMappingKey = storageKey ? `${storageKey}:my-accounts-mapping` : '';
+  const myAccountDismissedKey = storageKey ? `${storageKey}:my-accounts-dismissed` : '';
   const [mapping, setMapping] = useState(() => loadMapping(mappingKey));
   const [dismissed, setDismissed] = useState(() => loadMapping(dismissedKey));
+  const [myAccountMapping, setMyAccountMapping] = useState(() => loadMapping(myAccountMappingKey));
+  const [myAccountDismissed, setMyAccountDismissed] = useState(() => loadMapping(myAccountDismissedKey));
   const [search, setSearch] = useState('');
   const [suggestedOnly, setSuggestedOnly] = useState(false);
   const [uploadError, setUploadError] = useState(null);
-  const [picker, setPicker] = useState(null); // { matchKey, raw, query }
+  const [picker, setPicker] = useState(null); // { matchKey, raw, query, scope: 'tableView' | 'myAccounts' }
   const fileInputRef = useRef(null);
   const { data, source } = store;
 
@@ -153,6 +215,8 @@ export function UploadedListView({
     })();
     setMapping(loadMapping(`${storageKey}:account-mapping`));
     setDismissed(loadMapping(`${storageKey}:account-dismissed`));
+    setMyAccountMapping(loadMapping(`${storageKey}:my-accounts-mapping`));
+    setMyAccountDismissed(loadMapping(`${storageKey}:my-accounts-dismissed`));
     setSearch('');
     setSuggestedOnly(false);
     setUploadError(null);
@@ -167,10 +231,12 @@ export function UploadedListView({
     function onStorage(e) {
       if (e.key === mappingKey) setMapping(loadMapping(mappingKey));
       if (e.key === dismissedKey) setDismissed(loadMapping(dismissedKey));
+      if (e.key === myAccountMappingKey) setMyAccountMapping(loadMapping(myAccountMappingKey));
+      if (e.key === myAccountDismissedKey) setMyAccountDismissed(loadMapping(myAccountDismissedKey));
     }
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
-  }, [mappingKey, dismissedKey]);
+  }, [mappingKey, dismissedKey, myAccountMappingKey, myAccountDismissedKey]);
 
   // Persist mapping + dismissed set back to localStorage whenever
   // either changes.
@@ -188,16 +254,30 @@ export function UploadedListView({
       else localStorage.setItem(dismissedKey, JSON.stringify(dismissed));
     } catch {}
   }, [dismissed, dismissedKey]);
+  useEffect(() => {
+    if (!myAccountMappingKey) return;
+    try {
+      if (Object.keys(myAccountMapping).length === 0) localStorage.removeItem(myAccountMappingKey);
+      else localStorage.setItem(myAccountMappingKey, JSON.stringify(myAccountMapping));
+    } catch {}
+  }, [myAccountMapping, myAccountMappingKey]);
+  useEffect(() => {
+    if (!myAccountDismissedKey) return;
+    try {
+      if (Object.keys(myAccountDismissed).length === 0) localStorage.removeItem(myAccountDismissedKey);
+      else localStorage.setItem(myAccountDismissedKey, JSON.stringify(myAccountDismissed));
+    } catch {}
+  }, [myAccountDismissed, myAccountDismissedKey]);
 
   // Close the picker dropdown when clicking outside it.
   useEffect(() => {
     if (!picker) return;
     function onDocClick(e) {
       if (e.target.closest('[data-picker="my-account"]')) return;
-      // Any click on a different "My Account" cell button replaces this
-      // picker rather than just closing it — letting the button handler
-      // run is fine, openPicker will set new state.
-      if (e.target.closest('button[title*="Table View"], button[title*="prospect"], button[title*="map to a Table View"]')) return;
+      // A click on any mapping cell button replaces this picker rather
+      // than just closing it — letting the button handler run is fine,
+      // openPicker will set new state.
+      if (e.target.closest('button[data-mapping-cell]')) return;
       setPicker(null);
     }
     document.addEventListener('mousedown', onDocClick);
@@ -284,7 +364,7 @@ export function UploadedListView({
     });
   }, [data]);
 
-  function openPicker(row, anchorEl) {
+  function openPicker(row, anchorEl, scope = 'tableView') {
     const rect = anchorEl?.getBoundingClientRect?.();
     const width = 320;
     const pos = rect
@@ -293,13 +373,16 @@ export function UploadedListView({
           left: Math.min(rect.left, window.innerWidth - width - 8),
         }
       : { top: 80, left: 80 };
-    setPicker({ matchKey: row.__matchKey__, raw: row.__rawName__ || '', query: '', pos, width });
+    setPicker({ matchKey: row.__matchKey__, raw: row.__rawName__ || '', query: '', pos, width, scope });
   }
   function confirmMapping(matchKey, prospectCompany) {
-    setMapping(prev => ({ ...prev, [matchKey]: prospectCompany }));
+    const scope = picker?.scope || 'tableView';
+    const setMap = scope === 'myAccounts' ? setMyAccountMapping : setMapping;
+    const setDis = scope === 'myAccounts' ? setMyAccountDismissed : setDismissed;
+    setMap(prev => ({ ...prev, [matchKey]: prospectCompany }));
     // Confirming implicitly un-dismisses, so switching accounts later
     // still shows suggestions.
-    setDismissed(prev => {
+    setDis(prev => {
       if (!prev[matchKey]) return prev;
       const next = { ...prev };
       delete next[matchKey];
@@ -308,21 +391,29 @@ export function UploadedListView({
     setPicker(null);
   }
   function clearMapping(matchKey) {
-    setMapping(prev => {
+    const scope = picker?.scope || 'tableView';
+    const setMap = scope === 'myAccounts' ? setMyAccountMapping : setMapping;
+    setMap(prev => {
       const next = { ...prev };
       delete next[matchKey];
       return next;
     });
     setPicker(null);
   }
-  function dismissSuggestion(matchKey) {
-    setDismissed(prev => ({ ...prev, [matchKey]: true }));
+  function dismissSuggestion(matchKey, scope = 'tableView') {
+    const setDis = scope === 'myAccounts' ? setMyAccountDismissed : setDismissed;
+    setDis(prev => ({ ...prev, [matchKey]: true }));
   }
 
   const columns = useMemo(
-    () => buildColumns(rows, prospectsByNorm, prospectSuggestionFor, myAccountSuggestionFor, mapping, dismissed, openPicker, dismissSuggestion),
+    () => buildColumns(rows, {
+      prospectsByNorm, myAccountsByNorm,
+      prospectSuggestionFor, myAccountSuggestionFor,
+      mapping, dismissed, myAccountMapping, myAccountDismissed,
+      onPick: openPicker, onDismiss: dismissSuggestion,
+    }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rows, prospectsByNorm, prospectSuggestionFor, myAccountSuggestionFor, mapping, dismissed]
+    [rows, prospectsByNorm, myAccountsByNorm, prospectSuggestionFor, myAccountSuggestionFor, mapping, dismissed, myAccountMapping, myAccountDismissed]
   );
   const tableId = useMemo(
     () => `${tableIdPrefix}:` + columns.map(c => c.key).sort().join('|'),
@@ -333,10 +424,20 @@ export function UploadedListView({
     const keys = [];
     if (first) keys.push(first.key);
     for (const c of columns) {
-      if (c.key === '__myAccountsList__' || c.key === '__myAccount__') keys.push(c.key);
+      if (c.key === '__myAccountsList__' || c.key === '__myAccountsInfo__' || c.key === '__myAccount__') keys.push(c.key);
     }
     return keys;
   }, [columns]);
+
+  // A row "matches My Accounts" if it's either confirmed-mapped to a My
+  // Accounts prospect, or it has a non-dismissed suggestion. Confirmed
+  // rows stay visible under the filter because they're still My
+  // Accounts; dismissed un-mapped suggestions drop out.
+  const isMyAccountsRow = useMemo(() => (r) => {
+    if (myAccountMapping[r.__matchKey__]) return true;
+    if (myAccountDismissed[r.__matchKey__]) return false;
+    return !!myAccountSuggestionFor(r.__rawName__ || '');
+  }, [myAccountMapping, myAccountDismissed, myAccountSuggestionFor]);
 
   const filtered = useMemo(() => {
     let result = rows;
@@ -347,14 +448,14 @@ export function UploadedListView({
       );
     }
     if (suggestedOnly) {
-      result = result.filter(r => !!myAccountSuggestionFor(r.__rawName__ || ''));
+      result = result.filter(isMyAccountsRow);
     }
     return result;
-  }, [search, suggestedOnly, rows, myAccountSuggestionFor]);
+  }, [search, suggestedOnly, rows, isMyAccountsRow]);
 
   const myAccountsMatchCount = useMemo(
-    () => rows.reduce((n, r) => n + (myAccountSuggestionFor(r.__rawName__ || '') ? 1 : 0), 0),
-    [rows, myAccountSuggestionFor]
+    () => rows.reduce((n, r) => n + (isMyAccountsRow(r) ? 1 : 0), 0),
+    [rows, isMyAccountsRow]
   );
 
   async function handleUpload(e) {
@@ -401,11 +502,17 @@ export function UploadedListView({
 
   // Picker search results — top 30 prospects matching the query, or the
   // auto-suggestion + first 30 prospects when the query is empty.
+  // The picker is scoped: 'myAccounts' restricts the list to Baldauf's
+  // accounts only; 'tableView' uses every prospect.
   const pickerResults = useMemo(() => {
     if (!picker) return [];
     const q = (picker.query || '').toLowerCase().trim();
-    const auto = picker.raw ? prospectSuggestionFor(picker.raw) : null;
-    const list = prospects.filter(p => p.company && (!q || p.company.toLowerCase().includes(q)));
+    const source = picker.scope === 'myAccounts'
+      ? prospects.filter(p => (p.cdm || '').toLowerCase().includes('baldauf'))
+      : prospects;
+    const suggestFn = picker.scope === 'myAccounts' ? myAccountSuggestionFor : prospectSuggestionFor;
+    const auto = picker.raw ? suggestFn(picker.raw) : null;
+    const list = source.filter(p => p.company && (!q || p.company.toLowerCase().includes(q)));
     list.sort((a, b) => a.company.localeCompare(b.company));
     const out = [];
     const seen = new Set();
@@ -417,7 +524,7 @@ export function UploadedListView({
       if (out.length >= 30) break;
     }
     return out;
-  }, [picker, prospects, prospectSuggestionFor]);
+  }, [picker, prospects, prospectSuggestionFor, myAccountSuggestionFor]);
 
   return (
     <div className={styles.wrapper}>
@@ -528,7 +635,7 @@ export function UploadedListView({
             value={picker.query}
             onChange={e => setPicker(p => ({ ...p, query: e.target.value }))}
             onKeyDown={e => { if (e.key === 'Escape') setPicker(null); }}
-            placeholder="Search your accounts..."
+            placeholder={picker.scope === 'myAccounts' ? 'Search My Accounts…' : 'Search Table View prospects…'}
             style={{ width: '100%', padding: '0.3rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.75rem', fontFamily: 'inherit', marginBottom: '0.25rem', boxSizing: 'border-box' }}
           />
           <div style={{ overflowY: 'auto', flex: 1 }}>
@@ -555,7 +662,7 @@ export function UploadedListView({
               </div>
             )}
           </div>
-          {mapping[picker.matchKey] && (
+          {((picker.scope === 'myAccounts' ? myAccountMapping : mapping)[picker.matchKey]) && (
             <button
               type="button"
               onClick={() => clearMapping(picker.matchKey)}
