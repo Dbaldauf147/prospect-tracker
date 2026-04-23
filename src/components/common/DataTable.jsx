@@ -115,6 +115,11 @@ export function DataTable({
   rowStyle,
   emptyMessage = 'No data found',
   exportFileName,
+  exportPrimarySheetName,
+  // Extra sheets appended to the exported workbook. Each entry is
+  // { name, rows: [{ header: value }] }. Column widths auto-fit from
+  // the row keys.
+  exportExtraSheets,
 }) {
   const [colWidths, setColWidths] = useState(() => loadColWidths(tableId));
   const [visibleCols, setVisibleCols] = useState(() => loadColVisible(tableId, columns.map(c => c.key)));
@@ -253,8 +258,18 @@ export function DataTable({
           const ws = XLSX.utils.json_to_sheet(data);
           ws['!cols'] = exportCols.map(col => ({ wch: Math.max((colNames[col.key] || col.label).length, 12) }));
           const wb = XLSX.utils.book_new();
-          const sheetName = (exportFileName || tableId || 'Export').replace(/[\\/:*?\[\]]+/g, '-').slice(0, 31);
-          XLSX.utils.book_append_sheet(wb, ws, sheetName);
+          const primarySheetName = (exportPrimarySheetName || exportFileName || tableId || 'Export').replace(/[\\/:*?\[\]]+/g, '-').slice(0, 31);
+          XLSX.utils.book_append_sheet(wb, ws, primarySheetName);
+          if (Array.isArray(exportExtraSheets)) {
+            for (const extra of exportExtraSheets) {
+              if (!extra || !Array.isArray(extra.rows) || extra.rows.length === 0) continue;
+              const extraWs = XLSX.utils.json_to_sheet(extra.rows);
+              const extraHeaders = Object.keys(extra.rows[0]);
+              extraWs['!cols'] = extraHeaders.map(h => ({ wch: Math.max(h.length + 2, 14) }));
+              const extraName = String(extra.name || 'Sheet').replace(/[\\/:*?\[\]]+/g, '-').slice(0, 31);
+              XLSX.utils.book_append_sheet(wb, extraWs, extraName);
+            }
+          }
           const safeName = (exportFileName || tableId || 'export').replace(/[\\/:*?"<>|]+/g, '-');
           XLSX.writeFile(wb, `${safeName} - ${new Date().toISOString().slice(0, 10)}.xlsx`);
         }}>

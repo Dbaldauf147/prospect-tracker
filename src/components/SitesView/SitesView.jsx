@@ -571,6 +571,111 @@ export function SitesView() {
 
   const utilMeta = utility?.meta || null;
 
+  // Per-commodity savings % used for the overview. Applied to
+  // deregulated spend only — the user can adjust the numbers later if
+  // their bid-based estimates diverge.
+  const SAVINGS_PCT = {
+    electric: { low: 0.05, high: 0.15 },
+    gas:      { low: 0.03, high: 0.10 },
+  };
+
+  // Detect a company column on the uploaded sites sheet so we can
+  // group the overview by (company, state). Falls back to the sticky
+  // first column when no company-like header exists.
+  const siteCompanyColumn = useMemo(() => {
+    if (!sitesData.length) return '';
+    const headers = Object.keys(sitesData[0]);
+    const match = headers.find(h => /company|portfolio|parent|owner|account/i.test(String(h)));
+    return match || headers[0] || '';
+  }, [sitesData]);
+
+  // Build per-commodity overview rows grouped by (company, state).
+  // Each row summarizes sites, deregulated-only consumption/spend,
+  // and an indicative savings range.
+  const overviewByCommodity = useMemo(() => {
+    if (!utility?.zipMap || !rows.length || !siteCompanyColumn) {
+      return { electric: [], gas: [] };
+    }
+
+    function buildFor(commodity) {
+      const providerKey = `__${commodity}__`;
+      const consumptionKey = commodity === 'electric' ? '__kwh__' : '__therms__';
+      const costKey = `__${commodity}Cost__`;
+      const groups = new Map();
+      for (const r of rows) {
+        const company = String(r[siteCompanyColumn] ?? '').trim();
+        const state = r.__state__ || '';
+        if (!company) continue;
+        const key = `${company}||${state}`;
+        let g = groups.get(key);
+        if (!g) {
+          g = {
+            company,
+            state,
+            totalSites: 0,
+            deregulatedSites: 0,
+            deregulatedConsumption: 0,
+            deregulatedSpend: 0,
+          };
+          groups.set(key, g);
+        }
+        g.totalSites++;
+        const provider = r[providerKey];
+        const classification = classifyUtility(provider);
+        if (classification !== 'Deregulated') continue;
+        g.deregulatedSites++;
+        const consumption = r[consumptionKey];
+        if (typeof consumption === 'number' && Number.isFinite(consumption)) {
+          g.deregulatedConsumption += consumption;
+        }
+        const cost = r[costKey];
+        if (typeof cost === 'number' && Number.isFinite(cost)) {
+          g.deregulatedSpend += cost;
+        }
+      }
+
+      const pct = SAVINGS_PCT[commodity];
+      const consumptionLabel = commodity === 'electric'
+        ? 'Annual Deregulated Consumption kWh'
+        : 'Annual Deregulated Consumption therms';
+      const out = [];
+      for (const g of groups.values()) {
+        const low = g.deregulatedSpend * pct.low;
+        const high = g.deregulatedSpend * pct.high;
+        out.push({
+          Company: g.company,
+          'ST/Prov': g.state,
+          'Deregulated Status': g.deregulatedSites > 0 ? 'Deregulated' : 'Regulated',
+          'Total Sites': g.totalSites,
+          'Deregulated Sites': g.deregulatedSites,
+          [consumptionLabel]: Math.round(g.deregulatedConsumption),
+          'Annual Deregulated Spend': Math.round(g.deregulatedSpend * 100) / 100,
+          'Indicative Savings Range': `${Math.round(pct.low * 100)}% - ${Math.round(pct.high * 100)}%`,
+          'Indicative Savings Low': Math.round(low * 100) / 100,
+          'Indicative Savings High': Math.round(high * 100) / 100,
+        });
+      }
+      out.sort((a, b) => {
+        if (a.Company !== b.Company) return a.Company.localeCompare(b.Company);
+        return a['ST/Prov'].localeCompare(b['ST/Prov']);
+      });
+      return out;
+    }
+
+    return { electric: buildFor('electric'), gas: buildFor('gas') };
+  }, [rows, utility, siteCompanyColumn]);
+
+  const exportExtraSheets = useMemo(() => {
+    const sheets = [];
+    if (overviewByCommodity.electric.length) {
+      sheets.push({ name: 'Electric Overview', rows: overviewByCommodity.electric });
+    }
+    if (overviewByCommodity.gas.length) {
+      sheets.push({ name: 'Gas Overview', rows: overviewByCommodity.gas });
+    }
+    return sheets;
+  }, [overviewByCommodity]);
+
   return (
     <div
       className={styles.wrapper}
@@ -749,6 +854,8 @@ export function SitesView() {
           alwaysVisible={alwaysVisible}
           emptyMessage="No matching sites"
           exportFileName="Indicative Site Analysis"
+          exportPrimarySheetName="Raw Data"
+          exportExtraSheets={exportExtraSheets}
         />
       )}
 
