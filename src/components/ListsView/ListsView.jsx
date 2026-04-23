@@ -10,8 +10,8 @@ import styles from './ListsView.module.css';
 const SUBTABS = [
   { key: 'raclients', label: 'RA Clients' },
   { key: 'targets', label: 'Target Accounts' },
-  { key: 'recaclients', label: 'RECA Clients', storageKey: 'reca-clients-override' },
   { key: 'sites', label: 'Utility Lookup' },
+  { key: 'recaclients', label: 'RECA Clients', storageKey: 'reca-clients-override' },
   { key: 'csrd', label: 'CSRD', storageKey: 'csrd-list-override' },
   { key: 'cdp', label: 'CDP', storageKey: 'cdp-list-override' },
   { key: 'gresb', label: 'GRESB', storageKey: 'gresb-list-override' },
