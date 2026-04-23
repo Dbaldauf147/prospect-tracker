@@ -257,6 +257,7 @@ export function UploadedListView({
   const [search, setSearch] = useState('');
   const [suggestedOnly, setSuggestedOnly] = useState(false);
   const [uploadError, setUploadError] = useState(null);
+  const [uploadInfo, setUploadInfo] = useState(null); // { total, preservedTableView, preservedMyAccounts }
   const [picker, setPicker] = useState(null); // { matchKey, raw, query, scope: 'tableView' | 'myAccounts' }
   const fileInputRef = useRef(null);
   const { data, source } = store;
@@ -280,6 +281,7 @@ export function UploadedListView({
     setSearch('');
     setSuggestedOnly(false);
     setUploadError(null);
+    setUploadInfo(null);
     setPicker(null);
     return () => { cancelled = true; };
   }, [storageKey]);
@@ -594,11 +596,32 @@ export function UploadedListView({
     e.target.value = '';
     if (!file) return;
     setUploadError(null);
+    setUploadInfo(null);
     try {
       const buf = await file.arrayBuffer();
       const { rows: parsed } = parseBestSheet(new Uint8Array(buf));
       await saveListToIDB(storageKey, parsed);
       setStore({ data: parsed, source: 'override' });
+      // Mappings and dismissals are keyed by the row's normalized
+      // company name and live in localStorage, so they survive a
+      // re-upload automatically — count how many re-attach so the user
+      // can see their work wasn't lost.
+      const nameKey = parsed.length ? pickNameKey(Object.keys(parsed[0])) : null;
+      const newKeys = new Set();
+      if (nameKey) {
+        for (const row of parsed) {
+          const raw = String(row[nameKey] ?? '').trim();
+          const norm = normalizeCompany(raw);
+          if (norm) newKeys.add(`name::${norm}`);
+        }
+      }
+      const preservedTableView = Object.keys(mapping || {}).filter(k => newKeys.has(k)).length;
+      const preservedMyAccounts = Object.keys(myAccountMapping || {}).filter(k => newKeys.has(k)).length;
+      setUploadInfo({
+        total: parsed.length,
+        preservedTableView,
+        preservedMyAccounts,
+      });
     } catch (err) {
       const msg = err?.name === 'QuotaExceededError'
         ? 'Upload exceeded the browser storage quota. Try a smaller file or trim unused columns.'
@@ -767,7 +790,7 @@ export function UploadedListView({
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            title={`Upload an Excel file to populate the ${title} table.`}
+            title={`Upload an Excel or CSV of ${title}. Existing My Accounts / Table View mappings are preserved across re-uploads — rows whose company name matches an earlier mapping pick it up automatically.`}
             style={{ padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit' }}
           >
             Upload Excel
@@ -787,6 +810,28 @@ export function UploadedListView({
       {uploadError && (
         <div style={{ margin: '0.5rem 1.25rem', padding: '0.5rem 0.75rem', background: '#FEF2F2', border: '1px solid #FCA5A5', borderRadius: 6, color: '#991B1B', fontSize: '0.8rem' }}>
           {uploadError}
+        </div>
+      )}
+      {uploadInfo && (
+        <div style={{ margin: '0.5rem 1.25rem', padding: '0.5rem 0.75rem', background: '#F0FDF4', border: '1px solid #86EFAC', borderRadius: 6, color: '#166534', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+          <span>
+            ✓ <strong>{uploadInfo.total.toLocaleString()}</strong> {uploadInfo.total === 1 ? 'row' : 'rows'} loaded.
+            {(uploadInfo.preservedTableView + uploadInfo.preservedMyAccounts) > 0 ? (
+              <>
+                {' '}
+                <strong>{uploadInfo.preservedMyAccounts}</strong> My Account mapping{uploadInfo.preservedMyAccounts === 1 ? '' : 's'}
+                {' '}and <strong>{uploadInfo.preservedTableView}</strong> Table View mapping{uploadInfo.preservedTableView === 1 ? '' : 's'} re-attached from the previous file.
+              </>
+            ) : (
+              <> No existing mappings matched the new rows.</>
+            )}
+          </span>
+          <button
+            type="button"
+            onClick={() => setUploadInfo(null)}
+            title="Dismiss"
+            style={{ marginLeft: 'auto', background: 'transparent', border: 'none', color: '#166534', cursor: 'pointer', fontSize: '0.9rem', lineHeight: 1 }}
+          >×</button>
         </div>
       )}
       <div className={styles.searchRow}>
