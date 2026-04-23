@@ -456,9 +456,10 @@ export function SitesView() {
         const classification = classifyUtility(providerName);
         if (!classification) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
         const isRegulated = classification === 'Regulated';
+        // Deregulated = green (opportunity), Regulated = orange.
         const color = isRegulated
-          ? { bg: '#DCFCE7', border: '#86EFAC', text: '#166534' }
-          : { bg: '#FFEDD5', border: '#FDBA74', text: '#9A3412' };
+          ? { bg: '#FFEDD5', border: '#FDBA74', text: '#9A3412' }
+          : { bg: '#DCFCE7', border: '#86EFAC', text: '#166534' };
         const ruleHint = isRegulated
           ? 'Municipal, public power, or cooperative — single-utility market.'
           : 'Competitive retail market — customers can choose a supplier.';
@@ -591,10 +592,35 @@ export function SitesView() {
   // Per-commodity savings % used for the overview. Applied to
   // deregulated spend only — the user can adjust the numbers later if
   // their bid-based estimates diverge.
-  const SAVINGS_PCT = {
-    electric: { low: 0.05, high: 0.15 },
-    gas:      { low: 0.03, high: 0.10 },
+  // Electric deregulation status per state / province, with the
+  // corresponding indicative savings range. Anything not listed here
+  // is treated as a regulated market with zero savings — the user
+  // explicitly asked that regulated markets show no savings.
+  const ELECTRIC_DEREGULATION = {
+    AB: { status: 'yes',     range: '0%',      lowPct: 0,    highPct: 0 },
+    CT: { status: 'yes',     range: '2 - 4%',  lowPct: 0.02, highPct: 0.04 },
+    DC: { status: 'yes',     range: '2 - 4%',  lowPct: 0.02, highPct: 0.04 },
+    DE: { status: 'yes',     range: '2 - 4%',  lowPct: 0.02, highPct: 0.04 },
+    IL: { status: 'yes',     range: '2 - 4%',  lowPct: 0.02, highPct: 0.04 },
+    MA: { status: 'yes',     range: '2 - 4%',  lowPct: 0.02, highPct: 0.04 },
+    MD: { status: 'yes',     range: '2 - 4%',  lowPct: 0.02, highPct: 0.04 },
+    ME: { status: 'yes',     range: '2 - 4%',  lowPct: 0.02, highPct: 0.04 },
+    NH: { status: 'yes',     range: '2 - 4%',  lowPct: 0.02, highPct: 0.04 },
+    NJ: { status: 'yes',     range: '2 - 4%',  lowPct: 0.02, highPct: 0.04 },
+    NY: { status: 'yes',     range: '0%',      lowPct: 0,    highPct: 0 },
+    OH: { status: 'yes',     range: '2 - 4%',  lowPct: 0.02, highPct: 0.04 },
+    ON: { status: 'yes',     range: '0%',      lowPct: 0,    highPct: 0 },
+    OR: { status: 'yes',     range: '2 - 4%',  lowPct: 0.02, highPct: 0.04 },
+    PA: { status: 'yes',     range: '2 - 4%',  lowPct: 0.02, highPct: 0.04 },
+    RI: { status: 'yes',     range: '2 - 4%',  lowPct: 0.02, highPct: 0.04 },
+    TX: { status: 'yes',     range: '1 - 2%',  lowPct: 0.01, highPct: 0.02 },
+    CA: { status: 'Limited', range: '1 - 4%',  lowPct: 0.01, highPct: 0.04 },
+    MI: { status: 'Limited', range: '',        lowPct: null, highPct: null },
+    VA: { status: 'Limited', range: '',        lowPct: null, highPct: null },
+    WA: { status: 'Limited', range: '',        lowPct: null, highPct: null },
   };
+  // Flat savings range applied to any deregulated natural-gas site.
+  const GAS_SAVINGS = { range: '2 - 4%', lowPct: 0.02, highPct: 0.04 };
 
   // Detect a company column on the uploaded sites sheet so we can
   // group the overview by (company, state). Falls back to the sticky
@@ -637,6 +663,10 @@ export function SitesView() {
           groups.set(key, g);
         }
         g.totalSites++;
+        const stateIsDeregulated = commodity === 'electric'
+          ? !!ELECTRIC_DEREGULATION[state]
+          : true; // no curated list for gas — rely on provider-level only
+        if (!stateIsDeregulated) continue;
         const provider = r[providerKey];
         const classification = classifyUtility(provider);
         if (classification !== 'Deregulated') continue;
@@ -651,25 +681,53 @@ export function SitesView() {
         }
       }
 
-      const pct = SAVINGS_PCT[commodity];
       const consumptionLabel = commodity === 'electric'
         ? 'Annual Deregulated Consumption kWh'
         : 'Annual Deregulated Consumption therms';
       const out = [];
       for (const g of groups.values()) {
-        const low = g.deregulatedSpend * pct.low;
-        const high = g.deregulatedSpend * pct.high;
+        let status;
+        let range;
+        let lowPct;
+        let highPct;
+        if (commodity === 'electric') {
+          const entry = ELECTRIC_DEREGULATION[g.state];
+          status = entry?.status || 'no';
+          range = entry?.range ?? '';
+          lowPct = entry?.lowPct ?? null;
+          highPct = entry?.highPct ?? null;
+        } else {
+          if (g.deregulatedSites > 0) {
+            status = 'yes';
+            range = GAS_SAVINGS.range;
+            lowPct = GAS_SAVINGS.lowPct;
+            highPct = GAS_SAVINGS.highPct;
+          } else {
+            status = 'no';
+            range = '';
+            lowPct = null;
+            highPct = null;
+          }
+        }
+        // Regulated markets get zero savings by construction — the
+        // lowPct/highPct nulls resolve to blanks below.
+        const low = (lowPct != null && g.deregulatedSpend > 0)
+          ? Math.round(g.deregulatedSpend * lowPct * 100) / 100
+          : (lowPct != null ? 0 : '');
+        const high = (highPct != null && g.deregulatedSpend > 0)
+          ? Math.round(g.deregulatedSpend * highPct * 100) / 100
+          : (highPct != null ? 0 : '');
         out.push({
           Company: g.company,
           'ST/Prov': g.state,
-          'Deregulated Status': g.deregulatedSites > 0 ? 'Deregulated' : 'Regulated',
+          'Deregulated Status': status,
           'Total Sites': g.totalSites,
           'Deregulated Sites': g.deregulatedSites,
           [consumptionLabel]: Math.round(g.deregulatedConsumption),
           'Annual Deregulated Spend': Math.round(g.deregulatedSpend * 100) / 100,
-          'Indicative Savings Range': `${Math.round(pct.low * 100)}% - ${Math.round(pct.high * 100)}%`,
-          'Indicative Savings Low': Math.round(low * 100) / 100,
-          'Indicative Savings High': Math.round(high * 100) / 100,
+          'Indicative Savings Range': range,
+          'Indicative Savings Low': low,
+          'Indicative Savings High': high,
         });
       }
       out.sort((a, b) => {
@@ -702,8 +760,24 @@ export function SitesView() {
     const SE_GREEN_DARK = 'FF009530';
     const SE_TEXT_DARK = 'FF1E293B';
     const SE_BORDER = 'FFD4DDE1';
-    const MARKET_FILL = { Regulated: 'FFDCFCE7', Deregulated: 'FFFFEDD5' };
-    const MARKET_FG = { Regulated: 'FF166534', Deregulated: 'FF9A3412' };
+    // Deregulated markets = green, regulated = orange. "yes" and
+    // "Limited" count as deregulated; "no" counts as regulated, to
+    // cover both the site-level chip values (Regulated / Deregulated)
+    // and the state-level overview values (yes / Limited / no).
+    const MARKET_FILL = {
+      Deregulated: 'FFDCFCE7',
+      yes:         'FFDCFCE7',
+      Limited:     'FFDCFCE7',
+      Regulated:   'FFFFEDD5',
+      no:          'FFFFEDD5',
+    };
+    const MARKET_FG = {
+      Deregulated: 'FF166534',
+      yes:         'FF166534',
+      Limited:     'FF166534',
+      Regulated:   'FF9A3412',
+      no:          'FF9A3412',
+    };
 
     const wb = new Workbook();
     wb.creator = 'Schneider Electric · Prospect Tracker';
@@ -762,9 +836,10 @@ export function SitesView() {
             left: { style: 'thin', color: { argb: SE_BORDER } },
             right: { style: 'thin', color: { argb: SE_BORDER } },
           };
-          // Colour-code Regulated / Deregulated cells anywhere they appear.
+          // Colour-code Regulated / Deregulated / yes / Limited / no
+          // cells anywhere they appear.
           const asText = typeof v === 'string' ? v.trim() : '';
-          if (asText === 'Regulated' || asText === 'Deregulated') {
+          if (asText && MARKET_FILL[asText]) {
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: MARKET_FILL[asText] } };
             cell.font = { ...cell.font, bold: true, color: { argb: MARKET_FG[asText] } };
           }
