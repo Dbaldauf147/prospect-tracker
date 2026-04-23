@@ -1969,6 +1969,34 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     writeCompanyDeals([...companyDeals, deal]);
   }, [companyDeals, writeCompanyDeals]);
 
+  // One-shot backfill: lift any pre-existing raClientMatch / targetAccount
+  // values from the currently loaded portfolio rows into
+  // settings.savedPortfolioMappings. Runs once per mount after the first
+  // time portfolioCompanies is available, so users who had mappings from
+  // earlier uploads see the ★ "saved" marker immediately instead of only
+  // after touching a cell.
+  const portfolioBackfillRan = useRef(false);
+  useEffect(() => {
+    if (portfolioBackfillRan.current) return;
+    const list = fields.portfolioCompanies || [];
+    if (list.length === 0) return;
+    const saved = settings.savedPortfolioMappings || {};
+    const next = { ...saved };
+    let dirty = false;
+    for (const r of list) {
+      const k = (r.companyName || '').toLowerCase().trim();
+      if (!k) continue;
+      const prior = next[k] || {};
+      const merged = { ...prior };
+      let changed = false;
+      if (r.raClientMatch && prior.raClientMatch !== r.raClientMatch) { merged.raClientMatch = r.raClientMatch; changed = true; }
+      if (r.targetAccount && prior.targetAccount !== r.targetAccount) { merged.targetAccount = r.targetAccount; changed = true; }
+      if (changed) { merged.updatedAt = Date.now(); next[k] = merged; dirty = true; }
+    }
+    portfolioBackfillRan.current = true;
+    if (dirty) updateSettings({ savedPortfolioMappings: next });
+  }, [fields.portfolioCompanies, settings.savedPortfolioMappings, updateSettings]);
+
   const updateDeal = useCallback((dealId, patch) => {
     writeCompanyDeals(companyDeals.map(d => d.id === dealId ? { ...d, ...patch, updatedAt: Date.now() } : d));
   }, [companyDeals, writeCompanyDeals]);
@@ -5193,13 +5221,25 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             if (existing.length > 0 && !window.confirm(`Replace the current ${existing.length} portfolio compan${existing.length === 1 ? 'y' : 'ies'} with ${parsed.length} row${parsed.length === 1 ? '' : 's'} from "${fileName}"? This cannot be undone.`)) {
               return;
             }
-            // Auto-fill RA Client Match / Target Account from the user's saved
-            // mappings for any company name that's been seen before and didn't
-            // arrive in the upload with those fields already populated.
+            // Auto-fill RA Client Match / Target Account from two sources:
+            //   1. savedPortfolioMappings — explicit saves the user has made.
+            //   2. the existing portfolio rows being replaced — catches the
+            //      case where the user had mapped companies BEFORE this
+            //      feature rolled out, so nothing is in savedMappings yet.
             const savedMappings = settings.savedPortfolioMappings || {};
+            const implicitMappings = {};
+            for (const pr of (fields.portfolioCompanies || [])) {
+              const k = (pr.companyName || '').toLowerCase().trim();
+              if (!k) continue;
+              const entry = implicitMappings[k] || {};
+              if (pr.raClientMatch) entry.raClientMatch = pr.raClientMatch;
+              if (pr.targetAccount) entry.targetAccount = pr.targetAccount;
+              if (entry.raClientMatch || entry.targetAccount) implicitMappings[k] = entry;
+            }
+            const effectiveMappings = { ...implicitMappings, ...savedMappings };
             const withSaved = parsed.map(r => {
               const key = (r.companyName || '').toLowerCase().trim();
-              const saved = key && savedMappings[key];
+              const saved = key && effectiveMappings[key];
               if (!saved) return r;
               const out = { ...r };
               if (!out.raClientMatch && saved.raClientMatch) out.raClientMatch = saved.raClientMatch;
@@ -5207,6 +5247,21 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               return out;
             });
             set('portfolioCompanies', withSaved);
+            // Backfill savedPortfolioMappings so the mappings show the "saved"
+            // marker on the new rows (and so a different device sees them too).
+            if (Object.keys(implicitMappings).length > 0) {
+              const mergedMappings = { ...(settings.savedPortfolioMappings || {}) };
+              let dirty = false;
+              for (const [k, entry] of Object.entries(implicitMappings)) {
+                const prior = mergedMappings[k] || {};
+                const next = { ...prior };
+                let changed = false;
+                if (entry.raClientMatch && prior.raClientMatch !== entry.raClientMatch) { next.raClientMatch = entry.raClientMatch; changed = true; }
+                if (entry.targetAccount && prior.targetAccount !== entry.targetAccount) { next.targetAccount = entry.targetAccount; changed = true; }
+                if (changed) { next.updatedAt = Date.now(); mergedMappings[k] = next; dirty = true; }
+              }
+              if (dirty) updateSettings({ savedPortfolioMappings: mergedMappings });
+            }
             if (portfolioUpload.overview) set('portfolioOverview', portfolioUpload.overview);
             if (portfolioUpload.topFive) set('portfolioTopFive', portfolioUpload.topFive);
             // Persist the original file as a downloadable attachment for this company.
