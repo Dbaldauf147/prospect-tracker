@@ -88,7 +88,7 @@ function DataSourceLink({ storageKey }) {
   );
 }
 
-export function ListsView({ onTargetAccountsLoaded }) {
+export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectProspect }) {
   const [subtab, setSubtab] = useState('raclients');
 
   return (
@@ -120,6 +120,8 @@ export function ListsView({ onTargetAccountsLoaded }) {
             title="CSRD"
             singular="company"
             plural="companies"
+            prospects={prospects}
+            onSelectProspect={onSelectProspect}
           />
         )}
         {subtab === 'cdp' && (
@@ -129,6 +131,8 @@ export function ListsView({ onTargetAccountsLoaded }) {
             title="CDP"
             singular="company"
             plural="companies"
+            prospects={prospects}
+            onSelectProspect={onSelectProspect}
           />
         )}
         {subtab === 'gresb' && (
@@ -138,6 +142,8 @@ export function ListsView({ onTargetAccountsLoaded }) {
             title="GRESB"
             singular="company"
             plural="companies"
+            prospects={prospects}
+            onSelectProspect={onSelectProspect}
           />
         )}
         {subtab === 'sbt' && (
@@ -147,6 +153,8 @@ export function ListsView({ onTargetAccountsLoaded }) {
             title="SBT"
             singular="company"
             plural="companies"
+            prospects={prospects}
+            onSelectProspect={onSelectProspect}
           />
         )}
         {subtab === 'ecovadis' && (
@@ -156,6 +164,8 @@ export function ListsView({ onTargetAccountsLoaded }) {
             title="Ecovadis"
             singular="company"
             plural="companies"
+            prospects={prospects}
+            onSelectProspect={onSelectProspect}
           />
         )}
         {subtab === 'unpri' && (
@@ -165,6 +175,8 @@ export function ListsView({ onTargetAccountsLoaded }) {
             title="UN PRI"
             singular="signatory"
             plural="signatories"
+            prospects={prospects}
+            onSelectProspect={onSelectProspect}
           />
         )}
       </div>

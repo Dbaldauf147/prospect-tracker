@@ -272,7 +272,7 @@ function App() {
           ) : view === 'agenda' ? (
             <AgendaView prospects={prospects} onSelectProspect={handleSelect} onUpdateProspect={updateProspect} />
           ) : view === 'lists' ? (
-            <ListsView onTargetAccountsLoaded={setTargetAccountsData} />
+            <ListsView onTargetAccountsLoaded={setTargetAccountsData} prospects={prospects} onSelectProspect={handleSelect} />
           ) : view === 'clients' ? (
             <ClientsView prospects={prospects} onSelectProspect={handleSelect} />
           ) : view === 'opps' ? (
