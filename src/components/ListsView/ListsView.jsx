@@ -185,7 +185,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
           />
         )}
         {subtab === 'casb' && (
-          <UploadedListView
+          <LookupListView
             storageKey="casb-list-override"
             tableIdPrefix="casb-list"
             title="CA SB"
