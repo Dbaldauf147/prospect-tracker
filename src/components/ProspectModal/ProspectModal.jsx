@@ -9,6 +9,7 @@ import { OpportunityForm } from './OpportunityForm';
 import { loadEffectiveRaClients, raClientName, raClientCm } from '../../utils/raClientsStore';
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES, COUNTRIES, US_STATES } from '../../data/enums';
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
+import { saveSourceFile as savePortfolioSourceFileToIDB, loadSourceFile as loadPortfolioSourceFileFromIDB, clearSourceFile as clearPortfolioSourceFileFromIDB } from '../../utils/portfolioSourceFileStore';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import styles from './ProspectModal.module.css';
 
@@ -1123,47 +1124,32 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // Portfolio Companies upload preview — shows detected column mapping before applying
   const [portfolioUpload, setPortfolioUpload] = useState(null); // { fileName, headers: string[], rows: object[], mapping: { [header]: fieldKey|'' }, file?: File }
   const [portfolioDragActive, setPortfolioDragActive] = useState(false);
-  // Bumped after save / clear so the source-file metadata re-reads from localStorage.
+  // Bumped after save / clear so the source-file metadata is refetched
+  // from IndexedDB. Also used as the key for the render-time cache below.
   const [portfolioSourceFileVersion, setPortfolioSourceFileVersion] = useState(0);
+  const [portfolioSourceFile, setPortfolioSourceFile] = useState(null);
 
-  // Source-file attachment helpers (per-parent-company, persisted to localStorage so
-  // the user can download the original Excel they uploaded later).
-  function portfolioSourceKey(companyName) {
-    const slug = (companyName || '').toLowerCase().replace(/[^a-z0-9]/g, '-');
-    return slug ? `portfolioUploadFile:${slug}` : '';
-  }
-  function loadPortfolioSourceFile(companyName) {
-    const key = portfolioSourceKey(companyName);
-    if (!key) return null;
-    try {
-      const raw = localStorage.getItem(key);
-      if (!raw) return null;
-      return JSON.parse(raw);
-    } catch { return null; }
-  }
+  // Source-file attachment helpers (per-parent-company, persisted in
+  // IndexedDB so multi-MB Excel files don't blow the ~5 MB localStorage
+  // cap. The IDB helper also migrates any legacy localStorage entry on
+  // first load.)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const rec = await loadPortfolioSourceFileFromIDB(fields.company);
+      if (!cancelled) setPortfolioSourceFile(rec);
+    })();
+    return () => { cancelled = true; };
+  }, [fields.company, portfolioSourceFileVersion]);
+
   function clearPortfolioSourceFile(companyName) {
-    const key = portfolioSourceKey(companyName);
-    if (!key) return;
-    try { localStorage.removeItem(key); } catch {}
-    setPortfolioSourceFileVersion(v => v + 1);
+    clearPortfolioSourceFileFromIDB(companyName).finally(() => {
+      setPortfolioSourceFileVersion(v => v + 1);
+    });
   }
   async function savePortfolioSourceFile(companyName, file) {
-    const key = portfolioSourceKey(companyName);
-    if (!key || !file) return;
     try {
-      const dataUrl = await new Promise((res, rej) => {
-        const reader = new FileReader();
-        reader.onload = () => res(reader.result);
-        reader.onerror = rej;
-        reader.readAsDataURL(file);
-      });
-      localStorage.setItem(key, JSON.stringify({
-        name: file.name,
-        type: file.type || 'application/octet-stream',
-        size: file.size,
-        uploadedAt: new Date().toISOString(),
-        dataUrl,
-      }));
+      await savePortfolioSourceFileToIDB(companyName, file);
       setPortfolioSourceFileVersion(v => v + 1);
     } catch (err) {
       if (err && err.name === 'QuotaExceededError') {
@@ -4149,9 +4135,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       </label>
                       {(() => {
                         // Show the saved source-file attachment for this company.
-                        // Reads localStorage on every render via the version state.
-                        const _ = portfolioSourceFileVersion; // dependency hint
-                        const sourceFile = loadPortfolioSourceFile(fields.company);
+                        // Loaded async from IndexedDB into portfolioSourceFile state.
+                        const sourceFile = portfolioSourceFile;
                         if (!sourceFile) return null;
                         const sizeKb = sourceFile.size ? Math.round(sourceFile.size / 1024) : null;
                         const uploadedDate = sourceFile.uploadedAt ? new Date(sourceFile.uploadedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '';
@@ -4161,11 +4146,21 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.25rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 999, background: '#F0FDF4', fontSize: '0.7rem', color: '#166534', fontWeight: 600 }}
                           >
                             <span style={{ fontSize: '0.78rem' }}>📎</span>
-                            <a
-                              href={sourceFile.dataUrl}
-                              download={sourceFile.name}
-                              style={{ color: '#166534', textDecoration: 'underline', fontWeight: 600, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                            >{sourceFile.name}</a>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!sourceFile.blob) return;
+                                const url = URL.createObjectURL(sourceFile.blob);
+                                const a = document.createElement('a');
+                                a.href = url;
+                                a.download = sourceFile.name;
+                                document.body.appendChild(a);
+                                a.click();
+                                a.remove();
+                                setTimeout(() => URL.revokeObjectURL(url), 1000);
+                              }}
+                              style={{ color: '#166534', textDecoration: 'underline', fontWeight: 600, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: 'inherit' }}
+                            >{sourceFile.name}</button>
                             {uploadedDate && <span style={{ color: '#64748B', fontWeight: 400 }}>· {uploadedDate}</span>}
                             <button
                               type="button"
