@@ -29,27 +29,28 @@ function normalizeCompany(name) {
     .trim();
 }
 
-function buildColumns(data, prospectsByNorm, prospectSuggestionFor, mapping, onPick) {
+function pickNameKey(headers) {
+  const key = headers.find(k => /company|name|organi[sz]ation|signatory|entity/i.test(k));
+  return key || headers[0];
+}
+
+function buildColumns(data, prospectsByNorm, prospectSuggestionFor, mapping, dismissed, onPick, onDismiss) {
   if (!data.length) return [];
   const keys = new Set();
-  for (const row of data) for (const k of Object.keys(row)) if (k !== 'id') keys.add(k);
+  for (const row of data) for (const k of Object.keys(row)) if (k !== 'id' && k !== '__matchKey__') keys.add(k);
   const baseCols = [...keys].map((k, i) => ({
     key: k,
     label: k,
     defaultWidth: i === 0 ? 240 : 140,
     ...(i === 0 ? { sticky: true } : {}),
   }));
-  // Key column — the one used as the canonical company-name source. Falls
-  // back to the first column if we can't find one named "company"-ish.
-  const nameKey = baseCols.find(c => /company|name|organi[sz]ation|signatory|entity/i.test(c.key))?.key
-    || baseCols[0]?.key;
   const matchCol = {
     key: '__myAccount__',
     label: 'My Account',
-    defaultWidth: 220,
+    defaultWidth: 240,
     render: (row) => {
-      const raw = row[nameKey] || '';
-      const confirmed = mapping[row.__matchKey__];
+      const matchKey = row.__matchKey__;
+      const confirmed = mapping[matchKey];
       const prospect = confirmed
         ? prospectsByNorm.get(normalizeCompany(confirmed))
         : null;
@@ -64,16 +65,29 @@ function buildColumns(data, prospectsByNorm, prospectSuggestionFor, mapping, onP
           >✓ {prospect.company}</button>
         );
       }
-      const suggestion = prospectSuggestionFor(raw);
-      if (suggestion) {
-        return (
-          <button
-            type="button"
-            onClick={handleClick}
-            style={{ background: '#FEF3C7', border: '1px dashed #F59E0B', borderRadius: 999, padding: '1px 8px', fontSize: '0.7rem', color: '#92400E', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-            title="Suggested match · click to confirm or pick a different account"
-          >? {suggestion.company}</button>
-        );
+      const isDismissed = dismissed[matchKey];
+      if (!isDismissed) {
+        const suggestion = prospectSuggestionFor(row.__rawName__ || '');
+        if (suggestion) {
+          return (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, maxWidth: '100%' }}>
+              <button
+                type="button"
+                onClick={handleClick}
+                style={{ background: '#FEF3C7', border: '1px dashed #F59E0B', borderRadius: 999, padding: '1px 8px', fontSize: '0.7rem', color: '#92400E', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', maxWidth: 'calc(100% - 20px)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                title="Suggested match · click to confirm or pick a different account"
+              >? {suggestion.company}</button>
+              <button
+                type="button"
+                onClick={e => { e.stopPropagation(); onDismiss(matchKey); }}
+                title="Dismiss this suggestion"
+                style={{ background: 'transparent', border: 'none', color: '#94A3B8', cursor: 'pointer', fontSize: '0.85rem', lineHeight: 1, padding: '0 4px' }}
+                onMouseEnter={e => e.currentTarget.style.color = '#DC2626'}
+                onMouseLeave={e => e.currentTarget.style.color = '#94A3B8'}
+              >×</button>
+            </span>
+          );
+        }
       }
       return (
         <button
@@ -99,7 +113,9 @@ export function UploadedListView({
 }) {
   const [store, setStore] = useState({ data: [], source: 'empty' });
   const mappingKey = storageKey ? `${storageKey}:account-mapping` : '';
+  const dismissedKey = storageKey ? `${storageKey}:account-dismissed` : '';
   const [mapping, setMapping] = useState(() => loadMapping(mappingKey));
+  const [dismissed, setDismissed] = useState(() => loadMapping(dismissedKey));
   const [search, setSearch] = useState('');
   const [uploadError, setUploadError] = useState(null);
   const [picker, setPicker] = useState(null); // { matchKey, raw, query }
@@ -118,24 +134,27 @@ export function UploadedListView({
       }
     })();
     setMapping(loadMapping(`${storageKey}:account-mapping`));
+    setDismissed(loadMapping(`${storageKey}:account-dismissed`));
     setSearch('');
     setUploadError(null);
     setPicker(null);
     return () => { cancelled = true; };
   }, [storageKey]);
 
-  // Cross-tab sync is limited to the mapping (localStorage). The list
-  // itself is in IDB so storage events don't fire — that's fine, user
-  // re-uploads from the current tab anyway.
+  // Cross-tab sync is limited to the mapping + dismissed set
+  // (localStorage). The list itself is in IDB so storage events don't
+  // fire — that's fine, user re-uploads from the current tab anyway.
   useEffect(() => {
     function onStorage(e) {
       if (e.key === mappingKey) setMapping(loadMapping(mappingKey));
+      if (e.key === dismissedKey) setDismissed(loadMapping(dismissedKey));
     }
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
-  }, [mappingKey]);
+  }, [mappingKey, dismissedKey]);
 
-  // Persist mapping back to localStorage whenever it changes.
+  // Persist mapping + dismissed set back to localStorage whenever
+  // either changes.
   useEffect(() => {
     if (!mappingKey) return;
     try {
@@ -143,6 +162,13 @@ export function UploadedListView({
       else localStorage.setItem(mappingKey, JSON.stringify(mapping));
     } catch {}
   }, [mapping, mappingKey]);
+  useEffect(() => {
+    if (!dismissedKey) return;
+    try {
+      if (Object.keys(dismissed).length === 0) localStorage.removeItem(dismissedKey);
+      else localStorage.setItem(dismissedKey, JSON.stringify(dismissed));
+    } catch {}
+  }, [dismissed, dismissedKey]);
 
   // Close the picker dropdown when clicking outside it.
   useEffect(() => {
@@ -195,11 +221,25 @@ export function UploadedListView({
     return best?.prospect || null;
   }, [prospectsByNorm, prospectNorms]);
 
-  const rows = useMemo(() => data.map((r, i) => {
-    const canonKey = Object.keys(r)[0];
-    const nameForKey = canonKey ? String(r[canonKey] || '') : '';
-    return { ...r, id: i, __matchKey__: `${i}::${normalizeCompany(nameForKey)}` };
-  }), [data]);
+  const rows = useMemo(() => {
+    if (!data.length) return [];
+    const headers = [];
+    const seen = new Set();
+    for (const row of data) for (const k of Object.keys(row)) {
+      if (!seen.has(k)) { seen.add(k); headers.push(k); }
+    }
+    const nameKey = pickNameKey(headers);
+    return data.map((r, i) => {
+      const rawName = nameKey ? String(r[nameKey] || '') : '';
+      // Match key is the normalized company name — survives a re-upload
+      // with different row ordering or added/removed rows. Falls back
+      // to the row index when we can't extract a name so each row is
+      // still unique.
+      const norm = normalizeCompany(rawName);
+      const matchKey = norm ? `name::${norm}` : `row::${i}`;
+      return { ...r, id: i, __rawName__: rawName, __matchKey__: matchKey };
+    });
+  }, [data]);
 
   function openPicker(row, anchorEl) {
     const rect = anchorEl?.getBoundingClientRect?.();
@@ -210,10 +250,18 @@ export function UploadedListView({
           left: Math.min(rect.left, window.innerWidth - width - 8),
         }
       : { top: 80, left: 80 };
-    setPicker({ matchKey: row.__matchKey__, raw: row[Object.keys(row).find(k => k !== 'id' && k !== '__matchKey__') || 'id'] || '', query: '', pos, width });
+    setPicker({ matchKey: row.__matchKey__, raw: row.__rawName__ || '', query: '', pos, width });
   }
   function confirmMapping(matchKey, prospectCompany) {
     setMapping(prev => ({ ...prev, [matchKey]: prospectCompany }));
+    // Confirming implicitly un-dismisses, so switching accounts later
+    // still shows suggestions.
+    setDismissed(prev => {
+      if (!prev[matchKey]) return prev;
+      const next = { ...prev };
+      delete next[matchKey];
+      return next;
+    });
     setPicker(null);
   }
   function clearMapping(matchKey) {
@@ -224,11 +272,14 @@ export function UploadedListView({
     });
     setPicker(null);
   }
+  function dismissSuggestion(matchKey) {
+    setDismissed(prev => ({ ...prev, [matchKey]: true }));
+  }
 
   const columns = useMemo(
-    () => buildColumns(rows, prospectsByNorm, prospectSuggestionFor, mapping, openPicker),
+    () => buildColumns(rows, prospectsByNorm, prospectSuggestionFor, mapping, dismissed, openPicker, dismissSuggestion),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rows, prospectsByNorm, prospectSuggestionFor, mapping]
+    [rows, prospectsByNorm, prospectSuggestionFor, mapping, dismissed]
   );
   const tableId = useMemo(
     () => `${tableIdPrefix}:` + columns.map(c => c.key).sort().join('|'),
@@ -280,15 +331,18 @@ export function UploadedListView({
   }
 
   const matchStats = useMemo(() => {
-    const confirmed = Object.keys(mapping).length;
+    // Only count mappings whose row is actually in the current list —
+    // an older mapping for a company that's no longer uploaded should
+    // still be preserved in storage but doesn't belong in the count.
+    let confirmed = 0;
     let suggested = 0;
     for (const r of rows) {
-      if (mapping[r.__matchKey__]) continue;
-      const raw = Object.values(r).find(v => typeof v === 'string' && v.trim());
-      if (raw && prospectSuggestionFor(raw)) suggested++;
+      if (mapping[r.__matchKey__]) { confirmed++; continue; }
+      if (dismissed[r.__matchKey__]) continue;
+      if (r.__rawName__ && prospectSuggestionFor(r.__rawName__)) suggested++;
     }
     return { confirmed, suggested };
-  }, [rows, mapping, prospectSuggestionFor]);
+  }, [rows, mapping, dismissed, prospectSuggestionFor]);
 
   // Picker search results — top 30 prospects matching the query, or the
   // auto-suggestion + first 30 prospects when the query is empty.
