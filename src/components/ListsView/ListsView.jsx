@@ -11,6 +11,10 @@ const SUBTABS = [
   { key: 'recaclients', label: 'RECA Clients' },
   { key: 'csrd', label: 'CSRD' },
   { key: 'cdp', label: 'CDP' },
+  { key: 'gresb', label: 'GRESB' },
+  { key: 'sbt', label: 'SBT' },
+  { key: 'ecovadis', label: 'Ecovadis' },
+  { key: 'unpri', label: 'UN PRI' },
 ];
 
 function DataSourceLink({ storageKey }) {
@@ -125,6 +129,42 @@ export function ListsView({ onTargetAccountsLoaded }) {
             title="CDP"
             singular="company"
             plural="companies"
+          />
+        )}
+        {subtab === 'gresb' && (
+          <UploadedListView
+            storageKey="gresb-list-override"
+            tableIdPrefix="gresb-list"
+            title="GRESB"
+            singular="company"
+            plural="companies"
+          />
+        )}
+        {subtab === 'sbt' && (
+          <UploadedListView
+            storageKey="sbt-list-override"
+            tableIdPrefix="sbt-list"
+            title="SBT"
+            singular="company"
+            plural="companies"
+          />
+        )}
+        {subtab === 'ecovadis' && (
+          <UploadedListView
+            storageKey="ecovadis-list-override"
+            tableIdPrefix="ecovadis-list"
+            title="Ecovadis"
+            singular="company"
+            plural="companies"
+          />
+        )}
+        {subtab === 'unpri' && (
+          <UploadedListView
+            storageKey="unpri-list-override"
+            tableIdPrefix="unpri-list"
+            title="UN PRI"
+            singular="signatory"
+            plural="signatories"
           />
         )}
       </div>
