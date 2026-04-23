@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { RAClientsView } from '../RAClientsView/RAClientsView';
 import { TargetAccountsView } from '../TargetAccountsView/TargetAccountsView';
 import { RECAClientsView } from '../RECAClientsView/RECAClientsView';
+import { SitesView } from '../SitesView/SitesView';
 import { UploadedListView } from '../UploadedListView/UploadedListView';
 import styles from './ListsView.module.css';
 
@@ -9,6 +10,7 @@ const SUBTABS = [
   { key: 'raclients', label: 'RA Clients' },
   { key: 'targets', label: 'Target Accounts' },
   { key: 'recaclients', label: 'RECA Clients' },
+  { key: 'sites', label: 'Sites' },
   { key: 'csrd', label: 'CSRD' },
   { key: 'cdp', label: 'CDP' },
   { key: 'gresb', label: 'GRESB' },
@@ -113,6 +115,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
         {subtab === 'raclients' && <RAClientsView />}
         {subtab === 'targets' && <TargetAccountsView onDataLoaded={onTargetAccountsLoaded} />}
         {subtab === 'recaclients' && <RECAClientsView prospects={prospects} onSelectProspect={onSelectProspect} />}
+        {subtab === 'sites' && <SitesView />}
         {subtab === 'csrd' && (
           <UploadedListView
             storageKey="csrd-list-override"
