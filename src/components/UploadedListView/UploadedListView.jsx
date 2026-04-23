@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import * as XLSX from 'xlsx';
 import { DataTable } from '../common/DataTable';
 import styles from './UploadedListView.module.css';
@@ -62,11 +63,12 @@ function buildColumns(data, prospectsByNorm, prospectSuggestionFor, mapping, onP
       const prospect = confirmed
         ? prospectsByNorm.get(normalizeCompany(confirmed))
         : null;
+      const handleClick = (e) => onPick(row, e.currentTarget);
       if (prospect) {
         return (
           <button
             type="button"
-            onClick={() => onPick(row)}
+            onClick={handleClick}
             style={{ background: '#DCFCE7', border: '1px solid #86EFAC', borderRadius: 999, padding: '1px 8px', fontSize: '0.7rem', color: '#166534', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
             title="Mapped to one of your accounts · click to change"
           >✓ {prospect.company}</button>
@@ -77,7 +79,7 @@ function buildColumns(data, prospectsByNorm, prospectSuggestionFor, mapping, onP
         return (
           <button
             type="button"
-            onClick={() => onPick(row)}
+            onClick={handleClick}
             style={{ background: '#FEF3C7', border: '1px dashed #F59E0B', borderRadius: 999, padding: '1px 8px', fontSize: '0.7rem', color: '#92400E', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
             title="Suggested match · click to confirm or pick a different account"
           >? {suggestion.company}</button>
@@ -86,7 +88,7 @@ function buildColumns(data, prospectsByNorm, prospectSuggestionFor, mapping, onP
       return (
         <button
           type="button"
-          onClick={() => onPick(row)}
+          onClick={handleClick}
           style={{ background: 'transparent', border: '1px dashed #CBD5E1', borderRadius: 999, padding: '1px 8px', fontSize: '0.7rem', color: '#64748B', fontWeight: 400, cursor: 'pointer', fontFamily: 'inherit' }}
           title="Click to map to one of your accounts"
         >— Map —</button>
@@ -139,6 +141,21 @@ export function UploadedListView({
     } catch {}
   }, [mapping, mappingKey]);
 
+  // Close the picker dropdown when clicking outside it.
+  useEffect(() => {
+    if (!picker) return;
+    function onDocClick(e) {
+      if (e.target.closest('[data-picker="my-account"]')) return;
+      // Any click on a different "My Account" cell button replaces this
+      // picker rather than just closing it — letting the button handler
+      // run is fine, openPicker will set new state.
+      if (e.target.closest('button[title*="My Account"], button[title*="one of your accounts"], button[title*="map to one"]')) return;
+      setPicker(null);
+    }
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [picker]);
+
   // Build normalized prospect lookup + a list of normalized names for
   // substring fallbacks. Keeps the matching O(rows + prospects) rather
   // than O(rows * prospects).
@@ -181,8 +198,16 @@ export function UploadedListView({
     return { ...r, id: i, __matchKey__: `${i}::${normalizeCompany(nameForKey)}` };
   }), [data]);
 
-  function openPicker(row) {
-    setPicker({ matchKey: row.__matchKey__, raw: Object.values(row)[1] || Object.values(row)[0] || '', query: '' });
+  function openPicker(row, anchorEl) {
+    const rect = anchorEl?.getBoundingClientRect?.();
+    const width = 320;
+    const pos = rect
+      ? {
+          top: Math.min(rect.bottom + 4, window.innerHeight - 380),
+          left: Math.min(rect.left, window.innerWidth - width - 8),
+        }
+      : { top: 80, left: 80 };
+    setPicker({ matchKey: row.__matchKey__, raw: row[Object.keys(row).find(k => k !== 'id' && k !== '__matchKey__') || 'id'] || '', query: '', pos, width });
   }
   function confirmMapping(matchKey, prospectCompany) {
     setMapping(prev => ({ ...prev, [matchKey]: prospectCompany }));
@@ -356,67 +381,53 @@ export function UploadedListView({
           emptyMessage={`No matching ${plural} found`}
         />
       )}
-      {picker && (
+      {picker && createPortal(
         <div
-          onClick={() => setPicker(null)}
-          style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)', zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}
+          data-picker="my-account"
+          style={{ position: 'fixed', top: picker.pos.top, left: picker.pos.left, width: picker.width, background: '#fff', border: '1px solid #e2e8f0', borderRadius: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.12)', padding: '0.3rem', maxHeight: 350, zIndex: 9999, display: 'flex', flexDirection: 'column' }}
+          onClick={e => e.stopPropagation()}
         >
-          <div
-            onClick={e => e.stopPropagation()}
-            style={{ background: '#fff', borderRadius: 10, boxShadow: '0 20px 60px rgba(0,0,0,0.25)', width: 'min(480px, 100%)', maxHeight: '80vh', display: 'flex', flexDirection: 'column', fontFamily: 'inherit' }}
-          >
-            <div style={{ padding: '0.8rem 1rem', borderBottom: '1px solid var(--color-border-light)' }}>
-              <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--color-text)' }}>
-                Map <em>{picker.raw || '(this row)'}</em> to a My Account
-              </div>
-              <input
-                autoFocus
-                value={picker.query}
-                onChange={e => setPicker(p => ({ ...p, query: e.target.value }))}
-                placeholder="Search your accounts..."
-                style={{ marginTop: '0.5rem', width: '100%', padding: '0.4rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 6, fontSize: '0.82rem', fontFamily: 'inherit' }}
-              />
-            </div>
-            <div style={{ overflowY: 'auto', flex: 1 }}>
-              {pickerResults.map(p => (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => confirmMapping(picker.matchKey, p.company)}
-                  style={{ display: 'block', width: '100%', textAlign: 'left', background: 'none', border: 'none', padding: '0.5rem 1rem', borderBottom: '1px solid #F1F5F9', cursor: 'pointer', fontSize: '0.82rem', fontFamily: 'inherit' }}
-                  onMouseEnter={e => e.currentTarget.style.background = '#F8FAFC'}
-                  onMouseLeave={e => e.currentTarget.style.background = 'none'}
-                >
-                  <div style={{ fontWeight: 600, color: 'var(--color-text)' }}>{p.company}</div>
-                  {(p.tier || p.cdm) && (
-                    <div style={{ fontSize: '0.7rem', color: '#64748B', marginTop: 2 }}>
-                      {[p.tier, p.cdm].filter(Boolean).join(' · ')}
-                    </div>
-                  )}
-                </button>
-              ))}
-              {pickerResults.length === 0 && (
-                <div style={{ padding: '1rem', fontSize: '0.8rem', color: '#64748B', textAlign: 'center' }}>
-                  No matching accounts found.
-                </div>
-              )}
-            </div>
-            <div style={{ padding: '0.5rem 1rem', borderTop: '1px solid var(--color-border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              {mapping[picker.matchKey] ? (
-                <button
-                  type="button"
-                  onClick={() => clearMapping(picker.matchKey)}
-                  style={{ background: 'none', border: 'none', color: '#DC2626', cursor: 'pointer', fontSize: '0.78rem', fontFamily: 'inherit' }}
-                >Clear mapping</button>
-              ) : <span />}
+          <input
+            autoFocus
+            value={picker.query}
+            onChange={e => setPicker(p => ({ ...p, query: e.target.value }))}
+            onKeyDown={e => { if (e.key === 'Escape') setPicker(null); }}
+            placeholder="Search your accounts..."
+            style={{ width: '100%', padding: '0.3rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.75rem', fontFamily: 'inherit', marginBottom: '0.25rem', boxSizing: 'border-box' }}
+          />
+          <div style={{ overflowY: 'auto', flex: 1 }}>
+            {pickerResults.map(p => (
               <button
+                key={p.id}
                 type="button"
-                onClick={() => setPicker(null)}
-                style={{ padding: '0.3rem 0.7rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 5, cursor: 'pointer', fontSize: '0.78rem', fontFamily: 'inherit' }}
-              >Cancel</button>
-            </div>
+                onClick={() => confirmMapping(picker.matchKey, p.company)}
+                style={{ display: 'block', width: '100%', textAlign: 'left', background: 'none', border: 'none', padding: '0.35rem 0.5rem', borderRadius: 4, cursor: 'pointer', fontSize: '0.75rem', fontFamily: 'inherit' }}
+                onMouseEnter={e => e.currentTarget.style.background = '#F1F5F9'}
+                onMouseLeave={e => e.currentTarget.style.background = 'none'}
+              >
+                <div style={{ fontWeight: 600, color: 'var(--color-text)' }}>{p.company}</div>
+                {(p.tier || p.cdm) && (
+                  <div style={{ fontSize: '0.65rem', color: '#64748B', marginTop: 1 }}>
+                    {[p.tier, p.cdm].filter(Boolean).join(' · ')}
+                  </div>
+                )}
+              </button>
+            ))}
+            {pickerResults.length === 0 && (
+              <div style={{ padding: '0.75rem', fontSize: '0.75rem', color: '#64748B', textAlign: 'center' }}>
+                No matching accounts found.
+              </div>
+            )}
           </div>
-        </div>
+          {mapping[picker.matchKey] && (
+            <button
+              type="button"
+              onClick={() => clearMapping(picker.matchKey)}
+              style={{ marginTop: '0.25rem', padding: '0.3rem 0.5rem', background: 'none', border: 'none', color: '#DC2626', cursor: 'pointer', fontSize: '0.7rem', fontFamily: 'inherit', textAlign: 'left' }}
+            >Clear mapping</button>
+          )}
+        </div>,
+        document.body
       )}
     </div>
   );
