@@ -164,31 +164,42 @@ export function normalizeState(value) {
 
 // Detect ALL plausible consumption columns for a commodity so we can
 // pick the most conservative value per site when the source file
-// includes multiple estimates (e.g. "Electric kWh Min" + "Electric
-// kWh Max", or "Estimated kWh" + "Benchmark kWh").
+// includes multiple estimates. Patterns are intentionally broad
+// because users upload a lot of variants ("kWh", "Annual Energy",
+// "Electricity Consumption", "Power Usage", "Est. Energy (GWh/yr)",
+// "Gas therms Low", etc.).
 export function detectConsumptionColumns(headers, commodity) {
   if (!headers?.length) return [];
+  // NB: anchor gas on its own word so "gasoline" doesn't leak in but
+  // "Natural Gas" / "Gas Usage" / "Gas therms" all match.
   const patterns = commodity === 'electric'
     ? [
-        /^kwh$/i,
-        /\bkwh\b/i,
+        /\bk?wh\b/i,
         /\bmwh\b/i,
-        /annual.*(electric|kwh|power)/i,
-        /(electric|power).*(consum|usage|use|demand|annual|estimate|baseline|low|high|min|max|p50|p90)/i,
+        /\bgwh\b/i,
+        /\belectric(ity|al)?\b/i,
+        /\bpower\b/i,
+        /\benergy\b/i, // "Est. Energy", "Annual Energy"
       ]
     : [
-        /^therms?$/i,
         /\btherms?\b/i,
         /\bmmbtu\b/i,
         /\bmcf\b/i,
         /\bccf\b/i,
-        /(gas|natural\s*gas).*(consum|usage|use|annual|estimate|baseline|low|high|min|max|p50|p90)/i,
-        /annual.*(gas|natural\s*gas)/i,
+        /\bbtu\b/i,
+        /\bgas\b/i,
+        /\bnatural\s*gas\b/i,
+        /\bng\b/i, // NG as abbreviation
       ];
+  // Skip obvious non-consumption columns even when they contain a
+  // matching keyword (cost/rate/price/etc).
+  const EXCLUDE = /\b(rate|cost|price|tariff|spend|bill|per|\$|usd|category|type|status|notes?|fit|score|tier|rank|year|acquired|name|company|city|state|zip|country|address|id|count|sites?|opportunity)\b/i;
   const found = new Set();
   for (const h of headers) {
+    const s = String(h);
+    if (EXCLUDE.test(s)) continue;
     for (const pat of patterns) {
-      if (pat.test(String(h))) { found.add(h); break; }
+      if (pat.test(s)) { found.add(h); break; }
     }
   }
   return [...found];
@@ -206,32 +217,58 @@ export function detectConsumptionColumn(headers, commodity) {
 export function detectConsumptionUnit(header, commodity) {
   const h = String(header || '').toLowerCase();
   if (commodity === 'electric') {
+    if (/\bgwh\b/.test(h)) return 'GWh';
     if (/\bmwh\b/.test(h)) return 'MWh';
     return 'kWh';
   }
   if (/\bmmbtu\b/.test(h)) return 'MMBtu';
   if (/\bmcf\b/.test(h)) return 'Mcf';
   if (/\bccf\b/.test(h)) return 'Ccf';
+  if (/\bbtu\b/.test(h) && !/mmbtu/i.test(h)) return 'BTU';
   return 'therms';
 }
 
+// Forgiving numeric parse — accepts numbers, numeric strings with
+// thousands separators ("458,234"), trailing unit text ("458,234
+// kWh"), or leading currency-ish noise. Returns NaN only for truly
+// unparseable input.
+function looseNumber(value) {
+  if (value == null || value === '') return NaN;
+  if (typeof value === 'number') return value;
+  const raw = String(value).trim();
+  if (!raw) return NaN;
+  // Strip anything that isn't a digit, minus, or decimal point. Matches
+  // "458,234", "1.2M kWh", "~4,500 therms", etc. Ignores scientific
+  // notation, which is rare in these sheets.
+  const cleaned = raw.replace(/[^0-9.\-]/g, '');
+  if (!cleaned) return NaN;
+  const n = Number(cleaned);
+  if (!Number.isFinite(n)) return NaN;
+  // Expand common magnitude shorthand baked into the cell.
+  if (/\bm(illion)?\b/i.test(raw) || /\bM\b/.test(raw)) return n * 1_000_000;
+  if (/\bk\b/i.test(raw) || /\bthousand\b/i.test(raw)) return n * 1_000;
+  return n;
+}
+
 export function toKwh(value, unit) {
-  const n = Number(value);
+  const n = looseNumber(value);
   if (!Number.isFinite(n)) return null;
   switch (unit) {
-    case 'MWh': return n * 1000;
+    case 'GWh': return n * 1_000_000;
+    case 'MWh': return n * 1_000;
     case 'kWh':
-    default: return n;
+    default:    return n;
   }
 }
 
 export function toTherms(value, unit) {
-  const n = Number(value);
+  const n = looseNumber(value);
   if (!Number.isFinite(n)) return null;
   switch (unit) {
     case 'MMBtu': return n * 10;        // 1 MMBtu = 10 therms
     case 'Mcf':   return n * 10.37;     // 1 Mcf ≈ 10.37 therms (US avg heating value)
     case 'Ccf':   return n * 1.037;
+    case 'BTU':   return n / 100_000;   // 1 therm = 100,000 BTU
     case 'therms':
     default:      return n;
   }

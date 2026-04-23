@@ -109,6 +109,8 @@ export function SitesView() {
   const [utilityBusy, setUtilityBusy] = useState(false);
   const [mappingModal, setMappingModal] = useState(null);
   const [dragOver, setDragOver] = useState(false);
+  const [electricColOverride, setElectricColOverride] = useState(null);
+  const [gasColOverride, setGasColOverride] = useState(null);
   // { rows, headers, mapping: { zip, electric, gas, water } }
   const sitesFileRef = useRef(null);
   const utilityFileRef = useRef(null);
@@ -291,13 +293,28 @@ export function SitesView() {
   // multiple candidates we pick the smallest non-null value per row —
   // the user asked for the conservative estimate, and conservative
   // means lower consumption → lower cost.
-  const consumption = useMemo(() => {
+  const detectedConsumption = useMemo(() => {
     if (!sitesData.length) return { electric: [], gas: [] };
     const headers = Object.keys(sitesData[0]);
     const mk = (commodity) => detectConsumptionColumns(headers, commodity)
       .map(header => ({ header, unit: detectConsumptionUnit(header, commodity) }));
     return { electric: mk('electric'), gas: mk('gas') };
   }, [sitesData]);
+  // Active consumption columns = detection result, unless the user
+  // picked explicit overrides on the header bar.
+  const consumption = useMemo(() => {
+    function resolve(commodity, override) {
+      if (!override) return detectedConsumption[commodity];
+      if (override === '__none__') return [];
+      return [{ header: override, unit: detectConsumptionUnit(override, commodity) }];
+    }
+    return {
+      electric: resolve('electric', electricColOverride),
+      gas: resolve('gas', gasColOverride),
+    };
+  }, [detectedConsumption, electricColOverride, gasColOverride]);
+
+  const siteHeaders = useMemo(() => sitesData.length ? Object.keys(sitesData[0]) : [], [sitesData]);
 
   const pickMinConsumption = (row, candidates, toUnit) => {
     let best = null;
@@ -635,6 +652,49 @@ export function SitesView() {
           </span>
         )}
       </div>
+
+      {sitesData.length > 0 && (
+        <div className={styles.utilityBar} style={{ background: '#F1F5F9' }}>
+          <span style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text-secondary)' }}>Consumption columns:</span>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', color: 'var(--color-text-secondary)' }}>
+            <span>Electric</span>
+            <select
+              value={electricColOverride ?? (detectedConsumption.electric[0]?.header || '')}
+              onChange={e => setElectricColOverride(e.target.value || '__none__')}
+              style={{ padding: '0.2rem 0.4rem', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.72rem', fontFamily: 'inherit', background: '#fff' }}
+            >
+              <option value="__none__">— None —</option>
+              {siteHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+            </select>
+            {detectedConsumption.electric.length > 1 && !electricColOverride && (
+              <span style={{ fontSize: '0.65rem', color: '#64748B' }}>
+                (auto — min of {detectedConsumption.electric.length} cols)
+              </span>
+            )}
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', color: 'var(--color-text-secondary)' }}>
+            <span>Gas</span>
+            <select
+              value={gasColOverride ?? (detectedConsumption.gas[0]?.header || '')}
+              onChange={e => setGasColOverride(e.target.value || '__none__')}
+              style={{ padding: '0.2rem 0.4rem', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.72rem', fontFamily: 'inherit', background: '#fff' }}
+            >
+              <option value="__none__">— None —</option>
+              {siteHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+            </select>
+            {detectedConsumption.gas.length > 1 && !gasColOverride && (
+              <span style={{ fontSize: '0.65rem', color: '#64748B' }}>
+                (auto — min of {detectedConsumption.gas.length} cols)
+              </span>
+            )}
+          </label>
+          {(consumption.electric.length === 0 && consumption.gas.length === 0) && (
+            <span style={{ fontSize: '0.7rem', color: '#92400E', fontWeight: 600 }}>
+              No consumption columns matched — pick yours from the dropdowns.
+            </span>
+          )}
+        </div>
+      )}
 
       {uploadError && (
         <div style={{ margin: '0.5rem 1.25rem', padding: '0.5rem 0.75rem', background: '#FEF2F2', border: '1px solid #FCA5A5', borderRadius: 6, color: '#991B1B', fontSize: '0.8rem' }}>
