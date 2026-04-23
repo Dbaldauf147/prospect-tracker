@@ -162,17 +162,19 @@ export function normalizeState(value) {
   return code || null;
 }
 
-// Detect a consumption column in a sites spreadsheet. Returns the
-// matching header (or '' if nothing looks right).
-export function detectConsumptionColumn(headers, commodity) {
-  if (!headers?.length) return '';
+// Detect ALL plausible consumption columns for a commodity so we can
+// pick the most conservative value per site when the source file
+// includes multiple estimates (e.g. "Electric kWh Min" + "Electric
+// kWh Max", or "Estimated kWh" + "Benchmark kWh").
+export function detectConsumptionColumns(headers, commodity) {
+  if (!headers?.length) return [];
   const patterns = commodity === 'electric'
     ? [
         /^kwh$/i,
         /\bkwh\b/i,
+        /\bmwh\b/i,
         /annual.*(electric|kwh|power)/i,
-        /(electric|power).*(consum|usage|use|demand|annual)/i,
-        /mwh/i,
+        /(electric|power).*(consum|usage|use|demand|annual|estimate|baseline|low|high|min|max|p50|p90)/i,
       ]
     : [
         /^therms?$/i,
@@ -180,14 +182,22 @@ export function detectConsumptionColumn(headers, commodity) {
         /\bmmbtu\b/i,
         /\bmcf\b/i,
         /\bccf\b/i,
-        /(gas|natural\s*gas).*(consum|usage|use|annual)/i,
+        /(gas|natural\s*gas).*(consum|usage|use|annual|estimate|baseline|low|high|min|max|p50|p90)/i,
         /annual.*(gas|natural\s*gas)/i,
       ];
-  for (const pat of patterns) {
-    const hit = headers.find(h => pat.test(String(h)));
-    if (hit) return hit;
+  const found = new Set();
+  for (const h of headers) {
+    for (const pat of patterns) {
+      if (pat.test(String(h))) { found.add(h); break; }
+    }
   }
-  return '';
+  return [...found];
+}
+
+// Backwards-compat convenience for callers that only want the first
+// match — returns the header or ''.
+export function detectConsumptionColumn(headers, commodity) {
+  return detectConsumptionColumns(headers, commodity)[0] || '';
 }
 
 // Detect the unit of a consumption column so we can convert to the

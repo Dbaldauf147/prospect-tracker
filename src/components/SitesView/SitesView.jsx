@@ -15,7 +15,7 @@ import {
 import {
   zipToState,
   normalizeState,
-  detectConsumptionColumn,
+  detectConsumptionColumns,
   detectConsumptionUnit,
   toKwh,
   toTherms,
@@ -287,20 +287,32 @@ export function SitesView() {
     return pickZipColumn(Object.keys(sitesData[0]));
   }, [sitesData]);
 
-  // Detect annual consumption columns on the uploaded sites sheet. The
-  // same column drives the kWh / therm value plus the conversion, so
-  // "Annual MWh" gets treated as megawatt-hours and scaled back to kWh
-  // before applying the rate.
+  // Detect every plausible annual consumption column. When a site has
+  // multiple candidates we pick the smallest non-null value per row —
+  // the user asked for the conservative estimate, and conservative
+  // means lower consumption → lower cost.
   const consumption = useMemo(() => {
-    if (!sitesData.length) return { electric: null, gas: null };
+    if (!sitesData.length) return { electric: [], gas: [] };
     const headers = Object.keys(sitesData[0]);
-    const eHeader = detectConsumptionColumn(headers, 'electric');
-    const gHeader = detectConsumptionColumn(headers, 'gas');
-    return {
-      electric: eHeader ? { header: eHeader, unit: detectConsumptionUnit(eHeader, 'electric') } : null,
-      gas: gHeader ? { header: gHeader, unit: detectConsumptionUnit(gHeader, 'gas') } : null,
-    };
+    const mk = (commodity) => detectConsumptionColumns(headers, commodity)
+      .map(header => ({ header, unit: detectConsumptionUnit(header, commodity) }));
+    return { electric: mk('electric'), gas: mk('gas') };
   }, [sitesData]);
+
+  const pickMinConsumption = (row, candidates, toUnit) => {
+    let best = null;
+    let bestHeader = null;
+    for (const { header, unit } of candidates) {
+      const raw = row[header];
+      const converted = toUnit(raw, unit);
+      if (converted == null || !Number.isFinite(converted) || converted <= 0) continue;
+      if (best == null || converted < best) {
+        best = converted;
+        bestHeader = header;
+      }
+    }
+    return { value: best, sourceHeader: bestHeader };
+  };
 
   const rows = useMemo(() => {
     return sitesData.map((r, i) => {
@@ -309,10 +321,10 @@ export function SitesView() {
       const state = match?.state || zipToState(zip);
       const electricRate = state ? stateRate(state, 'electric') : null;
       const gasRate = state ? stateRate(state, 'gas') : null;
-      const kwh = consumption.electric ? toKwh(r[consumption.electric.header], consumption.electric.unit) : null;
-      const therms = consumption.gas ? toTherms(r[consumption.gas.header], consumption.gas.unit) : null;
-      const electricCost = electricRate != null && kwh != null ? electricRate * kwh : null;
-      const gasCost = gasRate != null && therms != null ? gasRate * therms : null;
+      const elec = pickMinConsumption(r, consumption.electric, toKwh);
+      const gas = pickMinConsumption(r, consumption.gas, toTherms);
+      const electricCost = electricRate != null && elec.value != null ? electricRate * elec.value : null;
+      const gasCost = gasRate != null && gas.value != null ? gasRate * gas.value : null;
       const totalCost = (electricCost ?? 0) + (gasCost ?? 0);
       return {
         ...r,
@@ -324,8 +336,10 @@ export function SitesView() {
         __city__: match?.city,
         __country__: match?.country,
         __state__: state,
-        __kwh__: kwh,
-        __therms__: therms,
+        __kwh__: elec.value,
+        __therms__: gas.value,
+        __kwhSource__: elec.sourceHeader,
+        __thermsSource__: gas.sourceHeader,
         __electricRate__: electricRate,
         __gasRate__: gasRate,
         __electricCost__: electricCost,
@@ -447,8 +461,20 @@ export function SitesView() {
         const val = row[`__${key}__`];
         if (val == null) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
         const text = formatMoney(val);
+        let title = label;
+        if (key === 'electricCost' && row.__kwh__ != null) {
+          title = `${row.__kwh__.toLocaleString()} kWh × ${formatRate(row.__electricRate__, 'electric')}${row.__kwhSource__ ? ` · min of matching columns ("${row.__kwhSource__}")` : ''}`;
+        } else if (key === 'gasCost' && row.__therms__ != null) {
+          title = `${Math.round(row.__therms__).toLocaleString()} therms × ${formatRate(row.__gasRate__, 'gas')}${row.__thermsSource__ ? ` · min of matching columns ("${row.__thermsSource__}")` : ''}`;
+        } else if (key === 'totalCost') {
+          const parts = [];
+          if (row.__electricCost__ != null) parts.push(`Electric ${formatMoney(row.__electricCost__)}`);
+          if (row.__gasCost__ != null) parts.push(`Gas ${formatMoney(row.__gasCost__)}`);
+          if (parts.length) title = parts.join(' + ');
+        }
         return (
           <span
+            title={title}
             style={{ background: color.bg, border: `1px solid ${color.border}`, color: color.text, padding: '1px 8px', borderRadius: 4, fontSize: '0.72rem', fontWeight: 700, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', whiteSpace: 'nowrap' }}
           >{text}</span>
         );
