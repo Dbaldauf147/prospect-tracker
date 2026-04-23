@@ -12,6 +12,17 @@ import {
   clearUtilityRates,
   normalizeZip,
 } from '../../utils/utilityRatesStore';
+import {
+  zipToState,
+  normalizeState,
+  detectConsumptionColumn,
+  detectConsumptionUnit,
+  toKwh,
+  toTherms,
+  stateRate,
+  formatMoney,
+  formatRate,
+} from '../../utils/utilityRates';
 import { parseBestSheet } from '../../utils/xlsxParse';
 import styles from './SitesView.module.css';
 
@@ -188,6 +199,7 @@ export function SitesView() {
         commodityType: detectColumn(headers, [/commodity\s*type/i, /commodity/i, /service\s*type/i, /^type$/i]),
         utility: detectColumn(headers, [/^utility$/i, /utility\s*(name|company|provider)/i, /provider/i, /utility/i]),
         city: detectColumn(headers, [/^city$/i, /city/i, /municipality/i]),
+        state: detectColumn(headers, [/^state$/i, /\bstate\b/i, /province/i, /region/i]),
         country: detectColumn(headers, [/^country$/i, /country/i, /nation/i]),
         uniqueLookup: detectColumn(headers, [/unique\s*lookup/i, /lookup\s*key/i, /unique\s*id/i]),
       };
@@ -232,6 +244,11 @@ export function SitesView() {
           const city = String(r[mapping.city] ?? '').trim();
           if (city) entry.city = city;
         }
+        if (mapping.state && !entry.state) {
+          const rawState = String(r[mapping.state] ?? '').trim();
+          const code = normalizeState(rawState);
+          if (code) entry.state = code;
+        }
         if (mapping.country && !entry.country) {
           const country = String(r[mapping.country] ?? '').trim();
           if (country) entry.country = country;
@@ -270,10 +287,33 @@ export function SitesView() {
     return pickZipColumn(Object.keys(sitesData[0]));
   }, [sitesData]);
 
+  // Detect annual consumption columns on the uploaded sites sheet. The
+  // same column drives the kWh / therm value plus the conversion, so
+  // "Annual MWh" gets treated as megawatt-hours and scaled back to kWh
+  // before applying the rate.
+  const consumption = useMemo(() => {
+    if (!sitesData.length) return { electric: null, gas: null };
+    const headers = Object.keys(sitesData[0]);
+    const eHeader = detectConsumptionColumn(headers, 'electric');
+    const gHeader = detectConsumptionColumn(headers, 'gas');
+    return {
+      electric: eHeader ? { header: eHeader, unit: detectConsumptionUnit(eHeader, 'electric') } : null,
+      gas: gHeader ? { header: gHeader, unit: detectConsumptionUnit(gHeader, 'gas') } : null,
+    };
+  }, [sitesData]);
+
   const rows = useMemo(() => {
     return sitesData.map((r, i) => {
       const zip = zipColumn ? normalizeZip(r[zipColumn]) : '';
       const match = utility?.zipMap && zip ? utility.zipMap[zip] : null;
+      const state = match?.state || zipToState(zip);
+      const electricRate = state ? stateRate(state, 'electric') : null;
+      const gasRate = state ? stateRate(state, 'gas') : null;
+      const kwh = consumption.electric ? toKwh(r[consumption.electric.header], consumption.electric.unit) : null;
+      const therms = consumption.gas ? toTherms(r[consumption.gas.header], consumption.gas.unit) : null;
+      const electricCost = electricRate != null && kwh != null ? electricRate * kwh : null;
+      const gasCost = gasRate != null && therms != null ? gasRate * therms : null;
+      const totalCost = (electricCost ?? 0) + (gasCost ?? 0);
       return {
         ...r,
         id: i,
@@ -283,10 +323,18 @@ export function SitesView() {
         __water__: match?.water,
         __city__: match?.city,
         __country__: match?.country,
+        __state__: state,
+        __kwh__: kwh,
+        __therms__: therms,
+        __electricRate__: electricRate,
+        __gasRate__: gasRate,
+        __electricCost__: electricCost,
+        __gasCost__: gasCost,
+        __totalCost__: (electricCost != null || gasCost != null) ? totalCost : null,
         __matched__: !!match,
       };
     });
-  }, [sitesData, zipColumn, utility]);
+  }, [sitesData, zipColumn, utility, consumption]);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return rows;
@@ -368,12 +416,56 @@ export function SitesView() {
         );
       },
     });
+    const makeStateCol = () => ({
+      key: 'lookup_state',
+      label: 'State',
+      defaultWidth: 80,
+      render: (row) => row.__state__
+        ? <span style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text)' }}>{row.__state__}</span>
+        : <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>—</span>,
+    });
+    const makeRateCol = (commodity, label) => ({
+      key: `${commodity}_rate`,
+      label,
+      defaultWidth: 110,
+      render: (row) => {
+        const val = row[`__${commodity}Rate__`];
+        if (val == null) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
+        return (
+          <span
+            title={`${row.__state__ || 'unknown state'} commercial average. Indicative only — not a tariff rate.`}
+            style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
+          >{formatRate(val, commodity)}</span>
+        );
+      },
+    });
+    const makeCostCol = (key, label, color) => ({
+      key,
+      label,
+      defaultWidth: 120,
+      render: (row) => {
+        const val = row[`__${key}__`];
+        if (val == null) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
+        const text = formatMoney(val);
+        return (
+          <span
+            style={{ background: color.bg, border: `1px solid ${color.border}`, color: color.text, padding: '1px 8px', borderRadius: 4, fontSize: '0.72rem', fontWeight: 700, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', whiteSpace: 'nowrap' }}
+          >{text}</span>
+        );
+      },
+    });
     return [
       ...base,
+      makeStateCol(),
       makeUtilityCol('electric', 'Electric Utility', { bg: '#FEF3C7', border: '#FCD34D', text: '#92400E' }),
       makeMarketCol('electric', 'Electric Market'),
+      makeRateCol('electric', 'Electric Rate'),
+      makeCostCol('electricCost', 'Electric Cost', { bg: '#FEF3C7', border: '#FCD34D', text: '#92400E' }),
       makeUtilityCol('gas', 'Gas Utility', { bg: '#DBEAFE', border: '#93C5FD', text: '#1E3A8A' }),
       makeMarketCol('gas', 'Gas Market'),
+      makeRateCol('gas', 'Gas Rate'),
+      makeCostCol('gasCost', 'Gas Cost', { bg: '#DBEAFE', border: '#93C5FD', text: '#1E3A8A' }),
+      makeCostCol('totalCost', 'Total Est. Cost', { bg: '#EDE9FE', border: '#C4B5FD', text: '#5B21B6' }),
       makeUtilityCol('water', 'Water Utility', { bg: '#DCFCE7', border: '#86EFAC', text: '#166534' }),
       makeLocationCol('city', 'Lookup City'),
       makeLocationCol('country', 'Lookup Country'),
@@ -382,7 +474,13 @@ export function SitesView() {
 
   const alwaysVisible = useMemo(() => {
     if (!columns.length) return [];
-    return [columns[0].key, 'electric', 'electric_market', 'gas', 'gas_market', 'water'];
+    return [
+      columns[0].key,
+      'electric', 'electric_market', 'electric_rate', 'electricCost',
+      'gas', 'gas_market', 'gas_rate', 'gasCost',
+      'totalCost',
+      'water',
+    ];
   }, [columns]);
 
   const tableId = useMemo(
@@ -393,8 +491,23 @@ export function SitesView() {
   const matchStats = useMemo(() => {
     if (!utility?.zipMap || !rows.length) return null;
     let matched = 0;
-    for (const r of rows) if (r.__matched__) matched++;
-    return { matched, total: rows.length };
+    let electricCost = 0;
+    let gasCost = 0;
+    let costedSites = 0;
+    for (const r of rows) {
+      if (r.__matched__) matched++;
+      if (r.__electricCost__ != null) electricCost += r.__electricCost__;
+      if (r.__gasCost__ != null) gasCost += r.__gasCost__;
+      if (r.__totalCost__ != null) costedSites++;
+    }
+    return {
+      matched,
+      total: rows.length,
+      electricCost,
+      gasCost,
+      totalCost: electricCost + gasCost,
+      costedSites,
+    };
   }, [rows, utility]);
 
   const utilMeta = utility?.meta || null;
@@ -414,7 +527,17 @@ export function SitesView() {
           <div className={styles.subtitle}>
             {sitesData.length} {sitesData.length === 1 ? 'site' : 'sites'}
             {matchStats && (
-              <> · <strong style={{ color: '#166534' }}>{matchStats.matched}</strong>/{matchStats.total} matched to utility lookup</>
+              <>
+                {' '}· <strong style={{ color: '#166534' }}>{matchStats.matched}</strong>/{matchStats.total} matched to utility lookup
+                {matchStats.costedSites > 0 && (
+                  <>
+                    {' '}· Est. annual spend <strong style={{ color: '#5B21B6' }}>{formatMoney(matchStats.totalCost)}</strong>
+                    {' '}(<span style={{ color: '#92400E' }}>{formatMoney(matchStats.electricCost)} electric</span>
+                    {' '}+ <span style={{ color: '#1E3A8A' }}>{formatMoney(matchStats.gasCost)} gas</span>)
+                    {' '}across {matchStats.costedSites} site{matchStats.costedSites === 1 ? '' : 's'}
+                  </>
+                )}
+              </>
             )}
           </div>
         </div>
@@ -541,6 +664,7 @@ export function SitesView() {
               { key: 'commodityType', label: 'Commodity Type', required: true },
               { key: 'utility', label: 'Utility', required: true },
               { key: 'city', label: 'City', required: false },
+              { key: 'state', label: 'State', required: false },
               { key: 'country', label: 'Country', required: false },
               { key: 'uniqueLookup', label: 'Unique Lookup', required: false },
             ].map(({ key, label, required }) => {
