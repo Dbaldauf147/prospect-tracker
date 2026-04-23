@@ -236,7 +236,16 @@ export function DataTable({
             const obj = {};
             for (const col of exportCols) {
               const label = colNames[col.key] || col.label;
-              const val = row[col.key];
+              let val;
+              // Columns with derived data (e.g. values stored under
+              // __electricCost__ while the column key is electricCost)
+              // can provide an exportValue mapper so the export matches
+              // what's on screen.
+              if (typeof col.exportValue === 'function') {
+                val = col.exportValue(row);
+              } else {
+                val = row[col.key];
+              }
               obj[label] = Array.isArray(val) ? val.join(', ') : (val ?? '');
             }
             return obj;

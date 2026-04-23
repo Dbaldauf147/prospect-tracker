@@ -390,6 +390,10 @@ export function SitesView() {
         if (k === zipColumn && row.__zipNorm__) return row.__zipNorm__;
         return v == null || v === '' ? <span style={{ color: 'var(--color-text-muted)' }}>—</span> : String(v);
       },
+      exportValue: (row) => {
+        if (k === zipColumn && row.__zipNorm__) return row.__zipNorm__;
+        return row[k] ?? '';
+      },
     }));
     const makeUtilityCol = (key, label, color) => ({
       key,
@@ -412,6 +416,7 @@ export function SitesView() {
           >{text}</span>
         );
       },
+      exportValue: (row) => row[`__${key}__`] ?? '',
     });
     const makeLocationCol = (key, label) => ({
       key,
@@ -422,6 +427,7 @@ export function SitesView() {
         if (!val) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
         return <span style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)' }}>{val}</span>;
       },
+      exportValue: (row) => row[`__${key}__`] ?? '',
     });
     const makeMarketCol = (utilityKey, label) => ({
       key: `${utilityKey}_market`,
@@ -446,6 +452,7 @@ export function SitesView() {
           >{classification}</span>
         );
       },
+      exportValue: (row) => classifyUtility(row[`__${utilityKey}__`]) || '',
     });
     const makeStateCol = () => ({
       key: 'lookup_state',
@@ -454,6 +461,7 @@ export function SitesView() {
       render: (row) => row.__state__
         ? <span style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text)' }}>{row.__state__}</span>
         : <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>—</span>,
+      exportValue: (row) => row.__state__ || '',
     });
     const makeRateCol = (commodity, label) => ({
       key: `${commodity}_rate`,
@@ -468,6 +476,10 @@ export function SitesView() {
             style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
           >{formatRate(val, commodity)}</span>
         );
+      },
+      exportValue: (row) => {
+        const val = row[`__${commodity}Rate__`];
+        return val == null ? '' : Number(val);
       },
     });
     const makeCostCol = (key, label, color) => ({
@@ -495,6 +507,10 @@ export function SitesView() {
             style={{ background: color.bg, border: `1px solid ${color.border}`, color: color.text, padding: '1px 8px', borderRadius: 4, fontSize: '0.72rem', fontWeight: 700, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', whiteSpace: 'nowrap' }}
           >{text}</span>
         );
+      },
+      exportValue: (row) => {
+        const val = row[`__${key}__`];
+        return val == null ? '' : Math.round(Number(val) * 100) / 100;
       },
     });
     return [
