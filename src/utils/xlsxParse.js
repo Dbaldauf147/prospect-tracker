@@ -13,15 +13,25 @@ function nonEmpty(row) {
   return n;
 }
 
-// Find the first row that looks like a header: 2+ non-empty cells and
-// at least one cell that looks label-ish (string, not a bare number).
+// Find the first row that looks like a header: a label-ish cell
+// (string, not a bare number) followed by at least one subsequent row
+// with data in any of the same columns. We used to require 2+
+// non-empty cells, which rejected legitimate single-column files
+// (common for list exports like CA SB entity-name rosters).
 function findHeaderRowIndex(rows) {
   for (let i = 0; i < Math.min(rows.length, 20); i++) {
     const row = rows[i] || [];
     const nonEmptyCount = nonEmpty(row);
-    if (nonEmptyCount < 2) continue;
+    if (nonEmptyCount < 1) continue;
     const hasLabel = row.some(c => typeof c === 'string' && c.trim().length > 0 && !/^[\d.,\-$]+$/.test(c.trim()));
-    if (hasLabel) return i;
+    if (!hasLabel) continue;
+    // Confirm this isn't just a title row by checking that some later
+    // row (within a small window) carries data. A single-column file
+    // with "Entity Name" then 4,000 company names passes this check;
+    // a one-line title with nothing below it fails.
+    for (let j = i + 1; j < Math.min(rows.length, i + 6); j++) {
+      if (nonEmpty(rows[j] || []) > 0) return i;
+    }
   }
   return -1;
 }
