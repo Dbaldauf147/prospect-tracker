@@ -7,38 +7,9 @@ import { Badge } from '../common/Badge';
 import { DataTable } from '../common/DataTable';
 import { statusColor, formatAum } from '../../utils/formatters';
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE } from '../../data/enums';
-import { loadList as loadListFromIDB } from '../../utils/uploadedListStore';
+import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import * as XLSX from 'xlsx';
 import styles from './MyAccountsView.module.css';
-
-// Every list tab on the Lists view that stores its uploaded file under
-// the UploadedListView convention. Keyed by the same storageKey the
-// consumers pass in, so we can read both the per-list confirmed
-// mappings and (when present) the full list data to pick up
-// non-dismissed fuzzy suggestions too.
-const LIST_FLAG_SOURCES = [
-  { label: 'RECA',     storageKey: 'reca-clients-override', color: { bg: '#DBEAFE', text: '#1E40AF' } },
-  { label: 'CSRD',     storageKey: 'csrd-list-override',    color: { bg: '#EDE9FE', text: '#5B21B6' } },
-  { label: 'CDP',      storageKey: 'cdp-list-override',     color: { bg: '#DCFCE7', text: '#166534' } },
-  { label: 'GRESB',    storageKey: 'gresb-list-override',   color: { bg: '#FEF3C7', text: '#92400E' } },
-  { label: 'SBT',      storageKey: 'sbt-list-override',     color: { bg: '#FCE7F3', text: '#9D174D' } },
-  { label: 'Ecovadis', storageKey: 'ecovadis-list-override', color: { bg: '#E0F2FE', text: '#075985' } },
-  { label: 'UN PRI',   storageKey: 'unpri-list-override',   color: { bg: '#F3E8FF', text: '#6B21A8' } },
-  { label: 'CA SB',    storageKey: 'casb-list-override',    color: { bg: '#FFEDD5', text: '#9A3412' } },
-];
-const LIST_FLAG_BY_LABEL = Object.fromEntries(LIST_FLAG_SOURCES.map(s => [s.label, s]));
-
-function pickListNameKey(headers) {
-  if (!headers?.length) return null;
-  const key = headers.find(k => /company|name|organi[sz]ation|signatory|entity/i.test(k));
-  return key || headers[0];
-}
-function safeReadMapping(storageKey) {
-  try {
-    const raw = localStorage.getItem(storageKey);
-    return raw ? (JSON.parse(raw) || {}) : {};
-  } catch { return {}; }
-}
 
 function InlineCell({ row, field, value, onUpdate, type, options }) {
   const [editing, setEditing] = useState(false);
@@ -1602,72 +1573,29 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
 
   // Build the List Flags aggregate. Runs when allAccounts changes so
   // flags match against the exact ~132 accounts the user sees on this
-  // tab — not the broader Baldauf-CDM prospect pool.
+  // tab — not the broader Baldauf-CDM prospect pool. Also refreshes
+  // when mappings change elsewhere (via the custom
+  // 'my-accounts-coverage-changed' event dispatched from
+  // UploadedListView) so returning from a list tab shows the latest.
+  const [flagVersion, setFlagVersion] = useState(0);
+  useEffect(() => {
+    const bump = () => setFlagVersion(v => v + 1);
+    window.addEventListener('my-accounts-coverage-changed', bump);
+    window.addEventListener('storage', bump);
+    return () => {
+      window.removeEventListener('my-accounts-coverage-changed', bump);
+      window.removeEventListener('storage', bump);
+    };
+  }, []);
   useEffect(() => {
     let cancelled = false;
-    const CORP_SUFFIXES = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|oy|ab|spa|kk|pty|holdings|group|grp)\b\.?/g;
-    function normalizeListCompany(name) {
-      return String(name || '')
-        .toLowerCase()
-        .normalize('NFKD').replace(/[̀-ͯ]/g, '')
-        .replace(/&/g, ' and ')
-        .replace(CORP_SUFFIXES, ' ')
-        .replace(/[^a-z0-9]+/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-    }
     (async () => {
-      const flags = new Map();
-      const targets = allAccounts
-        .map(a => ({ company: a.company, key: (a.company || '').toLowerCase().trim() }))
-        .filter(t => t.key);
-      const addFlag = (companyKey, label) => {
-        if (!companyKey) return;
-        if (!flags.has(companyKey)) flags.set(companyKey, new Set());
-        flags.get(companyKey).add(label);
-      };
-      for (const source of LIST_FLAG_SOURCES) {
-        const mapping = safeReadMapping(`${source.storageKey}:my-accounts-mapping`);
-        const dismissed = safeReadMapping(`${source.storageKey}:my-accounts-dismissed`);
-        // 1. Confirmed My-Account mappings.
-        for (const confirmed of Object.values(mapping)) {
-          if (typeof confirmed !== 'string') continue;
-          for (const t of targets) {
-            if (companiesMatch(t.company, confirmed)) {
-              addFlag(t.key, source.label);
-              break;
-            }
-          }
-        }
-        // 2. Non-dismissed fuzzy suggestions from the uploaded list.
-        try {
-          const listRows = await loadListFromIDB(source.storageKey);
-          if (cancelled) return;
-          if (!Array.isArray(listRows) || listRows.length === 0) continue;
-          const headers = Object.keys(listRows[0] || {});
-          const nameKey = pickListNameKey(headers);
-          if (!nameKey) continue;
-          for (const row of listRows) {
-            const rawName = String(row[nameKey] ?? '').trim();
-            if (!rawName) continue;
-            const norm = normalizeListCompany(rawName);
-            if (!norm) continue;
-            const matchKey = `name::${norm}`;
-            if (dismissed[matchKey]) continue;
-            if (mapping[matchKey]) continue;
-            for (const t of targets) {
-              if (companiesMatch(t.company, rawName)) {
-                addFlag(t.key, source.label);
-                break;
-              }
-            }
-          }
-        } catch {}
-      }
+      const names = allAccounts.map(a => a.company).filter(Boolean);
+      const flags = await computeListFlags(names);
       if (!cancelled) setListFlagsByCompany(flags);
     })();
     return () => { cancelled = true; };
-  }, [allAccounts]);
+  }, [allAccounts, flagVersion]);
 
   // Dynamic filter options — any visible column with ≤30 unique string values gets a filter
   const SKIP_FILTER_KEYS = new Set(['company', 'notes', 'dmNames', 'targetName', 'otherReps', 'sources', 'divisions', '_hide', 'id', 'createdAt', 'updatedAt', 'assetTypes', 'frameworks']);

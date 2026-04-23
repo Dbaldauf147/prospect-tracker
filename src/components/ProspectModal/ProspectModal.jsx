@@ -10,6 +10,7 @@ import { loadEffectiveRaClients, raClientName, raClientCm } from '../../utils/ra
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES, COUNTRIES, US_STATES } from '../../data/enums';
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { saveSourceFile as savePortfolioSourceFileToIDB, loadSourceFile as loadPortfolioSourceFileFromIDB, clearSourceFile as clearPortfolioSourceFileFromIDB } from '../../utils/portfolioSourceFileStore';
+import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import styles from './ProspectModal.module.css';
 
@@ -1219,7 +1220,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const [researchingPortfolio, setResearchingPortfolio] = useState(false);
   const [portfolioResearchError, setPortfolioResearchError] = useState(null);
   const [portfolioColWidths, setPortfolioColWidths] = useState({
-    num: 30, company: 180, industry: 140, sector: 160, subsector: 160, subsectorScore: 80, hqCity: 130, hqCountry: 90, energy: 110, siteCount: 100, rank: 130, fitTier: 100, pcDescription: 260, acquisitionYear: 90, notes: 220, raClient: 200, clientManager: 140, targetAccount: 200, tier: 80, salesRep: 160,
+    num: 30, company: 180, industry: 140, sector: 160, subsector: 160, subsectorScore: 80, hqCity: 130, hqCountry: 90, energy: 110, siteCount: 100, rank: 130, fitTier: 100, pcDescription: 260, acquisitionYear: 90, notes: 220, raClient: 200, clientManager: 140, targetAccount: 200, tier: 80, salesRep: 160, listFlags: 200,
   });
   const [portfolioSortByRank, setPortfolioSortByRank] = useState(true);
   const [raClientPickerOpen, setRaClientPickerOpen] = useState(null); // row index
@@ -2108,6 +2109,38 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     portfolioBackfillRan.current = true;
     if (dirty) updateSettings({ savedPortfolioMappings: next });
   }, [fields.portfolioCompanies, settings.savedPortfolioMappings, updateSettings]);
+
+  // List Flags: for each Portfolio Company, track which list tabs
+  // (CDP, GRESB, SBT, etc.) the name has been flagged on. Used in
+  // both the on-screen table column and the exported Portfolio
+  // Companies sheet. Refreshes when the portfolio roster changes or
+  // a list-tab mapping is saved (custom coverage-changed event).
+  const [portfolioListFlags, setPortfolioListFlags] = useState(() => new Map());
+  const [portfolioFlagVersion, setPortfolioFlagVersion] = useState(0);
+  useEffect(() => {
+    const bump = () => setPortfolioFlagVersion(v => v + 1);
+    window.addEventListener('my-accounts-coverage-changed', bump);
+    window.addEventListener('storage', bump);
+    return () => {
+      window.removeEventListener('my-accounts-coverage-changed', bump);
+      window.removeEventListener('storage', bump);
+    };
+  }, []);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const names = (fields.portfolioCompanies || [])
+        .map(r => r.companyName)
+        .filter(Boolean);
+      if (names.length === 0) {
+        if (!cancelled) setPortfolioListFlags(new Map());
+        return;
+      }
+      const flags = await computeListFlags(names);
+      if (!cancelled) setPortfolioListFlags(flags);
+    })();
+    return () => { cancelled = true; };
+  }, [fields.portfolioCompanies, portfolioFlagVersion]);
 
   const updateDeal = useCallback((dealId, patch) => {
     writeCompanyDeals(companyDeals.map(d => d.id === dealId ? { ...d, ...patch, updatedAt: Date.now() } : d));
@@ -3563,8 +3596,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   const maxS = rows.reduce((m, r) => Math.max(m, Number(r.siteCount) || 0), 0);
                   const years = rows.map(r => Number(r.acquisitionYear)).filter(y => y > 0);
                   const yearRange = years.length > 0 ? { min: Math.min(...years), max: Math.max(...years) } : null;
-                  const headers = ['Opportunity Score', 'Company Name', 'HQ Country', 'Est. Energy (GWh/yr)', 'Site Count', 'Sector', 'Subsector', 'Acquisition Year', 'PC Description', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM'];
-                  const colWidths = [13, 32, 15, 15, 15, 28, 22, 14, 48, 36, 26, 22, 26, 10, 22];
+                  const headers = ['Opportunity Score', 'Company Name', 'HQ Country', 'Est. Energy (GWh/yr)', 'Site Count', 'Sector', 'Subsector', 'Acquisition Year', 'PC Description', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM', 'List Flags'];
+                  const colWidths = [13, 32, 15, 15, 15, 28, 22, 14, 48, 36, 26, 22, 26, 10, 22, 22];
                   // Parse a site-count cell that may carry a (P)/(E) marker — e.g. "12 (E)" → { num: 12, isEstimate: true }.
                   // The number is what we write; the marker drives italic formatting in the export.
                   function parseSiteCount(raw) {
@@ -3612,6 +3645,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       r.targetAccount || '',
                       tierForTarget(r.targetAccount),
                       repForTarget(r.targetAccount),
+                      (() => {
+                        const set = portfolioListFlags.get((r.companyName || '').toLowerCase().trim());
+                        return set ? [...set].join(', ') : '';
+                      })(),
                     ];
                   });
 
@@ -4335,6 +4372,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             <col style={{ width: portfolioColWidths.targetAccount + 'px' }} />
                             <col style={{ width: portfolioColWidths.tier + 'px' }} />
                             <col style={{ width: portfolioColWidths.salesRep + 'px' }} />
+                            <col style={{ width: portfolioColWidths.listFlags + 'px' }} />
                             <col style={{ width: '28px' }} />
                           </colgroup>
                           <thead>
@@ -4362,6 +4400,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                               <th style={thBase}>Target Account<span style={resizeHandleStyle} onMouseDown={e => startResize('targetAccount', e)} /></th>
                               <th style={thBase}>Tier<span style={resizeHandleStyle} onMouseDown={e => startResize('tier', e)} /></th>
                               <th style={thBase}>Other CDM<span style={resizeHandleStyle} onMouseDown={e => startResize('salesRep', e)} /></th>
+                              <th style={thBase} title="Lists this company has been flagged on from the Lists tab">List Flags<span style={resizeHandleStyle} onMouseDown={e => startResize('listFlags', e)} /></th>
                               <th style={{ padding: '0.3rem 0.3rem', borderBottom: '1px solid var(--color-border)' }}></th>
                             </tr>
                           </thead>
@@ -4795,6 +4834,31 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                   return (
                                     <td style={{ padding: '0.15rem 0.3rem', fontSize: '0.7rem', color: rep ? 'var(--color-text)' : '#CBD5E1', fontStyle: rep ? 'normal' : 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={rep ? `From Target Accounts sheet for "${r.targetAccount}"` : (r.targetAccount ? 'No rep found on Target Accounts sheet for this account' : 'Map a target account to see its rep')}>
                                       {rep || (r.targetAccount ? '— no rep found —' : '—')}
+                                    </td>
+                                  );
+                                })()}
+                                {(() => {
+                                  const flagSet = portfolioListFlags.get((r.companyName || '').toLowerCase().trim());
+                                  const flags = flagSet ? [...flagSet] : [];
+                                  return (
+                                    <td style={{ padding: '0.15rem 0.3rem' }}>
+                                      {flags.length === 0
+                                        ? <span style={{ color: '#CBD5E1', fontSize: '0.7rem' }}>—</span>
+                                        : (
+                                          <span style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
+                                            {flags.map(label => {
+                                              const color = LIST_FLAG_BY_LABEL[label]?.color || { bg: '#F1F5F9', text: '#334155' };
+                                              return (
+                                                <span
+                                                  key={label}
+                                                  title={`Flagged on the ${label} list`}
+                                                  style={{ padding: '1px 6px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, background: color.bg, color: color.text, whiteSpace: 'nowrap' }}
+                                                >{label}</span>
+                                              );
+                                            })}
+                                          </span>
+                                        )
+                                      }
                                     </td>
                                   );
                                 })()}
