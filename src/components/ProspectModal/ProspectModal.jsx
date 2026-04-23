@@ -360,68 +360,109 @@ function normalizePortfolioCompany(name) {
     .trim();
 }
 
-// Given a Top 5 Overview sheet and a sibling site-list sheet from the
-// same workbook, append a "Site Count" column to the overview whose
-// value for each row is the number of rows on the site list that match
-// the overview row's company name. Mutates `overview` in place.
-function appendSiteCountToOverview(overview, siteList) {
-  const overviewHeaders = overview.headers || [];
-  const overviewCompanyIdx = overviewHeaders.findIndex(h => {
-    const s = String(h || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-    return s.includes('company') || s === 'name' || s.includes('portfolio');
-  });
-  const ovCol = overviewCompanyIdx >= 0 ? overviewCompanyIdx : 1;
+// Merge per-company numbers from the main Portfolio Companies sheet
+// into the Top 5 Overview sheet's Multi-site Billing and Energy cells
+// so the exported cell reads e.g. "Strong - 35 sites" or "Strong - 142
+// GWh/yr". Mutates `overview` in place and drops any pre-existing
+// Site Count column (the number lives inside the Multi-site Billing
+// cell now).
+function enrichOverviewFromPortfolio(overview, portfolioRows) {
+  if (!overview || !Array.isArray(overview.headers) || !Array.isArray(overview.rows)) return;
+  if (!Array.isArray(portfolioRows) || portfolioRows.length === 0) return;
 
-  const siteHeaders = siteList.headers || [];
-  const siteCompanyIdx = siteHeaders.findIndex(h => {
-    const s = String(h || '').toLowerCase();
-    return /company|parent|portfolio|owner|name/.test(s);
-  });
-  const siteCol = siteCompanyIdx >= 0 ? siteCompanyIdx : 0;
+  const overviewHeaders = overview.headers;
+  const findIdx = (pred) => overviewHeaders.findIndex(h => pred(String(h || '')));
+  const ovCompanyIdx = findIdx(s => /company|^name$|portfolio/i.test(s.replace(/[^a-z0-9]/gi, '')));
+  const ovBillingIdx = findIdx(s => /multi.?site.*billing|multisite\s*billing/i.test(s));
+  const ovEnergyIdx = findIdx(s => /^\s*energy\s*$|energy\s*(usage|intensity|consumption|fit|score|profile)?/i.test(s));
+  if (ovCompanyIdx < 0) return;
+
+  // Detect the main-tab headers by scanning the first row's keys.
+  const mainHeaders = Object.keys(portfolioRows[0] || {});
+  const mainHdr = (pred) => mainHeaders.find(h => pred(String(h || '')));
+  const mainCompanyKey = mainHdr(s => /company|portfolio/i.test(s));
+  const mainSiteKey = mainHdr(s => /site\s*count|^sites?$|number\s*of\s*sites?|est\.?\s*site/i.test(s));
+  const mainEnergyKey = mainHdr(s => /energy|gwh/i.test(s));
+
+  // Build a normalized name → { sites, energy } lookup from the main
+  // portfolio data so overview-row enrichment is O(rows + portfolio).
+  const byNorm = new Map();
+  for (const r of portfolioRows) {
+    const rawName = mainCompanyKey ? r[mainCompanyKey] : '';
+    const norm = normalizePortfolioCompany(rawName);
+    if (!norm) continue;
+    const sites = mainSiteKey ? r[mainSiteKey] : '';
+    const energy = mainEnergyKey ? r[mainEnergyKey] : '';
+    // First-seen wins; the main portfolio table shouldn't repeat companies.
+    if (!byNorm.has(norm)) byNorm.set(norm, { sites, energy });
+  }
 
   const rowCells = (r) => (Array.isArray(r) ? r : (r?.cells || []));
 
-  // Pre-compute normalized names for every top-5 company so we can do
-  // one pass over the (potentially large) site list.
-  const companies = overview.rows.map((r, i) => ({
-    idx: i,
-    norm: normalizePortfolioCompany(rowCells(r)[ovCol]),
-  })).filter(c => c.norm);
-
-  const counts = new Array(overview.rows.length).fill(0);
-  for (const siteRow of siteList.rows) {
-    const rawName = rowCells(siteRow)[siteCol];
-    const norm = normalizePortfolioCompany(rawName);
-    if (!norm) continue;
-    // Exact-normalized first, then single best substring fallback so
-    // "Blue Owl Real Estate" under the parent "Blue Owl" still counts.
-    let match = companies.find(c => c.norm === norm);
-    if (!match) {
-      let best = null;
-      for (const c of companies) {
-        if (c.norm.length < 3) continue;
-        if (norm.includes(c.norm) || c.norm.includes(norm)) {
-          if (!best || c.norm.length > best.norm.length) best = c;
-        }
+  function matchByName(overviewName) {
+    const norm = normalizePortfolioCompany(overviewName);
+    if (!norm) return null;
+    if (byNorm.has(norm)) return byNorm.get(norm);
+    // Substring fallback for portfolio brands that include a division
+    // ("Blue Owl Real Estate" in overview ↔ "Blue Owl" on main tab).
+    let best = null;
+    for (const [n, v] of byNorm) {
+      if (n.length < 3) continue;
+      if (n === norm || n.includes(norm) || norm.includes(n)) {
+        if (!best || n.length > best.n.length) best = { n, v };
       }
-      match = best;
     }
-    if (match) counts[match.idx]++;
+    return best?.v || null;
   }
 
-  // Avoid appending a second "Site Count" if one already exists — we
-  // overwrite its values instead to keep the table tidy.
-  const existingIdx = overviewHeaders.findIndex(h => /^\s*site\s*count\s*$/i.test(String(h || '')));
-  if (existingIdx >= 0) {
-    overview.rows = overview.rows.map((r, i) => {
-      const cells = rowCells(r).slice();
-      cells[existingIdx] = counts[i];
-      return { cells };
-    });
-    return;
+  function parseNumber(v) {
+    if (v == null || v === '') return null;
+    if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+    const cleaned = String(v).replace(/[^0-9.\-]/g, '');
+    if (!cleaned) return null;
+    const n = Number(cleaned);
+    return Number.isFinite(n) ? n : null;
   }
-  overview.headers = [...overviewHeaders, 'Site Count'];
-  overview.rows = overview.rows.map((r, i) => ({ cells: [...rowCells(r), counts[i]] }));
+
+  function appendSuffix(cellVal, suffix) {
+    const raw = String(cellVal ?? '').replace(/\s+$/, '');
+    if (!raw) return suffix.replace(/^\s*-\s*/, '');
+    // Avoid duplicating when the user has run the export twice.
+    const stripped = suffix.replace(/^\s*-\s*/, '');
+    if (raw.toLowerCase().includes(stripped.toLowerCase())) return raw;
+    return `${raw}${suffix}`;
+  }
+
+  overview.rows = overview.rows.map((r) => {
+    const cells = rowCells(r).slice();
+    const name = cells[ovCompanyIdx];
+    const match = matchByName(name);
+    if (!match) return { cells };
+    if (ovBillingIdx >= 0) {
+      const sitesNum = parseNumber(match.sites);
+      if (sitesNum != null && sitesNum > 0) {
+        cells[ovBillingIdx] = appendSuffix(cells[ovBillingIdx], ` - ${sitesNum.toLocaleString()} ${sitesNum === 1 ? 'site' : 'sites'}`);
+      }
+    }
+    if (ovEnergyIdx >= 0) {
+      const energyNum = parseNumber(match.energy);
+      if (energyNum != null && energyNum > 0) {
+        const energyLabel = `${energyNum.toLocaleString(undefined, { maximumFractionDigits: 1 })} GWh/yr`;
+        cells[ovEnergyIdx] = appendSuffix(cells[ovEnergyIdx], ` - ${energyLabel}`);
+      }
+    }
+    return { cells };
+  });
+
+  // Drop any Site Count column that got baked in by the earlier
+  // pipeline — its data lives inside Multi-site Billing now.
+  const siteCountIdx = overviewHeaders.findIndex(h => /^\s*site\s*count\s*$/i.test(String(h || '')));
+  if (siteCountIdx >= 0) {
+    overview.headers = overviewHeaders.filter((_, i) => i !== siteCountIdx);
+    overview.rows = overview.rows.map(r => ({
+      cells: rowCells(r).filter((_, i) => i !== siteCountIdx),
+    }));
+  }
 }
 
 // ── Inline HubSpot Contact Editor ──
@@ -1280,17 +1321,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         : null;
       const overview = readAoaSheet(overviewName);
       const topFive = readAoaSheet(deepDiveName || bareTop5Name);
-      // Optional "site list" sheet — any remaining sheet with "site" in
-      // its name, used to derive a per-company site count that gets
-      // appended to the Top 5 Overview as an extra column.
-      const siteListName = wb.SheetNames.find(n => {
-        const s = String(n || '').toLowerCase();
-        if (!s.includes('site')) return false;
-        return n !== overviewName && n !== deepDiveName && n !== bareTop5Name;
-      });
-      const siteList = readAoaSheet(siteListName);
-      if (overview && siteList && Array.isArray(overview.rows) && Array.isArray(siteList.rows)) {
-        appendSiteCountToOverview(overview, siteList);
+      // Pull site count + estimated energy from the main Portfolio
+      // Companies rows and splice them into the Overview's Multi-site
+      // Billing and Energy cells.
+      if (overview && Array.isArray(data) && data.length > 0) {
+        enrichOverviewFromPortfolio(overview, data);
       }
       const headers = Object.keys(data[0]);
       const patterns = {
@@ -3852,8 +3887,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                           };
                           cell.alignment = { vertical: 'top', horizontal: i === 0 ? 'center' : 'left', wrapText: opts.wrapAllText || isWrapCol(headers[i]) };
                           // Strong / Some / Weak → green / yellow / red.
+                          // Match on the leading word so enriched cells like
+                          // "Strong - 35 sites" or "Some - 42 GWh/yr" still
+                          // pick up the right tint.
                           if (opts.colorFitCells) {
-                            const fit = FIT_COLORS[String(raw ?? '').trim().toLowerCase()];
+                            const leading = String(raw ?? '').trim().toLowerCase().match(/^(strong|some|weak)\b/);
+                            const fit = leading ? FIT_COLORS[leading[1]] : null;
                             if (fit) {
                               cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fit.bg } };
                               cell.font = { ...cell.font, color: { argb: fit.fg }, bold: true };
