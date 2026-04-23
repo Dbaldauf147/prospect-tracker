@@ -2,18 +2,8 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import * as XLSX from 'xlsx';
 import { DataTable } from '../common/DataTable';
+import { saveList as saveListToIDB, loadList as loadListFromIDB, clearList as clearListFromIDB } from '../../utils/uploadedListStore';
 import styles from './UploadedListView.module.css';
-
-function loadList(storageKey) {
-  try {
-    const raw = localStorage.getItem(storageKey);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) return { data: parsed, source: 'override' };
-    }
-  } catch {}
-  return { data: [], source: 'empty' };
-}
 
 function loadMapping(key) {
   if (!key) return {};
@@ -107,30 +97,43 @@ export function UploadedListView({
   prospects = [],
   onSelectProspect,
 }) {
-  const [{ data, source }, setStore] = useState(() => loadList(storageKey));
+  const [store, setStore] = useState({ data: [], source: 'empty' });
   const mappingKey = storageKey ? `${storageKey}:account-mapping` : '';
   const [mapping, setMapping] = useState(() => loadMapping(mappingKey));
   const [search, setSearch] = useState('');
   const [uploadError, setUploadError] = useState(null);
   const [picker, setPicker] = useState(null); // { matchKey, raw, query }
   const fileInputRef = useRef(null);
+  const { data, source } = store;
 
+  // Load list from IDB whenever the tab (storageKey) changes.
   useEffect(() => {
-    setStore(loadList(storageKey));
+    let cancelled = false;
+    (async () => {
+      const loaded = await loadListFromIDB(storageKey);
+      if (!cancelled) {
+        setStore(Array.isArray(loaded) && loaded.length > 0
+          ? { data: loaded, source: 'override' }
+          : { data: [], source: 'empty' });
+      }
+    })();
     setMapping(loadMapping(`${storageKey}:account-mapping`));
     setSearch('');
     setUploadError(null);
     setPicker(null);
+    return () => { cancelled = true; };
   }, [storageKey]);
 
+  // Cross-tab sync is limited to the mapping (localStorage). The list
+  // itself is in IDB so storage events don't fire — that's fine, user
+  // re-uploads from the current tab anyway.
   useEffect(() => {
     function onStorage(e) {
-      if (e.key === storageKey) setStore(loadList(storageKey));
       if (e.key === mappingKey) setMapping(loadMapping(mappingKey));
     }
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
-  }, [storageKey, mappingKey]);
+  }, [mappingKey]);
 
   // Persist mapping back to localStorage whenever it changes.
   useEffect(() => {
@@ -260,20 +263,20 @@ export function UploadedListView({
       if (!sheet) throw new Error('Workbook has no sheets');
       const parsed = XLSX.utils.sheet_to_json(sheet, { defval: '' });
       if (!Array.isArray(parsed) || parsed.length === 0) throw new Error('No rows parsed');
-      localStorage.setItem(storageKey, JSON.stringify(parsed));
-      setStore(loadList(storageKey));
+      await saveListToIDB(storageKey, parsed);
+      setStore({ data: parsed, source: 'override' });
     } catch (err) {
       const msg = err?.name === 'QuotaExceededError'
-        ? 'Upload too large for browser storage (max ~5 MB). Try trimming unused columns.'
+        ? 'Upload exceeded the browser storage quota. Try a smaller file or trim unused columns.'
         : (err?.message || 'Failed to read file');
       setUploadError(msg);
     }
   }
 
-  function handleRevert() {
+  async function handleRevert() {
     if (!window.confirm(`Remove the uploaded ${title} list?`)) return;
-    localStorage.removeItem(storageKey);
-    setStore(loadList(storageKey));
+    await clearListFromIDB(storageKey);
+    setStore({ data: [], source: 'empty' });
   }
 
   const matchStats = useMemo(() => {

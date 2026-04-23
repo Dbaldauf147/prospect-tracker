@@ -6,7 +6,9 @@
 
 const DB_NAME = 'prospect-tracker-files';
 const STORE = 'portfolio-source-files';
-const DB_VERSION = 1;
+// Version 2 added the uploaded-lists object store. Kept in sync with
+// uploadedListStore.js so the two files never fight over DB versioning.
+const DB_VERSION = 2;
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -15,6 +17,9 @@ function openDB() {
       const db = req.result;
       if (!db.objectStoreNames.contains(STORE)) {
         db.createObjectStore(STORE, { keyPath: 'key' });
+      }
+      if (!db.objectStoreNames.contains('uploaded-lists')) {
+        db.createObjectStore('uploaded-lists', { keyPath: 'key' });
       }
     };
     req.onsuccess = () => resolve(req.result);
