@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback, useRef } from 'react';
+import { useMemo, useState, useCallback, useRef, Fragment } from 'react';
 import * as XLSX from 'xlsx';
 import { logAction } from '../../utils/auditLog';
 import { useAuth } from '../../contexts/AuthContext';
@@ -693,40 +693,63 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
     });
   }, []);
 
-  // Aggregate suggestions into a patch per prospect, excluding anything
-  // the user has dismissed. For Email Domain, append our suggestion to
-  // whatever the prospect already has (newline-separated).
-  const prospectBackfillUpdates = useMemo(() => {
+  // Build a row per prospect with a cell per Table View field. Each cell
+  // records the existing prospect value, any suggestion we have (upload
+  // or inferred), and whether the user dismissed it. The green panel
+  // renders this as a grid so all four columns stay visible even when
+  // the user dismisses individual suggestions; the bulk-apply patch is
+  // derived from the non-dismissed cells.
+  const prospectSuggestionRows = useMemo(() => {
     if (!onUpdateProspect) return [];
     const prospectIds = new Set();
     for (const r of rows) if (r._matchedProspectId) prospectIds.add(r._matchedProspectId);
-    const out = [];
     const fields = ['website', 'zoomCompanyId', 'zoomCompanyName', 'emailDomain'];
+    const out = [];
     for (const pid of prospectIds) {
       const prospect = prospects.find(p => p.id === pid);
       if (!prospect) continue;
-      const patch = {};
-      const sources = {};
+      const cells = {};
+      let hasAnySuggestion = false;
       for (const field of fields) {
-        if (dismissedSuggestions.has(`${pid}::${field}`)) continue;
+        const dismissKey = `${pid}::${field}`;
+        const dismissed = dismissedSuggestions.has(dismissKey);
         const sugg = suggestionFor(pid, field);
-        if (!sugg) continue;
-        if (field === 'emailDomain') {
-          const existing = String(prospect.emailDomain || '')
-            .split(/[\n;,]+/).map(s => s.trim()).filter(Boolean);
-          const existingLower = new Set(existing.map(s => s.toLowerCase()));
-          if (existingLower.has(sugg.value.toLowerCase())) continue;
-          patch.emailDomain = [...existing, sugg.value].join('\n');
-        } else {
-          patch[field] = sugg.value;
-        }
-        sources[field] = sugg;
+        const existing = String(prospect[field] || '').trim();
+        if (sugg) hasAnySuggestion = true;
+        cells[field] = { sugg, existing, dismissed, dismissKey };
       }
-      if (Object.keys(patch).length > 0) out.push({ prospect, patch, sources });
+      if (hasAnySuggestion) out.push({ prospect, cells });
     }
     out.sort((a, b) => (a.prospect.company || '').localeCompare(b.prospect.company || ''));
     return out;
   }, [rows, prospects, onUpdateProspect, dismissedSuggestions, suggestionFor]);
+
+  // Derive the apply-to-HubSpot patch from the grid, excluding dismissed
+  // cells. emailDomain is multi-value, so we append to the existing
+  // value rather than overwriting.
+  const prospectBackfillUpdates = useMemo(() => {
+    const out = [];
+    for (const { prospect, cells } of prospectSuggestionRows) {
+      const patch = {};
+      const sources = {};
+      for (const field of ['website', 'zoomCompanyId', 'zoomCompanyName', 'emailDomain']) {
+        const cell = cells[field];
+        if (!cell || !cell.sugg || cell.dismissed) continue;
+        if (field === 'emailDomain') {
+          const existing = String(prospect.emailDomain || '')
+            .split(/[\n;,]+/).map(s => s.trim()).filter(Boolean);
+          const existingLower = new Set(existing.map(s => s.toLowerCase()));
+          if (existingLower.has(cell.sugg.value.toLowerCase())) continue;
+          patch.emailDomain = [...existing, cell.sugg.value].join('\n');
+        } else {
+          patch[field] = cell.sugg.value;
+        }
+        sources[field] = cell.sugg;
+      }
+      if (Object.keys(patch).length > 0) out.push({ prospect, patch, sources });
+    }
+    return out;
+  }, [prospectSuggestionRows]);
 
   // Cheap per-row lookup of the four Table View fields we surface in
   // the contacts grid. Returns the matched prospect's current value
@@ -861,15 +884,15 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
           </div>
         </div>
 
-        {prospectBackfillUpdates.length > 0 && (
+        {prospectSuggestionRows.length > 0 && (
           <div style={{ margin: '0.75rem 0', border: '1px solid #86EFAC', background: '#F0FDF4', borderRadius: 8, padding: '0.6rem 0.8rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.6rem', marginBottom: '0.4rem' }}>
               <div>
                 <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#166534' }}>
-                  Fill missing Table View data on {prospectBackfillUpdates.length} prospect{prospectBackfillUpdates.length === 1 ? '' : 's'}
+                  Fill missing Table View data on {prospectSuggestionRows.length} prospect{prospectSuggestionRows.length === 1 ? '' : 's'}
                 </div>
                 <div style={{ fontSize: '0.68rem', color: '#14532D' }}>
-                  Website / Zoom / Email Domain suggestions from your upload or inferred from the contact emails. Uncheck any you'd rather not apply, then click Update Table View.
+                  Website / Zoom / Email Domain suggestions from your upload or inferred from the contact emails. Click × on a cell to skip it, or undo to restore. Then click Update Table View to push {prospectBackfillUpdates.length} prospect{prospectBackfillUpdates.length === 1 ? '' : 's'}.
                 </div>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
@@ -881,42 +904,67 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                 <button
                   type="button"
                   onClick={applyProspectBackfill}
-                  disabled={backfillBusy}
-                  style={{ padding: '0.35rem 0.8rem', border: 'none', borderRadius: 6, background: '#16A34A', color: '#fff', fontSize: '0.75rem', fontWeight: 700, cursor: backfillBusy ? 'wait' : 'pointer', fontFamily: 'inherit' }}
+                  disabled={backfillBusy || prospectBackfillUpdates.length === 0}
+                  style={{ padding: '0.35rem 0.8rem', border: 'none', borderRadius: 6, background: prospectBackfillUpdates.length === 0 ? '#94A3B8' : '#16A34A', color: '#fff', fontSize: '0.75rem', fontWeight: 700, cursor: backfillBusy || prospectBackfillUpdates.length === 0 ? 'not-allowed' : 'pointer', fontFamily: 'inherit' }}
                 >
                   {backfillBusy ? 'Updating…' : 'Update Table View'}
                 </button>
               </div>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
-              {prospectBackfillUpdates.map(({ prospect, patch, sources }) => (
-                <div key={prospect.id} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap', fontSize: '0.72rem', color: '#14532D', background: '#fff', border: '1px solid #BBF7D0', borderRadius: 6, padding: '0.3rem 0.5rem' }}>
-                  <strong style={{ color: '#166534', minWidth: 180 }}>{prospect.company || '—'}</strong>
-                  {Object.entries(patch).map(([field, value]) => {
-                    const label = PROSPECT_BACKFILL_FIELDS.find(f => f.key === field)?.label || field;
-                    const dismissKey = `${prospect.id}::${field}`;
-                    const origin = sources?.[field]?.origin || 'upload';
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(160px, 1.2fr) repeat(4, minmax(140px, 1fr))', gap: '0.2rem 0.4rem', fontSize: '0.7rem', background: '#fff', border: '1px solid #BBF7D0', borderRadius: 6, padding: '0.4rem 0.5rem' }}>
+              <div style={{ fontWeight: 700, color: '#166534', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.02em' }}>Company</div>
+              {PROSPECT_BACKFILL_FIELDS.map(f => (
+                <div key={f.key} style={{ fontWeight: 700, color: '#166534', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.02em' }}>{f.label}</div>
+              ))}
+              {prospectSuggestionRows.map(({ prospect, cells }) => (
+                <Fragment key={prospect.id}>
+                  <div style={{ color: '#166534', fontWeight: 600, alignSelf: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={prospect.company || ''}>
+                    {prospect.company || '—'}
+                  </div>
+                  {PROSPECT_BACKFILL_FIELDS.map(f => {
+                    const cell = cells[f.key];
+                    if (!cell || !cell.sugg) {
+                      if (cell?.existing && f.key !== 'emailDomain') {
+                        return (
+                          <div key={f.key} style={{ color: '#64748B', fontSize: '0.68rem', alignSelf: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`Already has: ${cell.existing}`}>
+                            {cell.existing}
+                          </div>
+                        );
+                      }
+                      return <div key={f.key} style={{ color: '#CBD5E1', alignSelf: 'center' }}>—</div>;
+                    }
+                    const { sugg, dismissed, dismissKey } = cell;
+                    const origin = sugg.origin;
+                    if (dismissed) {
+                      return (
+                        <div key={f.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, alignSelf: 'center', background: '#F1F5F9', border: '1px solid #CBD5E1', borderRadius: 999, padding: '1px 8px', color: '#64748B', fontSize: '0.66rem' }}>
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: 'line-through' }} title={sugg.value}>{String(sugg.value).replace(/\n/g, ' · ')}</span>
+                          <button
+                            type="button"
+                            onClick={() => toggleDismissed(dismissKey)}
+                            style={{ background: 'none', border: 'none', color: '#64748B', cursor: 'pointer', fontSize: '0.62rem', padding: 0, fontFamily: 'inherit', textDecoration: 'underline' }}
+                          >undo</button>
+                        </div>
+                      );
+                    }
                     return (
-                      <label
-                        key={field}
-                        title="Click to dismiss this suggestion"
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 8px', background: '#DCFCE7', border: '1px solid #86EFAC', borderRadius: 999, cursor: 'pointer' }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={true}
-                          onChange={() => toggleDismissed(dismissKey)}
-                          style={{ margin: 0 }}
-                        />
-                        <span style={{ fontWeight: 600, color: '#166534' }}>{label}:</span>
-                        <span style={{ color: '#14532D', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{String(value).replace(/\n/g, ' · ')}</span>
+                      <div key={f.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, alignSelf: 'center', background: '#FEF9C3', border: '1px solid #FACC15', borderRadius: 999, padding: '1px 6px 1px 8px', color: '#854D0E', fontSize: '0.68rem', fontWeight: 600 }}>
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }} title={sugg.value}>
+                          {String(sugg.value).replace(/\n/g, ' · ')}
+                        </span>
                         {origin === 'inferred' && (
-                          <span style={{ fontSize: '0.62rem', color: '#64748B', fontWeight: 500 }}>(inferred)</span>
+                          <span style={{ fontSize: '0.58rem', color: '#A16207', fontWeight: 500, fontStyle: 'italic' }}>auto</span>
                         )}
-                      </label>
+                        <button
+                          type="button"
+                          title="Remove this suggestion"
+                          onClick={() => toggleDismissed(dismissKey)}
+                          style={{ background: 'none', border: 'none', color: '#A16207', cursor: 'pointer', fontSize: '0.78rem', padding: 0, lineHeight: 1, fontFamily: 'inherit', fontWeight: 700 }}
+                        >×</button>
+                      </div>
                     );
                   })}
-                </div>
+                </Fragment>
               ))}
             </div>
           </div>
