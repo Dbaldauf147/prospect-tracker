@@ -23,7 +23,8 @@ const PROSPECT_BACKFILL_FIELDS = [
 // "name" so "ZoomInfo Company Name" maps to the Zoom field rather
 // than landing on the plain Company column. linkedin rules come
 // before the generic website rule so a "LinkedIn URL" header doesn't
-// land on Website.
+// land on Website. city/state/country rules sit above the company
+// rule so "Company City" doesn't match company.
 const HEADER_MATCH_RULES = [
   ['_upload_zoomCompanyId',   ['zoominfocompanyid', 'zoominfocompnyid', 'zoomcompanyid', 'zicompanyid', 'zoominfoid', 'zoomid', 'ziid']],
   ['_upload_zoomCompanyName', ['zoominfocompanyname', 'zoomcompanyname', 'zicompanyname', 'zoominfoname', 'zoomname']],
@@ -31,12 +32,28 @@ const HEADER_MATCH_RULES = [
   ['_upload_website',         ['companywebsite', 'companyurl', 'website', 'homepage', 'url']],
   ['_upload_emailDomain',     ['emaildomain', 'domainpattern', 'companydomain']],
   ['email',                   ['emailaddress', 'workemail', 'email']],
-  ['phone',                   ['mobilephone', 'workphone', 'cellphone', 'phonenumber', 'mobile', 'phone', 'cell']],
+  ['mobilePhone',             ['mobilephonenumber', 'cellphonenumber', 'mobilephone', 'cellphone', 'mobile', 'cell']],
+  ['phone',                   ['workphonenumber', 'officephone', 'directphone', 'workphone', 'phonenumber', 'phone']],
   ['firstname',               ['firstname', 'givenname', 'first']],
   ['lastname',                ['lastname', 'surname', 'familyname', 'last']],
   ['jobtitle',                ['jobtitle', 'position', 'title', 'role']],
+  ['city',                    ['city']],
+  ['state',                   ['stateprovinceregion', 'stateprovince', 'state']],
+  ['country',                 ['country']],
   ['company',                 ['accountname', 'companyname', 'organization', 'company', 'account']],
   ['dans_tags',               ['danstags', 'tags']],
+];
+
+// Headers that should never be auto-mapped, even if a rule pattern
+// appears inside them. Checked before the rules. This keeps noisy
+// exports from silently landing on the wrong field — e.g. "Company
+// Division Name" no longer gets captured as Company, and "ZoomInfo
+// Contact Profile URL" doesn't land on the Website column.
+const IGNORE_HEADER_PATTERNS = [
+  'companydivision',
+  'divisionname',
+  'zoominfocontactprofile',
+  'contactprofileurl',
 ];
 
 // All the destination fields a file column can be mapped to. Drives
@@ -48,9 +65,13 @@ const FIELD_OPTIONS = [
   { key: 'firstname',                label: 'First Name' },
   { key: 'lastname',                 label: 'Last Name' },
   { key: 'company',                  label: 'Company' },
-  { key: 'phone',                    label: 'Phone' },
+  { key: 'phone',                    label: 'Work Phone Number' },
+  { key: 'mobilePhone',              label: 'Cell Phone Number' },
   { key: 'jobtitle',                 label: 'Job Title' },
   { key: 'linkedinUrl',              label: 'LinkedIn URL' },
+  { key: 'city',                     label: 'City' },
+  { key: 'state',                    label: 'State' },
+  { key: 'country',                  label: 'Country' },
   { key: 'dans_tags',                label: "Dan's Tags" },
   { key: '_upload_website',          label: 'Table View — Website' },
   { key: '_upload_zoomCompanyId',    label: 'Table View — Zoom Company ID' },
@@ -69,6 +90,10 @@ function autoMapHeaders(headers) {
   for (const h of headers) {
     const n = norm(h);
     if (!n) { mapping[h] = ''; continue; }
+    if (IGNORE_HEADER_PATTERNS.some(p => n.includes(p))) {
+      mapping[h] = '';
+      continue;
+    }
     let matched = '';
     for (const [key, patterns] of HEADER_MATCH_RULES) {
       if (usedKeys.has(key)) continue;
@@ -92,7 +117,8 @@ function applyMappingToRows(rawRows, mapping) {
   for (const r of rawRows) {
     const out1 = {
       email: '', firstname: '', lastname: '', company: '',
-      phone: '', jobtitle: '', linkedinUrl: '', dans_tags: '',
+      phone: '', mobilePhone: '', jobtitle: '', linkedinUrl: '',
+      city: '', state: '', country: '', dans_tags: '',
     };
     for (const f of PROSPECT_BACKFILL_FIELDS) out1[`_upload_${f.key}`] = '';
     for (const [src, dst] of Object.entries(mapping)) {
@@ -447,8 +473,12 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
             if (p[k]) refreshed[k] = p[k];
           }
           if (!existing.phone && p.phone) refreshed.phone = p.phone;
+          if (!existing.mobilePhone && p.mobilePhone) refreshed.mobilePhone = p.mobilePhone;
           if (!existing.jobtitle && p.jobtitle) refreshed.jobtitle = p.jobtitle;
           if (!existing.linkedinUrl && p.linkedinUrl) refreshed.linkedinUrl = p.linkedinUrl;
+          if (!existing.city && p.city) refreshed.city = p.city;
+          if (!existing.state && p.state) refreshed.state = p.state;
+          if (!existing.country && p.country) refreshed.country = p.country;
           if (!existing.company && p.company) refreshed.company = p.company;
           if (!existing.dans_tags && p.dans_tags) refreshed.dans_tags = p.dans_tags;
           byEmail.set(p.email, refreshed);
@@ -571,10 +601,14 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
     if (firstname && !existing.firstname) patch.firstname = firstname;
     if (lastname && !existing.lastname) patch.lastname = lastname;
     if (row.phone && !existing.phone) patch.phone = row.phone;
+    if (row.mobilePhone && !existing.mobilephone) patch.mobilephone = row.mobilePhone;
     if (row.jobtitle && !existing.jobtitle) patch.jobtitle = row.jobtitle;
     if (row.linkedinUrl && row.linkedinUrl.trim() && !existing.hs_linkedin_url && !existing.linkedin_url) {
       patch.hs_linkedin_url = row.linkedinUrl.trim();
     }
+    if (row.city && !existing.city) patch.city = row.city;
+    if (row.state && !existing.state) patch.state = row.state;
+    if (row.country && !existing.country) patch.country = row.country;
     if (row.dans_tags && row.dans_tags.trim() && !existing.dans_tags && !existing.dan_s_tags) patch.dans_tags = row.dans_tags.trim();
     return Object.keys(patch).length ? patch : null;
   }
@@ -591,7 +625,11 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
         phone: row.phone,
         jobtitle: row.jobtitle,
       };
+      if (row.mobilePhone && row.mobilePhone.trim()) properties.mobilephone = row.mobilePhone.trim();
       if (row.linkedinUrl && row.linkedinUrl.trim()) properties.hs_linkedin_url = row.linkedinUrl.trim();
+      if (row.city && row.city.trim()) properties.city = row.city.trim();
+      if (row.state && row.state.trim()) properties.state = row.state.trim();
+      if (row.country && row.country.trim()) properties.country = row.country.trim();
       if (row.dans_tags && row.dans_tags.trim()) properties.dans_tags = row.dans_tags.trim();
       const res = await fetch('/api/hubspot?action=create-contact', {
         method: 'POST',
@@ -1229,8 +1267,12 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                 <col style={{ width: '200px' }} />
                 <col style={{ width: '140px' }} />
                 <col style={{ width: '140px' }} />
-                <col style={{ width: '120px' }} />
+                <col style={{ width: '140px' }} />
+                <col style={{ width: '140px' }} />
                 <col style={{ width: '180px' }} />
+                <col style={{ width: '110px' }} />
+                <col style={{ width: '90px' }} />
+                <col style={{ width: '110px' }} />
                 <col style={{ width: '240px' }} />
                 <col style={{ width: '36px' }} />
               </colgroup>
@@ -1248,8 +1290,12 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                   <th title="Table View — Email Domain">TV Email Domain</th>
                   <th>Dan's Tags</th>
                   <th>Job title</th>
-                  <th>Phone</th>
+                  <th>Work Phone Number</th>
+                  <th>Cell Phone Number</th>
                   <th>LinkedIn URL</th>
+                  <th>City</th>
+                  <th>State</th>
+                  <th>Country</th>
                   <th>Notes</th>
                   <th></th>
                 </tr>
@@ -1435,12 +1481,16 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                       <td><input className={styles.cellInput} value={r.dans_tags || ''} onChange={e => updateRow(r.email, { dans_tags: e.target.value })} placeholder="Tag1, Tag2" /></td>
                       <td><input className={styles.cellInput} value={r.jobtitle} onChange={e => updateRow(r.email, { jobtitle: e.target.value })} /></td>
                       <td><input className={styles.cellInput} value={r.phone} onChange={e => updateRow(r.email, { phone: e.target.value })} /></td>
+                      <td><input className={styles.cellInput} value={r.mobilePhone || ''} onChange={e => updateRow(r.email, { mobilePhone: e.target.value })} /></td>
                       <td style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                         <input className={styles.cellInput} value={r.linkedinUrl || ''} onChange={e => updateRow(r.email, { linkedinUrl: e.target.value })} placeholder="linkedin.com/in/…" />
                         {r.linkedinUrl && (
                           <a href={ensureProtocol(r.linkedinUrl)} target="_blank" rel="noopener noreferrer" title={r.linkedinUrl} style={{ fontSize: '0.72rem', color: 'var(--color-accent)', textDecoration: 'none' }}>↗</a>
                         )}
                       </td>
+                      <td><input className={styles.cellInput} value={r.city || ''} onChange={e => updateRow(r.email, { city: e.target.value })} /></td>
+                      <td><input className={styles.cellInput} value={r.state || ''} onChange={e => updateRow(r.email, { state: e.target.value })} /></td>
+                      <td><input className={styles.cellInput} value={r.country || ''} onChange={e => updateRow(r.email, { country: e.target.value })} /></td>
                       <td><input className={styles.cellInput} value={r.notes || ''} onChange={e => updateRow(r.email, { notes: e.target.value })} placeholder="Free-form note" /></td>
                       <td><button className={styles.rowRemove} onClick={() => removeRow(r.email)} title="Remove row">×</button></td>
                     </tr>

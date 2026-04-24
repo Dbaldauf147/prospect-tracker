@@ -630,6 +630,7 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
     lastname: contact.lastname || '',
     email: contact.email || '',
     phone: contact.phone || '',
+    mobilephone: contact.mobilephone || contact.mobile_phone || '',
     jobtitle: contact.jobtitle || '',
     company: contact.company || '',
     hs_linkedin_url: contact.hs_linkedin_url || contact.linkedin_url || '',
@@ -842,7 +843,8 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
               placeholder="—"
             />
           </div>
-          <div><label style={labelStyle}>Phone</label><input style={inputStyle} value={f.phone} onChange={e => set('phone', e.target.value)} /></div>
+          <div><label style={labelStyle}>Work Phone Number</label><input style={inputStyle} value={f.phone} onChange={e => set('phone', e.target.value)} /></div>
+          <div><label style={labelStyle}>Cell Phone Number</label><input style={inputStyle} value={f.mobilephone} onChange={e => set('mobilephone', e.target.value)} /></div>
           <div><label style={labelStyle}>Nickname <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(opt.)</span></label><input style={inputStyle} value={f.nickname} onChange={e => set('nickname', e.target.value)} placeholder="e.g. Bob" /></div>
           <div><label style={labelStyle}>Team Name <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(opt.)</span></label><input style={inputStyle} value={f.teamName} onChange={e => set('teamName', e.target.value)} placeholder="e.g. FP&A" /></div>
           <div style={{ gridColumn: 'span 2' }}>
@@ -5196,7 +5198,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   style={{ marginLeft: '0.4rem', padding: '0.2rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '4px', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', background: '#fff', color: '#7C3AED' }}
                 >Import Excel</button>
                 <button
-                  onClick={() => { setAddingContact(true); setEditingContact({ company: fields.company, firstname: '', lastname: '', email: '', phone: '', jobtitle: '', hs_linkedin_url: '', dans_tags: '' }); }}
+                  onClick={() => { setAddingContact(true); setEditingContact({ company: fields.company, firstname: '', lastname: '', email: '', phone: '', mobilephone: '', jobtitle: '', hs_linkedin_url: '', dans_tags: '' }); }}
                   style={{ marginLeft: '0.4rem', padding: '0.2rem 0.6rem', border: 'none', borderRadius: '4px', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', background: 'var(--color-accent)', color: '#fff' }}
                 >+ Add Contact</button>
               </div>
@@ -5236,7 +5238,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Tags</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Category</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Email</th>
-                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Phone</th>
+                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Work Phone</th>
+                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Cell Phone</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>City</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Country</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>LinkedIn</th>
@@ -5292,6 +5295,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             </td>
                             <td style={{ padding: '0.35rem 0.5rem', color: '#475569', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.email || '—'}</td>
                             <td style={{ padding: '0.35rem 0.5rem', color: '#475569', whiteSpace: 'nowrap' }}>{c.phone || '—'}</td>
+                            <td style={{ padding: '0.35rem 0.5rem', color: '#475569', whiteSpace: 'nowrap' }}>{c.mobilephone || c.mobile_phone || '—'}</td>
                             <td style={{ padding: '0.35rem 0.5rem', color: '#475569', whiteSpace: 'nowrap', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.city || '—'}</td>
                             <td style={{ padding: '0.35rem 0.5rem', color: '#475569', whiteSpace: 'nowrap', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.country || '—'}</td>
                             <td style={{ padding: '0.35rem 0.5rem' }}>
