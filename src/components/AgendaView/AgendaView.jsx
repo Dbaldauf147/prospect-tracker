@@ -333,6 +333,27 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
   const [tvMissingOnly, setTvMissingOnly] = useState(false);
   const [activeTab, setActiveTab] = useState('contacts'); // 'contacts' | 'tableview'
   const [pendingUpload, setPendingUpload] = useState(null); // { fileName, headers, rows, mapping }
+  const [sortKey, setSortKey] = useState(null); // column key; null = original insertion order
+  const [sortDir, setSortDir] = useState('asc'); // 'asc' | 'desc'
+  // Per-column "show only rows that have a live suggestion" toggles.
+  // Keyed by the same identifier as the column header.
+  const [columnFilters, setColumnFilters] = useState({
+    suggestedCompany: false, website: false, zoomCompanyId: false,
+    zoomCompanyName: false, emailDomain: false,
+  });
+  const toggleColumnFilter = useCallback((key) => {
+    setColumnFilters(prev => ({ ...prev, [key]: !prev[key] }));
+  }, []);
+  const handleSort = useCallback((key) => {
+    setSortKey(prev => {
+      if (prev === key) {
+        setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+        return key;
+      }
+      setSortDir('asc');
+      return key;
+    });
+  }, []);
   const [dismissedSuggestedCompanies, setDismissedSuggestedCompanies] = useState(() => new Set());
   const toggleSuggestedCompanyDismiss = useCallback((email) => {
     setDismissedSuggestedCompanies(prev => {
@@ -941,12 +962,55 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
   }, [prospects]);
 
   const visibleRows = useMemo(() => {
-    if (!tvMissingOnly) return rows;
-    return rows.filter(r => {
-      const s = rowTableViewState(r);
-      return s && s.anyMissing;
-    });
-  }, [rows, tvMissingOnly, rowTableViewState]);
+    let out = rows;
+    if (tvMissingOnly) {
+      out = out.filter(r => {
+        const s = rowTableViewState(r);
+        return s && s.anyMissing;
+      });
+    }
+    if (columnFilters.suggestedCompany) {
+      out = out.filter(r => {
+        const live = lookupMatch(r.email);
+        return live.suggestedCompany
+          && r.company !== live.suggestedCompany
+          && !dismissedSuggestedCompanies.has(r.email);
+      });
+    }
+    for (const field of ['website', 'zoomCompanyId', 'zoomCompanyName', 'emailDomain']) {
+      if (!columnFilters[field]) continue;
+      out = out.filter(r => !!suggestionFor(r._matchedProspectId, field));
+    }
+    if (sortKey) {
+      const dir = sortDir === 'asc' ? 1 : -1;
+      const sortValue = (r) => {
+        switch (sortKey) {
+          case 'email':            return r.email || '';
+          case 'status':           return hubspotByEmail.has(r.email) ? 'In HubSpot' : 'New';
+          case 'firstname':        return r.firstname || '';
+          case 'lastname':         return r.lastname || '';
+          case 'company':          return r.company || '';
+          case 'suggestedCompany': return lookupMatch(r.email).suggestedCompany || '';
+          case 'website':
+          case 'zoomCompanyId':
+          case 'zoomCompanyName':
+          case 'emailDomain':      return suggestionFor(r._matchedProspectId, sortKey)?.value || '';
+          case 'dans_tags':        return r.dans_tags || '';
+          case 'jobtitle':         return r.jobtitle || '';
+          case 'phone':            return r.phone || '';
+          case 'mobilePhone':      return r.mobilePhone || '';
+          case 'linkedinUrl':      return r.linkedinUrl || '';
+          case 'city':             return r.city || '';
+          case 'state':            return r.state || '';
+          case 'country':          return r.country || '';
+          case 'notes':            return r.notes || '';
+          default:                 return '';
+        }
+      };
+      out = [...out].sort((a, b) => String(sortValue(a)).localeCompare(String(sortValue(b))) * dir);
+    }
+    return out;
+  }, [rows, tvMissingOnly, columnFilters, sortKey, sortDir, rowTableViewState, lookupMatch, suggestionFor, dismissedSuggestedCompanies, hubspotByEmail]);
 
   const [backfillBusy, setBackfillBusy] = useState(false);
   const [backfillStatus, setBackfillStatus] = useState(null);
@@ -1322,26 +1386,60 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
               </colgroup>
               <thead>
                 <tr>
-                  <th>Email</th>
-                  <th>HubSpot Status</th>
-                  <th>First</th>
-                  <th>Last</th>
-                  <th>Company</th>
-                  <th>Suggested Company</th>
-                  <th title="Table View — Website">TV Website</th>
-                  <th title="Table View — Zoom Company ID">TV Zoom ID</th>
-                  <th title="Table View — Zoom Company Name">TV Zoom Name</th>
-                  <th title="Table View — Email Domain">TV Email Domain</th>
-                  <th>Dan's Tags</th>
-                  <th>Job title</th>
-                  <th>Work Phone Number</th>
-                  <th>Cell Phone Number</th>
-                  <th>LinkedIn URL</th>
-                  <th>City</th>
-                  <th>State</th>
-                  <th>Country</th>
-                  <th>Notes</th>
-                  <th></th>
+                  {(() => {
+                    const sortArrow = (key) => sortKey === key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '';
+                    const sortBtn = (label, key, extra = null) => (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, width: '100%' }}>
+                        <button
+                          type="button"
+                          onClick={() => handleSort(key)}
+                          title="Click to sort"
+                          style={{ background: 'none', border: 'none', color: 'inherit', font: 'inherit', cursor: 'pointer', padding: 0, textAlign: 'left', flex: 1, whiteSpace: 'nowrap' }}
+                        >
+                          {label}{sortArrow(key)}
+                        </button>
+                        {extra}
+                      </span>
+                    );
+                    const filterBtn = (key) => (
+                      <button
+                        type="button"
+                        title={columnFilters[key] ? 'Showing only rows with a suggestion — click to show all' : 'Show only rows with a suggestion'}
+                        onClick={() => toggleColumnFilter(key)}
+                        style={{
+                          background: columnFilters[key] ? '#FEF3C7' : 'transparent',
+                          border: `1px solid ${columnFilters[key] ? '#F59E0B' : 'transparent'}`,
+                          color: columnFilters[key] ? '#92400E' : '#94A3B8',
+                          cursor: 'pointer', fontSize: '0.62rem', padding: '0 4px', lineHeight: 1.2,
+                          borderRadius: 4, fontFamily: 'inherit', fontWeight: 700,
+                        }}
+                      >⚑</button>
+                    );
+                    return (
+                      <>
+                        <th>{sortBtn('Email', 'email')}</th>
+                        <th>{sortBtn('HubSpot Status', 'status')}</th>
+                        <th>{sortBtn('First', 'firstname')}</th>
+                        <th>{sortBtn('Last', 'lastname')}</th>
+                        <th>{sortBtn('Company', 'company')}</th>
+                        <th>{sortBtn('Suggested Company', 'suggestedCompany', filterBtn('suggestedCompany'))}</th>
+                        <th title="Table View — Website">{sortBtn('TV Website', 'website', filterBtn('website'))}</th>
+                        <th title="Table View — Zoom Company ID">{sortBtn('TV Zoom ID', 'zoomCompanyId', filterBtn('zoomCompanyId'))}</th>
+                        <th title="Table View — Zoom Company Name">{sortBtn('TV Zoom Name', 'zoomCompanyName', filterBtn('zoomCompanyName'))}</th>
+                        <th title="Table View — Email Domain">{sortBtn('TV Email Domain', 'emailDomain', filterBtn('emailDomain'))}</th>
+                        <th>{sortBtn("Dan's Tags", 'dans_tags')}</th>
+                        <th>{sortBtn('Job title', 'jobtitle')}</th>
+                        <th>{sortBtn('Work Phone Number', 'phone')}</th>
+                        <th>{sortBtn('Cell Phone Number', 'mobilePhone')}</th>
+                        <th>{sortBtn('LinkedIn URL', 'linkedinUrl')}</th>
+                        <th>{sortBtn('City', 'city')}</th>
+                        <th>{sortBtn('State', 'state')}</th>
+                        <th>{sortBtn('Country', 'country')}</th>
+                        <th>{sortBtn('Notes', 'notes')}</th>
+                        <th></th>
+                      </>
+                    );
+                  })()}
                 </tr>
               </thead>
               <tbody>
