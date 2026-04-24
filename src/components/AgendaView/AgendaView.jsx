@@ -181,6 +181,51 @@ function guessNameFromEmail(email) {
   return { firstname: cap(parts[0]), lastname: cap(parts[parts.length - 1]) };
 }
 
+// Patterns we check a contact email's local-part against to detect the
+// company's naming convention. The winner (most common across the
+// rows matched to a given prospect) becomes the "<pattern>@<domain>"
+// Email Domain suggestion.
+const EMAIL_PATTERN_RULES = [
+  { key: 'firstname.lastname',    build: (f, l) => (f && l ? `${f}.${l}` : null) },
+  { key: 'firstname_lastname',    build: (f, l) => (f && l ? `${f}_${l}` : null) },
+  { key: 'firstname-lastname',    build: (f, l) => (f && l ? `${f}-${l}` : null) },
+  { key: 'firstnamelastname',     build: (f, l) => (f && l ? `${f}${l}` : null) },
+  { key: 'lastname.firstname',    build: (f, l) => (f && l ? `${l}.${f}` : null) },
+  { key: 'lastnamefirstname',     build: (f, l) => (f && l ? `${l}${f}` : null) },
+  { key: 'firstinitial.lastname', build: (f, l) => (f && l ? `${f[0]}.${l}` : null) },
+  { key: 'firstinitiallastname',  build: (f, l) => (f && l ? `${f[0]}${l}` : null) },
+  { key: 'firstname.lastinitial', build: (f, l) => (f && l ? `${f}.${l[0]}` : null) },
+  { key: 'firstnamelastinitial',  build: (f, l) => (f && l ? `${f}${l[0]}` : null) },
+  { key: 'firstname',             build: (f)    => (f ? f : null) },
+  { key: 'lastname',              build: (_, l) => (l ? l : null) },
+];
+
+function detectLocalPattern(email, firstname, lastname) {
+  if (!email) return null;
+  const at = email.lastIndexOf('@');
+  if (at <= 0) return null;
+  const local = email.slice(0, at).toLowerCase().replace(/\+.*/, '');
+  const f = String(firstname || '').toLowerCase().replace(/[^a-z]/g, '');
+  const l = String(lastname || '').toLowerCase().replace(/[^a-z]/g, '');
+  for (const rule of EMAIL_PATTERN_RULES) {
+    const expected = rule.build(f, l);
+    if (expected && local === expected) return rule.key;
+  }
+  return null;
+}
+
+const FREE_MAIL_DOMAINS = new Set([
+  'gmail.com', 'outlook.com', 'hotmail.com', 'yahoo.com', 'icloud.com',
+  'aol.com', 'me.com', 'proton.me', 'protonmail.com', 'live.com', 'msn.com',
+]);
+
+function pickDominantKey(map) {
+  let bestKey = null;
+  let bestCount = 0;
+  for (const [k, c] of map) if (c > bestCount) { bestKey = k; bestCount = c; }
+  return bestKey;
+}
+
 export function AgendaView({ prospects = [], onUpdateProspect }) {
   const { user } = useAuth();
   const [rows, setRows] = useState(() => loadCache());
@@ -560,65 +605,128 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
   const updatedCount = Object.values(results).filter(v => v === 'updated').length;
   const errorCount = Object.values(results).filter(v => typeof v === 'string' && v.startsWith('error')).length;
 
-  // Build a per-prospect patch of Table View fields the upload has
-  // but the prospect is missing. Uses the _upload_* metadata carried
-  // on each row — so only xlsx-sourced rows contribute. Rows without
-  // a matched prospect are skipped. The emailDomain patch appends to
-  // the existing value (semicolon-separated) rather than overwriting.
-  const prospectBackfillUpdates = useMemo(() => {
-    if (!onUpdateProspect) return [];
+  // Per-prospect inferences derived from the contact rows matched to
+  // that prospect. Looks at each email's domain (ignoring free webmail)
+  // to pick the dominant company domain, and compares each email's
+  // local-part to the contact's firstname/lastname to pick the dominant
+  // naming pattern (firstname.lastname, flastname, etc.). The winners
+  // become the Website + Email Domain suggestions for that prospect.
+  const inferredSuggestions = useMemo(() => {
     const byProspect = new Map();
     for (const r of rows) {
-      const pid = r._matchedProspectId;
-      if (!pid) continue;
-      const prospect = prospects.find(p => p.id === pid);
-      if (!prospect) continue;
-      let entry = byProspect.get(pid);
-      if (!entry) {
-        entry = { prospect, patch: {}, sources: {}, domainEntries: new Set() };
-        byProspect.set(pid, entry);
+      if (!r._matchedProspectId) continue;
+      if (!byProspect.has(r._matchedProspectId)) {
+        byProspect.set(r._matchedProspectId, { domains: new Map(), patterns: new Map() });
       }
-      const website = String(r._upload_website || '').trim();
-      if (website && !String(prospect.website || '').trim() && !entry.patch.website) {
-        entry.patch.website = website;
-        entry.sources.website = r.email || website;
+      const bucket = byProspect.get(r._matchedProspectId);
+      const email = String(r.email || '').toLowerCase();
+      const at = email.lastIndexOf('@');
+      if (at <= 0) continue;
+      const domain = email.slice(at + 1);
+      if (domain && !FREE_MAIL_DOMAINS.has(domain)) {
+        bucket.domains.set(domain, (bucket.domains.get(domain) || 0) + 1);
       }
-      const zoomId = String(r._upload_zoomCompanyId || '').trim();
-      if (zoomId && !String(prospect.zoomCompanyId || '').trim() && !entry.patch.zoomCompanyId) {
-        entry.patch.zoomCompanyId = zoomId;
-        entry.sources.zoomCompanyId = r.email || zoomId;
-      }
-      const zoomName = String(r._upload_zoomCompanyName || '').trim();
-      if (zoomName && !String(prospect.zoomCompanyName || '').trim() && !entry.patch.zoomCompanyName) {
-        entry.patch.zoomCompanyName = zoomName;
-        entry.sources.zoomCompanyName = r.email || zoomName;
-      }
-      // Email Domain is multi-value (semicolon / newline separated on
-      // the prospect). Collect additions we'd make across all rows
-      // for this prospect; resolve into a single patch below.
-      const emailDomain = String(r._upload_emailDomain || '').trim();
-      if (emailDomain) {
-        const existing = String(prospect.emailDomain || '')
-          .split(/[\n;,]+/).map(s => s.trim().toLowerCase()).filter(Boolean);
-        for (const d of emailDomain.split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)) {
-          if (!existing.includes(d.toLowerCase())) entry.domainEntries.add(d);
-        }
+      const pattern = detectLocalPattern(email, r.firstname, r.lastname);
+      if (pattern) bucket.patterns.set(pattern, (bucket.patterns.get(pattern) || 0) + 1);
+    }
+    const out = new Map();
+    for (const [pid, { domains, patterns }] of byProspect) {
+      const dominantDomain = pickDominantKey(domains);
+      const dominantPattern = pickDominantKey(patterns);
+      out.set(pid, {
+        website: dominantDomain || null,
+        emailDomain: dominantDomain && dominantPattern
+          ? `${dominantPattern}@${dominantDomain}`
+          : (dominantDomain || null),
+        // zoomCompanyId / zoomCompanyName cannot be inferred from emails — upload only.
+      });
+    }
+    return out;
+  }, [rows]);
+
+  // Resolve a suggestion for (prospectId, fieldKey). Upload values (from
+  // an .xlsx drop) win over inferred ones. Fields with a single slot
+  // (website / zoomCompanyId / zoomCompanyName) skip the suggestion if
+  // the prospect already has a value. emailDomain is multi-value, so
+  // we only skip when the exact value is already present.
+  const suggestionFor = useCallback((prospectId, fieldKey) => {
+    if (!prospectId) return null;
+    const prospect = prospects.find(p => p.id === prospectId);
+    if (!prospect) return null;
+    const currentValue = String(prospect[fieldKey] || '').trim();
+    if (currentValue && fieldKey !== 'emailDomain') return null;
+    const existingDomains = fieldKey === 'emailDomain'
+      ? new Set(currentValue.split(/[\n;,]+/).map(s => s.trim().toLowerCase()).filter(Boolean))
+      : null;
+    const uploadKey = {
+      website: '_upload_website',
+      zoomCompanyId: '_upload_zoomCompanyId',
+      zoomCompanyName: '_upload_zoomCompanyName',
+      emailDomain: '_upload_emailDomain',
+    }[fieldKey];
+    if (uploadKey) {
+      for (const r of rows) {
+        if (r._matchedProspectId !== prospectId) continue;
+        const v = String(r[uploadKey] || '').trim();
+        if (!v) continue;
+        if (existingDomains && existingDomains.has(v.toLowerCase())) continue;
+        return { value: v, origin: 'upload' };
       }
     }
+    const inferred = inferredSuggestions.get(prospectId);
+    if (inferred && inferred[fieldKey]) {
+      const v = inferred[fieldKey];
+      if (existingDomains && existingDomains.has(v.toLowerCase())) return null;
+      return { value: v, origin: 'inferred' };
+    }
+    return null;
+  }, [rows, prospects, inferredSuggestions]);
+
+  // Set of "prospectId::field" suggestions the user has dismissed —
+  // both from the per-row pill × and the summary panel checkboxes.
+  const [dismissedSuggestions, setDismissedSuggestions] = useState(() => new Set());
+  const toggleDismissed = useCallback((key) => {
+    setDismissedSuggestions(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }, []);
+
+  // Aggregate suggestions into a patch per prospect, excluding anything
+  // the user has dismissed. For Email Domain, append our suggestion to
+  // whatever the prospect already has (newline-separated).
+  const prospectBackfillUpdates = useMemo(() => {
+    if (!onUpdateProspect) return [];
+    const prospectIds = new Set();
+    for (const r of rows) if (r._matchedProspectId) prospectIds.add(r._matchedProspectId);
     const out = [];
-    for (const entry of byProspect.values()) {
-      if (entry.domainEntries.size > 0) {
-        const currentEntries = String(entry.prospect.emailDomain || '')
-          .split(/[\n;,]+/).map(s => s.trim()).filter(Boolean);
-        const nextEntries = [...currentEntries, ...entry.domainEntries];
-        entry.patch.emailDomain = nextEntries.join('\n');
-        entry.sources.emailDomain = Array.from(entry.domainEntries).join(', ');
+    const fields = ['website', 'zoomCompanyId', 'zoomCompanyName', 'emailDomain'];
+    for (const pid of prospectIds) {
+      const prospect = prospects.find(p => p.id === pid);
+      if (!prospect) continue;
+      const patch = {};
+      const sources = {};
+      for (const field of fields) {
+        if (dismissedSuggestions.has(`${pid}::${field}`)) continue;
+        const sugg = suggestionFor(pid, field);
+        if (!sugg) continue;
+        if (field === 'emailDomain') {
+          const existing = String(prospect.emailDomain || '')
+            .split(/[\n;,]+/).map(s => s.trim()).filter(Boolean);
+          const existingLower = new Set(existing.map(s => s.toLowerCase()));
+          if (existingLower.has(sugg.value.toLowerCase())) continue;
+          patch.emailDomain = [...existing, sugg.value].join('\n');
+        } else {
+          patch[field] = sugg.value;
+        }
+        sources[field] = sugg;
       }
-      if (Object.keys(entry.patch).length > 0) out.push(entry);
+      if (Object.keys(patch).length > 0) out.push({ prospect, patch, sources });
     }
     out.sort((a, b) => (a.prospect.company || '').localeCompare(b.prospect.company || ''));
     return out;
-  }, [rows, prospects, onUpdateProspect]);
+  }, [rows, prospects, onUpdateProspect, dismissedSuggestions, suggestionFor]);
 
   // Cheap per-row lookup of the four Table View fields we surface in
   // the contacts grid. Returns the matched prospect's current value
@@ -654,20 +762,15 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
 
   const [backfillBusy, setBackfillBusy] = useState(false);
   const [backfillStatus, setBackfillStatus] = useState(null);
-  const [skipFields, setSkipFields] = useState(() => new Set()); // "prospectId::field"
   async function applyProspectBackfill() {
     if (!onUpdateProspect || prospectBackfillUpdates.length === 0) return;
     setBackfillBusy(true);
     let done = 0;
     let failed = 0;
     for (const { prospect, patch } of prospectBackfillUpdates) {
-      const filtered = {};
-      for (const [k, v] of Object.entries(patch)) {
-        if (!skipFields.has(`${prospect.id}::${k}`)) filtered[k] = v;
-      }
-      if (Object.keys(filtered).length === 0) continue;
+      if (Object.keys(patch).length === 0) continue;
       try {
-        await onUpdateProspect(prospect.id, filtered);
+        await onUpdateProspect(prospect.id, patch);
         done++;
       } catch {
         failed++;
@@ -678,7 +781,6 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
       type: failed > 0 ? 'partial' : 'success',
       message: `Updated ${done} prospect${done === 1 ? '' : 's'}${failed > 0 ? ` · ${failed} failed` : ''}.`,
     });
-    // Clear after a short delay so the user sees the confirmation.
     setTimeout(() => setBackfillStatus(null), 4000);
   }
 
@@ -730,6 +832,9 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
             file with <code>Email</code>, <code>Company</code>, plus optional <code>Website</code>,{' '}
             <code>Zoom Company ID</code>, <code>Zoom Company Name</code>, and <code>Email Domain</code>{' '}
             columns — we'll offer to backfill any missing values onto the matched Table View rows.
+            Even without an Excel file, we'll infer the company domain and naming pattern (e.g.{' '}
+            <code>firstname.lastname@acme.com</code>) from the emails themselves and suggest them as
+            yellow pills you can dismiss before bulk-applying.
           </div>
         </div>
 
@@ -764,7 +869,7 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                   Fill missing Table View data on {prospectBackfillUpdates.length} prospect{prospectBackfillUpdates.length === 1 ? '' : 's'}
                 </div>
                 <div style={{ fontSize: '0.68rem', color: '#14532D' }}>
-                  The uploaded file has Website / Zoom / Email Domain values these accounts don't currently carry. Uncheck any you'd rather not apply.
+                  Website / Zoom / Email Domain suggestions from your upload or inferred from the contact emails. Uncheck any you'd rather not apply, then click Update Table View.
                 </div>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
@@ -784,31 +889,30 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
               </div>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
-              {prospectBackfillUpdates.map(({ prospect, patch }) => (
+              {prospectBackfillUpdates.map(({ prospect, patch, sources }) => (
                 <div key={prospect.id} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap', fontSize: '0.72rem', color: '#14532D', background: '#fff', border: '1px solid #BBF7D0', borderRadius: 6, padding: '0.3rem 0.5rem' }}>
                   <strong style={{ color: '#166534', minWidth: 180 }}>{prospect.company || '—'}</strong>
                   {Object.entries(patch).map(([field, value]) => {
                     const label = PROSPECT_BACKFILL_FIELDS.find(f => f.key === field)?.label || field;
-                    const skipKey = `${prospect.id}::${field}`;
-                    const skipped = skipFields.has(skipKey);
+                    const dismissKey = `${prospect.id}::${field}`;
+                    const origin = sources?.[field]?.origin || 'upload';
                     return (
                       <label
                         key={field}
-                        title={skipped ? 'Click to include this field in the update' : 'Click to leave this field alone'}
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 8px', background: skipped ? '#F1F5F9' : '#DCFCE7', border: `1px solid ${skipped ? '#CBD5E1' : '#86EFAC'}`, borderRadius: 999, cursor: 'pointer', opacity: skipped ? 0.6 : 1 }}
+                        title="Click to dismiss this suggestion"
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 8px', background: '#DCFCE7', border: '1px solid #86EFAC', borderRadius: 999, cursor: 'pointer' }}
                       >
                         <input
                           type="checkbox"
-                          checked={!skipped}
-                          onChange={() => setSkipFields(prev => {
-                            const next = new Set(prev);
-                            if (next.has(skipKey)) next.delete(skipKey); else next.add(skipKey);
-                            return next;
-                          })}
+                          checked={true}
+                          onChange={() => toggleDismissed(dismissKey)}
                           style={{ margin: 0 }}
                         />
-                        <span style={{ fontWeight: 600, color: skipped ? '#64748B' : '#166534' }}>{label}:</span>
-                        <span style={{ color: skipped ? '#64748B' : '#14532D', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{String(value).replace(/\n/g, ' · ')}</span>
+                        <span style={{ fontWeight: 600, color: '#166534' }}>{label}:</span>
+                        <span style={{ color: '#14532D', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{String(value).replace(/\n/g, ' · ')}</span>
+                        {origin === 'inferred' && (
+                          <span style={{ fontSize: '0.62rem', color: '#64748B', fontWeight: 500 }}>(inferred)</span>
+                        )}
                       </label>
                     );
                   })}
@@ -905,10 +1009,43 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                   const live = lookupMatch(r.email);
                   const currentHsCompany = hubspotContact?.company?.trim() || '';
                   const tvState = rowTableViewState(r);
-                  const renderTv = (fieldKey, uploadKey) => {
+                  const renderTv = (fieldKey) => {
                     if (!tvState) return <span className={styles.metaText}>—</span>;
                     const existing = tvState.has[fieldKey];
-                    const uploadVal = String(r[uploadKey] || '').trim();
+                    const pid = r._matchedProspectId;
+                    const dismissKey = `${pid}::${fieldKey}`;
+                    const isDismissed = pid && dismissedSuggestions.has(dismissKey);
+                    const sugg = pid && !isDismissed ? suggestionFor(pid, fieldKey) : null;
+                    // emailDomain is multi-value — when the prospect has
+                    // entries AND we can suggest a new one, show both.
+                    if (existing && fieldKey === 'emailDomain' && sugg) {
+                      const display = existing.replace(/\n/g, ', ');
+                      return (
+                        <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 2, alignItems: 'flex-start' }}>
+                          <span
+                            title={existing}
+                            style={{ fontSize: '0.7rem', color: '#334155', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                          >
+                            {display}
+                          </span>
+                          <span
+                            title={`${sugg.origin === 'inferred' ? 'Inferred' : 'From upload'}. Click × to remove this suggestion.`}
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 6px 1px 8px', background: '#FEF9C3', border: '1px solid #FACC15', borderRadius: 999, fontSize: '0.66rem', fontWeight: 600, color: '#854D0E', maxWidth: '100%' }}
+                          >
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>+ {sugg.value}</span>
+                            {sugg.origin === 'inferred' && (
+                              <span style={{ fontSize: '0.58rem', color: '#A16207', fontWeight: 500, fontStyle: 'italic' }}>auto</span>
+                            )}
+                            <button
+                              type="button"
+                              title="Remove this suggestion"
+                              onClick={() => toggleDismissed(dismissKey)}
+                              style={{ background: 'none', border: 'none', color: '#A16207', cursor: 'pointer', fontSize: '0.78rem', padding: 0, lineHeight: 1, fontFamily: 'inherit', fontWeight: 700 }}
+                            >×</button>
+                          </span>
+                        </span>
+                      );
+                    }
                     if (existing) {
                       const display = existing.replace(/\n/g, ', ');
                       return (
@@ -928,32 +1065,57 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                         </span>
                       );
                     }
-                    if (uploadVal) {
+                    if (isDismissed) {
+                      return (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                          <span style={{ fontSize: '0.66rem', color: '#94A3B8', fontStyle: 'italic' }}>dismissed</span>
+                          <button
+                            type="button"
+                            onClick={() => toggleDismissed(dismissKey)}
+                            style={{ background: 'none', border: 'none', color: '#94A3B8', cursor: 'pointer', fontSize: '0.62rem', padding: 0, fontFamily: 'inherit', textDecoration: 'underline' }}
+                          >undo</button>
+                        </span>
+                      );
+                    }
+                    if (sugg) {
+                      const tip = sugg.origin === 'inferred'
+                        ? `Inferred from contact emails. Click × to remove this suggestion.`
+                        : `From the uploaded file. Click × to remove this suggestion.`;
                       return (
                         <span
-                          title={`Prospect is missing this field. Upload has: ${uploadVal}`}
+                          title={`${tip}\nValue: ${sugg.value}`}
                           style={{
-                            display: 'inline-block',
-                            padding: '1px 7px',
-                            background: '#FEF3C7',
-                            border: '1px solid #F59E0B',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 4,
+                            padding: '1px 6px 1px 8px',
+                            background: '#FEF9C3',
+                            border: '1px solid #FACC15',
                             borderRadius: 999,
                             fontSize: '0.68rem',
                             fontWeight: 600,
-                            color: '#92400E',
+                            color: '#854D0E',
                             maxWidth: '100%',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
                           }}
                         >
-                          + {uploadVal}
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+                            {sugg.value}
+                          </span>
+                          {sugg.origin === 'inferred' && (
+                            <span style={{ fontSize: '0.58rem', color: '#A16207', fontWeight: 500, fontStyle: 'italic' }}>auto</span>
+                          )}
+                          <button
+                            type="button"
+                            title="Remove this suggestion"
+                            onClick={() => toggleDismissed(dismissKey)}
+                            style={{ background: 'none', border: 'none', color: '#A16207', cursor: 'pointer', fontSize: '0.78rem', padding: 0, lineHeight: 1, fontFamily: 'inherit', fontWeight: 700 }}
+                          >×</button>
                         </span>
                       );
                     }
                     return (
                       <span
-                        title="Prospect is missing this field and the upload has no value"
+                        title="Prospect is missing this field and no upload/inferred value"
                         style={{ fontSize: '0.68rem', color: '#94A3B8', fontStyle: 'italic' }}
                       >
                         missing
@@ -989,10 +1151,10 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                           >{live.suggestedCompany}</button>
                         ) : <span className={styles.metaText}>—</span>}
                       </td>
-                      <td>{renderTv('website', '_upload_website')}</td>
-                      <td>{renderTv('zoomCompanyId', '_upload_zoomCompanyId')}</td>
-                      <td>{renderTv('zoomCompanyName', '_upload_zoomCompanyName')}</td>
-                      <td>{renderTv('emailDomain', '_upload_emailDomain')}</td>
+                      <td>{renderTv('website')}</td>
+                      <td>{renderTv('zoomCompanyId')}</td>
+                      <td>{renderTv('zoomCompanyName')}</td>
+                      <td>{renderTv('emailDomain')}</td>
                       <td className={styles.domainsCell} title={live.companyDomains?.join('\n')}>
                         {live.companyDomains && live.companyDomains.length > 0
                           ? live.companyDomains.join(', ')
