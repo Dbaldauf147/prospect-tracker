@@ -689,14 +689,12 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
   // the file into ZoomInfo (or similar) to build the first contact
   // list for each empty account.
   function downloadEmptyAccountsCSV() {
-    // Read the My Accounts list. Prefer the *filtered* names (the
-    // exact set the user currently sees on the My Accounts tab —
-    // typically ~132 companies after hiding inactive statuses and any
-    // bucket filter) over the raw tier1+tier2 pool. If neither key
-    // has been written yet (fresh load, My Accounts not opened), fall
-    // back to Baldauf-CDM prospects with the inactive statuses filter
-    // applied — matches what the My Accounts tab shows by default.
-    let myAccountNames = [];
+    // Only use the post-filter "visible" My Accounts list — the same
+    // ~132 companies the user sees on the My Accounts tab. The older
+    // active-names key stored the wider tier1+tier2 pool (~320) and
+    // caused extra companies like EDP to leak into the export, so we
+    // no longer fall back to it. When filtered-names is missing, ask
+    // the user to open the My Accounts tab once so it gets published.
     const readList = (key) => {
       try {
         const raw = localStorage.getItem(key);
@@ -704,30 +702,9 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
         return Array.isArray(parsed) ? parsed : null;
       } catch { return null; }
     };
-    const filtered = readList('my-accounts:filtered-names');
-    if (filtered && filtered.length > 0) {
-      myAccountNames = filtered;
-    } else {
-      const active = readList('my-accounts:active-names');
-      if (active && active.length > 0) myAccountNames = active;
-    }
+    let myAccountNames = readList('my-accounts:filtered-names') || [];
     if (myAccountNames.length === 0) {
-      // Derived fallback: My Accounts hides 'Old Client', 'Hold Off',
-      // 'Lost - Not Sold' by default, so apply the same rule here.
-      const INACTIVE = new Set(['Old Client', 'Hold Off', 'Lost - Not Sold']);
-      const seen = new Set();
-      for (const p of prospects) {
-        if (!(p.cdm || '').toLowerCase().includes('baldauf')) continue;
-        if (INACTIVE.has(p.status)) continue;
-        const name = (p.company || '').trim();
-        const k = name.toLowerCase();
-        if (!k || seen.has(k)) continue;
-        seen.add(k);
-        myAccountNames.push(name);
-      }
-    }
-    if (myAccountNames.length === 0) {
-      alert('No My Accounts companies found. Check that your prospects have a CDM value — or open the My Accounts tab once so the filtered list is published.');
+      alert('The visible My Accounts list hasn\'t been published yet. Open the My Accounts tab once (the page publishes its filtered list automatically while you\'re on it), then come back here and try the export again.');
       return;
     }
 

@@ -1771,6 +1771,10 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   useEffect(() => {
     try {
       const names = filteredAccounts.map(a => (a.company || '').trim()).filter(Boolean);
+      // Don't clobber an existing populated list with an empty one —
+      // the initial render of this tab can have an empty
+      // filteredAccounts before prospects load.
+      if (names.length === 0) return;
       localStorage.setItem('my-accounts:filtered-names', JSON.stringify(names));
     } catch {}
   }, [filteredAccounts]);
