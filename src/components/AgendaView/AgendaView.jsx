@@ -188,6 +188,7 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(null); // { done, total }
   const [results, setResults] = useState({}); // email -> 'added' | 'exists' | 'error: msg'
+  const [tvMissingOnly, setTvMissingOnly] = useState(false);
 
   // Reload HubSpot cache whenever results change (so newly-added contacts move to the "exists" state).
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -619,6 +620,38 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
     return out;
   }, [rows, prospects, onUpdateProspect]);
 
+  // Cheap per-row lookup of the four Table View fields we surface in
+  // the contacts grid. Returns the matched prospect's current value
+  // for each field (so we can show "has it" vs "missing"), plus a
+  // boolean for the row filter.
+  const rowTableViewState = useCallback((r) => {
+    if (!r._matchedProspectId) return null;
+    const prospect = prospects.find(p => p.id === r._matchedProspectId);
+    if (!prospect) return null;
+    const has = {
+      website: String(prospect.website || '').trim(),
+      zoomCompanyId: String(prospect.zoomCompanyId || '').trim(),
+      zoomCompanyName: String(prospect.zoomCompanyName || '').trim(),
+      emailDomain: String(prospect.emailDomain || '').trim(),
+    };
+    const missing = {
+      website: !has.website,
+      zoomCompanyId: !has.zoomCompanyId,
+      zoomCompanyName: !has.zoomCompanyName,
+      emailDomain: !has.emailDomain,
+    };
+    const anyMissing = missing.website || missing.zoomCompanyId || missing.zoomCompanyName || missing.emailDomain;
+    return { prospect, has, missing, anyMissing };
+  }, [prospects]);
+
+  const visibleRows = useMemo(() => {
+    if (!tvMissingOnly) return rows;
+    return rows.filter(r => {
+      const s = rowTableViewState(r);
+      return s && s.anyMissing;
+    });
+  }, [rows, tvMissingOnly, rowTableViewState]);
+
   const [backfillBusy, setBackfillBusy] = useState(false);
   const [backfillStatus, setBackfillStatus] = useState(null);
   const [skipFields, setSkipFields] = useState(() => new Set()); // "prospectId::field"
@@ -788,6 +821,31 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
         {rows.length === 0 ? (
           <div className={styles.empty}>No contacts yet. Drag or paste above to get started.</div>
         ) : (
+          <>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.6rem', margin: '0.5rem 0 0.25rem' }}>
+            <div style={{ fontSize: '0.72rem', color: '#64748B' }}>
+              Showing <strong>{visibleRows.length}</strong> of {rows.length} row{rows.length === 1 ? '' : 's'}
+            </div>
+            <button
+              type="button"
+              onClick={() => setTvMissingOnly(v => !v)}
+              title="Show only rows whose matched Table View account is missing one or more of Website / Zoom ID / Zoom Name / Email Domain"
+              style={{
+                padding: '0.3rem 0.7rem',
+                border: `1px solid ${tvMissingOnly ? '#F59E0B' : 'var(--color-border)'}`,
+                borderRadius: 6,
+                background: tvMissingOnly ? '#FEF3C7' : '#fff',
+                color: tvMissingOnly ? '#92400E' : 'var(--color-text-secondary)',
+                fontSize: '0.72rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              ⚠ {tvMissingOnly ? 'Showing missing Table View data' : 'Missing Table View data only'}
+            </button>
+          </div>
           <div className={styles.tableWrap}>
             <table className={styles.table}>
               <colgroup>
@@ -797,6 +855,10 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                 <col style={{ width: '130px' }} />
                 <col style={{ width: '180px' }} />
                 <col style={{ width: '170px' }} />
+                <col style={{ width: '160px' }} />
+                <col style={{ width: '130px' }} />
+                <col style={{ width: '160px' }} />
+                <col style={{ width: '200px' }} />
                 <col style={{ width: '200px' }} />
                 <col style={{ width: '140px' }} />
                 <col style={{ width: '140px' }} />
@@ -812,6 +874,10 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                   <th>Last</th>
                   <th>Company</th>
                   <th>Suggested Company</th>
+                  <th title="Table View — Website">TV Website</th>
+                  <th title="Table View — Zoom Company ID">TV Zoom ID</th>
+                  <th title="Table View — Zoom Company Name">TV Zoom Name</th>
+                  <th title="Table View — Email Domain">TV Email Domain</th>
                   <th>Company Email Domains</th>
                   <th>Dan's Tags</th>
                   <th>Job title</th>
@@ -821,7 +887,7 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                 </tr>
               </thead>
               <tbody>
-                {rows.map(r => {
+                {visibleRows.map(r => {
                   const hubspotContact = hubspotByEmail.get(r.email);
                   const exists = !!hubspotContact;
                   const outcome = results[r.email];
@@ -838,6 +904,62 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                   }
                   const live = lookupMatch(r.email);
                   const currentHsCompany = hubspotContact?.company?.trim() || '';
+                  const tvState = rowTableViewState(r);
+                  const renderTv = (fieldKey, uploadKey) => {
+                    if (!tvState) return <span className={styles.metaText}>—</span>;
+                    const existing = tvState.has[fieldKey];
+                    const uploadVal = String(r[uploadKey] || '').trim();
+                    if (existing) {
+                      const display = existing.replace(/\n/g, ', ');
+                      return (
+                        <span
+                          title={existing}
+                          style={{
+                            fontSize: '0.72rem',
+                            color: '#334155',
+                            display: 'inline-block',
+                            maxWidth: '100%',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {display}
+                        </span>
+                      );
+                    }
+                    if (uploadVal) {
+                      return (
+                        <span
+                          title={`Prospect is missing this field. Upload has: ${uploadVal}`}
+                          style={{
+                            display: 'inline-block',
+                            padding: '1px 7px',
+                            background: '#FEF3C7',
+                            border: '1px solid #F59E0B',
+                            borderRadius: 999,
+                            fontSize: '0.68rem',
+                            fontWeight: 600,
+                            color: '#92400E',
+                            maxWidth: '100%',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          + {uploadVal}
+                        </span>
+                      );
+                    }
+                    return (
+                      <span
+                        title="Prospect is missing this field and the upload has no value"
+                        style={{ fontSize: '0.68rem', color: '#94A3B8', fontStyle: 'italic' }}
+                      >
+                        missing
+                      </span>
+                    );
+                  };
                   return (
                     <tr key={r.email}>
                       <td className={styles.emailCell}>{r.email}</td>
@@ -867,6 +989,10 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                           >{live.suggestedCompany}</button>
                         ) : <span className={styles.metaText}>—</span>}
                       </td>
+                      <td>{renderTv('website', '_upload_website')}</td>
+                      <td>{renderTv('zoomCompanyId', '_upload_zoomCompanyId')}</td>
+                      <td>{renderTv('zoomCompanyName', '_upload_zoomCompanyName')}</td>
+                      <td>{renderTv('emailDomain', '_upload_emailDomain')}</td>
                       <td className={styles.domainsCell} title={live.companyDomains?.join('\n')}>
                         {live.companyDomains && live.companyDomains.length > 0
                           ? live.companyDomains.join(', ')
@@ -883,6 +1009,7 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
               </tbody>
             </table>
           </div>
+          </>
         )}
       </div>
     </div>
