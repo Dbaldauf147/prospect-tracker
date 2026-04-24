@@ -87,7 +87,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
   const [expanded, setExpanded] = useState(() => new Set());
   const [query, setQuery] = useState('');
   // Persisted column widths + sort so the layout survives reloads.
-  const DEFAULT_COL_WIDTHS = { company: 240, dm: 170, met: 170, mapping: 110, opps: 100, ratio: 120, clients: 110 };
+  const DEFAULT_COL_WIDTHS = { company: 240, dm: 170, met: 170, mapping: 110, opps: 100, ratio: 120, clients: 110, keyContacts: 120 };
   const [colWidths, setColWidths] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('pe-portfolio:col-widths')) || {};
@@ -167,6 +167,27 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
     }
     return map;
   }, [prospects, oppsRecords]);
+
+  // HubSpot "Dan Key Target" lookup — keyed by lower-cased company
+  // name. Each entry is an array of contact names so the PE Portfolio
+  // table can aggregate across the firm + all its portfolio companies.
+  const keyContactsByCompany = useMemo(() => {
+    const map = new Map();
+    try {
+      const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
+      for (const c of (cache?.contacts || [])) {
+        const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
+        if (tags.includes('hide')) continue;
+        if (!tags.includes('dan key target')) continue;
+        const lower = (c.company || '').toLowerCase().trim();
+        if (!lower) continue;
+        const name = [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email || 'Unknown';
+        if (!map.has(lower)) map.set(lower, []);
+        map.get(lower).push(name);
+      }
+    } catch {}
+    return map;
+  }, []);
 
   // HubSpot decision-maker lookup — replicates MyAccountsView's rule
   // (contact has a 'decision maker' tag, not hidden). Keyed by the
@@ -248,20 +269,41 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
       // PCs that have converted to Clients.
       const pcClientCount = portfolio.filter(p => p.status === 'Client').length;
 
+      // "Dan Key Target" contacts across the PE firm + all PCs, deduped
+      // by contact display name so the same person tagged at multiple
+      // entities doesn't inflate the count.
+      const keySeen = new Set();
+      const keyNames = [];
+      for (const [kcCompany, names] of keyContactsByCompany.entries()) {
+        if (!dmCandidates.some(n => companiesMatch(n, kcCompany))) continue;
+        for (const nm of names) {
+          if (keySeen.has(nm)) continue;
+          keySeen.add(nm);
+          keyNames.push(nm);
+        }
+      }
+
       out.set(pe.id, {
         decisionMakerNames: dmNames,
         decisionMakerEntries: dmEntries,
         metInPersonCount,
         nycCount,
         pcMappingCount: portfolio.length,
+        // "Have I populated this PE firm's Portfolio Companies tab?"
+        // Yes when the PE firm's own prospect record carries any
+        // entries in its portfolioCompanies array — independent of
+        // how many separate prospects reference it via peOwner.
+        pcMapped: Array.isArray(pe.portfolioCompanies) && pe.portfolioCompanies.length > 0,
         pcOppsCount,
         activeOpps: active,
         totalOpps: total,
         pcClientCount,
+        keyContactCount: keyNames.length,
+        keyContactNames: keyNames,
       });
     }
     return out;
-  }, [peFirms, portfolioByPe, oppsByProspectId, decisionMakerByCompany, oppsRecords]);
+  }, [peFirms, portfolioByPe, oppsByProspectId, decisionMakerByCompany, keyContactsByCompany, oppsRecords]);
 
   const sortedPeFirms = useMemo(() => {
     const arr = [...peFirms];
@@ -281,7 +323,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
           if (cmp === 0) cmp = (sa.nycCount || 0) - (sb.nycCount || 0);
           break;
         case 'mapping':
-          cmp = (sa.pcMappingCount || 0) - (sb.pcMappingCount || 0);
+          cmp = (sa.pcMapped ? 1 : 0) - (sb.pcMapped ? 1 : 0);
           break;
         case 'opps':
           cmp = (sa.pcOppsCount || 0) - (sb.pcOppsCount || 0);
@@ -292,6 +334,9 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
           break;
         case 'clients':
           cmp = (sa.pcClientCount || 0) - (sb.pcClientCount || 0);
+          break;
+        case 'keyContacts':
+          cmp = (sa.keyContactCount || 0) - (sb.keyContactCount || 0);
           break;
         default:
           cmp = 0;
@@ -360,15 +405,16 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
             </div>
           </div>
         ) : (() => {
-          const GRID = `${colWidths.company}px ${colWidths.dm}px ${colWidths.met}px ${colWidths.mapping}px ${colWidths.opps}px ${colWidths.ratio}px ${colWidths.clients}px 28px`;
+          const GRID = `${colWidths.company}px ${colWidths.dm}px ${colWidths.met}px ${colWidths.mapping}px ${colWidths.opps}px ${colWidths.ratio}px ${colWidths.clients}px ${colWidths.keyContacts || DEFAULT_COL_WIDTHS.keyContacts}px 28px`;
           const HEADER_COLUMNS = [
             { key: 'company', label: 'PE firm', align: 'left',   tip: 'Sort by company name' },
             { key: 'dm',      label: 'Decision Maker Found?', align: 'left', tip: 'Sort by number of decision makers found on HubSpot' },
             { key: 'met',     label: 'Met in Person', align: 'left', tip: 'Met-in-person count / total decision makers, plus how many of them list New York / NYC as their city' },
-            { key: 'mapping', label: 'PC Mapping', align: 'center', tip: 'Count of portfolio companies linked to this PE firm via the peOwner field' },
+            { key: 'mapping', label: 'PC Mapping', align: 'center', tip: 'Yes when the PE firm has entries in its Portfolio Companies tab; No otherwise' },
             { key: 'opps',    label: 'PC Opps', align: 'center',    tip: 'Count of portfolio companies that have at least one opportunity in the Opps tab' },
             { key: 'ratio',   label: 'PC Opps 2/4', align: 'center', tip: 'Active / total opps aggregated across the PE firm plus every portfolio company' },
             { key: 'clients', label: 'PC Clients', align: 'center',  tip: 'Portfolio companies currently set to status = Client' },
+            { key: 'keyContacts', label: 'Key Contacts', align: 'center', tip: 'Count of HubSpot contacts tagged "Dan Key Target" across the PE firm plus its portfolio companies' },
           ];
           const SORT_GLYPH = (key) => sortKey === key ? (sortDir === 'desc' ? ' ▼' : ' ▲') : '';
           const RESIZE_HANDLE = { position: 'absolute', top: 0, right: 0, bottom: 0, width: 6, cursor: 'col-resize', userSelect: 'none' };
@@ -491,8 +537,12 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
                         );
                       })()}
 
-                      <div style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.78rem', fontWeight: 700, color: (stats.pcMappingCount || 0) > 0 ? '#1E293B' : '#CBD5E1' }}>
-                        {stats.pcMappingCount || 0}
+                      <div style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.72rem', fontWeight: 700 }}>
+                        {stats.pcMapped ? (
+                          <span style={{ padding: '1px 8px', borderRadius: 999, background: '#DCFCE7', border: '1px solid #86EFAC', color: '#166534' }}>Yes</span>
+                        ) : (
+                          <span style={{ padding: '1px 8px', borderRadius: 999, background: '#F1F5F9', border: '1px solid #CBD5E1', color: '#64748B' }}>No</span>
+                        )}
                       </div>
 
                       <div style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.78rem', fontWeight: 700, color: (stats.pcOppsCount || 0) > 0 ? '#7C3AED' : '#CBD5E1' }}>
@@ -505,6 +555,13 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
 
                       <div style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.78rem', fontWeight: 700, color: (stats.pcClientCount || 0) > 0 ? '#10B981' : '#CBD5E1' }}>
                         {stats.pcClientCount || 0}
+                      </div>
+
+                      <div
+                        title={(stats.keyContactNames || []).join('\n') || undefined}
+                        style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.78rem', fontWeight: 700, color: (stats.keyContactCount || 0) > 0 ? '#0891B2' : '#CBD5E1' }}
+                      >
+                        {stats.keyContactCount || 0}
                       </div>
 
                       <div style={{ padding: '0.55rem 0.2rem', textAlign: 'center', color: '#94A3B8', fontSize: '0.8rem' }}>

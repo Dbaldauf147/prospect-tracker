@@ -648,32 +648,48 @@ function TypeMismatchWarning({ row, onUpdate }) {
 
 function SimilarNamesWarning({ matches, onDismiss }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef(null);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+  const badgeRef = useRef(null);
+  const popoverRef = useRef(null);
   useEffect(() => {
     if (!open) return;
-    const h = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const h = e => {
+      const t = e.target;
+      if (badgeRef.current?.contains(t)) return;
+      if (popoverRef.current?.contains(t)) return;
+      setOpen(false);
+    };
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, [open]);
   if (!matches || matches.length === 0) return null;
   return (
-    <span style={{ position: 'relative' }} ref={ref}>
+    <>
       <span
+        ref={badgeRef}
         title={`${matches.length} similar name${matches.length === 1 ? '' : 's'} in Table View — click for details`}
-        onClick={e => { e.stopPropagation(); setOpen(p => !p); }}
+        onClick={e => {
+          e.stopPropagation();
+          if (badgeRef.current) {
+            const rect = badgeRef.current.getBoundingClientRect();
+            setPos({ top: rect.bottom + 4, left: rect.left });
+          }
+          setOpen(p => !p);
+        }}
         style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16, borderRadius: '50%', background: '#FEF3C7', border: '1px solid #F59E0B', color: '#92400E', fontSize: '0.62rem', fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}
       >⚠</span>
-      {open && (
+      {open && createPortal(
         <div
+          ref={popoverRef}
           onClick={e => e.stopPropagation()}
           style={{
-            position: 'absolute', top: '100%', left: 0, zIndex: 50, marginTop: '4px',
+            position: 'fixed', top: pos.top, left: pos.left, zIndex: 1000,
             background: '#fff', border: '1px solid var(--color-border)', borderRadius: '8px',
             boxShadow: '0 4px 12px rgba(0,0,0,0.15)', padding: '0.6rem 0.8rem', minWidth: '260px', maxWidth: '360px',
           }}
         >
           <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text)', marginBottom: '0.3rem' }}>Similar names in Table View</div>
-          <ul style={{ margin: 0, padding: 0, listStyle: 'none', fontSize: '0.7rem', color: 'var(--color-text-secondary)', marginBottom: '0.5rem' }}>
+          <ul style={{ margin: 0, padding: 0, listStyle: 'none', fontSize: '0.7rem', color: 'var(--color-text-secondary)', marginBottom: '0.5rem', maxHeight: 240, overflowY: 'auto' }}>
             {matches.map(m => (
               <li key={m.id || m.company} style={{ padding: '2px 0', borderBottom: '1px dashed #F1F5F9' }}>• {m.company}</li>
             ))}
@@ -686,9 +702,10 @@ function SimilarNamesWarning({ matches, onDismiss }) {
               cursor: 'pointer', fontFamily: 'inherit', width: '100%',
             }}
           >Ignore this warning</button>
-        </div>
+        </div>,
+        document.body
       )}
-    </span>
+    </>
   );
 }
 
