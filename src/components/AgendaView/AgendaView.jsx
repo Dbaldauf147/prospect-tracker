@@ -1,9 +1,64 @@
 import { useMemo, useState, useCallback, useRef } from 'react';
+import * as XLSX from 'xlsx';
 import { logAction } from '../../utils/auditLog';
 import { useAuth } from '../../contexts/AuthContext';
 import styles from './AgendaView.module.css';
 
 const STORAGE_KEY = 'bulk-contacts-cache';
+
+// Columns we'll try to pull out of an uploaded Excel alongside the
+// standard contact fields. When present, we offer to backfill the
+// matched Table View prospect with any of these four values it's
+// missing (website, Zoom Company ID/Name, email domain).
+const PROSPECT_BACKFILL_FIELDS = [
+  { key: 'website',         label: 'Website',           aliases: ['website', 'url', 'web', 'homepage'] },
+  { key: 'zoomCompanyId',   label: 'Zoom Company ID',   aliases: ['zoomcompanyid', 'zoomid'] },
+  { key: 'zoomCompanyName', label: 'Zoom Company Name', aliases: ['zoomcompanyname', 'zoomname'] },
+  { key: 'emailDomain',     label: 'Email Domain',      aliases: ['emaildomain', 'domain'] },
+];
+
+// Parse an uploaded Excel sheet into an array of AgendaView-compatible
+// rows. Maps email + name + company + phone + jobtitle columns using
+// the same norm rules as the per-company contact importer. Also picks
+// up the four Table View backfill fields so we can later offer to
+// populate missing values on the matched prospect.
+function parseContactsXlsx(rows) {
+  if (!rows || !rows.length) return [];
+  const headers = Object.keys(rows[0]);
+  const norm = s => (s || '').toString().toLowerCase().replace(/[^a-z0-9]/g, '');
+  const mapping = {};
+  for (const h of headers) {
+    const n = norm(h);
+    if (n === 'email' || n === 'emailaddress') mapping[h] = 'email';
+    else if (n === 'firstname' || n === 'first') mapping[h] = 'firstname';
+    else if (n === 'lastname' || n === 'last') mapping[h] = 'lastname';
+    else if (n === 'company' || n === 'companyname' || n === 'accountname' || n === 'account') mapping[h] = 'company';
+    else if (n === 'phone') mapping[h] = 'phone';
+    else if (n === 'jobtitle' || n === 'title') mapping[h] = 'jobtitle';
+    else if (n === 'tags' || n === 'danstags') mapping[h] = 'dans_tags';
+    else {
+      for (const f of PROSPECT_BACKFILL_FIELDS) {
+        if (f.aliases.includes(n)) { mapping[h] = `_upload_${f.key}`; break; }
+      }
+    }
+  }
+  const out = [];
+  for (const r of rows) {
+    const out1 = {
+      email: '', firstname: '', lastname: '', company: '', phone: '', jobtitle: '', dans_tags: '',
+    };
+    for (const f of PROSPECT_BACKFILL_FIELDS) out1[`_upload_${f.key}`] = '';
+    for (const [src, dst] of Object.entries(mapping)) {
+      if (!dst) continue;
+      out1[dst] = String(r[src] ?? '').trim();
+    }
+    if (!out1.email) continue;
+    out1.email = out1.email.toLowerCase();
+    if (out1.email.endsWith('@se.com')) continue;
+    out.push(out1);
+  }
+  return out;
+}
 
 // "Name <email@x.com>" or just "email@x.com" or "First Last (email)" — extract pairs.
 const PAIR_RE = /(?:"?([^"<\n,;]+?)"?\s*[<(]\s*)?([\w.+-]+@[\w-]+\.[\w.-]+)\s*[>)]?/g;
@@ -218,6 +273,13 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
       _matchedProspectId: matched?.id || null,
       _matchedDomain: domain,
       _domainAlreadyKnown: wasExactMatch,
+      // Preserve the Table View backfill fields parsed off an Excel
+      // upload so the "Fill missing Table View data" panel can offer
+      // them below.
+      _upload_website: r._upload_website || '',
+      _upload_zoomCompanyId: r._upload_zoomCompanyId || '',
+      _upload_zoomCompanyName: r._upload_zoomCompanyName || '',
+      _upload_emailDomain: r._upload_emailDomain || '',
     };
   }, [lookupMatch]);
 
@@ -277,8 +339,9 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
     const text = dt.getData('text/plain') || dt.getData('text/html') || '';
     if (text) collected.push(...parseEmailHeaders(text));
 
-    // 2. If files were dropped (e.g. .msg from Outlook desktop), read each and try
-    //    to extract any email-looking strings from the text we can decode.
+    // 2. If files were dropped, branch on type: .xlsx / .xls gets parsed
+    //    via SheetJS (pulling in Table View backfill fields); anything
+    //    else we read as text and regex-extract email addresses.
     const files = Array.from(dt.files || []);
     if (files.length === 0 && collected.length > 0) {
       mergeNewRows(collected);
@@ -287,12 +350,32 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
 
     if (files.length === 0) return;
 
-    let pending = files.length;
-    files.forEach(file => {
+    const xlsxFiles = files.filter(f => /\.xlsx?$/i.test(f.name));
+    const otherFiles = files.filter(f => !/\.xlsx?$/i.test(f.name));
+    let pending = xlsxFiles.length + otherFiles.length;
+    if (pending === 0) {
+      if (collected.length > 0) mergeNewRows(collected);
+      return;
+    }
+    xlsxFiles.forEach(async (file) => {
+      try {
+        const buf = await file.arrayBuffer();
+        const wb = XLSX.read(buf);
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const raw = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+        const parsed = parseContactsXlsx(raw);
+        collected.push(...parsed);
+      } catch (err) {
+        console.warn('Failed to parse xlsx', err);
+      } finally {
+        pending -= 1;
+        if (pending === 0) mergeNewRows(collected);
+      }
+    });
+    otherFiles.forEach(file => {
       const reader = new FileReader();
       reader.onload = () => {
         const raw = String(reader.result || '');
-        // Best-effort: extract anything matching an email regex from the binary text.
         const matches = parseDroppedText(raw);
         collected.push(...matches);
         pending -= 1;
@@ -476,6 +559,96 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
   const updatedCount = Object.values(results).filter(v => v === 'updated').length;
   const errorCount = Object.values(results).filter(v => typeof v === 'string' && v.startsWith('error')).length;
 
+  // Build a per-prospect patch of Table View fields the upload has
+  // but the prospect is missing. Uses the _upload_* metadata carried
+  // on each row — so only xlsx-sourced rows contribute. Rows without
+  // a matched prospect are skipped. The emailDomain patch appends to
+  // the existing value (semicolon-separated) rather than overwriting.
+  const prospectBackfillUpdates = useMemo(() => {
+    if (!onUpdateProspect) return [];
+    const byProspect = new Map();
+    for (const r of rows) {
+      const pid = r._matchedProspectId;
+      if (!pid) continue;
+      const prospect = prospects.find(p => p.id === pid);
+      if (!prospect) continue;
+      let entry = byProspect.get(pid);
+      if (!entry) {
+        entry = { prospect, patch: {}, sources: {}, domainEntries: new Set() };
+        byProspect.set(pid, entry);
+      }
+      const website = String(r._upload_website || '').trim();
+      if (website && !String(prospect.website || '').trim() && !entry.patch.website) {
+        entry.patch.website = website;
+        entry.sources.website = r.email || website;
+      }
+      const zoomId = String(r._upload_zoomCompanyId || '').trim();
+      if (zoomId && !String(prospect.zoomCompanyId || '').trim() && !entry.patch.zoomCompanyId) {
+        entry.patch.zoomCompanyId = zoomId;
+        entry.sources.zoomCompanyId = r.email || zoomId;
+      }
+      const zoomName = String(r._upload_zoomCompanyName || '').trim();
+      if (zoomName && !String(prospect.zoomCompanyName || '').trim() && !entry.patch.zoomCompanyName) {
+        entry.patch.zoomCompanyName = zoomName;
+        entry.sources.zoomCompanyName = r.email || zoomName;
+      }
+      // Email Domain is multi-value (semicolon / newline separated on
+      // the prospect). Collect additions we'd make across all rows
+      // for this prospect; resolve into a single patch below.
+      const emailDomain = String(r._upload_emailDomain || '').trim();
+      if (emailDomain) {
+        const existing = String(prospect.emailDomain || '')
+          .split(/[\n;,]+/).map(s => s.trim().toLowerCase()).filter(Boolean);
+        for (const d of emailDomain.split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)) {
+          if (!existing.includes(d.toLowerCase())) entry.domainEntries.add(d);
+        }
+      }
+    }
+    const out = [];
+    for (const entry of byProspect.values()) {
+      if (entry.domainEntries.size > 0) {
+        const currentEntries = String(entry.prospect.emailDomain || '')
+          .split(/[\n;,]+/).map(s => s.trim()).filter(Boolean);
+        const nextEntries = [...currentEntries, ...entry.domainEntries];
+        entry.patch.emailDomain = nextEntries.join('\n');
+        entry.sources.emailDomain = Array.from(entry.domainEntries).join(', ');
+      }
+      if (Object.keys(entry.patch).length > 0) out.push(entry);
+    }
+    out.sort((a, b) => (a.prospect.company || '').localeCompare(b.prospect.company || ''));
+    return out;
+  }, [rows, prospects, onUpdateProspect]);
+
+  const [backfillBusy, setBackfillBusy] = useState(false);
+  const [backfillStatus, setBackfillStatus] = useState(null);
+  const [skipFields, setSkipFields] = useState(() => new Set()); // "prospectId::field"
+  async function applyProspectBackfill() {
+    if (!onUpdateProspect || prospectBackfillUpdates.length === 0) return;
+    setBackfillBusy(true);
+    let done = 0;
+    let failed = 0;
+    for (const { prospect, patch } of prospectBackfillUpdates) {
+      const filtered = {};
+      for (const [k, v] of Object.entries(patch)) {
+        if (!skipFields.has(`${prospect.id}::${k}`)) filtered[k] = v;
+      }
+      if (Object.keys(filtered).length === 0) continue;
+      try {
+        await onUpdateProspect(prospect.id, filtered);
+        done++;
+      } catch {
+        failed++;
+      }
+    }
+    setBackfillBusy(false);
+    setBackfillStatus({
+      type: failed > 0 ? 'partial' : 'success',
+      message: `Updated ${done} prospect${done === 1 ? '' : 's'}${failed > 0 ? ` · ${failed} failed` : ''}.`,
+    });
+    // Clear after a short delay so the user sees the confirmation.
+    setTimeout(() => setBackfillStatus(null), 4000);
+  }
+
   return (
     <div className={styles.wrapper}>
       <div className={styles.header}>
@@ -516,11 +689,14 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
           tabIndex={0}
         >
           <div className={styles.dropIcon}>&#8681;</div>
-          <div className={styles.dropTitle}>Drag emails here from Outlook</div>
+          <div className={styles.dropTitle}>Drag emails or an Excel file here</div>
           <div className={styles.dropHint}>
-            Or paste a list of addresses. Multi-select messages in Outlook and drag them onto this box —
-            sender + recipient addresses are extracted automatically. You can also paste comma- or
-            semicolon-separated lists like <code>Jane Doe &lt;jane@acme.com&gt;; john@acme.com</code>.
+            Multi-select messages in Outlook and drag them on — sender + recipient addresses are
+            extracted automatically. You can also paste comma- or semicolon-separated lists like{' '}
+            <code>Jane Doe &lt;jane@acme.com&gt;; john@acme.com</code>. Drop an <code>.xlsx</code>/<code>.xls</code>{' '}
+            file with <code>Email</code>, <code>Company</code>, plus optional <code>Website</code>,{' '}
+            <code>Zoom Company ID</code>, <code>Zoom Company Name</code>, and <code>Email Domain</code>{' '}
+            columns — we'll offer to backfill any missing values onto the matched Table View rows.
           </div>
         </div>
 
@@ -546,6 +722,68 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
             </div>
           </div>
         </div>
+
+        {prospectBackfillUpdates.length > 0 && (
+          <div style={{ margin: '0.75rem 0', border: '1px solid #86EFAC', background: '#F0FDF4', borderRadius: 8, padding: '0.6rem 0.8rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.6rem', marginBottom: '0.4rem' }}>
+              <div>
+                <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#166534' }}>
+                  Fill missing Table View data on {prospectBackfillUpdates.length} prospect{prospectBackfillUpdates.length === 1 ? '' : 's'}
+                </div>
+                <div style={{ fontSize: '0.68rem', color: '#14532D' }}>
+                  The uploaded file has Website / Zoom / Email Domain values these accounts don't currently carry. Uncheck any you'd rather not apply.
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                {backfillStatus && (
+                  <span style={{ fontSize: '0.7rem', color: backfillStatus.type === 'success' ? '#166534' : '#92400E', fontWeight: 600 }}>
+                    {backfillStatus.message}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={applyProspectBackfill}
+                  disabled={backfillBusy}
+                  style={{ padding: '0.35rem 0.8rem', border: 'none', borderRadius: 6, background: '#16A34A', color: '#fff', fontSize: '0.75rem', fontWeight: 700, cursor: backfillBusy ? 'wait' : 'pointer', fontFamily: 'inherit' }}
+                >
+                  {backfillBusy ? 'Updating…' : 'Update Table View'}
+                </button>
+              </div>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+              {prospectBackfillUpdates.map(({ prospect, patch }) => (
+                <div key={prospect.id} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap', fontSize: '0.72rem', color: '#14532D', background: '#fff', border: '1px solid #BBF7D0', borderRadius: 6, padding: '0.3rem 0.5rem' }}>
+                  <strong style={{ color: '#166534', minWidth: 180 }}>{prospect.company || '—'}</strong>
+                  {Object.entries(patch).map(([field, value]) => {
+                    const label = PROSPECT_BACKFILL_FIELDS.find(f => f.key === field)?.label || field;
+                    const skipKey = `${prospect.id}::${field}`;
+                    const skipped = skipFields.has(skipKey);
+                    return (
+                      <label
+                        key={field}
+                        title={skipped ? 'Click to include this field in the update' : 'Click to leave this field alone'}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 8px', background: skipped ? '#F1F5F9' : '#DCFCE7', border: `1px solid ${skipped ? '#CBD5E1' : '#86EFAC'}`, borderRadius: 999, cursor: 'pointer', opacity: skipped ? 0.6 : 1 }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={!skipped}
+                          onChange={() => setSkipFields(prev => {
+                            const next = new Set(prev);
+                            if (next.has(skipKey)) next.delete(skipKey); else next.add(skipKey);
+                            return next;
+                          })}
+                          style={{ margin: 0 }}
+                        />
+                        <span style={{ fontWeight: 600, color: skipped ? '#64748B' : '#166534' }}>{label}:</span>
+                        <span style={{ color: skipped ? '#64748B' : '#14532D', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{String(value).replace(/\n/g, ' · ')}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {rows.length === 0 ? (
           <div className={styles.empty}>No contacts yet. Drag or paste above to get started.</div>
