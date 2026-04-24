@@ -1175,7 +1175,6 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                 <col style={{ width: '130px' }} />
                 <col style={{ width: '160px' }} />
                 <col style={{ width: '200px' }} />
-                <col style={{ width: '200px' }} />
                 <col style={{ width: '140px' }} />
                 <col style={{ width: '140px' }} />
                 <col style={{ width: '120px' }} />
@@ -1194,7 +1193,6 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                   <th title="Table View — Zoom Company ID">TV Zoom ID</th>
                   <th title="Table View — Zoom Company Name">TV Zoom Name</th>
                   <th title="Table View — Email Domain">TV Email Domain</th>
-                  <th>Company Email Domains</th>
                   <th>Dan's Tags</th>
                   <th>Job title</th>
                   <th>Phone</th>
@@ -1380,11 +1378,6 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                       <td>{renderTv('zoomCompanyId')}</td>
                       <td>{renderTv('zoomCompanyName')}</td>
                       <td>{renderTv('emailDomain')}</td>
-                      <td className={styles.domainsCell} title={live.companyDomains?.join('\n')}>
-                        {live.companyDomains && live.companyDomains.length > 0
-                          ? live.companyDomains.join(', ')
-                          : <span className={styles.metaText}>—</span>}
-                      </td>
                       <td><input className={styles.cellInput} value={r.dans_tags || ''} onChange={e => updateRow(r.email, { dans_tags: e.target.value })} placeholder="Tag1, Tag2" /></td>
                       <td><input className={styles.cellInput} value={r.jobtitle} onChange={e => updateRow(r.email, { jobtitle: e.target.value })} /></td>
                       <td><input className={styles.cellInput} value={r.phone} onChange={e => updateRow(r.email, { phone: e.target.value })} /></td>
