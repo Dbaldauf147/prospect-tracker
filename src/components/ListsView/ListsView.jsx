@@ -43,10 +43,31 @@ function safeReadMap(key) {
   } catch { return {}; }
 }
 
+function readSavedUrl(key) {
+  try { return localStorage.getItem(key) || ''; } catch { return ''; }
+}
+
+// Prepend https:// for links pasted without a protocol so the <a> href
+// opens the intended page instead of being treated as a same-origin path.
+function ensureProtocol(url) {
+  if (!url) return '';
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(url) ? url : `https://${url}`;
+}
+
 function DataSourceLink({ storageKey }) {
-  const saved = (() => { try { return localStorage.getItem(storageKey) || ''; } catch { return ''; } })();
+  const [saved, setSaved] = useState(() => readSavedUrl(storageKey));
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(saved);
+
+  // When the parent swaps storageKey (subtab change), re-read from
+  // localStorage and reset the edit state so we don't bleed drafts
+  // across subtabs.
+  useEffect(() => {
+    const v = readSavedUrl(storageKey);
+    setSaved(v);
+    setDraft(v);
+    setEditing(false);
+  }, [storageKey]);
 
   function save() {
     const url = draft.trim();
@@ -54,6 +75,14 @@ function DataSourceLink({ storageKey }) {
       if (url) localStorage.setItem(storageKey, url);
       else localStorage.removeItem(storageKey);
     } catch {}
+    setSaved(url);
+    setEditing(false);
+  }
+
+  function clear() {
+    try { localStorage.removeItem(storageKey); } catch {}
+    setSaved('');
+    setDraft('');
     setEditing(false);
   }
 
@@ -64,16 +93,18 @@ function DataSourceLink({ storageKey }) {
           autoFocus
           value={draft}
           onChange={e => setDraft(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false); }}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); save(); } if (e.key === 'Escape') setEditing(false); }}
           placeholder="Paste data source URL..."
           style={{ flex: 1, minWidth: 200, padding: '0.25rem 0.5rem', border: '1px solid var(--color-accent)', borderRadius: 4, fontSize: '0.72rem', fontFamily: 'inherit' }}
         />
         <button
+          type="button"
           onClick={save}
           style={{ padding: '0.25rem 0.5rem', border: 'none', borderRadius: 4, background: 'var(--color-accent)', color: '#fff', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
         >Save</button>
         <button
-          onClick={() => setEditing(false)}
+          type="button"
+          onClick={() => { setDraft(saved); setEditing(false); }}
           style={{ padding: '0.25rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 4, background: '#fff', color: '#64748B', fontSize: '0.68rem', cursor: 'pointer', fontFamily: 'inherit' }}
         >Cancel</button>
       </div>
@@ -85,7 +116,7 @@ function DataSourceLink({ storageKey }) {
       {saved ? (
         <>
           <a
-            href={saved}
+            href={ensureProtocol(saved)}
             target="_blank"
             rel="noopener noreferrer"
             title={saved}
@@ -94,11 +125,13 @@ function DataSourceLink({ storageKey }) {
             Data source
           </a>
           <button
+            type="button"
             onClick={() => { setDraft(saved); setEditing(true); }}
             style={{ background: 'none', border: 'none', fontSize: '0.68rem', color: '#94A3B8', cursor: 'pointer', fontFamily: 'inherit' }}
           >Edit</button>
           <button
-            onClick={() => { try { localStorage.removeItem(storageKey); } catch {} setDraft(''); setEditing(false); window.location.reload(); }}
+            type="button"
+            onClick={clear}
             style={{ background: 'none', border: 'none', fontSize: '0.68rem', color: '#94A3B8', cursor: 'pointer', fontFamily: 'inherit' }}
             onMouseEnter={e => e.currentTarget.style.color = '#DC2626'}
             onMouseLeave={e => e.currentTarget.style.color = '#94A3B8'}
@@ -106,6 +139,7 @@ function DataSourceLink({ storageKey }) {
         </>
       ) : (
         <button
+          type="button"
           onClick={() => { setDraft(''); setEditing(true); }}
           style={{ fontSize: '0.72rem', color: 'var(--color-accent)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}
         >+ Add data source link</button>
