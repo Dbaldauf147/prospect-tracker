@@ -192,6 +192,14 @@ function companiesMatch(a, b) {
   const longer = na.length >= nb.length ? na : nb;
   const shorter = na.length >= nb.length ? nb : na;
   if (shorter.length >= 4 && shorter.length >= longer.length * 0.6 && longer.includes(shorter)) return true;
+  // Acronym / single-token match — "TIAA" vs "(TIAA) Teachers
+  // Insurance and Annuity Association of America". Parens act as
+  // word separators.
+  const tokensOf = (s) => s.replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
+  const sTokens = tokensOf(shorter);
+  if (sTokens.length === 1 && sTokens[0].length >= 3) {
+    if (tokensOf(longer).includes(sTokens[0])) return true;
+  }
   return false;
 }
 

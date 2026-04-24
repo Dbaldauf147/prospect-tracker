@@ -238,6 +238,17 @@ function companiesMatch(a, b) {
   const sLonger = sa.length >= sb.length ? sa : sb;
   const sShorter = sa.length >= sb.length ? sb : sa;
   if (sShorter.length >= 4 && sShorter.length >= sLonger.length * 0.6 && sLonger.includes(sShorter)) return true;
+  // Acronym / single-token match. Catches the case where one side is
+  // a short company name like "TIAA" and the other carries that as a
+  // parenthesized abbreviation or leading token, e.g.
+  // "(TIAA) Teachers Insurance and Annuity Association of America"
+  // or "Jones Lang LaSalle (JLL)" vs "JLL". Treats parentheses as
+  // word separators so the contents are first-class tokens.
+  const tokensOf = (s) => s.replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
+  const sTokens = tokensOf(shorter);
+  if (sTokens.length === 1 && sTokens[0].length >= 3) {
+    if (tokensOf(longer).includes(sTokens[0])) return true;
+  }
   return false;
 }
 
