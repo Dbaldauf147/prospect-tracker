@@ -176,18 +176,20 @@
 .resizeHandle {
   position: absolute;
   right: 0;
-  top: 0;
-  bottom: 0;
-  width: 5px;
+  top: 20%;
+  bottom: 20%;
+  width: 7px;
   cursor: col-resize;
   background: transparent;
-  transition: background 0.15s;
+  transition: background 0.15s, border-color 0.15s;
   z-index: 20;
+  border-right: 2px solid var(--color-border-light);
 }
 
 .resizeHandle:hover,
 .resizeHandle:active {
-  background: var(--color-accent);
+  background: rgba(99, 102, 241, 0.15);
+  border-right-color: var(--color-accent);
 }
 
 .sortArrow {

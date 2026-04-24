@@ -2365,6 +2365,7 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
             ]}
             rows={filteredContacts}
             alwaysVisible={['_deleteRow', '_select']}
+            enableColumnFilters
             emptyMessage="No contacts found"
           />
         </>

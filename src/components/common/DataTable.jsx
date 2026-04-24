@@ -126,10 +126,15 @@ export function DataTable({
   // formatting, etc.) while reusing the table's sort / visibility /
   // rename state.
   onExport,
+  // When true, every visible column gets a compact text input under
+  // its header. Rows are filtered (substring, case-insensitive) by
+  // the raw cell value for each column that has a non-empty filter.
+  enableColumnFilters = false,
 }) {
   const [colWidths, setColWidths] = useState(() => loadColWidths(tableId));
   const [visibleCols, setVisibleCols] = useState(() => loadColVisible(tableId, columns.map(c => c.key)));
   const [colNames, setColNames] = useState(() => loadColNames(tableId));
+  const [colFilters, setColFilters] = useState({});
   const resizingRef = useRef(null);
 
   function renameCol(key, name) {
@@ -158,9 +163,24 @@ export function DataTable({
   }
 
   // Sort rows internally if no external sort
+  // Apply per-column text filters on top of the externally-filtered
+  // rows prop. Substring match (case-insensitive) against String(row[key]).
+  const filteredRows = useMemo(() => {
+    const activeFilters = Object.entries(colFilters).filter(([, v]) => v && v.trim());
+    if (activeFilters.length === 0) return rows;
+    return rows.filter(row => {
+      for (const [key, needle] of activeFilters) {
+        const n = needle.toLowerCase();
+        const hay = String(row[key] ?? '').toLowerCase();
+        if (!hay.includes(n)) return false;
+      }
+      return true;
+    });
+  }, [rows, colFilters]);
+
   const sortedRows = useMemo(() => {
-    if (externalSortConfig || !internalSort.key) return rows;
-    const sorted = [...rows];
+    if (externalSortConfig || !internalSort.key) return filteredRows;
+    const sorted = [...filteredRows];
     sorted.sort((a, b) => {
       let aVal = a[internalSort.key];
       let bVal = b[internalSort.key];
@@ -181,7 +201,7 @@ export function DataTable({
       return 0;
     });
     return sorted;
-  }, [rows, internalSort, externalSortConfig]);
+  }, [filteredRows, internalSort, externalSortConfig]);
 
   const headerRef = useRef(null);
   const bodyRef = useRef(null);
@@ -325,6 +345,32 @@ export function DataTable({
                     </th>
                   ))}
                 </tr>
+                {enableColumnFilters && (
+                  <tr>
+                    {visibleColumns.map(col => {
+                      const filterable = !String(col.key || '').startsWith('_');
+                      return (
+                        <th
+                          key={col.key}
+                          style={{ width: getWidth(col), padding: '2px 4px', background: 'var(--color-surface)', borderBottom: '1px solid var(--color-border-light)' }}
+                          onClick={e => e.stopPropagation()}
+                          className={col.sticky ? styles.stickyCol : undefined}
+                        >
+                          {filterable ? (
+                            <input
+                              type="text"
+                              value={colFilters[col.key] || ''}
+                              onChange={e => setColFilters(prev => ({ ...prev, [col.key]: e.target.value }))}
+                              onClick={e => e.stopPropagation()}
+                              placeholder="Filter..."
+                              style={{ width: '100%', padding: '2px 6px', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.68rem', fontFamily: 'inherit', boxSizing: 'border-box' }}
+                            />
+                          ) : null}
+                        </th>
+                      );
+                    })}
+                  </tr>
+                )}
               </thead>
             </table>
           </div>
