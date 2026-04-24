@@ -206,6 +206,54 @@ function parseEmailHeaders(text) {
 // rules. Persisted to localStorage so the user doesn't have to keep
 // re-clicking the same Suggested Company pill across imports.
 const COMPANY_RULES_KEY = 'bulk-contacts-company-rules';
+const BULK_COL_WIDTHS_KEY = 'bulk-contacts-col-widths';
+const BULK_COL_VISIBLE_KEY = 'bulk-contacts-col-visible';
+
+// Column catalog for the Bulk Add Contacts table. order drives the
+// layout; key is the single source of truth for width state, toggle
+// state, and (where applicable) sort/filter handlers.
+const BULK_COLS = [
+  { key: '_remove',          label: '',                    w: 36,  fixed: true, toggleable: false },
+  { key: 'email',            label: 'Email',               w: 230 },
+  { key: 'status',           label: 'HubSpot Status',      w: 120 },
+  { key: 'firstname',        label: 'First',               w: 110 },
+  { key: 'lastname',         label: 'Last',                w: 130 },
+  { key: 'jobtitle',         label: 'Job title',           w: 140 },
+  { key: 'company',          label: 'Company',             w: 180 },
+  { key: 'tier',             label: 'Tier',                w: 90  },
+  { key: 'suggestedCompany', label: 'Suggested Company',   w: 170 },
+  { key: 'website',          label: 'TV Website',          w: 160 },
+  { key: 'zoomCompanyId',    label: 'TV Zoom ID',          w: 130 },
+  { key: 'zoomCompanyName',  label: 'TV Zoom Name',        w: 160 },
+  { key: 'emailDomain',      label: 'TV Email Domain',     w: 200 },
+  { key: 'dans_tags',        label: "Dan's Tags",          w: 140 },
+  { key: 'phone',            label: 'Work Phone Number',   w: 140 },
+  { key: 'mobilePhone',      label: 'Cell Phone Number',   w: 140 },
+  { key: 'linkedinUrl',      label: 'LinkedIn URL',        w: 180 },
+  { key: 'city',             label: 'City',                w: 110 },
+  { key: 'state',            label: 'State',               w: 90  },
+  { key: 'country',          label: 'Country',             w: 110 },
+  { key: 'notes',            label: 'Notes',               w: 240 },
+];
+function loadBulkColWidths() {
+  try { return JSON.parse(localStorage.getItem(BULK_COL_WIDTHS_KEY)) || {}; } catch { return {}; }
+}
+function persistBulkColWidths(obj) {
+  try { localStorage.setItem(BULK_COL_WIDTHS_KEY, JSON.stringify(obj)); } catch {}
+}
+function loadBulkColVisible() {
+  try {
+    const raw = localStorage.getItem(BULK_COL_VISIBLE_KEY);
+    if (!raw) return null;
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr)) return new Set(arr);
+  } catch {}
+  return null;
+}
+function persistBulkColVisible(set) {
+  try { localStorage.setItem(BULK_COL_VISIBLE_KEY, JSON.stringify([...set])); } catch {}
+}
+
 const companyRuleKey = s => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
 function loadCompanyRules() {
   try { return JSON.parse(localStorage.getItem(COMPANY_RULES_KEY)) || {}; } catch { return {}; }
@@ -361,6 +409,47 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
   const [dismissedSuggestedCompanies, setDismissedSuggestedCompanies] = useState(() => new Set());
   const [companyRules, setCompanyRules] = useState(() => loadCompanyRules());
   const [showRulesPanel, setShowRulesPanel] = useState(false);
+  // Column-resize + visibility state for the Bulk Add Contacts table.
+  const [bulkColWidths, setBulkColWidths] = useState(() => loadBulkColWidths());
+  const [bulkColVisible, setBulkColVisible] = useState(() => {
+    const saved = loadBulkColVisible();
+    return saved || new Set(BULK_COLS.map(c => c.key));
+  });
+  const [showBulkColMenu, setShowBulkColMenu] = useState(false);
+  const getBulkColWidth = (key) => bulkColWidths[key] || BULK_COLS.find(c => c.key === key)?.w || 120;
+  const toggleBulkColVisible = useCallback((key) => {
+    setBulkColVisible(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      persistBulkColVisible(next);
+      return next;
+    });
+  }, []);
+  const bulkResizingRef = useRef(null);
+  const handleBulkResize = useCallback((e, colKey) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startWidth = (bulkColWidths[colKey] || BULK_COLS.find(c => c.key === colKey)?.w || 120);
+    bulkResizingRef.current = colKey;
+    const move = (ev) => {
+      const dx = ev.clientX - startX;
+      const next = Math.max(36, startWidth + dx);
+      setBulkColWidths(prev => ({ ...prev, [colKey]: next }));
+    };
+    const up = () => {
+      bulkResizingRef.current = null;
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      setBulkColWidths(prev => { persistBulkColWidths(prev); return prev; });
+    };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }, [bulkColWidths]);
   const saveCompanyRule = useCallback((raw, canonical) => {
     const k = companyRuleKey(raw);
     const v = String(canonical || '').trim();
@@ -1092,13 +1181,17 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
           case 'state':            return r.state || '';
           case 'country':          return r.country || '';
           case 'notes':            return r.notes || '';
+          case 'tier': {
+            const p = r._matchedProspectId ? prospects.find(pp => pp.id === r._matchedProspectId) : null;
+            return (p && p.tier) || '';
+          }
           default:                 return '';
         }
       };
       out = [...out].sort((a, b) => String(sortValue(a)).localeCompare(String(sortValue(b))) * dir);
     }
     return out;
-  }, [rows, tvMissingOnly, columnFilters, sortKey, sortDir, rowTableViewState, lookupMatch, suggestionFor, dismissedSuggestedCompanies, hubspotByEmail]);
+  }, [rows, tvMissingOnly, columnFilters, sortKey, sortDir, rowTableViewState, lookupMatch, suggestionFor, dismissedSuggestedCompanies, hubspotByEmail, prospects]);
 
   const [backfillBusy, setBackfillBusy] = useState(false);
   const [backfillStatus, setBackfillStatus] = useState(null);
@@ -1486,25 +1579,58 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                 Showing <strong>{visibleRows.length}</strong> of {rows.length} row{rows.length === 1 ? '' : 's'}
               </span>
             </div>
-            <button
-              type="button"
-              onClick={() => setTvMissingOnly(v => !v)}
-              title="Show only rows whose matched Table View account is missing one or more of Website / Zoom ID / Zoom Name / Email Domain"
-              style={{
-                padding: '0.3rem 0.7rem',
-                border: `1px solid ${tvMissingOnly ? '#F59E0B' : 'var(--color-border)'}`,
-                borderRadius: 6,
-                background: tvMissingOnly ? '#FEF3C7' : '#fff',
-                color: tvMissingOnly ? '#92400E' : 'var(--color-text-secondary)',
-                fontSize: '0.72rem',
-                fontWeight: 600,
-                cursor: 'pointer',
-                fontFamily: 'inherit',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              ⚠ {tvMissingOnly ? 'Showing missing Table View data' : 'Missing Table View data only'}
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              <div style={{ position: 'relative' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowBulkColMenu(v => !v)}
+                  title="Show / hide table columns"
+                  style={{ padding: '0.3rem 0.7rem', border: '1px solid var(--color-border)', borderRadius: 6, background: '#fff', color: 'var(--color-text-secondary)', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+                >
+                  Columns <span style={{ opacity: 0.7 }}>({bulkColVisible.size}/{BULK_COLS.length})</span>
+                </button>
+                {showBulkColMenu && (
+                  <div
+                    style={{ position: 'absolute', right: 0, top: 'calc(100% + 4px)', zIndex: 600, background: '#fff', border: '1px solid var(--color-border)', borderRadius: 6, boxShadow: '0 8px 24px rgba(0,0,0,0.1)', minWidth: 220, maxHeight: 360, overflow: 'auto', padding: '0.4rem 0.5rem', fontSize: '0.72rem' }}
+                    onClick={e => e.stopPropagation()}
+                  >
+                    {BULK_COLS.map(c => {
+                      const disabled = c.toggleable === false;
+                      return (
+                        <label key={c.key} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 2px', cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.5 : 1 }}>
+                          <input
+                            type="checkbox"
+                            checked={bulkColVisible.has(c.key)}
+                            disabled={disabled}
+                            onChange={() => toggleBulkColVisible(c.key)}
+                          />
+                          <span>{c.label || '(action)'}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setTvMissingOnly(v => !v)}
+                title="Show only rows whose matched Table View account is missing one or more of Website / Zoom ID / Zoom Name / Email Domain"
+                style={{
+                  padding: '0.3rem 0.7rem',
+                  border: `1px solid ${tvMissingOnly ? '#F59E0B' : 'var(--color-border)'}`,
+                  borderRadius: 6,
+                  background: tvMissingOnly ? '#FEF3C7' : '#fff',
+                  color: tvMissingOnly ? '#92400E' : 'var(--color-text-secondary)',
+                  fontSize: '0.72rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                ⚠ {tvMissingOnly ? 'Showing missing Table View data' : 'Missing Table View data only'}
+              </button>
+            </div>
           </div>
           <div className={styles.tableWrap}>
             <datalist id="bulk-contacts-company-list">
@@ -1514,83 +1640,53 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
             </datalist>
             <table className={styles.table}>
               <colgroup>
-                <col style={{ width: '36px' }} />
-                <col style={{ width: '230px' }} />
-                <col style={{ width: '120px' }} />
-                <col style={{ width: '110px' }} />
-                <col style={{ width: '130px' }} />
-                <col style={{ width: '140px' }} />
-                <col style={{ width: '180px' }} />
-                <col style={{ width: '170px' }} />
-                <col style={{ width: '160px' }} />
-                <col style={{ width: '130px' }} />
-                <col style={{ width: '160px' }} />
-                <col style={{ width: '200px' }} />
-                <col style={{ width: '140px' }} />
-                <col style={{ width: '140px' }} />
-                <col style={{ width: '140px' }} />
-                <col style={{ width: '180px' }} />
-                <col style={{ width: '110px' }} />
-                <col style={{ width: '90px' }} />
-                <col style={{ width: '110px' }} />
-                <col style={{ width: '240px' }} />
+                {BULK_COLS.filter(c => bulkColVisible.has(c.key)).map(c => (
+                  <col key={c.key} style={{ width: getBulkColWidth(c.key) + 'px' }} />
+                ))}
               </colgroup>
               <thead>
                 <tr>
-                  {(() => {
-                    const sortArrow = (key) => sortKey === key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '';
-                    const sortBtn = (label, key, extra = null) => (
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, width: '100%' }}>
-                        <button
-                          type="button"
-                          onClick={() => handleSort(key)}
-                          title="Click to sort"
-                          style={{ background: 'none', border: 'none', color: 'inherit', font: 'inherit', cursor: 'pointer', padding: 0, textAlign: 'left', flex: 1, whiteSpace: 'nowrap' }}
-                        >
-                          {label}{sortArrow(key)}
-                        </button>
-                        {extra}
-                      </span>
-                    );
-                    const filterBtn = (key) => (
-                      <button
-                        type="button"
-                        title={columnFilters[key] ? 'Showing only rows with a suggestion — click to show all' : 'Show only rows with a suggestion'}
-                        onClick={() => toggleColumnFilter(key)}
-                        style={{
-                          background: columnFilters[key] ? '#FEF3C7' : 'transparent',
-                          border: `1px solid ${columnFilters[key] ? '#F59E0B' : 'transparent'}`,
-                          color: columnFilters[key] ? '#92400E' : '#94A3B8',
-                          cursor: 'pointer', fontSize: '0.62rem', padding: '0 4px', lineHeight: 1.2,
-                          borderRadius: 4, fontFamily: 'inherit', fontWeight: 700,
-                        }}
-                      >⚑</button>
-                    );
+                  {BULK_COLS.filter(c => bulkColVisible.has(c.key)).map(c => {
+                    const isRemove = c.key === '_remove';
+                    const sortArrow = sortKey === c.key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '';
+                    const canSort = !isRemove;
+                    const hasSuggestFilter = ['suggestedCompany', 'website', 'zoomCompanyId', 'zoomCompanyName', 'emailDomain'].includes(c.key);
+                    const filterOn = hasSuggestFilter && columnFilters[c.key];
                     return (
-                      <>
-                        <th></th>
-                        <th>{sortBtn('Email', 'email')}</th>
-                        <th>{sortBtn('HubSpot Status', 'status')}</th>
-                        <th>{sortBtn('First', 'firstname')}</th>
-                        <th>{sortBtn('Last', 'lastname')}</th>
-                        <th>{sortBtn('Job title', 'jobtitle')}</th>
-                        <th>{sortBtn('Company', 'company')}</th>
-                        <th>{sortBtn('Suggested Company', 'suggestedCompany', filterBtn('suggestedCompany'))}</th>
-                        <th title="Table View — Website">{sortBtn('TV Website', 'website', filterBtn('website'))}</th>
-                        <th title="Table View — Zoom Company ID">{sortBtn('TV Zoom ID', 'zoomCompanyId', filterBtn('zoomCompanyId'))}</th>
-                        <th title="Table View — Zoom Company Name">{sortBtn('TV Zoom Name', 'zoomCompanyName', filterBtn('zoomCompanyName'))}</th>
-                        <th title="Table View — Email Domain">{sortBtn('TV Email Domain', 'emailDomain', filterBtn('emailDomain'))}</th>
-                        <th>{sortBtn("Dan's Tags", 'dans_tags')}</th>
-                        <th>{sortBtn('Work Phone Number', 'phone')}</th>
-                        <th>{sortBtn('Cell Phone Number', 'mobilePhone')}</th>
-                        <th>{sortBtn('LinkedIn URL', 'linkedinUrl')}</th>
-                        <th>{sortBtn('City', 'city')}</th>
-                        <th>{sortBtn('State', 'state')}</th>
-                        <th>{sortBtn('Country', 'country')}</th>
-                        <th>{sortBtn('Notes', 'notes')}</th>
-                      </>
+                      <th key={c.key} style={{ position: 'relative' }}>
+                        {canSort ? (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, width: '100%' }}>
+                            <button
+                              type="button"
+                              onClick={() => handleSort(c.key)}
+                              title="Click to sort"
+                              style={{ background: 'none', border: 'none', color: 'inherit', font: 'inherit', cursor: 'pointer', padding: 0, textAlign: 'left', flex: 1, whiteSpace: 'nowrap' }}
+                            >
+                              {c.label}{sortArrow}
+                            </button>
+                            {hasSuggestFilter && (
+                              <button
+                                type="button"
+                                title={filterOn ? 'Showing only rows with a suggestion — click to show all' : 'Show only rows with a suggestion'}
+                                onClick={() => toggleColumnFilter(c.key)}
+                                style={{
+                                  background: filterOn ? '#FEF3C7' : 'transparent',
+                                  border: `1px solid ${filterOn ? '#F59E0B' : 'transparent'}`,
+                                  color: filterOn ? '#92400E' : '#94A3B8',
+                                  cursor: 'pointer', fontSize: '0.62rem', padding: '0 4px', lineHeight: 1.2,
+                                  borderRadius: 4, fontFamily: 'inherit', fontWeight: 700,
+                                }}
+                              >⚑</button>
+                            )}
+                          </span>
+                        ) : null}
+                        <span
+                          onMouseDown={(e) => handleBulkResize(e, c.key)}
+                          style={{ position: 'absolute', right: 0, top: '20%', bottom: '20%', width: 7, cursor: 'col-resize', borderRight: '2px solid var(--color-border-light)', zIndex: 5 }}
+                        />
+                      </th>
                     );
-                  })()}
+                  })}
                 </tr>
               </thead>
               <tbody>
@@ -1612,6 +1708,7 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                   const live = lookupMatch(r.email);
                   const currentHsCompany = hubspotContact?.company?.trim() || '';
                   const tvState = rowTableViewState(r);
+                  const prospect = r._matchedProspectId ? prospects.find(p => p.id === r._matchedProspectId) : null;
                   const renderTv = (fieldKey) => {
                     if (!tvState) return <span className={styles.metaText}>—</span>;
                     const existing = tvState.has[fieldKey];
@@ -1764,13 +1861,13 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                   };
                   return (
                     <tr key={r.email}>
-                      <td><button className={styles.rowRemove} onClick={() => removeRow(r.email)} title="Remove row">×</button></td>
-                      <td className={styles.emailCell}>{r.email}</td>
-                      <td><span className={`${styles.statusPill} ${statusClass}`}>{statusLabel}</span></td>
-                      <td><input className={styles.cellInput} value={r.firstname} onChange={e => updateRow(r.email, { firstname: e.target.value })} /></td>
-                      <td><input className={styles.cellInput} value={r.lastname} onChange={e => updateRow(r.email, { lastname: e.target.value })} /></td>
-                      <td><input className={styles.cellInput} value={r.jobtitle} onChange={e => updateRow(r.email, { jobtitle: e.target.value })} /></td>
-                      <td>
+                      {bulkColVisible.has('_remove') && <td><button className={styles.rowRemove} onClick={() => removeRow(r.email)} title="Remove row">×</button></td>}
+                      {bulkColVisible.has('email') && <td className={styles.emailCell}>{r.email}</td>}
+                      {bulkColVisible.has('status') && <td><span className={`${styles.statusPill} ${statusClass}`}>{statusLabel}</span></td>}
+                      {bulkColVisible.has('firstname') && <td><input className={styles.cellInput} value={r.firstname} onChange={e => updateRow(r.email, { firstname: e.target.value })} /></td>}
+                      {bulkColVisible.has('lastname') && <td><input className={styles.cellInput} value={r.lastname} onChange={e => updateRow(r.email, { lastname: e.target.value })} /></td>}
+                      {bulkColVisible.has('jobtitle') && <td><input className={styles.cellInput} value={r.jobtitle} onChange={e => updateRow(r.email, { jobtitle: e.target.value })} /></td>}
+                      {bulkColVisible.has('company') && <td>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                           <input
                             className={styles.cellInput}
@@ -1794,8 +1891,14 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                             </div>
                           )
                         )}
-                      </td>
-                      <td className={styles.suggestCell}>
+                      </td>}
+                      {bulkColVisible.has('tier') && <td>{(() => {
+                        const t = (prospect && prospect.tier) || '';
+                        if (!t || t === '-') return <span className={styles.metaText}>—</span>;
+                        const colors = t === 'Tier 1' ? { bg: '#DBEAFE', color: '#1E40AF' } : t === 'Tier 2' ? { bg: '#FEF3C7', color: '#92400E' } : { bg: '#F3F4F6', color: '#6B7280' };
+                        return <span style={{ padding: '1px 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 600, background: colors.bg, color: colors.color }}>{t}</span>;
+                      })()}</td>}
+                      {bulkColVisible.has('suggestedCompany') && <td className={styles.suggestCell}>
                         {(() => {
                           const sc = live.suggestedCompany;
                           if (!sc) return <span className={styles.metaText}>—</span>;
@@ -1838,24 +1941,24 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                             </span>
                           );
                         })()}
-                      </td>
-                      <td>{renderTv('website')}</td>
-                      <td>{renderTv('zoomCompanyId')}</td>
-                      <td>{renderTv('zoomCompanyName')}</td>
-                      <td>{renderTv('emailDomain')}</td>
-                      <td><input className={styles.cellInput} value={r.dans_tags || ''} onChange={e => updateRow(r.email, { dans_tags: e.target.value })} placeholder="Tag1, Tag2" /></td>
-                      <td><input className={styles.cellInput} value={r.phone} onChange={e => updateRow(r.email, { phone: e.target.value })} /></td>
-                      <td><input className={styles.cellInput} value={r.mobilePhone || ''} onChange={e => updateRow(r.email, { mobilePhone: e.target.value })} /></td>
-                      <td style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      </td>}
+                      {bulkColVisible.has('website') && <td>{renderTv('website')}</td>}
+                      {bulkColVisible.has('zoomCompanyId') && <td>{renderTv('zoomCompanyId')}</td>}
+                      {bulkColVisible.has('zoomCompanyName') && <td>{renderTv('zoomCompanyName')}</td>}
+                      {bulkColVisible.has('emailDomain') && <td>{renderTv('emailDomain')}</td>}
+                      {bulkColVisible.has('dans_tags') && <td><input className={styles.cellInput} value={r.dans_tags || ''} onChange={e => updateRow(r.email, { dans_tags: e.target.value })} placeholder="Tag1, Tag2" /></td>}
+                      {bulkColVisible.has('phone') && <td><input className={styles.cellInput} value={r.phone} onChange={e => updateRow(r.email, { phone: e.target.value })} /></td>}
+                      {bulkColVisible.has('mobilePhone') && <td><input className={styles.cellInput} value={r.mobilePhone || ''} onChange={e => updateRow(r.email, { mobilePhone: e.target.value })} /></td>}
+                      {bulkColVisible.has('linkedinUrl') && <td style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                         <input className={styles.cellInput} value={r.linkedinUrl || ''} onChange={e => updateRow(r.email, { linkedinUrl: e.target.value })} placeholder="linkedin.com/in/…" />
                         {r.linkedinUrl && (
                           <a href={ensureProtocol(r.linkedinUrl)} target="_blank" rel="noopener noreferrer" title={r.linkedinUrl} style={{ fontSize: '0.72rem', color: 'var(--color-accent)', textDecoration: 'none' }}>↗</a>
                         )}
-                      </td>
-                      <td><input className={styles.cellInput} value={r.city || ''} onChange={e => updateRow(r.email, { city: e.target.value })} /></td>
-                      <td><input className={styles.cellInput} value={r.state || ''} onChange={e => updateRow(r.email, { state: e.target.value })} /></td>
-                      <td><input className={styles.cellInput} value={r.country || ''} onChange={e => updateRow(r.email, { country: e.target.value })} /></td>
-                      <td><input className={styles.cellInput} value={r.notes || ''} onChange={e => updateRow(r.email, { notes: e.target.value })} placeholder="Free-form note" /></td>
+                      </td>}
+                      {bulkColVisible.has('city') && <td><input className={styles.cellInput} value={r.city || ''} onChange={e => updateRow(r.email, { city: e.target.value })} /></td>}
+                      {bulkColVisible.has('state') && <td><input className={styles.cellInput} value={r.state || ''} onChange={e => updateRow(r.email, { state: e.target.value })} /></td>}
+                      {bulkColVisible.has('country') && <td><input className={styles.cellInput} value={r.country || ''} onChange={e => updateRow(r.email, { country: e.target.value })} /></td>}
+                      {bulkColVisible.has('notes') && <td><input className={styles.cellInput} value={r.notes || ''} onChange={e => updateRow(r.email, { notes: e.target.value })} placeholder="Free-form note" /></td>}
                     </tr>
                   );
                 })}
