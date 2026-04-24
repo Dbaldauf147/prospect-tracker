@@ -1419,25 +1419,32 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     return () => window.removeEventListener('hubspot-cache-updated', handler);
   }, []);
 
-  const { hubspotCompanies, decisionMakerByCompany, contactCountByCompany, bucketsByCompany } = useMemo(() => {
+  const { hubspotCompanies, decisionMakerByCompany, contactsByCompany, bucketsByCompany, contactsByEmailDomain, bucketsByEmailDomain } = useMemo(() => {
     const list = [];
     const dmMap = {}; // company lowercase → [names]
-    const countMap = {}; // company lowercase → count
+    const contactsMap = {}; // company lowercase → Set<contactId>
     const bucketMap = {}; // company lowercase → Set of matched bucket tags
+    // Email-domain-keyed parallels so a prospect can pick up
+    // contacts whose Company text is "TIAA" / "TIAA-CREF" / blank
+    // when the prospect has tiaa.org registered under emailDomain
+    // or website.
+    const domainContacts = {}; // domain → Set<contactId>
+    const domainBuckets = {}; // domain → Set of bucket tags
     try {
       const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
       const seen = new Set();
+      const FREE = new Set(['gmail.com', 'outlook.com', 'hotmail.com', 'yahoo.com', 'icloud.com', 'aol.com', 'me.com', 'proton.me', 'protonmail.com', 'live.com', 'msn.com']);
       for (const c of (cache?.contacts || [])) {
-        // Skip hidden contacts (those with 'Hide' tag)
         const contactTags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
         const isHidden = contactTags.includes('hide');
+        const cid = c.id || c.email || (c.firstname + '|' + c.lastname);
+        const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').split(';').map(t => t.trim().toLowerCase()).filter(Boolean);
         const lower = (c.company || '').toLowerCase();
         if (lower) {
           if (!seen.has(lower)) { seen.add(lower); list.push(lower); }
           if (!isHidden) {
-            countMap[lower] = (countMap[lower] || 0) + 1;
-            // Track which buckets this company has covered
-            const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').split(';').map(t => t.trim().toLowerCase()).filter(Boolean);
+            if (!contactsMap[lower]) contactsMap[lower] = new Set();
+            contactsMap[lower].add(cid);
             if (!bucketMap[lower]) bucketMap[lower] = new Set();
             for (const tag of tags) {
               if (BUCKET_TAGS.includes(tag)) bucketMap[lower].add(tag);
@@ -1449,9 +1456,30 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
           if (!dmMap[lower]) dmMap[lower] = [];
           dmMap[lower].push(name || c.email || 'Unknown');
         }
+        if (!isHidden && c.email) {
+          const at = c.email.lastIndexOf('@');
+          if (at >= 0) {
+            const domain = c.email.slice(at + 1).toLowerCase().trim();
+            if (domain && !FREE.has(domain)) {
+              if (!domainContacts[domain]) domainContacts[domain] = new Set();
+              domainContacts[domain].add(cid);
+              if (!domainBuckets[domain]) domainBuckets[domain] = new Set();
+              for (const tag of tags) {
+                if (BUCKET_TAGS.includes(tag)) domainBuckets[domain].add(tag);
+              }
+            }
+          }
+        }
       }
     } catch {}
-    return { hubspotCompanies: list, decisionMakerByCompany: dmMap, contactCountByCompany: countMap, bucketsByCompany: bucketMap };
+    return {
+      hubspotCompanies: list,
+      decisionMakerByCompany: dmMap,
+      contactsByCompany: contactsMap,
+      bucketsByCompany: bucketMap,
+      contactsByEmailDomain: domainContacts,
+      bucketsByEmailDomain: domainBuckets,
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prospects, cacheVersion]);
 
@@ -1562,18 +1590,45 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       const otherReps = targetNameSet.size === 0
         ? []
         : allTargetReps.filter(t => targetNameSet.has((t.company || '').toLowerCase().trim()));
-      // Count HubSpot contacts across parent + all divisions (fuzzy match)
-      let contactCount = 0;
+      // Count HubSpot contacts across parent + all divisions, matching
+      // by Company text first then by email domain so TIAA-style
+      // accounts (varied Company values like "TIAA" / "TIAA-CREF" /
+      // "(TIAA) Teachers...") still pick up every contact that shares
+      // the registered email domain. Track contact IDs in a Set so
+      // each contact is counted at most once even when both the
+      // company-text and email-domain rules match.
+      const matchedContactIds = new Set();
       const bucketsSeen = new Set();
-      for (const [co, count] of Object.entries(contactCountByCompany)) {
+      for (const [co, ids] of Object.entries(contactsByCompany)) {
         if (allCompanyNames.some(name => companiesMatch(name, co))) {
-          contactCount += count;
-          // Merge bucket coverage from matching company names
+          for (const id of ids) matchedContactIds.add(id);
           if (bucketsByCompany[co]) {
             for (const b of bucketsByCompany[co]) bucketsSeen.add(b);
           }
         }
       }
+      const prospectDomains = new Set();
+      if (p.emailDomain) {
+        for (const entry of String(p.emailDomain).split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)) {
+          const at = entry.lastIndexOf('@');
+          const d = (at >= 0 ? entry.slice(at + 1) : entry).toLowerCase().trim();
+          if (d) prospectDomains.add(d);
+        }
+      }
+      if (p.website) {
+        const d = String(p.website).replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '').toLowerCase().trim();
+        if (d) prospectDomains.add(d);
+      }
+      for (const d of prospectDomains) {
+        const ids = contactsByEmailDomain[d];
+        if (ids) {
+          for (const id of ids) matchedContactIds.add(id);
+        }
+        if (bucketsByEmailDomain[d]) {
+          for (const b of bucketsByEmailDomain[d]) bucketsSeen.add(b);
+        }
+      }
+      const contactCount = matchedContactIds.size;
       const bucketCount = bucketsSeen.size;
       // Suggested status based on opps data (fuzzy match company names).
       // Only suggest when we actually find opps for this company — no match
@@ -1727,7 +1782,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     if (skippedCdm.length > 0) console.log('My Accounts: skipped (CDM not Baldauf):', skippedCdm);
     console.log(`My Accounts: ${t1.length} Tier 1, ${t2.length} Tier 2 (incl ${oppsOnlyAdded} opps-only)`);
     return { tier1: t1, tier2: t2, allAccounts: all, statusCounts: counts };
-  }, [prospects, targetMap, targetAccounts, allTargetReps, activityByCompany, activeOppsByAccount, totalOppsByAccount, suggestedStatusByAccount, displayNameByAccount, hubspotCompanies, targetCompanies, decisionMakerByCompany, contactCountByCompany, bucketsByCompany, divisionsMap, pePartnerAccountSet]);
+  }, [prospects, targetMap, targetAccounts, allTargetReps, activityByCompany, activeOppsByAccount, totalOppsByAccount, suggestedStatusByAccount, displayNameByAccount, hubspotCompanies, targetCompanies, decisionMakerByCompany, contactsByCompany, bucketsByCompany, contactsByEmailDomain, bucketsByEmailDomain, divisionsMap, pePartnerAccountSet]);
 
   const clientCount = statusCounts['Client'] || 0;
   const tier3Count = allAccounts.filter(a => a.myTier === 'Tier 3').length;
