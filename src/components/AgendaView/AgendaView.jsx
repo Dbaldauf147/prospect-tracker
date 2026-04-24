@@ -1666,6 +1666,26 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                       );
                     }
                     if (sugg) return renderSuggPill();
+                    // Quick-apply: when the prospect is missing Zoom
+                    // Name and the row has a Company value, offer a
+                    // one-click button to copy the company name over.
+                    if (fieldKey === 'zoomCompanyName' && prospect && r.company && r.company.trim()) {
+                      const value = r.company.trim();
+                      return (
+                        <span
+                          title={`Copy "${value}" into the prospect's Zoom Company Name`}
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 6px 1px 8px', background: '#EEF2FF', border: '1px solid #C7D2FE', borderRadius: 999, fontSize: '0.66rem', fontWeight: 600, color: '#3730A3', maxWidth: '100%' }}
+                        >
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>Use Company</span>
+                          <button
+                            type="button"
+                            title={`Apply "${value}"`}
+                            onClick={() => applySingleSuggestion(prospect, 'zoomCompanyName', value)}
+                            style={{ background: '#4F46E5', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '0.62rem', padding: '0 5px', lineHeight: 1.4, fontFamily: 'inherit', fontWeight: 700, borderRadius: 999 }}
+                          >✓</button>
+                        </span>
+                      );
+                    }
                     return (
                       <span
                         title="Prospect is missing this field and no upload/inferred value"
