@@ -21,10 +21,13 @@ const PROSPECT_BACKFILL_FIELDS = [
 // rule whose pattern appears in the normalized header string. Order
 // matters — Zoom / ZoomInfo patterns come before generic "company" /
 // "name" so "ZoomInfo Company Name" maps to the Zoom field rather
-// than landing on the plain Company column.
+// than landing on the plain Company column. linkedin rules come
+// before the generic website rule so a "LinkedIn URL" header doesn't
+// land on Website.
 const HEADER_MATCH_RULES = [
   ['_upload_zoomCompanyId',   ['zoominfocompanyid', 'zoominfocompnyid', 'zoomcompanyid', 'zicompanyid', 'zoominfoid', 'zoomid', 'ziid']],
   ['_upload_zoomCompanyName', ['zoominfocompanyname', 'zoomcompanyname', 'zicompanyname', 'zoominfoname', 'zoomname']],
+  ['linkedinUrl',             ['linkedinurl', 'linkedinprofileurl', 'linkedinprofile', 'linkedin']],
   ['_upload_website',         ['companywebsite', 'companyurl', 'website', 'homepage', 'url']],
   ['_upload_emailDomain',     ['emaildomain', 'domainpattern', 'companydomain']],
   ['email',                   ['emailaddress', 'workemail', 'email']],
@@ -36,33 +39,60 @@ const HEADER_MATCH_RULES = [
   ['dans_tags',               ['danstags', 'tags']],
 ];
 
-// Parse an uploaded Excel sheet into an array of AgendaView-compatible
-// rows. Maps email + name + company + phone + jobtitle columns using
-// the same norm rules as the per-company contact importer. Also picks
-// up the four Table View backfill fields so we can later offer to
-// populate missing values on the matched prospect.
-function parseContactsXlsx(rows) {
-  if (!rows || !rows.length) return [];
-  const headers = Object.keys(rows[0]);
+// All the destination fields a file column can be mapped to. Drives
+// the Maps-To dropdown in the mapping preview modal and the default
+// row schema in the parser.
+const FIELD_OPTIONS = [
+  { key: '',                         label: '— Ignore this column —' },
+  { key: 'email',                    label: 'Email (required)' },
+  { key: 'firstname',                label: 'First Name' },
+  { key: 'lastname',                 label: 'Last Name' },
+  { key: 'company',                  label: 'Company' },
+  { key: 'phone',                    label: 'Phone' },
+  { key: 'jobtitle',                 label: 'Job Title' },
+  { key: 'linkedinUrl',              label: 'LinkedIn URL' },
+  { key: 'dans_tags',                label: "Dan's Tags" },
+  { key: '_upload_website',          label: 'Table View — Website' },
+  { key: '_upload_zoomCompanyId',    label: 'Table View — Zoom Company ID' },
+  { key: '_upload_zoomCompanyName',  label: 'Table View — Zoom Company Name' },
+  { key: '_upload_emailDomain',      label: 'Table View — Email Domain' },
+];
+
+// Auto-map a set of file headers to our internal destination fields.
+// Each header can only feed one field (first qualifying rule wins) to
+// avoid ambiguous collisions like "Company Name" vs. "ZoomInfo Company
+// Name". Returns { header: destinationKey | '' }.
+function autoMapHeaders(headers) {
   const norm = s => (s || '').toString().toLowerCase().replace(/[^a-z0-9]/g, '');
   const mapping = {};
   const usedKeys = new Set();
   for (const h of headers) {
     const n = norm(h);
-    if (!n) continue;
+    if (!n) { mapping[h] = ''; continue; }
+    let matched = '';
     for (const [key, patterns] of HEADER_MATCH_RULES) {
       if (usedKeys.has(key)) continue;
       if (patterns.some(p => n === p || n.includes(p))) {
-        mapping[h] = key;
+        matched = key;
         usedKeys.add(key);
         break;
       }
     }
+    mapping[h] = matched;
   }
+  return mapping;
+}
+
+// Given a mapping and raw sheet rows, produce an array of AgendaView
+// row objects. Rows without an email are dropped, as are @se.com
+// addresses. All destination fields present in the schema below are
+// initialized so downstream code can rely on their presence.
+function applyMappingToRows(rawRows, mapping) {
   const out = [];
-  for (const r of rows) {
+  for (const r of rawRows) {
     const out1 = {
-      email: '', firstname: '', lastname: '', company: '', phone: '', jobtitle: '', dans_tags: '',
+      email: '', firstname: '', lastname: '', company: '',
+      phone: '', jobtitle: '', linkedinUrl: '', dans_tags: '',
     };
     for (const f of PROSPECT_BACKFILL_FIELDS) out1[`_upload_${f.key}`] = '';
     for (const [src, dst] of Object.entries(mapping)) {
@@ -75,6 +105,16 @@ function parseContactsXlsx(rows) {
     out.push(out1);
   }
   return out;
+}
+
+// Parse an uploaded Excel sheet into an array of AgendaView-compatible
+// rows using the auto-mapper. Used for the plain-text fallback path
+// when we don't surface a mapping preview.
+function parseContactsXlsx(rows) {
+  if (!rows || !rows.length) return [];
+  const headers = Object.keys(rows[0]);
+  const mapping = autoMapHeaders(headers);
+  return applyMappingToRows(rows, mapping);
 }
 
 // "Name <email@x.com>" or just "email@x.com" or "First Last (email)" — extract pairs.
@@ -262,7 +302,7 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
   const [results, setResults] = useState({}); // email -> 'added' | 'exists' | 'error: msg'
   const [tvMissingOnly, setTvMissingOnly] = useState(false);
   const [activeTab, setActiveTab] = useState('contacts'); // 'contacts' | 'tableview'
-  const [lastMapping, setLastMapping] = useState(null); // { fileName, rowCount, map, headers }
+  const [pendingUpload, setPendingUpload] = useState(null); // { fileName, headers, rows, mapping }
 
   // Reload HubSpot cache whenever results change (so newly-added contacts move to the "exists" state).
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -408,6 +448,7 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
           }
           if (!existing.phone && p.phone) refreshed.phone = p.phone;
           if (!existing.jobtitle && p.jobtitle) refreshed.jobtitle = p.jobtitle;
+          if (!existing.linkedinUrl && p.linkedinUrl) refreshed.linkedinUrl = p.linkedinUrl;
           if (!existing.company && p.company) refreshed.company = p.company;
           if (!existing.dans_tags && p.dans_tags) refreshed.dans_tags = p.dans_tags;
           byEmail.set(p.email, refreshed);
@@ -430,73 +471,50 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
     const text = dt.getData('text/plain') || dt.getData('text/html') || '';
     if (text) collected.push(...parseEmailHeaders(text));
 
-    // 2. If files were dropped, branch on type: .xlsx / .xls / .csv gets
-    //    parsed via SheetJS (pulling in Table View backfill fields);
-    //    anything else we read as text and regex-extract email addresses.
+    // 2. If files were dropped, branch on type: .xlsx / .xls / .csv / .tsv
+    //    opens a column-mapping preview modal; anything else we read as
+    //    text and regex-extract email addresses.
     const files = Array.from(dt.files || []);
     if (files.length === 0 && collected.length > 0) {
       mergeNewRows(collected);
       return;
     }
-
     if (files.length === 0) return;
 
-    const sheetFiles = files.filter(f => /\.(xlsx?|csv|tsv)$/i.test(f.name));
+    const sheetFile = files.find(f => /\.(xlsx?|csv|tsv)$/i.test(f.name));
     const otherFiles = files.filter(f => !/\.(xlsx?|csv|tsv)$/i.test(f.name));
-    let pending = sheetFiles.length + otherFiles.length;
-    if (pending === 0) {
-      if (collected.length > 0) mergeNewRows(collected);
-      return;
-    }
-    sheetFiles.forEach(async (file) => {
-      try {
-        const buf = await file.arrayBuffer();
-        const wb = XLSX.read(buf);
-        const sheet = wb.Sheets[wb.SheetNames[0]];
-        const raw = XLSX.utils.sheet_to_json(sheet, { defval: '' });
-        const parsed = parseContactsXlsx(raw);
-        collected.push(...parsed);
-        // Snapshot the column mapping for a per-drop diagnostic so the
-        // user can see which of their file's headers we recognized.
-        if (raw.length > 0) {
+
+    if (sheetFile) {
+      (async () => {
+        try {
+          const buf = await sheetFile.arrayBuffer();
+          const wb = XLSX.read(buf);
+          const sheet = wb.Sheets[wb.SheetNames[0]];
+          const raw = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+          if (raw.length === 0) { alert('No data rows found in the file.'); return; }
           const headers = Object.keys(raw[0]);
-          const norm = s => (s || '').toString().toLowerCase().replace(/[^a-z0-9]/g, '');
-          const map = {};
-          const used = new Set();
-          for (const h of headers) {
-            const n = norm(h);
-            if (!n) continue;
-            for (const [key, patterns] of HEADER_MATCH_RULES) {
-              if (used.has(key)) continue;
-              if (patterns.some(p => n === p || n.includes(p))) {
-                map[h] = key;
-                used.add(key);
-                break;
-              }
-            }
-          }
-          setLastMapping({ fileName: file.name, rowCount: parsed.length, map, headers });
+          const mapping = autoMapHeaders(headers);
+          setPendingUpload({ fileName: sheetFile.name, headers, rows: raw, mapping });
+        } catch (err) {
+          console.warn('Failed to parse sheet', err);
+          alert('Could not read that file: ' + (err.message || 'unknown error'));
         }
-      } catch (err) {
-        console.warn('Failed to parse sheet', err);
-      } finally {
-        pending -= 1;
-        if (pending === 0) mergeNewRows(collected);
-      }
-    });
+      })();
+    }
+
+    if (collected.length > 0) mergeNewRows(collected);
+
+    let pending = otherFiles.length;
+    if (pending === 0) return;
     otherFiles.forEach(file => {
       const reader = new FileReader();
       reader.onload = () => {
         const raw = String(reader.result || '');
         const matches = parseDroppedText(raw);
-        collected.push(...matches);
         pending -= 1;
-        if (pending === 0) mergeNewRows(collected);
+        if (matches.length > 0) mergeNewRows(matches);
       };
-      reader.onerror = () => {
-        pending -= 1;
-        if (pending === 0) mergeNewRows(collected);
-      };
+      reader.onerror = () => { pending -= 1; };
       reader.readAsText(file);
     });
   }
@@ -554,6 +572,9 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
     if (lastname && !existing.lastname) patch.lastname = lastname;
     if (row.phone && !existing.phone) patch.phone = row.phone;
     if (row.jobtitle && !existing.jobtitle) patch.jobtitle = row.jobtitle;
+    if (row.linkedinUrl && row.linkedinUrl.trim() && !existing.hs_linkedin_url && !existing.linkedin_url) {
+      patch.hs_linkedin_url = row.linkedinUrl.trim();
+    }
     if (row.dans_tags && row.dans_tags.trim() && !existing.dans_tags && !existing.dan_s_tags) patch.dans_tags = row.dans_tags.trim();
     return Object.keys(patch).length ? patch : null;
   }
@@ -570,6 +591,7 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
         phone: row.phone,
         jobtitle: row.jobtitle,
       };
+      if (row.linkedinUrl && row.linkedinUrl.trim()) properties.hs_linkedin_url = row.linkedinUrl.trim();
       if (row.dans_tags && row.dans_tags.trim()) properties.dans_tags = row.dans_tags.trim();
       const res = await fetch('/api/hubspot?action=create-contact', {
         method: 'POST',
@@ -929,57 +951,12 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
           onPaste={handlePaste}
           tabIndex={0}
         >
-          <div className={styles.dropIcon}>&#8681;</div>
-          <div className={styles.dropTitle}>Drag emails or an Excel file here</div>
-          <div className={styles.dropHint}>
-            Multi-select messages in Outlook and drag them on — sender + recipient addresses are
-            extracted automatically. You can also paste comma- or semicolon-separated lists like{' '}
-            <code>Jane Doe &lt;jane@acme.com&gt;; john@acme.com</code>. Drop an <code>.xlsx</code>/<code>.xls</code>{' '}
-            file with <code>Email</code>, <code>Company</code>, plus optional <code>Website</code>,{' '}
-            <code>Zoom Company ID</code>, <code>Zoom Company Name</code>, and <code>Email Domain</code>{' '}
-            columns — we'll offer to backfill any missing values onto the matched Table View rows.
-            Even without an Excel file, we'll infer the company domain and naming pattern (e.g.{' '}
-            <code>firstname.lastname@acme.com</code>) from the emails themselves and suggest them as
-            yellow pills you can dismiss before bulk-applying.
-          </div>
+          <span className={styles.dropIcon}>&#8681;</span>
+          <span className={styles.dropTitle}>Drop emails, Excel, CSV, or TSV here</span>
+          <span className={styles.dropHint}>
+            Sheet drops show a column-mapping preview. Plain-text drops / pastes extract addresses only.
+          </span>
         </div>
-
-        {lastMapping && (() => {
-          const labels = {
-            email: 'Email', firstname: 'First Name', lastname: 'Last Name', company: 'Company',
-            phone: 'Phone', jobtitle: 'Job Title', dans_tags: "Dan's Tags",
-            _upload_website: 'Website', _upload_zoomCompanyId: 'Zoom Company ID',
-            _upload_zoomCompanyName: 'Zoom Company Name', _upload_emailDomain: 'Email Domain',
-          };
-          const mapped = Object.entries(lastMapping.map);
-          const unmapped = lastMapping.headers.filter(h => !lastMapping.map[h]);
-          return (
-            <div style={{ marginTop: '-0.25rem', padding: '0.4rem 0.6rem', background: '#F8FAFC', border: '1px solid var(--color-border)', borderRadius: 6, fontSize: '0.7rem', color: '#475569' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.25rem' }}>
-                <strong style={{ color: '#334155' }}>{lastMapping.fileName}</strong>
-                <span>· {lastMapping.rowCount} row{lastMapping.rowCount === 1 ? '' : 's'} parsed · {mapped.length} of {lastMapping.headers.length} columns matched</span>
-                <button
-                  type="button"
-                  onClick={() => setLastMapping(null)}
-                  style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#94A3B8', cursor: 'pointer', fontSize: '0.8rem', padding: 0 }}
-                  title="Dismiss"
-                >×</button>
-              </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
-                {mapped.map(([header, key]) => (
-                  <span key={header} style={{ padding: '1px 8px', background: '#DCFCE7', border: '1px solid #86EFAC', borderRadius: 999, color: '#166534', fontSize: '0.66rem' }}>
-                    <strong>{header}</strong> → {labels[key] || key}
-                  </span>
-                ))}
-                {unmapped.map(h => (
-                  <span key={h} title="This column was not auto-mapped to any field" style={{ padding: '1px 8px', background: '#F1F5F9', border: '1px solid #CBD5E1', borderRadius: 999, color: '#64748B', fontSize: '0.66rem' }}>
-                    <strong>{h}</strong> → ignored
-                  </span>
-                ))}
-              </div>
-            </div>
-          );
-        })()}
 
         <div className={styles.summary}>
           <div className={styles.summaryCard}>
@@ -1253,6 +1230,7 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                 <col style={{ width: '140px' }} />
                 <col style={{ width: '140px' }} />
                 <col style={{ width: '120px' }} />
+                <col style={{ width: '180px' }} />
                 <col style={{ width: '240px' }} />
                 <col style={{ width: '36px' }} />
               </colgroup>
@@ -1271,6 +1249,7 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                   <th>Dan's Tags</th>
                   <th>Job title</th>
                   <th>Phone</th>
+                  <th>LinkedIn URL</th>
                   <th>Notes</th>
                   <th></th>
                 </tr>
@@ -1456,6 +1435,12 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                       <td><input className={styles.cellInput} value={r.dans_tags || ''} onChange={e => updateRow(r.email, { dans_tags: e.target.value })} placeholder="Tag1, Tag2" /></td>
                       <td><input className={styles.cellInput} value={r.jobtitle} onChange={e => updateRow(r.email, { jobtitle: e.target.value })} /></td>
                       <td><input className={styles.cellInput} value={r.phone} onChange={e => updateRow(r.email, { phone: e.target.value })} /></td>
+                      <td style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <input className={styles.cellInput} value={r.linkedinUrl || ''} onChange={e => updateRow(r.email, { linkedinUrl: e.target.value })} placeholder="linkedin.com/in/…" />
+                        {r.linkedinUrl && (
+                          <a href={ensureProtocol(r.linkedinUrl)} target="_blank" rel="noopener noreferrer" title={r.linkedinUrl} style={{ fontSize: '0.72rem', color: 'var(--color-accent)', textDecoration: 'none' }}>↗</a>
+                        )}
+                      </td>
                       <td><input className={styles.cellInput} value={r.notes || ''} onChange={e => updateRow(r.email, { notes: e.target.value })} placeholder="Free-form note" /></td>
                       <td><button className={styles.rowRemove} onClick={() => removeRow(r.email)} title="Remove row">×</button></td>
                     </tr>
@@ -1467,6 +1452,92 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
           </>
         )}
       </div>
+
+      {pendingUpload && (() => {
+        const { fileName, headers, rows: rawRows, mapping } = pendingUpload;
+        const sampleRow = rawRows[0] || {};
+        const mappedFieldCounts = {};
+        for (const v of Object.values(mapping)) if (v) mappedFieldCounts[v] = (mappedFieldCounts[v] || 0) + 1;
+        const hasEmail = Object.values(mapping).includes('email');
+        const hasDuplicate = Object.values(mappedFieldCounts).some(n => n > 1);
+        const updateCell = (header, fieldKey) => {
+          setPendingUpload(prev => prev ? { ...prev, mapping: { ...prev.mapping, [header]: fieldKey } } : prev);
+        };
+        const cancel = () => setPendingUpload(null);
+        const confirmImport = () => {
+          if (!hasEmail) { alert('At least one column must map to Email before importing.'); return; }
+          if (hasDuplicate) { alert('Each field can only be mapped to one column. Set duplicates to Ignore first.'); return; }
+          const parsed = applyMappingToRows(rawRows, mapping);
+          if (parsed.length === 0) {
+            alert('No rows had a valid Email — nothing to import.');
+            return;
+          }
+          mergeNewRows(parsed);
+          setPendingUpload(null);
+        };
+        return (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '1.25rem' }}>
+            <div style={{ background: '#fff', borderRadius: 10, boxShadow: '0 20px 60px rgba(0,0,0,0.25)', width: 'min(900px, 100%)', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
+              <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid var(--color-border)' }}>
+                <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-text)' }}>Review column mapping</div>
+                <div style={{ fontSize: '0.8rem', color: '#64748B', marginTop: '0.2rem' }}>
+                  <strong>{rawRows.length}</strong> row{rawRows.length === 1 ? '' : 's'} from <em>{fileName}</em> — confirm each column maps to the right field, then import.
+                </div>
+                {!hasEmail && (
+                  <div style={{ marginTop: '0.5rem', padding: '0.4rem 0.6rem', background: '#FEF2F2', border: '1px solid #FCA5A5', color: '#991B1B', borderRadius: 6, fontSize: '0.75rem' }}>
+                    A column must map to <strong>Email</strong> before you can import.
+                  </div>
+                )}
+                {hasDuplicate && (
+                  <div style={{ marginTop: '0.5rem', padding: '0.4rem 0.6rem', background: '#FFFBEB', border: '1px solid #FCD34D', color: '#854D0E', borderRadius: 6, fontSize: '0.75rem' }}>
+                    Some fields are mapped by more than one column. Only one mapping can win — set duplicates to "Ignore".
+                  </div>
+                )}
+              </div>
+              <div style={{ flex: 1, overflowY: 'auto', padding: '0.75rem 1.25rem' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+                  <thead>
+                    <tr style={{ background: '#F8FAFC', textAlign: 'left' }}>
+                      <th style={{ padding: '0.4rem 0.5rem', borderBottom: '1px solid var(--color-border)', fontSize: '0.7rem', color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>File Column</th>
+                      <th style={{ padding: '0.4rem 0.5rem', borderBottom: '1px solid var(--color-border)', fontSize: '0.7rem', color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Sample Value</th>
+                      <th style={{ padding: '0.4rem 0.5rem', borderBottom: '1px solid var(--color-border)', fontSize: '0.7rem', color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Maps To</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {headers.map(h => {
+                      const sample = String(sampleRow[h] ?? '');
+                      const mappedTo = mapping[h] || '';
+                      return (
+                        <tr key={h} style={{ borderBottom: '1px solid #F1F5F9' }}>
+                          <td style={{ padding: '0.35rem 0.5rem', fontWeight: 600, color: 'var(--color-text)' }}>{h}</td>
+                          <td style={{ padding: '0.35rem 0.5rem', color: '#64748B', maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={sample}>
+                            {sample || <span style={{ color: '#CBD5E1', fontStyle: 'italic' }}>(empty)</span>}
+                          </td>
+                          <td style={{ padding: '0.35rem 0.5rem' }}>
+                            <select
+                              value={mappedTo}
+                              onChange={e => updateCell(h, e.target.value)}
+                              style={{ width: '100%', padding: '0.25rem 0.4rem', border: `1px solid ${mappedTo ? 'var(--color-border)' : '#FDBA74'}`, background: mappedTo ? '#fff' : '#FFF7ED', borderRadius: 4, fontSize: '0.75rem', fontFamily: 'inherit' }}
+                            >
+                              {FIELD_OPTIONS.map(opt => (
+                                <option key={opt.key} value={opt.key}>{opt.label}</option>
+                              ))}
+                            </select>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div style={{ padding: '0.75rem 1.25rem', borderTop: '1px solid var(--color-border)', display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+                <button type="button" onClick={cancel} style={{ padding: '0.45rem 0.9rem', border: '1px solid var(--color-border)', background: '#fff', color: 'var(--color-text-secondary)', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit' }}>Cancel</button>
+                <button type="button" onClick={confirmImport} disabled={!hasEmail || hasDuplicate} style={{ padding: '0.45rem 0.9rem', border: 'none', background: (!hasEmail || hasDuplicate) ? '#94A3B8' : 'var(--color-accent)', color: '#fff', borderRadius: 6, fontSize: '0.8rem', fontWeight: 600, cursor: (!hasEmail || hasDuplicate) ? 'not-allowed' : 'pointer', fontFamily: 'inherit' }}>Import {rawRows.length} row{rawRows.length === 1 ? '' : 's'}</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
