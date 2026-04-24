@@ -1599,6 +1599,36 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
     return m;
   }, [prospects]);
 
+  // Keys of the prefix map sorted by length descending so we can
+  // return the *longest* prefix that matches the query (preferring
+  // "amtrustfinancial" over "amtrust" when both qualify).
+  const prospectTokenPrefixKeysDesc = useMemo(() => (
+    Array.from(prospectTokenPrefixMap.keys()).sort((a, b) => b.length - a.length)
+  ), [prospectTokenPrefixMap]);
+
+  // Loose lookup: find a prospect by "compact" query key — compact =
+  // lowercase alphanumeric, no spaces. Supports:
+  //   - exact key hit (query === prospectPrefix)
+  //   - query STARTS WITH any prospect prefix of length >= 5 (so
+  //     "amtrustgroup" still resolves to "Amtrust Financial" via the
+  //     "amtrust" prefix)
+  //   - prospect prefix starts with query, length >= 5 (covers the
+  //     "strategichotels" → "Strategic Hotels & Resorts" case)
+  // Longest-match-wins to avoid "acme" matching when a more specific
+  // "acmebrands" also qualifies.
+  const findProspectByCompactKey = (queryCompact) => {
+    if (!queryCompact || queryCompact.length < 3) return '';
+    const exact = prospectTokenPrefixMap.get(queryCompact);
+    if (exact) return exact;
+    for (const key of prospectTokenPrefixKeysDesc) {
+      if (key.length < 5) break;
+      if (queryCompact.startsWith(key) || key.startsWith(queryCompact)) {
+        return prospectTokenPrefixMap.get(key) || '';
+      }
+    }
+    return '';
+  };
+
   // Cheap brand-from-domain extractor. "urw.com" → "Urw",
   // "ext.urw.com" → "Urw", "acme.co.uk" → "Acme". Returns "" for
   // free-mail providers so contacts from personal inboxes don't end
@@ -1660,43 +1690,40 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
           const atIdx = c.email.lastIndexOf('@');
           if (atIdx >= 0) emailDomain = c.email.slice(atIdx + 1).toLowerCase();
         }
+        // Only ever suggest a name that exists in Table View — never
+        // the raw domain brand or the contact's own typed value.
         if (c.company) {
           const currentLower = c.company.toLowerCase();
           const normKey = normalizeCompanyKey(c.company);
           if (normKey) {
             // 1. Exact normalized match — "Acme Corp" → "Acme Corporation".
             let canonical = prospectKeyToCanonical.get(normKey);
-            // 2. Token-prefix match — "Alexandria" normalized-compact
-            //    "alexandria" maps to "Alexandria Real Estate Equities
-            //    Inc." because that prospect's first-token prefix is
-            //    "alexandria" in prospectTokenPrefixMap.
+            // 2. Loose compact-key match — "Alexandria" compact
+            //    "alexandria" → "Alexandria Real Estate Equities",
+            //    "Amtrustgroup" compact "amtrustgroup" (starts with
+            //    "amtrust") → "Amtrust Financial".
             if (!canonical) {
               const compactKey = normKey.replace(/\s+/g, '');
-              if (compactKey && compactKey.length >= 3) {
-                canonical = prospectTokenPrefixMap.get(compactKey);
-              }
+              canonical = findProspectByCompactKey(compactKey);
             }
             if (canonical && canonical.toLowerCase() !== currentLower) {
               guessedCompany = canonical;
             }
           }
-        } else {
-          if (emailDomain) {
-            // 1. Explicit domain-to-prospect map first.
-            let hit = domainToCompany.get(emailDomain) || '';
-            // 2. If no domain hit, try matching the domain's brand to
-            //    any prospect's leading-token prefix — e.g.
-            //    "strategichotels" (from strategichotels.com) should
-            //    resolve to "Strategic Hotels & Resorts".
-            if (!hit) {
-              const brand = companyFromDomain(emailDomain);
-              if (brand) {
-                const brandKey = brand.toLowerCase().replace(/[^a-z0-9]/g, '');
-                hit = prospectTokenPrefixMap.get(brandKey) || brand;
-              }
+        } else if (emailDomain) {
+          // 1. Explicit domain-to-prospect map.
+          let hit = domainToCompany.get(emailDomain) || '';
+          // 2. Loose match against the prospect-name prefix index
+          //    (covers "strategichotels.com" → "Strategic Hotels &
+          //    Resorts", "amtrustgroup.com" → "Amtrust Financial").
+          if (!hit) {
+            const brand = companyFromDomain(emailDomain);
+            if (brand) {
+              const brandKey = brand.toLowerCase().replace(/[^a-z0-9]/g, '');
+              hit = findProspectByCompactKey(brandKey);
             }
-            guessedCompany = hit;
           }
+          guessedCompany = hit;
         }
 
         // If we guessed a company, also try to match to prospect
@@ -1748,7 +1775,7 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
           tier,
         };
       });
-  }, [contacts, prospects, domainToCompany, tierByCompany, prospectKeyToCanonical, prospectTokenPrefixMap, FREE_MAIL, TWO_PART_TLDS, contactLocalFields]);
+  }, [contacts, prospects, domainToCompany, tierByCompany, prospectKeyToCanonical, prospectTokenPrefixMap, prospectTokenPrefixKeysDesc, FREE_MAIL, TWO_PART_TLDS, contactLocalFields]);
 
   // Dynamic filter options for HubSpot columns
   const HUBSPOT_FILTER_SKIP = new Set(['id', '_select', '_delete', 'guessedCompany', 'guessedName', 'guessedFirstName', 'guessedLastName', 'effectiveCompany', 'matchedProspect', 'enrolledCount', 'isEnrolled', 'hs_sequences_is_enrolled', 'hs_sequences_actively_enrolled_count']);
