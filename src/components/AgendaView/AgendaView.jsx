@@ -28,7 +28,7 @@ const PROSPECT_BACKFILL_FIELDS = [
 const HEADER_MATCH_RULES = [
   ['_upload_zoomCompanyId',   ['zoominfocompanyid', 'zoominfocompnyid', 'zoomcompanyid', 'zicompanyid', 'zoominfoid', 'zoomid', 'ziid']],
   ['_upload_zoomCompanyName', ['zoominfocompanyname', 'zoomcompanyname', 'zicompanyname', 'zoominfoname', 'zoomname']],
-  ['linkedinUrl',             ['linkedinurl', 'linkedinprofileurl', 'linkedinprofile', 'linkedin']],
+  ['linkedinUrl',             ['contactlinkedin', 'employeelinkedin', 'personlinkedin', 'linkedincontactprofile', 'linkedincontactprofileurl', 'linkedinurl', 'linkedinprofileurl', 'linkedinprofile', 'linkedin']],
   ['_upload_website',         ['companywebsite', 'companyurl', 'website', 'homepage', 'url']],
   ['_upload_emailDomain',     ['emaildomain', 'domainpattern', 'companydomain']],
   ['email',                   ['emailaddress', 'workemail', 'email']],
@@ -47,13 +47,17 @@ const HEADER_MATCH_RULES = [
 // Headers that should never be auto-mapped, even if a rule pattern
 // appears inside them. Checked before the rules. This keeps noisy
 // exports from silently landing on the wrong field — e.g. "Company
-// Division Name" no longer gets captured as Company, and "ZoomInfo
-// Contact Profile URL" doesn't land on the Website column.
+// Division Name" no longer gets captured as Company, "ZoomInfo
+// Contact Profile URL" doesn't land on the Website column, and
+// "Company LinkedIn URL" never fills the contact's LinkedIn field
+// (we only want the employee's personal profile).
 const IGNORE_HEADER_PATTERNS = [
   'companydivision',
   'divisionname',
   'zoominfocontactprofile',
   'contactprofileurl',
+  'companylinkedin',
+  'linkedincompany',
 ];
 
 // All the destination fields a file column can be mapped to. Drives
