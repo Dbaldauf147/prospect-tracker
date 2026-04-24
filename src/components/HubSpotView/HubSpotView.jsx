@@ -2127,9 +2127,12 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
                     </span>
                   );
                 }
-                // No contact company yet, but we have a guess —
-                // surface it as a yellow pill with explicit apply / dismiss
-                // buttons so the user can one-click convert.
+                // Only surface this column when we actually have a
+                // guess AND the contact is missing a company. Anything
+                // else (contact already has a company, or no guess at
+                // all) collapses to — so the column stays a true
+                // "suggestion" column instead of echoing the existing
+                // Company value as plain text.
                 if (!c.company && c.guessedCompany) {
                   return (
                     <span
@@ -2153,12 +2156,6 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
                       >×</button>
                     </span>
                   );
-                }
-                // Contact already has a Company — show it as an
-                // editable inline cell (existing behavior) so the user
-                // can still correct it.
-                if (c.company) {
-                  return <HubSpotInlineCell contact={c} field="company" value={c.company} onSave={handleInlineUpdate} suggestions={prospectCompanyNames} />;
                 }
                 return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
               }},
