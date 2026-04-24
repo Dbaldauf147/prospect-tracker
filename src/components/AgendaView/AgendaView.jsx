@@ -411,6 +411,25 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
   const [showRulesPanel, setShowRulesPanel] = useState(false);
   // Column-resize + visibility state for the Bulk Add Contacts table.
   const [bulkColWidths, setBulkColWidths] = useState(() => loadBulkColWidths());
+  const [bulkColTextFilters, setBulkColTextFilters] = useState({});
+  const [bulkMassMode, setBulkMassMode] = useState(false);
+  const [bulkSelected, setBulkSelected] = useState(() => new Set());
+  const toggleBulkSelect = useCallback((email) => {
+    setBulkSelected(prev => {
+      const n = new Set(prev);
+      if (n.has(email)) n.delete(email); else n.add(email);
+      return n;
+    });
+  }, []);
+  // BULK_COLS filtered by visibility, with a dynamically-injected
+  // _select checkbox column at the left edge when mass-edit mode is on.
+  const effectiveBulkCols = useMemo(() => {
+    const base = BULK_COLS.filter(c => bulkColVisible.has(c.key));
+    if (bulkMassMode) {
+      base.unshift({ key: '_select', label: '', w: 32, fixed: true, toggleable: false });
+    }
+    return base;
+  }, [bulkMassMode, bulkColVisible]);
   const [bulkColVisible, setBulkColVisible] = useState(() => {
     const saved = loadBulkColVisible();
     return saved || new Set(BULK_COLS.map(c => c.key));
@@ -1158,6 +1177,50 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
       if (!columnFilters[field]) continue;
       out = out.filter(r => !!suggestionFor(r._matchedProspectId, field));
     }
+    // Per-column text filter — substring, case-insensitive.
+    const activeText = Object.entries(bulkColTextFilters).filter(([, v]) => v && v.trim());
+    if (activeText.length > 0) {
+      const valueFor = (r, key) => {
+        switch (key) {
+          case 'email':            return r.email || '';
+          case 'status':           return hubspotByEmail.has(r.email) ? 'in hubspot' : 'new';
+          case 'firstname':        return r.firstname || '';
+          case 'lastname':         return r.lastname || '';
+          case 'company':          return r.company || '';
+          case 'jobtitle':         return r.jobtitle || '';
+          case 'suggestedCompany': return lookupMatch(r.email).suggestedCompany || '';
+          case 'website':
+          case 'zoomCompanyId':
+          case 'zoomCompanyName':
+          case 'emailDomain':      return suggestionFor(r._matchedProspectId, key)?.value || '';
+          case 'dans_tags':        return r.dans_tags || '';
+          case 'phone':            return r.phone || '';
+          case 'mobilePhone':      return r.mobilePhone || '';
+          case 'linkedinUrl':      return r.linkedinUrl || '';
+          case 'city':             return r.city || '';
+          case 'state':            return r.state || '';
+          case 'country':          return r.country || '';
+          case 'notes':            return r.notes || '';
+          case 'tier': {
+            const p = r._matchedProspectId ? prospects.find(pp => pp.id === r._matchedProspectId) : null;
+            if (!p) return '';
+            const explicit = (p.tier || '').trim();
+            if (explicit === 'Tier 1' || explicit === 'Tier 2') return explicit;
+            if ((p.cdm || '').toLowerCase().includes('baldauf')) return 'Tier 3';
+            return '';
+          }
+          default:                 return '';
+        }
+      };
+      out = out.filter(r => {
+        for (const [key, needle] of activeText) {
+          const n = needle.toLowerCase();
+          const hay = String(valueFor(r, key)).toLowerCase();
+          if (!hay.includes(n)) return false;
+        }
+        return true;
+      });
+    }
     if (sortKey) {
       const dir = sortDir === 'asc' ? 1 : -1;
       const sortValue = (r) => {
@@ -1195,7 +1258,7 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
       out = [...out].sort((a, b) => String(sortValue(a)).localeCompare(String(sortValue(b))) * dir);
     }
     return out;
-  }, [rows, tvMissingOnly, columnFilters, sortKey, sortDir, rowTableViewState, lookupMatch, suggestionFor, dismissedSuggestedCompanies, hubspotByEmail, prospects]);
+  }, [rows, tvMissingOnly, columnFilters, sortKey, sortDir, rowTableViewState, lookupMatch, suggestionFor, dismissedSuggestedCompanies, hubspotByEmail, prospects, bulkColTextFilters]);
 
   const [backfillBusy, setBackfillBusy] = useState(false);
   const [backfillStatus, setBackfillStatus] = useState(null);
@@ -1584,6 +1647,46 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
               </span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              <button
+                type="button"
+                onClick={() => { setBulkMassMode(v => !v); setBulkSelected(new Set()); }}
+                title="Select multiple rows for bulk actions"
+                style={{ padding: '0.3rem 0.7rem', border: `1px solid ${bulkMassMode ? 'var(--color-accent)' : 'var(--color-border)'}`, borderRadius: 6, background: bulkMassMode ? 'var(--color-accent)' : '#fff', color: bulkMassMode ? '#fff' : 'var(--color-text-secondary)', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+              >
+                {bulkMassMode ? 'Exit Mass Edit' : 'Mass Edit'}
+              </button>
+              {bulkMassMode && (() => {
+                const allSelected = visibleRows.length > 0 && visibleRows.every(r => bulkSelected.has(r.email));
+                return (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBulkSelected(prev => {
+                        const next = new Set(prev);
+                        if (allSelected) for (const r of visibleRows) next.delete(r.email);
+                        else for (const r of visibleRows) next.add(r.email);
+                        return next;
+                      });
+                    }}
+                    style={{ padding: '0.3rem 0.7rem', border: '1px solid var(--color-border)', borderRadius: 6, background: '#fff', color: 'var(--color-text-secondary)', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+                  >{allSelected ? `Deselect All (${bulkSelected.size})` : `Select All (${visibleRows.length})`}</button>
+                );
+              })()}
+              {bulkMassMode && bulkSelected.size > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!confirm(`Remove ${bulkSelected.size} selected row${bulkSelected.size === 1 ? '' : 's'} from the queue? (HubSpot is not touched.)`)) return;
+                    setRows(prev => {
+                      const next = prev.filter(r => !bulkSelected.has(r.email));
+                      saveCache(next);
+                      return next;
+                    });
+                    setBulkSelected(new Set());
+                  }}
+                  style={{ padding: '0.3rem 0.7rem', border: '1px solid #FCA5A5', borderRadius: 6, background: '#FEF2F2', color: '#B91C1C', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+                >Remove {bulkSelected.size} selected</button>
+              )}
               <div style={{ position: 'relative' }}>
                 <button
                   type="button"
@@ -1644,21 +1747,41 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
             </datalist>
             <table className={styles.table}>
               <colgroup>
-                {BULK_COLS.filter(c => bulkColVisible.has(c.key)).map(c => (
-                  <col key={c.key} style={{ width: getBulkColWidth(c.key) + 'px' }} />
+                {effectiveBulkCols.map(c => (
+                  <col key={c.key} style={{ width: (bulkColWidths[c.key] || c.w || 120) + 'px' }} />
                 ))}
               </colgroup>
               <thead>
                 <tr>
-                  {BULK_COLS.filter(c => bulkColVisible.has(c.key)).map(c => {
+                  {effectiveBulkCols.map(c => {
                     const isRemove = c.key === '_remove';
+                    const isSelect = c.key === '_select';
                     const sortArrow = sortKey === c.key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '';
-                    const canSort = !isRemove;
+                    const canSort = !isRemove && !isSelect;
                     const hasSuggestFilter = ['suggestedCompany', 'website', 'zoomCompanyId', 'zoomCompanyName', 'emailDomain'].includes(c.key);
                     const filterOn = hasSuggestFilter && columnFilters[c.key];
+                    const allVisibleSelected = visibleRows.length > 0 && visibleRows.every(r => bulkSelected.has(r.email));
                     return (
                       <th key={c.key} style={{ position: 'relative' }}>
-                        {canSort ? (
+                        {isSelect ? (
+                          <input
+                            type="checkbox"
+                            checked={allVisibleSelected}
+                            onChange={() => {
+                              setBulkSelected(prev => {
+                                const next = new Set(prev);
+                                if (allVisibleSelected) {
+                                  for (const r of visibleRows) next.delete(r.email);
+                                } else {
+                                  for (const r of visibleRows) next.add(r.email);
+                                }
+                                return next;
+                              });
+                            }}
+                            title="Select / deselect every visible row"
+                            style={{ accentColor: 'var(--color-accent)' }}
+                          />
+                        ) : canSort ? (
                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, width: '100%' }}>
                             <button
                               type="button"
@@ -1684,10 +1807,30 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                             )}
                           </span>
                         ) : null}
-                        <span
-                          onMouseDown={(e) => handleBulkResize(e, c.key)}
-                          style={{ position: 'absolute', right: 0, top: '20%', bottom: '20%', width: 7, cursor: 'col-resize', borderRight: '2px solid var(--color-border-light)', zIndex: 5 }}
-                        />
+                        {!isSelect && (
+                          <span
+                            onMouseDown={(e) => handleBulkResize(e, c.key)}
+                            style={{ position: 'absolute', right: 0, top: '20%', bottom: '20%', width: 7, cursor: 'col-resize', borderRight: '2px solid var(--color-border-light)', zIndex: 5 }}
+                          />
+                        )}
+                      </th>
+                    );
+                  })}
+                </tr>
+                <tr>
+                  {effectiveBulkCols.map(c => {
+                    const isAction = c.key.startsWith('_');
+                    return (
+                      <th key={c.key} style={{ padding: '2px 4px', background: 'var(--color-surface)', borderBottom: '1px solid var(--color-border-light)' }}>
+                        {isAction ? null : (
+                          <input
+                            type="text"
+                            value={bulkColTextFilters[c.key] || ''}
+                            onChange={e => setBulkColTextFilters(prev => ({ ...prev, [c.key]: e.target.value }))}
+                            placeholder="Filter..."
+                            style={{ width: '100%', padding: '2px 6px', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.68rem', fontFamily: 'inherit', boxSizing: 'border-box' }}
+                          />
+                        )}
                       </th>
                     );
                   })}
@@ -1865,6 +2008,16 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                   };
                   return (
                     <tr key={r.email}>
+                      {bulkMassMode && (
+                        <td>
+                          <input
+                            type="checkbox"
+                            checked={bulkSelected.has(r.email)}
+                            onChange={() => toggleBulkSelect(r.email)}
+                            style={{ accentColor: 'var(--color-accent)' }}
+                          />
+                        </td>
+                      )}
                       {bulkColVisible.has('_remove') && <td><button className={styles.rowRemove} onClick={() => removeRow(r.email)} title="Remove row">×</button></td>}
                       {bulkColVisible.has('email') && <td className={styles.emailCell}>{r.email}</td>}
                       {bulkColVisible.has('status') && <td><span className={`${styles.statusPill} ${statusClass}`}>{statusLabel}</span></td>}
