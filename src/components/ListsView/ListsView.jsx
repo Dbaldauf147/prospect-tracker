@@ -280,7 +280,36 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
                 })() : undefined}
                 onClick={() => setSubtab(t.key)}
               >
-                {t.label}{complete && ' ✓'}
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  {t.label}
+                  {myCov?.touched > 0 && (
+                    <span
+                      title={`My Accounts: ${myCov.mapped}/${myCov.touched} mapped`}
+                      style={{
+                        fontSize: '0.6rem',
+                        fontWeight: 700,
+                        padding: '1px 6px',
+                        borderRadius: 999,
+                        background: myCov.pct === 100 ? '#DCFCE7' : (isActive && !complete ? '#FFFFFF' : '#DBEAFE'),
+                        color:      myCov.pct === 100 ? '#166534' : '#1E3A8A',
+                      }}
+                    >MA {myCov.pct}%</span>
+                  )}
+                  {portCov?.touched > 0 && (
+                    <span
+                      title={`Portfolio: ${portCov.mapped}/${portCov.touched} mapped`}
+                      style={{
+                        fontSize: '0.6rem',
+                        fontWeight: 700,
+                        padding: '1px 6px',
+                        borderRadius: 999,
+                        background: portCov.pct === 100 ? '#DCFCE7' : (isActive && !complete ? '#FFFFFF' : '#EDE9FE'),
+                        color:      portCov.pct === 100 ? '#166534' : '#5B21B6',
+                      }}
+                    >PC {portCov.pct}%</span>
+                  )}
+                  {complete && <span>✓</span>}
+                </span>
               </button>
             );
           })}
