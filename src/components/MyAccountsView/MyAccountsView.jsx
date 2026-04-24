@@ -165,6 +165,7 @@ const ACCOUNT_COLUMNS = [
   { key: 'bfoCompanyName', label: 'BFO Company Name', defaultWidth: 180 },
   { key: 'zoomCompanyId', label: 'Zoom Company ID', defaultWidth: 120 },
   { key: 'zoomCompanyName', label: 'Zoom Company Name', defaultWidth: 180 },
+  { key: 'similarNames', label: 'Similar in TV', defaultWidth: 200 },
   { key: 'cdm', label: 'CDM', defaultWidth: 120 },
   { key: 'notes', label: 'Notes', defaultWidth: 200 },
   { key: 'contactCount', label: 'Contacts', defaultWidth: 80, render: (row) => row.contactCount > 0 ? <span style={{ fontWeight: 700, color: '#0891B2' }}>{row.contactCount}</span> : <span style={{ color: 'var(--color-text-muted)' }}>0</span> },
@@ -1911,6 +1912,50 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     return dupes;
   }, [allAccounts]);
 
+  // For each account, the set of OTHER Table View prospects whose
+  // company name normalizes to the same key — catches near-duplicate
+  // spellings like "Affinius Capital" vs "Affinius Capital, a USAA Co."
+  // that would otherwise live as separate prospects. Normalization
+  // strips parentheticals, corporate suffixes, and punctuation.
+  const similarNamesByAccount = useMemo(() => {
+    const CORP_SUFFIXES = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|oy|ab|spa|kk|pty|holdings|group|grp)\b\.?/g;
+    const norm = s => String(s || '')
+      .toLowerCase()
+      .normalize('NFKD').replace(/[̀-ͯ]/g, '')
+      .replace(/\(.*?\)/g, ' ')
+      .replace(/\[.*?\]/g, ' ')
+      .replace(/&/g, ' and ')
+      .replace(CORP_SUFFIXES, ' ')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    // Group every prospect's company by its normalized key.
+    const byNorm = new Map();
+    for (const p of prospects) {
+      const raw = (p.company || '').trim();
+      if (!raw) continue;
+      const k = norm(raw);
+      if (!k) continue;
+      if (!byNorm.has(k)) byNorm.set(k, []);
+      byNorm.get(k).push({ id: p.id, company: raw });
+    }
+    // Walk the accounts and collect the other entries that share a
+    // key but differ in display spelling. Account companies can
+    // themselves appear in the group; filter those out.
+    const out = new Map();
+    for (const a of allAccounts) {
+      const raw = (a.company || '').trim();
+      if (!raw) continue;
+      const k = norm(raw);
+      const group = byNorm.get(k);
+      if (!group || group.length < 2) continue;
+      const rawLower = raw.toLowerCase();
+      const others = group.filter(g => g.company.toLowerCase() !== rawLower);
+      if (others.length > 0) out.set(rawLower, others);
+    }
+    return out;
+  }, [prospects, allAccounts]);
+
   // Set the company column render with onSelect, and make editable columns use InlineCell
   const columns = useMemo(() => {
     const mapped = ACCOUNT_COLUMNS.map(col => {
@@ -1949,6 +1994,27 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
                   >{label}</span>
                 );
               })}
+            </span>
+          );
+        }};
+      }
+      if (col.key === 'similarNames') {
+        return { ...col, render: (row) => {
+          const matches = similarNamesByAccount.get((row.company || '').toLowerCase().trim());
+          if (!matches || matches.length === 0) {
+            return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>—</span>;
+          }
+          const names = matches.map(m => m.company);
+          const tooltip = names.join('\n');
+          return (
+            <span
+              title={tooltip}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 6px 1px 8px', background: '#FEF3C7', border: '1px solid #F59E0B', borderRadius: 999, fontSize: '0.68rem', fontWeight: 600, color: '#92400E', maxWidth: '100%' }}
+            >
+              <span style={{ fontWeight: 700 }}>{matches.length}</span>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+                {names[0]}{matches.length > 1 ? ` +${matches.length - 1}` : ''}
+              </span>
             </span>
           );
         }};
@@ -2060,7 +2126,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       render: (row) => <button className={styles.deleteBtn} onClick={(e) => { e.stopPropagation(); if (confirm(`Remove "${row.company}" from the database?`)) { dismissCompany(row.company); onDelete(row.id); } }} title="Remove">&#x2715;</button>,
     });
     return mapped;
-  }, [onSelect, onUpdate, allTargetNames, divisionsMap, allCompaniesForDivisions, duplicateTargetNames, listFlagsByCompany]);
+  }, [onSelect, onUpdate, allTargetNames, divisionsMap, allCompaniesForDivisions, duplicateTargetNames, listFlagsByCompany, similarNamesByAccount]);
 
   return (
     <div className={styles.wrapper}>
