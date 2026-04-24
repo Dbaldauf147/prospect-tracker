@@ -319,6 +319,8 @@ function App() {
           isNew={modal.isNew}
           onSave={handleModalSave}
           onClose={handleModalClose}
+          onDeleteProspect={deleteProspect}
+          onUpdateProspect={updateProspect}
           hubspotContacts={hubspotContacts}
           onDeleteContact={handleDeleteContactPropagate}
           orgCharts={settings.orgCharts || EMPTY_OBJ}

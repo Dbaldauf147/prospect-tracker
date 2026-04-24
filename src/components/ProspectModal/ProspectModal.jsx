@@ -1117,7 +1117,7 @@ const ALL_SERVICE_ITEMS_LOWER = new Set(
   SERVICE_CATEGORIES.flatMap(cat => cat.items.map(i => i.toLowerCase()))
 );
 
-export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew, hubspotContacts = [], onDeleteContact, orgCharts = {}, onUpdateOrgChart = () => {}, settings = {}, updateSettings = () => {}, updateSettingsPath = () => {}, targetAccountsData = null }) {
+export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew, onDeleteProspect, onUpdateProspect, hubspotContacts = [], onDeleteContact, orgCharts = {}, onUpdateOrgChart = () => {}, settings = {}, updateSettings = () => {}, updateSettingsPath = () => {}, targetAccountsData = null }) {
   const [fields, setFields] = useState(() => {
     if (prospect) return { ...EMPTY, ...prospect };
     return { ...EMPTY };
@@ -1216,6 +1216,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const [expandedServiceNote, setExpandedServiceNote] = useState(null);
   const [competitorsOpen, setCompetitorsOpen] = useState(false);
   const [portfolioOpen, setPortfolioOpen] = useState(false);
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const [mergeQuery, setMergeQuery] = useState('');
   const [pastePortfolio, setPastePortfolio] = useState('');
   const [researchingPortfolio, setResearchingPortfolio] = useState(false);
   const [portfolioResearchError, setPortfolioResearchError] = useState(null);
@@ -2285,12 +2287,65 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     setTimeout(() => { win.print(); }, 300);
   }
 
+  // Merge-duplicate workflow: pick another prospect and fold it into
+  // this one, then delete the picked record. Arrays get concat+dedup;
+  // object maps shallow-merge with this record winning on collision.
+  async function performMerge(sourceProspect) {
+    if (!sourceProspect || sourceProspect.id === prospect.id) return;
+    if (!onUpdateProspect || !onDeleteProspect) {
+      alert('Merge is only available on existing records.');
+      return;
+    }
+    const confirmMsg = `Merge "${sourceProspect.company || sourceProspect.id}" into "${fields.company}"?\n\nThis will pull any missing fields from the other record and permanently delete it. This can't be undone.`;
+    if (!window.confirm(confirmMsg)) return;
+    const isEmpty = (v) => v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0);
+    const isPlainObject = (v) => v && typeof v === 'object' && !Array.isArray(v);
+    const merged = { ...fields };
+    for (const [k, vSrc] of Object.entries(sourceProspect || {})) {
+      if (k === 'id') continue;
+      const vCur = merged[k];
+      if (Array.isArray(vCur) && Array.isArray(vSrc)) {
+        // Concat + dedup primitives; for objects keep both (stringify dedup).
+        const seen = new Set();
+        const out = [];
+        for (const item of [...vCur, ...vSrc]) {
+          const key = typeof item === 'object' ? JSON.stringify(item) : String(item);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          out.push(item);
+        }
+        merged[k] = out;
+      } else if (isPlainObject(vCur) && isPlainObject(vSrc)) {
+        merged[k] = { ...vSrc, ...vCur };
+      } else if (isEmpty(vCur) && !isEmpty(vSrc)) {
+        merged[k] = vSrc;
+      }
+    }
+    try {
+      await onUpdateProspect(prospect.id, merged);
+      await onDeleteProspect(sourceProspect.id);
+      setMergeOpen(false);
+    } catch (err) {
+      alert(`Merge failed: ${err?.message || err}`);
+    }
+  }
+
   return (
     <div className={styles.overlay} onClick={onClose}>
       <div className={styles.modal} onClick={e => e.stopPropagation()}>
         <div className={styles.header}>
           <h2 className={styles.title}>{isNew ? 'Add Prospect' : fields.company}</h2>
-          <button className={styles.closeBtn} onClick={onClose}>&times;</button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            {!isNew && onDeleteProspect && onUpdateProspect && (
+              <button
+                type="button"
+                onClick={() => setMergeOpen(true)}
+                title="Combine another prospect record into this one, then delete the other"
+                style={{ padding: '0.25rem 0.6rem', border: '1px solid #CBD5E1', borderRadius: 6, background: '#fff', fontSize: '0.72rem', fontWeight: 600, color: '#334155', cursor: 'pointer', fontFamily: 'inherit' }}
+              >Merge duplicate…</button>
+            )}
+            <button className={styles.closeBtn} onClick={onClose}>&times;</button>
+          </div>
         </div>
         <div className={styles.body}>
           <div className={styles.grid}>
@@ -5579,6 +5634,82 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             </div>
           );
         })(),
+        document.body
+      )}
+      {mergeOpen && createPortal(
+        <div
+          onClick={() => setMergeOpen(false)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.55)', zIndex: 10100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ background: '#fff', borderRadius: 10, boxShadow: '0 20px 60px rgba(0,0,0,0.25)', width: 'min(520px, 100%)', maxHeight: '80vh', display: 'flex', flexDirection: 'column', fontFamily: 'inherit' }}
+          >
+            <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid #E2E8F0' }}>
+              <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#1E293B' }}>Merge another record into "{fields.company}"</div>
+              <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 4 }}>
+                Pick the duplicate record. We'll pull any missing fields into this record (this one wins where both have values, arrays get combined) and delete the duplicate.
+              </div>
+            </div>
+            <div style={{ padding: '0.6rem 1.25rem', borderBottom: '1px solid #F1F5F9' }}>
+              <input
+                autoFocus
+                type="text"
+                value={mergeQuery}
+                onChange={e => setMergeQuery(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Escape') setMergeOpen(false); }}
+                placeholder="Search prospects…"
+                style={{ width: '100%', padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.82rem', fontFamily: 'inherit', boxSizing: 'border-box' }}
+              />
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '0.4rem 0' }}>
+              {(() => {
+                const q = mergeQuery.trim().toLowerCase();
+                const list = prospects
+                  .filter(p => p.id !== prospect.id && (p.company || '').trim())
+                  .filter(p => !q || (p.company || '').toLowerCase().includes(q));
+                list.sort((a, b) => {
+                  // Boost matches on the current company name first — duplicates
+                  // usually share exact or near-exact names.
+                  const targetNorm = (fields.company || '').toLowerCase().trim();
+                  const aNear = (a.company || '').toLowerCase().trim() === targetNorm;
+                  const bNear = (b.company || '').toLowerCase().trim() === targetNorm;
+                  if (aNear !== bNear) return aNear ? -1 : 1;
+                  return (a.company || '').localeCompare(b.company || '');
+                });
+                if (!list.length) {
+                  return <div style={{ padding: '1rem 1.25rem', color: '#94A3B8', fontSize: '0.78rem', textAlign: 'center' }}>No matching prospects</div>;
+                }
+                return list.slice(0, 50).map(p => {
+                  const isLikelyDupe = (p.company || '').toLowerCase().trim() === (fields.company || '').toLowerCase().trim();
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => performMerge(p)}
+                      style={{ width: '100%', textAlign: 'left', padding: '0.5rem 1.25rem', border: 'none', background: isLikelyDupe ? '#FEF3C7' : '#fff', cursor: 'pointer', fontFamily: 'inherit', borderBottom: '1px solid #F1F5F9' }}
+                      onMouseEnter={e => e.currentTarget.style.background = isLikelyDupe ? '#FDE68A' : '#F8FAFC'}
+                      onMouseLeave={e => e.currentTarget.style.background = isLikelyDupe ? '#FEF3C7' : '#fff'}
+                    >
+                      <div style={{ fontSize: '0.82rem', fontWeight: 600, color: '#1E293B' }}>{p.company}</div>
+                      <div style={{ fontSize: '0.68rem', color: '#64748B', marginTop: 2 }}>
+                        {[p.type, p.status, p.cdm].filter(Boolean).join(' · ') || 'no details'}
+                        {isLikelyDupe && <span style={{ color: '#92400E', marginLeft: 6, fontWeight: 700 }}>· likely duplicate</span>}
+                      </div>
+                    </button>
+                  );
+                });
+              })()}
+            </div>
+            <div style={{ padding: '0.6rem 1.25rem', borderTop: '1px solid #E2E8F0', display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                onClick={() => setMergeOpen(false)}
+                style={{ padding: '0.4rem 0.9rem', border: '1px solid #E2E8F0', borderRadius: 6, background: '#fff', fontSize: '0.78rem', fontFamily: 'inherit', cursor: 'pointer', color: '#475569' }}
+              >Cancel</button>
+            </div>
+          </div>
+        </div>,
         document.body
       )}
     </div>
