@@ -558,11 +558,16 @@ const PORTFOLIO_FIELD_OPTIONS = [
 
 function computePortfolioFitScore(row, maxEnergy, maxSites, yearRange) {
   // If the uploaded file carries an Opportunity Score column, use that
-  // verbatim — the methodology-tab formula below is then just reference
-  // material for how the uploader is expected to have scored the rows.
-  if (row.opportunityScore != null && row.opportunityScore !== '') {
-    const uploaded = Number(row.opportunityScore);
-    if (Number.isFinite(uploaded)) return Math.round(uploaded);
+  // value verbatim — never fall back to the composite methodology.
+  // Extract the first numeric token so values like "85%", "85/100", or
+  // "85 (est.)" parse cleanly; when the cell genuinely has no number we
+  // return 0 rather than silently computing a score the user didn't
+  // supply.
+  if (row.opportunityScore != null && String(row.opportunityScore).trim() !== '') {
+    const cleaned = String(row.opportunityScore).replace(/,/g, '');
+    const match = cleaned.match(/-?\d+(?:\.\d+)?/);
+    if (match) return Math.round(Number(match[0]));
+    return 0;
   }
   // Sector fit precedence:
   //   1. Subsector Score — only used when BOTH a Subsector label and a
@@ -4504,10 +4509,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                   const score = rowScores[i];
                                   const tier = industryTier(r.sector || r.industry);
                                   const colors = tier ? TIER_COLORS[tier] : { bg: 'transparent', color: '#94A3B8', border: 'var(--color-border)' };
+                                  const hasImportedScore = r.opportunityScore != null && String(r.opportunityScore).trim() !== '';
+                                  const origin = hasImportedScore ? 'From uploaded file' : 'Computed (no Opportunity Score column mapped)';
                                   return (
                                     <td style={{ padding: '0.15rem 0.25rem' }}>
                                       <span
-                                        title={`Fit ${tier || '—'} · Energy ${r.energyGwh || 0} GWh · Sites ${r.siteCount || 0}`}
+                                        title={`${origin}\nFit ${tier || '—'} · Energy ${r.energyGwh || 0} GWh · Sites ${r.siteCount || 0}`}
                                         style={{ display: 'inline-block', minWidth: '38px', padding: '0.1rem 0.35rem', borderRadius: 10, fontSize: '0.68rem', fontWeight: 700, background: colors.bg, color: colors.color, border: `1px solid ${colors.border}` }}
                                       >
                                         {score}
@@ -5513,6 +5520,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     } else {
                       out.siteCount = '';
                     }
+                  } else if (fieldKey === 'opportunityScore' || fieldKey === 'sectorScore' || fieldKey === 'subsectorScore') {
+                    // Accept "85%", "85/100", "85 (est.)", "1,234" — keep the numeric portion
+                    // so the table shows the exact score from the uploaded file rather than
+                    // silently falling back to the composite methodology.
+                    const m = raw.replace(/,/g, '').match(/-?\d+(\.\d+)?/);
+                    out[fieldKey] = m ? m[0] : '';
                   } else {
                     out[fieldKey] = raw;
                   }
@@ -5601,6 +5614,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       <strong>{unmappedExpected.length}</strong> expected column{unmappedExpected.length === 1 ? ' is' : 's are'} not being uploaded:{' '}
                       <span style={{ fontWeight: 600 }}>{unmappedExpected.join(', ')}</span>.
                       {' '}Map a file column to each one below, or leave them blank if you don't have that data.
+                    </div>
+                  )}
+                  {!mappedFields.has('opportunityScore') && (
+                    <div style={{ marginTop: '0.5rem', padding: '0.4rem 0.6rem', background: '#FEF3C7', border: '1px solid #F59E0B', color: '#92400E', borderRadius: 6, fontSize: '0.75rem' }}>
+                      No column is mapped to <strong>Opportunity Score</strong>. Rows without an uploaded score fall back to the composite methodology
+                      (0.40·Energy + 0.25·Sector + 0.20·Sites + 0.15·Year). Map the column below if you want to preserve the scores from the file verbatim.
                     </div>
                   )}
                 </div>
