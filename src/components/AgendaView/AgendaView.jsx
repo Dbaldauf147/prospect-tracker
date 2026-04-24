@@ -914,7 +914,7 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
         )}
 
         {activeTab === 'tableview' && prospectSuggestionRows.length > 0 && (
-          <div style={{ margin: '0.75rem 0', border: '1px solid #86EFAC', background: '#F0FDF4', borderRadius: 8, padding: '0.6rem 0.8rem' }}>
+          <div style={{ flex: 1, minHeight: 0, overflow: 'auto', margin: '0.75rem 0', border: '1px solid #86EFAC', background: '#F0FDF4', borderRadius: 8, padding: '0.6rem 0.8rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.6rem', marginBottom: '0.4rem' }}>
               <div>
                 <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#166534' }}>
