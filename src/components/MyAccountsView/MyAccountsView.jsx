@@ -170,11 +170,14 @@ const ACCOUNT_COLUMNS = [
   { key: 'contactCount', label: 'Contacts', defaultWidth: 80, render: (row) => {
     // Hover tip exposes how the matcher resolved this row so 0
     // counts have a debuggable explanation.
-    const tip = `Match diagnostics for ${row.company || ''}:
+    const tip = `Match diagnostics for this row:
+  Prospect company (as stored): "${row.company || ''}"
   HubSpot cache size: ${row._contactDebug?.cacheSize ?? '—'}
   Exact-name matches: ${row._contactDebug?.exactNameMatches ?? '—'}
   Domain matches: ${row._contactDebug?.domainMatches ?? '—'}
-  Prospect domains: ${row._contactDebug?.prospectDomains?.join(', ') || '(none registered)'}`;
+  Prospect domains: ${row._contactDebug?.prospectDomains?.join(', ') || '(none registered)'}
+  Sample HubSpot companies w/ overlapping tokens:
+    ${(row._contactDebug?.similarContactCompanies || []).join('\n    ') || '(none found)'}`;
     if (row.contactCount > 0) {
       return <span title={tip} style={{ fontWeight: 700, color: '#0891B2', cursor: 'help' }}>{row.contactCount}</span>;
     }
@@ -251,6 +254,20 @@ function companiesMatch(a, b) {
   const fa = flatten(na);
   const fb = flatten(nb);
   if (fa && fb && fa === fb) return true;
+  // Sorted-token-set equality so the match works regardless of
+  // word order — catches "Teachers Insurance and Annuity
+  // Association of America (TIAA)" vs "(TIAA) Teachers Insurance
+  // and Annuity Association of America" where the tokens are the
+  // same but the ordering differs.
+  const STOP = new Set(['a', 'an', 'the', 'and', 'of', 'co', 'inc', 'llc', 'ltd', 'corp']);
+  const sigTokens = (s) => flatten(s).split(' ').filter(t => t.length >= 2 && !STOP.has(t));
+  const ta = sigTokens(na);
+  const tb = sigTokens(nb);
+  if (ta.length >= 2 && ta.length === tb.length) {
+    const sortedA = [...ta].sort().join('|');
+    const sortedB = [...tb].sort().join('|');
+    if (sortedA === sortedB) return true;
+  }
   // One contains the other — but only if the shorter is at least 60% of the longer
   const longer = na.length >= nb.length ? na : nb;
   const shorter = na.length >= nb.length ? nb : na;
@@ -1660,11 +1677,37 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       }
       const contactCount = matchedContactIds.size;
       const bucketCount = bucketsSeen.size;
+      // Find contact-company strings that share any significant token
+      // with the prospect's name so we can spot formatting diffs
+      // (missing paren, extra suffix, etc.) at a glance via the
+      // Contacts-cell tooltip. Limited to the first 8 matches to
+      // keep the tooltip readable.
+      const companyWords = new Set(
+        String(p.company || '')
+          .normalize('NFKD')
+          .replace(/[̀-ͯ]/g, '')
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, ' ')
+          .split(' ')
+          .filter(t => t.length >= 4)
+      );
+      const similarContactCompanies = [];
+      if (companyWords.size > 0) {
+        for (const co of Object.keys(contactsByCompany)) {
+          const coWords = co.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(' ');
+          if (coWords.some(w => w.length >= 4 && companyWords.has(w))) {
+            const size = contactsByCompany[co].size;
+            similarContactCompanies.push(`"${co}" (${size})`);
+            if (similarContactCompanies.length >= 8) break;
+          }
+        }
+      }
       const _contactDebug = {
         cacheSize: Object.values(contactsByCompany).reduce((s, set) => s + set.size, 0),
         exactNameMatches,
         domainMatches,
         prospectDomains: [...prospectDomains],
+        similarContactCompanies,
       };
       // Suggested status based on opps data (fuzzy match company names).
       // Only suggest when we actually find opps for this company — no match
