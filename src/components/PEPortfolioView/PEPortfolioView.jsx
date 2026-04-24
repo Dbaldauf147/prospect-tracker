@@ -126,56 +126,101 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
     return map;
   }, [prospects, oppsRecords]);
 
-  const firmOppCount = useMemo(() => {
-    const counts = new Map();
-    for (const pe of peFirms) {
-      const portfolio = portfolioByPe.get((pe.company || '').trim().toLowerCase()) || [];
-      let n = 0;
-      for (const p of portfolio) {
-        const opps = oppsByProspectId.get(p.id) || [];
-        for (const r of opps) {
-          const stage = (r['Stage'] || '').trim();
-          if (INVALID_STAGES.has(stage)) continue;
-          if (!showClosed && CLOSED_STAGES.has(stage)) continue;
-          n += 1;
-        }
+  // HubSpot decision-maker lookup — replicates MyAccountsView's rule
+  // (contact has a 'decision maker' tag, not hidden). Keyed by the
+  // lower-cased company name in the contact record so we can do a
+  // fuzzy lookup below against each PE firm / portfolio company.
+  const decisionMakerByCompany = useMemo(() => {
+    const map = new Map();
+    try {
+      const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
+      for (const c of (cache?.contacts || [])) {
+        const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
+        if (tags.includes('hide')) continue;
+        if (!tags.includes('decision maker')) continue;
+        const lower = (c.company || '').toLowerCase().trim();
+        if (!lower) continue;
+        if (!map.has(lower)) map.set(lower, []);
+        const name = [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email || 'Unknown';
+        map.get(lower).push(name);
       }
-      counts.set(pe.id, n);
-    }
-    return counts;
-  }, [peFirms, portfolioByPe, oppsByProspectId, showClosed]);
+    } catch {}
+    return map;
+  }, []);
 
-  // Per-firm open / closed opp counts — used as columns on each firm
-  // card so you can see at a glance which PE firms have a history
-  // (open, closed, or both) without expanding anything.
-  const oppStateByFirm = useMemo(() => {
+  // Per-firm stage stats — the row-level data behind the stages table.
+  //   decisionMakerNames  : DM contacts on this PE firm (or its PCs)
+  //   pcMappingCount      : portfolio companies linked via peOwner
+  //   pcOppsCount         : PCs that have ≥1 opp (any stage)
+  //   activeOpps, totalOpps : aggregated across the PE firm + all PCs,
+  //                           active = non-closed non-invalid stage;
+  //                           total = every non-invalid stage
+  //   pcClientCount       : PCs where status === 'Client'
+  const stageStatsByFirm = useMemo(() => {
     const out = new Map();
     for (const pe of peFirms) {
       const portfolio = portfolioByPe.get((pe.company || '').trim().toLowerCase()) || [];
-      let open = 0;
-      let closed = 0;
-      for (const p of portfolio) {
-        const opps = oppsByProspectId.get(p.id) || [];
-        for (const r of opps) {
-          const stage = (r['Stage'] || '').trim();
-          if (INVALID_STAGES.has(stage)) continue;
-          if (CLOSED_STAGES.has(stage)) closed++;
-          else open++;
+      const firmName = (pe.company || '').trim().toLowerCase();
+      // DM: match on the firm name OR any portfolio company name.
+      const dmNames = [];
+      const dmSeen = new Set();
+      const dmCandidates = [firmName, ...portfolio.map(p => (p.company || '').toLowerCase().trim()).filter(Boolean)];
+      for (const [dmCompany, names] of decisionMakerByCompany.entries()) {
+        if (dmCandidates.some(n => companiesMatch(n, dmCompany))) {
+          for (const n of names) {
+            if (!dmSeen.has(n)) { dmSeen.add(n); dmNames.push(n); }
+          }
         }
       }
-      out.set(pe.id, { open, closed });
+
+      // PC Opps — PCs with ≥1 opp.
+      let pcOppsCount = 0;
+      for (const p of portfolio) {
+        if ((oppsByProspectId.get(p.id) || []).length > 0) pcOppsCount++;
+      }
+
+      // Aggregate opps for the PE firm itself + every portfolio company.
+      // We re-scan the Opps records so we also catch opps that land
+      // directly on the PE firm's account name (not just its PCs).
+      let active = 0;
+      let total = 0;
+      const oppsNames = [firmName, ...portfolio.map(p => (p.company || '').toLowerCase().trim()).filter(Boolean)];
+      for (const r of oppsRecords) {
+        const stage = (r['Stage'] || '').trim();
+        if (INVALID_STAGES.has(stage)) continue;
+        const acct = (r['Account'] || '').toLowerCase();
+        if (!acct) continue;
+        if (!oppsNames.some(n => companiesMatch(n, acct))) continue;
+        total++;
+        if (!CLOSED_STAGES.has(stage)) active++;
+      }
+
+      // PCs that have converted to Clients.
+      const pcClientCount = portfolio.filter(p => p.status === 'Client').length;
+
+      out.set(pe.id, {
+        decisionMakerNames: dmNames,
+        pcMappingCount: portfolio.length,
+        pcOppsCount,
+        activeOpps: active,
+        totalOpps: total,
+        pcClientCount,
+      });
     }
     return out;
-  }, [peFirms, portfolioByPe, oppsByProspectId]);
+  }, [peFirms, portfolioByPe, oppsByProspectId, decisionMakerByCompany, oppsRecords]);
 
   const sortedPeFirms = useMemo(() => (
     [...peFirms].sort((a, b) => {
-      const ca = firmOppCount.get(a.id) || 0;
-      const cb = firmOppCount.get(b.id) || 0;
-      if (ca !== cb) return cb - ca;
+      const sa = stageStatsByFirm.get(a.id) || {};
+      const sb = stageStatsByFirm.get(b.id) || {};
+      // Primary: active opps (so firms with live pipeline rise).
+      if ((sb.activeOpps || 0) !== (sa.activeOpps || 0)) return (sb.activeOpps || 0) - (sa.activeOpps || 0);
+      // Secondary: total opps.
+      if ((sb.totalOpps || 0) !== (sa.totalOpps || 0)) return (sb.totalOpps || 0) - (sa.totalOpps || 0);
       return (a.company || '').localeCompare(b.company || '');
     })
-  ), [peFirms, firmOppCount]);
+  ), [peFirms, stageStatsByFirm]);
 
   const q = query.trim().toLowerCase();
   const filteredFirms = q
@@ -233,95 +278,85 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
                 : `${peFirms.length} total PE firms loaded — adjust your search.`}
             </div>
           </div>
-        ) : filteredFirms.map(pe => {
-          const portfolio = portfolioByPe.get((pe.company || '').trim().toLowerCase()) || [];
-          const allOpps = portfolio.flatMap(p => (oppsByProspectId.get(p.id) || []).map(r => ({ ...r, _company: p.company, _prospectId: p.id })));
-          const visibleOpps = allOpps.filter(r => {
-            const stage = (r['Stage'] || '').trim();
-            if (INVALID_STAGES.has(stage)) return false;
-            if (!showClosed && CLOSED_STAGES.has(stage)) return false;
-            return true;
-          });
-          const oppsByStage = new Map();
-          for (const r of visibleOpps) {
-            const key = (r['Stage'] || 'Unspecified').trim() || 'Unspecified';
-            if (!oppsByStage.has(key)) oppsByStage.set(key, []);
-            oppsByStage.get(key).push(r);
-          }
-          const stageOrder = Array.from(oppsByStage.keys()).sort((a, b) => a.localeCompare(b));
-          const isExpanded = expanded.has(pe.id);
+        ) : (() => {
+          const GRID = 'minmax(220px, 2fr) 150px 110px 100px 120px 110px 28px';
+          const HEADER_STYLE = { padding: '0.35rem 0.6rem', fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#475569' };
           return (
-            <div key={pe.id} style={{ background: '#FFFFFF', border: '1px solid #CBD5E1', borderRadius: 8, overflow: 'hidden', marginBottom: '0.5rem' }}>
-              <button
-                type="button"
-                onClick={() => toggle(pe.id)}
-                style={{ width: '100%', padding: '0.7rem 1rem', background: '#F8FAFC', border: 'none', borderBottom: isExpanded ? '1px solid #E2E8F0' : 'none', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}
-              >
-                <div style={{ fontSize: '0.92rem', fontWeight: 700, color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={pe.company}>{pe.company}</div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.72rem', color: '#64748B', whiteSpace: 'nowrap' }}>
-                  <span>{portfolio.length} portfolio {portfolio.length === 1 ? 'company' : 'companies'}</span>
-                  <span>·</span>
-                  <span>{visibleOpps.length} {visibleOpps.length === 1 ? 'opportunity' : 'opportunities'}</span>
-                  <span>·</span>
-                  {(() => {
-                    const state = oppStateByFirm.get(pe.id) || { open: 0, closed: 0 };
-                    return (
-                      <>
+            <div style={{ background: '#fff', border: '1px solid #CBD5E1', borderRadius: 8, overflow: 'hidden' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: GRID, background: '#F1F5F9', borderBottom: '1px solid #CBD5E1', position: 'sticky', top: 0, zIndex: 1 }}>
+                <div style={HEADER_STYLE}>PE firm</div>
+                <div style={HEADER_STYLE}>Decision Maker Found?</div>
+                <div style={{ ...HEADER_STYLE, textAlign: 'center' }} title="Count of portfolio companies linked to this PE firm via the peOwner field">PC Mapping</div>
+                <div style={{ ...HEADER_STYLE, textAlign: 'center' }} title="Count of portfolio companies that have at least one opportunity in the Opps tab">PC Opps</div>
+                <div style={{ ...HEADER_STYLE, textAlign: 'center' }} title="Active / total opps aggregated across the PE firm plus every portfolio company">PC Opps 2/4</div>
+                <div style={{ ...HEADER_STYLE, textAlign: 'center' }} title="Portfolio companies currently set to status = Client">PC Clients</div>
+                <div style={HEADER_STYLE}></div>
+              </div>
+
+              {filteredFirms.map((pe, rowIdx) => {
+                const portfolio = portfolioByPe.get((pe.company || '').trim().toLowerCase()) || [];
+                const allOpps = portfolio.flatMap(p => (oppsByProspectId.get(p.id) || []).map(r => ({ ...r, _company: p.company, _prospectId: p.id })));
+                const visibleOpps = allOpps.filter(r => {
+                  const stage = (r['Stage'] || '').trim();
+                  if (INVALID_STAGES.has(stage)) return false;
+                  if (!showClosed && CLOSED_STAGES.has(stage)) return false;
+                  return true;
+                });
+                const oppsByStage = new Map();
+                for (const r of visibleOpps) {
+                  const key = (r['Stage'] || 'Unspecified').trim() || 'Unspecified';
+                  if (!oppsByStage.has(key)) oppsByStage.set(key, []);
+                  oppsByStage.get(key).push(r);
+                }
+                const stageOrder = Array.from(oppsByStage.keys()).sort((a, b) => a.localeCompare(b));
+                const isExpanded = expanded.has(pe.id);
+                const stats = stageStatsByFirm.get(pe.id) || {};
+                const dmFound = (stats.decisionMakerNames || []).length > 0;
+                return (
+                  <div key={pe.id} style={{ borderTop: rowIdx === 0 ? 'none' : '1px solid #E2E8F0' }}>
+                    <button
+                      type="button"
+                      onClick={() => toggle(pe.id)}
+                      style={{ width: '100%', padding: 0, background: isExpanded ? '#F8FAFC' : '#fff', border: 'none', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', display: 'grid', gridTemplateColumns: GRID, alignItems: 'center' }}
+                    >
+                      <div
+                        style={{ padding: '0.55rem 0.6rem', fontSize: '0.82rem', fontWeight: 700, color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                        title={pe.company}
+                        onClick={e => { e.stopPropagation(); onSelectProspect?.(pe); }}
+                      >{pe.company}</div>
+
+                      <div style={{ padding: '0.55rem 0.6rem' }}>
                         <span
-                          title={state.open > 0
-                            ? `${state.open} open ${state.open === 1 ? 'opportunity' : 'opportunities'} in progress`
-                            : 'No open opportunities on this firm\'s portfolio'}
+                          title={dmFound ? (stats.decisionMakerNames || []).join(', ') : 'No HubSpot contact tagged "decision maker" for this firm or its portfolio companies'}
                           style={{
-                            padding: '1px 8px',
-                            borderRadius: 999,
-                            fontSize: '0.65rem',
-                            fontWeight: 700,
-                            background: state.open > 0 ? '#DCFCE7' : '#F1F5F9',
-                            color: state.open > 0 ? '#166534' : '#94A3B8',
-                            border: `1px solid ${state.open > 0 ? '#86EFAC' : '#E2E8F0'}`,
+                            padding: '1px 8px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700,
+                            background: dmFound ? '#DCFCE7' : '#FEE2E2',
+                            color:      dmFound ? '#166534' : '#991B1B',
+                            border: `1px solid ${dmFound ? '#86EFAC' : '#FCA5A5'}`,
                           }}
-                        >Open {state.open}</span>
-                        <span
-                          title={state.closed > 0
-                            ? `${state.closed} closed ${state.closed === 1 ? 'opportunity' : 'opportunities'} (Sold / Not Sold / Lost)`
-                            : 'No closed opportunities on this firm\'s portfolio'}
-                          style={{
-                            padding: '1px 8px',
-                            borderRadius: 999,
-                            fontSize: '0.65rem',
-                            fontWeight: 700,
-                            background: state.closed > 0 ? '#FEE2E2' : '#F1F5F9',
-                            color: state.closed > 0 ? '#991B1B' : '#94A3B8',
-                            border: `1px solid ${state.closed > 0 ? '#FCA5A5' : '#E2E8F0'}`,
-                          }}
-                        >Closed {state.closed}</span>
-                      </>
-                    );
-                  })()}
-                  <span>·</span>
-                  {(() => {
-                    const uploadedCount = Array.isArray(pe.portfolioCompanies) ? pe.portfolioCompanies.length : 0;
-                    const hasUploaded = uploadedCount > 0;
-                    return (
-                      <span
-                        title={hasUploaded
-                          ? `Popup page has ${uploadedCount} uploaded portfolio ${uploadedCount === 1 ? 'company' : 'companies'}`
-                          : 'No portfolio companies uploaded on this firm\'s popup page yet'}
-                        style={{
-                          padding: '1px 8px',
-                          borderRadius: 999,
-                          fontSize: '0.65rem',
-                          fontWeight: 700,
-                          background: hasUploaded ? '#EDE9FE' : '#F1F5F9',
-                          color: hasUploaded ? '#5B21B6' : '#64748B',
-                          border: `1px solid ${hasUploaded ? '#C4B5FD' : '#CBD5E1'}`,
-                        }}
-                      >{hasUploaded ? `◆ ${uploadedCount} uploaded` : '◇ none uploaded'}</span>
-                    );
-                  })()}
-                  <span style={{ marginLeft: '0.4rem', color: '#94A3B8' }}>{isExpanded ? '▾' : '▸'}</span>
-                </div>
-              </button>
+                        >{dmFound ? `✓ ${(stats.decisionMakerNames || []).length} found` : '✗ Not found'}</span>
+                      </div>
+
+                      <div style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.78rem', fontWeight: 700, color: (stats.pcMappingCount || 0) > 0 ? '#1E293B' : '#CBD5E1' }}>
+                        {stats.pcMappingCount || 0}
+                      </div>
+
+                      <div style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.78rem', fontWeight: 700, color: (stats.pcOppsCount || 0) > 0 ? '#7C3AED' : '#CBD5E1' }}>
+                        {stats.pcOppsCount || 0}
+                      </div>
+
+                      <div style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.78rem', fontWeight: 700, color: (stats.activeOpps || 0) > 0 ? '#7C3AED' : (stats.totalOpps || 0) > 0 ? '#64748B' : '#CBD5E1' }} title="active / total opportunities across this firm and its portfolio companies">
+                        {(stats.activeOpps || 0)}/{(stats.totalOpps || 0)}
+                      </div>
+
+                      <div style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.78rem', fontWeight: 700, color: (stats.pcClientCount || 0) > 0 ? '#10B981' : '#CBD5E1' }}>
+                        {stats.pcClientCount || 0}
+                      </div>
+
+                      <div style={{ padding: '0.55rem 0.2rem', textAlign: 'center', color: '#94A3B8', fontSize: '0.8rem' }}>
+                        {isExpanded ? '▾' : '▸'}
+                      </div>
+                    </button>
 
               {isExpanded && (
                 <div style={{ padding: '0.75rem 1rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
@@ -392,6 +427,9 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
             </div>
           );
         })}
+            </div>
+          );
+        })()}
       </div>
     </div>
   );
