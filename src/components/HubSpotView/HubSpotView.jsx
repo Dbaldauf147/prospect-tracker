@@ -1080,6 +1080,11 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
   function dismissGuess(contactId, field) {
     updateSettings({ dismissedGuesses: { ...dismissedGuesses, [`${contactId}_${field}`]: true } });
   }
+  function undismissGuess(contactId, field) {
+    const next = { ...dismissedGuesses };
+    delete next[`${contactId}_${field}`];
+    updateSettings({ dismissedGuesses: next });
+  }
 
   // Build tier lookup from prospects (My Accounts data)
   const tierByCompany = useMemo(() => {
@@ -2094,15 +2099,53 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
                 const style = colors[c.tier] || { bg: '#F3F4F6', color: '#6B7280' };
                 return <span style={{ padding: '2px 8px', borderRadius: '999px', fontSize: '0.68rem', fontWeight: 600, background: style.bg, color: style.color }}>{c.tier}</span>;
               }},
-              { key: 'guessedCompany', label: 'Guessed Company', defaultWidth: 180, render: (c) => {
-                if (dismissedGuesses[`${c.id}_company`]) return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
-                const val = c.company || c.guessedCompany;
-                if (!val) return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
-                return <HubSpotInlineCell contact={c} field="company" value={val} onSave={async (id, updates) => {
-                  const newVal = (updates.company || '').trim();
-                  if (!newVal) { dismissGuess(c.id, 'company'); return; }
-                  await handleInlineUpdate(id, updates);
-                }} suggestions={prospectCompanyNames} />;
+              { key: 'guessedCompany', label: 'Guessed Company', defaultWidth: 220, render: (c) => {
+                if (dismissedGuesses[`${c.id}_company`]) {
+                  return (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                      <span style={{ color: '#94A3B8', fontStyle: 'italic', fontSize: '0.72rem' }}>dismissed</span>
+                      <button
+                        type="button"
+                        onClick={() => undismissGuess(c.id, 'company')}
+                        style={{ background: 'none', border: 'none', color: '#94A3B8', cursor: 'pointer', fontSize: '0.65rem', padding: 0, fontFamily: 'inherit', textDecoration: 'underline' }}
+                      >undo</button>
+                    </span>
+                  );
+                }
+                // No contact company yet, but we have a guess —
+                // surface it as a yellow pill with explicit apply / dismiss
+                // buttons so the user can one-click convert.
+                if (!c.company && c.guessedCompany) {
+                  return (
+                    <span
+                      title={`Apply "${c.guessedCompany}" as the contact's Company in HubSpot`}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 6px 1px 8px', background: '#FEF9C3', border: '1px solid #FACC15', borderRadius: 999, fontSize: '0.7rem', fontWeight: 600, color: '#854D0E', maxWidth: '100%' }}
+                    >
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+                        {c.guessedCompany}
+                      </span>
+                      <button
+                        type="button"
+                        title="Use this as Company"
+                        onClick={async (e) => { e.stopPropagation(); await handleInlineUpdate(c.id, { company: c.guessedCompany }); }}
+                        style={{ background: '#16A34A', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '0.62rem', padding: '0 5px', lineHeight: 1.4, fontFamily: 'inherit', fontWeight: 700, borderRadius: 999 }}
+                      >✓</button>
+                      <button
+                        type="button"
+                        title="Dismiss this suggestion"
+                        onClick={(e) => { e.stopPropagation(); dismissGuess(c.id, 'company'); }}
+                        style={{ background: 'none', border: 'none', color: '#A16207', cursor: 'pointer', fontSize: '0.82rem', padding: 0, lineHeight: 1, fontFamily: 'inherit', fontWeight: 700 }}
+                      >×</button>
+                    </span>
+                  );
+                }
+                // Contact already has a Company — show it as an
+                // editable inline cell (existing behavior) so the user
+                // can still correct it.
+                if (c.company) {
+                  return <HubSpotInlineCell contact={c} field="company" value={c.company} onSave={handleInlineUpdate} suggestions={prospectCompanyNames} />;
+                }
+                return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
               }},
               { key: 'guessedName', label: 'Guessed Name', defaultWidth: 160, render: (c) => {
                 if (dismissedGuesses[`${c.id}_name`]) return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
