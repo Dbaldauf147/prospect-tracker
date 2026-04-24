@@ -34,7 +34,8 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups }
 
   const settingsItems = [
     { kind: 'view',    key: 'vibe',    label: 'Vibe Prospecting',  icon: '\u{1F50D}' },
-    { kind: 'action',  key: 'sync',    label: 'Sync Google Sheets', icon: '↻',    onClick: () => { onSync?.(); setSettingsOpen(false); } },
+    { kind: 'action',  key: 'sync',    label: 'Sync Google Sheets', icon: '↻',          onClick: () => { onSync?.(); setSettingsOpen(false); } },
+    { kind: 'action',  key: 'backups', label: 'Backups',            icon: '\u{1F4BE}',   onClick: () => { onOpenBackups?.(); setSettingsOpen(false); } },
     { kind: 'view',    key: 'privacy', label: 'Privacy & Security', icon: '\u{1F512}' },
   ];
   const activeInSettings = settingsItems.some(it => it.kind === 'view' && it.key === view);
@@ -137,14 +138,6 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups }
         >
           <span className={styles.navIcon}>&#x2702;</span>
           Deduplication
-        </button>
-        <button
-          className={styles.navItem}
-          onClick={onOpenBackups}
-          title="View and restore local backups of your settings"
-        >
-          <span className={styles.navIcon}>&#128190;</span>
-          Backups
         </button>
       </nav>
 
