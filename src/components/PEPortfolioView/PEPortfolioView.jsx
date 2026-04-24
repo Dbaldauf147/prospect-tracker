@@ -145,6 +145,32 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
     return counts;
   }, [peFirms, portfolioByPe, oppsByProspectId, showClosed]);
 
+  // Split PE firms by opportunity state so we can surface a
+  // "history at a glance" banner at the top of the page. A firm
+  // counts as having an opp if any of its portfolio prospects is in
+  // the Opps tab with a valid stage.
+  const oppHistoryByFirm = useMemo(() => {
+    const open = [];
+    const closed = [];
+    for (const pe of peFirms) {
+      const portfolio = portfolioByPe.get((pe.company || '').trim().toLowerCase()) || [];
+      let hasOpen = false;
+      let hasClosed = false;
+      for (const p of portfolio) {
+        const opps = oppsByProspectId.get(p.id) || [];
+        for (const r of opps) {
+          const stage = (r['Stage'] || '').trim();
+          if (INVALID_STAGES.has(stage)) continue;
+          if (CLOSED_STAGES.has(stage)) hasClosed = true;
+          else hasOpen = true;
+        }
+      }
+      if (hasOpen) open.push(pe);
+      if (hasClosed) closed.push(pe);
+    }
+    return { open, closed };
+  }, [peFirms, portfolioByPe, oppsByProspectId]);
+
   const sortedPeFirms = useMemo(() => (
     [...peFirms].sort((a, b) => {
       const ca = firmOppCount.get(a.id) || 0;
@@ -193,6 +219,48 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
         />
       </div>
 
+      {(oppHistoryByFirm.open.length > 0 || oppHistoryByFirm.closed.length > 0) && (
+        <div style={{ padding: '0 1.25rem 0.75rem', flexShrink: 0, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+          {oppHistoryByFirm.open.length > 0 && (
+            <div style={{ background: '#F0FDF4', border: '1px solid #86EFAC', borderRadius: 6, padding: '0.5rem 0.7rem' }}>
+              <div style={{ fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#166534', marginBottom: '0.3rem' }}>
+                Open opportunities with {oppHistoryByFirm.open.length} PE {oppHistoryByFirm.open.length === 1 ? 'firm' : 'firms'}
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
+                {oppHistoryByFirm.open.map(pe => (
+                  <button
+                    key={pe.id}
+                    type="button"
+                    onClick={() => onSelectProspect?.(pe)}
+                    title={`${pe.company} — click to open firm`}
+                    style={{ padding: '2px 10px', background: '#DCFCE7', color: '#166534', border: '1px solid #86EFAC', borderRadius: 999, fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+                  >{pe.company}</button>
+                ))}
+              </div>
+            </div>
+          )}
+          {oppHistoryByFirm.closed.length > 0 && (
+            <div style={{ background: '#FEF2F2', border: '1px solid #FCA5A5', borderRadius: 6, padding: '0.5rem 0.7rem' }}>
+              <div style={{ fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#991B1B', marginBottom: '0.3rem' }}>
+                Closed opportunities with {oppHistoryByFirm.closed.length} PE {oppHistoryByFirm.closed.length === 1 ? 'firm' : 'firms'}
+                <span style={{ fontWeight: 500, textTransform: 'none', letterSpacing: 0, color: '#7F1D1D', marginLeft: 6 }}>(sold / not sold / lost)</span>
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
+                {oppHistoryByFirm.closed.map(pe => (
+                  <button
+                    key={pe.id}
+                    type="button"
+                    onClick={() => onSelectProspect?.(pe)}
+                    title={`${pe.company} — click to open firm`}
+                    style={{ padding: '2px 10px', background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5', borderRadius: 999, fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+                  >{pe.company}</button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       <div style={{ flex: 1, overflowY: 'auto', padding: '0 1.25rem 1.25rem', minHeight: 0 }}>
         {oppsRecords.length === 0 && (
           <div style={{ padding: '0.6rem 0.8rem', marginBottom: '0.5rem', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 6, fontSize: '0.72rem', color: '#92400E' }}>
@@ -239,6 +307,27 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
                   <span>{portfolio.length} portfolio {portfolio.length === 1 ? 'company' : 'companies'}</span>
                   <span>·</span>
                   <span>{visibleOpps.length} {visibleOpps.length === 1 ? 'opportunity' : 'opportunities'}</span>
+                  <span>·</span>
+                  {(() => {
+                    const uploadedCount = Array.isArray(pe.portfolioCompanies) ? pe.portfolioCompanies.length : 0;
+                    const hasUploaded = uploadedCount > 0;
+                    return (
+                      <span
+                        title={hasUploaded
+                          ? `Popup page has ${uploadedCount} uploaded portfolio ${uploadedCount === 1 ? 'company' : 'companies'}`
+                          : 'No portfolio companies uploaded on this firm\'s popup page yet'}
+                        style={{
+                          padding: '1px 8px',
+                          borderRadius: 999,
+                          fontSize: '0.65rem',
+                          fontWeight: 700,
+                          background: hasUploaded ? '#EDE9FE' : '#F1F5F9',
+                          color: hasUploaded ? '#5B21B6' : '#64748B',
+                          border: `1px solid ${hasUploaded ? '#C4B5FD' : '#CBD5E1'}`,
+                        }}
+                      >{hasUploaded ? `◆ ${uploadedCount} uploaded` : '◇ none uploaded'}</span>
+                    );
+                  })()}
                   <span style={{ marginLeft: '0.4rem', color: '#94A3B8' }}>{isExpanded ? '▾' : '▸'}</span>
                 </div>
               </button>
