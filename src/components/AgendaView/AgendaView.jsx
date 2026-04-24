@@ -257,13 +257,6 @@ function extractBrandToken(domain) {
   return parts[parts.length - 2];
 }
 
-function guessDomainCompany(email) {
-  const at = email.lastIndexOf('@');
-  if (at < 0) return '';
-  const domain = email.slice(at + 1).toLowerCase();
-  if (['gmail.com', 'outlook.com', 'hotmail.com', 'yahoo.com', 'icloud.com', 'aol.com', 'me.com'].includes(domain)) return '';
-  return domain.replace(/\.(com|org|net|io|co|us|ca|uk)$/i, '').replace(/\./g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-}
 
 // Mirrors the name-from-email guess used on the HubSpot Contacts page:
 // split the local part on '.' / '_' / '-' and title-case the first + last token.
@@ -1702,11 +1695,15 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                       );
                     }
                     if (sugg) return renderSuggPill();
-                    // Quick-apply: when the prospect is missing Zoom
-                    // Name and the row has a Company value, offer a
-                    // one-click button to copy the company name over.
-                    if (fieldKey === 'zoomCompanyName' && prospect && r.company && r.company.trim()) {
-                      const value = r.company.trim();
+                    // Quick-apply: when the matched prospect is missing
+                    // Zoom Name, offer a one-click button to copy the
+                    // prospect's own Company name over. Uses the
+                    // prospect's canonical company (always a Table
+                    // View name) rather than the row's typed company
+                    // so we never suggest a value that doesn't exist
+                    // in Table View.
+                    if (fieldKey === 'zoomCompanyName' && prospect && prospect.company && prospect.company.trim()) {
+                      const value = prospect.company.trim();
                       return (
                         <span
                           title={`Copy "${value}" into the prospect's Zoom Company Name`}
