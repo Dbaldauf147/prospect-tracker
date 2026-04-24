@@ -43,13 +43,14 @@ const CHART_VIEW_OPTIONS = [
   { key: 'stackedArea', label: 'Stacked Area' },
 ];
 
-function ProgressChart({ title, data, series, isPct, defaultView = 'line' }) {
+function ProgressChart({ title, data, series, isPct, defaultView = 'line', secondarySeries }) {
   const [viewType, setViewType] = useState(defaultView);
   const yProps = isPct
     ? { domain: [0, 100], tickFormatter: v => `${v}%` }
     : { allowDecimals: false };
   const tooltipFmt = isPct ? (v => `${v}%`) : undefined;
   const stacked = viewType === 'stackedBar' || viewType === 'stackedArea' || viewType === 'stackedLine';
+  const hasSecondary = Array.isArray(secondarySeries) && secondarySeries.length > 0;
   return (
     <div style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', padding: '1rem' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', marginBottom: '0.75rem' }}>
@@ -69,44 +70,60 @@ function ProgressChart({ title, data, series, isPct, defaultView = 'line' }) {
           <BarChart data={data}>
             <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
             <XAxis dataKey="weekLabel" fontSize={11} tick={{ fill: '#64748B' }} />
-            <YAxis fontSize={11} tick={{ fill: '#64748B' }} {...yProps} />
+            <YAxis yAxisId="left" fontSize={11} tick={{ fill: '#64748B' }} {...yProps} />
+            {hasSecondary && <YAxis yAxisId="right" orientation="right" fontSize={11} tick={{ fill: '#64748B' }} allowDecimals={false} />}
             <Tooltip formatter={tooltipFmt} />
             <Legend />
             {series.map(s => (
-              <Bar key={s.key} dataKey={s.key} name={s.name} fill={s.color} stackId={stacked ? 'a' : undefined} />
+              <Bar key={s.key} yAxisId="left" dataKey={s.key} name={s.name} fill={s.color} stackId={stacked ? 'a' : undefined} />
+            ))}
+            {hasSecondary && secondarySeries.map(s => (
+              <Line key={s.key} yAxisId="right" type="monotone" dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2} strokeDasharray="4 2" dot={{ r: 3, fill: s.color }} />
             ))}
           </BarChart>
         ) : viewType === 'area' || viewType === 'stackedArea' ? (
           <AreaChart data={data}>
             <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
             <XAxis dataKey="weekLabel" fontSize={11} tick={{ fill: '#64748B' }} />
-            <YAxis fontSize={11} tick={{ fill: '#64748B' }} {...yProps} />
+            <YAxis yAxisId="left" fontSize={11} tick={{ fill: '#64748B' }} {...yProps} />
+            {hasSecondary && <YAxis yAxisId="right" orientation="right" fontSize={11} tick={{ fill: '#64748B' }} allowDecimals={false} />}
             <Tooltip formatter={tooltipFmt} />
             <Legend />
             {series.map(s => (
-              <Area key={s.key} type="monotone" dataKey={s.key} name={s.name} stroke={s.color} fill={s.color} fillOpacity={0.3} stackId={stacked ? 'a' : undefined} />
+              <Area key={s.key} yAxisId="left" type="monotone" dataKey={s.key} name={s.name} stroke={s.color} fill={s.color} fillOpacity={0.3} stackId={stacked ? 'a' : undefined} />
+            ))}
+            {hasSecondary && secondarySeries.map(s => (
+              <Line key={s.key} yAxisId="right" type="monotone" dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2} strokeDasharray="4 2" dot={{ r: 3, fill: s.color }} />
             ))}
           </AreaChart>
         ) : viewType === 'stackedLine' ? (
           <AreaChart data={data}>
             <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
             <XAxis dataKey="weekLabel" fontSize={11} tick={{ fill: '#64748B' }} />
-            <YAxis fontSize={11} tick={{ fill: '#64748B' }} {...yProps} />
+            <YAxis yAxisId="left" fontSize={11} tick={{ fill: '#64748B' }} {...yProps} />
+            {hasSecondary && <YAxis yAxisId="right" orientation="right" fontSize={11} tick={{ fill: '#64748B' }} allowDecimals={false} />}
             <Tooltip formatter={tooltipFmt} />
             <Legend />
             {series.map(s => (
-              <Area key={s.key} type="monotone" dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2} fill="none" stackId="a" dot={{ r: 3, fill: s.color }} activeDot={{ r: 5 }} />
+              <Area key={s.key} yAxisId="left" type="monotone" dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2} fill="none" stackId="a" dot={{ r: 3, fill: s.color }} activeDot={{ r: 5 }} />
+            ))}
+            {hasSecondary && secondarySeries.map(s => (
+              <Line key={s.key} yAxisId="right" type="monotone" dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2} strokeDasharray="4 2" dot={{ r: 3, fill: s.color }} />
             ))}
           </AreaChart>
         ) : (
           <LineChart data={data}>
             <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
             <XAxis dataKey="weekLabel" fontSize={11} tick={{ fill: '#64748B' }} />
-            <YAxis fontSize={11} tick={{ fill: '#64748B' }} {...yProps} />
+            <YAxis yAxisId="left" fontSize={11} tick={{ fill: '#64748B' }} {...yProps} />
+            {hasSecondary && <YAxis yAxisId="right" orientation="right" fontSize={11} tick={{ fill: '#64748B' }} allowDecimals={false} />}
             <Tooltip formatter={tooltipFmt} />
             <Legend />
             {series.map(s => (
-              <Line key={s.key} type="monotone" dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2} dot={{ r: 4 }} />
+              <Line key={s.key} yAxisId="left" type="monotone" dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2} dot={{ r: 4 }} />
+            ))}
+            {hasSecondary && secondarySeries.map(s => (
+              <Line key={s.key} yAxisId="right" type="monotone" dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2} strokeDasharray="4 2" dot={{ r: 3, fill: s.color }} />
             ))}
           </LineChart>
         )}
@@ -513,6 +530,7 @@ export function ProgressView({ prospects, settings }) {
     return data.map(d => ({
       ...d,
       weekLabel: new Date(d.week + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+      totalAccounts: (d.t1Total || 0) + (d.t2Total || 0) + (d.t3Total || 0),
     }));
   }, [history, currentSnapshot]);
 
@@ -648,6 +666,9 @@ export function ProgressView({ prospects, settings }) {
                 { key: 't1Total', name: 'Tier 1', color: '#DC2626' },
                 { key: 't2Total', name: 'Tier 2', color: '#3B82F6' },
                 { key: 't3Total', name: 'Tier 3', color: '#F59E0B' },
+              ]}
+              secondarySeries={[
+                { key: 'totalAccounts', name: 'Total Accounts', color: '#111827' },
               ]}
             />
           </div>
