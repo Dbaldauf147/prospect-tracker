@@ -689,29 +689,29 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
   // the file into ZoomInfo (or similar) to build the first contact
   // list for each empty account.
   function downloadEmptyAccountsCSV() {
-    // My Accounts published names from the My Accounts view. Falls
-    // back to Baldauf-CDM prospects (same rule the Lists tab uses) so
-    // the export works even on a fresh page load where the My Accounts
-    // tab hasn't been opened yet.
+    // Read the My Accounts list. Prefer the *filtered* names (the
+    // exact set the user currently sees on the My Accounts tab —
+    // typically ~132 companies after hiding inactive statuses and any
+    // bucket filter) over the raw tier1+tier2 pool. If neither key
+    // has been written yet (fresh load, My Accounts not opened), ask
+    // the user to open it once so the filtered list is published.
     let myAccountNames = [];
-    try {
-      const raw = localStorage.getItem('my-accounts:active-names');
-      const parsed = raw ? JSON.parse(raw) : null;
-      if (Array.isArray(parsed)) myAccountNames = parsed;
-    } catch { /* ignore */ }
-    if (myAccountNames.length === 0) {
-      const seen = new Set();
-      for (const p of prospects) {
-        if (!(p.cdm || '').toLowerCase().includes('baldauf')) continue;
-        const name = (p.company || '').trim();
-        const k = name.toLowerCase();
-        if (!k || seen.has(k)) continue;
-        seen.add(k);
-        myAccountNames.push(name);
-      }
+    const readList = (key) => {
+      try {
+        const raw = localStorage.getItem(key);
+        const parsed = raw ? JSON.parse(raw) : null;
+        return Array.isArray(parsed) ? parsed : null;
+      } catch { return null; }
+    };
+    const filtered = readList('my-accounts:filtered-names');
+    if (filtered && filtered.length > 0) {
+      myAccountNames = filtered;
+    } else {
+      const active = readList('my-accounts:active-names');
+      if (active && active.length > 0) myAccountNames = active;
     }
     if (myAccountNames.length === 0) {
-      alert('No My Accounts companies found. Check that prospects have a CDM value (or open the My Accounts tab once so the published list is generated).');
+      alert('No My Accounts list is published yet. Open the My Accounts tab once so the website can publish the filtered list you actually see (typically ~132 companies), then try again.');
       return;
     }
 

@@ -1763,6 +1763,18 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     return result;
   }, [allAccounts, filters, search, bucketFilter, inactiveMode]);
 
+  // Publish the visible (post-filter) company list to a second
+  // localStorage key so downstream features (like the Bulk Add
+  // Contacts "Accounts without contacts" export) can target exactly
+  // the set the user sees on-screen rather than the full tier1+tier2
+  // pool.
+  useEffect(() => {
+    try {
+      const names = filteredAccounts.map(a => (a.company || '').trim()).filter(Boolean);
+      localStorage.setItem('my-accounts:filtered-names', JSON.stringify(names));
+    } catch {}
+  }, [filteredAccounts]);
+
   // All company names from Target Accounts file (not just Dan Baldauf's)
   const allTargetNames = useMemo(() => {
     if (!targetAccountsData?.sheets) return [];
