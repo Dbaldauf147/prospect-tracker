@@ -693,8 +693,9 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
     // exact set the user currently sees on the My Accounts tab —
     // typically ~132 companies after hiding inactive statuses and any
     // bucket filter) over the raw tier1+tier2 pool. If neither key
-    // has been written yet (fresh load, My Accounts not opened), ask
-    // the user to open it once so the filtered list is published.
+    // has been written yet (fresh load, My Accounts not opened), fall
+    // back to Baldauf-CDM prospects with the inactive statuses filter
+    // applied — matches what the My Accounts tab shows by default.
     let myAccountNames = [];
     const readList = (key) => {
       try {
@@ -711,7 +712,22 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
       if (active && active.length > 0) myAccountNames = active;
     }
     if (myAccountNames.length === 0) {
-      alert('No My Accounts list is published yet. Open the My Accounts tab once so the website can publish the filtered list you actually see (typically ~132 companies), then try again.');
+      // Derived fallback: My Accounts hides 'Old Client', 'Hold Off',
+      // 'Lost - Not Sold' by default, so apply the same rule here.
+      const INACTIVE = new Set(['Old Client', 'Hold Off', 'Lost - Not Sold']);
+      const seen = new Set();
+      for (const p of prospects) {
+        if (!(p.cdm || '').toLowerCase().includes('baldauf')) continue;
+        if (INACTIVE.has(p.status)) continue;
+        const name = (p.company || '').trim();
+        const k = name.toLowerCase();
+        if (!k || seen.has(k)) continue;
+        seen.add(k);
+        myAccountNames.push(name);
+      }
+    }
+    if (myAccountNames.length === 0) {
+      alert('No My Accounts companies found. Check that your prospects have a CDM value — or open the My Accounts tab once so the filtered list is published.');
       return;
     }
 
