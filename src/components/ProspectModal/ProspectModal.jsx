@@ -137,6 +137,11 @@ function companiesMatch(a, b) {
   const nb = (b || '').toLowerCase().trim();
   if (!na || !nb) return false;
   if (na === nb) return true;
+  // Whitespace-collapsed equality — catches copy/paste variants
+  // where one side carries double spaces or trailing whitespace that
+  // .trim() alone doesn't fix.
+  const squish = (s) => s.replace(/\s+/g, ' ').trim();
+  if (squish(na) === squish(nb)) return true;
   const longer = na.length >= nb.length ? na : nb;
   const shorter = na.length >= nb.length ? nb : na;
   if (shorter.length >= 4 && shorter.length >= longer.length * 0.6 && longer.includes(shorter)) return true;
@@ -147,6 +152,15 @@ function companiesMatch(a, b) {
   const sLonger = sa.length >= sb.length ? sa : sb;
   const sShorter = sa.length >= sb.length ? sb : sa;
   if (sShorter.length >= 4 && sShorter.length >= sLonger.length * 0.6 && sLonger.includes(sShorter)) return true;
+  // Acronym / single-token match. Catches "TIAA" vs
+  // "(TIAA) Teachers Insurance and Annuity Association of America"
+  // and "JLL" vs "Jones Lang LaSalle (JLL)" by treating parens
+  // as word separators.
+  const tokensOf = (s) => s.replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
+  const sTokens = tokensOf(shorter);
+  if (sTokens.length === 1 && sTokens[0].length >= 3) {
+    if (tokensOf(longer).includes(sTokens[0])) return true;
+  }
   return false;
 }
 
@@ -1137,10 +1151,40 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // Local contact state — updated optimistically after HubSpot saves
   const baseContacts = useMemo(() => {
     if (!fields.company || isNew) return [];
+    // Collect this prospect's registered email domains so we can
+    // include contacts whose Company text doesn't match the prospect
+    // name but whose email sits on a known domain (e.g. "TIAA" vs
+    // "(TIAA) Teachers Insurance and Annuity Association of America"
+    // where every contact shares @tiaa.org).
+    const domains = new Set();
+    if (fields.emailDomain) {
+      for (const entry of String(fields.emailDomain).split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)) {
+        const at = entry.lastIndexOf('@');
+        const d = (at >= 0 ? entry.slice(at + 1) : entry).toLowerCase().trim();
+        if (d) domains.add(d);
+      }
+    }
+    if (fields.website) {
+      const d = String(fields.website).replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '').toLowerCase().trim();
+      if (d) domains.add(d);
+    }
+    const FREE = new Set(['gmail.com', 'outlook.com', 'hotmail.com', 'yahoo.com', 'icloud.com', 'aol.com', 'me.com', 'proton.me', 'protonmail.com', 'live.com', 'msn.com']);
+    const contactDomain = (email) => {
+      if (!email) return '';
+      const at = email.lastIndexOf('@');
+      if (at < 0) return '';
+      const d = email.slice(at + 1).toLowerCase().trim();
+      return (d && !FREE.has(d)) ? d : '';
+    };
     return hubspotContacts
-      .filter(c => companiesMatch(c.company, fields.company))
-      .filter(c => !contactIsHidden(c));
-  }, [fields.company, hubspotContacts, isNew]);
+      .filter(c => {
+        if (contactIsHidden(c)) return false;
+        if (companiesMatch(c.company, fields.company)) return true;
+        const d = contactDomain(c.email);
+        if (d && domains.has(d)) return true;
+        return false;
+      });
+  }, [fields.company, fields.emailDomain, fields.website, hubspotContacts, isNew]);
 
   const [localContacts, setLocalContacts] = useState(baseContacts);
   useEffect(() => { setLocalContacts(baseContacts); }, [baseContacts]);
