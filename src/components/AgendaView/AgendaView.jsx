@@ -17,6 +17,25 @@ const PROSPECT_BACKFILL_FIELDS = [
   { key: 'emailDomain',     label: 'Email Domain',      aliases: ['emaildomain', 'domain'] },
 ];
 
+// Priority-ordered mapping rules: for each header we pick the FIRST
+// rule whose pattern appears in the normalized header string. Order
+// matters — Zoom / ZoomInfo patterns come before generic "company" /
+// "name" so "ZoomInfo Company Name" maps to the Zoom field rather
+// than landing on the plain Company column.
+const HEADER_MATCH_RULES = [
+  ['_upload_zoomCompanyId',   ['zoominfocompanyid', 'zoominfocompnyid', 'zoomcompanyid', 'zicompanyid', 'zoominfoid', 'zoomid', 'ziid']],
+  ['_upload_zoomCompanyName', ['zoominfocompanyname', 'zoomcompanyname', 'zicompanyname', 'zoominfoname', 'zoomname']],
+  ['_upload_website',         ['companywebsite', 'companyurl', 'website', 'homepage', 'url']],
+  ['_upload_emailDomain',     ['emaildomain', 'domainpattern', 'companydomain']],
+  ['email',                   ['emailaddress', 'workemail', 'email']],
+  ['phone',                   ['mobilephone', 'workphone', 'cellphone', 'phonenumber', 'mobile', 'phone', 'cell']],
+  ['firstname',               ['firstname', 'givenname', 'first']],
+  ['lastname',                ['lastname', 'surname', 'familyname', 'last']],
+  ['jobtitle',                ['jobtitle', 'position', 'title', 'role']],
+  ['company',                 ['accountname', 'companyname', 'organization', 'company', 'account']],
+  ['dans_tags',               ['danstags', 'tags']],
+];
+
 // Parse an uploaded Excel sheet into an array of AgendaView-compatible
 // rows. Maps email + name + company + phone + jobtitle columns using
 // the same norm rules as the per-company contact importer. Also picks
@@ -27,18 +46,16 @@ function parseContactsXlsx(rows) {
   const headers = Object.keys(rows[0]);
   const norm = s => (s || '').toString().toLowerCase().replace(/[^a-z0-9]/g, '');
   const mapping = {};
+  const usedKeys = new Set();
   for (const h of headers) {
     const n = norm(h);
-    if (n === 'email' || n === 'emailaddress') mapping[h] = 'email';
-    else if (n === 'firstname' || n === 'first') mapping[h] = 'firstname';
-    else if (n === 'lastname' || n === 'last') mapping[h] = 'lastname';
-    else if (n === 'company' || n === 'companyname' || n === 'accountname' || n === 'account') mapping[h] = 'company';
-    else if (n === 'phone') mapping[h] = 'phone';
-    else if (n === 'jobtitle' || n === 'title') mapping[h] = 'jobtitle';
-    else if (n === 'tags' || n === 'danstags') mapping[h] = 'dans_tags';
-    else {
-      for (const f of PROSPECT_BACKFILL_FIELDS) {
-        if (f.aliases.includes(n)) { mapping[h] = `_upload_${f.key}`; break; }
+    if (!n) continue;
+    for (const [key, patterns] of HEADER_MATCH_RULES) {
+      if (usedKeys.has(key)) continue;
+      if (patterns.some(p => n === p || n.includes(p))) {
+        mapping[h] = key;
+        usedKeys.add(key);
+        break;
       }
     }
   }
