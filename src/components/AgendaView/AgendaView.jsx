@@ -703,15 +703,38 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
     };
     let myAccountNames = readList('my-accounts:filtered-names') || [];
     if (myAccountNames.length === 0) {
-      const fallback = readList('my-accounts:active-names') || [];
+      // Second-best: the wider tier1+tier2 pool the old publish wrote.
+      let fallback = readList('my-accounts:active-names') || [];
+      let fallbackSource = 'my-accounts:active-names (tier1+tier2 pool)';
       if (fallback.length === 0) {
-        alert('No My Accounts list has been published yet. Open the My Accounts tab once so the list gets published, then try again.');
+        // Last resort: derive from the in-memory prospects list using
+        // the default My Accounts filter (Baldauf CDM + not in an
+        // inactive status). This can still include extras the
+        // MyAccountsView tab classifies out, so we warn the user.
+        const INACTIVE = new Set(['Old Client', 'Hold Off', 'Lost - Not Sold']);
+        const seen = new Set();
+        const derived = [];
+        for (const p of prospects) {
+          if (!(p.cdm || '').toLowerCase().includes('baldauf')) continue;
+          if (INACTIVE.has(p.status)) continue;
+          const name = (p.company || '').trim();
+          const k = name.toLowerCase();
+          if (!k || seen.has(k)) continue;
+          seen.add(k);
+          derived.push(name);
+        }
+        fallback = derived;
+        fallbackSource = 'derived from Baldauf-CDM prospects (My Accounts tab has not been opened yet)';
+      }
+      if (fallback.length === 0) {
+        alert('No My Accounts list could be resolved. Open the My Accounts tab once so the visible list is published, then try again.');
         return;
       }
       const ok = window.confirm(
-        `The narrow (~132) filtered My Accounts list hasn't been published yet, but the wider tier1+tier2 pool (${fallback.length} companies) is available.\n\n` +
-        `Click OK to export against that wider list now — note it can include extras like EDP that aren't on your visible My Accounts page.\n\n` +
-        `Click Cancel, open the My Accounts tab once (the filtered list publishes automatically while you're on it), then come back here.`
+        `The narrow filtered My Accounts list (~132 companies) hasn\'t been published yet.\n\n` +
+        `Source: ${fallbackSource}\nCount: ${fallback.length} companies\n\n` +
+        `Click OK to export against that list now — it may include extras (like EDP) that aren\'t on your visible My Accounts page.\n\n` +
+        `Click Cancel, then open the My Accounts tab once (it auto-publishes the filtered list while you\'re on it) and come back to try again.`
       );
       if (!ok) return;
       myAccountNames = fallback;
