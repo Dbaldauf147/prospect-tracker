@@ -547,6 +547,7 @@ const PORTFOLIO_FIELD_OPTIONS = [
   { key: 'estElectricity', label: 'Est. Electricity' },
   { key: 'estNaturalGas', label: 'Est. Natural Gas' },
   { key: 'siteCount', label: 'Est. Site Count' },
+  { key: 'strategy', label: 'Strategy' },
   { key: 'pcDescription', label: 'PC Description' },
   { key: 'acquisitionYear', label: 'Acquisition Year' },
   { key: 'notes', label: 'Notes' },
@@ -1224,7 +1225,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const [researchingPortfolio, setResearchingPortfolio] = useState(false);
   const [portfolioResearchError, setPortfolioResearchError] = useState(null);
   const [portfolioColWidths, setPortfolioColWidths] = useState({
-    num: 30, company: 180, industry: 140, sector: 160, subsector: 160, subsectorScore: 80, hqCity: 130, hqCountry: 90, energy: 110, estElectricity: 120, estNaturalGas: 120, siteCount: 100, rank: 130, fitTier: 100, pcDescription: 260, acquisitionYear: 90, notes: 220, raClient: 200, clientManager: 140, targetAccount: 200, tier: 80, salesRep: 160, listFlags: 200,
+    num: 30, company: 180, industry: 140, sector: 160, subsector: 160, subsectorScore: 80, strategy: 140, hqCity: 130, hqCountry: 90, energy: 110, estElectricity: 120, estNaturalGas: 120, siteCount: 100, rank: 130, fitTier: 100, pcDescription: 260, acquisitionYear: 90, notes: 220, raClient: 200, clientManager: 140, targetAccount: 200, tier: 80, salesRep: 160, listFlags: 200,
   });
   const [portfolioSortByRank, setPortfolioSortByRank] = useState(true);
   const [raClientPickerOpen, setRaClientPickerOpen] = useState(null); // row index
@@ -1349,6 +1350,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         hqCountry: ['hqcountry', 'country'],
         estElectricity: ['estelectricity', 'electricity', 'kwh', 'mwh', 'powerusage', 'annualpower'],
         estNaturalGas: ['estnaturalgas', 'naturalgas', 'ngconsumption', 'therms', 'mmbtu', 'annualgas'],
+        strategy: ['strategy', 'investmentstrategy', 'fundstrategy', 'peplaystrategy'],
         energyGwh: ['energy', 'gwh'],
         siteCount: ['sitecount', 'sites', 'numberofsites', 'estsitecount'],
         pcDescription: ['pcdescription', 'pcdesc', 'description'],
@@ -3572,7 +3574,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   set('portfolioCompanies', rows.filter((_, i) => i !== idx));
                 }
                 function addRow() {
-                  set('portfolioCompanies', [...rows, { companyName: '', sector: '', subsector: '', subsectorScore: '', hqCity: '', hqCountry: '', energyGwh: '', estElectricity: '', estNaturalGas: '', siteCount: '', pcDescription: '', acquisitionYear: '', notes: '' }]);
+                  set('portfolioCompanies', [...rows, { companyName: '', sector: '', subsector: '', subsectorScore: '', strategy: '', hqCity: '', hqCountry: '', energyGwh: '', estElectricity: '', estNaturalGas: '', siteCount: '', pcDescription: '', acquisitionYear: '', notes: '' }]);
                 }
                 function parsePaste() {
                   const text = pastePortfolio.trim();
@@ -3629,6 +3631,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       'Sector': 'Tech / Software & Office Occupiers',
                       'Subsector': 'Enterprise SaaS',
                       'Subsector Score': 3.2,
+                      'Strategy': 'Buyout',
                       'PC Description': 'Short, 1-2 sentence description of what the company does.',
                       'Acquisition Year': 2021,
                       'Notes': '',
@@ -3640,9 +3643,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     },
                   ];
                   const ws = XLSX.utils.json_to_sheet(templateRows, {
-                    header: ['Company Name', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Electricity', 'Est. Natural Gas', 'Site Count', 'Sector', 'Subsector', 'Subsector Score', 'Acquisition Year', 'PC Description', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM'],
+                    header: ['Company Name', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Electricity', 'Est. Natural Gas', 'Site Count', 'Sector', 'Subsector', 'Subsector Score', 'Strategy', 'Acquisition Year', 'PC Description', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM'],
                   });
-                  ws['!cols'] = [{ wch: 30 }, { wch: 20 }, { wch: 16 }, { wch: 20 }, { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 28 }, { wch: 22 }, { wch: 12 }, { wch: 14 }, { wch: 48 }, { wch: 36 }, { wch: 26 }, { wch: 22 }, { wch: 26 }, { wch: 10 }, { wch: 22 }];
+                  ws['!cols'] = [{ wch: 30 }, { wch: 20 }, { wch: 16 }, { wch: 20 }, { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 28 }, { wch: 22 }, { wch: 12 }, { wch: 16 }, { wch: 14 }, { wch: 48 }, { wch: 36 }, { wch: 26 }, { wch: 22 }, { wch: 26 }, { wch: 10 }, { wch: 22 }];
                   const wb = XLSX.utils.book_new();
                   XLSX.utils.book_append_sheet(wb, ws, 'Portfolio Companies');
                   const safeName = (fields.company || 'company').replace(/[^a-z0-9]+/gi, '_');
@@ -3657,8 +3660,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   const maxS = rows.reduce((m, r) => Math.max(m, Number(r.siteCount) || 0), 0);
                   const years = rows.map(r => Number(r.acquisitionYear)).filter(y => y > 0);
                   const yearRange = years.length > 0 ? { min: Math.min(...years), max: Math.max(...years) } : null;
-                  const headers = ['Opportunity Score', 'Company Name', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Electricity', 'Est. Natural Gas', 'Site Count', 'Sector', 'Subsector', 'Acquisition Year', 'PC Description', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM', 'List Flags'];
-                  const colWidths = [13, 32, 15, 15, 16, 16, 15, 28, 22, 14, 48, 36, 26, 22, 26, 10, 22, 22];
+                  const headers = ['Opportunity Score', 'Company Name', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Electricity', 'Est. Natural Gas', 'Site Count', 'Sector', 'Subsector', 'Strategy', 'Acquisition Year', 'PC Description', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM', 'List Flags'];
+                  const colWidths = [13, 32, 15, 15, 16, 16, 15, 28, 22, 18, 14, 48, 36, 26, 22, 26, 10, 22, 22];
                   // Parse a site-count cell that may carry a (P)/(E) marker — e.g. "12 (E)" → { num: 12, isEstimate: true }.
                   // The number is what we write; the marker drives italic formatting in the export.
                   function parseSiteCount(raw) {
@@ -3700,6 +3703,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       sites,
                       r.sector || r.industry || '',
                       r.subsector || '',
+                      r.strategy || '',
                       acqYear,
                       r.pcDescription || '',
                       // Use a single space when notes is empty so a long PC Description
@@ -3832,12 +3836,13 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         // Number formats. Column order here is:
                         //   0 Opportunity Score · 1 Company Name · 2 HQ Country ·
                         //   3 Energy · 4 Est. Electricity · 5 Est. Natural Gas ·
-                        //   6 Site Count · 7 Sector · 8 Subsector · 9 Acquisition Year · ...
-                        if (i === 0 || i === 9) cell.numFmt = '0';
+                        //   6 Site Count · 7 Sector · 8 Subsector · 9 Strategy ·
+                        //   10 Acquisition Year · ...
+                        if (i === 0 || i === 10) cell.numFmt = '0';
                         if (i === 3 || i === 4 || i === 5 || i === 6) cell.numFmt = '#,##0';
-                        // Acquisition Year (col 9): color-code by recency so older years
+                        // Acquisition Year (col 10): color-code by recency so older years
                         // visibly show they're pulling the opportunity score down.
-                        if (i === 9 && v != null) {
+                        if (i === 10 && v != null) {
                           const yPct = yearRecencyPcts[idx];
                           if (yPct != null) {
                             if (yPct >= 0.7) {
@@ -4434,6 +4439,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             <col style={{ width: portfolioColWidths.sector + 'px' }} />
                             <col style={{ width: portfolioColWidths.subsector + 'px' }} />
                             <col style={{ width: portfolioColWidths.subsectorScore + 'px' }} />
+                            <col style={{ width: portfolioColWidths.strategy + 'px' }} />
                             <col style={{ width: portfolioColWidths.acquisitionYear + 'px' }} />
                             <col style={{ width: portfolioColWidths.pcDescription + 'px' }} />
                             <col style={{ width: portfolioColWidths.notes + 'px' }} />
@@ -4464,6 +4470,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                               <th style={thBase}>Sector<span style={resizeHandleStyle} onMouseDown={e => startResize('sector', e)} /></th>
                               <th style={thBase}>Subsector<span style={resizeHandleStyle} onMouseDown={e => startResize('subsector', e)} /></th>
                               <th style={thBase}>Score<span style={resizeHandleStyle} onMouseDown={e => startResize('subsectorScore', e)} /></th>
+                              <th style={thBase} title="PE investment strategy for this portfolio company">Strategy<span style={resizeHandleStyle} onMouseDown={e => startResize('strategy', e)} /></th>
                               <th style={{ ...thBase }}>Acquisition Year<span style={resizeHandleStyle} onMouseDown={e => startResize('acquisitionYear', e)} /></th>
                               <th style={thBase}>PC Description<span style={resizeHandleStyle} onMouseDown={e => startResize('pcDescription', e)} /></th>
                               <th style={thBase}>Notes<span style={resizeHandleStyle} onMouseDown={e => startResize('notes', e)} /></th>
@@ -4613,6 +4620,18 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                     value={r.subsectorScore || ''}
                                     onChange={e => updateRow(i, { subsectorScore: e.target.value })}
                                     title="Per-row sector fit score (1-10). Overrides the keyword-derived sector score."
+                                    placeholder="—"
+                                    style={{ width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: 'var(--color-text)' }}
+                                    onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; e.target.style.background = '#fff'; }}
+                                    onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }}
+                                  />
+                                </td>
+                                <td style={{ padding: '0.15rem 0.25rem' }}>
+                                  <input
+                                    type="text"
+                                    value={r.strategy || ''}
+                                    onChange={e => updateRow(i, { strategy: e.target.value })}
+                                    title="PE investment strategy (e.g. Buyout, Growth Equity, Venture, Credit)"
                                     placeholder="—"
                                     style={{ width: '100%', padding: '0.15rem 0.3rem', border: '1px solid transparent', borderRadius: '3px', fontSize: '0.7rem', fontFamily: 'inherit', background: 'transparent', color: 'var(--color-text)' }}
                                     onFocus={e => { e.target.style.border = '1px solid var(--color-accent)'; e.target.style.background = '#fff'; }}
