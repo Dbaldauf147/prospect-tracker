@@ -202,6 +202,18 @@ function parseEmailHeaders(text) {
   return blocks.length ? parseDroppedText(blocks.join('; ')) : parseDroppedText(text);
 }
 
+// Saved "when a contact's parsed Company matches X, auto-apply Y"
+// rules. Persisted to localStorage so the user doesn't have to keep
+// re-clicking the same Suggested Company pill across imports.
+const COMPANY_RULES_KEY = 'bulk-contacts-company-rules';
+const companyRuleKey = s => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+function loadCompanyRules() {
+  try { return JSON.parse(localStorage.getItem(COMPANY_RULES_KEY)) || {}; } catch { return {}; }
+}
+function persistCompanyRules(map) {
+  try { localStorage.setItem(COMPANY_RULES_KEY, JSON.stringify(map)); } catch { /* ignore */ }
+}
+
 function loadCache() {
   try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; } catch { return []; }
 }
@@ -354,6 +366,29 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
     });
   }, []);
   const [dismissedSuggestedCompanies, setDismissedSuggestedCompanies] = useState(() => new Set());
+  const [companyRules, setCompanyRules] = useState(() => loadCompanyRules());
+  const [showRulesPanel, setShowRulesPanel] = useState(false);
+  const saveCompanyRule = useCallback((raw, canonical) => {
+    const k = companyRuleKey(raw);
+    const v = String(canonical || '').trim();
+    if (!k || !v || k === v.toLowerCase()) return;
+    setCompanyRules(prev => {
+      if (prev[k] === v) return prev;
+      const next = { ...prev, [k]: v };
+      persistCompanyRules(next);
+      return next;
+    });
+  }, []);
+  const removeCompanyRule = useCallback((raw) => {
+    const k = companyRuleKey(raw);
+    setCompanyRules(prev => {
+      if (!(k in prev)) return prev;
+      const next = { ...prev };
+      delete next[k];
+      persistCompanyRules(next);
+      return next;
+    });
+  }, []);
   const toggleSuggestedCompanyDismiss = useCallback((email) => {
     setDismissedSuggestedCompanies(prev => {
       const next = new Set(prev);
@@ -503,6 +538,15 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
 
   const mergeNewRows = useCallback((parsed) => {
     if (parsed.length === 0) return;
+    // Apply saved Company mapping rules so the user doesn't have to
+    // keep re-clicking the Suggested Company pill for the same names.
+    for (const p of parsed) {
+      const k = companyRuleKey(p.company);
+      if (k && companyRules[k]) {
+        p.company = companyRules[k];
+        p._companyFromRule = true;
+      }
+    }
     const newlyEnriched = [];
     setRows(prev => {
       const byEmail = new Map(prev.map(r => [r.email, r]));
@@ -539,7 +583,7 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
       return next;
     });
     if (newlyEnriched.length > 0) patchProspectDomains(newlyEnriched);
-  }, [enrichRow, patchProspectDomains]);
+  }, [enrichRow, patchProspectDomains, companyRules]);
 
   function handleDrop(e) {
     e.preventDefault();
@@ -1078,6 +1122,51 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
           <div className={styles.subtitle}>Drop emails from Outlook here — extract addresses, edit details, push to HubSpot in one go.</div>
         </div>
         <div className={styles.headerActions}>
+          <div style={{ position: 'relative' }}>
+            <button
+              type="button"
+              className={styles.secondaryBtn}
+              onClick={() => setShowRulesPanel(v => !v)}
+              title="Saved Company mapping rules auto-apply on import"
+            >
+              ★ Saved rules <span style={{ fontSize: '0.7rem', opacity: 0.8 }}>({Object.keys(companyRules).length})</span>
+            </button>
+            {showRulesPanel && (
+              <div
+                style={{ position: 'absolute', right: 0, top: 'calc(100% + 4px)', zIndex: 500, background: '#fff', border: '1px solid var(--color-border)', borderRadius: 6, boxShadow: '0 8px 24px rgba(0,0,0,0.1)', minWidth: 320, maxWidth: 420, maxHeight: 360, overflow: 'auto' }}
+              >
+                <div style={{ padding: '0.5rem 0.7rem', borderBottom: '1px solid var(--color-border-light)', fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span>Saved Company rules</span>
+                  <button type="button" onClick={() => setShowRulesPanel(false)} style={{ background: 'none', border: 'none', color: '#94A3B8', cursor: 'pointer', fontSize: '0.9rem', padding: 0 }}>×</button>
+                </div>
+                {Object.keys(companyRules).length === 0 ? (
+                  <div style={{ padding: '0.75rem', fontSize: '0.72rem', color: '#64748B', fontStyle: 'italic' }}>
+                    No saved rules yet. Click ✓ on a Suggested Company pill to save that mapping and auto-apply it on future imports.
+                  </div>
+                ) : (
+                  <div style={{ padding: '0.4rem 0.5rem', display: 'flex', flexDirection: 'column', gap: 3 }}>
+                    {Object.entries(companyRules).sort(([a], [b]) => a.localeCompare(b)).map(([raw, canonical]) => (
+                      <div key={raw} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.72rem', padding: '0.25rem 0.35rem', borderRadius: 4, background: '#F8FAFC' }}>
+                        <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`${raw} → ${canonical}`}>
+                          <span style={{ color: '#64748B' }}>{raw}</span>
+                          <span style={{ color: '#CBD5E1', margin: '0 4px' }}>→</span>
+                          <span style={{ color: 'var(--color-text)', fontWeight: 600 }}>{canonical}</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => removeCompanyRule(raw)}
+                          title="Remove this rule"
+                          style={{ background: 'none', border: 'none', color: '#94A3B8', cursor: 'pointer', fontSize: '0.9rem', padding: '0 4px', lineHeight: 1 }}
+                          onMouseEnter={e => { e.currentTarget.style.color = '#DC2626'; }}
+                          onMouseLeave={e => { e.currentTarget.style.color = '#94A3B8'; }}
+                        >×</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
           {rows.length > 0 && <button className={styles.secondaryBtn} onClick={clearAll}>Clear</button>}
         </div>
       </div>
@@ -1362,6 +1451,7 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
             </datalist>
             <table className={styles.table}>
               <colgroup>
+                <col style={{ width: '36px' }} />
                 <col style={{ width: '230px' }} />
                 <col style={{ width: '120px' }} />
                 <col style={{ width: '110px' }} />
@@ -1381,7 +1471,6 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                 <col style={{ width: '90px' }} />
                 <col style={{ width: '110px' }} />
                 <col style={{ width: '240px' }} />
-                <col style={{ width: '36px' }} />
               </colgroup>
               <thead>
                 <tr>
@@ -1416,6 +1505,7 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                     );
                     return (
                       <>
+                        <th></th>
                         <th>{sortBtn('Email', 'email')}</th>
                         <th>{sortBtn('HubSpot Status', 'status')}</th>
                         <th>{sortBtn('First', 'firstname')}</th>
@@ -1435,7 +1525,6 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                         <th>{sortBtn('State', 'state')}</th>
                         <th>{sortBtn('Country', 'country')}</th>
                         <th>{sortBtn('Notes', 'notes')}</th>
-                        <th></th>
                       </>
                     );
                   })()}
@@ -1588,19 +1677,25 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                   };
                   return (
                     <tr key={r.email}>
+                      <td><button className={styles.rowRemove} onClick={() => removeRow(r.email)} title="Remove row">×</button></td>
                       <td className={styles.emailCell}>{r.email}</td>
                       <td><span className={`${styles.statusPill} ${statusClass}`}>{statusLabel}</span></td>
                       <td><input className={styles.cellInput} value={r.firstname} onChange={e => updateRow(r.email, { firstname: e.target.value })} /></td>
                       <td><input className={styles.cellInput} value={r.lastname} onChange={e => updateRow(r.email, { lastname: e.target.value })} /></td>
                       <td><input className={styles.cellInput} value={r.jobtitle} onChange={e => updateRow(r.email, { jobtitle: e.target.value })} /></td>
                       <td>
-                        <input
-                          className={styles.cellInput}
-                          value={r.company}
-                          onChange={e => updateRow(r.email, { company: e.target.value })}
-                          list="bulk-contacts-company-list"
-                          autoComplete="off"
-                        />
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <input
+                            className={styles.cellInput}
+                            value={r.company}
+                            onChange={e => updateRow(r.email, { company: e.target.value, _companyFromRule: false })}
+                            list="bulk-contacts-company-list"
+                            autoComplete="off"
+                          />
+                          {r._companyFromRule && (
+                            <span title="Applied from a saved rule" style={{ fontSize: '0.72rem', color: '#F59E0B' }}>★</span>
+                          )}
+                        </div>
                         {exists && (
                           currentHsCompany ? (
                             <div className={styles.hsCompanyHint} title="Currently stored in HubSpot">
@@ -1641,7 +1736,10 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                               <button
                                 type="button"
                                 title="Use this as Company"
-                                onClick={() => updateRow(r.email, { company: sc })}
+                                onClick={() => {
+                                  saveCompanyRule(r.company, sc);
+                                  updateRow(r.email, { company: sc });
+                                }}
                                 style={{ background: '#16A34A', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '0.62rem', padding: '0 5px', lineHeight: 1.4, fontFamily: 'inherit', fontWeight: 700, borderRadius: 999 }}
                               >✓</button>
                               <button
@@ -1671,7 +1769,6 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                       <td><input className={styles.cellInput} value={r.state || ''} onChange={e => updateRow(r.email, { state: e.target.value })} /></td>
                       <td><input className={styles.cellInput} value={r.country || ''} onChange={e => updateRow(r.email, { country: e.target.value })} /></td>
                       <td><input className={styles.cellInput} value={r.notes || ''} onChange={e => updateRow(r.email, { notes: e.target.value })} placeholder="Free-form note" /></td>
-                      <td><button className={styles.rowRemove} onClick={() => removeRow(r.email)} title="Remove row">×</button></td>
                     </tr>
                   );
                 })}
