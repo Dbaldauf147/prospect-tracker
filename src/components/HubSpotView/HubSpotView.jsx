@@ -1578,6 +1578,27 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
     return m;
   }, [prospects]);
 
+  // Token-prefix map → canonical name. For each prospect, we store
+  // every "first-N-tokens concatenated with no spaces" form so a
+  // domain brand like "strategichotels" (from strategichotels.com)
+  // matches "Strategic Hotels & Resorts" (first two tokens of its
+  // normalized name = "strategic" + "hotels"). Keeps the lookup
+  // O(tokens) while covering multi-word companies that don't have
+  // an explicit email-domain registered.
+  const prospectTokenPrefixMap = useMemo(() => {
+    const m = new Map();
+    for (const p of prospects) {
+      const normalized = normalizeCompanyKey(p.company);
+      if (!normalized) continue;
+      const tokens = normalized.split(' ').filter(Boolean);
+      for (let n = 1; n <= tokens.length; n++) {
+        const prefix = tokens.slice(0, n).join('');
+        if (prefix && prefix.length >= 3 && !m.has(prefix)) m.set(prefix, p.company);
+      }
+    }
+    return m;
+  }, [prospects]);
+
   // Cheap brand-from-domain extractor. "urw.com" → "Urw",
   // "ext.urw.com" → "Urw", "acme.co.uk" → "Acme". Returns "" for
   // free-mail providers so contacts from personal inboxes don't end
@@ -1650,9 +1671,20 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
           }
         } else {
           if (emailDomain) {
-            guessedCompany = domainToCompany.get(emailDomain)
-              || companyFromDomain(emailDomain)
-              || '';
+            // 1. Explicit domain-to-prospect map first.
+            let hit = domainToCompany.get(emailDomain) || '';
+            // 2. If no domain hit, try matching the domain's brand to
+            //    any prospect's leading-token prefix — e.g.
+            //    "strategichotels" (from strategichotels.com) should
+            //    resolve to "Strategic Hotels & Resorts".
+            if (!hit) {
+              const brand = companyFromDomain(emailDomain);
+              if (brand) {
+                const brandKey = brand.toLowerCase().replace(/[^a-z0-9]/g, '');
+                hit = prospectTokenPrefixMap.get(brandKey) || brand;
+              }
+            }
+            guessedCompany = hit;
           }
         }
 
@@ -1705,7 +1737,7 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
           tier,
         };
       });
-  }, [contacts, prospects, domainToCompany, tierByCompany, prospectKeyToCanonical, FREE_MAIL, TWO_PART_TLDS, contactLocalFields]);
+  }, [contacts, prospects, domainToCompany, tierByCompany, prospectKeyToCanonical, prospectTokenPrefixMap, FREE_MAIL, TWO_PART_TLDS, contactLocalFields]);
 
   // Dynamic filter options for HubSpot columns
   const HUBSPOT_FILTER_SKIP = new Set(['id', '_select', '_delete', 'guessedCompany', 'guessedName', 'guessedFirstName', 'guessedLastName', 'effectiveCompany', 'matchedProspect', 'enrolledCount', 'isEnrolled', 'hs_sequences_is_enrolled', 'hs_sequences_actively_enrolled_count']);
