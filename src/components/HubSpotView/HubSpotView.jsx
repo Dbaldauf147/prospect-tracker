@@ -2087,6 +2087,21 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
           <DataTable
             tableId="hubspot-contacts"
             columns={[
+              {
+                key: '_delete',
+                label: '',
+                defaultWidth: 36,
+                render: (c) => (
+                  <button
+                    type="button"
+                    title={`Delete ${[c.firstname, c.lastname].filter(Boolean).join(' ') || c.email || 'this contact'} from HubSpot`}
+                    onClick={(e) => { e.stopPropagation(); handleDeleteContact(c.id, [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email || 'contact'); }}
+                    style={{ background: 'none', border: 'none', color: '#94A3B8', cursor: 'pointer', fontSize: '1rem', lineHeight: 1, padding: 0, fontWeight: 700 }}
+                    onMouseEnter={(e) => { e.currentTarget.style.color = '#DC2626'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.color = '#94A3B8'; }}
+                  >×</button>
+                ),
+              },
               ...(massMode ? [{ key: '_select', label: '', defaultWidth: 36, render: (c) => <input type="checkbox" checked={selected.has(c.id)} onChange={() => toggleSelect(c.id)} onClick={e => e.stopPropagation()} style={{ accentColor: 'var(--color-accent)' }} /> }] : []),
               { key: 'firstname', label: 'First Name', defaultWidth: 120, render: (c) => <HubSpotInlineCell contact={c} field="firstname" value={c.firstname} onSave={handleInlineUpdate} /> },
               { key: 'lastname', label: 'Last Name', defaultWidth: 120, render: (c) => <HubSpotInlineCell contact={c} field="lastname" value={c.lastname} onSave={handleInlineUpdate} /> },
@@ -2214,7 +2229,7 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
               { key: '_delete', label: '', defaultWidth: 40, render: (c) => <button className={styles.deleteBtn} onClick={(e) => { e.stopPropagation(); handleDeleteContact(c.id, [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email); }} title="Delete from HubSpot">&#x1F5D1;</button> },
             ]}
             rows={filteredContacts}
-            alwaysVisible={[]}
+            alwaysVisible={['_delete']}
             emptyMessage="No contacts found"
           />
         </>
