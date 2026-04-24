@@ -646,8 +646,53 @@ function TypeMismatchWarning({ row, onUpdate }) {
   );
 }
 
-function TierMismatchWarning({ row, onApply, onDismiss }) {
+function SimilarNamesWarning({ matches, onDismiss }) {
   const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const h = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [open]);
+  if (!matches || matches.length === 0) return null;
+  return (
+    <span style={{ position: 'relative' }} ref={ref}>
+      <span
+        title={`${matches.length} similar name${matches.length === 1 ? '' : 's'} in Table View — click for details`}
+        onClick={e => { e.stopPropagation(); setOpen(p => !p); }}
+        style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16, borderRadius: '50%', background: '#FEF3C7', border: '1px solid #F59E0B', color: '#92400E', fontSize: '0.62rem', fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}
+      >⚠</span>
+      {open && (
+        <div
+          onClick={e => e.stopPropagation()}
+          style={{
+            position: 'absolute', top: '100%', left: 0, zIndex: 50, marginTop: '4px',
+            background: '#fff', border: '1px solid var(--color-border)', borderRadius: '8px',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.15)', padding: '0.6rem 0.8rem', minWidth: '260px', maxWidth: '360px',
+          }}
+        >
+          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text)', marginBottom: '0.3rem' }}>Similar names in Table View</div>
+          <ul style={{ margin: 0, padding: 0, listStyle: 'none', fontSize: '0.7rem', color: 'var(--color-text-secondary)', marginBottom: '0.5rem' }}>
+            {matches.map(m => (
+              <li key={m.id || m.company} style={{ padding: '2px 0', borderBottom: '1px dashed #F1F5F9' }}>• {m.company}</li>
+            ))}
+          </ul>
+          <button
+            onClick={() => { onDismiss(); setOpen(false); }}
+            style={{
+              padding: '0.4rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px',
+              background: 'var(--color-surface)', color: 'var(--color-text-secondary)', fontSize: '0.72rem', fontWeight: 600,
+              cursor: 'pointer', fontFamily: 'inherit', width: '100%',
+            }}
+          >Ignore this warning</button>
+        </div>
+      )}
+    </span>
+  );
+}
+
+function TierMismatchWarning({ row, onApply, onDismiss }) {  const [open, setOpen] = useState(false);
   const ref = useRef(null);
   useEffect(() => {
     if (!open) return;
@@ -1943,6 +1988,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     // themselves appear in the group; filter those out.
     const out = new Map();
     for (const a of allAccounts) {
+      if (a.ignoreSimilarNames) continue;
       const raw = (a.company || '').trim();
       if (!raw) continue;
       const k = norm(raw);
@@ -1965,15 +2011,14 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
           label: similarCount > 0 ? `Company ⚠ ${similarCount}` : 'Company',
           render: (row) => {
             const similar = similarNamesByAccount.get((row.company || '').toLowerCase().trim());
-            const hasSimilar = !!(similar && similar.length > 0);
             return (
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                 <span style={{ fontWeight: 600, color: 'var(--color-text)', cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); onSelect(row); }}>{row.company}</span>
-                {hasSimilar && (
-                  <span
-                    title={`${similar.length} similar name${similar.length === 1 ? '' : 's'} in Table View:\n${similar.map(m => '• ' + m.company).join('\n')}`}
-                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16, borderRadius: '50%', background: '#FEF3C7', border: '1px solid #F59E0B', color: '#92400E', fontSize: '0.62rem', fontWeight: 700, cursor: 'help', flexShrink: 0 }}
-                  >⚠</span>
+                {similar && similar.length > 0 && (
+                  <SimilarNamesWarning
+                    matches={similar}
+                    onDismiss={() => onUpdate(row.id, { ignoreSimilarNames: true })}
+                  />
                 )}
               </span>
             );
