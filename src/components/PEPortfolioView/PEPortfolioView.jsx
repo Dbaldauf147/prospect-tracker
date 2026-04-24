@@ -87,7 +87,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
   const [expanded, setExpanded] = useState(() => new Set());
   const [query, setQuery] = useState('');
   // Persisted column widths + sort so the layout survives reloads.
-  const DEFAULT_COL_WIDTHS = { company: 240, dm: 170, mapping: 110, opps: 100, ratio: 120, clients: 110 };
+  const DEFAULT_COL_WIDTHS = { company: 240, dm: 170, met: 170, mapping: 110, opps: 100, ratio: 120, clients: 110 };
   const [colWidths, setColWidths] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('pe-portfolio:col-widths')) || {};
@@ -170,8 +170,9 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
 
   // HubSpot decision-maker lookup — replicates MyAccountsView's rule
   // (contact has a 'decision maker' tag, not hidden). Keyed by the
-  // lower-cased company name in the contact record so we can do a
-  // fuzzy lookup below against each PE firm / portfolio company.
+  // lower-cased company name in the contact record; each entry is an
+  // array of { name, metInPerson, city } so the PE Portfolio table
+  // can show the met-in-person ratio and a NYC breakdown.
   const decisionMakerByCompany = useMemo(() => {
     const map = new Map();
     try {
@@ -184,7 +185,9 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
         if (!lower) continue;
         if (!map.has(lower)) map.set(lower, []);
         const name = [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email || 'Unknown';
-        map.get(lower).push(name);
+        const metInPerson = tags.includes('met in person');
+        const city = String(c.city || '').trim();
+        map.get(lower).push({ name, metInPerson, city });
       }
     } catch {}
     return map;
@@ -204,16 +207,21 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
       const portfolio = portfolioByPe.get((pe.company || '').trim().toLowerCase()) || [];
       const firmName = (pe.company || '').trim().toLowerCase();
       // DM: match on the firm name OR any portfolio company name.
-      const dmNames = [];
+      // Each entry is { name, metInPerson, city } so the stages table
+      // can show a met-in-person ratio + NYC count.
+      const dmEntries = [];
       const dmSeen = new Set();
       const dmCandidates = [firmName, ...portfolio.map(p => (p.company || '').toLowerCase().trim()).filter(Boolean)];
-      for (const [dmCompany, names] of decisionMakerByCompany.entries()) {
+      for (const [dmCompany, items] of decisionMakerByCompany.entries()) {
         if (dmCandidates.some(n => companiesMatch(n, dmCompany))) {
-          for (const n of names) {
-            if (!dmSeen.has(n)) { dmSeen.add(n); dmNames.push(n); }
+          for (const item of items) {
+            if (!dmSeen.has(item.name)) { dmSeen.add(item.name); dmEntries.push(item); }
           }
         }
       }
+      const dmNames = dmEntries.map(e => e.name);
+      const metInPersonCount = dmEntries.filter(e => e.metInPerson).length;
+      const nycCount = dmEntries.filter(e => /(new york|nyc)/i.test(e.city || '')).length;
 
       // PC Opps — PCs with ≥1 opp.
       let pcOppsCount = 0;
@@ -242,6 +250,9 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
 
       out.set(pe.id, {
         decisionMakerNames: dmNames,
+        decisionMakerEntries: dmEntries,
+        metInPersonCount,
+        nycCount,
         pcMappingCount: portfolio.length,
         pcOppsCount,
         activeOpps: active,
@@ -264,6 +275,10 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
           break;
         case 'dm':
           cmp = ((sa.decisionMakerNames || []).length) - ((sb.decisionMakerNames || []).length);
+          break;
+        case 'met':
+          cmp = (sa.metInPersonCount || 0) - (sb.metInPersonCount || 0);
+          if (cmp === 0) cmp = (sa.nycCount || 0) - (sb.nycCount || 0);
           break;
         case 'mapping':
           cmp = (sa.pcMappingCount || 0) - (sb.pcMappingCount || 0);
@@ -345,10 +360,11 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
             </div>
           </div>
         ) : (() => {
-          const GRID = `${colWidths.company}px ${colWidths.dm}px ${colWidths.mapping}px ${colWidths.opps}px ${colWidths.ratio}px ${colWidths.clients}px 28px`;
+          const GRID = `${colWidths.company}px ${colWidths.dm}px ${colWidths.met}px ${colWidths.mapping}px ${colWidths.opps}px ${colWidths.ratio}px ${colWidths.clients}px 28px`;
           const HEADER_COLUMNS = [
             { key: 'company', label: 'PE firm', align: 'left',   tip: 'Sort by company name' },
             { key: 'dm',      label: 'Decision Maker Found?', align: 'left', tip: 'Sort by number of decision makers found on HubSpot' },
+            { key: 'met',     label: 'Met in Person', align: 'left', tip: 'Met-in-person count / total decision makers, plus how many of them list New York / NYC as their city' },
             { key: 'mapping', label: 'PC Mapping', align: 'center', tip: 'Count of portfolio companies linked to this PE firm via the peOwner field' },
             { key: 'opps',    label: 'PC Opps', align: 'center',    tip: 'Count of portfolio companies that have at least one opportunity in the Opps tab' },
             { key: 'ratio',   label: 'PC Opps 2/4', align: 'center', tip: 'Active / total opps aggregated across the PE firm plus every portfolio company' },
@@ -434,6 +450,46 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
                           }}
                         >{dmFound ? `✓ ${(stats.decisionMakerNames || []).length} found` : '✗ Not found'}</span>
                       </div>
+
+                      {(() => {
+                        const dmTotal = (stats.decisionMakerNames || []).length;
+                        const met = stats.metInPersonCount || 0;
+                        const nyc = stats.nycCount || 0;
+                        if (dmTotal === 0) {
+                          return (
+                            <div style={{ padding: '0.55rem 0.6rem', fontSize: '0.72rem', color: '#CBD5E1' }}>—</div>
+                          );
+                        }
+                        const nycList = (stats.decisionMakerEntries || [])
+                          .filter(e => /(new york|nyc)/i.test(e.city || ''))
+                          .map(e => `${e.name}${e.city ? ` (${e.city})` : ''}`)
+                          .join(', ');
+                        const metList = (stats.decisionMakerEntries || [])
+                          .filter(e => e.metInPerson)
+                          .map(e => e.name)
+                          .join(', ');
+                        const tipParts = [];
+                        if (met > 0) tipParts.push(`Met in person: ${metList}`);
+                        else tipParts.push('No decision makers tagged "met in person" yet');
+                        if (nyc > 0) tipParts.push(`In NY: ${nycList}`);
+                        return (
+                          <div style={{ padding: '0.55rem 0.6rem', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: '0.72rem' }} title={tipParts.join('\n')}>
+                            <span
+                              style={{
+                                padding: '1px 8px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700,
+                                background: met > 0 ? '#DCFCE7' : '#F1F5F9',
+                                color:      met > 0 ? '#166534' : '#94A3B8',
+                                border: `1px solid ${met > 0 ? '#86EFAC' : '#E2E8F0'}`,
+                              }}
+                            >{met}/{dmTotal}</span>
+                            {nyc > 0 && (
+                              <span style={{ fontSize: '0.65rem', fontWeight: 600, color: '#5B21B6' }}>
+                                ({nyc} in New York)
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })()}
 
                       <div style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.78rem', fontWeight: 700, color: (stats.pcMappingCount || 0) > 0 ? '#1E293B' : '#CBD5E1' }}>
                         {stats.pcMappingCount || 0}
