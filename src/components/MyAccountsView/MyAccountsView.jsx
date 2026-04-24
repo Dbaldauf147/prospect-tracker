@@ -1959,21 +1959,26 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   const columns = useMemo(() => {
     const mapped = ACCOUNT_COLUMNS.map(col => {
       if (col.key === 'company') {
-        return { ...col, render: (row) => {
-          const similar = similarNamesByAccount.get((row.company || '').toLowerCase().trim());
-          const hasSimilar = !!(similar && similar.length > 0);
-          return (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-              <span style={{ fontWeight: 600, color: 'var(--color-text)', cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); onSelect(row); }}>{row.company}</span>
-              {hasSimilar && (
-                <span
-                  title={`${similar.length} similar name${similar.length === 1 ? '' : 's'} in Table View:\n${similar.map(m => '• ' + m.company).join('\n')}`}
-                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16, borderRadius: '50%', background: '#FEF3C7', border: '1px solid #F59E0B', color: '#92400E', fontSize: '0.62rem', fontWeight: 700, cursor: 'help', flexShrink: 0 }}
-                >⚠</span>
-              )}
-            </span>
-          );
-        }};
+        const similarCount = filteredAccounts.filter(a => similarNamesByAccount.has((a.company || '').toLowerCase().trim())).length;
+        return {
+          ...col,
+          label: similarCount > 0 ? `Company ⚠ ${similarCount}` : 'Company',
+          render: (row) => {
+            const similar = similarNamesByAccount.get((row.company || '').toLowerCase().trim());
+            const hasSimilar = !!(similar && similar.length > 0);
+            return (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <span style={{ fontWeight: 600, color: 'var(--color-text)', cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); onSelect(row); }}>{row.company}</span>
+                {hasSimilar && (
+                  <span
+                    title={`${similar.length} similar name${similar.length === 1 ? '' : 's'} in Table View:\n${similar.map(m => '• ' + m.company).join('\n')}`}
+                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16, borderRadius: '50%', background: '#FEF3C7', border: '1px solid #F59E0B', color: '#92400E', fontSize: '0.62rem', fontWeight: 700, cursor: 'help', flexShrink: 0 }}
+                  >⚠</span>
+                )}
+              </span>
+            );
+          },
+        };
       }
       if (col.key === 'myTier') {
         return { ...col, render: (row) => (
@@ -2118,7 +2123,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       render: (row) => <button className={styles.deleteBtn} onClick={(e) => { e.stopPropagation(); if (confirm(`Remove "${row.company}" from the database?`)) { dismissCompany(row.company); onDelete(row.id); } }} title="Remove">&#x2715;</button>,
     });
     return mapped;
-  }, [onSelect, onUpdate, allTargetNames, divisionsMap, allCompaniesForDivisions, duplicateTargetNames, listFlagsByCompany, similarNamesByAccount]);
+  }, [onSelect, onUpdate, allTargetNames, divisionsMap, allCompaniesForDivisions, duplicateTargetNames, listFlagsByCompany, similarNamesByAccount, filteredAccounts]);
 
   return (
     <div className={styles.wrapper}>
