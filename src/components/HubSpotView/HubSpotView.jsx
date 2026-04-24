@@ -2080,10 +2080,6 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
           <div className={styles.summaryLabel}>All Contacts</div>
           <div className={styles.summaryValue}>{contacts.length}</div>
         </button>
-        <button className={`${styles.summaryCard} ${cardFilter === 'notMatched' ? styles.summaryCardActive : ''}`} onClick={() => setCardFilter(cardFilter === 'notMatched' ? null : 'notMatched')}>
-          <div className={styles.summaryLabel}>Not Matched to Prospects</div>
-          <div className={styles.summaryValue}>{enrichedContacts.length - matchedCount}</div>
-        </button>
         <button className={`${styles.summaryCard} ${cardFilter === 'companyUnmapped' ? styles.summaryCardActive : ''}`} onClick={() => setCardFilter(cardFilter === 'companyUnmapped' ? null : 'companyUnmapped')} title="Contacts whose Company is set but doesn't match any Table View prospect by name">
           <div className={styles.summaryLabel}>Company Not in TV</div>
           <div className={styles.summaryValue}>{enrichedContacts.filter(c => {
