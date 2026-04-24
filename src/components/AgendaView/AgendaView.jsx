@@ -689,12 +689,11 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
   // the file into ZoomInfo (or similar) to build the first contact
   // list for each empty account.
   function downloadEmptyAccountsCSV() {
-    // Only use the post-filter "visible" My Accounts list — the same
-    // ~132 companies the user sees on the My Accounts tab. The older
-    // active-names key stored the wider tier1+tier2 pool (~320) and
-    // caused extra companies like EDP to leak into the export, so we
-    // no longer fall back to it. When filtered-names is missing, ask
-    // the user to open the My Accounts tab once so it gets published.
+    // Prefer the visible My-Accounts list (the ~132 companies the
+    // user actually sees on the My Accounts tab). If that key is
+    // missing, offer to fall back to the wider tier1+tier2 pool
+    // (~320 — what the older active-names key stored) so the export
+    // still works before the user has re-opened My Accounts.
     const readList = (key) => {
       try {
         const raw = localStorage.getItem(key);
@@ -704,8 +703,18 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
     };
     let myAccountNames = readList('my-accounts:filtered-names') || [];
     if (myAccountNames.length === 0) {
-      alert('The visible My Accounts list hasn\'t been published yet. Open the My Accounts tab once (the page publishes its filtered list automatically while you\'re on it), then come back here and try the export again.');
-      return;
+      const fallback = readList('my-accounts:active-names') || [];
+      if (fallback.length === 0) {
+        alert('No My Accounts list has been published yet. Open the My Accounts tab once so the list gets published, then try again.');
+        return;
+      }
+      const ok = window.confirm(
+        `The narrow (~132) filtered My Accounts list hasn't been published yet, but the wider tier1+tier2 pool (${fallback.length} companies) is available.\n\n` +
+        `Click OK to export against that wider list now — note it can include extras like EDP that aren't on your visible My Accounts page.\n\n` +
+        `Click Cancel, open the My Accounts tab once (the filtered list publishes automatically while you're on it), then come back here.`
+      );
+      if (!ok) return;
+      myAccountNames = fallback;
     }
 
     // Normalize with the same rules used on the Lists tab so "Acme, Inc"
