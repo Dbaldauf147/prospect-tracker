@@ -329,6 +329,14 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
   const [tvMissingOnly, setTvMissingOnly] = useState(false);
   const [activeTab, setActiveTab] = useState('contacts'); // 'contacts' | 'tableview'
   const [pendingUpload, setPendingUpload] = useState(null); // { fileName, headers, rows, mapping }
+  const [dismissedSuggestedCompanies, setDismissedSuggestedCompanies] = useState(() => new Set());
+  const toggleSuggestedCompanyDismiss = useCallback((email) => {
+    setDismissedSuggestedCompanies(prev => {
+      const next = new Set(prev);
+      if (next.has(email)) next.delete(email); else next.add(email);
+      return next;
+    });
+  }, []);
 
   // Reload HubSpot cache whenever results change (so newly-added contacts move to the "exists" state).
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1466,13 +1474,45 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                         )}
                       </td>
                       <td className={styles.suggestCell}>
-                        {live.suggestedCompany ? (
-                          <button
-                            className={styles.suggestPill}
-                            title={r.company === live.suggestedCompany ? 'Already applied' : 'Click to use this as Company'}
-                            onClick={() => updateRow(r.email, { company: live.suggestedCompany })}
-                          >{live.suggestedCompany}</button>
-                        ) : <span className={styles.metaText}>—</span>}
+                        {(() => {
+                          const sc = live.suggestedCompany;
+                          if (!sc) return <span className={styles.metaText}>—</span>;
+                          if (r.company === sc) {
+                            return <span style={{ fontSize: '0.7rem', color: '#64748B', fontStyle: 'italic' }}>applied</span>;
+                          }
+                          if (dismissedSuggestedCompanies.has(r.email)) {
+                            return (
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                <span style={{ fontSize: '0.66rem', color: '#94A3B8', fontStyle: 'italic' }}>dismissed</span>
+                                <button
+                                  type="button"
+                                  onClick={() => toggleSuggestedCompanyDismiss(r.email)}
+                                  style={{ background: 'none', border: 'none', color: '#94A3B8', cursor: 'pointer', fontSize: '0.62rem', padding: 0, fontFamily: 'inherit', textDecoration: 'underline' }}
+                                >undo</button>
+                              </span>
+                            );
+                          }
+                          return (
+                            <span
+                              title={sc}
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 6px 1px 8px', background: '#FEF9C3', border: '1px solid #FACC15', borderRadius: 999, fontSize: '0.68rem', fontWeight: 600, color: '#854D0E', maxWidth: '100%' }}
+                            >
+                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{sc}</span>
+                              <button
+                                type="button"
+                                title="Use this as Company"
+                                onClick={() => updateRow(r.email, { company: sc })}
+                                style={{ background: '#16A34A', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '0.62rem', padding: '0 5px', lineHeight: 1.4, fontFamily: 'inherit', fontWeight: 700, borderRadius: 999 }}
+                              >✓</button>
+                              <button
+                                type="button"
+                                title="Dismiss this suggestion"
+                                onClick={() => toggleSuggestedCompanyDismiss(r.email)}
+                                style={{ background: 'none', border: 'none', color: '#A16207', cursor: 'pointer', fontSize: '0.78rem', padding: 0, lineHeight: 1, fontFamily: 'inherit', fontWeight: 700 }}
+                              >×</button>
+                            </span>
+                          );
+                        })()}
                       </td>
                       <td>{renderTv('website')}</td>
                       <td>{renderTv('zoomCompanyId')}</td>
