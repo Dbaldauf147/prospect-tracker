@@ -165,7 +165,6 @@ const ACCOUNT_COLUMNS = [
   { key: 'bfoCompanyName', label: 'BFO Company Name', defaultWidth: 180 },
   { key: 'zoomCompanyId', label: 'Zoom Company ID', defaultWidth: 120 },
   { key: 'zoomCompanyName', label: 'Zoom Company Name', defaultWidth: 180 },
-  { key: 'similarNames', label: 'Similar in TV', defaultWidth: 200 },
   { key: 'cdm', label: 'CDM', defaultWidth: 120 },
   { key: 'notes', label: 'Notes', defaultWidth: 200 },
   { key: 'contactCount', label: 'Contacts', defaultWidth: 80, render: (row) => row.contactCount > 0 ? <span style={{ fontWeight: 700, color: '#0891B2' }}>{row.contactCount}</span> : <span style={{ color: 'var(--color-text-muted)' }}>0</span> },
@@ -1960,7 +1959,21 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   const columns = useMemo(() => {
     const mapped = ACCOUNT_COLUMNS.map(col => {
       if (col.key === 'company') {
-        return { ...col, render: (row) => <span style={{ fontWeight: 600, color: 'var(--color-text)', cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); onSelect(row); }}>{row.company}</span> };
+        return { ...col, render: (row) => {
+          const similar = similarNamesByAccount.get((row.company || '').toLowerCase().trim());
+          const hasSimilar = !!(similar && similar.length > 0);
+          return (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ fontWeight: 600, color: 'var(--color-text)', cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); onSelect(row); }}>{row.company}</span>
+              {hasSimilar && (
+                <span
+                  title={`${similar.length} similar name${similar.length === 1 ? '' : 's'} in Table View:\n${similar.map(m => '• ' + m.company).join('\n')}`}
+                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16, borderRadius: '50%', background: '#FEF3C7', border: '1px solid #F59E0B', color: '#92400E', fontSize: '0.62rem', fontWeight: 700, cursor: 'help', flexShrink: 0 }}
+                >⚠</span>
+              )}
+            </span>
+          );
+        }};
       }
       if (col.key === 'myTier') {
         return { ...col, render: (row) => (
@@ -1994,27 +2007,6 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
                   >{label}</span>
                 );
               })}
-            </span>
-          );
-        }};
-      }
-      if (col.key === 'similarNames') {
-        return { ...col, render: (row) => {
-          const matches = similarNamesByAccount.get((row.company || '').toLowerCase().trim());
-          if (!matches || matches.length === 0) {
-            return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>—</span>;
-          }
-          const names = matches.map(m => m.company);
-          const tooltip = names.join('\n');
-          return (
-            <span
-              title={tooltip}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 6px 1px 8px', background: '#FEF3C7', border: '1px solid #F59E0B', borderRadius: 999, fontSize: '0.68rem', fontWeight: 600, color: '#92400E', maxWidth: '100%' }}
-            >
-              <span style={{ fontWeight: 700 }}>{matches.length}</span>
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
-                {names[0]}{matches.length > 1 ? ` +${matches.length - 1}` : ''}
-              </span>
             </span>
           );
         }};
