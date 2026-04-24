@@ -2154,6 +2154,18 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
             <button className={massMode ? styles.massEditBtnActive : styles.massEditBtn} onClick={() => { setMassMode(p => !p); setSelected(new Set()); }}>
               {massMode ? 'Exit Mass Edit' : 'Mass Edit'}
             </button>
+            {massMode && (
+              <button
+                type="button"
+                className={styles.massEditBtn}
+                onClick={toggleSelectAll}
+                title={selected.size === filteredContacts.length && filteredContacts.length > 0 ? 'Deselect all rows' : 'Select every row in the current view'}
+              >
+                {selected.size === filteredContacts.length && filteredContacts.length > 0
+                  ? `Deselect All (${selected.size})`
+                  : `Select All (${filteredContacts.length})`}
+              </button>
+            )}
             <button className={styles.newContactBtn} onClick={() => setEditContact(null)}>+ New Contact</button>
             <button className={styles.bulkUploadBtn} onClick={() => setShowBulkUpload(true)}>Bulk Upload</button>
             {enrichedContacts.some(c => !c.company && c.guessedCompany && !dismissedGuesses[`${c.id}_company`]) && (
