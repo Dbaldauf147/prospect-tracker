@@ -238,6 +238,33 @@ function buildColumns(data, ctx) {
       onPick, onDismiss,
     }),
   };
+  const portfolioInfoCol = {
+    key: '__portfolioInfo__',
+    label: 'PE Owner',
+    defaultWidth: 180,
+    render: (row) => {
+      const mk = row.__matchKey__;
+      // Prefer the confirmed mapping's owner; fall back to a live
+      // fuzzy suggestion's owner so the user can see the context
+      // before confirming.
+      const confirmedName = portfolioMapping[mk];
+      let entry = confirmedName ? portfolioByNorm.get(normalizeCompany(confirmedName)) : null;
+      let fromSuggestion = false;
+      if (!entry && !portfolioDismissed[mk]) {
+        entry = row.__rawName__ ? portfolioSuggestionFor(row.__rawName__) : null;
+        fromSuggestion = !!entry;
+      }
+      if (!entry || !entry.parent) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>—</span>;
+      return (
+        <span
+          title={fromSuggestion
+            ? `Owner of suggested match "${entry.company}" — confirm the mapping to lock it in`
+            : `Owner of ${entry.company}`}
+          style={{ fontSize: '0.72rem', color: fromSuggestion ? '#92400E' : 'var(--color-text-secondary)', fontStyle: fromSuggestion ? 'italic' : 'normal' }}
+        >{entry.parent}</span>
+      );
+    },
+  };
   const matchCol = {
     key: '__myAccount__',
     label: 'Table View Mapping',
@@ -249,7 +276,7 @@ function buildColumns(data, ctx) {
       onPick, onDismiss,
     }),
   };
-  return [...baseCols, ...textCol, myAccountsCol, myAccountsInfoCol, portfolioCol, matchCol];
+  return [...baseCols, ...textCol, myAccountsCol, myAccountsInfoCol, portfolioCol, portfolioInfoCol, matchCol];
 }
 
 export function UploadedListView({
@@ -635,6 +662,7 @@ export function UploadedListView({
         c.key === '__myAccountsList__' ||
         c.key === '__myAccountsInfo__' ||
         c.key === '__portfolioList__' ||
+        c.key === '__portfolioInfo__' ||
         c.key === '__myAccount__' ||
         c.key.startsWith('__text_')
       ) keys.push(c.key);
