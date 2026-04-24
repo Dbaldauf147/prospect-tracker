@@ -560,14 +560,15 @@ function computePortfolioFitScore(row, maxEnergy, maxSites, yearRange) {
   // If the uploaded file carries an Opportunity Score column, use that
   // value verbatim — never fall back to the composite methodology.
   // Extract the first numeric token so values like "85%", "85/100", or
-  // "85 (est.)" parse cleanly; when the cell genuinely has no number we
-  // return 0 rather than silently computing a score the user didn't
-  // supply.
+  // "85 (est.)" parse cleanly. When the cell has an explicit non-
+  // numeric value like "N/A" (common for credit strategies where a
+  // score doesn't apply) return null so callers can render it as
+  // "N/A" rather than a fabricated 0 or a composite score.
   if (row.opportunityScore != null && String(row.opportunityScore).trim() !== '') {
     const cleaned = String(row.opportunityScore).replace(/,/g, '');
     const match = cleaned.match(/-?\d+(?:\.\d+)?/);
     if (match) return Math.round(Number(match[0]));
-    return 0;
+    return null;
   }
   // Sector fit precedence:
   //   1. Subsector Score — only used when BOTH a Subsector label and a
@@ -3679,10 +3680,15 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     const n = Number(cleaned);
                     return { value: Number.isFinite(n) && cleaned !== '' ? n : (cleaned || null), isEstimate };
                   }
-                  // Export ordered by Opportunity Score (highest first); ties keep original order
+                  // Export ordered by Opportunity Score (highest first); ties keep original order.
+                  // Rows whose score came back null (explicit N/A) sink to the bottom.
                   const orderedRows = rows
                     .map((r, idx) => ({ r, idx, score: computePortfolioFitScore(r, maxE, maxS, yearRange) }))
-                    .sort((a, b) => b.score - a.score || a.idx - b.idx);
+                    .sort((a, b) => {
+                      const av = a.score == null ? -Infinity : a.score;
+                      const bv = b.score == null ? -Infinity : b.score;
+                      return bv - av || a.idx - b.idx;
+                    });
                   const siteEstimateFlags = orderedRows.map(({ r }) => parseSiteCount(r.siteCount).isEstimate);
                   // Acquisition year recency: 0 = oldest (hurts score), 1 = newest (helps).
                   // null when the row has no year.
@@ -3701,7 +3707,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     const acqYear = acqYearNum > 0 ? acqYearNum : (r.acquisitionYear || '');
                     const clientMgr = (r.clientManager || '').trim() || cmForRaClient(r.raClientMatch);
                     return [
-                      score,
+                      score == null ? 'N/A' : score,
                       r.companyName || '',
                       r.hqCountry || '',
                       energy,
@@ -4158,8 +4164,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   return { min: Math.min(...years), max: Math.max(...years) };
                 })();
                 const rowScores = rows.map(r => computePortfolioFitScore(r, maxEnergyForRank, maxSitesForRank, yearRangeForRank));
+                // Null scores (explicit N/A) sort to the bottom regardless of direction.
+                const scoreForSort = s => s == null ? -Infinity : s;
                 const displayOrder = portfolioSortByRank
-                  ? rows.map((_, i) => i).sort((a, b) => rowScores[b] - rowScores[a])
+                  ? rows.map((_, i) => i).sort((a, b) => scoreForSort(rowScores[b]) - scoreForSort(rowScores[a]))
                   : rows.map((_, i) => i);
 
                 // Target Accounts — full list of names from the uploaded sheet (same source as MyAccountsView)
@@ -4510,16 +4518,21 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                 {(() => {
                                   const score = rowScores[i];
                                   const tier = industryTier(r.sector || r.industry);
-                                  const colors = tier ? TIER_COLORS[tier] : { bg: 'transparent', color: '#94A3B8', border: 'var(--color-border)' };
                                   const hasImportedScore = r.opportunityScore != null && String(r.opportunityScore).trim() !== '';
-                                  const origin = hasImportedScore ? 'From uploaded file' : 'Computed (no Opportunity Score column mapped)';
+                                  const isNA = score == null;
+                                  const origin = isNA
+                                    ? 'From uploaded file — value was non-numeric (e.g. N/A) so no score is shown'
+                                    : hasImportedScore ? 'From uploaded file' : 'Computed (no Opportunity Score column mapped)';
+                                  const colors = isNA
+                                    ? { bg: '#F8FAFC', color: '#94A3B8', border: '#E2E8F0' }
+                                    : (tier ? TIER_COLORS[tier] : { bg: 'transparent', color: '#94A3B8', border: 'var(--color-border)' });
                                   return (
                                     <td style={{ padding: '0.15rem 0.25rem' }}>
                                       <span
                                         title={`${origin}\nFit ${tier || '—'} · Energy ${r.energyGwh || 0} GWh · Sites ${r.siteCount || 0}`}
                                         style={{ display: 'inline-block', minWidth: '38px', padding: '0.1rem 0.35rem', borderRadius: 10, fontSize: '0.68rem', fontWeight: 700, background: colors.bg, color: colors.color, border: `1px solid ${colors.border}` }}
                                       >
-                                        {score}
+                                        {isNA ? 'N/A' : score}
                                       </span>
                                     </td>
                                   );
@@ -5527,9 +5540,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   } else if (fieldKey === 'opportunityScore' || fieldKey === 'sectorScore' || fieldKey === 'subsectorScore') {
                     // Accept "85%", "85/100", "85 (est.)", "1,234" — keep the numeric portion
                     // so the table shows the exact score from the uploaded file rather than
-                    // silently falling back to the composite methodology.
+                    // silently falling back to the composite methodology. Preserve the raw
+                    // cell when it has text without a number (e.g. "N/A" for credit
+                    // strategies) so the scorer can distinguish "explicitly N/A" from
+                    // "column not provided" and render accordingly.
                     const m = raw.replace(/,/g, '').match(/-?\d+(\.\d+)?/);
-                    out[fieldKey] = m ? m[0] : '';
+                    if (m) out[fieldKey] = m[0];
+                    else if (raw) out[fieldKey] = raw;
+                    else out[fieldKey] = '';
                   } else {
                     out[fieldKey] = raw;
                   }
