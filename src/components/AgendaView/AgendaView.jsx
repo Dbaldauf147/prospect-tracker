@@ -388,6 +388,24 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
     return { domainToProspect: dToP, prospectDomains: pDoms, tokenToProspect: tToP };
   }, [prospects]);
 
+  // Unique, alphabetically-sorted list of Table View company names —
+  // piped into a shared <datalist> so the Company input offers native
+  // predictive-text suggestions while the user types.
+  const prospectCompanyOptions = useMemo(() => {
+    const seen = new Set();
+    const names = [];
+    for (const p of prospects) {
+      const name = (p.company || '').trim();
+      if (!name) continue;
+      const key = name.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      names.push(name);
+    }
+    names.sort((a, b) => a.localeCompare(b));
+    return names;
+  }, [prospects]);
+
   // Look up match details for a single row based on the current prospects snapshot.
   // Used both during initial enrichment AND at render time so the columns refresh
   // after the prospect's emailDomain is auto-patched.
@@ -1274,6 +1292,11 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
             </button>
           </div>
           <div className={styles.tableWrap}>
+            <datalist id="bulk-contacts-company-list">
+              {prospectCompanyOptions.map(name => (
+                <option key={name} value={name} />
+              ))}
+            </datalist>
             <table className={styles.table}>
               <colgroup>
                 <col style={{ width: '230px' }} />
@@ -1473,7 +1496,13 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                       <td><input className={styles.cellInput} value={r.firstname} onChange={e => updateRow(r.email, { firstname: e.target.value })} /></td>
                       <td><input className={styles.cellInput} value={r.lastname} onChange={e => updateRow(r.email, { lastname: e.target.value })} /></td>
                       <td>
-                        <input className={styles.cellInput} value={r.company} onChange={e => updateRow(r.email, { company: e.target.value })} />
+                        <input
+                          className={styles.cellInput}
+                          value={r.company}
+                          onChange={e => updateRow(r.email, { company: e.target.value })}
+                          list="bulk-contacts-company-list"
+                          autoComplete="off"
+                        />
                         {exists && (
                           currentHsCompany ? (
                             <div className={styles.hsCompanyHint} title="Currently stored in HubSpot">
