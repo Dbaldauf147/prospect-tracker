@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -86,6 +86,48 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
   const [showClosed, setShowClosed] = useState(false);
   const [expanded, setExpanded] = useState(() => new Set());
   const [query, setQuery] = useState('');
+  // Persisted column widths + sort so the layout survives reloads.
+  const DEFAULT_COL_WIDTHS = { company: 240, dm: 170, mapping: 110, opps: 100, ratio: 120, clients: 110 };
+  const [colWidths, setColWidths] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('pe-portfolio:col-widths')) || {};
+      return { ...DEFAULT_COL_WIDTHS, ...saved };
+    } catch { return DEFAULT_COL_WIDTHS; }
+  });
+  const [sortKey, setSortKey] = useState(() => localStorage.getItem('pe-portfolio:sort-key') || 'ratio');
+  const [sortDir, setSortDir] = useState(() => localStorage.getItem('pe-portfolio:sort-dir') || 'desc');
+  useEffect(() => {
+    try { localStorage.setItem('pe-portfolio:col-widths', JSON.stringify(colWidths)); } catch {}
+  }, [colWidths]);
+  useEffect(() => {
+    try { localStorage.setItem('pe-portfolio:sort-key', sortKey); } catch {}
+  }, [sortKey]);
+  useEffect(() => {
+    try { localStorage.setItem('pe-portfolio:sort-dir', sortDir); } catch {}
+  }, [sortDir]);
+  const resizingRef = useRef(null);
+  function startResize(colKey, e) {
+    e.preventDefault();
+    e.stopPropagation();
+    resizingRef.current = { key: colKey, startX: e.clientX, startWidth: colWidths[colKey] || 100 };
+    const onMove = (ev) => {
+      if (!resizingRef.current) return;
+      const delta = ev.clientX - resizingRef.current.startX;
+      const next = Math.max(60, resizingRef.current.startWidth + delta);
+      setColWidths(prev => ({ ...prev, [resizingRef.current.key]: next }));
+    };
+    const onUp = () => {
+      resizingRef.current = null;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+  function toggleSort(key) {
+    setSortDir(prev => (sortKey === key ? (prev === 'asc' ? 'desc' : 'asc') : 'desc'));
+    setSortKey(key);
+  }
   const oppsRecords = useOppsRecords(user?.uid);
 
   const peFirms = useMemo(() => (
@@ -210,17 +252,41 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
     return out;
   }, [peFirms, portfolioByPe, oppsByProspectId, decisionMakerByCompany, oppsRecords]);
 
-  const sortedPeFirms = useMemo(() => (
-    [...peFirms].sort((a, b) => {
+  const sortedPeFirms = useMemo(() => {
+    const arr = [...peFirms];
+    arr.sort((a, b) => {
       const sa = stageStatsByFirm.get(a.id) || {};
       const sb = stageStatsByFirm.get(b.id) || {};
-      // Primary: active opps (so firms with live pipeline rise).
-      if ((sb.activeOpps || 0) !== (sa.activeOpps || 0)) return (sb.activeOpps || 0) - (sa.activeOpps || 0);
-      // Secondary: total opps.
-      if ((sb.totalOpps || 0) !== (sa.totalOpps || 0)) return (sb.totalOpps || 0) - (sa.totalOpps || 0);
-      return (a.company || '').localeCompare(b.company || '');
-    })
-  ), [peFirms, stageStatsByFirm]);
+      let cmp = 0;
+      switch (sortKey) {
+        case 'company':
+          cmp = (a.company || '').localeCompare(b.company || '');
+          break;
+        case 'dm':
+          cmp = ((sa.decisionMakerNames || []).length) - ((sb.decisionMakerNames || []).length);
+          break;
+        case 'mapping':
+          cmp = (sa.pcMappingCount || 0) - (sb.pcMappingCount || 0);
+          break;
+        case 'opps':
+          cmp = (sa.pcOppsCount || 0) - (sb.pcOppsCount || 0);
+          break;
+        case 'ratio':
+          cmp = (sa.activeOpps || 0) - (sb.activeOpps || 0);
+          if (cmp === 0) cmp = (sa.totalOpps || 0) - (sb.totalOpps || 0);
+          break;
+        case 'clients':
+          cmp = (sa.pcClientCount || 0) - (sb.pcClientCount || 0);
+          break;
+        default:
+          cmp = 0;
+      }
+      if (sortDir === 'desc') cmp = -cmp;
+      if (cmp === 0) cmp = (a.company || '').localeCompare(b.company || '');
+      return cmp;
+    });
+    return arr;
+  }, [peFirms, stageStatsByFirm, sortKey, sortDir]);
 
   const q = query.trim().toLowerCase();
   const filteredFirms = q
@@ -279,18 +345,50 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
             </div>
           </div>
         ) : (() => {
-          const GRID = 'minmax(220px, 2fr) 150px 110px 100px 120px 110px 28px';
-          const HEADER_STYLE = { padding: '0.35rem 0.6rem', fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#475569' };
+          const GRID = `${colWidths.company}px ${colWidths.dm}px ${colWidths.mapping}px ${colWidths.opps}px ${colWidths.ratio}px ${colWidths.clients}px 28px`;
+          const HEADER_COLUMNS = [
+            { key: 'company', label: 'PE firm', align: 'left',   tip: 'Sort by company name' },
+            { key: 'dm',      label: 'Decision Maker Found?', align: 'left', tip: 'Sort by number of decision makers found on HubSpot' },
+            { key: 'mapping', label: 'PC Mapping', align: 'center', tip: 'Count of portfolio companies linked to this PE firm via the peOwner field' },
+            { key: 'opps',    label: 'PC Opps', align: 'center',    tip: 'Count of portfolio companies that have at least one opportunity in the Opps tab' },
+            { key: 'ratio',   label: 'PC Opps 2/4', align: 'center', tip: 'Active / total opps aggregated across the PE firm plus every portfolio company' },
+            { key: 'clients', label: 'PC Clients', align: 'center',  tip: 'Portfolio companies currently set to status = Client' },
+          ];
+          const SORT_GLYPH = (key) => sortKey === key ? (sortDir === 'desc' ? ' ▼' : ' ▲') : '';
+          const RESIZE_HANDLE = { position: 'absolute', top: 0, right: 0, bottom: 0, width: 6, cursor: 'col-resize', userSelect: 'none' };
           return (
             <div style={{ background: '#fff', border: '1px solid #CBD5E1', borderRadius: 8, overflow: 'hidden' }}>
               <div style={{ display: 'grid', gridTemplateColumns: GRID, background: '#F1F5F9', borderBottom: '1px solid #CBD5E1', position: 'sticky', top: 0, zIndex: 1 }}>
-                <div style={HEADER_STYLE}>PE firm</div>
-                <div style={HEADER_STYLE}>Decision Maker Found?</div>
-                <div style={{ ...HEADER_STYLE, textAlign: 'center' }} title="Count of portfolio companies linked to this PE firm via the peOwner field">PC Mapping</div>
-                <div style={{ ...HEADER_STYLE, textAlign: 'center' }} title="Count of portfolio companies that have at least one opportunity in the Opps tab">PC Opps</div>
-                <div style={{ ...HEADER_STYLE, textAlign: 'center' }} title="Active / total opps aggregated across the PE firm plus every portfolio company">PC Opps 2/4</div>
-                <div style={{ ...HEADER_STYLE, textAlign: 'center' }} title="Portfolio companies currently set to status = Client">PC Clients</div>
-                <div style={HEADER_STYLE}></div>
+                {HEADER_COLUMNS.map(c => (
+                  <div
+                    key={c.key}
+                    onClick={() => toggleSort(c.key)}
+                    title={c.tip}
+                    style={{
+                      position: 'relative',
+                      padding: '0.35rem 0.6rem',
+                      fontSize: '0.62rem',
+                      fontWeight: 700,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.04em',
+                      color: sortKey === c.key ? '#1E293B' : '#475569',
+                      textAlign: c.align,
+                      cursor: 'pointer',
+                      userSelect: 'none',
+                      background: sortKey === c.key ? '#E2E8F0' : 'transparent',
+                      borderRight: '1px solid #E2E8F0',
+                    }}
+                  >
+                    {c.label}{SORT_GLYPH(c.key)}
+                    <span
+                      onMouseDown={e => startResize(c.key, e)}
+                      onClick={e => e.stopPropagation()}
+                      style={RESIZE_HANDLE}
+                      title="Drag to resize"
+                    />
+                  </div>
+                ))}
+                <div style={{ padding: '0.35rem 0.6rem' }}></div>
               </div>
 
               {filteredFirms.map((pe, rowIdx) => {
