@@ -571,6 +571,81 @@ function StatusMismatchWarning({ row, onUpdate }) {
   );
 }
 
+// Drop-down warning when an account's Type doesn't match what the
+// opps data implies (currently only 'Portfolio Company' triggered by
+// a PE-Partner-sourced opp). Same UX pattern as StatusMismatchWarning.
+function TypeMismatchWarning({ row, onUpdate }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const dropRef = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const h = e => { if (ref.current && !ref.current.contains(e.target) && dropRef.current && !dropRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [open]);
+  return (
+    <span ref={ref}>
+      <span
+        style={{ color: '#F59E0B', fontSize: '0.55rem', fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}
+        onClick={e => { e.stopPropagation(); setOpen(p => !p); }}
+        title={`Opps sourced from a PE Partner — suggest Type = "${row.suggestedType}"`}
+      >&#9888; {row.suggestedType}</span>
+      {open && createPortal(
+        <div
+          ref={dropRef}
+          onClick={e => e.stopPropagation()}
+          style={{
+            position: 'fixed',
+            top: ref.current ? ref.current.getBoundingClientRect().bottom + 4 : 100,
+            left: ref.current ? ref.current.getBoundingClientRect().left : 100,
+            zIndex: 10000,
+            background: '#fff', border: '1px solid var(--color-border)', borderRadius: '8px',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.15)', padding: '0.6rem 0.8rem', minWidth: '240px',
+          }}
+        >
+          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text)', marginBottom: '0.3rem' }}>Type Suggestion</div>
+          <div style={{ fontSize: '0.7rem', color: 'var(--color-text-secondary)', marginBottom: '0.5rem' }}>
+            Current: <strong>{row.type || '—'}</strong><br/>
+            At least one opp has <strong>Source = PE Partner</strong>, which usually means{' '}
+            <strong>{row.suggestedType}</strong>.
+          </div>
+          <div style={{ display: 'flex', gap: '0.4rem', flexDirection: 'column' }}>
+            <button
+              onClick={() => { onUpdate(row.id, { type: row.suggestedType }); setOpen(false); }}
+              title={`Set Type to "${row.suggestedType}"`}
+              style={{
+                padding: '0.4rem 0.6rem', border: 'none', borderRadius: '6px',
+                background: 'var(--color-accent)', color: '#fff', fontSize: '0.72rem', fontWeight: 600,
+                cursor: 'pointer', fontFamily: 'inherit',
+              }}
+            >Set Type to {row.suggestedType}</button>
+            <button
+              onClick={() => { onUpdate(row.id, { hideTypeSuggestion: true }); setOpen(false); }}
+              title="Keep the current Type and stop suggesting changes for this company"
+              style={{
+                padding: '0.4rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px',
+                background: '#fff', color: 'var(--color-text)', fontSize: '0.72rem', fontWeight: 600,
+                cursor: 'pointer', fontFamily: 'inherit',
+              }}
+            >Keep current Type</button>
+            <button
+              onClick={() => { onUpdate(row.id, { dismissedSuggestedType: row.suggestedType }); setOpen(false); }}
+              title="Dismiss this suggestion for now. It will reappear if the suggested Type ever changes."
+              style={{
+                padding: '0.4rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px',
+                background: 'var(--color-surface)', color: 'var(--color-text-secondary)', fontSize: '0.72rem', fontWeight: 600,
+                cursor: 'pointer', fontFamily: 'inherit',
+              }}
+            >Ignore</button>
+          </div>
+        </div>,
+        document.body
+      )}
+    </span>
+  );
+}
+
 function TierMismatchWarning({ row, onApply, onDismiss }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
@@ -1077,13 +1152,14 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     return () => { cancelled = true; };
   }, [user]);
 
-  const { activeOppsByAccount, totalOppsByAccount, openOppsByAccount, suggestedStatusByAccount, displayNameByAccount } = useMemo(() => {
+  const { activeOppsByAccount, totalOppsByAccount, openOppsByAccount, suggestedStatusByAccount, displayNameByAccount, pePartnerAccountSet } = useMemo(() => {
     const active = {};
     const total = {};
     const open = {}; // non-closed, non-invalid opps (for Tier 3 inclusion)
     const stagesByAccount = {};
     const displayName = {}; // lowercase key -> original-case name (first seen)
-    if (oppsRecords.length === 0) return { activeOppsByAccount: active, totalOppsByAccount: total, openOppsByAccount: open, suggestedStatusByAccount: {}, displayNameByAccount: displayName };
+    const peSet = new Set(); // lowercase account names with any opp tagged Source = PE Partner
+    if (oppsRecords.length === 0) return { activeOppsByAccount: active, totalOppsByAccount: total, openOppsByAccount: open, suggestedStatusByAccount: {}, displayNameByAccount: displayName, pePartnerAccountSet: peSet };
     const closedStages = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
     for (const r of oppsRecords) {
       const rawAccount = (r['Account'] || '').trim();
@@ -1103,6 +1179,11 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       } else if (stage && !closedStages.has(stage) && !invalidStages.has(stage)) {
         stagesByAccount[account].active++;
       }
+
+      // Track PE Partner-sourced opps so we can nudge the account's
+      // Type toward 'Portfolio Company' when it isn't already.
+      const sourceVal = String(r['Source'] || '').trim().toLowerCase();
+      if (sourceVal.includes('pe partner') || sourceVal === 'pe partner') peSet.add(account);
 
       // Count all opps (including closed) in total, only open in active
       if (!invalidStages.has(stage)) {
@@ -1142,7 +1223,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     const soldOpps = oppsRecords.filter(r => (r['Stage'] || '').toLowerCase().includes('sold') || (r['Stage'] || '').toLowerCase().includes('won'));
     console.log('All Sold/Won opps:', soldOpps.map(r => `"${r['Account']}" Stage="${r['Stage']}"`));
 
-    return { activeOppsByAccount: active, totalOppsByAccount: total, openOppsByAccount: open, suggestedStatusByAccount: suggested, displayNameByAccount: displayName };
+    return { activeOppsByAccount: active, totalOppsByAccount: total, openOppsByAccount: open, suggestedStatusByAccount: suggested, displayNameByAccount: displayName, pePartnerAccountSet: peSet };
   }, [oppsRecords]);
 
   // Dismissed companies — companies the user manually deleted that should not be auto-recreated
@@ -1436,12 +1517,28 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         if (found) break;
       }
       const statusMismatch = !p.hideStatusSuggestion && !!suggestedStatus && suggestedStatus !== p.status && p.status && p.dismissedSuggestedStatus !== suggestedStatus;
+      // Any opp sourced from a "PE Partner" nudges Type → Portfolio
+      // Company. Fuzzy-match against the row's company + divisions to
+      // catch e.g. 'Acme Holdings' vs 'Acme Holdings LLC'.
+      let pePartnerHit = false;
+      for (const name of allCompanyNames) {
+        if (pePartnerAccountSet.has(name)) { pePartnerHit = true; break; }
+        for (const pe of pePartnerAccountSet) {
+          if (companiesMatch(name, pe)) { pePartnerHit = true; break; }
+        }
+        if (pePartnerHit) break;
+      }
+      const suggestedType = pePartnerHit ? 'Portfolio Company' : '';
+      const typeMismatch = !!suggestedType
+        && p.type !== suggestedType
+        && p.dismissedSuggestedType !== suggestedType
+        && !p.hideTypeSuggestion;
       // Hide accounts with zero open opps — UNLESS they're strategic
       // (Tier 1 or Tier 2) AND owned by Baldauf. A Tier 1 account on
       // someone else's CDM with no open opps shouldn't show on Dan's list.
       const isStrategicTier = tier === 'Tier 1' || tier === 'Tier 2';
       if (!(isStrategicTier && isBaldauf) && (!oppsCount || oppsCount === 0)) continue;
-      const entry = { ...p, myTier: tier, activityCount, oppsCount, totalOpps, sources: sources.join(', '), dmFound: !!dmNames, dmNames: dmNames ? dmNames.join(', ') : '', cdmMismatch: !isBaldauf, targetNames, targetName: (targetNames || []).join(', '), targetTier, tierMismatch, otherReps, contactCount, bucketCount, suggestedStatus, statusMismatch };
+      const entry = { ...p, myTier: tier, activityCount, oppsCount, totalOpps, sources: sources.join(', '), dmFound: !!dmNames, dmNames: dmNames ? dmNames.join(', ') : '', cdmMismatch: !isBaldauf, targetNames, targetName: (targetNames || []).join(', '), targetTier, tierMismatch, otherReps, contactCount, bucketCount, suggestedStatus, statusMismatch, suggestedType, typeMismatch };
       if (tier === 'Tier 1') t1.push(entry);
       else t2.push(entry); // Tier 2 and Tier 3 both go in t2 array
       const s = p.status || 'Unknown';
@@ -1544,6 +1641,8 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         bucketCount: 0,
         suggestedStatus,
         statusMismatch: false, // no stored status to compare against
+        suggestedType: '',
+        typeMismatch: false,
         _oppsOnly: true,
       };
       t2.push(entry);
@@ -1555,7 +1654,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     if (skippedCdm.length > 0) console.log('My Accounts: skipped (CDM not Baldauf):', skippedCdm);
     console.log(`My Accounts: ${t1.length} Tier 1, ${t2.length} Tier 2 (incl ${oppsOnlyAdded} opps-only)`);
     return { tier1: t1, tier2: t2, allAccounts: all, statusCounts: counts };
-  }, [prospects, targetMap, targetAccounts, allTargetReps, activityByCompany, activeOppsByAccount, totalOppsByAccount, suggestedStatusByAccount, displayNameByAccount, hubspotCompanies, targetCompanies, decisionMakerByCompany, contactCountByCompany, bucketsByCompany, divisionsMap]);
+  }, [prospects, targetMap, targetAccounts, allTargetReps, activityByCompany, activeOppsByAccount, totalOppsByAccount, suggestedStatusByAccount, displayNameByAccount, hubspotCompanies, targetCompanies, decisionMakerByCompany, contactCountByCompany, bucketsByCompany, divisionsMap, pePartnerAccountSet]);
 
   const clientCount = statusCounts['Client'] || 0;
   const tier3Count = allAccounts.filter(a => a.myTier === 'Tier 3').length;
@@ -1774,7 +1873,13 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         )};
       }
       if (col.key === 'type') {
-        return { ...col, render: (row) => <InlineCell row={row} field="type" value={row.type} onUpdate={onUpdate} options={TYPES} /> };
+        const typeMismatchCount = filteredAccounts.filter(a => a.typeMismatch).length;
+        return { ...col, label: typeMismatchCount > 0 ? `Type ⚠ ${typeMismatchCount}` : 'Type', render: (row) => (
+          <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+            <InlineCell row={row} field="type" value={row.type} onUpdate={onUpdate} options={TYPES} />
+            {row.typeMismatch && <TypeMismatchWarning row={row} onUpdate={onUpdate} />}
+          </span>
+        )};
       }
       if (col.key === 'geography') {
         return { ...col, render: (row) => <InlineCell row={row} field="geography" value={row.geography} onUpdate={onUpdate} options={GEOGRAPHIES} /> };
