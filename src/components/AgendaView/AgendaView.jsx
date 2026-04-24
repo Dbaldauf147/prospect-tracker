@@ -226,6 +226,16 @@ function pickDominantKey(map) {
   return bestKey;
 }
 
+// Prepend https:// when a URL doesn't already carry a protocol so the
+// <a href> opens externally instead of being treated as a same-origin
+// path ("acme.com" -> "https://acme.com").
+function ensureProtocol(url) {
+  if (!url) return '';
+  const trimmed = String(url).trim();
+  if (!trimmed) return '';
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+}
+
 export function AgendaView({ prospects = [], onUpdateProspect }) {
   const { user } = useAuth();
   const [rows, setRows] = useState(() => loadCache());
@@ -786,6 +796,41 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
 
   const [backfillBusy, setBackfillBusy] = useState(false);
   const [backfillStatus, setBackfillStatus] = useState(null);
+  // Track per-cell apply state — "prospectId::field" keys. 'applying'
+  // while the request is in flight, 'applied' once we've patched the
+  // prospect and before it re-renders with the new value so the user
+  // sees a transient confirmation.
+  const [cellApplyState, setCellApplyState] = useState({});
+
+  // Push a single (prospect, field) suggestion to HubSpot without
+  // touching the other suggestions. emailDomain is multi-value, so we
+  // append to the prospect's existing newline-joined list.
+  const applySingleSuggestion = useCallback(async (prospect, fieldKey, value) => {
+    if (!onUpdateProspect || !prospect || !fieldKey || !value) return;
+    const key = `${prospect.id}::${fieldKey}`;
+    setCellApplyState(prev => ({ ...prev, [key]: 'applying' }));
+    try {
+      let patchValue = value;
+      if (fieldKey === 'emailDomain') {
+        const existing = String(prospect.emailDomain || '')
+          .split(/[\n;,]+/).map(s => s.trim()).filter(Boolean);
+        const existingLower = new Set(existing.map(s => s.toLowerCase()));
+        if (existingLower.has(String(value).toLowerCase())) {
+          setCellApplyState(prev => ({ ...prev, [key]: 'applied' }));
+          setTimeout(() => setCellApplyState(prev => { const n = { ...prev }; delete n[key]; return n; }), 1500);
+          return;
+        }
+        patchValue = [...existing, value].join('\n');
+      }
+      await onUpdateProspect(prospect.id, { [fieldKey]: patchValue });
+      setCellApplyState(prev => ({ ...prev, [key]: 'applied' }));
+      setTimeout(() => setCellApplyState(prev => { const n = { ...prev }; delete n[key]; return n; }), 1500);
+    } catch {
+      setCellApplyState(prev => ({ ...prev, [key]: 'error' }));
+      setTimeout(() => setCellApplyState(prev => { const n = { ...prev }; delete n[key]; return n; }), 2500);
+    }
+  }, [onUpdateProspect]);
+
   async function applyProspectBackfill() {
     if (!onUpdateProspect || prospectBackfillUpdates.length === 0) return;
     setBackfillBusy(true);
@@ -921,7 +966,7 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                   Fill missing Table View data on {prospectSuggestionRows.length} prospect{prospectSuggestionRows.length === 1 ? '' : 's'}
                 </div>
                 <div style={{ fontSize: '0.68rem', color: '#14532D' }}>
-                  Website / Zoom / Email Domain suggestions from your upload or inferred from the contact emails. Click × on a cell to skip it, or undo to restore. Then click Update Table View to push {prospectBackfillUpdates.length} prospect{prospectBackfillUpdates.length === 1 ? '' : 's'}.
+                  Website / Zoom / Email Domain suggestions from your upload or inferred from the contact emails. Click ✓ on a cell to apply just that one, × to skip it, or the Update Table View button to push all {prospectBackfillUpdates.length} prospect{prospectBackfillUpdates.length === 1 ? '' : 's'} at once.
                 </div>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
@@ -952,8 +997,23 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                   </div>
                   {PROSPECT_BACKFILL_FIELDS.map(f => {
                     const cell = cells[f.key];
+                    const isWebsite = f.key === 'website';
                     if (!cell || !cell.sugg) {
                       if (cell?.existing && f.key !== 'emailDomain') {
+                        if (isWebsite) {
+                          return (
+                            <a
+                              key={f.key}
+                              href={ensureProtocol(cell.existing)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title={`Already has: ${cell.existing}`}
+                              style={{ color: 'var(--color-accent)', fontSize: '0.68rem', alignSelf: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: 'underline' }}
+                            >
+                              {cell.existing}
+                            </a>
+                          );
+                        }
                         return (
                           <div key={f.key} style={{ color: '#64748B', fontSize: '0.68rem', alignSelf: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`Already has: ${cell.existing}`}>
                             {cell.existing}
@@ -964,6 +1024,7 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                     }
                     const { sugg, dismissed, dismissKey } = cell;
                     const origin = sugg.origin;
+                    const applyState = cellApplyState[dismissKey];
                     if (dismissed) {
                       return (
                         <div key={f.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, alignSelf: 'center', background: '#F1F5F9', border: '1px solid #CBD5E1', borderRadius: 999, padding: '1px 8px', color: '#64748B', fontSize: '0.66rem' }}>
@@ -976,20 +1037,56 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                         </div>
                       );
                     }
+                    const valueDisplay = String(sugg.value).replace(/\n/g, ' · ');
+                    const valueEl = isWebsite ? (
+                      <a
+                        href={ensureProtocol(sugg.value)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={e => e.stopPropagation()}
+                        style={{ color: '#854D0E', textDecoration: 'underline', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}
+                        title={sugg.value}
+                      >
+                        {valueDisplay}
+                      </a>
+                    ) : (
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }} title={sugg.value}>
+                        {valueDisplay}
+                      </span>
+                    );
                     return (
-                      <div key={f.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, alignSelf: 'center', background: '#FEF9C3', border: '1px solid #FACC15', borderRadius: 999, padding: '1px 6px 1px 8px', color: '#854D0E', fontSize: '0.68rem', fontWeight: 600 }}>
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }} title={sugg.value}>
-                          {String(sugg.value).replace(/\n/g, ' · ')}
-                        </span>
+                      <div key={f.key} style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 4, alignSelf: 'center',
+                        background: applyState === 'applied' ? '#DCFCE7' : applyState === 'error' ? '#FEE2E2' : '#FEF9C3',
+                        border: `1px solid ${applyState === 'applied' ? '#86EFAC' : applyState === 'error' ? '#FCA5A5' : '#FACC15'}`,
+                        borderRadius: 999, padding: '1px 6px 1px 8px',
+                        color: applyState === 'applied' ? '#166534' : applyState === 'error' ? '#991B1B' : '#854D0E',
+                        fontSize: '0.68rem', fontWeight: 600,
+                      }}>
+                        {valueEl}
                         {origin === 'inferred' && (
                           <span style={{ fontSize: '0.58rem', color: '#A16207', fontWeight: 500, fontStyle: 'italic' }}>auto</span>
                         )}
-                        <button
-                          type="button"
-                          title="Remove this suggestion"
-                          onClick={() => toggleDismissed(dismissKey)}
-                          style={{ background: 'none', border: 'none', color: '#A16207', cursor: 'pointer', fontSize: '0.78rem', padding: 0, lineHeight: 1, fontFamily: 'inherit', fontWeight: 700 }}
-                        >×</button>
+                        {applyState === 'applied' ? (
+                          <span style={{ fontSize: '0.62rem', fontWeight: 700 }}>✓ Applied</span>
+                        ) : applyState === 'applying' ? (
+                          <span style={{ fontSize: '0.62rem' }}>…</span>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              title="Apply just this suggestion to the prospect"
+                              onClick={() => applySingleSuggestion(prospect, f.key, sugg.value)}
+                              style={{ background: '#16A34A', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '0.62rem', padding: '0 5px', lineHeight: 1.4, fontFamily: 'inherit', fontWeight: 700, borderRadius: 999 }}
+                            >✓</button>
+                            <button
+                              type="button"
+                              title="Remove this suggestion"
+                              onClick={() => toggleDismissed(dismissKey)}
+                              style={{ background: 'none', border: 'none', color: '#A16207', cursor: 'pointer', fontSize: '0.78rem', padding: 0, lineHeight: 1, fontFamily: 'inherit', fontWeight: 700 }}
+                            >×</button>
+                          </>
+                        )}
                       </div>
                     );
                   })}
@@ -1114,55 +1211,103 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                     const dismissKey = `${pid}::${fieldKey}`;
                     const isDismissed = pid && dismissedSuggestions.has(dismissKey);
                     const sugg = pid && !isDismissed ? suggestionFor(pid, fieldKey) : null;
+                    const prospect = pid ? prospects.find(p => p.id === pid) : null;
+                    const applyState = cellApplyState[dismissKey];
+
+                    // Render the prospect's existing value — hyperlink the
+                    // website so the user can click through.
+                    const renderExisting = (value, { small = false, prefix = '' } = {}) => {
+                      const display = String(value).replace(/\n/g, ', ');
+                      const style = {
+                        fontSize: small ? '0.7rem' : '0.72rem',
+                        color: '#334155',
+                        display: 'inline-block',
+                        maxWidth: '100%',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      };
+                      if (fieldKey === 'website') {
+                        return (
+                          <a
+                            href={ensureProtocol(value)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={value}
+                            style={{ ...style, color: 'var(--color-accent)', textDecoration: 'underline' }}
+                          >
+                            {prefix}{display}
+                          </a>
+                        );
+                      }
+                      return <span title={value} style={style}>{prefix}{display}</span>;
+                    };
+
+                    // Render the yellow suggestion pill with ✓ apply + × dismiss.
+                    const renderSuggPill = (prefix = '') => {
+                      const tip = sugg.origin === 'inferred'
+                        ? `Inferred from contact emails.\nValue: ${sugg.value}`
+                        : `From the uploaded file.\nValue: ${sugg.value}`;
+                      const valueEl = fieldKey === 'website' ? (
+                        <a
+                          href={ensureProtocol(sugg.value)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={e => e.stopPropagation()}
+                          style={{ color: '#854D0E', textDecoration: 'underline', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}
+                        >
+                          {prefix}{sugg.value}
+                        </a>
+                      ) : (
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+                          {prefix}{sugg.value}
+                        </span>
+                      );
+                      return (
+                        <span
+                          title={tip}
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 6px 1px 8px', background: applyState === 'applied' ? '#DCFCE7' : applyState === 'error' ? '#FEE2E2' : '#FEF9C3', border: `1px solid ${applyState === 'applied' ? '#86EFAC' : applyState === 'error' ? '#FCA5A5' : '#FACC15'}`, borderRadius: 999, fontSize: '0.68rem', fontWeight: 600, color: applyState === 'applied' ? '#166534' : applyState === 'error' ? '#991B1B' : '#854D0E', maxWidth: '100%' }}
+                        >
+                          {valueEl}
+                          {sugg.origin === 'inferred' && (
+                            <span style={{ fontSize: '0.58rem', color: '#A16207', fontWeight: 500, fontStyle: 'italic' }}>auto</span>
+                          )}
+                          {applyState === 'applied' ? (
+                            <span style={{ fontSize: '0.62rem', fontWeight: 700 }}>✓ Applied</span>
+                          ) : applyState === 'applying' ? (
+                            <span style={{ fontSize: '0.62rem' }}>…</span>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                title="Apply just this suggestion to the prospect"
+                                disabled={!prospect}
+                                onClick={() => applySingleSuggestion(prospect, fieldKey, sugg.value)}
+                                style={{ background: '#16A34A', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '0.62rem', padding: '0 5px', lineHeight: 1.4, fontFamily: 'inherit', fontWeight: 700, borderRadius: 999 }}
+                              >✓</button>
+                              <button
+                                type="button"
+                                title="Remove this suggestion"
+                                onClick={() => toggleDismissed(dismissKey)}
+                                style={{ background: 'none', border: 'none', color: '#A16207', cursor: 'pointer', fontSize: '0.78rem', padding: 0, lineHeight: 1, fontFamily: 'inherit', fontWeight: 700 }}
+                              >×</button>
+                            </>
+                          )}
+                        </span>
+                      );
+                    };
+
                     // emailDomain is multi-value — when the prospect has
                     // entries AND we can suggest a new one, show both.
                     if (existing && fieldKey === 'emailDomain' && sugg) {
-                      const display = existing.replace(/\n/g, ', ');
                       return (
                         <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 2, alignItems: 'flex-start' }}>
-                          <span
-                            title={existing}
-                            style={{ fontSize: '0.7rem', color: '#334155', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                          >
-                            {display}
-                          </span>
-                          <span
-                            title={`${sugg.origin === 'inferred' ? 'Inferred' : 'From upload'}. Click × to remove this suggestion.`}
-                            style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 6px 1px 8px', background: '#FEF9C3', border: '1px solid #FACC15', borderRadius: 999, fontSize: '0.66rem', fontWeight: 600, color: '#854D0E', maxWidth: '100%' }}
-                          >
-                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>+ {sugg.value}</span>
-                            {sugg.origin === 'inferred' && (
-                              <span style={{ fontSize: '0.58rem', color: '#A16207', fontWeight: 500, fontStyle: 'italic' }}>auto</span>
-                            )}
-                            <button
-                              type="button"
-                              title="Remove this suggestion"
-                              onClick={() => toggleDismissed(dismissKey)}
-                              style={{ background: 'none', border: 'none', color: '#A16207', cursor: 'pointer', fontSize: '0.78rem', padding: 0, lineHeight: 1, fontFamily: 'inherit', fontWeight: 700 }}
-                            >×</button>
-                          </span>
+                          {renderExisting(existing, { small: true })}
+                          {renderSuggPill('+ ')}
                         </span>
                       );
                     }
-                    if (existing) {
-                      const display = existing.replace(/\n/g, ', ');
-                      return (
-                        <span
-                          title={existing}
-                          style={{
-                            fontSize: '0.72rem',
-                            color: '#334155',
-                            display: 'inline-block',
-                            maxWidth: '100%',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                          }}
-                        >
-                          {display}
-                        </span>
-                      );
-                    }
+                    if (existing) return renderExisting(existing);
                     if (isDismissed) {
                       return (
                         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
@@ -1175,42 +1320,7 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                         </span>
                       );
                     }
-                    if (sugg) {
-                      const tip = sugg.origin === 'inferred'
-                        ? `Inferred from contact emails. Click × to remove this suggestion.`
-                        : `From the uploaded file. Click × to remove this suggestion.`;
-                      return (
-                        <span
-                          title={`${tip}\nValue: ${sugg.value}`}
-                          style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: 4,
-                            padding: '1px 6px 1px 8px',
-                            background: '#FEF9C3',
-                            border: '1px solid #FACC15',
-                            borderRadius: 999,
-                            fontSize: '0.68rem',
-                            fontWeight: 600,
-                            color: '#854D0E',
-                            maxWidth: '100%',
-                          }}
-                        >
-                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
-                            {sugg.value}
-                          </span>
-                          {sugg.origin === 'inferred' && (
-                            <span style={{ fontSize: '0.58rem', color: '#A16207', fontWeight: 500, fontStyle: 'italic' }}>auto</span>
-                          )}
-                          <button
-                            type="button"
-                            title="Remove this suggestion"
-                            onClick={() => toggleDismissed(dismissKey)}
-                            style={{ background: 'none', border: 'none', color: '#A16207', cursor: 'pointer', fontSize: '0.78rem', padding: 0, lineHeight: 1, fontFamily: 'inherit', fontWeight: 700 }}
-                          >×</button>
-                        </span>
-                      );
-                    }
+                    if (sugg) return renderSuggPill();
                     return (
                       <span
                         title="Prospect is missing this field and no upload/inferred value"
