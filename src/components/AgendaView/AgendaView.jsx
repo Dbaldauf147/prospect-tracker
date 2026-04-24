@@ -234,6 +234,7 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
   const [progress, setProgress] = useState(null); // { done, total }
   const [results, setResults] = useState({}); // email -> 'added' | 'exists' | 'error: msg'
   const [tvMissingOnly, setTvMissingOnly] = useState(false);
+  const [activeTab, setActiveTab] = useState('contacts'); // 'contacts' | 'tableview'
 
   // Reload HubSpot cache whenever results change (so newly-added contacts move to the "exists" state).
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -816,24 +817,6 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
         </div>
         <div className={styles.headerActions}>
           {rows.length > 0 && <button className={styles.secondaryBtn} onClick={clearAll}>Clear</button>}
-          <button
-            className={styles.primaryBtn}
-            disabled={busy || (newCount === 0 && updateCount === 0)}
-            onClick={addAll}
-            title={
-              newCount === 0 && updateCount === 0
-                ? 'Nothing to send'
-                : `Create ${newCount} new and fill missing fields on ${updateCount} existing contact${updateCount === 1 ? '' : 's'}`
-            }
-          >
-            {busy
-              ? `Sending ${progress?.done}/${progress?.total}…`
-              : updateCount > 0 && newCount > 0
-                ? `Send to HubSpot (${newCount} new · ${updateCount} update${updateCount === 1 ? '' : 's'})`
-                : updateCount > 0
-                  ? `Update ${updateCount} in HubSpot`
-                  : `+ Add ${newCount} to HubSpot`}
-          </button>
         </div>
       </div>
 
@@ -884,7 +867,53 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
           </div>
         </div>
 
-        {prospectSuggestionRows.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderBottom: '1px solid var(--color-border)', margin: '0.75rem 0 0' }}>
+          {[
+            { key: 'contacts',  label: 'Add Contacts',       count: newCount + updateCount },
+            { key: 'tableview', label: 'Update Table View',  count: prospectBackfillUpdates.length },
+          ].map(t => {
+            const isActive = activeTab === t.key;
+            return (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => setActiveTab(t.key)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  borderBottom: isActive ? '2px solid var(--color-accent)' : '2px solid transparent',
+                  color: isActive ? 'var(--color-accent)' : 'var(--color-text-secondary)',
+                  fontSize: '0.78rem',
+                  fontWeight: 700,
+                  padding: '0.5rem 0.75rem',
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                }}
+              >
+                {t.label}
+                <span style={{
+                  fontSize: '0.65rem',
+                  fontWeight: 700,
+                  padding: '1px 6px',
+                  borderRadius: 999,
+                  background: isActive ? 'var(--color-accent)' : '#E2E8F0',
+                  color: isActive ? '#fff' : '#475569',
+                }}>{t.count}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {activeTab === 'tableview' && prospectSuggestionRows.length === 0 && (
+          <div className={styles.empty} style={{ marginTop: '0.75rem' }}>
+            No Table View backfills available. Drop contacts whose matched prospects are missing a Website / Zoom / Email Domain value.
+          </div>
+        )}
+
+        {activeTab === 'tableview' && prospectSuggestionRows.length > 0 && (
           <div style={{ margin: '0.75rem 0', border: '1px solid #86EFAC', background: '#F0FDF4', borderRadius: 8, padding: '0.6rem 0.8rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.6rem', marginBottom: '0.4rem' }}>
               <div>
@@ -970,13 +999,34 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
           </div>
         )}
 
-        {rows.length === 0 ? (
+        {activeTab === 'contacts' && rows.length === 0 ? (
           <div className={styles.empty}>No contacts yet. Drag or paste above to get started.</div>
-        ) : (
+        ) : activeTab === 'contacts' && (
           <>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.6rem', margin: '0.5rem 0 0.25rem' }}>
-            <div style={{ fontSize: '0.72rem', color: '#64748B' }}>
-              Showing <strong>{visibleRows.length}</strong> of {rows.length} row{rows.length === 1 ? '' : 's'}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.6rem', margin: '0.75rem 0 0.25rem', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <button
+                type="button"
+                className={styles.primaryBtn}
+                disabled={busy || (newCount === 0 && updateCount === 0)}
+                onClick={addAll}
+                title={
+                  newCount === 0 && updateCount === 0
+                    ? 'Nothing to send'
+                    : `Create ${newCount} new and fill missing fields on ${updateCount} existing contact${updateCount === 1 ? '' : 's'}`
+                }
+              >
+                {busy
+                  ? `Sending ${progress?.done}/${progress?.total}…`
+                  : updateCount > 0 && newCount > 0
+                    ? `Send to HubSpot (${newCount} new · ${updateCount} update${updateCount === 1 ? '' : 's'})`
+                    : updateCount > 0
+                      ? `Update ${updateCount} in HubSpot`
+                      : `+ Add ${newCount} to HubSpot`}
+              </button>
+              <span style={{ fontSize: '0.72rem', color: '#64748B' }}>
+                Showing <strong>{visibleRows.length}</strong> of {rows.length} row{rows.length === 1 ? '' : 's'}
+              </span>
             </div>
             <button
               type="button"
