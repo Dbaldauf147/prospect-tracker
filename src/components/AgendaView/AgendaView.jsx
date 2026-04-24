@@ -406,10 +406,11 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
   // Also build a token → prospect map from company-name words (e.g. "URW" from
   // "Unibail-Rodamco-Westfield (URW)") so we can fuzzy-match when the domain
   // itself isn't registered on the prospect.
-  const { domainToProspect, prospectDomains, tokenToProspect } = useMemo(() => {
+  const { domainToProspect, prospectDomains, tokenToProspect, prospectCompactPrefixMap, prospectCompactPrefixesDesc } = useMemo(() => {
     const dToP = new Map();
     const pDoms = new Map();
     const tToP = new Map();
+    const compactToP = new Map();
     function recordDomain(p, domain) {
       if (!domain || !p.company) return;
       dToP.set(domain, p);
@@ -438,9 +439,25 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
         for (const t of tokens) {
           if (!tToP.has(t)) tToP.set(t, p); // first-wins; prospects loaded earlier take priority
         }
+        // Index every "first-N-tokens joined" compact form — e.g.
+        // "LPL Financial" → "lpl", "lplfinancial" — so a domain brand
+        // like "lplfinancial" (from lplfinancial.com) can still map
+        // back to the canonical TV prospect.
+        const orderedTokens = p.company.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+        for (let n = 1; n <= orderedTokens.length; n++) {
+          const prefix = orderedTokens.slice(0, n).join('');
+          if (prefix && prefix.length >= 3 && !compactToP.has(prefix)) compactToP.set(prefix, p);
+        }
       }
     }
-    return { domainToProspect: dToP, prospectDomains: pDoms, tokenToProspect: tToP };
+    const compactDesc = Array.from(compactToP.keys()).sort((a, b) => b.length - a.length);
+    return {
+      domainToProspect: dToP,
+      prospectDomains: pDoms,
+      tokenToProspect: tToP,
+      prospectCompactPrefixMap: compactToP,
+      prospectCompactPrefixesDesc: compactDesc,
+    };
   }, [prospects]);
 
   // Unique, alphabetically-sorted list of Table View company names —
@@ -472,12 +489,31 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
     if (!matched && domain) {
       const token = extractBrandToken(domain);
       if (token && token.length >= 3) matched = tokenToProspect.get(token) || null;
+      // Still no hit? Try the compact-prefix map so "lplfinancial"
+      // (domain brand) resolves to "LPL Financial" (prospect whose
+      // first-two-token compact form is "lplfinancial"). Supports
+      // prefix-match in either direction, longest wins.
+      if (!matched && token && token.length >= 3) {
+        if (prospectCompactPrefixMap.has(token)) {
+          matched = prospectCompactPrefixMap.get(token);
+        } else {
+          for (const key of prospectCompactPrefixesDesc) {
+            if (key.length < 5) break;
+            if (token.startsWith(key) || key.startsWith(token)) {
+              matched = prospectCompactPrefixMap.get(key);
+              break;
+            }
+          }
+        }
+      }
     }
-    const suggestedCompany = matched?.company || (domain ? guessDomainCompany(email) : '');
+    // Only suggest a company that actually exists in Table View —
+    // never a bare brand derived from the domain (e.g. "Lplfinancial").
+    const suggestedCompany = matched?.company || '';
     const domainSet = matched ? prospectDomains.get(matched.company.toLowerCase()) : null;
     const companyDomains = domainSet ? Array.from(domainSet).sort() : (domain ? [domain] : []);
     return { domain, matched, wasExactMatch, suggestedCompany, companyDomains };
-  }, [domainToProspect, prospectDomains, tokenToProspect]);
+  }, [domainToProspect, prospectDomains, tokenToProspect, prospectCompactPrefixMap, prospectCompactPrefixesDesc]);
 
   const enrichRow = useCallback((r) => {
     const { domain, matched, wasExactMatch } = lookupMatch(r.email);
