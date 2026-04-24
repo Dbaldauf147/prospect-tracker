@@ -55,7 +55,6 @@ const IGNORE_HEADER_PATTERNS = [
   'companydivision',
   'divisionname',
   'zoominfocontactprofile',
-  'contactprofileurl',
   'companylinkedin',
   'linkedincompany',
 ];
