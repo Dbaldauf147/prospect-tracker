@@ -2351,7 +2351,6 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
               { key: 'lastOpen', label: 'Last Open', defaultWidth: 120, render: (c) => <span className={styles.dateText}>{fmtDate(c.hs_email_last_open_date)}</span> },
               { key: 'lastClick', label: 'Last Click', defaultWidth: 120, render: (c) => <span className={styles.dateText}>{fmtDate(c.hs_email_last_click_date)}</span> },
               { key: '_edit', label: '', defaultWidth: 36, render: (c) => <button onClick={(e) => { e.stopPropagation(); setEditContact(c); }} title="Edit contact" style={{ background: 'none', border: '1px solid var(--color-border)', borderRadius: '4px', padding: '1px 6px', fontSize: '0.7rem', cursor: 'pointer', color: 'var(--color-accent)' }}>Edit</button> },
-              { key: '_delete', label: '', defaultWidth: 40, render: (c) => <button className={styles.deleteBtn} onClick={(e) => { e.stopPropagation(); handleDeleteContact(c.id, [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email); }} title="Delete from HubSpot">&#x1F5D1;</button> },
             ]}
             rows={filteredContacts}
             alwaysVisible={['_delete']}
