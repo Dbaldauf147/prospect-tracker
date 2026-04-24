@@ -167,7 +167,19 @@ const ACCOUNT_COLUMNS = [
   { key: 'zoomCompanyName', label: 'Zoom Company Name', defaultWidth: 180 },
   { key: 'cdm', label: 'CDM', defaultWidth: 120 },
   { key: 'notes', label: 'Notes', defaultWidth: 200 },
-  { key: 'contactCount', label: 'Contacts', defaultWidth: 80, render: (row) => row.contactCount > 0 ? <span style={{ fontWeight: 700, color: '#0891B2' }}>{row.contactCount}</span> : <span style={{ color: 'var(--color-text-muted)' }}>0</span> },
+  { key: 'contactCount', label: 'Contacts', defaultWidth: 80, render: (row) => {
+    // Hover tip exposes how the matcher resolved this row so 0
+    // counts have a debuggable explanation.
+    const tip = `Match diagnostics for ${row.company || ''}:
+  HubSpot cache size: ${row._contactDebug?.cacheSize ?? '—'}
+  Exact-name matches: ${row._contactDebug?.exactNameMatches ?? '—'}
+  Domain matches: ${row._contactDebug?.domainMatches ?? '—'}
+  Prospect domains: ${row._contactDebug?.prospectDomains?.join(', ') || '(none registered)'}`;
+    if (row.contactCount > 0) {
+      return <span title={tip} style={{ fontWeight: 700, color: '#0891B2', cursor: 'help' }}>{row.contactCount}</span>;
+    }
+    return <span title={tip} style={{ color: 'var(--color-text-muted)', cursor: 'help' }}>0</span>;
+  } },
   { key: 'bucketCount', label: 'Stakeholders', defaultWidth: 90, render: (row) => {
     const count = row.bucketCount || 0;
     const color = count === 5 ? '#059669' : count >= 3 ? '#D97706' : count > 0 ? '#DC2626' : 'var(--color-text-muted)';
@@ -225,6 +237,20 @@ function companiesMatch(a, b) {
   const nb = (b || '').toLowerCase().trim();
   if (!na || !nb) return false;
   if (na === nb) return true;
+  // Ultra-tolerant equality. NFKD normalize, drop diacritics,
+  // collapse non-alphanumeric runs to single spaces, lowercase,
+  // and compare. Catches Unicode goblin diffs (non-breaking space,
+  // smart-quote paren, em-dash) that break ===.
+  const flatten = (s) => String(s || '')
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+  const fa = flatten(na);
+  const fb = flatten(nb);
+  if (fa && fb && fa === fb) return true;
   // One contains the other — but only if the shorter is at least 60% of the longer
   const longer = na.length >= nb.length ? na : nb;
   const shorter = na.length >= nb.length ? nb : na;
@@ -1599,9 +1625,11 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       // company-text and email-domain rules match.
       const matchedContactIds = new Set();
       const bucketsSeen = new Set();
+      let exactNameMatches = 0;
       for (const [co, ids] of Object.entries(contactsByCompany)) {
         if (allCompanyNames.some(name => companiesMatch(name, co))) {
           for (const id of ids) matchedContactIds.add(id);
+          exactNameMatches += ids.size;
           if (bucketsByCompany[co]) {
             for (const b of bucketsByCompany[co]) bucketsSeen.add(b);
           }
@@ -1619,10 +1647,12 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         const d = String(p.website).replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '').toLowerCase().trim();
         if (d) prospectDomains.add(d);
       }
+      let domainMatches = 0;
       for (const d of prospectDomains) {
         const ids = contactsByEmailDomain[d];
         if (ids) {
           for (const id of ids) matchedContactIds.add(id);
+          domainMatches += ids.size;
         }
         if (bucketsByEmailDomain[d]) {
           for (const b of bucketsByEmailDomain[d]) bucketsSeen.add(b);
@@ -1630,6 +1660,12 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       }
       const contactCount = matchedContactIds.size;
       const bucketCount = bucketsSeen.size;
+      const _contactDebug = {
+        cacheSize: Object.values(contactsByCompany).reduce((s, set) => s + set.size, 0),
+        exactNameMatches,
+        domainMatches,
+        prospectDomains: [...prospectDomains],
+      };
       // Suggested status based on opps data (fuzzy match company names).
       // Only suggest when we actually find opps for this company — no match
       // means no data to base a suggestion on, so we stay silent.
@@ -1666,7 +1702,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       // someone else's CDM with no open opps shouldn't show on Dan's list.
       const isStrategicTier = tier === 'Tier 1' || tier === 'Tier 2';
       if (!(isStrategicTier && isBaldauf) && (!oppsCount || oppsCount === 0)) continue;
-      const entry = { ...p, myTier: tier, activityCount, oppsCount, totalOpps, sources: sources.join(', '), dmFound: !!dmNames, dmNames: dmNames ? dmNames.join(', ') : '', cdmMismatch: !isBaldauf, targetNames, targetName: (targetNames || []).join(', '), targetTier, tierMismatch, otherReps, contactCount, bucketCount, suggestedStatus, statusMismatch, suggestedType, typeMismatch };
+      const entry = { ...p, myTier: tier, activityCount, oppsCount, totalOpps, sources: sources.join(', '), dmFound: !!dmNames, dmNames: dmNames ? dmNames.join(', ') : '', cdmMismatch: !isBaldauf, targetNames, targetName: (targetNames || []).join(', '), targetTier, tierMismatch, otherReps, contactCount, bucketCount, _contactDebug, suggestedStatus, statusMismatch, suggestedType, typeMismatch };
       if (tier === 'Tier 1') t1.push(entry);
       else t2.push(entry); // Tier 2 and Tier 3 both go in t2 array
       const s = p.status || 'Unknown';
