@@ -683,70 +683,14 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
     try { localStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
   }
 
-  // Download a CSV of My Accounts companies that have no HubSpot
-  // contact on file yet. Pulls Zoom Company ID / Zoom Company Name /
-  // Website from the matching Table View prospect so the user can take
-  // the file into ZoomInfo (or similar) to build the first contact
-  // list for each empty account.
-  function downloadEmptyAccountsCSV() {
-    // Prefer the visible My-Accounts list (the ~132 companies the
-    // user actually sees on the My Accounts tab). If that key is
-    // missing, offer to fall back to the wider tier1+tier2 pool
-    // (~320 — what the older active-names key stored) so the export
-    // still works before the user has re-opened My Accounts.
-    const readList = (key) => {
-      try {
-        const raw = localStorage.getItem(key);
-        const parsed = raw ? JSON.parse(raw) : null;
-        return Array.isArray(parsed) ? parsed : null;
-      } catch { return null; }
-    };
-    let myAccountNames = readList('my-accounts:filtered-names') || [];
-    if (myAccountNames.length === 0) {
-      // Second-best: the wider tier1+tier2 pool the old publish wrote.
-      let fallback = readList('my-accounts:active-names') || [];
-      let fallbackSource = 'my-accounts:active-names (tier1+tier2 pool)';
-      if (fallback.length === 0) {
-        // Last resort: derive from the in-memory prospects list using
-        // the default My Accounts filter (Baldauf CDM + not in an
-        // inactive status). This can still include extras the
-        // MyAccountsView tab classifies out, so we warn the user.
-        const INACTIVE = new Set(['Old Client', 'Hold Off', 'Lost - Not Sold']);
-        const seen = new Set();
-        const derived = [];
-        for (const p of prospects) {
-          if (!(p.cdm || '').toLowerCase().includes('baldauf')) continue;
-          if (INACTIVE.has(p.status)) continue;
-          const name = (p.company || '').trim();
-          const k = name.toLowerCase();
-          if (!k || seen.has(k)) continue;
-          seen.add(k);
-          derived.push(name);
-        }
-        fallback = derived;
-        fallbackSource = 'derived from Baldauf-CDM prospects (My Accounts tab has not been opened yet)';
-      }
-      if (fallback.length === 0) {
-        alert('No My Accounts list could be resolved. Open the My Accounts tab once so the visible list is published, then try again.');
-        return;
-      }
-      const ok = window.confirm(
-        `The narrow filtered My Accounts list (~132 companies) hasn\'t been published yet.\n\n` +
-        `Source: ${fallbackSource}\nCount: ${fallback.length} companies\n\n` +
-        `Click OK to export against that list now — it may include extras (like EDP) that aren\'t on your visible My Accounts page.\n\n` +
-        `Click Cancel, then open the My Accounts tab once (it auto-publishes the filtered list while you\'re on it) and come back to try again.`
-      );
-      if (!ok) return;
-      myAccountNames = fallback;
-    }
-
-    // Normalize with the same rules used on the Lists tab so "Acme, Inc"
-    // and "Acme Corporation" collapse to the same key. Parenthetical
-    // qualifiers like "(a Pritzker Private Capital co.)" are stripped
-    // first so "EDP (a Pritzker Private Capital co.)" still matches a
-    // plain "EDP" HubSpot company.
+  // Normalize a company name to a comparison key. Parenthetical
+  // qualifiers like "(a Pritzker Private Capital co.)" are stripped
+  // first so "EDP (a Pritzker Private Capital co.)" still matches a
+  // plain "EDP" HubSpot company. Shared between the CSV export and
+  // the pasted-list save path.
+  function normalizeCompanyName(s) {
     const CORP_SUFFIXES = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|oy|ab|spa|kk|pty|holdings|group|grp)\b\.?/g;
-    const norm = s => String(s || '')
+    return String(s || '')
       .toLowerCase()
       .normalize('NFKD').replace(/[̀-ͯ]/g, '')
       .replace(/\(.*?\)/g, ' ')
@@ -756,6 +700,54 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
       .replace(/[^a-z0-9]+/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
+  }
+
+  // Prompt the user to paste the exact My Accounts company list (one
+  // per line). Saves it to my-accounts:filtered-names so the CSV
+  // export and any other consumer picks up the authoritative list,
+  // then automatically triggers the download so they don't have to
+  // click the export button again.
+  function pasteMyAccountsList() {
+    const pasted = window.prompt(
+      'Paste the list of My Accounts companies from the My Accounts tab, one per line.\n\n' +
+      'Tip: select the Company column on the My Accounts table and copy — most browsers paste it as newline-separated names.\n\n' +
+      'This list is saved to your browser and reused for future exports until you overwrite it.'
+    );
+    if (!pasted) return;
+    const names = pasted.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    if (names.length === 0) {
+      alert('No company names found in the pasted text.');
+      return;
+    }
+    try { localStorage.setItem('my-accounts:filtered-names', JSON.stringify(names)); } catch {}
+    alert(`Saved ${names.length} companies. Starting the export now.`);
+    downloadEmptyAccountsCSV();
+  }
+
+  // Download a CSV of My Accounts companies that have no HubSpot
+  // contact on file yet. Pulls Zoom Company ID / Zoom Company Name /
+  // Website from the matching Table View prospect so the user can take
+  // the file into ZoomInfo (or similar) to build the first contact
+  // list for each empty account.
+  function downloadEmptyAccountsCSV() {
+    const readList = (key) => {
+      try {
+        const raw = localStorage.getItem(key);
+        const parsed = raw ? JSON.parse(raw) : null;
+        return Array.isArray(parsed) ? parsed : null;
+      } catch { return null; }
+    };
+    let myAccountNames = readList('my-accounts:filtered-names') || [];
+    if (myAccountNames.length === 0) {
+      alert(
+        'No My Accounts list has been published yet.\n\n' +
+        'Option 1: Open the My Accounts tab once so it publishes the filtered list automatically, then come back.\n\n' +
+        'Option 2: Click the "Paste My Accounts" button to paste the list directly and save it.'
+      );
+      return;
+    }
+
+    const norm = normalizeCompanyName;
 
     // Build a set of companies that already have at least one HubSpot
     // contact. Uses the synced cache so we don't have to hit the API.
@@ -1305,6 +1297,14 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
             title="Download a CSV of My Accounts companies that have no HubSpot contacts yet, with their Zoom / website data from Table View"
           >
             ⇩ Accounts w/o contacts
+          </button>
+          <button
+            type="button"
+            className={styles.secondaryBtn}
+            onClick={pasteMyAccountsList}
+            title="Paste your My Accounts list (one company per line) to authoritatively set the list used by the export"
+          >
+            📋 Paste My Accounts
           </button>
           {rows.length > 0 && <button className={styles.secondaryBtn} onClick={clearAll}>Clear</button>}
         </div>
