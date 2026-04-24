@@ -50,6 +50,42 @@ async function getAllContacts(token) {
   return contacts;
 }
 
+// Normalize the semicolon-separated `dans_tags` string before we hand
+// it to HubSpot. The frontend displays and stores tags with natural
+// spacing (e.g. "Efficiency / Renewables"), but the HubSpot enumeration
+// on that property only accepts the no-space variant
+// ("Efficiency/Renewables"). When the picker's spaced version leaks
+// through the API layer, HubSpot rejects the PATCH with
+// "[value] was not one of the allowed options". This helper rewrites
+// any known-mismatched tags to the form HubSpot expects.
+const DANS_TAGS_ALIASES = {
+  'Efficiency / Renewables': 'Efficiency/Renewables',
+  'efficiency / renewables': 'Efficiency/Renewables',
+};
+function normalizeDansTagsForHubSpot(raw) {
+  if (raw == null) return raw;
+  const parts = String(raw).split(';').map(s => s.trim()).filter(Boolean);
+  const out = parts.map(t => {
+    const key = t.replace(/\s+/g, ' ');
+    return DANS_TAGS_ALIASES[key] || DANS_TAGS_ALIASES[key.toLowerCase()] || t;
+  });
+  const seen = new Set();
+  const deduped = [];
+  for (const t of out) {
+    const k = t.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    deduped.push(t);
+  }
+  return deduped.join(';');
+}
+function normalizeContactPropertiesForHubSpot(props) {
+  if (!props || typeof props !== 'object') return props;
+  const next = { ...props };
+  if ('dans_tags' in next) next.dans_tags = normalizeDansTagsForHubSpot(next.dans_tags);
+  return next;
+}
+
 async function getContactsByCompany(token, companyName) {
   const data = await hubspotFetch(
     `/crm/v3/objects/contacts/search`,
@@ -251,10 +287,11 @@ export default async function handler(req, res) {
       if (!properties || !properties.email) {
         return res.status(400).json({ error: 'Email is required to create a contact' });
       }
+      const cleanProps = normalizeContactPropertiesForHubSpot(properties);
       const createRes = await fetch(`${BASE}/crm/v3/objects/contacts`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ properties }),
+        body: JSON.stringify({ properties: cleanProps }),
       });
       if (createRes.ok) {
         const created = await createRes.json();
@@ -294,10 +331,11 @@ export default async function handler(req, res) {
       if (!contactId) {
         return res.status(400).json({ error: 'contactId is required' });
       }
+      const cleanProps = normalizeContactPropertiesForHubSpot(properties);
       const updateRes = await fetch(`${BASE}/crm/v3/objects/contacts/${contactId}`, {
         method: 'PATCH',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ properties }),
+        body: JSON.stringify({ properties: cleanProps }),
       });
       if (!updateRes.ok) {
         const text = await updateRes.text();
@@ -356,6 +394,7 @@ export default async function handler(req, res) {
         if (contact.state) props.state = contact.state;
         if (contact.country) props.country = contact.country;
         if (contact.dans_tags) props.dans_tags = contact.dans_tags;
+        const normProps = normalizeContactPropertiesForHubSpot(props);
         const noteBody = (contact.notes || '').toString().trim();
 
         if (!props.email) {
@@ -371,7 +410,7 @@ export default async function handler(req, res) {
             const updateRes = await fetch(`${BASE}/crm/v3/objects/contacts/${existingId}`, {
               method: 'PATCH',
               headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ properties: props }),
+              body: JSON.stringify({ properties: normProps }),
             });
             if (!updateRes.ok) {
               const text = await updateRes.text();
@@ -384,7 +423,7 @@ export default async function handler(req, res) {
             const createRes = await fetch(`${BASE}/crm/v3/objects/contacts`, {
               method: 'POST',
               headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ properties: props }),
+              body: JSON.stringify({ properties: normProps }),
             });
             if (!createRes.ok) {
               const text = await createRes.text();
