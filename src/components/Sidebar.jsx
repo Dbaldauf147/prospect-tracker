@@ -1,9 +1,43 @@
+import { useState, useEffect, useRef } from 'react';
 import styles from './Sidebar.module.css';
 
 export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups }) {
   const initials = user?.displayName
     ? user.displayName.split(' ').map(n => n[0]).join('').toUpperCase()
     : user?.email?.[0]?.toUpperCase() || '?';
+
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsWrapRef = useRef(null);
+
+  // Close the gear popover when the user clicks outside of it.
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const onDown = (e) => {
+      if (!settingsWrapRef.current?.contains(e.target)) setSettingsOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [settingsOpen]);
+
+  // Close on Escape for keyboard users.
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const onKey = (e) => { if (e.key === 'Escape') setSettingsOpen(false); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [settingsOpen]);
+
+  function chooseView(next) {
+    setView(next);
+    setSettingsOpen(false);
+  }
+
+  const settingsItems = [
+    { kind: 'view',    key: 'vibe',    label: 'Vibe Prospecting',  icon: '\u{1F50D}' },
+    { kind: 'action',  key: 'sync',    label: 'Sync Google Sheets', icon: '↻',    onClick: () => { onSync?.(); setSettingsOpen(false); } },
+    { kind: 'view',    key: 'privacy', label: 'Privacy & Security', icon: '\u{1F512}' },
+  ];
+  const activeInSettings = settingsItems.some(it => it.kind === 'view' && it.key === view);
 
   return (
     <div className={styles.sidebar}>
@@ -98,25 +132,11 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups }
           Email Campaigns
         </button>
         <button
-          className={view === 'vibe' ? styles.navItemActive : styles.navItem}
-          onClick={() => setView('vibe')}
-        >
-          <span className={styles.navIcon}>&#128269;</span>
-          Vibe Prospecting
-        </button>
-        <button
           className={view === 'dedupe' ? styles.navItemActive : styles.navItem}
           onClick={() => setView('dedupe')}
         >
           <span className={styles.navIcon}>&#x2702;</span>
           Deduplication
-        </button>
-        <button
-          className={styles.navItem}
-          onClick={onSync}
-        >
-          <span className={styles.navIcon}>&#8635;</span>
-          Sync Google Sheets
         </button>
         <button
           className={styles.navItem}
@@ -126,14 +146,40 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups }
           <span className={styles.navIcon}>&#128190;</span>
           Backups
         </button>
-        <button
-          className={view === 'privacy' ? styles.navItemActive : styles.navItem}
-          onClick={() => setView('privacy')}
-        >
-          <span className={styles.navIcon}>&#128274;</span>
-          Privacy & Security
-        </button>
       </nav>
+
+      <div className={styles.settingsWrap} ref={settingsWrapRef}>
+        <button
+          className={(settingsOpen || activeInSettings) ? styles.settingsBtnActive : styles.settingsBtn}
+          onClick={() => setSettingsOpen(v => !v)}
+          title="Settings"
+        >
+          <span className={styles.navIcon}>&#9881;</span>
+          Settings
+          <span className={styles.settingsCaret}>{settingsOpen ? '▾' : '▸'}</span>
+        </button>
+        {settingsOpen && (
+          <div className={styles.settingsPopover} role="menu">
+            {settingsItems.map(it => {
+              const isActive = it.kind === 'view' && view === it.key;
+              return (
+                <button
+                  key={it.key}
+                  role="menuitem"
+                  className={isActive ? styles.settingsItemActive : styles.settingsItem}
+                  onClick={() => {
+                    if (it.kind === 'action') it.onClick();
+                    else chooseView(it.key);
+                  }}
+                >
+                  <span className={styles.navIcon}>{it.icon}</span>
+                  {it.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       <div className={styles.userSection}>
         <div className={styles.avatar}>

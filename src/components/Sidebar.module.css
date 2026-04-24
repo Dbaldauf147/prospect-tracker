@@ -119,3 +119,78 @@
 .logoutBtn:hover {
   opacity: 1;
 }
+
+.settingsWrap {
+  position: relative;
+  padding: 0 0.5rem 0.25rem;
+}
+
+.settingsBtn,
+.settingsBtnActive {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.55rem 0.75rem;
+  border-radius: var(--radius-md);
+  color: var(--color-sidebar-text);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  background: none;
+  border: none;
+  width: 100%;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+}
+.settingsBtn:hover,
+.settingsBtnActive {
+  background: rgba(255,255,255,0.05);
+  color: #fff;
+}
+
+.settingsCaret {
+  margin-left: auto;
+  font-size: 0.7rem;
+  opacity: 0.6;
+}
+
+.settingsPopover {
+  position: absolute;
+  left: calc(100% + 4px);
+  bottom: 0.25rem;
+  min-width: 220px;
+  background: var(--color-sidebar);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: var(--radius-md);
+  box-shadow: 0 12px 32px rgba(0,0,0,0.35);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 200;
+}
+
+.settingsItem,
+.settingsItemActive {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.7rem;
+  border-radius: var(--radius-md);
+  color: var(--color-sidebar-text);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+}
+.settingsItem:hover {
+  background: rgba(255,255,255,0.05);
+  color: #fff;
+}
+.settingsItemActive {
+  background: var(--color-sidebar-active);
+  color: #fff;
+}
