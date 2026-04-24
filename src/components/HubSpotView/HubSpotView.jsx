@@ -1532,6 +1532,34 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
   }, [prospects]);
 
   // Match contacts to prospects by company name, guess company from email, hide @se.com
+  // Normalization used when checking whether a contact's company
+  // matches any Table View prospect — strips parentheticals,
+  // corporate suffixes, punctuation, and accents so "Acme, Inc." and
+  // "Acme Corporation" collapse to the same key. Shared between the
+  // "Company Not in TV" filter and the enrichment guard below.
+  const normalizeCompanyKey = (s) => {
+    const CORP_SUFFIXES = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|oy|ab|spa|kk|pty|holdings|group|grp)\b\.?/g;
+    return String(s || '')
+      .toLowerCase()
+      .normalize('NFKD').replace(/[̀-ͯ]/g, '')
+      .replace(/\(.*?\)/g, ' ')
+      .replace(/\[.*?\]/g, ' ')
+      .replace(/&/g, ' and ')
+      .replace(CORP_SUFFIXES, ' ')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  };
+
+  const prospectCompanyKeys = useMemo(() => {
+    const set = new Set();
+    for (const p of prospects) {
+      const k = normalizeCompanyKey(p.company);
+      if (k) set.add(k);
+    }
+    return set;
+  }, [prospects]);
+
   const enrichedContacts = useMemo(() => {
     const prospectMap = new Map();
     for (const p of prospects) {
@@ -1685,6 +1713,13 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
       result = result.filter(c => c.guessedName && (!c.firstname || !c.lastname));
     } else if (cardFilter === 'guessedCompany') {
       result = result.filter(c => !c.company && c.guessedCompany);
+    } else if (cardFilter === 'companyUnmapped') {
+      result = result.filter(c => {
+        const company = String(c.company || '').trim();
+        if (!company) return false;
+        const k = normalizeCompanyKey(company);
+        return !!k && !prospectCompanyKeys.has(k);
+      });
     }
 
     // Apply column filters
@@ -1712,7 +1747,7 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
     }
 
     return result;
-  }, [enrichedContacts, search, cardFilter, colFilters]);
+  }, [enrichedContacts, search, cardFilter, colFilters, prospectCompanyKeys]);
 
   function toggleSelect(id) {
     setSelected(prev => {
@@ -1914,6 +1949,15 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
         <button className={`${styles.summaryCard} ${cardFilter === 'notMatched' ? styles.summaryCardActive : ''}`} onClick={() => setCardFilter(cardFilter === 'notMatched' ? null : 'notMatched')}>
           <div className={styles.summaryLabel}>Not Matched to Prospects</div>
           <div className={styles.summaryValue}>{enrichedContacts.length - matchedCount}</div>
+        </button>
+        <button className={`${styles.summaryCard} ${cardFilter === 'companyUnmapped' ? styles.summaryCardActive : ''}`} onClick={() => setCardFilter(cardFilter === 'companyUnmapped' ? null : 'companyUnmapped')} title="Contacts whose Company is set but doesn't match any Table View prospect by name">
+          <div className={styles.summaryLabel}>Company Not in TV</div>
+          <div className={styles.summaryValue}>{enrichedContacts.filter(c => {
+            const company = String(c.company || '').trim();
+            if (!company) return false;
+            const k = normalizeCompanyKey(company);
+            return !!k && !prospectCompanyKeys.has(k);
+          }).length}</div>
         </button>
         <button className={`${styles.summaryCard} ${cardFilter === 'enrolled' ? styles.summaryCardActive : ''}`} onClick={() => setCardFilter(cardFilter === 'enrolled' ? null : 'enrolled')}>
           <div className={styles.summaryLabel}>In Sequences</div>
