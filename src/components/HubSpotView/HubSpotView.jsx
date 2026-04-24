@@ -1664,7 +1664,18 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
           const currentLower = c.company.toLowerCase();
           const normKey = normalizeCompanyKey(c.company);
           if (normKey) {
-            const canonical = prospectKeyToCanonical.get(normKey);
+            // 1. Exact normalized match — "Acme Corp" → "Acme Corporation".
+            let canonical = prospectKeyToCanonical.get(normKey);
+            // 2. Token-prefix match — "Alexandria" normalized-compact
+            //    "alexandria" maps to "Alexandria Real Estate Equities
+            //    Inc." because that prospect's first-token prefix is
+            //    "alexandria" in prospectTokenPrefixMap.
+            if (!canonical) {
+              const compactKey = normKey.replace(/\s+/g, '');
+              if (compactKey && compactKey.length >= 3) {
+                canonical = prospectTokenPrefixMap.get(compactKey);
+              }
+            }
             if (canonical && canonical.toLowerCase() !== currentLower) {
               guessedCompany = canonical;
             }
