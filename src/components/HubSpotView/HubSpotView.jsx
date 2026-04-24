@@ -2356,7 +2356,7 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
               { key: '_edit', label: '', defaultWidth: 36, render: (c) => <button onClick={(e) => { e.stopPropagation(); setEditContact(c); }} title="Edit contact" style={{ background: 'none', border: '1px solid var(--color-border)', borderRadius: '4px', padding: '1px 6px', fontSize: '0.7rem', cursor: 'pointer', color: 'var(--color-accent)' }}>Edit</button> },
             ]}
             rows={filteredContacts}
-            alwaysVisible={['_deleteRow']}
+            alwaysVisible={['_deleteRow', '_select']}
             emptyMessage="No contacts found"
           />
         </>
