@@ -421,6 +421,10 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
       return n;
     });
   }, []);
+  const [bulkColVisible, setBulkColVisible] = useState(() => {
+    const saved = loadBulkColVisible();
+    return saved || new Set(BULK_COLS.map(c => c.key));
+  });
   // BULK_COLS filtered by visibility, with a dynamically-injected
   // _select checkbox column at the left edge when mass-edit mode is on.
   const effectiveBulkCols = useMemo(() => {
@@ -430,10 +434,6 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
     }
     return base;
   }, [bulkMassMode, bulkColVisible]);
-  const [bulkColVisible, setBulkColVisible] = useState(() => {
-    const saved = loadBulkColVisible();
-    return saved || new Set(BULK_COLS.map(c => c.key));
-  });
   const [showBulkColMenu, setShowBulkColMenu] = useState(false);
   const getBulkColWidth = (key) => bulkColWidths[key] || BULK_COLS.find(c => c.key === key)?.w || 120;
   const toggleBulkColVisible = useCallback((key) => {
