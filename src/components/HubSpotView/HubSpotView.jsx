@@ -1778,7 +1778,7 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
   }, [contacts, prospects, domainToCompany, tierByCompany, prospectKeyToCanonical, prospectTokenPrefixMap, prospectTokenPrefixKeysDesc, FREE_MAIL, TWO_PART_TLDS, contactLocalFields]);
 
   // Dynamic filter options for HubSpot columns
-  const HUBSPOT_FILTER_SKIP = new Set(['id', '_select', '_delete', 'guessedCompany', 'guessedName', 'guessedFirstName', 'guessedLastName', 'effectiveCompany', 'matchedProspect', 'enrolledCount', 'isEnrolled', 'hs_sequences_is_enrolled', 'hs_sequences_actively_enrolled_count']);
+  const HUBSPOT_FILTER_SKIP = new Set(['id', '_select', '_delete', '_deleteRow', '_edit', 'guessedCompany', 'guessedName', 'guessedFirstName', 'guessedLastName', 'effectiveCompany', 'matchedProspect', 'enrolledCount', 'isEnrolled', 'hs_sequences_is_enrolled', 'hs_sequences_actively_enrolled_count']);
   const HUBSPOT_FILTER_LABELS = { company: 'Company', tier: 'Tier', jobtitle: 'Title', city: 'City', state: 'State', country: 'Country', firstname: 'First Name', lastname: 'Last Name', email: 'Email', phone: 'Phone', sequenceStatus: 'Sequence', dans_tags: "Dan's Tags", dan_s_tags: "Dan's Tags" };
   const hsFilterOptions = useMemo(() => {
     const opts = {};
@@ -2217,19 +2217,22 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
             tableId="hubspot-contacts"
             columns={[
               {
-                key: '_delete',
-                label: '',
-                defaultWidth: 36,
-                render: (c) => (
-                  <button
-                    type="button"
-                    title={`Delete ${[c.firstname, c.lastname].filter(Boolean).join(' ') || c.email || 'this contact'} from HubSpot`}
-                    onClick={(e) => { e.stopPropagation(); handleDeleteContact(c.id, [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email || 'contact'); }}
-                    style={{ background: 'none', border: 'none', color: '#94A3B8', cursor: 'pointer', fontSize: '1rem', lineHeight: 1, padding: 0, fontWeight: 700 }}
-                    onMouseEnter={(e) => { e.currentTarget.style.color = '#DC2626'; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.color = '#94A3B8'; }}
-                  >×</button>
-                ),
+                key: '_deleteRow',
+                label: 'Delete',
+                defaultWidth: 60,
+                render: (c) => {
+                  const name = [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email || 'this contact';
+                  return (
+                    <button
+                      type="button"
+                      title={`Delete ${name} from HubSpot`}
+                      onClick={(e) => { e.stopPropagation(); handleDeleteContact(c.id, name); }}
+                      style={{ background: '#FEF2F2', border: '1px solid #FCA5A5', borderRadius: 6, color: '#B91C1C', cursor: 'pointer', fontSize: '0.85rem', padding: '2px 8px', fontWeight: 700, lineHeight: 1 }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = '#FCA5A5'; e.currentTarget.style.color = '#fff'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = '#FEF2F2'; e.currentTarget.style.color = '#B91C1C'; }}
+                    >🗑</button>
+                  );
+                },
               },
               ...(massMode ? [{ key: '_select', label: '', defaultWidth: 36, render: (c) => <input type="checkbox" checked={selected.has(c.id)} onChange={() => toggleSelect(c.id)} onClick={e => e.stopPropagation()} style={{ accentColor: 'var(--color-accent)' }} /> }] : []),
               { key: 'firstname', label: 'First Name', defaultWidth: 120, render: (c) => <HubSpotInlineCell contact={c} field="firstname" value={c.firstname} onSave={handleInlineUpdate} /> },
@@ -2353,7 +2356,7 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
               { key: '_edit', label: '', defaultWidth: 36, render: (c) => <button onClick={(e) => { e.stopPropagation(); setEditContact(c); }} title="Edit contact" style={{ background: 'none', border: '1px solid var(--color-border)', borderRadius: '4px', padding: '1px 6px', fontSize: '0.7rem', cursor: 'pointer', color: 'var(--color-accent)' }}>Edit</button> },
             ]}
             rows={filteredContacts}
-            alwaysVisible={['_delete']}
+            alwaysVisible={['_deleteRow']}
             emptyMessage="No contacts found"
           />
         </>
