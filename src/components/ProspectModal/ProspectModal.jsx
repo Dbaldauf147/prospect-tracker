@@ -137,9 +137,23 @@ function companiesMatch(a, b) {
   const nb = (b || '').toLowerCase().trim();
   if (!na || !nb) return false;
   if (na === nb) return true;
-  // Whitespace-collapsed equality — catches copy/paste variants
-  // where one side carries double spaces or trailing whitespace that
-  // .trim() alone doesn't fix.
+  // Ultra-tolerant equality. Normalizes Unicode (NFKD), drops
+  // diacritics, replaces every non-letter/digit with a single
+  // space, collapses whitespace, then compares. Catches the case
+  // where one side has a non-breaking space, smart-quote paren,
+  // or different punctuation that breaks ===.
+  const flatten = (s) => String(s || '')
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+  const fa = flatten(na);
+  const fb = flatten(nb);
+  if (fa && fb && fa === fb) return true;
+  // Whitespace-collapsed equality on the original lower-trimmed
+  // strings — catches copy/paste variants with double spaces.
   const squish = (s) => s.replace(/\s+/g, ' ').trim();
   if (squish(na) === squish(nb)) return true;
   const longer = na.length >= nb.length ? na : nb;
