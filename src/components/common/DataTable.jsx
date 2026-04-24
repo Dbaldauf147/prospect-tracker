@@ -191,7 +191,7 @@ export function DataTable({
   }
 
   const getWidth = (col) => colWidths[col.key] || col.defaultWidth || 120;
-  const visibleColumns = columns.filter(c => visibleCols.has(c.key));
+  const visibleColumns = columns.filter(c => visibleCols.has(c.key) || alwaysVisible.includes(c.key));
 
   function toggleCol(key) {
     if (alwaysVisible.includes(key)) return;
