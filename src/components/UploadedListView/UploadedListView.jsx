@@ -307,6 +307,7 @@ export function UploadedListView({
   const [search, setSearch] = useState('');
   const [suggestedOnly, setSuggestedOnly] = useState(false);
   const [portfolioOnly, setPortfolioOnly] = useState(false);
+  const [mappedOnly, setMappedOnly] = useState(false);
   const [uploadError, setUploadError] = useState(null);
   const [uploadInfo, setUploadInfo] = useState(null); // { total, preservedTableView, preservedMyAccounts }
   const [picker, setPicker] = useState(null); // { matchKey, raw, query, scope: 'tableView' | 'myAccounts' }
@@ -334,6 +335,7 @@ export function UploadedListView({
     setSearch('');
     setSuggestedOnly(false);
     setPortfolioOnly(false);
+    setMappedOnly(false);
     setUploadError(null);
     setUploadInfo(null);
     setPicker(null);
@@ -686,6 +688,12 @@ export function UploadedListView({
     return !!portfolioSuggestionFor(r.__rawName__ || '');
   }, [portfolioMapping, portfolioDismissed, portfolioSuggestionFor]);
 
+  // "Mapped" = the row carries a confirmed My-Account or Portfolio
+  // mapping. Non-dismissed suggestions aren't mapped yet.
+  const isMappedRow = useMemo(() => (r) => (
+    !!myAccountMapping[r.__matchKey__] || !!portfolioMapping[r.__matchKey__]
+  ), [myAccountMapping, portfolioMapping]);
+
   const filtered = useMemo(() => {
     let result = rows;
     if (search.trim()) {
@@ -694,16 +702,22 @@ export function UploadedListView({
         Object.entries(r).some(([k, v]) => k !== '__matchKey__' && String(v).toLowerCase().includes(term))
       );
     }
-    // Filters OR together when both toggles are on so the user sees
-    // the union of everything they've flagged.
+    // "My Accounts only" / "Portfolio only" OR together when both are
+    // on so the user sees the union of everything they've flagged.
     if (suggestedOnly || portfolioOnly) {
       result = result.filter(r => (
         (suggestedOnly && isMyAccountsRow(r)) ||
         (portfolioOnly && isPortfolioRow(r))
       ));
     }
+    // "Mapped only" ANDs with everything else — narrows whatever's
+    // already on-screen down to rows with at least one confirmed
+    // My-Account or Portfolio mapping.
+    if (mappedOnly) {
+      result = result.filter(isMappedRow);
+    }
     return result;
-  }, [search, suggestedOnly, portfolioOnly, rows, isMyAccountsRow, isPortfolioRow]);
+  }, [search, suggestedOnly, portfolioOnly, mappedOnly, rows, isMyAccountsRow, isPortfolioRow, isMappedRow]);
 
   const myAccountsMatchCount = useMemo(
     () => rows.reduce((n, r) => n + (isMyAccountsRow(r) ? 1 : 0), 0),
@@ -712,6 +726,10 @@ export function UploadedListView({
   const portfolioMatchCount = useMemo(
     () => rows.reduce((n, r) => n + (isPortfolioRow(r) ? 1 : 0), 0),
     [rows, isPortfolioRow]
+  );
+  const mappedCount = useMemo(
+    () => rows.reduce((n, r) => n + (isMappedRow(r) ? 1 : 0), 0),
+    [rows, isMappedRow]
   );
 
   async function handleUpload(e) {
@@ -1076,7 +1094,31 @@ export function UploadedListView({
             </span>
           )}
         </button>
-        {(search || suggestedOnly || portfolioOnly) && <span className={styles.resultCount}>{filtered.length} results</span>}
+        <button
+          type="button"
+          onClick={() => setMappedOnly(v => !v)}
+          title="Show only list rows with a confirmed My Accounts or Portfolio Companies mapping. Combines with the other filters."
+          style={{
+            padding: '0.35rem 0.7rem',
+            border: `1px solid ${mappedOnly ? '#16A34A' : 'var(--color-border)'}`,
+            borderRadius: 6,
+            background: mappedOnly ? '#DCFCE7' : '#fff',
+            color: mappedOnly ? '#166534' : 'var(--color-text-secondary)',
+            fontSize: '0.75rem',
+            fontWeight: 600,
+            cursor: 'pointer',
+            fontFamily: 'inherit',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          ✓ {mappedOnly ? 'Showing Mapped only' : 'Mapped only'}
+          {mappedCount > 0 && (
+            <span style={{ marginLeft: 6, fontSize: '0.68rem', color: mappedOnly ? '#166534' : '#94A3B8' }}>
+              {mappedCount}
+            </span>
+          )}
+        </button>
+        {(search || suggestedOnly || portfolioOnly || mappedOnly) && <span className={styles.resultCount}>{filtered.length} results</span>}
       </div>
       {rows.length === 0 ? (
         <div style={{ padding: '2rem 1.25rem', textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>
