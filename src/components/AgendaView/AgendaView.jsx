@@ -732,11 +732,16 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
     }
 
     // Normalize with the same rules used on the Lists tab so "Acme, Inc"
-    // and "Acme Corporation" collapse to the same key.
+    // and "Acme Corporation" collapse to the same key. Parenthetical
+    // qualifiers like "(a Pritzker Private Capital co.)" are stripped
+    // first so "EDP (a Pritzker Private Capital co.)" still matches a
+    // plain "EDP" HubSpot company.
     const CORP_SUFFIXES = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|oy|ab|spa|kk|pty|holdings|group|grp)\b\.?/g;
     const norm = s => String(s || '')
       .toLowerCase()
       .normalize('NFKD').replace(/[̀-ͯ]/g, '')
+      .replace(/\(.*?\)/g, ' ')
+      .replace(/\[.*?\]/g, ' ')
       .replace(/&/g, ' and ')
       .replace(CORP_SUFFIXES, ' ')
       .replace(/[^a-z0-9]+/g, ' ')
