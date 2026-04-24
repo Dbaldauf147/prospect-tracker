@@ -1366,13 +1366,13 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                 <col style={{ width: '120px' }} />
                 <col style={{ width: '110px' }} />
                 <col style={{ width: '130px' }} />
+                <col style={{ width: '140px' }} />
                 <col style={{ width: '180px' }} />
                 <col style={{ width: '170px' }} />
                 <col style={{ width: '160px' }} />
                 <col style={{ width: '130px' }} />
                 <col style={{ width: '160px' }} />
                 <col style={{ width: '200px' }} />
-                <col style={{ width: '140px' }} />
                 <col style={{ width: '140px' }} />
                 <col style={{ width: '140px' }} />
                 <col style={{ width: '140px' }} />
@@ -1420,6 +1420,7 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                         <th>{sortBtn('HubSpot Status', 'status')}</th>
                         <th>{sortBtn('First', 'firstname')}</th>
                         <th>{sortBtn('Last', 'lastname')}</th>
+                        <th>{sortBtn('Job title', 'jobtitle')}</th>
                         <th>{sortBtn('Company', 'company')}</th>
                         <th>{sortBtn('Suggested Company', 'suggestedCompany', filterBtn('suggestedCompany'))}</th>
                         <th title="Table View — Website">{sortBtn('TV Website', 'website', filterBtn('website'))}</th>
@@ -1427,7 +1428,6 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                         <th title="Table View — Zoom Company Name">{sortBtn('TV Zoom Name', 'zoomCompanyName', filterBtn('zoomCompanyName'))}</th>
                         <th title="Table View — Email Domain">{sortBtn('TV Email Domain', 'emailDomain', filterBtn('emailDomain'))}</th>
                         <th>{sortBtn("Dan's Tags", 'dans_tags')}</th>
-                        <th>{sortBtn('Job title', 'jobtitle')}</th>
                         <th>{sortBtn('Work Phone Number', 'phone')}</th>
                         <th>{sortBtn('Cell Phone Number', 'mobilePhone')}</th>
                         <th>{sortBtn('LinkedIn URL', 'linkedinUrl')}</th>
@@ -1592,6 +1592,7 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                       <td><span className={`${styles.statusPill} ${statusClass}`}>{statusLabel}</span></td>
                       <td><input className={styles.cellInput} value={r.firstname} onChange={e => updateRow(r.email, { firstname: e.target.value })} /></td>
                       <td><input className={styles.cellInput} value={r.lastname} onChange={e => updateRow(r.email, { lastname: e.target.value })} /></td>
+                      <td><input className={styles.cellInput} value={r.jobtitle} onChange={e => updateRow(r.email, { jobtitle: e.target.value })} /></td>
                       <td>
                         <input
                           className={styles.cellInput}
@@ -1658,7 +1659,6 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                       <td>{renderTv('zoomCompanyName')}</td>
                       <td>{renderTv('emailDomain')}</td>
                       <td><input className={styles.cellInput} value={r.dans_tags || ''} onChange={e => updateRow(r.email, { dans_tags: e.target.value })} placeholder="Tag1, Tag2" /></td>
-                      <td><input className={styles.cellInput} value={r.jobtitle} onChange={e => updateRow(r.email, { jobtitle: e.target.value })} /></td>
                       <td><input className={styles.cellInput} value={r.phone} onChange={e => updateRow(r.email, { phone: e.target.value })} /></td>
                       <td><input className={styles.cellInput} value={r.mobilePhone || ''} onChange={e => updateRow(r.email, { mobilePhone: e.target.value })} /></td>
                       <td style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
