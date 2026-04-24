@@ -683,6 +683,92 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
     try { localStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
   }
 
+  // Download a CSV of My Accounts companies that have no HubSpot
+  // contact on file yet. Pulls Zoom Company ID / Zoom Company Name /
+  // Website from the matching Table View prospect so the user can take
+  // the file into ZoomInfo (or similar) to build the first contact
+  // list for each empty account.
+  function downloadEmptyAccountsCSV() {
+    // My Accounts published names from the My Accounts view.
+    let myAccountNames = [];
+    try {
+      const raw = localStorage.getItem('my-accounts:active-names');
+      myAccountNames = raw ? JSON.parse(raw) : [];
+    } catch { /* ignore */ }
+    if (!Array.isArray(myAccountNames) || myAccountNames.length === 0) {
+      alert('No My Accounts list is published yet. Open the My Accounts tab once so the website knows which companies to check.');
+      return;
+    }
+
+    // Normalize with the same rules used on the Lists tab so "Acme, Inc"
+    // and "Acme Corporation" collapse to the same key.
+    const CORP_SUFFIXES = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|oy|ab|spa|kk|pty|holdings|group|grp)\b\.?/g;
+    const norm = s => String(s || '')
+      .toLowerCase()
+      .normalize('NFKD').replace(/[̀-ͯ]/g, '')
+      .replace(/&/g, ' and ')
+      .replace(CORP_SUFFIXES, ' ')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    // Build a set of companies that already have at least one HubSpot
+    // contact. Uses the synced cache so we don't have to hit the API.
+    const contactCompanies = new Set();
+    try {
+      const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
+      for (const c of (cache?.contacts || [])) {
+        const k = norm(c.company);
+        if (k) contactCompanies.add(k);
+      }
+    } catch { /* ignore */ }
+
+    // Build a lookup of prospects keyed by normalized company name so
+    // we can pull Zoom / website for each empty account.
+    const prospectByNorm = new Map();
+    for (const p of prospects) {
+      const k = norm(p.company);
+      if (k && !prospectByNorm.has(k)) prospectByNorm.set(k, p);
+    }
+
+    // Filter the My Accounts list to the names with NO HubSpot contact.
+    const emptyAccounts = myAccountNames.filter(name => {
+      const k = norm(name);
+      return k && !contactCompanies.has(k);
+    });
+    if (emptyAccounts.length === 0) {
+      alert('Every company in My Accounts already has at least one HubSpot contact.');
+      return;
+    }
+
+    const header = ['Company', 'Zoom Company ID', 'Zoom Company Name', 'Zoom Website'];
+    const rows = [header];
+    for (const name of emptyAccounts) {
+      const p = prospectByNorm.get(norm(name));
+      rows.push([
+        name,
+        p?.zoomCompanyId || '',
+        p?.zoomCompanyName || '',
+        p?.website || '',
+      ]);
+    }
+
+    const csvCell = v => {
+      const s = String(v ?? '');
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const csv = rows.map(r => r.map(csvCell).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `my-accounts-no-contacts-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
   // Build a properties object of fields the user has supplied that are currently blank
   // on the existing HubSpot contact. Used to "fill in missing values" without overwriting
   // data that HubSpot already has.
@@ -1167,6 +1253,14 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
               </div>
             )}
           </div>
+          <button
+            type="button"
+            className={styles.secondaryBtn}
+            onClick={downloadEmptyAccountsCSV}
+            title="Download a CSV of My Accounts companies that have no HubSpot contacts yet, with their Zoom / website data from Table View"
+          >
+            ⇩ Accounts w/o contacts
+          </button>
           {rows.length > 0 && <button className={styles.secondaryBtn} onClick={clearAll}>Clear</button>}
         </div>
       </div>
