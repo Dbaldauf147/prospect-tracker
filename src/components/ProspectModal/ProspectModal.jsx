@@ -5375,9 +5375,32 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     </tbody>
                   </table>
                 </div>
-              ) : (
-                <div style={{ fontSize: '0.78rem', color: '#9CA3AF', fontStyle: 'italic' }}>No HubSpot contacts found for this company</div>
-              )}
+              ) : (() => {
+                const totalContacts = Array.isArray(hubspotContacts) ? hubspotContacts.length : 0;
+                const exactCompany = totalContacts > 0
+                  ? hubspotContacts.filter(c => (c.company || '').toLowerCase().trim() === (fields.company || '').toLowerCase().trim()).length
+                  : 0;
+                const hasEmailDomain = !!(fields.emailDomain && String(fields.emailDomain).trim());
+                const hasWebsite = !!(fields.website && String(fields.website).trim());
+                return (
+                  <div style={{ fontSize: '0.78rem', color: '#64748B', fontStyle: 'italic', lineHeight: 1.5 }}>
+                    <div>No HubSpot contacts found for this company.</div>
+                    <div style={{ marginTop: '0.3rem', fontSize: '0.72rem' }}>
+                      <span style={{ color: '#9CA3AF' }}>HubSpot cache: {totalContacts.toLocaleString()} contacts · Exact-name match: {exactCompany}</span>
+                    </div>
+                    {!hasEmailDomain && !hasWebsite && (
+                      <div style={{ marginTop: '0.3rem', color: '#B45309', fontSize: '0.72rem' }}>
+                        Tip: this prospect has no Email Domain or Website registered. Add the company's domain (e.g. <code>tiaa.org</code>) to the Email Domain field so contacts whose Company text differs from the prospect name still match by email.
+                      </div>
+                    )}
+                    {totalContacts === 0 && (
+                      <div style={{ marginTop: '0.3rem', color: '#B45309', fontSize: '0.72rem' }}>
+                        Tip: no HubSpot contacts are cached locally. Open the HubSpot Contacts tab once to sync.
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
               </div>
             </div>
           )}
