@@ -43,7 +43,7 @@ const CHART_VIEW_OPTIONS = [
   { key: 'stackedArea', label: 'Stacked Area' },
 ];
 
-function ProgressChart({ title, data, series, isPct, defaultView = 'line', secondarySeries }) {
+function ProgressChart({ title, data, series, isPct, defaultView = 'line', secondarySeries, onHide }) {
   const [viewType, setViewType] = useState(defaultView);
   const yProps = isPct
     ? { domain: [0, 100], tickFormatter: v => `${v}%` }
@@ -55,15 +55,27 @@ function ProgressChart({ title, data, series, isPct, defaultView = 'line', secon
     <div style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', padding: '1rem' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', marginBottom: '0.75rem' }}>
         <h3 style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-text)', margin: 0 }}>{title}</h3>
-        <select
-          value={viewType}
-          onChange={e => setViewType(e.target.value)}
-          style={{ fontSize: '0.7rem', padding: '0.2rem 0.4rem', border: '1px solid var(--color-border)', borderRadius: '5px', background: 'var(--color-surface)', color: 'var(--color-text)', fontFamily: 'inherit', cursor: 'pointer' }}
-        >
-          {CHART_VIEW_OPTIONS.map(opt => (
-            <option key={opt.key} value={opt.key}>{opt.label}</option>
-          ))}
-        </select>
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+          <select
+            value={viewType}
+            onChange={e => setViewType(e.target.value)}
+            style={{ fontSize: '0.7rem', padding: '0.2rem 0.4rem', border: '1px solid var(--color-border)', borderRadius: '5px', background: 'var(--color-surface)', color: 'var(--color-text)', fontFamily: 'inherit', cursor: 'pointer' }}
+          >
+            {CHART_VIEW_OPTIONS.map(opt => (
+              <option key={opt.key} value={opt.key}>{opt.label}</option>
+            ))}
+          </select>
+          {onHide && (
+            <button
+              type="button"
+              onClick={onHide}
+              title="Hide this chart"
+              style={{ background: 'none', border: '1px solid var(--color-border)', borderRadius: 5, color: 'var(--color-text-secondary)', cursor: 'pointer', padding: '0.1rem 0.45rem', fontSize: '0.8rem', lineHeight: 1, fontFamily: 'inherit' }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = '#DC2626'; e.currentTarget.style.borderColor = '#FCA5A5'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--color-text-secondary)'; e.currentTarget.style.borderColor = 'var(--color-border)'; }}
+            >×</button>
+          )}
+        </div>
       </div>
       <ResponsiveContainer width="100%" height={250}>
         {viewType === 'bar' || viewType === 'stackedBar' ? (
@@ -183,6 +195,25 @@ function companiesMatch(a, b) {
   return false;
 }
 
+const HIDDEN_CHARTS_KEY = 'progress:hidden-charts';
+const PROGRESS_CHART_DEFS = [
+  { id: 'contactPct',   label: '% of Accounts with HubSpot Contacts' },
+  { id: 'dmPct',        label: '% of Accounts with Decision Maker Identified' },
+  { id: 'connectedPct', label: '% of Accounts Connected (Had Opportunity)' },
+  { id: 'inactivePct',  label: '% of Accounts Inactive (Lost / Hold Off / Old Client)' },
+  { id: 'tierTotals',   label: 'My Accounts by Tier' },
+];
+function loadHiddenCharts() {
+  try {
+    const raw = localStorage.getItem(HIDDEN_CHARTS_KEY);
+    const arr = raw ? JSON.parse(raw) : null;
+    return Array.isArray(arr) ? new Set(arr) : new Set();
+  } catch { return new Set(); }
+}
+function persistHiddenCharts(set) {
+  try { localStorage.setItem(HIDDEN_CHARTS_KEY, JSON.stringify([...set])); } catch {}
+}
+
 export function ProgressView({ prospects, settings }) {
   const { user } = useAuth();
   const [history, setHistory] = useState([]);
@@ -192,6 +223,16 @@ export function ProgressView({ prospects, settings }) {
   const [expandedCard, setExpandedCard] = useState(null);
   const [editingWeek, setEditingWeek] = useState(null);
   const [saveStatus, setSaveStatus] = useState('');
+  const [hiddenCharts, setHiddenCharts] = useState(() => loadHiddenCharts());
+  const [showChartsMenu, setShowChartsMenu] = useState(false);
+  const toggleChartHidden = (id) => {
+    setHiddenCharts(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      persistHiddenCharts(next);
+      return next;
+    });
+  };
 
   // Load history from Firestore + opps data
   useEffect(() => {
@@ -634,43 +675,81 @@ export function ProgressView({ prospects, settings }) {
       {/* Charts */}
       {chartData.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', position: 'relative' }}>
+            <button
+              type="button"
+              onClick={() => setShowChartsMenu(v => !v)}
+              title="Show / hide individual charts"
+              style={{ padding: '0.3rem 0.7rem', border: '1px solid var(--color-border)', borderRadius: 6, background: 'var(--color-surface)', color: 'var(--color-text-secondary)', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+            >
+              Charts <span style={{ opacity: 0.7 }}>({PROGRESS_CHART_DEFS.length - hiddenCharts.size}/{PROGRESS_CHART_DEFS.length})</span>
+            </button>
+            {showChartsMenu && (
+              <div
+                style={{ position: 'absolute', right: 0, top: 'calc(100% + 4px)', zIndex: 50, background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 6, boxShadow: '0 8px 24px rgba(0,0,0,0.1)', minWidth: 280, padding: '0.4rem 0.5rem' }}
+                onClick={e => e.stopPropagation()}
+              >
+                {PROGRESS_CHART_DEFS.map(c => (
+                  <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 2px', cursor: 'pointer', fontSize: '0.72rem' }}>
+                    <input type="checkbox" checked={!hiddenCharts.has(c.id)} onChange={() => toggleChartHidden(c.id)} />
+                    <span>{c.label}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
-            <ProgressChart
-              title="% of Accounts with HubSpot Contacts"
-              data={chartData}
-              series={[{ key: 't1ContactPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2ContactPct', name: 'Tier 2', color: '#3B82F6' }]}
-              isPct
-            />
-            <ProgressChart
-              title="% of Accounts with Decision Maker Identified"
-              data={chartData}
-              series={[{ key: 't1DMPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2DMPct', name: 'Tier 2', color: '#3B82F6' }]}
-              isPct
-            />
-            <ProgressChart
-              title="% of Accounts Connected (Had Opportunity)"
-              data={chartData}
-              series={[{ key: 't1ConnectedPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2ConnectedPct', name: 'Tier 2', color: '#3B82F6' }]}
-              isPct
-            />
-            <ProgressChart
-              title="% of Accounts Inactive (Lost / Hold Off / Old Client)"
-              data={chartData}
-              series={[{ key: 't1InactivePct', name: 'Tier 1', color: '#DC2626' }, { key: 't2InactivePct', name: 'Tier 2', color: '#3B82F6' }]}
-              isPct
-            />
-            <ProgressChart
-              title="My Accounts by Tier"
-              data={chartData}
-              series={[
-                { key: 't1Total', name: 'Tier 1', color: '#DC2626' },
-                { key: 't2Total', name: 'Tier 2', color: '#3B82F6' },
-                { key: 't3Total', name: 'Tier 3', color: '#F59E0B' },
-              ]}
-              secondarySeries={[
-                { key: 'totalAccounts', name: 'Total Accounts', color: '#111827' },
-              ]}
-            />
+            {!hiddenCharts.has('contactPct') && (
+              <ProgressChart
+                title="% of Accounts with HubSpot Contacts"
+                data={chartData}
+                series={[{ key: 't1ContactPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2ContactPct', name: 'Tier 2', color: '#3B82F6' }]}
+                isPct
+                onHide={() => toggleChartHidden('contactPct')}
+              />
+            )}
+            {!hiddenCharts.has('dmPct') && (
+              <ProgressChart
+                title="% of Accounts with Decision Maker Identified"
+                data={chartData}
+                series={[{ key: 't1DMPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2DMPct', name: 'Tier 2', color: '#3B82F6' }]}
+                isPct
+                onHide={() => toggleChartHidden('dmPct')}
+              />
+            )}
+            {!hiddenCharts.has('connectedPct') && (
+              <ProgressChart
+                title="% of Accounts Connected (Had Opportunity)"
+                data={chartData}
+                series={[{ key: 't1ConnectedPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2ConnectedPct', name: 'Tier 2', color: '#3B82F6' }]}
+                isPct
+                onHide={() => toggleChartHidden('connectedPct')}
+              />
+            )}
+            {!hiddenCharts.has('inactivePct') && (
+              <ProgressChart
+                title="% of Accounts Inactive (Lost / Hold Off / Old Client)"
+                data={chartData}
+                series={[{ key: 't1InactivePct', name: 'Tier 1', color: '#DC2626' }, { key: 't2InactivePct', name: 'Tier 2', color: '#3B82F6' }]}
+                isPct
+                onHide={() => toggleChartHidden('inactivePct')}
+              />
+            )}
+            {!hiddenCharts.has('tierTotals') && (
+              <ProgressChart
+                title="My Accounts by Tier"
+                data={chartData}
+                series={[
+                  { key: 't1Total', name: 'Tier 1', color: '#DC2626' },
+                  { key: 't2Total', name: 'Tier 2', color: '#3B82F6' },
+                  { key: 't3Total', name: 'Tier 3', color: '#F59E0B' },
+                ]}
+                secondarySeries={[
+                  { key: 'totalAccounts', name: 'Total Accounts', color: '#111827' },
+                ]}
+                onHide={() => toggleChartHidden('tierTotals')}
+              />
+            )}
           </div>
 
           {/* History table */}
