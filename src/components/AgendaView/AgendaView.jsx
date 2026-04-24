@@ -1183,7 +1183,11 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
           case 'notes':            return r.notes || '';
           case 'tier': {
             const p = r._matchedProspectId ? prospects.find(pp => pp.id === r._matchedProspectId) : null;
-            return (p && p.tier) || '';
+            if (!p) return '';
+            const explicit = (p.tier || '').trim();
+            if (explicit === 'Tier 1' || explicit === 'Tier 2') return explicit;
+            if ((p.cdm || '').toLowerCase().includes('baldauf')) return 'Tier 3';
+            return '';
           }
           default:                 return '';
         }
@@ -1893,9 +1897,22 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                         )}
                       </td>}
                       {bulkColVisible.has('tier') && <td>{(() => {
-                        const t = (prospect && prospect.tier) || '';
-                        if (!t || t === '-') return <span className={styles.metaText}>—</span>;
-                        const colors = t === 'Tier 1' ? { bg: '#DBEAFE', color: '#1E40AF' } : t === 'Tier 2' ? { bg: '#FEF3C7', color: '#92400E' } : { bg: '#F3F4F6', color: '#6B7280' };
+                        if (!prospect) return <span className={styles.metaText}>—</span>;
+                        const explicit = (prospect.tier || '').trim();
+                        let t;
+                        if (explicit === 'Tier 1' || explicit === 'Tier 2') {
+                          t = explicit;
+                        } else if ((prospect.cdm || '').toLowerCase().includes('baldauf')) {
+                          // Prospect is in My Accounts (Baldauf CDM) but
+                          // has no explicit Tier 1/2 marker — default
+                          // to Tier 3 the same way MyAccountsView does.
+                          t = 'Tier 3';
+                        } else {
+                          return <span className={styles.metaText}>—</span>;
+                        }
+                        const colors = t === 'Tier 1' ? { bg: '#DBEAFE', color: '#1E40AF' }
+                          : t === 'Tier 2' ? { bg: '#FEF3C7', color: '#92400E' }
+                          : { bg: '#F3F4F6', color: '#6B7280' };
                         return <span style={{ padding: '1px 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 600, background: colors.bg, color: colors.color }}>{t}</span>;
                       })()}</td>}
                       {bulkColVisible.has('suggestedCompany') && <td className={styles.suggestCell}>
