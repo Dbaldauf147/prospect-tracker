@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback, useRef, Fragment } from 'react';
+import { useMemo, useState, useCallback, useRef, useEffect, Fragment } from 'react';
 import * as XLSX from 'xlsx';
 import { logAction } from '../../utils/auditLog';
 import { useAuth } from '../../contexts/AuthContext';
@@ -369,6 +369,22 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
       if (prev[k] === v) return prev;
       const next = { ...prev, [k]: v };
       persistCompanyRules(next);
+      return next;
+    });
+    // Retroactively update every other row currently in the grid
+    // whose raw company matches — so mapping "Lennar" → "Lennar
+    // Corporation" on one row fixes all the other Lennar rows too.
+    setRows(prev => {
+      let changed = false;
+      const next = prev.map(r => {
+        if (companyRuleKey(r.company) === k && r.company !== v) {
+          changed = true;
+          return { ...r, company: v, _companyFromRule: true };
+        }
+        return r;
+      });
+      if (!changed) return prev;
+      saveCache(next);
       return next;
     });
   }, []);
@@ -1120,6 +1136,24 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
       setTimeout(() => setCellApplyState(prev => { const n = { ...prev }; delete n[key]; return n; }), 2500);
     }
   }, [onUpdateProspect]);
+
+  // Auto-accept TV Email Domain suggestions. The email-pattern guess
+  // (firstname.lastname@domain) is stable and derived directly from
+  // the emails the user just dropped, so we push it to the matched
+  // prospect without waiting for a click. Deduped per session via a
+  // ref so we never re-fire the same (prospect, value) pair.
+  const autoAppliedEmailDomainsRef = useRef(new Set());
+  useEffect(() => {
+    if (!onUpdateProspect) return;
+    for (const { prospect, cells } of prospectSuggestionRows) {
+      const cell = cells.emailDomain;
+      if (!cell || !cell.sugg || cell.dismissed) continue;
+      const dedupeKey = `${prospect.id}::${cell.sugg.value}`;
+      if (autoAppliedEmailDomainsRef.current.has(dedupeKey)) continue;
+      autoAppliedEmailDomainsRef.current.add(dedupeKey);
+      applySingleSuggestion(prospect, 'emailDomain', cell.sugg.value);
+    }
+  }, [prospectSuggestionRows, applySingleSuggestion, onUpdateProspect]);
 
   async function applyProspectBackfill() {
     if (!onUpdateProspect || prospectBackfillUpdates.length === 0) return;
