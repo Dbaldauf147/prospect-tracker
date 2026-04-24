@@ -1565,6 +1565,42 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
     return set;
   }, [prospects]);
 
+  // normKey → canonical prospect company name, so a contact whose
+  // Company is a slightly-off variant ("Acme Corp") can be suggested
+  // the canonical spelling ("Acme Corporation") when the normalized
+  // keys collide.
+  const prospectKeyToCanonical = useMemo(() => {
+    const m = new Map();
+    for (const p of prospects) {
+      const k = normalizeCompanyKey(p.company);
+      if (k && !m.has(k)) m.set(k, p.company);
+    }
+    return m;
+  }, [prospects]);
+
+  // Cheap brand-from-domain extractor. "urw.com" → "Urw",
+  // "ext.urw.com" → "Urw", "acme.co.uk" → "Acme". Returns "" for
+  // free-mail providers so contacts from personal inboxes don't end
+  // up with a bogus guessed company.
+  const FREE_MAIL = useMemo(() => new Set([
+    'gmail.com', 'outlook.com', 'hotmail.com', 'yahoo.com', 'icloud.com',
+    'aol.com', 'me.com', 'proton.me', 'protonmail.com', 'live.com', 'msn.com',
+  ]), []);
+  const TWO_PART_TLDS = useMemo(() => new Set([
+    'co.uk', 'co.jp', 'com.au', 'com.br', 'co.nz', 'com.mx', 'co.in',
+  ]), []);
+  const companyFromDomain = (domain) => {
+    if (!domain || FREE_MAIL.has(domain)) return '';
+    const parts = domain.split('.').filter(Boolean);
+    if (parts.length < 2) return '';
+    const lastTwo = parts.slice(-2).join('.');
+    const brand = (TWO_PART_TLDS.has(lastTwo) && parts.length >= 3)
+      ? parts[parts.length - 3]
+      : parts[parts.length - 2];
+    if (!brand) return '';
+    return brand.replace(/\b\w/g, ch => ch.toUpperCase());
+  };
+
   const enrichedContacts = useMemo(() => {
     const prospectMap = new Map();
     for (const p of prospects) {
@@ -1587,13 +1623,36 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
         const companyKey = (c.company || '').toLowerCase();
         const prospect = prospectMap.get(companyKey);
 
-        // Guess company from email domain if company is blank
+        // Guess a canonical company name. Three fallbacks:
+        //  1. If the contact already has a Company that doesn't match
+        //     any prospect by-name, but normalizes to the same key as
+        //     one, suggest that prospect's canonical spelling (e.g.
+        //     "Acme Corp" → "Acme Corporation").
+        //  2. Otherwise look up the email domain in the prospect-domain
+        //     map we build below.
+        //  3. Finally fall back to a brand extracted from the domain
+        //     itself so "@acme.com" still yields "Acme" even when no
+        //     prospect has that domain on file.
         let guessedCompany = '';
-        if (!c.company && c.email) {
+        let emailDomain = '';
+        if (c.email) {
           const atIdx = c.email.lastIndexOf('@');
-          if (atIdx >= 0) {
-            const domain = c.email.slice(atIdx + 1).toLowerCase();
-            guessedCompany = domainToCompany.get(domain) || '';
+          if (atIdx >= 0) emailDomain = c.email.slice(atIdx + 1).toLowerCase();
+        }
+        if (c.company) {
+          const currentLower = c.company.toLowerCase();
+          const normKey = normalizeCompanyKey(c.company);
+          if (normKey) {
+            const canonical = prospectKeyToCanonical.get(normKey);
+            if (canonical && canonical.toLowerCase() !== currentLower) {
+              guessedCompany = canonical;
+            }
+          }
+        } else {
+          if (emailDomain) {
+            guessedCompany = domainToCompany.get(emailDomain)
+              || companyFromDomain(emailDomain)
+              || '';
           }
         }
 
@@ -1646,7 +1705,7 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
           tier,
         };
       });
-  }, [contacts, prospects, domainToCompany, tierByCompany]);
+  }, [contacts, prospects, domainToCompany, tierByCompany, prospectKeyToCanonical, FREE_MAIL, TWO_PART_TLDS, contactLocalFields]);
 
   // Dynamic filter options for HubSpot columns
   const HUBSPOT_FILTER_SKIP = new Set(['id', '_select', '_delete', 'guessedCompany', 'guessedName', 'guessedFirstName', 'guessedLastName', 'effectiveCompany', 'matchedProspect', 'enrolledCount', 'isEnrolled', 'hs_sequences_is_enrolled', 'hs_sequences_actively_enrolled_count']);
@@ -2127,13 +2186,12 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
                     </span>
                   );
                 }
-                // Only surface this column when we actually have a
-                // guess AND the contact is missing a company. Anything
-                // else (contact already has a company, or no guess at
-                // all) collapses to — so the column stays a true
-                // "suggestion" column instead of echoing the existing
-                // Company value as plain text.
-                if (!c.company && c.guessedCompany) {
+                // Surface the guess whenever it differs from the
+                // contact's current Company (which covers both the
+                // "contact has no company" and "contact has a
+                // non-canonical spelling" cases). If the guess matches
+                // the existing Company, there's nothing to suggest.
+                if (c.guessedCompany && c.guessedCompany.toLowerCase() !== String(c.company || '').toLowerCase()) {
                   return (
                     <span
                       title={`Apply "${c.guessedCompany}" as the contact's Company in HubSpot`}
