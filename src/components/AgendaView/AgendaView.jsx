@@ -689,14 +689,29 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
   // the file into ZoomInfo (or similar) to build the first contact
   // list for each empty account.
   function downloadEmptyAccountsCSV() {
-    // My Accounts published names from the My Accounts view.
+    // My Accounts published names from the My Accounts view. Falls
+    // back to Baldauf-CDM prospects (same rule the Lists tab uses) so
+    // the export works even on a fresh page load where the My Accounts
+    // tab hasn't been opened yet.
     let myAccountNames = [];
     try {
       const raw = localStorage.getItem('my-accounts:active-names');
-      myAccountNames = raw ? JSON.parse(raw) : [];
+      const parsed = raw ? JSON.parse(raw) : null;
+      if (Array.isArray(parsed)) myAccountNames = parsed;
     } catch { /* ignore */ }
-    if (!Array.isArray(myAccountNames) || myAccountNames.length === 0) {
-      alert('No My Accounts list is published yet. Open the My Accounts tab once so the website knows which companies to check.');
+    if (myAccountNames.length === 0) {
+      const seen = new Set();
+      for (const p of prospects) {
+        if (!(p.cdm || '').toLowerCase().includes('baldauf')) continue;
+        const name = (p.company || '').trim();
+        const k = name.toLowerCase();
+        if (!k || seen.has(k)) continue;
+        seen.add(k);
+        myAccountNames.push(name);
+      }
+    }
+    if (myAccountNames.length === 0) {
+      alert('No My Accounts companies found. Check that prospects have a CDM value (or open the My Accounts tab once so the published list is generated).');
       return;
     }
 
