@@ -197,11 +197,12 @@ function companiesMatch(a, b) {
 
 const HIDDEN_CHARTS_KEY = 'progress:hidden-charts';
 const PROGRESS_CHART_DEFS = [
-  { id: 'contactPct',   label: '% of Accounts with HubSpot Contacts' },
-  { id: 'dmPct',        label: '% of Accounts with Decision Maker Identified' },
-  { id: 'connectedPct', label: '% of Accounts Connected (Had Opportunity)' },
-  { id: 'inactivePct',  label: '% of Accounts Inactive (Lost / Hold Off / Old Client)' },
-  { id: 'tierTotals',   label: 'My Accounts by Tier' },
+  { id: 'contactPct',     label: '% of Accounts with HubSpot Contacts' },
+  { id: 'dmPct',          label: '% of Accounts with Decision Maker Identified' },
+  { id: 'connectedPct',   label: '% of Accounts Connected (Had Opportunity)' },
+  { id: 'inactivePct',    label: '% of Accounts Inactive (Lost / Hold Off / Old Client)' },
+  { id: 'tierTotals',     label: 'My Accounts by Tier' },
+  { id: 'noOppsActivity', label: 'Activity on Accounts with No Opportunities (30d)' },
 ];
 function loadHiddenCharts() {
   try {
@@ -391,6 +392,62 @@ export function ProgressView({ prospects, settings }) {
       }
     }
 
+    // Build per-company activity counts from the local activity cache —
+    // 30-day window, same rule MyAccountsView uses. Powers the "No-Opps
+    // Activity" chart (sum of activity events on accounts with zero
+    // opps, so we can watch outreach stay alive on cold accounts).
+    const activityByCompany = (() => {
+      const counts = {};
+      let cache = null;
+      try { cache = JSON.parse(localStorage.getItem('hubspot-activity-cache')); } catch {}
+      if (!cache) return counts;
+      const domainMap = new Map();
+      const contactMap = new Map();
+      for (const c of hubspotContacts) {
+        if (c.email && c.company) contactMap.set(c.email.toLowerCase(), c.company.toLowerCase());
+      }
+      for (const p of myProspects) {
+        if (p.emailDomain) {
+          const entries = p.emailDomain.split(/[\n;,]+/).map(s => s.trim()).filter(Boolean);
+          for (const entry of entries) {
+            const atIdx = entry.lastIndexOf('@');
+            const domain = atIdx >= 0 ? entry.slice(atIdx + 1).toLowerCase() : entry.toLowerCase();
+            if (domain && p.company) domainMap.set(domain, p.company.toLowerCase());
+          }
+        }
+        if (p.website) {
+          const d = p.website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '').toLowerCase();
+          if (d && p.company) domainMap.set(d, p.company.toLowerCase());
+        }
+      }
+      const matchCompany = (email) => {
+        if (!email) return null;
+        const parts = email.split(/[;,]/).map(s => s.trim().toLowerCase()).filter(Boolean);
+        for (const e of parts) {
+          if (e.endsWith('@se.com')) continue;
+          if (contactMap.has(e)) return contactMap.get(e);
+          const atIdx = e.lastIndexOf('@');
+          if (atIdx >= 0) {
+            const domain = e.slice(atIdx + 1);
+            if (domainMap.has(domain)) return domainMap.get(domain);
+          }
+        }
+        return null;
+      };
+      const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+      for (const e of (cache.emails || [])) {
+        if (e.hs_timestamp && new Date(e.hs_timestamp).getTime() < thirtyDaysAgo) continue;
+        const co = matchCompany(e.hs_email_to_email) || matchCompany(e.hs_email_from_email);
+        if (co) counts[co] = (counts[co] || 0) + 1;
+      }
+      for (const c of (cache.calls || [])) {
+        if (c.hs_timestamp && new Date(c.hs_timestamp).getTime() < thirtyDaysAgo) continue;
+        const co = matchCompany(c.hs_call_to_number) || matchCompany(c.hs_call_from_number);
+        if (co) counts[co] = (counts[co] || 0) + 1;
+      }
+      return counts;
+    })();
+
     function hasDM(company) {
       const lower = (company || '').toLowerCase();
       for (const co of dmCompanies) {
@@ -435,6 +492,19 @@ export function ProgressView({ prospects, settings }) {
     const t1NotConnected = t1.filter(p => !hasOpp(p.company));
     const t2NotConnected = t2.filter(p => !hasOpp(p.company));
 
+    // No-opps activity: sum 30-day activity event count across My
+    // Accounts that DON'T have any opps — track outreach to cold
+    // accounts. Also break out by tier so the chart can layer them.
+    const sumActivity = (list) => list.reduce((s, p) => {
+      const c = activityByCompany[(p.company || '').toLowerCase()] || 0;
+      return s + c;
+    }, 0);
+    const noOppsActivityT1 = sumActivity(t1NotConnected);
+    const noOppsActivityT2 = sumActivity(t2NotConnected);
+    const noOppsActivityT3 = sumActivity(t3.filter(p => !hasOpp(p.company)));
+    const noOppsActivityTotal = noOppsActivityT1 + noOppsActivityT2 + noOppsActivityT3;
+    const noOppsAccountCount = t1NotConnected.length + t2NotConnected.length + t3.filter(p => !hasOpp(p.company)).length;
+
     return {
       week: getWeekKey(new Date()),
       t1Total, t2Total, t3Total: t3.length,
@@ -443,6 +513,11 @@ export function ProgressView({ prospects, settings }) {
       t1WithDM, t2WithDM,
       t1Connected, t2Connected,
       t1Inactive, t2Inactive,
+      noOppsActivityT1,
+      noOppsActivityT2,
+      noOppsActivityT3,
+      noOppsActivityTotal,
+      noOppsAccountCount,
       t1ContactPct: t1Total > 0 ? Math.round((t1WithContacts / t1Total) * 100) : 0,
       t2ContactPct: t2Total > 0 ? Math.round((t2WithContacts / t2Total) * 100) : 0,
       t1DMPct: t1Total > 0 ? Math.round((t1WithDM / t1Total) * 100) : 0,
@@ -489,6 +564,7 @@ export function ProgressView({ prospects, settings }) {
     currentSnapshot.t1WithDM, currentSnapshot.t2WithDM,
     currentSnapshot.t1Connected, currentSnapshot.t2Connected,
     currentSnapshot.t1Inactive, currentSnapshot.t2Inactive,
+    currentSnapshot.noOppsActivityTotal, currentSnapshot.noOppsAccountCount,
   ]);
 
   // Save current week snapshot — re-reads Firestore first to avoid overwriting
@@ -748,6 +824,21 @@ export function ProgressView({ prospects, settings }) {
                   { key: 'totalAccounts', name: 'Total Accounts', color: '#111827' },
                 ]}
                 onHide={() => toggleChartHidden('tierTotals')}
+              />
+            )}
+            {!hiddenCharts.has('noOppsActivity') && (
+              <ProgressChart
+                title="Activity on Accounts with No Opportunities (30d)"
+                data={chartData}
+                series={[
+                  { key: 'noOppsActivityT1', name: 'Tier 1', color: '#DC2626' },
+                  { key: 'noOppsActivityT2', name: 'Tier 2', color: '#3B82F6' },
+                  { key: 'noOppsActivityT3', name: 'Tier 3', color: '#F59E0B' },
+                ]}
+                secondarySeries={[
+                  { key: 'noOppsAccountCount', name: 'No-Opps Accounts', color: '#111827' },
+                ]}
+                onHide={() => toggleChartHidden('noOppsActivity')}
               />
             )}
           </div>
