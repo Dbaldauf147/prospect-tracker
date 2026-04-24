@@ -1779,6 +1779,83 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     } catch {}
   }, [filteredAccounts]);
 
+  // Download a CSV of the CURRENTLY FILTERED My Accounts that have
+  // no HubSpot contact on file yet. Pulls Zoom Company ID / Zoom
+  // Company Name / Website from the matching Table View prospect so
+  // the user can take the file into ZoomInfo (or similar) to build
+  // the first contact list for each empty account. Lives on this
+  // view so we have direct access to filteredAccounts — no more
+  // localStorage round-trip.
+  function downloadAccountsWithoutContacts() {
+    if (filteredAccounts.length === 0) {
+      alert('There are no accounts in the current view.');
+      return;
+    }
+    const CORP_SUFFIXES = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|oy|ab|spa|kk|pty|holdings|group|grp)\b\.?/g;
+    const norm = s => String(s || '')
+      .toLowerCase()
+      .normalize('NFKD').replace(/[̀-ͯ]/g, '')
+      .replace(/\(.*?\)/g, ' ')
+      .replace(/\[.*?\]/g, ' ')
+      .replace(/&/g, ' and ')
+      .replace(CORP_SUFFIXES, ' ')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    // Companies that already have at least one HubSpot contact on file.
+    const contactCompanies = new Set();
+    try {
+      const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
+      for (const c of (cache?.contacts || [])) {
+        const k = norm(c.company);
+        if (k) contactCompanies.add(k);
+      }
+    } catch { /* ignore */ }
+
+    // Lookup prospects by normalized company name to pull Zoom + site.
+    const prospectByNorm = new Map();
+    for (const p of prospects) {
+      const k = norm(p.company);
+      if (k && !prospectByNorm.has(k)) prospectByNorm.set(k, p);
+    }
+
+    const empty = filteredAccounts.filter(a => {
+      const k = norm(a.company);
+      return k && !contactCompanies.has(k);
+    });
+    if (empty.length === 0) {
+      alert('Every company in the current My Accounts view already has at least one HubSpot contact.');
+      return;
+    }
+
+    const header = ['Company', 'Zoom Company ID', 'Zoom Company Name', 'Zoom Website'];
+    const rows = [header];
+    for (const a of empty) {
+      const p = prospectByNorm.get(norm(a.company));
+      rows.push([
+        a.company || '',
+        p?.zoomCompanyId || '',
+        p?.zoomCompanyName || '',
+        p?.website || '',
+      ]);
+    }
+    const csvCell = v => {
+      const s = String(v ?? '');
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const csv = rows.map(r => r.map(csvCell).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `my-accounts-no-contacts-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
   // All company names from Target Accounts file (not just Dan Baldauf's)
   const allTargetNames = useMemo(() => {
     if (!targetAccountsData?.sheets) return [];
@@ -2021,6 +2098,11 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
           style={{ padding: '0.25rem 0.6rem', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-accent)', whiteSpace: 'nowrap' }}
         >Import Zoom Mapping</button>
         <input ref={zoomFileRef} type="file" accept=".xlsx,.xls,.csv" style={{ display: 'none' }} onChange={handleZoomFileSelect} />
+        <button
+          onClick={downloadAccountsWithoutContacts}
+          title="Download a CSV of the accounts in the current view that have no HubSpot contacts yet, with their Zoom / website data from Table View"
+          style={{ padding: '0.25rem 0.6rem', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-accent)', whiteSpace: 'nowrap' }}
+        >⇩ Accounts w/o contacts</button>
         <span className={styles.resultCount}>{filteredAccounts.length} of {allAccounts.length}</span>
       </div>
       {targetAccounts.length > 0 && (() => {
