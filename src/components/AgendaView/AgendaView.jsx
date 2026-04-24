@@ -414,6 +414,32 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
   const [bulkColTextFilters, setBulkColTextFilters] = useState({});
   const [bulkMassMode, setBulkMassMode] = useState(false);
   const [bulkSelected, setBulkSelected] = useState(() => new Set());
+  const [bulkEditOpen, setBulkEditOpen] = useState(false);
+  const [bulkEditField, setBulkEditField] = useState('company');
+  const [bulkEditValue, setBulkEditValue] = useState('');
+  const [bulkEditMode, setBulkEditMode] = useState('replace'); // 'replace' | 'append'
+  function applyBulkEdit() {
+    const field = bulkEditField;
+    const value = bulkEditValue;
+    if (!field || bulkSelected.size === 0) return;
+    setRows(prev => {
+      const next = prev.map(r => {
+        if (!bulkSelected.has(r.email)) return r;
+        if (bulkEditMode === 'append' && (field === 'dans_tags' || field === 'notes')) {
+          const existing = String(r[field] || '');
+          if (!value.trim()) return r;
+          if (existing.split(/[;\n,]+/).map(s => s.trim()).includes(value.trim())) return r;
+          const sep = field === 'notes' ? '\n' : '; ';
+          return { ...r, [field]: existing ? `${existing}${sep}${value.trim()}` : value.trim() };
+        }
+        return { ...r, [field]: value };
+      });
+      saveCache(next);
+      return next;
+    });
+    setBulkEditOpen(false);
+    setBulkEditValue('');
+  }
   const toggleBulkSelect = useCallback((email) => {
     setBulkSelected(prev => {
       const n = new Set(prev);
@@ -1673,19 +1699,26 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                 );
               })()}
               {bulkMassMode && bulkSelected.size > 0 && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!confirm(`Remove ${bulkSelected.size} selected row${bulkSelected.size === 1 ? '' : 's'} from the queue? (HubSpot is not touched.)`)) return;
-                    setRows(prev => {
-                      const next = prev.filter(r => !bulkSelected.has(r.email));
-                      saveCache(next);
-                      return next;
-                    });
-                    setBulkSelected(new Set());
-                  }}
-                  style={{ padding: '0.3rem 0.7rem', border: '1px solid #FCA5A5', borderRadius: 6, background: '#FEF2F2', color: '#B91C1C', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
-                >Remove {bulkSelected.size} selected</button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => { setBulkEditOpen(true); setBulkEditValue(''); }}
+                    style={{ padding: '0.3rem 0.7rem', border: '1px solid var(--color-accent)', borderRadius: 6, background: 'var(--color-accent)', color: '#fff', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+                  >Bulk Edit {bulkSelected.size}</button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!confirm(`Remove ${bulkSelected.size} selected row${bulkSelected.size === 1 ? '' : 's'} from the queue? (HubSpot is not touched.)`)) return;
+                      setRows(prev => {
+                        const next = prev.filter(r => !bulkSelected.has(r.email));
+                        saveCache(next);
+                        return next;
+                      });
+                      setBulkSelected(new Set());
+                    }}
+                    style={{ padding: '0.3rem 0.7rem', border: '1px solid #FCA5A5', borderRadius: 6, background: '#FEF2F2', color: '#B91C1C', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+                  >Remove {bulkSelected.size} selected</button>
+                </>
               )}
               <div style={{ position: 'relative' }}>
                 <button
@@ -2138,6 +2171,82 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
           </>
         )}
       </div>
+
+      {bulkEditOpen && (
+        <div
+          style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100, padding: '1.25rem' }}
+          onClick={() => setBulkEditOpen(false)}
+        >
+          <div
+            style={{ background: '#fff', borderRadius: 10, boxShadow: '0 20px 60px rgba(0,0,0,0.25)', width: 'min(440px, 100%)', display: 'flex', flexDirection: 'column' }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid var(--color-border)' }}>
+              <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-text)' }}>Bulk Edit {bulkSelected.size} contact{bulkSelected.size === 1 ? '' : 's'}</div>
+              <div style={{ fontSize: '0.78rem', color: '#64748B', marginTop: '0.25rem' }}>
+                Updates the selected rows in the grid only — push them to HubSpot via Send to HubSpot afterwards.
+              </div>
+            </div>
+            <div style={{ padding: '0.85rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+              <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text)' }}>
+                Field
+                <select
+                  value={bulkEditField}
+                  onChange={e => setBulkEditField(e.target.value)}
+                  style={{ width: '100%', padding: '0.4rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 6, fontSize: '0.8rem', fontFamily: 'inherit', marginTop: 4 }}
+                >
+                  <option value="firstname">First Name</option>
+                  <option value="lastname">Last Name</option>
+                  <option value="company">Company</option>
+                  <option value="jobtitle">Job Title</option>
+                  <option value="phone">Work Phone Number</option>
+                  <option value="mobilePhone">Cell Phone Number</option>
+                  <option value="linkedinUrl">LinkedIn URL</option>
+                  <option value="dans_tags">Dan's Tags</option>
+                  <option value="city">City</option>
+                  <option value="state">State</option>
+                  <option value="country">Country</option>
+                  <option value="notes">Notes</option>
+                </select>
+              </label>
+              {(bulkEditField === 'dans_tags' || bulkEditField === 'notes') && (
+                <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.72rem' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <input type="radio" checked={bulkEditMode === 'replace'} onChange={() => setBulkEditMode('replace')} /> Replace
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <input type="radio" checked={bulkEditMode === 'append'} onChange={() => setBulkEditMode('append')} /> Append
+                  </label>
+                </div>
+              )}
+              <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text)' }}>
+                {bulkEditMode === 'append' ? 'Value to append' : 'New value'}
+                <input
+                  autoFocus
+                  type="text"
+                  value={bulkEditValue}
+                  onChange={e => setBulkEditValue(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') applyBulkEdit(); if (e.key === 'Escape') setBulkEditOpen(false); }}
+                  placeholder={bulkEditMode === 'append' ? 'e.g. Dan Key Target' : 'Leave empty to clear the field'}
+                  style={{ width: '100%', padding: '0.4rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 6, fontSize: '0.8rem', fontFamily: 'inherit', marginTop: 4 }}
+                />
+              </label>
+            </div>
+            <div style={{ padding: '0.75rem 1.25rem', borderTop: '1px solid var(--color-border)', display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+              <button
+                type="button"
+                onClick={() => setBulkEditOpen(false)}
+                style={{ padding: '0.45rem 0.9rem', border: '1px solid var(--color-border)', background: '#fff', color: 'var(--color-text-secondary)', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit' }}
+              >Cancel</button>
+              <button
+                type="button"
+                onClick={applyBulkEdit}
+                style={{ padding: '0.45rem 0.9rem', border: 'none', background: 'var(--color-accent)', color: '#fff', borderRadius: 6, fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+              >Apply to {bulkSelected.size}</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {pendingUpload && (() => {
         const { fileName, headers, rows: rawRows, mapping } = pendingUpload;
