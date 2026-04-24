@@ -769,9 +769,14 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
       const dominantPattern = pickDominantKey(patterns);
       out.set(pid, {
         website: dominantDomain || null,
+        // Only suggest an emailDomain entry when we have a naming
+        // pattern. A bare domain like "acme.com" would just duplicate
+        // the company website and isn't useful in Table View — we
+        // skip it so the user sees patterns like "firstname.lastname
+        // @acme.com" only.
         emailDomain: dominantDomain && dominantPattern
           ? `${dominantPattern}@${dominantDomain}`
-          : (dominantDomain || null),
+          : null,
         // zoomCompanyId / zoomCompanyName cannot be inferred from emails — upload only.
       });
     }
@@ -803,6 +808,10 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
         if (r._matchedProspectId !== prospectId) continue;
         const v = String(r[uploadKey] || '').trim();
         if (!v) continue;
+        // For emailDomain, require a naming pattern (value must
+        // contain @). Bare company domains like "acme.com" aren't
+        // useful and shouldn't be suggested.
+        if (fieldKey === 'emailDomain' && !v.includes('@')) continue;
         if (existingDomains && existingDomains.has(v.toLowerCase())) continue;
         return { value: v, origin: 'upload' };
       }
