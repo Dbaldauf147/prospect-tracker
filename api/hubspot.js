@@ -132,18 +132,25 @@ async function createCompanyByName(token, rawName) {
   }
 }
 
-// Set the contact's primary Company association. associationTypeId 1 is
-// the HUBSPOT_DEFINED `contact_to_company` (primary). PUT is idempotent —
-// safe to call repeatedly, including when the association already exists.
+// Set the contact's primary Company association via the v4 "default"
+// endpoint, which handles the primary-company semantics automatically
+// (the default contact_to_company association IS the primary). Returns
+// { ok, status, errorText } so the caller can surface failures instead
+// of silently swallowing them — earlier we had a v3 PUT with a wrong
+// associationTypeId that failed quietly and reverted edits on the next
+// sync.
 async function setContactPrimaryCompany(token, contactId, companyId) {
   try {
-    const res = await fetch(`${BASE}/crm/v3/objects/contacts/${contactId}/associations/companies/${companyId}/1`, {
+    const res = await fetch(`${BASE}/crm/v4/objects/contacts/${contactId}/associations/default/companies/${companyId}`, {
       method: 'PUT',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     });
-    return res.ok;
-  } catch {
-    return false;
+    if (res.ok) return { ok: true };
+    let errorText = '';
+    try { errorText = (await res.text()).slice(0, 300); } catch {}
+    return { ok: false, status: res.status, errorText };
+  } catch (err) {
+    return { ok: false, status: 0, errorText: String(err?.message || err).slice(0, 300) };
   }
 }
 
@@ -435,12 +442,22 @@ export default async function handler(req, res) {
       // Company record by exact name; create one if there's no match,
       // since otherwise the typed value would silently disappear on the
       // next sync.
+      let companyAssignment = null;
       if (typeof cleanProps.company === 'string') {
         const companyName = cleanProps.company.trim();
         if (companyName) {
           let companyId = await findCompanyByName(token, companyName);
-          if (!companyId) companyId = await createCompanyByName(token, companyName);
-          if (companyId) await setContactPrimaryCompany(token, contactId, companyId);
+          let created = false;
+          if (!companyId) {
+            companyId = await createCompanyByName(token, companyName);
+            created = true;
+          }
+          if (companyId) {
+            const result = await setContactPrimaryCompany(token, contactId, companyId);
+            companyAssignment = { companyId, created, ...result };
+          } else {
+            companyAssignment = { ok: false, errorText: 'Failed to find or create Company record' };
+          }
         }
       }
       const updateRes = await fetch(`${BASE}/crm/v3/objects/contacts/${contactId}`, {
@@ -453,7 +470,7 @@ export default async function handler(req, res) {
         throw new Error(`Update failed ${updateRes.status}: ${text.slice(0, 300)}`);
       }
       const updated = await updateRes.json();
-      return res.json({ success: true, contact: { id: updated.id, ...updated.properties } });
+      return res.json({ success: true, contact: { id: updated.id, ...updated.properties }, companyAssignment });
     }
 
     if (action === 'create-note' && req.method === 'POST') {
