@@ -1959,6 +1959,65 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
     setMassProcessing(false);
   }
 
+  // Accept the guessed company for one contact AND auto-apply the same
+  // value to every other contact whose guess resolved to the same name
+  // (same email domain, same normalized variant, etc.). This lets one
+  // click clean up an entire cohort of contacts that all reduce to the
+  // same canonical company. Confirms before touching more than one row
+  // so a single accidental click can't fan out into a wide write.
+  async function handleAcceptGuessedCompany(contact) {
+    const guess = (contact.guessedCompany || '').trim();
+    if (!guess) return;
+    const target = guess.toLowerCase();
+    const peers = enrichedContacts.filter(c =>
+      c.guessedCompany &&
+      c.guessedCompany.toLowerCase().trim() === target &&
+      String(c.company || '').toLowerCase() !== target &&
+      !dismissedGuesses[`${c.id}_company`]
+    );
+    if (peers.length === 0) {
+      // Fallback to a plain single-row update — covers the case where the
+      // contact's existing Company already equals the guess (peer list
+      // would exclude it) but the user clicked anyway.
+      await handleInlineUpdate(contact.id, { company: guess });
+      return;
+    }
+    if (peers.length > 1) {
+      if (!confirm(`Apply "${guess}" to ${peers.length} contacts that share this suggestion?`)) {
+        // User said no to bulk — apply just to the clicked row.
+        await handleInlineUpdate(contact.id, { company: guess });
+        return;
+      }
+    }
+    setMassProcessing(true);
+    setPushStatus(null);
+    let updated = 0, errors = 0;
+    for (const c of peers) {
+      try {
+        const res = await fetch('/api/hubspot?action=update-contact', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contactId: c.id, properties: { company: guess } }),
+        });
+        const json = await res.json();
+        if (json.error) { errors++; } else { updated++; }
+      } catch { errors++; }
+    }
+    setData(prev => {
+      if (!prev) return prev;
+      const peerIds = new Set(peers.map(p => p.id));
+      const upd = {
+        ...prev,
+        contacts: prev.contacts.map(c => peerIds.has(c.id) ? { ...c, company: guess } : c),
+      };
+      saveCache(upd);
+      return upd;
+    });
+    setPushStatus({ type: 'success', message: `Applied "${guess}" to ${updated} contacts${errors > 0 ? `, ${errors} failed` : ''}` });
+    logAction(user, 'bulk_apply_same_guess', { count: updated, guess });
+    setMassProcessing(false);
+  }
+
   async function handleCopyAllGuessedCompanies() {
     const toCopy = enrichedContacts.filter(c => !c.company && c.guessedCompany && !dismissedGuesses[`${c.id}_company`]);
     if (toCopy.length === 0) return;
@@ -2283,8 +2342,8 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
                       </span>
                       <button
                         type="button"
-                        title="Use this as Company"
-                        onClick={async (e) => { e.stopPropagation(); await handleInlineUpdate(c.id, { company: c.guessedCompany }); }}
+                        title="Use this as Company (auto-applies to every other contact with the same suggestion)"
+                        onClick={async (e) => { e.stopPropagation(); await handleAcceptGuessedCompany(c); }}
                         style={{ background: '#16A34A', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '0.62rem', padding: '0 5px', lineHeight: 1.4, fontFamily: 'inherit', fontWeight: 700, borderRadius: 999 }}
                       >✓</button>
                       <button
