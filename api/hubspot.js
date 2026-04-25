@@ -16,6 +16,7 @@ async function getAllContacts(token) {
   let after = undefined;
   const properties = [
     'firstname', 'lastname', 'email', 'phone', 'company', 'jobtitle',
+    'associatedcompanyid',
     'hs_lead_status', 'lastmodifieddate', 'createdate',
     'notes_last_updated', 'notes_last_contacted', 'num_contacted_notes',
     'hs_sales_email_last_replied', 'hs_email_last_send_date',
@@ -46,6 +47,42 @@ async function getAllContacts(token) {
 
     // Safety limit
     if (contacts.length > 10000) break;
+  }
+
+  // Single source of truth: overwrite each contact's free-text `company`
+  // with the *name* of its primary associated Company record. The text
+  // field on contacts drifts from the Company record over time (rename
+  // the Company in HubSpot and old contacts keep the stale text); the
+  // Company record is the canonical entity and is what the app's Table
+  // View rows tie to. Contacts with no Company association get an empty
+  // company string so they no longer match any prospect by company text.
+  const companyIds = new Set();
+  for (const c of contacts) {
+    const id = c.properties?.associatedcompanyid;
+    if (id) companyIds.add(String(id));
+  }
+  const companyNames = new Map();
+  const idList = [...companyIds];
+  for (let i = 0; i < idList.length; i += 100) {
+    const batch = idList.slice(i, i + 100);
+    try {
+      const res = await fetch(`${BASE}/crm/v3/objects/companies/batch/read`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ properties: ['name'], inputs: batch.map(id => ({ id })) }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        for (const r of (data.results || [])) {
+          companyNames.set(String(r.id), r.properties?.name || '');
+        }
+      }
+    } catch {}
+  }
+  for (const c of contacts) {
+    const id = c.properties?.associatedcompanyid;
+    const name = id ? (companyNames.get(String(id)) || '') : '';
+    c.properties.company = name;
   }
   return contacts;
 }
