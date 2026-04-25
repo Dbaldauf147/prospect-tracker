@@ -311,7 +311,7 @@ export function DataTable({
           Export Excel
         </button>
       </div>
-      {sortedRows.length === 0 ? (
+      {sortedRows.length === 0 && !enableColumnFilters ? (
         <div className={styles.empty}>{emptyMessage}</div>
       ) : (
         <>
@@ -374,26 +374,30 @@ export function DataTable({
               </thead>
             </table>
           </div>
-          <div className={styles.scrollWrap} ref={bodyRef} onScroll={handleBodyScroll}>
-            <table className={styles.table} style={{ tableLayout: 'fixed', width: visibleColumns.reduce((s, c) => s + getWidth(c), 0) }}>
-              <colgroup>
-                {visibleColumns.map(col => (
-                  <col key={col.key} style={{ width: getWidth(col) }} />
-                ))}
-              </colgroup>
-              <tbody>
-                {sortedRows.map((row, ri) => (
-                  <tr key={row.id || ri} className={rowClassName ? rowClassName(row) : undefined} onClick={onRowClick ? () => onRowClick(row) : undefined} style={{ ...(onRowClick ? { cursor: 'pointer' } : undefined), ...(rowStyle ? rowStyle(row) : undefined) }}>
-                    {visibleColumns.map(col => (
-                      <td key={col.key} className={col.sticky ? styles.stickyCol : undefined}>
-                        {col.render ? col.render(row) : (row[col.key] ?? '—')}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {sortedRows.length === 0 ? (
+            <div className={styles.empty}>{emptyMessage}</div>
+          ) : (
+            <div className={styles.scrollWrap} ref={bodyRef} onScroll={handleBodyScroll}>
+              <table className={styles.table} style={{ tableLayout: 'fixed', width: visibleColumns.reduce((s, c) => s + getWidth(c), 0) }}>
+                <colgroup>
+                  {visibleColumns.map(col => (
+                    <col key={col.key} style={{ width: getWidth(col) }} />
+                  ))}
+                </colgroup>
+                <tbody>
+                  {sortedRows.map((row, ri) => (
+                    <tr key={row.id || ri} className={rowClassName ? rowClassName(row) : undefined} onClick={onRowClick ? () => onRowClick(row) : undefined} style={{ ...(onRowClick ? { cursor: 'pointer' } : undefined), ...(rowStyle ? rowStyle(row) : undefined) }}>
+                      {visibleColumns.map(col => (
+                        <td key={col.key} className={col.sticky ? styles.stickyCol : undefined}>
+                          {col.render ? col.render(row) : (row[col.key] ?? '—')}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </>
       )}
     </div>
