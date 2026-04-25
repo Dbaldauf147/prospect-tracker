@@ -87,6 +87,66 @@ async function getAllContacts(token) {
   return contacts;
 }
 
+// Find a Company record by exact name (case-insensitive trim). Returns
+// its HubSpot id, or null on a miss / network error. Used by edit
+// flows so the contact-level Company text and the associated Company
+// record stay in lockstep — getAllContacts overwrites the text from
+// the association on every sync, so an edit that didn't also reassign
+// would silently revert on next refresh.
+async function findCompanyByName(token, rawName) {
+  const name = String(rawName || '').trim();
+  if (!name) return null;
+  try {
+    const res = await fetch(`${BASE}/crm/v3/objects/companies/search`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        filterGroups: [{ filters: [{ propertyName: 'name', operator: 'EQ', value: name }] }],
+        properties: ['name'],
+        limit: 1,
+      }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const hit = (data.results || [])[0];
+    return hit ? String(hit.id) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function createCompanyByName(token, rawName) {
+  const name = String(rawName || '').trim();
+  if (!name) return null;
+  try {
+    const res = await fetch(`${BASE}/crm/v3/objects/companies`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ properties: { name } }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.id ? String(data.id) : null;
+  } catch {
+    return null;
+  }
+}
+
+// Set the contact's primary Company association. associationTypeId 1 is
+// the HUBSPOT_DEFINED `contact_to_company` (primary). PUT is idempotent —
+// safe to call repeatedly, including when the association already exists.
+async function setContactPrimaryCompany(token, contactId, companyId) {
+  try {
+    const res = await fetch(`${BASE}/crm/v3/objects/contacts/${contactId}/associations/companies/${companyId}/1`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 // Normalize the semicolon-separated `dans_tags` string before we hand
 // it to HubSpot. The frontend displays and stores tags with natural
 // spacing (e.g. "Efficiency / Renewables"), but the HubSpot enumeration
@@ -369,6 +429,20 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'contactId is required' });
       }
       const cleanProps = normalizeContactPropertiesForHubSpot(properties);
+      // If `company` is being set, also reassign the contact's primary
+      // Company association so the canonical-name sync (getAllContacts)
+      // doesn't revert the edit on next refresh. Find an existing
+      // Company record by exact name; create one if there's no match,
+      // since otherwise the typed value would silently disappear on the
+      // next sync.
+      if (typeof cleanProps.company === 'string') {
+        const companyName = cleanProps.company.trim();
+        if (companyName) {
+          let companyId = await findCompanyByName(token, companyName);
+          if (!companyId) companyId = await createCompanyByName(token, companyName);
+          if (companyId) await setContactPrimaryCompany(token, contactId, companyId);
+        }
+      }
       const updateRes = await fetch(`${BASE}/crm/v3/objects/contacts/${contactId}`, {
         method: 'PATCH',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
