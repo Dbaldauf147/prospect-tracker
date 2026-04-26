@@ -171,13 +171,12 @@ function saveCache(data) {
   try {
     localStorage.setItem(CACHE_KEY, JSON.stringify(data));
   } catch (err) {
-    // Over-quota — retry with a slimmed contact list (drop heavy optional fields) to fit.
+    // Over-quota. Try a much-slimmer contact list (only the fields the
+    // table actually renders) to fit under the ~5MB localStorage cap.
     try {
       const slimContactKeys = new Set([
-        'id', 'vid', 'firstname', 'lastname', 'email', 'phone', 'company', 'jobtitle',
-        'hs_linkedin_url', 'linkedin_url', 'city', 'state', 'country',
-        'dans_tags', 'dan_s_tags', 'dans_tag', 'createdate', 'lastmodifieddate',
-        'hs_object_id', '_localOnly', 'notes',
+        'id', 'firstname', 'lastname', 'email', 'phone', 'company', 'jobtitle',
+        'dans_tags',
       ]);
       const slim = {
         ...data,
@@ -190,7 +189,12 @@ function saveCache(data) {
       localStorage.setItem(CACHE_KEY, JSON.stringify(slim));
       console.warn('HubSpot cache saved in slim mode (over quota with full fields)');
     } catch (err2) {
-      console.error('HubSpot cache write failed (quota exceeded, even slim version too large):', err2?.message || err2);
+      // Slim still didn't fit. Drop the stale cache entirely so the next
+      // page load doesn't render an out-of-date snapshot before the API
+      // fetch catches up. The auto-fetch on mount repopulates from the
+      // server, so losing the cache only costs a brief loading state.
+      try { localStorage.removeItem(CACHE_KEY); } catch {}
+      console.warn('HubSpot cache exceeded quota even slimmed — cleared cache so next load fetches fresh');
     }
   }
 }
