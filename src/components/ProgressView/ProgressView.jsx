@@ -348,9 +348,18 @@ export function ProgressView({ prospects, settings }) {
     } catch {}
 
     const contactCompanies = new Set();
+    const contactDomains = new Set();
+    const FREE_MAIL = new Set(['gmail.com', 'outlook.com', 'hotmail.com', 'yahoo.com', 'icloud.com', 'aol.com', 'me.com', 'proton.me', 'protonmail.com', 'live.com', 'msn.com']);
     for (const c of hubspotContacts) {
       const co = (c.company || '').toLowerCase();
       if (co) contactCompanies.add(co);
+      if (c.email) {
+        const at = c.email.lastIndexOf('@');
+        if (at >= 0) {
+          const d = c.email.slice(at + 1).toLowerCase().trim();
+          if (d && !FREE_MAIL.has(d)) contactDomains.add(d);
+        }
+      }
     }
 
     // Use opps data loaded from Firestore/IndexedDB/localStorage
@@ -366,10 +375,34 @@ export function ProgressView({ prospects, settings }) {
       totalOppsByAccount[account] = (totalOppsByAccount[account] || 0) + 1;
     }
 
-    function hasContact(company) {
-      const lower = (company || '').toLowerCase();
+    // Match the My Accounts contact-count rule: a prospect has contacts
+    // if any HubSpot contact's Company text matches OR if its email
+    // domain matches one of the prospect's registered email-domain or
+    // website domains. Without the domain fallback, accounts like TIAA —
+    // where contacts share "@tiaa.org" but their Company text varies —
+    // get undercounted vs the My Accounts table.
+    function prospectDomains(p) {
+      const out = new Set();
+      if (p?.emailDomain) {
+        for (const entry of String(p.emailDomain).split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)) {
+          const at = entry.lastIndexOf('@');
+          const d = (at >= 0 ? entry.slice(at + 1) : entry).toLowerCase().trim();
+          if (d) out.add(d);
+        }
+      }
+      if (p?.website) {
+        const d = String(p.website).replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '').toLowerCase().trim();
+        if (d) out.add(d);
+      }
+      return out;
+    }
+    function hasContact(p) {
+      const lower = (p?.company || '').toLowerCase();
       for (const co of contactCompanies) {
         if (companiesMatch(lower, co)) return true;
+      }
+      for (const d of prospectDomains(p)) {
+        if (contactDomains.has(d)) return true;
       }
       return false;
     }
@@ -475,8 +508,8 @@ export function ProgressView({ prospects, settings }) {
 
     const t1Total = t1.length;
     const t2Total = t2.length;
-    const t1WithContactsList = t1.filter(p => hasContact(p.company));
-    const t2WithContactsList = t2.filter(p => hasContact(p.company));
+    const t1WithContactsList = t1.filter(p => hasContact(p));
+    const t2WithContactsList = t2.filter(p => hasContact(p));
     const t1WithDMList = t1.filter(p => hasDM(p.company));
     const t2WithDMList = t2.filter(p => hasDM(p.company));
     const t1ConnectedList = t1.filter(p => hasOpp(p.company));
@@ -493,8 +526,8 @@ export function ProgressView({ prospects, settings }) {
     const t2Inactive = t2InactiveList.length;
 
     // Also build "not" lists
-    const t1NoContacts = t1.filter(p => !hasContact(p.company));
-    const t2NoContacts = t2.filter(p => !hasContact(p.company));
+    const t1NoContacts = t1.filter(p => !hasContact(p));
+    const t2NoContacts = t2.filter(p => !hasContact(p));
     const t1NoDM = t1.filter(p => !hasDM(p.company));
     const t2NoDM = t2.filter(p => !hasDM(p.company));
     const t1NotConnected = t1.filter(p => !hasOpp(p.company));
