@@ -87,15 +87,32 @@ async function getAllContacts(token) {
   return contacts;
 }
 
-// Find a Company record by exact name (case-insensitive trim). Returns
-// its HubSpot id, or null on a miss / network error. Used by edit
-// flows so the contact-level Company text and the associated Company
-// record stay in lockstep — getAllContacts overwrites the text from
-// the association on every sync, so an edit that didn't also reassign
-// would silently revert on next refresh.
+// Loose-match company-name normalizer: lowercase, strip diacritics,
+// drop common corporate suffixes, replace any non-alphanumeric run with
+// a single space, collapse whitespace. Used to compare candidate
+// HubSpot Company names against the user's typed value when the strict
+// EQ search doesn't find a match.
+const COMPANY_SUFFIX_RE = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|oy|ab|spa|kk|pty|holdings|group|grp|partners|capital|management)\b\.?/g;
+function normalizeCompanyName(s) {
+  return String(s || '')
+    .toLowerCase()
+    .normalize('NFKD').replace(/[̀-ͯ]/g, '')
+    .replace(/&/g, ' and ')
+    .replace(COMPANY_SUFFIX_RE, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Find a HubSpot Company record by name. Tries progressively looser
+// matches so subtle variants (case, trailing whitespace, "Inc"/"LLC"
+// suffixes, punctuation) still find an existing record instead of
+// kicking off a duplicate-create that often fails. Returns the HubSpot
+// id, or null when nothing matches even after fuzzy normalization.
 async function findCompanyByName(token, rawName) {
   const name = String(rawName || '').trim();
   if (!name) return null;
+  // 1. Strict EQ — fast path when the name lines up exactly.
   try {
     const res = await fetch(`${BASE}/crm/v3/objects/companies/search`, {
       method: 'POST',
@@ -106,29 +123,74 @@ async function findCompanyByName(token, rawName) {
         limit: 1,
       }),
     });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const hit = (data.results || [])[0];
-    return hit ? String(hit.id) : null;
-  } catch {
-    return null;
-  }
+    if (res.ok) {
+      const data = await res.json();
+      const hit = (data.results || [])[0];
+      if (hit?.id) return String(hit.id);
+    }
+  } catch { /* fall through */ }
+  // 2. CONTAINS_TOKEN with the leading distinctive token, then
+  // normalize-and-compare the candidates client-side. Catches
+  // "Starwood Capital Group" against an existing "Starwood Capital"
+  // or "Starwood Capital Group LLC" or "Starwood Capital Group, L.P."
+  const tokens = name.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
+  const probe = tokens[0] && tokens[0].length >= 3 ? tokens[0] : name;
+  try {
+    const res = await fetch(`${BASE}/crm/v3/objects/companies/search`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        filterGroups: [{ filters: [{ propertyName: 'name', operator: 'CONTAINS_TOKEN', value: probe }] }],
+        properties: ['name'],
+        limit: 50,
+      }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const candidates = (data.results || []).map(r => ({ id: String(r.id), name: r.properties?.name || '' }));
+      if (candidates.length > 0) {
+        const target = normalizeCompanyName(name);
+        // Prefer exact normalized match. Fall back to shortest candidate
+        // whose normalized form contains the target — that's typically
+        // the closest "real" company without extra qualifiers.
+        const exact = candidates.find(c => normalizeCompanyName(c.name) === target);
+        if (exact) return exact.id;
+        const partial = candidates
+          .filter(c => {
+            const n = normalizeCompanyName(c.name);
+            return n && (n.includes(target) || target.includes(n));
+          })
+          .sort((a, b) => a.name.length - b.name.length)[0];
+        if (partial) return partial.id;
+      }
+    }
+  } catch { /* fall through */ }
+  return null;
 }
 
+// Create a Company record. Returns either { ok: true, id } or
+// { ok: false, status, errorText } so the caller can surface the
+// real reason (permissions, duplicate name validation, etc.) instead
+// of a generic miss.
 async function createCompanyByName(token, rawName) {
   const name = String(rawName || '').trim();
-  if (!name) return null;
+  if (!name) return { ok: false, status: 0, errorText: 'Empty company name' };
   try {
     const res = await fetch(`${BASE}/crm/v3/objects/companies`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ properties: { name } }),
     });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data.id ? String(data.id) : null;
-  } catch {
-    return null;
+    if (res.ok) {
+      const data = await res.json();
+      if (data.id) return { ok: true, id: String(data.id) };
+      return { ok: false, status: res.status, errorText: 'Create returned no id' };
+    }
+    let errorText = '';
+    try { errorText = (await res.text()).slice(0, 300); } catch { /* noop */ }
+    return { ok: false, status: res.status, errorText };
+  } catch (err) {
+    return { ok: false, status: 0, errorText: String(err?.message || err).slice(0, 300) };
   }
 }
 
@@ -448,15 +510,25 @@ export default async function handler(req, res) {
         if (companyName) {
           let companyId = await findCompanyByName(token, companyName);
           let created = false;
+          let createError = null;
           if (!companyId) {
-            companyId = await createCompanyByName(token, companyName);
-            created = true;
+            const createRes = await createCompanyByName(token, companyName);
+            if (createRes.ok) {
+              companyId = createRes.id;
+              created = true;
+            } else {
+              createError = createRes;
+            }
           }
           if (companyId) {
             const result = await setContactPrimaryCompany(token, contactId, companyId);
             companyAssignment = { companyId, created, ...result };
           } else {
-            companyAssignment = { ok: false, errorText: 'Failed to find or create Company record' };
+            companyAssignment = {
+              ok: false,
+              status: createError?.status || 0,
+              errorText: createError?.errorText || 'Failed to find or create Company record',
+            };
           }
         }
       }
