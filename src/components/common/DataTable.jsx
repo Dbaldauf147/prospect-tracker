@@ -205,10 +205,44 @@ export function DataTable({
 
   const headerRef = useRef(null);
   const bodyRef = useRef(null);
+  const firstRowRef = useRef(null);
+
+  // Virtualization. Only render rows in (or near) the viewport when the
+  // dataset is large enough that the savings outweigh the wrapper-row
+  // overhead. Row height is measured from the first rendered row so the
+  // spacers stay aligned even if the design's padding changes. Below
+  // VIRTUALIZE_THRESHOLD, behavior is identical to the legacy table.
+  const VIRTUALIZE_THRESHOLD = 50;
+  const ROW_BUFFER = 8;
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(0);
+  const [rowHeight, setRowHeight] = useState(33);
 
   function handleBodyScroll(e) {
     if (headerRef.current) headerRef.current.scrollLeft = e.target.scrollLeft;
+    setScrollTop(e.target.scrollTop);
   }
+
+  useEffect(() => {
+    if (!bodyRef.current) return;
+    const el = bodyRef.current;
+    const update = () => setViewportHeight(el.clientHeight);
+    update();
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(update);
+      ro.observe(el);
+      return () => ro.disconnect();
+    }
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
+
+  useEffect(() => {
+    if (firstRowRef.current) {
+      const h = firstRowRef.current.offsetHeight;
+      if (h && Math.abs(h - rowHeight) > 0.5) setRowHeight(h);
+    }
+  });
 
   const getWidth = (col) => colWidths[col.key] || col.defaultWidth || 120;
   const visibleColumns = columns.filter(c => visibleCols.has(c.key) || alwaysVisible.includes(c.key));
@@ -376,28 +410,61 @@ export function DataTable({
           </div>
           {sortedRows.length === 0 ? (
             <div className={styles.empty}>{emptyMessage}</div>
-          ) : (
-            <div className={styles.scrollWrap} ref={bodyRef} onScroll={handleBodyScroll}>
-              <table className={styles.table} style={{ tableLayout: 'fixed', width: visibleColumns.reduce((s, c) => s + getWidth(c), 0) }}>
-                <colgroup>
-                  {visibleColumns.map(col => (
-                    <col key={col.key} style={{ width: getWidth(col) }} />
-                  ))}
-                </colgroup>
-                <tbody>
-                  {sortedRows.map((row, ri) => (
-                    <tr key={row.id || ri} className={rowClassName ? rowClassName(row) : undefined} onClick={onRowClick ? () => onRowClick(row) : undefined} style={{ ...(onRowClick ? { cursor: 'pointer' } : undefined), ...(rowStyle ? rowStyle(row) : undefined) }}>
-                      {visibleColumns.map(col => (
-                        <td key={col.key} className={col.sticky ? styles.stickyCol : undefined}>
-                          {col.render ? col.render(row) : (row[col.key] ?? '—')}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          ) : (() => {
+            const total = sortedRows.length;
+            const virtualize = total > VIRTUALIZE_THRESHOLD && rowHeight > 0;
+            let startIdx = 0;
+            let endIdx = total;
+            if (virtualize) {
+              const visibleCount = Math.max(1, Math.ceil(viewportHeight / rowHeight));
+              startIdx = Math.max(0, Math.floor(scrollTop / rowHeight) - ROW_BUFFER);
+              endIdx = Math.min(total, startIdx + visibleCount + ROW_BUFFER * 2);
+            }
+            const topPad = virtualize ? startIdx * rowHeight : 0;
+            const bottomPad = virtualize ? Math.max(0, (total - endIdx) * rowHeight) : 0;
+            const visibleRows = virtualize ? sortedRows.slice(startIdx, endIdx) : sortedRows;
+            return (
+              <div className={styles.scrollWrap} ref={bodyRef} onScroll={handleBodyScroll}>
+                <table className={styles.table} style={{ tableLayout: 'fixed', width: visibleColumns.reduce((s, c) => s + getWidth(c), 0) }}>
+                  <colgroup>
+                    {visibleColumns.map(col => (
+                      <col key={col.key} style={{ width: getWidth(col) }} />
+                    ))}
+                  </colgroup>
+                  <tbody>
+                    {topPad > 0 && (
+                      <tr aria-hidden="true" style={{ height: topPad }}>
+                        <td colSpan={visibleColumns.length} style={{ padding: 0, border: 'none' }} />
+                      </tr>
+                    )}
+                    {visibleRows.map((row, ri) => {
+                      const absoluteIdx = startIdx + ri;
+                      return (
+                        <tr
+                          key={row.id || absoluteIdx}
+                          ref={ri === 0 ? firstRowRef : undefined}
+                          className={rowClassName ? rowClassName(row) : undefined}
+                          onClick={onRowClick ? () => onRowClick(row) : undefined}
+                          style={{ ...(onRowClick ? { cursor: 'pointer' } : undefined), ...(rowStyle ? rowStyle(row) : undefined) }}
+                        >
+                          {visibleColumns.map(col => (
+                            <td key={col.key} className={col.sticky ? styles.stickyCol : undefined}>
+                              {col.render ? col.render(row) : (row[col.key] ?? '—')}
+                            </td>
+                          ))}
+                        </tr>
+                      );
+                    })}
+                    {bottomPad > 0 && (
+                      <tr aria-hidden="true" style={{ height: bottomPad }}>
+                        <td colSpan={visibleColumns.length} style={{ padding: 0, border: 'none' }} />
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })()}
         </>
       )}
     </div>
