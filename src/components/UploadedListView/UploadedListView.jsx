@@ -1280,18 +1280,56 @@ export function UploadedListView({
             </span>
           )}
         </button>
+        {(() => {
+          const filteredKeys = filtered.map(r => r.__matchKey__);
+          const visibleSelected = filteredKeys.filter(k => selectedKeys.has(k)).length;
+          const allVisibleSelected = filteredKeys.length > 0 && visibleSelected === filteredKeys.length;
+          const toggle = () => {
+            if (allVisibleSelected) {
+              setSelectedKeys(prev => {
+                const next = new Set(prev);
+                for (const k of filteredKeys) next.delete(k);
+                return next;
+              });
+            } else {
+              setSelectedKeys(prev => {
+                const next = new Set(prev);
+                for (const k of filteredKeys) next.add(k);
+                return next;
+              });
+            }
+          };
+          if (filteredKeys.length === 0) return null;
+          return (
+            <button
+              type="button"
+              onClick={toggle}
+              title={allVisibleSelected ? 'Deselect all visible rows' : 'Select all visible rows'}
+              style={{
+                padding: '0.35rem 0.7rem',
+                border: `1px solid ${allVisibleSelected ? '#3B82F6' : 'var(--color-border)'}`,
+                borderRadius: 6,
+                background: allVisibleSelected ? '#DBEAFE' : '#fff',
+                color: allVisibleSelected ? '#1E3A8A' : 'var(--color-text-secondary)',
+                fontSize: '0.75rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {allVisibleSelected ? 'Deselect all' : 'Select all'}
+              <span style={{ marginLeft: 6, fontSize: '0.68rem', color: allVisibleSelected ? '#1E3A8A' : '#94A3B8' }}>
+                {filteredKeys.length}
+              </span>
+            </button>
+          );
+        })()}
         {(search || suggestedOnly || portfolioOnly || mappedOnly) && <span className={styles.resultCount}>{filtered.length} results</span>}
       </div>
       {selectedKeys.size > 0 && (() => {
         const acceptMa = pendingCountFor('myAccounts');
         const acceptPc = pendingCountFor('portfolio');
-        const filteredKeys = filtered.map(r => r.__matchKey__);
-        const allFilteredSelected = filteredKeys.length > 0 && filteredKeys.every(k => selectedKeys.has(k));
-        const selectAllVisible = () => setSelectedKeys(prev => {
-          const next = new Set(prev);
-          for (const k of filteredKeys) next.add(k);
-          return next;
-        });
         const baseBtn = { padding: '0.35rem 0.7rem', borderRadius: 6, fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' };
         const accentBtn = (active) => ({ ...baseBtn, border: `1px solid ${active ? '#16A34A' : 'var(--color-border)'}`, background: active ? '#DCFCE7' : '#fff', color: active ? '#166534' : '#94A3B8' });
         const dismissBtn = (active) => ({ ...baseBtn, border: `1px solid ${active ? '#DC2626' : 'var(--color-border)'}`, background: active ? '#FEE2E2' : '#fff', color: active ? '#991B1B' : '#94A3B8' });
@@ -1300,11 +1338,6 @@ export function UploadedListView({
             <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#1E293B' }}>
               {selectedKeys.size} selected
             </span>
-            {!allFilteredSelected && filteredKeys.length > selectedKeys.size && (
-              <button type="button" style={{ ...baseBtn, border: '1px solid var(--color-border)', background: '#fff', color: 'var(--color-text-secondary)' }} onClick={selectAllVisible}>
-                Select all visible ({filteredKeys.length})
-              </button>
-            )}
             <button type="button" style={accentBtn(acceptMa > 0)} disabled={acceptMa === 0} onClick={() => bulkAccept('myAccounts')}>
               ★ Accept My Accounts {acceptMa > 0 && `(${acceptMa})`}
             </button>
