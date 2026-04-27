@@ -977,7 +977,8 @@ export function UploadedListView({
       : picker.scope === 'portfolio'
         ? portfolioSuggestionFor
         : prospectSuggestionFor;
-    const auto = picker.raw ? suggestFn(picker.raw) : null;
+    const autoSuggestion = picker.raw ? suggestFn(picker.raw) : null;
+    const auto = autoSuggestion?.prospect || null;
     const list = source.filter(p => p.company && (!q || p.company.toLowerCase().includes(q)));
     list.sort((a, b) => a.company.localeCompare(b.company));
     const out = [];
