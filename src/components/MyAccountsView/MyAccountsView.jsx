@@ -848,6 +848,19 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   // building the row entries.
   const [listFlagsByCompany, setListFlagsByCompany] = useState(() => new Map());
 
+  // HubSpot contact cache (IndexedDB-backed). Declared here near the top so
+  // useMemos lower in the function body can safely reference it without TDZ.
+  const [hubspotCache, setHubspotCacheState] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      getHubspotCache().then(c => { if (!cancelled) setHubspotCacheState(c); }).catch(() => {});
+    };
+    refresh();
+    window.addEventListener('hubspot-cache-updated', refresh);
+    return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
+  }, []);
+
   // Hydrate filter state once settings arrive after login, then debounce-persist changes.
   const viewHydratedRef = useRef(!!savedView);
   useEffect(() => {
@@ -1410,20 +1423,6 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
 
   // Build source maps: which companies exist in each data source
   const BUCKET_TAGS = ['esg', 'procurement', 'utilities', 'climate risk', 'capital planning'];
-
-  // Refresh HubSpot cache in background when My Accounts loads
-  // HubSpot contact cache (IndexedDB-backed). Refreshed on mount and on
-  // hubspot-cache-updated events from ProspectModal/HubSpotView.
-  const [hubspotCache, setHubspotCacheState] = useState(null);
-  useEffect(() => {
-    let cancelled = false;
-    const refresh = () => {
-      getHubspotCache().then(c => { if (!cancelled) setHubspotCacheState(c); }).catch(() => {});
-    };
-    refresh();
-    window.addEventListener('hubspot-cache-updated', refresh);
-    return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
-  }, []);
 
   // Background-refresh contacts from HubSpot when My Accounts loads.
   useEffect(() => {
