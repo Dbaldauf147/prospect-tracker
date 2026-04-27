@@ -1281,36 +1281,50 @@ export function UploadedListView({
           )}
         </button>
         {(() => {
-          const filteredKeys = filtered.map(r => r.__matchKey__);
-          const visibleSelected = filteredKeys.filter(k => selectedKeys.has(k)).length;
-          const allVisibleSelected = filteredKeys.length > 0 && visibleSelected === filteredKeys.length;
+          // Only count rows that currently show a yellow suggestion pill
+          // in at least one scope — i.e. not already mapped and not
+          // dismissed. The button targets exactly those rows so a single
+          // click teases up everything that still needs a decision.
+          const suggestedKeys = filtered
+            .filter(r => {
+              const mk = r.__matchKey__;
+              const raw = r.__rawName__ || '';
+              const maLive = !myAccountMapping[mk] && !myAccountDismissed[mk] && !!myAccountSuggestionFor(raw);
+              const pcLive = !portfolioMapping[mk] && !portfolioDismissed[mk] && !!portfolioSuggestionFor(raw);
+              return maLive || pcLive;
+            })
+            .map(r => r.__matchKey__);
+          if (suggestedKeys.length === 0) return null;
+          const visibleSelected = suggestedKeys.filter(k => selectedKeys.has(k)).length;
+          const allVisibleSelected = visibleSelected === suggestedKeys.length;
           const toggle = () => {
             if (allVisibleSelected) {
               setSelectedKeys(prev => {
                 const next = new Set(prev);
-                for (const k of filteredKeys) next.delete(k);
+                for (const k of suggestedKeys) next.delete(k);
                 return next;
               });
             } else {
               setSelectedKeys(prev => {
                 const next = new Set(prev);
-                for (const k of filteredKeys) next.add(k);
+                for (const k of suggestedKeys) next.add(k);
                 return next;
               });
             }
           };
-          if (filteredKeys.length === 0) return null;
           return (
             <button
               type="button"
               onClick={toggle}
-              title={allVisibleSelected ? 'Deselect all visible rows' : 'Select all visible rows'}
+              title={allVisibleSelected
+                ? 'Deselect all rows with a live suggestion (the yellow pills)'
+                : 'Select every row showing a yellow suggestion in either My Accounts or Portfolio Companies'}
               style={{
                 padding: '0.35rem 0.7rem',
-                border: `1px solid ${allVisibleSelected ? '#3B82F6' : 'var(--color-border)'}`,
+                border: `1px solid ${allVisibleSelected ? '#F59E0B' : 'var(--color-border)'}`,
                 borderRadius: 6,
-                background: allVisibleSelected ? '#DBEAFE' : '#fff',
-                color: allVisibleSelected ? '#1E3A8A' : 'var(--color-text-secondary)',
+                background: allVisibleSelected ? '#FEF3C7' : '#fff',
+                color: allVisibleSelected ? '#92400E' : 'var(--color-text-secondary)',
                 fontSize: '0.75rem',
                 fontWeight: 600,
                 cursor: 'pointer',
@@ -1318,9 +1332,9 @@ export function UploadedListView({
                 whiteSpace: 'nowrap',
               }}
             >
-              {allVisibleSelected ? 'Deselect all' : 'Select all'}
-              <span style={{ marginLeft: 6, fontSize: '0.68rem', color: allVisibleSelected ? '#1E3A8A' : '#94A3B8' }}>
-                {filteredKeys.length}
+              {allVisibleSelected ? 'Deselect suggested' : 'Select all suggested'}
+              <span style={{ marginLeft: 6, fontSize: '0.68rem', color: allVisibleSelected ? '#92400E' : '#94A3B8' }}>
+                {suggestedKeys.length}
               </span>
             </button>
           );
