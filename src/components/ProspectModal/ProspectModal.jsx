@@ -1422,7 +1422,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       const saved = JSON.parse(localStorage.getItem('portfolio-cols-visible'));
       if (saved && typeof saved === 'object') return saved;
     } catch { /* noop */ }
-    return Object.fromEntries(['rank','company','hqCity','hqCountry','energy','estElectricity','estNaturalGas','siteCount','sector','subsector','subsectorScore','strategy','acquisitionYear','pcDescription','notes','raClient','clientManager','targetAccount','tier','salesRep','listFlags'].map(k => [k, true]));
+    // Default visibility — every column on except HQ City, which the
+    // user keeps hidden by default and reveals via the Columns ▾ menu
+    // when they need it.
+    return Object.fromEntries(['rank','company','hqCity','hqCountry','energy','estElectricity','estNaturalGas','siteCount','sector','subsector','subsectorScore','strategy','acquisitionYear','pcDescription','notes','raClient','clientManager','targetAccount','tier','salesRep','listFlags'].map(k => [k, k !== 'hqCity']));
   });
   useEffect(() => {
     try { localStorage.setItem('portfolio-cols-visible', JSON.stringify(portfolioColsVisible)); } catch { /* noop */ }
