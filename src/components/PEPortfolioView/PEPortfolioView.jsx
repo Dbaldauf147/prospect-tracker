@@ -177,45 +177,75 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
     return map;
   }, [prospects, oppsRecords]);
 
-  // HubSpot "Dan Key Target" lookup — keyed by lower-cased company
-  // name. Each entry is an array of contact names so the PE Portfolio
-  // table can aggregate across the firm + all its portfolio companies.
-  const keyContactsByCompany = useMemo(() => {
-    const map = new Map();
-    for (const c of (hubspotCache?.contacts || [])) {
-      const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
-      if (tags.includes('hide')) continue;
-      if (!tags.includes('dan key target')) continue;
-      const lower = (c.company || '').toLowerCase().trim();
-      if (!lower) continue;
-      const name = [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email || 'Unknown';
-      if (!map.has(lower)) map.set(lower, []);
-      map.get(lower).push(name);
-    }
-    return map;
-  }, [hubspotCache]);
+  // Generic email domains to ignore when matching contacts by domain.
+  const FREE_MAIL = useMemo(() => new Set([
+    'gmail.com', 'outlook.com', 'hotmail.com', 'yahoo.com', 'icloud.com',
+    'aol.com', 'me.com', 'proton.me', 'protonmail.com', 'live.com', 'msn.com',
+  ]), []);
 
-  // HubSpot decision-maker lookup — replicates MyAccountsView's rule
-  // (contact has a 'decision maker' tag, not hidden). Keyed by the
-  // lower-cased company name in the contact record; each entry is an
-  // array of { name, metInPerson, city } so the PE Portfolio table
-  // can show the met-in-person ratio and a NYC breakdown.
-  const decisionMakerByCompany = useMemo(() => {
-    const map = new Map();
+  // Flat list of DM contacts so each PE firm can match by either company
+  // name OR registered email domain — same dual-match the prospect modal
+  // uses, so the table here doesn't disagree with what the popup shows.
+  const decisionMakers = useMemo(() => {
+    const out = [];
     for (const c of (hubspotCache?.contacts || [])) {
       const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
       if (tags.includes('hide')) continue;
       if (!tags.includes('decision maker')) continue;
-      const lower = (c.company || '').toLowerCase().trim();
-      if (!lower) continue;
-      if (!map.has(lower)) map.set(lower, []);
-      const name = [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email || 'Unknown';
-      const metInPerson = tags.includes('met in person');
-      const city = String(c.city || '').trim();
-      map.get(lower).push({ name, metInPerson, city });
+      const company = (c.company || '').toLowerCase().trim();
+      const email = (c.email || '').toLowerCase().trim();
+      const at = email.lastIndexOf('@');
+      const rawDomain = at >= 0 ? email.slice(at + 1).trim() : '';
+      const domain = rawDomain && !FREE_MAIL.has(rawDomain) ? rawDomain : '';
+      out.push({
+        name: [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email || 'Unknown',
+        company,
+        domain,
+        metInPerson: tags.includes('met in person'),
+        city: String(c.city || '').trim(),
+      });
     }
-    return map;
-  }, [hubspotCache]);
+    return out;
+  }, [hubspotCache, FREE_MAIL]);
+
+  // Same flat-list pattern for the "Dan Key Target" tag.
+  const keyContacts = useMemo(() => {
+    const out = [];
+    for (const c of (hubspotCache?.contacts || [])) {
+      const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
+      if (tags.includes('hide')) continue;
+      if (!tags.includes('dan key target')) continue;
+      const company = (c.company || '').toLowerCase().trim();
+      const email = (c.email || '').toLowerCase().trim();
+      const at = email.lastIndexOf('@');
+      const rawDomain = at >= 0 ? email.slice(at + 1).trim() : '';
+      const domain = rawDomain && !FREE_MAIL.has(rawDomain) ? rawDomain : '';
+      out.push({
+        name: [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email || 'Unknown',
+        company,
+        domain,
+      });
+    }
+    return out;
+  }, [hubspotCache, FREE_MAIL]);
+
+  // Pull the registered email domains off a prospect — both manual
+  // emailDomain entries and the website hostname. Used to bucket DM /
+  // Key Target contacts onto the right PE firm by domain.
+  const collectProspectDomains = (p, into) => {
+    if (!p) return;
+    if (p.emailDomain) {
+      for (const entry of String(p.emailDomain).split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)) {
+        const at = entry.lastIndexOf('@');
+        const d = (at >= 0 ? entry.slice(at + 1) : entry).toLowerCase().trim();
+        if (d) into.add(d);
+      }
+    }
+    if (p.website) {
+      const d = String(p.website).replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '').toLowerCase().trim();
+      if (d) into.add(d);
+    }
+  };
 
   // Per-firm stage stats — the row-level data behind the stages table.
   //   decisionMakerNames  : DM contacts on this PE firm (or its PCs)
@@ -230,18 +260,24 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
     for (const pe of peFirms) {
       const portfolio = portfolioByPe.get((pe.company || '').trim().toLowerCase()) || [];
       const firmName = (pe.company || '').trim().toLowerCase();
-      // DM: match on the firm name OR any portfolio company name.
-      // Each entry is { name, metInPerson, city } so the stages table
-      // can show a met-in-person ratio + NYC count.
+      // DM: match each contact on the firm name (or any portfolio company
+      // name) OR a registered email domain on this firm / its portfolio
+      // companies. The dual-match mirrors the prospect modal so the table
+      // here doesn't disagree with what the popup shows for the same firm.
+      const dmCandidates = [firmName, ...portfolio.map(p => (p.company || '').toLowerCase().trim()).filter(Boolean)];
+      const firmDomains = new Set();
+      collectProspectDomains(pe, firmDomains);
+      for (const p of portfolio) collectProspectDomains(p, firmDomains);
       const dmEntries = [];
       const dmSeen = new Set();
-      const dmCandidates = [firmName, ...portfolio.map(p => (p.company || '').toLowerCase().trim()).filter(Boolean)];
-      for (const [dmCompany, items] of decisionMakerByCompany.entries()) {
-        if (dmCandidates.some(n => companiesMatch(n, dmCompany))) {
-          for (const item of items) {
-            if (!dmSeen.has(item.name)) { dmSeen.add(item.name); dmEntries.push(item); }
-          }
-        }
+      for (const dm of decisionMakers) {
+        const matches =
+          (dm.company && dmCandidates.some(n => companiesMatch(n, dm.company))) ||
+          (dm.domain && firmDomains.has(dm.domain));
+        if (!matches) continue;
+        if (dmSeen.has(dm.name)) continue;
+        dmSeen.add(dm.name);
+        dmEntries.push(dm);
       }
       const dmNames = dmEntries.map(e => e.name);
       const metInPersonCount = dmEntries.filter(e => e.metInPerson).length;
@@ -272,18 +308,19 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
       // PCs that have converted to Clients.
       const pcClientCount = portfolio.filter(p => p.status === 'Client').length;
 
-      // "Dan Key Target" contacts across the PE firm + all PCs, deduped
-      // by contact display name so the same person tagged at multiple
-      // entities doesn't inflate the count.
+      // "Dan Key Target" contacts across the PE firm + all PCs. Same
+      // company-or-domain matching as the DM lookup above, deduped by
+      // display name.
       const keySeen = new Set();
       const keyNames = [];
-      for (const [kcCompany, names] of keyContactsByCompany.entries()) {
-        if (!dmCandidates.some(n => companiesMatch(n, kcCompany))) continue;
-        for (const nm of names) {
-          if (keySeen.has(nm)) continue;
-          keySeen.add(nm);
-          keyNames.push(nm);
-        }
+      for (const kc of keyContacts) {
+        const matches =
+          (kc.company && dmCandidates.some(n => companiesMatch(n, kc.company))) ||
+          (kc.domain && firmDomains.has(kc.domain));
+        if (!matches) continue;
+        if (keySeen.has(kc.name)) continue;
+        keySeen.add(kc.name);
+        keyNames.push(kc.name);
       }
 
       out.set(pe.id, {
@@ -306,7 +343,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
       });
     }
     return out;
-  }, [peFirms, portfolioByPe, oppsByProspectId, decisionMakerByCompany, keyContactsByCompany, oppsRecords]);
+  }, [peFirms, portfolioByPe, oppsByProspectId, decisionMakers, keyContacts, oppsRecords]);
 
   const sortedPeFirms = useMemo(() => {
     const arr = [...peFirms];
