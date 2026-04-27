@@ -49,22 +49,33 @@ function addTo(map, key, value) {
   set.add(value);
 }
 
+function substringMatch(a, b) {
+  // Mirrors the substring + length-threshold rule from companiesMatch:
+  // shorter must be ≥ 4 chars and ≥ 60% of longer.length, and longer
+  // must contain shorter as a substring.
+  const longer = a.length >= b.length ? a : b;
+  const shorter = a.length >= b.length ? b : a;
+  return shorter.length >= 4 && shorter.length >= longer.length * 0.6 && longer.includes(shorter);
+}
+
 export function buildCompanyIndex(strings) {
   const flatTo = new Map();
   const strippedTo = new Map();
   const squishTo = new Map();
   const tokenAppearsIn = new Map(); // token → strings whose tokens contain it
   const singleTokenIs = new Map();  // token → strings that ARE single-token == token
+  const meta = new Map();           // original → { lower, stripped }
   for (const s of strings || []) {
     if (!s) continue;
     const lower = String(s).toLowerCase().trim();
     if (!lower) continue;
+    const stripped = strip(lower);
+    meta.set(s, { lower, stripped });
     const sq = squish(lower);
     if (sq) addTo(squishTo, sq, s);
     const f = flatten(lower);
     if (f) addTo(flatTo, f, s);
-    const st = strip(lower);
-    if (st) addTo(strippedTo, st, s);
+    if (stripped) addTo(strippedTo, stripped, s);
     const tokens = tokensOf(lower);
     if (tokens.length === 1 && tokens[0].length >= 3) {
       addTo(singleTokenIs, tokens[0], s);
@@ -73,7 +84,7 @@ export function buildCompanyIndex(strings) {
       if (t.length >= 3) addTo(tokenAppearsIn, t, s);
     }
   }
-  return { flatTo, strippedTo, squishTo, tokenAppearsIn, singleTokenIs };
+  return { flatTo, strippedTo, squishTo, tokenAppearsIn, singleTokenIs, meta };
 }
 
 export function findMatchesInIndex(index, query) {
@@ -107,6 +118,30 @@ export function findMatchesInIndex(index, query) {
       if (hit) for (const s of hit) matches.add(s);
     }
   }
+  // Substring + length-threshold rule. Narrowed to candidates that
+  // share at least one significant token with the query so we run the
+  // (cheap) substring check against ~tens of strings instead of all N.
+  // Catches cases like "Bank of America" ↔ "Bank of America Holdings"
+  // where the extra word isn't a corporate suffix the strip rule knows
+  // about.
+  if (lower.length >= 4) {
+    const queryStripped = strip(lower);
+    const candidates = new Set();
+    for (const t of tokens) {
+      if (t.length < 3) continue;
+      const hit = index.tokenAppearsIn.get(t);
+      if (hit) for (const s of hit) candidates.add(s);
+    }
+    for (const s of candidates) {
+      if (matches.has(s)) continue;
+      const m = index.meta && index.meta.get(s);
+      if (!m) continue;
+      if (substringMatch(lower, m.lower)) { matches.add(s); continue; }
+      if (queryStripped && m.stripped && substringMatch(queryStripped, m.stripped)) {
+        matches.add(s);
+      }
+    }
+  }
   return matches;
 }
 
@@ -127,6 +162,21 @@ export function hasMatchInIndex(index, query) {
   } else if (tokens.length > 1) {
     for (const t of tokens) {
       if (t.length >= 3 && index.singleTokenIs.has(t)) return true;
+    }
+  }
+  if (lower.length >= 4 && index.meta) {
+    const queryStripped = strip(lower);
+    const candidates = new Set();
+    for (const t of tokens) {
+      if (t.length < 3) continue;
+      const hit = index.tokenAppearsIn.get(t);
+      if (hit) for (const s of hit) candidates.add(s);
+    }
+    for (const s of candidates) {
+      const m = index.meta.get(s);
+      if (!m) continue;
+      if (substringMatch(lower, m.lower)) return true;
+      if (queryStripped && m.stripped && substringMatch(queryStripped, m.stripped)) return true;
     }
   }
   return false;
