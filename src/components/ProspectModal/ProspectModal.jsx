@@ -1391,6 +1391,54 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const [portfolioColWidths, setPortfolioColWidths] = useState({
     num: 30, company: 180, industry: 140, sector: 160, subsector: 160, subsectorScore: 80, strategy: 140, hqCity: 130, hqCountry: 90, energy: 110, estElectricity: 120, estNaturalGas: 120, siteCount: 100, rank: 130, fitTier: 100, pcDescription: 260, acquisitionYear: 90, notes: 220, raClient: 200, clientManager: 140, targetAccount: 200, tier: 80, salesRep: 160, listFlags: 200,
   });
+  // Per-column visibility for the Portfolio Companies table. Independent
+  // from the export — the export header list is hard-coded so toggling
+  // the on-screen view never drops columns from the downloaded sheet.
+  const PORTFOLIO_COL_DEFS = useMemo(() => [
+    { key: 'rank',             label: 'Opportunity Score' },
+    { key: 'company',          label: 'Company' },
+    { key: 'hqCity',           label: 'HQ City' },
+    { key: 'hqCountry',        label: 'HQ Country' },
+    { key: 'energy',           label: 'Energy' },
+    { key: 'estElectricity',   label: 'Est. Electricity' },
+    { key: 'estNaturalGas',    label: 'Est. Natural Gas' },
+    { key: 'siteCount',        label: 'Sites' },
+    { key: 'sector',           label: 'Sector' },
+    { key: 'subsector',        label: 'Subsector' },
+    { key: 'subsectorScore',   label: 'Subsector Score' },
+    { key: 'strategy',         label: 'Strategy' },
+    { key: 'acquisitionYear',  label: 'Acquisition Year' },
+    { key: 'pcDescription',    label: 'PC Description' },
+    { key: 'notes',            label: 'Notes' },
+    { key: 'raClient',         label: 'RA Client Match' },
+    { key: 'clientManager',    label: 'Client Manager' },
+    { key: 'targetAccount',    label: 'Target Account' },
+    { key: 'tier',             label: 'Tier' },
+    { key: 'salesRep',         label: 'Other CDM' },
+    { key: 'listFlags',        label: 'External Reporting' },
+  ], []);
+  const [portfolioColsVisible, setPortfolioColsVisible] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('portfolio-cols-visible'));
+      if (saved && typeof saved === 'object') return saved;
+    } catch { /* noop */ }
+    return Object.fromEntries(['rank','company','hqCity','hqCountry','energy','estElectricity','estNaturalGas','siteCount','sector','subsector','subsectorScore','strategy','acquisitionYear','pcDescription','notes','raClient','clientManager','targetAccount','tier','salesRep','listFlags'].map(k => [k, true]));
+  });
+  useEffect(() => {
+    try { localStorage.setItem('portfolio-cols-visible', JSON.stringify(portfolioColsVisible)); } catch { /* noop */ }
+  }, [portfolioColsVisible]);
+  const [portfolioColsMenuOpen, setPortfolioColsMenuOpen] = useState(false);
+  useEffect(() => {
+    if (!portfolioColsMenuOpen) return;
+    const h = e => {
+      const t = e.target;
+      if (t instanceof Element && t.closest('[data-portfolio-cols-menu]')) return;
+      setPortfolioColsMenuOpen(false);
+    };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [portfolioColsMenuOpen]);
+  const colVis = (key) => (portfolioColsVisible[key] === false ? 'collapse' : 'visible');
   const [portfolioSortByRank, setPortfolioSortByRank] = useState(true);
   const [raClientPickerOpen, setRaClientPickerOpen] = useState(null); // row index
   const [targetAccountPickerOpen, setTargetAccountPickerOpen] = useState(null); // row index
@@ -4590,30 +4638,79 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       )}
                     </div>
                     {rows.length > 0 && (
+                      <>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6, marginBottom: 4, position: 'relative' }} data-portfolio-cols-menu>
+                        <span style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)' }}>
+                          {(() => {
+                            const total = PORTFOLIO_COL_DEFS.length;
+                            const shown = PORTFOLIO_COL_DEFS.filter(c => portfolioColsVisible[c.key] !== false).length;
+                            return shown === total ? '' : `${shown}/${total} columns shown · export keeps all`;
+                          })()}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setPortfolioColsMenuOpen(o => !o)}
+                          style={{ padding: '0.25rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 5, background: '#fff', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text-secondary)' }}
+                          title="Show or hide columns on this table. The Excel export always includes every column."
+                        >
+                          Columns ▾
+                        </button>
+                        {portfolioColsMenuOpen && (
+                          <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 2, background: '#fff', border: '1px solid var(--color-border)', borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.08)', padding: '0.35rem', maxHeight: 360, overflowY: 'auto', zIndex: 30, minWidth: 200 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 6, padding: '0 0.25rem 0.35rem', borderBottom: '1px solid var(--color-border-light)', marginBottom: '0.25rem' }}>
+                              <button
+                                type="button"
+                                onClick={() => setPortfolioColsVisible(Object.fromEntries(PORTFOLIO_COL_DEFS.map(c => [c.key, true])))}
+                                style={{ background: 'none', border: 'none', color: 'var(--color-accent)', fontSize: '0.65rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', padding: 0 }}
+                              >Show all</button>
+                              <button
+                                type="button"
+                                onClick={() => setPortfolioColsVisible(prev => ({ ...prev, ...Object.fromEntries(PORTFOLIO_COL_DEFS.filter(c => c.key !== 'company').map(c => [c.key, false])) }))}
+                                style={{ background: 'none', border: 'none', color: 'var(--color-text-muted)', fontSize: '0.65rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', padding: 0 }}
+                                title="Hide every column except Company"
+                              >Hide all</button>
+                            </div>
+                            {PORTFOLIO_COL_DEFS.map(({ key, label }) => {
+                              const checked = portfolioColsVisible[key] !== false;
+                              return (
+                                <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '2px 4px', fontSize: '0.7rem', color: 'var(--color-text)', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={e => setPortfolioColsVisible(prev => ({ ...prev, [key]: e.target.checked }))}
+                                    style={{ accentColor: 'var(--color-accent)' }}
+                                  />
+                                  {label}
+                                </label>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
                       <div style={{ border: '1px solid var(--color-border)', borderRadius: '6px', overflow: 'auto' }}>
                         <table style={{ borderCollapse: 'collapse', fontSize: '0.7rem', tableLayout: 'fixed', width: 'auto' }}>
                           <colgroup>
-                            <col style={{ width: portfolioColWidths.rank + 'px' }} />
-                            <col style={{ width: portfolioColWidths.company + 'px' }} />
-                            <col style={{ width: portfolioColWidths.hqCity + 'px' }} />
-                            <col style={{ width: portfolioColWidths.hqCountry + 'px' }} />
-                            <col style={{ width: portfolioColWidths.energy + 'px' }} />
-                            <col style={{ width: portfolioColWidths.estElectricity + 'px' }} />
-                            <col style={{ width: portfolioColWidths.estNaturalGas + 'px' }} />
-                            <col style={{ width: portfolioColWidths.siteCount + 'px' }} />
-                            <col style={{ width: portfolioColWidths.sector + 'px' }} />
-                            <col style={{ width: portfolioColWidths.subsector + 'px' }} />
-                            <col style={{ width: portfolioColWidths.subsectorScore + 'px' }} />
-                            <col style={{ width: portfolioColWidths.strategy + 'px' }} />
-                            <col style={{ width: portfolioColWidths.acquisitionYear + 'px' }} />
-                            <col style={{ width: portfolioColWidths.pcDescription + 'px' }} />
-                            <col style={{ width: portfolioColWidths.notes + 'px' }} />
-                            <col style={{ width: portfolioColWidths.raClient + 'px' }} />
-                            <col style={{ width: portfolioColWidths.clientManager + 'px' }} />
-                            <col style={{ width: portfolioColWidths.targetAccount + 'px' }} />
-                            <col style={{ width: portfolioColWidths.tier + 'px' }} />
-                            <col style={{ width: portfolioColWidths.salesRep + 'px' }} />
-                            <col style={{ width: portfolioColWidths.listFlags + 'px' }} />
+                            <col style={{ width: portfolioColWidths.rank + 'px',             visibility: colVis('rank') }} />
+                            <col style={{ width: portfolioColWidths.company + 'px',          visibility: colVis('company') }} />
+                            <col style={{ width: portfolioColWidths.hqCity + 'px',           visibility: colVis('hqCity') }} />
+                            <col style={{ width: portfolioColWidths.hqCountry + 'px',        visibility: colVis('hqCountry') }} />
+                            <col style={{ width: portfolioColWidths.energy + 'px',           visibility: colVis('energy') }} />
+                            <col style={{ width: portfolioColWidths.estElectricity + 'px',   visibility: colVis('estElectricity') }} />
+                            <col style={{ width: portfolioColWidths.estNaturalGas + 'px',    visibility: colVis('estNaturalGas') }} />
+                            <col style={{ width: portfolioColWidths.siteCount + 'px',        visibility: colVis('siteCount') }} />
+                            <col style={{ width: portfolioColWidths.sector + 'px',           visibility: colVis('sector') }} />
+                            <col style={{ width: portfolioColWidths.subsector + 'px',        visibility: colVis('subsector') }} />
+                            <col style={{ width: portfolioColWidths.subsectorScore + 'px',   visibility: colVis('subsectorScore') }} />
+                            <col style={{ width: portfolioColWidths.strategy + 'px',         visibility: colVis('strategy') }} />
+                            <col style={{ width: portfolioColWidths.acquisitionYear + 'px',  visibility: colVis('acquisitionYear') }} />
+                            <col style={{ width: portfolioColWidths.pcDescription + 'px',    visibility: colVis('pcDescription') }} />
+                            <col style={{ width: portfolioColWidths.notes + 'px',            visibility: colVis('notes') }} />
+                            <col style={{ width: portfolioColWidths.raClient + 'px',         visibility: colVis('raClient') }} />
+                            <col style={{ width: portfolioColWidths.clientManager + 'px',    visibility: colVis('clientManager') }} />
+                            <col style={{ width: portfolioColWidths.targetAccount + 'px',    visibility: colVis('targetAccount') }} />
+                            <col style={{ width: portfolioColWidths.tier + 'px',             visibility: colVis('tier') }} />
+                            <col style={{ width: portfolioColWidths.salesRep + 'px',         visibility: colVis('salesRep') }} />
+                            <col style={{ width: portfolioColWidths.listFlags + 'px',        visibility: colVis('listFlags') }} />
                             <col style={{ width: '28px' }} />
                           </colgroup>
                           <thead>
@@ -5172,6 +5269,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                           </tbody>
                         </table>
                       </div>
+                      </>
                     )}
                     {rows.length === 0 && (
                       <div style={{ fontSize: '0.75rem', color: '#9CA3AF', fontStyle: 'italic', padding: '0.25rem 0' }}>No portfolio companies yet — paste a table above or add rows manually</div>
