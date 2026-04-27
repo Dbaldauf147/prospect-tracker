@@ -576,6 +576,34 @@ export function UploadedListView({
     return () => window.removeEventListener('storage', onStorage);
   }, []);
 
+  // Set of lower-trimmed account names the user has blocked from
+  // fuzzy-match suggestions on the Target Accounts page. Refreshed on
+  // 'target-accounts:blocked-changed' (same window) and 'storage'
+  // (cross-window) so toggling a block updates suggestions live.
+  const [blockedAccountNames, setBlockedAccountNames] = useState(() => {
+    try {
+      const raw = localStorage.getItem('target-accounts:blocked-names');
+      const arr = raw ? JSON.parse(raw) : [];
+      return new Set(Array.isArray(arr) ? arr.map(s => String(s).toLowerCase().trim()).filter(Boolean) : []);
+    } catch { return new Set(); }
+  });
+  useEffect(() => {
+    function refresh() {
+      try {
+        const raw = localStorage.getItem('target-accounts:blocked-names');
+        const arr = raw ? JSON.parse(raw) : [];
+        setBlockedAccountNames(new Set(Array.isArray(arr) ? arr.map(s => String(s).toLowerCase().trim()).filter(Boolean) : []));
+      } catch { setBlockedAccountNames(new Set()); }
+    }
+    function onStorage(e) { if (e.key === 'target-accounts:blocked-names') refresh(); }
+    window.addEventListener('target-accounts:blocked-changed', refresh);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener('target-accounts:blocked-changed', refresh);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
+
   // Build the fuzzy-match index for the My Accounts column + filter.
   // Prefer the resolved list when MyAccountsView has published it
   // (exact 132 companies); fall back to the Baldauf-CDM prospect pool
@@ -586,6 +614,8 @@ export function UploadedListView({
     const add = (name, prospect) => {
       const trimmed = String(name || '').trim();
       if (!trimmed) return;
+      // Skip accounts the user has blocked on the Target Accounts page.
+      if (blockedAccountNames.has(trimmed.toLowerCase())) return;
       const norm = normalizeCompany(trimmed);
       if (!norm) return;
       if (!byNorm.has(norm)) byNorm.set(norm, prospect || { company: trimmed });
@@ -611,7 +641,7 @@ export function UploadedListView({
       }
     }
     return { myAccountsByNorm: byNorm, myAccountNorms: norms };
-  }, [prospects, myAccountNames]);
+  }, [prospects, myAccountNames, blockedAccountNames]);
 
   // Returns { prospect, score } where score is 0–1. Score is 1 for exact
   // normalized matches, and the shorter/longer length ratio for substring
@@ -1013,14 +1043,16 @@ export function UploadedListView({
     let accountSet;
     if (Array.isArray(myAccountNames) && myAccountNames.length > 0) {
       accountSet = new Set(
-        myAccountNames.map(n => String(n || '').toLowerCase().trim()).filter(Boolean)
+        myAccountNames
+          .map(n => String(n || '').toLowerCase().trim())
+          .filter(k => k && !blockedAccountNames.has(k))
       );
     } else {
       accountSet = new Set();
       for (const p of prospects) {
         if (!(p.cdm || '').toLowerCase().includes('baldauf')) continue;
         const k = (p.company || '').toLowerCase().trim();
-        if (k) accountSet.add(k);
+        if (k && !blockedAccountNames.has(k)) accountSet.add(k);
       }
     }
     const totalAccounts = accountSet.size;
@@ -1058,7 +1090,7 @@ export function UploadedListView({
       pct,
       totalAccounts,
     };
-  }, [rows, myAccountNames, prospects, myAccountMapping, myAccountDismissed, myAccountSuggestionFor]);
+  }, [rows, myAccountNames, prospects, myAccountMapping, myAccountDismissed, myAccountSuggestionFor, blockedAccountNames]);
 
   // Portfolio Companies mapping progress — same denominator /
   // numerator shape as myAccountsCoverage, but counted against the
@@ -1113,10 +1145,17 @@ export function UploadedListView({
     let source;
     if (picker.scope === 'myAccounts') {
       if (Array.isArray(myAccountNames) && myAccountNames.length > 0) {
-        const nameSet = new Set(myAccountNames.map(n => String(n || '').toLowerCase().trim()).filter(Boolean));
+        const nameSet = new Set(
+          myAccountNames
+            .map(n => String(n || '').toLowerCase().trim())
+            .filter(k => k && !blockedAccountNames.has(k))
+        );
         source = prospects.filter(p => nameSet.has((p.company || '').toLowerCase().trim()));
       } else {
-        source = prospects.filter(p => (p.cdm || '').toLowerCase().includes('baldauf'));
+        source = prospects.filter(p =>
+          (p.cdm || '').toLowerCase().includes('baldauf')
+          && !blockedAccountNames.has((p.company || '').toLowerCase().trim())
+        );
       }
     } else if (picker.scope === 'portfolio') {
       source = allPortfolioCompanies;
@@ -1142,7 +1181,7 @@ export function UploadedListView({
       if (out.length >= 30) break;
     }
     return out;
-  }, [picker, prospects, allPortfolioCompanies, prospectSuggestionFor, myAccountSuggestionFor, portfolioSuggestionFor, myAccountNames]);
+  }, [picker, prospects, allPortfolioCompanies, prospectSuggestionFor, myAccountSuggestionFor, portfolioSuggestionFor, myAccountNames, blockedAccountNames]);
 
   return (
     <div className={styles.wrapper}>

@@ -97,6 +97,28 @@ export async function loadTargetAccountsFromDB(userId) {
   return loadCache();
 }
 
+// Persisted set of lowercased-trimmed account names that should be
+// suppressed from fuzzy-lookup suggestions everywhere in the app
+// (My Accounts column on every Lists subtab + picker dropdowns).
+// Stored as a JSON array under target-accounts:blocked-names.
+const BLOCKED_KEY = 'target-accounts:blocked-names';
+const BLOCKED_EVENT = 'target-accounts:blocked-changed';
+
+function loadBlockedAccountNames() {
+  try {
+    const raw = localStorage.getItem(BLOCKED_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(arr) ? arr.map(s => String(s).toLowerCase().trim()).filter(Boolean) : []);
+  } catch { return new Set(); }
+}
+
+function persistBlockedAccountNames(set) {
+  try {
+    localStorage.setItem(BLOCKED_KEY, JSON.stringify([...set]));
+  } catch { /* noop */ }
+  try { window.dispatchEvent(new Event(BLOCKED_EVENT)); } catch { /* noop */ }
+}
+
 function InlineEditCell({ value, rowIndex, colKey, onSave }) {
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
@@ -130,7 +152,20 @@ export function TargetAccountsView({ onDataLoaded }) {
   const [activeSheet, setActiveSheet] = useState(null);
   const [dragOver, setDragOver] = useState(false);
   const [filters, setFilters] = useState({});
+  const [blockedAccountNames, setBlockedAccountNamesState] = useState(loadBlockedAccountNames);
+  const [hideBlockedRows, setHideBlockedRows] = useState(false);
   const fileRef = useRef(null);
+  function toggleBlockedAccount(rawName) {
+    const key = String(rawName || '').toLowerCase().trim();
+    if (!key) return;
+    setBlockedAccountNamesState(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      persistBlockedAccountNames(next);
+      return next;
+    });
+  }
 
   // Load from Firestore (then IndexedDB fallback) on mount
   useEffect(() => {
@@ -242,19 +277,53 @@ export function TargetAccountsView({ onDataLoaded }) {
   const headers = currentSheet?.headers || [];
   const records = currentSheet?.records || [];
 
-  // Build columns from headers — all cells are editable
+  // Build columns from headers — all cells are editable. The leftmost
+  // "Blocked" column toggles per-row; blocked accounts are suppressed
+  // from fuzzy-match suggestions across the app.
+  const nameKey = headers[0];
   const columns = useMemo(() => {
     const seen = new Set();
-    return headers
+    const dataCols = headers
       .filter(h => { if (!h || seen.has(h)) return false; seen.add(h); return true; })
       .map(h => ({
         key: h,
         label: h,
         defaultWidth: h.length > 25 ? 180 : h.length > 15 ? 140 : 110,
         sticky: h === headers[0],
-        render: (row) => <InlineEditCell value={row[h]} rowIndex={row._id - 1} colKey={h} onSave={handleCellEdit} />,
+        render: (row) => {
+          const isBlocked = nameKey ? blockedAccountNames.has(String(row[nameKey] || '').toLowerCase().trim()) : false;
+          return (
+            <span style={{ textDecoration: isBlocked ? 'line-through' : 'none', color: isBlocked ? 'var(--color-text-muted)' : 'inherit', display: 'inline-block' }}>
+              <InlineEditCell value={row[h]} rowIndex={row._id - 1} colKey={h} onSave={handleCellEdit} />
+            </span>
+          );
+        },
       }));
-  }, [headers]);
+    const blockCol = {
+      key: '__blocked__',
+      label: '',
+      defaultWidth: 50,
+      render: (row) => {
+        const accountName = nameKey ? String(row[nameKey] || '').trim() : '';
+        const isBlocked = !!accountName && blockedAccountNames.has(accountName.toLowerCase());
+        return (
+          <input
+            type="checkbox"
+            checked={isBlocked}
+            disabled={!accountName}
+            onChange={() => toggleBlockedAccount(accountName)}
+            onClick={e => e.stopPropagation()}
+            title={isBlocked
+              ? `"${accountName}" is blocked — uncheck to show in fuzzy-match suggestions again`
+              : `Block "${accountName}" from appearing in fuzzy-match suggestions across every Lists subtab and picker`}
+            style={{ cursor: accountName ? 'pointer' : 'not-allowed', accentColor: '#DC2626' }}
+            aria-label={`Block ${accountName} from fuzzy lookups`}
+          />
+        );
+      },
+    };
+    return [blockCol, ...dataCols];
+  }, [headers, blockedAccountNames, nameKey]);
 
   // Detect filterable columns (those with <=50 unique non-empty values)
   const filterableColumns = useMemo(() => {
@@ -286,6 +355,18 @@ export function TargetAccountsView({ onDataLoaded }) {
 
   const activeFilterCount = Object.values(filters).reduce((s, a) => s + a.length, 0);
 
+  // Count of records currently flagged as blocked, used on the toolbar
+  // to show how many fuzzy-lookup suppressions are active.
+  const blockedCount = useMemo(() => {
+    if (!nameKey) return 0;
+    let n = 0;
+    for (const r of records) {
+      const k = String(r[nameKey] || '').toLowerCase().trim();
+      if (k && blockedAccountNames.has(k)) n++;
+    }
+    return n;
+  }, [records, blockedAccountNames, nameKey]);
+
   // Filtered records
   const filtered = useMemo(() => {
     let result = records;
@@ -302,8 +383,11 @@ export function TargetAccountsView({ onDataLoaded }) {
         Object.values(r).some(v => v && String(v).toLowerCase().includes(term))
       );
     }
+    if (hideBlockedRows && nameKey) {
+      result = result.filter(r => !blockedAccountNames.has(String(r[nameKey] || '').toLowerCase().trim()));
+    }
     return result;
-  }, [records, search, filters]);
+  }, [records, search, filters, hideBlockedRows, blockedAccountNames, nameKey]);
 
   // Set active sheet on first load
   if (data && !activeSheet && data.sheetNames?.length > 0) {
@@ -429,6 +513,30 @@ export function TargetAccountsView({ onDataLoaded }) {
             {filterableColumns.map(fc => (
               <FilterDrop key={fc.key} label={fc.key} options={fc.options} selected={filters[fc.key] || []} onToggle={v => toggleFilter(fc.key, v)} />
             ))}
+            <button
+              type="button"
+              onClick={() => setHideBlockedRows(v => !v)}
+              title="Show only the accounts blocked from fuzzy-match suggestions, or hide them from this view"
+              style={{
+                padding: '0.35rem 0.7rem',
+                border: `1px solid ${hideBlockedRows ? '#DC2626' : 'var(--color-border)'}`,
+                borderRadius: 6,
+                background: hideBlockedRows ? '#FEE2E2' : '#fff',
+                color: hideBlockedRows ? '#991B1B' : 'var(--color-text-secondary)',
+                fontSize: '0.75rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {hideBlockedRows ? 'Showing only un-blocked' : 'Hide blocked'}
+              {blockedCount > 0 && (
+                <span style={{ marginLeft: 6, fontSize: '0.68rem', color: hideBlockedRows ? '#991B1B' : '#94A3B8' }}>
+                  {blockedCount} blocked
+                </span>
+              )}
+            </button>
             {activeFilterCount > 0 && <button className={styles.clearBtn} onClick={() => setFilters({})}>Clear all</button>}
             <span className={styles.resultCount}>{filtered.length} of {records.length}</span>
             <label className={styles.uploadBtn} style={{ marginLeft: 'auto', fontSize: 'var(--font-size-xs)', padding: '0.3rem 0.6rem' }}>
