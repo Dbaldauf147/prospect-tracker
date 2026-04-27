@@ -84,24 +84,15 @@ function renderMappingCell({ row, scope, mapping, dismissed, suggestionFor, pros
     if (suggestion) {
       const sProspect = suggestion.prospect;
       const pct = Math.round((suggestion.score || 0) * 100);
-      // Badge color tracks confidence so the eye finds high-confidence
-      // suggestions quickly: green ≥80%, amber 60–79%, red <60%.
-      const pctBg = pct >= 80 ? '#DCFCE7' : pct >= 60 ? '#FEF3C7' : '#FEE2E2';
-      const pctBorder = pct >= 80 ? '#86EFAC' : pct >= 60 ? '#FCD34D' : '#FCA5A5';
-      const pctColor = pct >= 80 ? '#166534' : pct >= 60 ? '#92400E' : '#991B1B';
       return (
         <span style={{ display: 'flex', alignItems: 'flex-start', gap: 2, width: '100%', minWidth: 0 }}>
           <button
             type="button"
             data-mapping-cell={scope}
             onClick={handleClick}
-            style={{ background: '#FEF3C7', border: '1px dashed #F59E0B', borderRadius: 12, padding: '2px 8px', fontSize: '0.7rem', color: '#92400E', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', flex: '0 1 auto', minWidth: 0, maxWidth: 'calc(100% - 60px)', textAlign: 'left', whiteSpace: 'normal', overflowWrap: 'break-word', lineHeight: 1.25 }}
+            style={{ background: '#FEF3C7', border: '1px dashed #F59E0B', borderRadius: 12, padding: '2px 8px', fontSize: '0.7rem', color: '#92400E', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', flex: '0 1 auto', minWidth: 0, maxWidth: 'calc(100% - 20px)', textAlign: 'left', whiteSpace: 'normal', overflowWrap: 'break-word', lineHeight: 1.25 }}
             title={`${suggestTitle} · ${sProspect.company} · ${pct}% match`}
           >{sProspect.company}</button>
-          <span
-            title={`Match confidence: ${pct}%`}
-            style={{ background: pctBg, border: `1px solid ${pctBorder}`, color: pctColor, borderRadius: 999, padding: '0 6px', fontSize: '0.6rem', fontWeight: 700, lineHeight: '1.4', flexShrink: 0, alignSelf: 'flex-start', marginTop: 1 }}
-          >{pct}%</span>
           <button
             type="button"
             data-mapping-cell={scope}
@@ -164,6 +155,28 @@ function TextEditCell({ value, onChange, placeholder }) {
     >
       {value || placeholder || '—'}
     </span>
+  );
+}
+
+function MatchPctCell({ row, myAccountSuggestionFor, portfolioSuggestionFor }) {
+  const raw = row.__rawName__ || '';
+  const ma = myAccountSuggestionFor(raw);
+  const pc = portfolioSuggestionFor(raw);
+  // Show the higher of the two scopes' confidence so a single column
+  // surfaces the best match available to the row regardless of where
+  // it ends up getting mapped.
+  const best = [ma, pc].filter(Boolean).reduce((acc, s) => (acc && acc.score >= s.score ? acc : s), null);
+  if (!best) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>—</span>;
+  const pct = Math.round((best.score || 0) * 100);
+  // Color tracks confidence: green ≥80%, amber 60–79%, red <60%.
+  const bg = pct >= 80 ? '#DCFCE7' : pct >= 60 ? '#FEF3C7' : '#FEE2E2';
+  const border = pct >= 80 ? '#86EFAC' : pct >= 60 ? '#FCD34D' : '#FCA5A5';
+  const color = pct >= 80 ? '#166534' : pct >= 60 ? '#92400E' : '#991B1B';
+  return (
+    <span
+      title={`Match confidence: ${pct}% · best of My Accounts and Portfolio Companies suggestions`}
+      style={{ background: bg, border: `1px solid ${border}`, color, borderRadius: 999, padding: '1px 8px', fontSize: '0.65rem', fontWeight: 700, whiteSpace: 'nowrap' }}
+    >{pct}%</span>
   );
 }
 
@@ -277,7 +290,19 @@ function buildColumns(data, ctx) {
       );
     },
   };
-  return [...baseCols, ...textCol, myAccountsCol, myAccountsInfoCol, portfolioCol, portfolioInfoCol];
+  const matchPctCol = {
+    key: '__matchPct__',
+    label: '% Match',
+    defaultWidth: 90,
+    render: (row) => (
+      <MatchPctCell
+        row={row}
+        myAccountSuggestionFor={myAccountSuggestionFor}
+        portfolioSuggestionFor={portfolioSuggestionFor}
+      />
+    ),
+  };
+  return [...baseCols, ...textCol, myAccountsCol, myAccountsInfoCol, portfolioCol, portfolioInfoCol, matchPctCol];
 }
 
 export function UploadedListView({
