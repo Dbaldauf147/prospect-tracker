@@ -1049,6 +1049,133 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
   return prevId === nextId && prev.onSave === next.onSave && prev.onClose === next.onClose && prev.tagOptions === next.tagOptions && prev.onSaveNote === next.onSaveNote && prev.onSaveOldEmails === next.onSaveOldEmails && prev.onSaveNickname === next.onSaveNickname && prev.onSaveReportsTo === next.onSaveReportsTo && prevMgrs === nextMgrs && companyContactsEqual && domainsEqual;
 });
 
+function SearchableSelect({ options, value, onChange, placeholder = 'Select…', allowCustom = true }) {
+  const [open, setOpen] = useState(false);
+  const [filter, setFilter] = useState('');
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 0, up: false });
+  const ref = useRef(null);
+  const dropRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const h = (e) => {
+      if (ref.current?.contains(e.target)) return;
+      if (dropRef.current?.contains(e.target)) return;
+      setOpen(false); setFilter('');
+    };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || !ref.current) return;
+    const rect = ref.current.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const up = spaceBelow < 260;
+    setPos({
+      top: up ? rect.top - 2 : rect.bottom + 2,
+      left: rect.left,
+      width: rect.width,
+      up,
+    });
+  }, [open, filter]);
+
+  const q = filter.trim().toLowerCase();
+  const filtered = q ? options.filter(o => String(o).toLowerCase().includes(q)) : options;
+  const exactMatch = filtered.some(o => String(o).toLowerCase() === q);
+
+  function pick(v) {
+    onChange(v);
+    setOpen(false);
+    setFilter('');
+  }
+
+  return (
+    <div ref={ref}>
+      <div
+        onClick={() => { setOpen(o => !o); setFilter(''); }}
+        style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.3rem',
+          padding: '0.4rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: '6px',
+          minHeight: '36px', cursor: 'pointer', background: 'var(--color-bg)', fontSize: '0.78rem',
+        }}
+      >
+        <span style={{ color: value ? 'var(--color-text)' : 'var(--color-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {value || placeholder}
+        </span>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.6rem', color: 'var(--color-text-muted)' }}>
+          {value && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onChange(''); }}
+              title="Clear"
+              style={{ background: 'none', border: 'none', color: '#94A3B8', fontSize: '0.85rem', cursor: 'pointer', padding: 0, lineHeight: 1, fontFamily: 'inherit' }}
+            >&times;</button>
+          )}
+          {open ? '▲' : '▼'}
+        </span>
+      </div>
+      {open && createPortal(
+        <div ref={dropRef} style={{
+          position: 'fixed',
+          top: pos.up ? undefined : pos.top,
+          bottom: pos.up ? (window.innerHeight - pos.top) : undefined,
+          left: pos.left,
+          width: Math.max(pos.width, 240),
+          zIndex: 10001,
+          background: '#fff', border: '1px solid #E2E8F0', borderRadius: '6px',
+          boxShadow: '0 4px 16px rgba(0,0,0,0.15)', maxHeight: '260px', display: 'flex', flexDirection: 'column',
+        }}>
+          <input
+            type="text"
+            placeholder="Search…"
+            value={filter}
+            onChange={e => setFilter(e.target.value)}
+            onClick={e => e.stopPropagation()}
+            onKeyDown={e => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                if (filtered.length > 0) pick(filtered[0]);
+                else if (allowCustom && filter.trim()) pick(filter.trim());
+              } else if (e.key === 'Escape') {
+                setOpen(false); setFilter('');
+              }
+            }}
+            autoFocus
+            style={{ margin: '0.3rem', padding: '0.3rem 0.5rem', border: '1px solid #E2E8F0', borderRadius: '4px', fontSize: '0.72rem', fontFamily: 'inherit', outline: 'none' }}
+          />
+          <div style={{ overflowY: 'auto', flex: 1 }}>
+            {filtered.map(opt => (
+              <div
+                key={opt}
+                onClick={() => pick(opt)}
+                style={{
+                  padding: '0.35rem 0.6rem', fontSize: '0.74rem', cursor: 'pointer',
+                  color: '#1E293B', background: opt === value ? '#EFF6FF' : 'transparent', fontWeight: opt === value ? 600 : 400,
+                }}
+                onMouseOver={e => { if (opt !== value) e.currentTarget.style.background = '#F1F5F9'; }}
+                onMouseOut={e => { if (opt !== value) e.currentTarget.style.background = 'transparent'; }}
+              >{opt}</div>
+            ))}
+            {filtered.length === 0 && !allowCustom && (
+              <div style={{ padding: '0.5rem 0.6rem', fontSize: '0.7rem', color: '#94A3B8' }}>No matches</div>
+            )}
+            {allowCustom && filter.trim() && !exactMatch && (
+              <div
+                onClick={() => pick(filter.trim())}
+                style={{ padding: '0.35rem 0.6rem', fontSize: '0.74rem', cursor: 'pointer', color: '#475569', borderTop: filtered.length > 0 ? '1px solid #F1F5F9' : 'none', fontStyle: 'italic' }}
+                onMouseOver={e => e.currentTarget.style.background = '#F1F5F9'}
+                onMouseOut={e => e.currentTarget.style.background = 'transparent'}
+              >Use “{filter.trim()}”</div>
+            )}
+          </div>
+        </div>,
+        document.body
+      )}
+    </div>
+  );
+}
+
 function MultiSelectDropdown({ options, selected, onToggle }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0, width: 0, up: false });
@@ -1273,6 +1400,19 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     TAG_OPTIONS.forEach(t => tagSet.add(t));
     return [...tagSet].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
   }, [hubspotContacts]);
+
+  // Unique CDM names across all prospects, alphabetized — feeds the
+  // searchable dropdown on the CDM field. Includes the current value
+  // even if it hasn't been used elsewhere yet.
+  const cdmOptions = useMemo(() => {
+    const set = new Set();
+    for (const p of (prospects || [])) {
+      const v = (p?.cdm || '').trim();
+      if (v) set.add(v);
+    }
+    if (fields.cdm) set.add(String(fields.cdm).trim());
+    return [...set].filter(Boolean).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  }, [prospects, fields.cdm]);
 
   const [contactView, setContactView] = useState('table'); // 'table' | 'orgchart'
   const [editingContact, setEditingContact] = useState(null);
@@ -2467,7 +2607,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
             <div>
               <label className={styles.label}>CDM</label>
-              <CommitOnBlurInput className={styles.input} value={fields.cdm} onCommit={v => set('cdm', v)} />
+              <SearchableSelect
+                options={cdmOptions}
+                value={fields.cdm || ''}
+                onChange={v => set('cdm', v)}
+                placeholder="Select CDM…"
+              />
             </div>
 
             <div>
