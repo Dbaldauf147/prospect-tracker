@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState, useRef } from 'react';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
+import { getHubspotCache } from '../../utils/hubspotContactsCache';
+import { dbGet } from '../../utils/db';
 
 // Closed/invalid stages from the Opps tab — these shouldn't count toward "active pipeline".
 const CLOSED_STAGES = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
@@ -43,22 +45,11 @@ function useOppsRecords(userId) {
   const [records, setRecords] = useState([]);
   useEffect(() => {
     let cancelled = false;
-    function loadFromIndexedDB() {
-      return new Promise((resolve) => {
-        try {
-          const req = indexedDB.open('prospect-tracker-db');
-          req.onsuccess = () => {
-            const idb = req.result;
-            if (!idb.objectStoreNames.contains('opps-cache')) return resolve(null);
-            const tx = idb.transaction('opps-cache', 'readonly');
-            const store = tx.objectStore('opps-cache');
-            const getReq = store.get('data');
-            getReq.onsuccess = () => resolve(getReq.result?.records || null);
-            getReq.onerror = () => resolve(null);
-          };
-          req.onerror = () => resolve(null);
-        } catch { resolve(null); }
-      });
+    async function loadFromIndexedDB() {
+      try {
+        const data = await dbGet('opps-cache', 'data');
+        return data?.records || null;
+      } catch { return null; }
     }
     function loadFromLocalStorage() {
       try {
@@ -94,6 +85,16 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
   const [showClosed, setShowClosed] = useState(false);
   const [expanded, setExpanded] = useState(() => new Set());
   const [query, setQuery] = useState('');
+  const [hubspotCache, setHubspotCacheState] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      getHubspotCache().then(c => { if (!cancelled) setHubspotCacheState(c); }).catch(() => {});
+    };
+    refresh();
+    window.addEventListener('hubspot-cache-updated', refresh);
+    return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
+  }, []);
   // Persisted column widths + sort so the layout survives reloads.
   const DEFAULT_COL_WIDTHS = { company: 240, dm: 170, met: 170, mapping: 110, opps: 100, ratio: 120, clients: 110, keyContacts: 120 };
   const [colWidths, setColWidths] = useState(() => {
@@ -181,21 +182,18 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
   // table can aggregate across the firm + all its portfolio companies.
   const keyContactsByCompany = useMemo(() => {
     const map = new Map();
-    try {
-      const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
-      for (const c of (cache?.contacts || [])) {
-        const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
-        if (tags.includes('hide')) continue;
-        if (!tags.includes('dan key target')) continue;
-        const lower = (c.company || '').toLowerCase().trim();
-        if (!lower) continue;
-        const name = [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email || 'Unknown';
-        if (!map.has(lower)) map.set(lower, []);
-        map.get(lower).push(name);
-      }
-    } catch {}
+    for (const c of (hubspotCache?.contacts || [])) {
+      const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
+      if (tags.includes('hide')) continue;
+      if (!tags.includes('dan key target')) continue;
+      const lower = (c.company || '').toLowerCase().trim();
+      if (!lower) continue;
+      const name = [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email || 'Unknown';
+      if (!map.has(lower)) map.set(lower, []);
+      map.get(lower).push(name);
+    }
     return map;
-  }, []);
+  }, [hubspotCache]);
 
   // HubSpot decision-maker lookup — replicates MyAccountsView's rule
   // (contact has a 'decision maker' tag, not hidden). Keyed by the
@@ -204,23 +202,20 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
   // can show the met-in-person ratio and a NYC breakdown.
   const decisionMakerByCompany = useMemo(() => {
     const map = new Map();
-    try {
-      const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
-      for (const c of (cache?.contacts || [])) {
-        const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
-        if (tags.includes('hide')) continue;
-        if (!tags.includes('decision maker')) continue;
-        const lower = (c.company || '').toLowerCase().trim();
-        if (!lower) continue;
-        if (!map.has(lower)) map.set(lower, []);
-        const name = [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email || 'Unknown';
-        const metInPerson = tags.includes('met in person');
-        const city = String(c.city || '').trim();
-        map.get(lower).push({ name, metInPerson, city });
-      }
-    } catch {}
+    for (const c of (hubspotCache?.contacts || [])) {
+      const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
+      if (tags.includes('hide')) continue;
+      if (!tags.includes('decision maker')) continue;
+      const lower = (c.company || '').toLowerCase().trim();
+      if (!lower) continue;
+      if (!map.has(lower)) map.set(lower, []);
+      const name = [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email || 'Unknown';
+      const metInPerson = tags.includes('met in person');
+      const city = String(c.city || '').trim();
+      map.get(lower).push({ name, metInPerson, city });
+    }
     return map;
-  }, []);
+  }, [hubspotCache]);
 
   // Per-firm stage stats — the row-level data behind the stages table.
   //   decisionMakerNames  : DM contacts on this PE firm (or its PCs)

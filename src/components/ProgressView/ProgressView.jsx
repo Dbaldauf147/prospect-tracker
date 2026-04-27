@@ -4,6 +4,8 @@ import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { LineChart, Line, BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from 'recharts';
 import { buildCompanyIndex, hasMatchInIndex } from '../../utils/companyIndex';
+import { getHubspotContacts } from '../../utils/hubspotContactsCache';
+import { dbGet } from '../../utils/db';
 
 function EditableCell({ value, onCommit, color, suffix = '', bold = false }) {
   const [editing, setEditing] = useState(false);
@@ -166,27 +168,11 @@ function ProgressChart({ title, data, series, isPct, defaultView = 'line', secon
   );
 }
 
-function loadOppsFromIndexedDB() {
-  return new Promise(resolve => {
-    try {
-      const req = indexedDB.open('prospect-tracker-db', 3);
-      req.onupgradeneeded = () => {
-        const d = req.result;
-        if (!d.objectStoreNames.contains('target-accounts')) d.createObjectStore('target-accounts');
-        if (!d.objectStoreNames.contains('opps-cache')) d.createObjectStore('opps-cache');
-        if (!d.objectStoreNames.contains('clients-cache')) d.createObjectStore('clients-cache');
-      };
-      req.onsuccess = () => {
-        const d = req.result;
-        const tx = d.transaction('opps-cache', 'readonly');
-        const store = tx.objectStore('opps-cache');
-        const getReq = store.get('data');
-        getReq.onsuccess = () => resolve(getReq.result?.records || []);
-        getReq.onerror = () => resolve([]);
-      };
-      req.onerror = () => resolve([]);
-    } catch { resolve([]); }
-  });
+async function loadOppsFromIndexedDB() {
+  try {
+    const data = await dbGet('opps-cache', 'data');
+    return data?.records || [];
+  } catch { return []; }
 }
 
 function getWeekKey(date) {
@@ -266,6 +252,16 @@ export function ProgressView({ prospects, settings }) {
   const [expandedCard, setExpandedCard] = useState(null);
   const [editingWeek, setEditingWeek] = useState(null);
   const [saveStatus, setSaveStatus] = useState('');
+  const [hubspotContactsState, setHubspotContactsState] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      getHubspotContacts().then(c => { if (!cancelled) setHubspotContactsState(c); }).catch(() => {});
+    };
+    refresh();
+    window.addEventListener('hubspot-cache-updated', refresh);
+    return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
+  }, []);
   const [hiddenCharts, setHiddenCharts] = useState(() => loadHiddenCharts());
   const [showChartsMenu, setShowChartsMenu] = useState(false);
   const [chartTitles, setChartTitles] = useState(() => loadChartTitles());
@@ -386,12 +382,8 @@ export function ProgressView({ prospects, settings }) {
     const t2 = myProspects.filter(p => p.tier === 'Tier 2');
     const t3 = myProspects.filter(p => p.tier === 'Tier 3');
 
-    // Load HubSpot cache for contact data
-    let hubspotContacts = [];
-    try {
-      const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
-      hubspotContacts = cache?.contacts || [];
-    } catch {}
+    // Load HubSpot cache for contact data (loaded async into hubspotContactsState)
+    const hubspotContacts = hubspotContactsState;
 
     const contactCompanies = new Set();
     const contactDomains = new Set();
@@ -630,7 +622,7 @@ export function ProgressView({ prospects, settings }) {
         t2Inactive: t2InactiveList.map(p => ({ company: p.company, status: p.status })),
       },
     };
-  }, [prospects, settings, oppsRecordsState]);
+  }, [prospects, settings, oppsRecordsState, hubspotContactsState]);
 
   // Auto-save the current week whenever the snapshot numbers settle.
   // Re-fires on any snapshot-number change (not just mount) so the last

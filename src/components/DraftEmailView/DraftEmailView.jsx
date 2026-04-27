@@ -3,46 +3,51 @@ import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
 import { secureSet, secureGet, secureClear } from '../../utils/secureStorage';
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
+import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import styles from './DraftEmailView.module.css';
 
 function TagContactPicker({ allContacts, selectedContacts, onAdd, onRemove, onBulkAdd, onBulkRemove }) {
   const [selectedTags, setSelectedTags] = useState(new Set());
   const [tagSearch, setTagSearch] = useState('');
+  const [rawContacts, setRawContacts] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      getHubspotContacts().then(c => { if (!cancelled) setRawContacts(c); }).catch(() => {});
+    };
+    refresh();
+    window.addEventListener('hubspot-cache-updated', refresh);
+    return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
+  }, []);
 
   const allTags = useMemo(() => {
     const tags = new Set();
-    try {
-      const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
-      (cache?.contacts || []).forEach(c => {
-        const t = c.dans_tags || c.dan_s_tags || c.dans_tag || '';
-        t.split(';').map(s => s.trim()).filter(Boolean).forEach(tag => tags.add(tag));
-      });
-    } catch {}
+    rawContacts.forEach(c => {
+      const t = c.dans_tags || c.dan_s_tags || c.dans_tag || '';
+      t.split(';').map(s => s.trim()).filter(Boolean).forEach(tag => tags.add(tag));
+    });
     return [...tags].sort();
-  }, []);
+  }, [rawContacts]);
 
   // Contacts matching ALL selected tags (AND logic)
   const tagContacts = useMemo(() => {
     if (selectedTags.size === 0) return [];
-    try {
-      const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
-      return (cache?.contacts || []).filter(c => {
-        const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').split(';').map(s => s.trim());
-        return [...selectedTags].every(tag => tags.includes(tag)) && c.email;
-      }).map(c => ({
-        id: c.id,
-        name: [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email,
-        firstName: c.firstname || '',
-        lastName: c.lastname || '',
-        email: c.email,
-        company: c.company || '',
-        title: c.jobtitle || '',
-        phone: c.phone || '',
-        city: c.city || '',
-        state: c.state || '',
-      }));
-    } catch { return []; }
-  }, [selectedTags]);
+    return rawContacts.filter(c => {
+      const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').split(';').map(s => s.trim());
+      return [...selectedTags].every(tag => tags.includes(tag)) && c.email;
+    }).map(c => ({
+      id: c.id,
+      name: [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email,
+      firstName: c.firstname || '',
+      lastName: c.lastname || '',
+      email: c.email,
+      company: c.company || '',
+      title: c.jobtitle || '',
+      phone: c.phone || '',
+      city: c.city || '',
+      state: c.state || '',
+    }));
+  }, [selectedTags, rawContacts]);
 
   function toggleTag(tag) {
     setSelectedTags(prev => {
@@ -222,10 +227,11 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
   // Load HubSpot contacts from cache
   const [allContacts, setAllContacts] = useState([]);
   useEffect(() => {
-    try {
-      const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
-      if (cache?.contacts) {
-        setAllContacts(cache.contacts.filter(c => c.email).map(c => ({
+    let cancelled = false;
+    const refresh = () => {
+      getHubspotContacts().then(contacts => {
+        if (cancelled) return;
+        setAllContacts(contacts.filter(c => c.email).map(c => ({
           id: c.id,
           name: [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email,
           firstName: c.firstname || '',
@@ -238,8 +244,11 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
           state: c.state || '',
           linkedinUrl: c.hs_linkedin_url || c.linkedin_url || '',
         })));
-      }
-    } catch {}
+      }).catch(() => {});
+    };
+    refresh();
+    window.addEventListener('hubspot-cache-updated', refresh);
+    return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
 
 

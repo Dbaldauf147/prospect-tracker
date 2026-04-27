@@ -1,31 +1,12 @@
-// Read-only helper that reads the Opps cache populated by OppsView (IndexedDB).
-// Falling back gracefully if the store doesn't exist yet.
+// Read-only helper for the Opps cache populated by OppsView (IndexedDB).
 
-const DB_NAME = 'prospect-tracker-db';
-const DB_STORE = 'opps-cache';
+import { dbGet } from './db';
 
-function openDB() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME);
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
+const STORE = 'opps-cache';
 
 export async function loadOppsFromCache() {
-  try {
-    const db = await openDB();
-    if (!db.objectStoreNames.contains(DB_STORE)) return null;
-    return await new Promise((resolve) => {
-      const tx = db.transaction(DB_STORE, 'readonly');
-      const store = tx.objectStore(DB_STORE);
-      const req = store.get('data');
-      req.onsuccess = () => resolve(req.result || null);
-      req.onerror = () => resolve(null);
-    });
-  } catch {
-    return null;
-  }
+  try { return (await dbGet(STORE, 'data')) || null; }
+  catch { return null; }
 }
 
 export function findOppByBfoLink(cache, bfoLink) {

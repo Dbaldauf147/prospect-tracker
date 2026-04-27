@@ -12,52 +12,18 @@ import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { saveSourceFile as savePortfolioSourceFileToIDB, loadSourceFile as loadPortfolioSourceFileFromIDB, clearSourceFile as clearPortfolioSourceFileFromIDB } from '../../utils/portfolioSourceFileStore';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
+import { updateHubspotCache, notifyCacheUpdated } from '../../utils/hubspotContactsCache';
+import { dbGet } from '../../utils/db';
 import styles from './ProspectModal.module.css';
 
-function loadOppsFromIndexedDB() {
-  return new Promise(resolve => {
-    try {
-      const req = indexedDB.open('prospect-tracker-db', 3);
-      req.onupgradeneeded = () => {
-        const d = req.result;
-        if (!d.objectStoreNames.contains('target-accounts')) d.createObjectStore('target-accounts');
-        if (!d.objectStoreNames.contains('opps-cache')) d.createObjectStore('opps-cache');
-        if (!d.objectStoreNames.contains('clients-cache')) d.createObjectStore('clients-cache');
-      };
-      req.onsuccess = () => {
-        const d = req.result;
-        const tx = d.transaction('opps-cache', 'readonly');
-        const store = tx.objectStore('opps-cache');
-        const getReq = store.get('data');
-        getReq.onsuccess = () => resolve(getReq.result || null);
-        getReq.onerror = () => resolve(null);
-      };
-      req.onerror = () => resolve(null);
-    } catch { resolve(null); }
-  });
+async function loadOppsFromIndexedDB() {
+  try { return (await dbGet('opps-cache', 'data')) || null; }
+  catch { return null; }
 }
 
-function loadClientsFromIndexedDB() {
-  return new Promise(resolve => {
-    try {
-      const req = indexedDB.open('prospect-tracker-db', 3);
-      req.onupgradeneeded = () => {
-        const d = req.result;
-        if (!d.objectStoreNames.contains('target-accounts')) d.createObjectStore('target-accounts');
-        if (!d.objectStoreNames.contains('opps-cache')) d.createObjectStore('opps-cache');
-        if (!d.objectStoreNames.contains('clients-cache')) d.createObjectStore('clients-cache');
-      };
-      req.onsuccess = () => {
-        const d = req.result;
-        const tx = d.transaction('clients-cache', 'readonly');
-        const store = tx.objectStore('clients-cache');
-        const getReq = store.get('data');
-        getReq.onsuccess = () => resolve(getReq.result || null);
-        getReq.onerror = () => resolve(null);
-      };
-      req.onerror = () => resolve(null);
-    } catch { resolve(null); }
-  });
+async function loadClientsFromIndexedDB() {
+  try { return (await dbGet('clients-cache', 'data')) || null; }
+  catch { return null; }
 }
 
 function buildDefaultOpportunityTemplate(dateLine, timeLine) {
@@ -727,13 +693,10 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
       if (!res.ok || json.error) throw new Error(json?.message || json?.error || `HubSpot ${res.status}`);
       // Update local cache so the main view reflects the change immediately
       try {
-        const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
-        if (cache?.contacts) {
-          const idx = cache.contacts.findIndex(c => String(c.id || c.vid) === String(cid));
-          if (idx !== -1) cache.contacts[idx] = { ...cache.contacts[idx], dans_tags: tagsStr };
-          try { localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache)); } catch {}
-          window.dispatchEvent(new Event('hubspot-cache-updated'));
-        }
+        await updateHubspotCache(draft => {
+          const idx = draft.contacts.findIndex(c => String(c.id || c.vid) === String(cid));
+          if (idx !== -1) draft.contacts[idx] = { ...draft.contacts[idx], dans_tags: tagsStr };
+        });
       } catch {}
       onSave({ ...contact, dans_tags: tagsStr }, { silent: true });
       setTagsSaveStatus('Saved ✓');
@@ -803,29 +766,24 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
       if (!res.ok || json.error) throw new Error(json?.message || json?.error || `HubSpot ${res.status}`);
       // Include notes in the saved contact (stored locally)
       const savedContact = isNew ? { id: json.id, ...allProps } : { ...contact, ...allProps };
-      // Update localStorage cache (exclude notes/oldEmails — those live in Firestore settings)
+      // Update HubSpot cache (exclude notes/oldEmails — those live in Firestore settings)
       try {
-        const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
-        if (cache?.contacts) {
+        await updateHubspotCache(draft => {
           const cacheProps = { ...hsProps };
           if (isNew) {
             // If this was promoted from a local-only contact, remove the old local entry so we don't duplicate
             if (isLocalOnly && existingId) {
-              cache.contacts = cache.contacts.filter(c => String(c.id || c.vid) !== String(existingId));
+              draft.contacts = draft.contacts.filter(c => String(c.id || c.vid) !== String(existingId));
             }
-            cache.contacts.push({ id: savedContact.id, ...cacheProps });
+            draft.contacts.push({ id: savedContact.id, ...cacheProps });
           } else {
-            const idx = cache.contacts.findIndex(c => String(c.id || c.vid) === String(contact.id || contact.vid));
-            if (idx !== -1) cache.contacts[idx] = { ...cache.contacts[idx], ...cacheProps };
+            const idx = draft.contacts.findIndex(c => String(c.id || c.vid) === String(contact.id || contact.vid));
+            if (idx !== -1) draft.contacts[idx] = { ...draft.contacts[idx], ...cacheProps };
           }
-          try {
-            localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache));
-          } catch (qerr) {
-            console.warn('HubSpot cache write skipped (quota):', qerr.message);
-          }
-          window.dispatchEvent(new Event('hubspot-cache-updated'));
-        }
-      } catch {}
+        });
+      } catch (err) {
+        console.warn('HubSpot cache write failed:', err?.message || err);
+      }
       // Save note & old emails to Firestore settings (cross-device)
       const savedCid = savedContact.id || savedContact.vid;
       if (savedCid && onSaveNote) {
@@ -1791,11 +1749,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         if (data.success) {
           deleted += 1;
           try {
-            const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
-            if (cache?.contacts) {
-              cache.contacts = cache.contacts.filter(x => String(x.id || x.vid) !== String(cid));
-              localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache));
-            }
+            await updateHubspotCache(draft => {
+              draft.contacts = draft.contacts.filter(x => String(x.id || x.vid) !== String(cid));
+            });
           } catch { /* ignore */ }
         } else {
           deleteErrors += 1;
@@ -1818,11 +1774,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         if (data.success && data.contact) {
           added += 1;
           try {
-            const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
-            if (cache?.contacts) {
-              cache.contacts.push(data.contact);
-              localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache));
-            }
+            await updateHubspotCache(draft => { draft.contacts.push(data.contact); });
           } catch { /* ignore */ }
           const newId = data.contact.id;
           if (newId && teamName) handleSaveContactTeamName(newId, teamName);
@@ -1834,7 +1786,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         errors += 1;
       }
     }
-    window.dispatchEvent(new Event('hubspot-cache-updated'));
+    notifyCacheUpdated();
     setContactsImporting(false);
     setContactsUploadPreview(null);
     alert(
@@ -2382,11 +2334,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       if (!res.ok) throw new Error('Delete failed');
       // Remove from local HubSpot cache
       try {
-        const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
-        if (cache?.contacts) {
-          cache.contacts = cache.contacts.filter(c => String(c.id || c.vid) !== String(cid));
-          localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache));
-        }
+        await updateHubspotCache(draft => {
+          draft.contacts = draft.contacts.filter(c => String(c.id || c.vid) !== String(cid));
+        });
       } catch {}
       if (onDeleteContact) onDeleteContact(cid);
     } catch (err) {
@@ -2968,18 +2918,15 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                               // handles the 409-recovered path where the
                               // server returned an existing contact.
                               try {
-                                const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache')) || {};
-                                const list = Array.isArray(cache.contacts) ? cache.contacts : [];
-                                const incomingEmail = (data.contact.email || '').toLowerCase();
-                                const idx = list.findIndex(c =>
-                                  (c.id && c.id === data.contact.id) ||
-                                  (incomingEmail && (c.email || '').toLowerCase() === incomingEmail)
-                                );
-                                if (idx >= 0) list[idx] = { ...list[idx], ...data.contact };
-                                else list.push(data.contact);
-                                cache.contacts = list;
-                                localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache));
-                                window.dispatchEvent(new Event('hubspot-cache-updated'));
+                                await updateHubspotCache(draft => {
+                                  const incomingEmail = (data.contact.email || '').toLowerCase();
+                                  const idx = draft.contacts.findIndex(c =>
+                                    (c.id && c.id === data.contact.id) ||
+                                    (incomingEmail && (c.email || '').toLowerCase() === incomingEmail)
+                                  );
+                                  if (idx >= 0) draft.contacts[idx] = { ...draft.contacts[idx], ...data.contact };
+                                  else draft.contacts.push(data.contact);
+                                });
                               } catch {}
                               if (data.alreadyExisted) {
                                 console.log(`HubSpot contact already existed (id ${data.contact.id}); pulled into local cache.`);

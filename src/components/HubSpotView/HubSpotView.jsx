@@ -5,13 +5,8 @@ import { DataTable } from '../common/DataTable';
 import { logAction } from '../../utils/auditLog';
 import { useAuth } from '../../contexts/AuthContext';
 import { COUNTRIES } from '../../data/enums';
+import { getHubspotCache, setHubspotCache, updateHubspotCache } from '../../utils/hubspotContactsCache';
 import styles from './HubSpotView.module.css';
-
-// NOTE: The HubSpot sync cache is intentionally stored as plain (unencrypted)
-// localStorage.  The cache can be very large and encrypting/decrypting it on
-// every access would cause noticeable UI lag.  It contains synced CRM data, not
-// authentication secrets.  OAuth tokens are encrypted via secureStorage.js.
-const CACHE_KEY = 'hubspot-sync-cache';
 
 function HubSpotFilterDrop({ label, options, selected, onToggle, onBulkSet }) {
   const [open, setOpen] = useState(false);
@@ -163,40 +158,10 @@ function HubSpotInlineCell({ contact, field, value, onSave, suggestions }) {
   );
 }
 
-function loadCache() {
-  try { return JSON.parse(localStorage.getItem(CACHE_KEY)); } catch { return null; }
-}
-
 function saveCache(data) {
-  try {
-    localStorage.setItem(CACHE_KEY, JSON.stringify(data));
-  } catch (err) {
-    // Over-quota. Try a much-slimmer contact list (only the fields the
-    // table actually renders) to fit under the ~5MB localStorage cap.
-    try {
-      const slimContactKeys = new Set([
-        'id', 'firstname', 'lastname', 'email', 'phone', 'company', 'jobtitle',
-        'dans_tags',
-      ]);
-      const slim = {
-        ...data,
-        contacts: Array.isArray(data?.contacts) ? data.contacts.map(c => {
-          const out = {};
-          for (const k of Object.keys(c)) if (slimContactKeys.has(k)) out[k] = c[k];
-          return out;
-        }) : data?.contacts,
-      };
-      localStorage.setItem(CACHE_KEY, JSON.stringify(slim));
-      console.warn('HubSpot cache saved in slim mode (over quota with full fields)');
-    } catch (err2) {
-      // Slim still didn't fit. Drop the stale cache entirely so the next
-      // page load doesn't render an out-of-date snapshot before the API
-      // fetch catches up. The auto-fetch on mount repopulates from the
-      // server, so losing the cache only costs a brief loading state.
-      try { localStorage.removeItem(CACHE_KEY); } catch {}
-      console.warn('HubSpot cache exceeded quota even slimmed — cleared cache so next load fetches fresh');
-    }
-  }
+  setHubspotCache(data).catch(err => {
+    console.error('HubSpot cache write failed:', err?.message || err);
+  });
 }
 
 function fmtDate(dateStr) {
@@ -635,13 +600,10 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
       const json = await res.json();
       if (!res.ok || json.error) throw new Error(json?.message || json?.error || `HubSpot ${res.status}`);
       try {
-        const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
-        if (cache?.contacts) {
-          const idx = cache.contacts.findIndex(c => String(c.id || c.vid) === String(cid));
-          if (idx !== -1) cache.contacts[idx] = { ...cache.contacts[idx], dans_tags: tagsStr };
-          try { localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache)); } catch {}
-          window.dispatchEvent(new Event('hubspot-cache-updated'));
-        }
+        await updateHubspotCache(draft => {
+          const idx = draft.contacts.findIndex(c => String(c.id || c.vid) === String(cid));
+          if (idx !== -1) draft.contacts[idx] = { ...draft.contacts[idx], dans_tags: tagsStr };
+        });
       } catch {}
       setTagsSaveStatus('Saved ✓');
       setTimeout(() => setTagsSaveStatus(''), 1500);
@@ -669,15 +631,19 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
     return () => document.removeEventListener('mousedown', h);
   }, [tagsDropdownOpen]);
 
-  // All contact emails for CC suggestions
-  const allEmails = useMemo(() => {
-    try {
-      const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
-      return (cache?.contacts || []).filter(c => c.email).map(c => ({
+  // All contact emails for CC suggestions (loaded async from IDB on mount)
+  const [allEmails, setAllEmails] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    getHubspotCache().then(cache => {
+      if (cancelled) return;
+      const list = (cache?.contacts || []).filter(c => c.email).map(c => ({
         email: c.email,
         name: [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email,
       }));
-    } catch { return []; }
+      setAllEmails(list);
+    }).catch(() => {});
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -1062,7 +1028,12 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
 
 export function HubSpotView({ prospects, settings, updateSettings }) {
   const { user } = useAuth();
-  const [data, setData] = useState(loadCache);
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    getHubspotCache().then(c => { if (!cancelled) setData(c || null); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [tab, setTab] = useState('contacts');
@@ -1255,17 +1226,15 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
     let localSaved = 0;
     if (withoutEmail.length > 0) {
       try {
-        const cacheRaw = localStorage.getItem('hubspot-sync-cache');
-        const cache = cacheRaw ? JSON.parse(cacheRaw) : { contacts: [] };
-        if (!Array.isArray(cache.contacts)) cache.contacts = [];
-        for (const c of withoutEmail) {
-          const { notes, ...props } = c;
-          const localId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-          cache.contacts.push({ id: localId, _localOnly: true, ...props });
-          localSaved++;
-        }
-        try { localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache)); } catch (qerr) { console.warn('Cache write skipped (quota):', qerr.message); }
-        window.dispatchEvent(new Event('hubspot-cache-updated'));
+        await updateHubspotCache(draft => {
+          if (!Array.isArray(draft.contacts)) draft.contacts = [];
+          for (const c of withoutEmail) {
+            const { notes, ...props } = c;
+            const localId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+            draft.contacts.push({ id: localId, _localOnly: true, ...props });
+            localSaved++;
+          }
+        });
       } catch (err) {
         console.error('Failed to save emailless contacts locally:', err);
       }
@@ -1417,7 +1386,7 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
       if (json.error) throw new Error(json.error);
       // Preserve local-only contacts (created from bulk upload rows without email) across syncs
       try {
-        const existing = JSON.parse(localStorage.getItem(CACHE_KEY));
+        const existing = await getHubspotCache();
         const localOnly = (existing?.contacts || []).filter(c => c._localOnly);
         if (localOnly.length > 0 && Array.isArray(json.contacts)) {
           json.contacts = [...json.contacts, ...localOnly];
@@ -1434,6 +1403,7 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
 
   // Load Dan's Tags options from contacts data + HubSpot properties
   useEffect(() => {
+    let cancelled = false;
     const vals = new Set();
     // Collect from all contacts
     const contacts = data?.contacts || [];
@@ -1441,17 +1411,19 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
       const v = c.dans_tags || c.dan_s_tags || c.dans_tag || '';
       if (v) v.split(';').forEach(t => { if (t.trim()) vals.add(t.trim()); });
     }
+    const tagsApply = () => { if (!cancelled && vals.size > 0) setDansTagOptions([...vals].sort()); };
     // Also try cache if data not loaded yet
     if (contacts.length === 0) {
-      try {
-        const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
+      getHubspotCache().then(cache => {
         for (const c of cache?.contacts || []) {
           const v = c.dans_tags || c.dan_s_tags || c.dans_tag || '';
           if (v) v.split(';').forEach(t => { if (t.trim()) vals.add(t.trim()); });
         }
-      } catch {}
+        tagsApply();
+      }).catch(() => tagsApply());
+    } else {
+      tagsApply();
     }
-    if (vals.size > 0) setDansTagOptions([...vals].sort());
     // Also try HubSpot property options as supplement
     (async () => {
       try {
@@ -1474,6 +1446,7 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
         }
       } catch {}
     })();
+    return () => { cancelled = true; };
   }, [data]);
 
   // Auto-sync on mount if cache is stale (older than 15 minutes) or missing
@@ -2443,10 +2416,7 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
           companyNames={(() => {
             const names = new Set();
             (prospects || []).forEach(p => { if (p.company) names.add(p.company); });
-            try {
-              const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
-              (cache?.contacts || []).forEach(c => { if (c.company) names.add(c.company); });
-            } catch {}
+            (data?.contacts || []).forEach(c => { if (c.company) names.add(c.company); });
             return [...names].sort();
           })()}
           tagOptions={dansTagOptions}

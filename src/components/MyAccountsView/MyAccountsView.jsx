@@ -9,6 +9,8 @@ import { statusColor, formatAum } from '../../utils/formatters';
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE } from '../../data/enums';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { buildCompanyIndex, findMatchesInIndex, hasMatchInIndex } from '../../utils/companyIndex';
+import { getHubspotCache, setHubspotCache } from '../../utils/hubspotContactsCache';
+import { dbGet } from '../../utils/db';
 import * as XLSX from 'xlsx';
 import styles from './MyAccountsView.module.css';
 
@@ -1163,12 +1165,9 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       // Build domain→company map from prospects
       const domainMap = new Map();
       const contactMap = new Map();
-      try {
-        const hsCache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
-        for (const c of (hsCache?.contacts || [])) {
-          if (c.email && c.company) contactMap.set(c.email.toLowerCase(), c.company.toLowerCase());
-        }
-      } catch {}
+      for (const c of (hubspotCache?.contacts || [])) {
+        if (c.email && c.company) contactMap.set(c.email.toLowerCase(), c.company.toLowerCase());
+      }
       for (const p of prospects) {
         if (p.emailDomain) {
           // Support multiple email domains separated by newlines, semicolons, or commas
@@ -1213,7 +1212,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       }
     } catch {}
     return counts;
-  }, [prospects]);
+  }, [prospects, hubspotCache]);
 
   // Load opps data. Priority: IndexedDB (fresh from Opps tab) -> localStorage
   // -> Firestore (synced across devices by Opps tab). The Firestore fallback
@@ -1223,24 +1222,10 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   useEffect(() => {
     let cancelled = false;
     async function loadFromIndexedDB() {
-      return new Promise((resolve) => {
-        try {
-          // Version-agnostic open so the settings-backups bump doesn't
-          // throw VersionError here (which previously meant MyAccountsView
-          // silently fell through to an empty/stale Firestore copy).
-          const req = indexedDB.open('prospect-tracker-db');
-          req.onsuccess = () => {
-            const idb = req.result;
-            if (!idb.objectStoreNames.contains('opps-cache')) return resolve(null);
-            const tx = idb.transaction('opps-cache', 'readonly');
-            const store = tx.objectStore('opps-cache');
-            const getReq = store.get('data');
-            getReq.onsuccess = () => resolve(getReq.result?.records || null);
-            getReq.onerror = () => resolve(null);
-          };
-          req.onerror = () => resolve(null);
-        } catch { resolve(null); }
-      });
+      try {
+        const data = await dbGet('opps-cache', 'data');
+        return data?.records || null;
+      } catch { return null; }
     }
     function loadFromLocalStorage() {
       try {
@@ -1427,14 +1412,27 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   const BUCKET_TAGS = ['esg', 'procurement', 'utilities', 'climate risk', 'capital planning'];
 
   // Refresh HubSpot cache in background when My Accounts loads
-  const [cacheVersion, setCacheVersion] = useState(0);
+  // HubSpot contact cache (IndexedDB-backed). Refreshed on mount and on
+  // hubspot-cache-updated events from ProspectModal/HubSpotView.
+  const [hubspotCache, setHubspotCacheState] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      getHubspotCache().then(c => { if (!cancelled) setHubspotCacheState(c); }).catch(() => {});
+    };
+    refresh();
+    window.addEventListener('hubspot-cache-updated', refresh);
+    return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
+  }, []);
+
+  // Background-refresh contacts from HubSpot when My Accounts loads.
   useEffect(() => {
     (async () => {
       try {
         const res = await fetch('/api/hubspot?action=contacts');
         const json = await res.json();
         if (json.contacts) {
-          // Slim each contact to essential fields to fit under localStorage quota
+          // Slim each contact to essential fields to keep the cache compact.
           const slimContacts = json.contacts.map(c => ({
             id: c.id, vid: c.vid, firstname: c.firstname, lastname: c.lastname,
             email: c.email, phone: c.phone, jobtitle: c.jobtitle, company: c.company,
@@ -1446,21 +1444,13 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
             notes_last_contacted: c.notes_last_contacted,
           }));
           try {
-            localStorage.setItem('hubspot-sync-cache', JSON.stringify({ ...json, contacts: slimContacts, syncedAt: new Date().toISOString() }));
+            await setHubspotCache({ ...json, contacts: slimContacts, syncedAt: new Date().toISOString() });
           } catch (err) {
-            console.warn('HubSpot cache too large for localStorage, skipping cache write:', err.message);
+            console.warn('HubSpot cache write failed:', err.message);
           }
-          setCacheVersion(v => v + 1);
         }
       } catch {}
     })();
-  }, []);
-
-  // Listen for localStorage changes (e.g. contact edits from ProspectModal)
-  useEffect(() => {
-    const handler = () => setCacheVersion(v => v + 1);
-    window.addEventListener('hubspot-cache-updated', handler);
-    return () => window.removeEventListener('hubspot-cache-updated', handler);
   }, []);
 
   const { hubspotCompanies, decisionMakerByCompany, contactsByCompany, bucketsByCompany, contactsByEmailDomain, bucketsByEmailDomain } = useMemo(() => {
@@ -1475,7 +1465,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     const domainContacts = {}; // domain → Set<contactId>
     const domainBuckets = {}; // domain → Set of bucket tags
     try {
-      const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
+      const cache = hubspotCache;
       const seen = new Set();
       const FREE = new Set(['gmail.com', 'outlook.com', 'hotmail.com', 'yahoo.com', 'icloud.com', 'aol.com', 'me.com', 'proton.me', 'protonmail.com', 'live.com', 'msn.com']);
       for (const c of (cache?.contacts || [])) {
@@ -1525,7 +1515,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       bucketsByEmailDomain: domainBuckets,
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prospects, cacheVersion]);
+  }, [prospects, hubspotCache]);
 
   const targetCompanies = useMemo(() => {
     const seen = new Set();
@@ -2049,13 +2039,10 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
 
     // Companies that already have at least one HubSpot contact on file.
     const contactCompanies = new Set();
-    try {
-      const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
-      for (const c of (cache?.contacts || [])) {
-        const k = norm(c.company);
-        if (k) contactCompanies.add(k);
-      }
-    } catch { /* ignore */ }
+    for (const c of (hubspotCache?.contacts || [])) {
+      const k = norm(c.company);
+      if (k) contactCompanies.add(k);
+    }
 
     // Lookup prospects by normalized company name to pull Zoom + site.
     const prospectByNorm = new Map();

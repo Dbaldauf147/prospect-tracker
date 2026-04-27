@@ -3,63 +3,20 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { DataTable } from '../common/DataTable';
+import { dbGet, dbPut } from '../../utils/db';
 import styles from './OppsView.module.css';
 
 const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1ee0OREqA25jzDaR6xRDSrj_ZIZDymQjf1k2Z2_ajVKw/export?format=csv&gid=0';
-const DB_NAME = 'prospect-tracker-db';
 const DB_STORE = 'opps-cache';
-const DB_VERSION = 3; // bump version to add clients-cache store
-
-function openDB() {
-  return new Promise((resolve, reject) => {
-    // Open without a specific version to avoid VersionError when another
-    // part of the app (e.g. settings-backups) has upgraded the DB past our
-    // local DB_VERSION constant. If our stores don't exist yet we do a
-    // version+1 upgrade in a second open call.
-    const initial = indexedDB.open(DB_NAME);
-    initial.onsuccess = () => {
-      const db = initial.result;
-      const missing = ['target-accounts', DB_STORE, 'clients-cache'].filter(
-        (s) => !db.objectStoreNames.contains(s)
-      );
-      if (missing.length === 0) return resolve(db);
-      const v = db.version + 1;
-      db.close();
-      const upgrade = indexedDB.open(DB_NAME, v);
-      upgrade.onupgradeneeded = () => {
-        const udb = upgrade.result;
-        for (const s of missing) {
-          if (!udb.objectStoreNames.contains(s)) udb.createObjectStore(s);
-        }
-      };
-      upgrade.onsuccess = () => resolve(upgrade.result);
-      upgrade.onerror = () => reject(upgrade.error);
-    };
-    initial.onerror = () => reject(initial.error);
-  });
-}
 
 async function loadCacheAsync() {
-  try {
-    const db = await openDB();
-    return new Promise((resolve) => {
-      const tx = db.transaction(DB_STORE, 'readonly');
-      const store = tx.objectStore(DB_STORE);
-      const req = store.get('data');
-      req.onsuccess = () => resolve(req.result || null);
-      req.onerror = () => resolve(null);
-    });
-  } catch { return null; }
+  try { return (await dbGet(DB_STORE, 'data')) || null; }
+  catch { return null; }
 }
 
 async function saveCacheAsync(data) {
-  try {
-    const db = await openDB();
-    const tx = db.transaction(DB_STORE, 'readwrite');
-    tx.objectStore(DB_STORE).put(data, 'data');
-  } catch (err) {
-    console.error('Failed to save opps to IndexedDB:', err);
-  }
+  try { await dbPut(DB_STORE, data, 'data'); }
+  catch (err) { console.error('Failed to save opps to IndexedDB:', err); }
 }
 
 function parseCsv(text) {

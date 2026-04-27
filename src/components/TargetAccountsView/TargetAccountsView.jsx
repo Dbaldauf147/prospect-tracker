@@ -4,6 +4,7 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { DataTable } from '../common/DataTable';
+import { dbGet, dbPut } from '../../utils/db';
 import styles from './TargetAccountsView.module.css';
 
 function FilterDrop({ label, options, selected, onToggle }) {
@@ -41,46 +42,16 @@ function FilterDrop({ label, options, selected, onToggle }) {
   );
 }
 
-const DB_NAME = 'prospect-tracker-db';
 const STORE_NAME = 'target-accounts';
-const DB_VERSION = 3;
-
-function openDB() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME);
-      if (!db.objectStoreNames.contains('opps-cache')) db.createObjectStore('opps-cache');
-      if (!db.objectStoreNames.contains('clients-cache')) db.createObjectStore('clients-cache');
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
 
 async function loadCache() {
-  try {
-    const db = await openDB();
-    return new Promise((resolve) => {
-      const tx = db.transaction(STORE_NAME, 'readonly');
-      const store = tx.objectStore(STORE_NAME);
-      const req = store.get('data');
-      req.onsuccess = () => resolve(req.result || null);
-      req.onerror = () => resolve(null);
-    });
-  } catch { return null; }
+  try { return (await dbGet(STORE_NAME, 'data')) || null; }
+  catch { return null; }
 }
 
 async function saveCache(data) {
-  try {
-    const db = await openDB();
-    const tx = db.transaction(STORE_NAME, 'readwrite');
-    const store = tx.objectStore(STORE_NAME);
-    store.put(data, 'data');
-  } catch (err) {
-    console.error('Failed to save to IndexedDB:', err);
-  }
+  try { await dbPut(STORE_NAME, data, 'data'); }
+  catch (err) { console.error('Failed to save to IndexedDB:', err); }
 }
 
 // Firestore persistence for target accounts

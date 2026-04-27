@@ -4,36 +4,10 @@
 // previous settings here so we can recover from an accidental
 // cross-device overwrite.
 
-const DB_NAME = 'prospect-tracker-db';
+import { openDB } from './db';
+
 const STORE = 'settings-backups';
 const MAX_BACKUPS = 30;
-
-function openDB() {
-  return new Promise((resolve, reject) => {
-    // Use a version bump that upgrades in place; opens as latest version.
-    const req = indexedDB.open(DB_NAME);
-    req.onsuccess = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains(STORE)) {
-        // Need to upgrade to add the store.
-        const version = db.version + 1;
-        db.close();
-        const upgradeReq = indexedDB.open(DB_NAME, version);
-        upgradeReq.onupgradeneeded = () => {
-          const udb = upgradeReq.result;
-          if (!udb.objectStoreNames.contains(STORE)) {
-            udb.createObjectStore(STORE, { keyPath: 'timestamp' });
-          }
-        };
-        upgradeReq.onsuccess = () => resolve(upgradeReq.result);
-        upgradeReq.onerror = () => reject(upgradeReq.error);
-        return;
-      }
-      resolve(db);
-    };
-    req.onerror = () => reject(req.error);
-  });
-}
 
 export async function pushBackup(settings, reason = '') {
   if (!settings || typeof settings !== 'object') return;
@@ -109,7 +83,7 @@ export async function deleteBackup(timestamp) {
       tx.oncomplete = () => resolve();
       tx.onerror = () => resolve();
     });
-  } catch {}
+  } catch { /* noop */ }
 }
 
 // Console escape hatch for emergency restore.

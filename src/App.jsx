@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { getHubspotContacts } from './utils/hubspotContactsCache';
 import { useAuth } from './contexts/AuthContext';
 import { useProspects } from './hooks/useProspects';
 import { useSheetSync } from './hooks/useSheetSync';
@@ -104,23 +105,17 @@ function App() {
   const [showBackups, setShowBackups] = useState(false);
   const [migrating, setMigrating] = useState(false);
   const [migrateResult, setMigrateResult] = useState(null);
-  const [hubspotContacts, setHubspotContacts] = useState(() => {
-    try {
-      const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
-      return cache?.contacts || [];
-    } catch { return []; }
-  });
+  const [hubspotContacts, setHubspotContacts] = useState([]);
 
-  // Refresh hubspot contacts when cache updates
+  // Load HubSpot contacts from IndexedDB and refresh on cache updates.
   useEffect(() => {
-    const handler = () => {
-      try {
-        const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
-        setHubspotContacts(cache?.contacts || []);
-      } catch {}
+    let cancelled = false;
+    const refresh = () => {
+      getHubspotContacts().then(c => { if (!cancelled) setHubspotContacts(c); }).catch(() => {});
     };
-    window.addEventListener('hubspot-cache-updated', handler);
-    return () => window.removeEventListener('hubspot-cache-updated', handler);
+    refresh();
+    window.addEventListener('hubspot-cache-updated', refresh);
+    return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
 
   async function migrateClientsServices() {
@@ -194,10 +189,7 @@ function App() {
 
   const handleModalClose = useCallback(() => setModal(null), []);
   const handleDeleteContactPropagate = useCallback(() => {
-    try {
-      const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
-      setHubspotContacts(cache?.contacts || []);
-    } catch {}
+    getHubspotContacts().then(setHubspotContacts).catch(() => {});
   }, []);
   const handleUpdateOrgChart = useCallback((key, data) => {
     const next = { ...(settings.orgCharts || {}), [key]: data };

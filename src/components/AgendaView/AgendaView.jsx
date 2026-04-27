@@ -2,6 +2,7 @@ import { useMemo, useState, useCallback, useRef, useEffect, Fragment } from 'rea
 import * as XLSX from 'xlsx';
 import { logAction } from '../../utils/auditLog';
 import { useAuth } from '../../contexts/AuthContext';
+import { getHubspotContacts, updateHubspotCache } from '../../utils/hubspotContactsCache';
 import styles from './AgendaView.module.css';
 
 const STORAGE_KEY = 'bulk-contacts-cache';
@@ -269,13 +270,11 @@ function saveCache(rows) {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(rows)); } catch { /* ignore */ }
 }
 
-function loadHubSpotByEmail() {
+async function loadHubSpotByEmail() {
   try {
-    const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
+    const contacts = await getHubspotContacts();
     const m = new Map();
-    for (const c of (cache?.contacts || [])) {
-      if (c.email) m.set(c.email.toLowerCase(), c);
-    }
+    for (const c of contacts) if (c.email) m.set(c.email.toLowerCase(), c);
     return m;
   } catch { return new Map(); }
 }
@@ -541,8 +540,16 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
   }, []);
 
   // Reload HubSpot cache whenever results change (so newly-added contacts move to the "exists" state).
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const hubspotByEmail = useMemo(() => loadHubSpotByEmail(), [results]);
+  const [hubspotByEmail, setHubspotByEmail] = useState(new Map());
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      loadHubSpotByEmail().then(m => { if (!cancelled) setHubspotByEmail(m); });
+    };
+    refresh();
+    window.addEventListener('hubspot-cache-updated', refresh);
+    return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
+  }, [results]);
 
   // Build domain → prospect (and prospect → all known domains) maps so we can both
   // suggest a company and surface the full domain list tied to that prospect.
@@ -665,8 +672,7 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
     // Initial Company value: match HubSpot's current value when the contact already exists
     // (even if blank — so user sees the real state). For brand-new contacts, leave blank so the
     // Suggested Company chip is an explicit opt-in rather than an auto-fill.
-    const hubspotCache = loadHubSpotByEmail();
-    const existing = hubspotCache.get(r.email);
+    const existing = hubspotByEmail.get(r.email);
     const initialCompany = r.company !== undefined && r.company !== null && r.company !== ''
       ? r.company
       : (existing ? (existing.company || '') : '');
@@ -686,7 +692,7 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
       _upload_zoomCompanyName: r._upload_zoomCompanyName || '',
       _upload_emailDomain: r._upload_emailDomain || '',
     };
-  }, [lookupMatch]);
+  }, [lookupMatch, hubspotByEmail]);
 
   // Track which (prospectId, domain) pairs we've already patched this session so we don't flood Firestore.
   const patchedPairsRef = useRef(new Set());
@@ -917,12 +923,7 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
           source: 'bulk_contacts',
         });
         try {
-          const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
-          if (cache?.contacts) {
-            cache.contacts.push(data.contact);
-            localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache));
-            window.dispatchEvent(new Event('hubspot-cache-updated'));
-          }
+          await updateHubspotCache(draft => { draft.contacts.push(data.contact); });
         } catch { /* ignore */ }
         return 'added';
       }
@@ -947,12 +948,9 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
           source: 'bulk_contacts',
         });
         try {
-          const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
-          if (cache?.contacts) {
-            cache.contacts = cache.contacts.map(c => c.id === existing.id ? { ...c, ...patch } : c);
-            localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache));
-            window.dispatchEvent(new Event('hubspot-cache-updated'));
-          }
+          await updateHubspotCache(draft => {
+            draft.contacts = draft.contacts.map(c => c.id === existing.id ? { ...c, ...patch } : c);
+          });
         } catch { /* ignore */ }
         return 'updated';
       }

@@ -4,6 +4,7 @@ import { db } from '../../firebase';
 import { DataTable } from '../common/DataTable';
 import { logAction } from '../../utils/auditLog';
 import { useAuth } from '../../contexts/AuthContext';
+import { getHubspotCache, updateHubspotCache } from '../../utils/hubspotContactsCache';
 import styles from './ActivityView.module.css';
 
 const CACHE_KEY = 'hubspot-activity-cache';
@@ -122,17 +123,25 @@ export function ActivityView({ prospects = [] }) {
     return map;
   }, [prospects]);
 
-  // Also load HubSpot contacts cache for email→company matching
-  const hubspotContacts = useMemo(() => {
-    try {
-      const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
-      const map = new Map();
-      for (const c of (cache?.contacts || [])) {
-        if (c.email && c.company) map.set(c.email.toLowerCase(), c.company);
-      }
-      return map;
-    } catch { return new Map(); }
+  // HubSpot contact cache (IDB-backed). Refreshed on mount and on cache events.
+  const [hubspotCache, setHubspotCacheState] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      getHubspotCache().then(c => { if (!cancelled) setHubspotCacheState(c); }).catch(() => {});
+    };
+    refresh();
+    window.addEventListener('hubspot-cache-updated', refresh);
+    return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
+
+  const hubspotContacts = useMemo(() => {
+    const map = new Map();
+    for (const c of (hubspotCache?.contacts || [])) {
+      if (c.email && c.company) map.set(c.email.toLowerCase(), c.company);
+    }
+    return map;
+  }, [hubspotCache]);
 
   function guessCompanyFromEmail(email) {
     if (!email) return '';
@@ -168,10 +177,7 @@ export function ActivityView({ prospects = [] }) {
   // Check if an email already exists in HubSpot contacts
   function isInHubSpot(email) {
     if (!email) return false;
-    try {
-      const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
-      return (cache?.contacts || []).some(c => c.email && c.email.toLowerCase() === email.toLowerCase());
-    } catch { return false; }
+    return (hubspotCache?.contacts || []).some(c => c.email && c.email.toLowerCase() === email.toLowerCase());
   }
 
   function openContactPopup(name, email, company, phone) {
@@ -216,11 +222,7 @@ export function ActivityView({ prospects = [] }) {
         });
         // Update local cache
         try {
-          const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
-          if (cache?.contacts) {
-            cache.contacts.push(data.contact);
-            localStorage.setItem('hubspot-sync-cache', JSON.stringify(cache));
-          }
+          await updateHubspotCache(draft => { draft.contacts.push(data.contact); });
         } catch {}
       } else {
         setAddResult(data.error || 'Failed to add contact');
@@ -234,14 +236,11 @@ export function ActivityView({ prospects = [] }) {
   // Build contact ID → contact map from HubSpot cache
   const contactIdMap = useMemo(() => {
     const map = new Map();
-    try {
-      const cache = JSON.parse(localStorage.getItem('hubspot-sync-cache'));
-      for (const c of (cache?.contacts || [])) {
-        if (c.id) map.set(c.id, c);
-      }
-    } catch {}
+    for (const c of (hubspotCache?.contacts || [])) {
+      if (c.id) map.set(c.id, c);
+    }
     return map;
-  }, []);
+  }, [hubspotCache]);
 
   const allActivities = useMemo(() => {
     if (!data) return [];

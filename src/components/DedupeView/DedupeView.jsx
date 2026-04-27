@@ -1,12 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
+import { getHubspotCache, setHubspotCache } from '../../utils/hubspotContactsCache';
 import styles from './DedupeView.module.css';
 
-const CACHE_KEY = 'hubspot-sync-cache';
 const DISMISSED_KEY = 'dedupe-dismissed';
-
-function loadHubSpotCache() {
-  try { return JSON.parse(localStorage.getItem(CACHE_KEY)); } catch { return null; }
-}
 
 function loadDismissed() {
   try { return new Set(JSON.parse(localStorage.getItem(DISMISSED_KEY))); } catch { return new Set(); }
@@ -111,21 +107,23 @@ function findDuplicateGroups(contacts) {
 }
 
 export function DedupeView() {
-  const [data, setData] = useState(loadHubSpotCache);
+  const [data, setData] = useState(null);
   const [dismissed, setDismissed] = useState(loadDismissed);
   const [status, setStatus] = useState(null);
   const [merging, setMerging] = useState(false);
   const [selectedKeep, setSelectedKeep] = useState({}); // key -> contactId to keep
   const [tab, setTab] = useState('all');
 
-  // Re-read cache when it changes
+  // Load cache on mount and refresh on cache-updated events.
   useEffect(() => {
-    const interval = setInterval(() => {
-      const fresh = loadHubSpotCache();
-      if (fresh?.syncedAt !== data?.syncedAt) setData(fresh);
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [data]);
+    let cancelled = false;
+    const refresh = () => {
+      getHubspotCache().then(c => { if (!cancelled) setData(c || null); }).catch(() => {});
+    };
+    refresh();
+    window.addEventListener('hubspot-cache-updated', refresh);
+    return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
+  }, []);
 
   const contacts = data?.contacts || [];
 
@@ -177,7 +175,7 @@ export function DedupeView() {
     setData(prev => {
       if (!prev) return prev;
       const updated = { ...prev, contacts: prev.contacts.filter(c => !deleteIds.has(c.id)) };
-      try { localStorage.setItem(CACHE_KEY, JSON.stringify(updated)); } catch (err) { console.warn('DedupeView cache write skipped (quota):', err?.message || err); }
+      setHubspotCache(updated).catch(err => console.warn('DedupeView cache write failed:', err?.message || err));
       return updated;
     });
 
