@@ -761,8 +761,21 @@ export function UploadedListView({
     if (mappedOnly) {
       result = result.filter(isMappedRow);
     }
-    return result;
-  }, [search, suggestedOnly, portfolioOnly, mappedOnly, rows, isMyAccountsRow, isPortfolioRow, isMappedRow]);
+    // Stamp each row with its current best-suggestion confidence (the
+    // same score the % Match column displays) so the table can sort by
+    // it. Mirrors MatchPctCell's "skip dismissed / mapped scopes" rule
+    // so the sort order matches what the user actually sees.
+    return result.map(r => {
+      const mk = r.__matchKey__;
+      const raw = r.__rawName__ || '';
+      const maAvailable = !myAccountMapping[mk] && !myAccountDismissed[mk];
+      const pcAvailable = !portfolioMapping[mk] && !portfolioDismissed[mk];
+      const ma = maAvailable ? myAccountSuggestionFor(raw) : null;
+      const pc = pcAvailable ? portfolioSuggestionFor(raw) : null;
+      const best = [ma, pc].filter(Boolean).reduce((acc, s) => (acc && acc.score >= s.score ? acc : s), null);
+      return { ...r, __matchPct__: best ? Math.round(best.score * 100) : null };
+    });
+  }, [search, suggestedOnly, portfolioOnly, mappedOnly, rows, isMyAccountsRow, isPortfolioRow, isMappedRow, myAccountMapping, myAccountDismissed, portfolioMapping, portfolioDismissed, myAccountSuggestionFor, portfolioSuggestionFor]);
 
   const myAccountsMatchCount = useMemo(
     () => rows.reduce((n, r) => n + (isMyAccountsRow(r) ? 1 : 0), 0),
