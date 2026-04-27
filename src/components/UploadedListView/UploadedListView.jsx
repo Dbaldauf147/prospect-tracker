@@ -82,15 +82,26 @@ function renderMappingCell({ row, scope, mapping, dismissed, suggestionFor, pros
   if (!isDismissed) {
     const suggestion = suggestionFor(row.__rawName__ || '');
     if (suggestion) {
+      const sProspect = suggestion.prospect;
+      const pct = Math.round((suggestion.score || 0) * 100);
+      // Badge color tracks confidence so the eye finds high-confidence
+      // suggestions quickly: green ≥80%, amber 60–79%, red <60%.
+      const pctBg = pct >= 80 ? '#DCFCE7' : pct >= 60 ? '#FEF3C7' : '#FEE2E2';
+      const pctBorder = pct >= 80 ? '#86EFAC' : pct >= 60 ? '#FCD34D' : '#FCA5A5';
+      const pctColor = pct >= 80 ? '#166534' : pct >= 60 ? '#92400E' : '#991B1B';
       return (
         <span style={{ display: 'flex', alignItems: 'flex-start', gap: 2, width: '100%', minWidth: 0 }}>
           <button
             type="button"
             data-mapping-cell={scope}
             onClick={handleClick}
-            style={{ background: '#FEF3C7', border: '1px dashed #F59E0B', borderRadius: 12, padding: '2px 8px', fontSize: '0.7rem', color: '#92400E', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', flex: '0 1 auto', minWidth: 0, maxWidth: 'calc(100% - 20px)', textAlign: 'left', whiteSpace: 'normal', overflowWrap: 'break-word', lineHeight: 1.25 }}
-            title={`${suggestTitle} · ${suggestion.company}`}
-          >{suggestion.company}</button>
+            style={{ background: '#FEF3C7', border: '1px dashed #F59E0B', borderRadius: 12, padding: '2px 8px', fontSize: '0.7rem', color: '#92400E', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', flex: '0 1 auto', minWidth: 0, maxWidth: 'calc(100% - 60px)', textAlign: 'left', whiteSpace: 'normal', overflowWrap: 'break-word', lineHeight: 1.25 }}
+            title={`${suggestTitle} · ${sProspect.company} · ${pct}% match`}
+          >{sProspect.company}</button>
+          <span
+            title={`Match confidence: ${pct}%`}
+            style={{ background: pctBg, border: `1px solid ${pctBorder}`, color: pctColor, borderRadius: 999, padding: '0 6px', fontSize: '0.6rem', fontWeight: 700, lineHeight: '1.4', flexShrink: 0, alignSelf: 'flex-start', marginTop: 1 }}
+          >{pct}%</span>
           <button
             type="button"
             data-mapping-cell={scope}
@@ -251,7 +262,8 @@ function buildColumns(data, ctx) {
       let entry = confirmedName ? portfolioByNorm.get(normalizeCompany(confirmedName)) : null;
       let fromSuggestion = false;
       if (!entry && !portfolioDismissed[mk]) {
-        entry = row.__rawName__ ? portfolioSuggestionFor(row.__rawName__) : null;
+        const s = row.__rawName__ ? portfolioSuggestionFor(row.__rawName__) : null;
+        entry = s ? s.prospect : null;
         fromSuggestion = !!entry;
       }
       if (!entry || !entry.parent) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>—</span>;
@@ -265,18 +277,7 @@ function buildColumns(data, ctx) {
       );
     },
   };
-  const matchCol = {
-    key: '__myAccount__',
-    label: 'Table View Mapping',
-    defaultWidth: 240,
-    render: (row) => renderMappingCell({
-      row, scope: 'tableView',
-      mapping, dismissed,
-      suggestionFor: prospectSuggestionFor, prospectsByNorm,
-      onPick, onDismiss,
-    }),
-  };
-  return [...baseCols, ...textCol, myAccountsCol, myAccountsInfoCol, portfolioCol, portfolioInfoCol, matchCol];
+  return [...baseCols, ...textCol, myAccountsCol, myAccountsInfoCol, portfolioCol, portfolioInfoCol];
 }
 
 export function UploadedListView({
@@ -511,20 +512,28 @@ export function UploadedListView({
     return { myAccountsByNorm: byNorm, myAccountNorms: norms };
   }, [prospects, myAccountNames]);
 
+  // Returns { prospect, score } where score is 0–1. Score is 1 for exact
+  // normalized matches, and the shorter/longer length ratio for substring
+  // containment matches — so "tiaa" against "tiaa cref" scores higher
+  // than "tiaa" against "(tiaa) teachers insurance and annuity association".
   function suggestFrom(raw, byNorm, norms) {
     const norm = normalizeCompany(raw);
     if (!norm) return null;
     const exact = byNorm.get(norm);
-    if (exact) return exact;
+    if (exact) return { prospect: exact, score: 1 };
     let best = null;
     for (const { norm: pn, prospect } of norms) {
-      if (pn === norm) return prospect;
+      if (pn === norm) return { prospect, score: 1 };
       if (pn.length < 3) continue;
       if (norm.includes(pn) || pn.includes(norm)) {
         if (!best || pn.length < best.pn.length) best = { pn, prospect };
       }
     }
-    return best?.prospect || null;
+    if (!best) return null;
+    const shorter = Math.min(norm.length, best.pn.length);
+    const longer = Math.max(norm.length, best.pn.length);
+    const score = longer > 0 ? shorter / longer : 0;
+    return { prospect: best.prospect, score };
   }
 
   const prospectSuggestionFor = useMemo(
