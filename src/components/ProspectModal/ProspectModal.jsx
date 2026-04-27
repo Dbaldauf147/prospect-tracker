@@ -1448,6 +1448,35 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const [contactsUploadPreview, setContactsUploadPreview] = useState(null); // { fileName, headers, rows, mapping }
   const [contactsImporting, setContactsImporting] = useState(false);
 
+  // Set of lowercased-trimmed account names the user has blocked from
+  // fuzzy-match suggestions on the Target Accounts page. The Portfolio
+  // Companies suggestion list filters these out so a blocked account
+  // (e.g. "ICE") never resurfaces here. Refreshed on the same event
+  // TargetAccountsView dispatches when the user toggles a row.
+  const [blockedTargetAccounts, setBlockedTargetAccounts] = useState(() => {
+    try {
+      const raw = localStorage.getItem('target-accounts:blocked-names');
+      const arr = raw ? JSON.parse(raw) : [];
+      return new Set(Array.isArray(arr) ? arr.map(s => String(s).toLowerCase().trim()).filter(Boolean) : []);
+    } catch { return new Set(); }
+  });
+  useEffect(() => {
+    function refresh() {
+      try {
+        const raw = localStorage.getItem('target-accounts:blocked-names');
+        const arr = raw ? JSON.parse(raw) : [];
+        setBlockedTargetAccounts(new Set(Array.isArray(arr) ? arr.map(s => String(s).toLowerCase().trim()).filter(Boolean) : []));
+      } catch { setBlockedTargetAccounts(new Set()); }
+    }
+    function onStorage(e) { if (e.key === 'target-accounts:blocked-names') refresh(); }
+    window.addEventListener('target-accounts:blocked-changed', refresh);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener('target-accounts:blocked-changed', refresh);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
+
   // Close the PE Owner dropdown when clicking outside
   useEffect(() => {
     if (!peOwnerPickerOpen) return;
@@ -4397,7 +4426,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     if (!companyCol) continue;
                     for (const rec of sheet.records) {
                       const v = (rec[companyCol] || '').toString().trim();
-                      if (v) names.add(v);
+                      // Skip names the user has blocked on the Target
+                      // Accounts page — keeps suggestions consistent
+                      // with the Lists subtabs' behavior.
+                      if (v && !blockedTargetAccounts.has(v.toLowerCase())) names.add(v);
                     }
                   }
                   return [...names].sort((a, b) => a.localeCompare(b));
