@@ -1,14 +1,14 @@
 // Shared helper for computing "which Lists-tab lists is this company
 // flagged on" across the app. Used by MyAccountsView's List Flags
 // column and the Portfolio Companies table / export.
-
-import { loadList as loadListFromIDB } from './uploadedListStore';
-
-// Every list tab on the Lists view that stores its uploaded file under
-// the UploadedListView convention. Keyed by the same storageKey the
-// consumers pass in so we can read both the per-list confirmed
-// mappings and (when present) the full list data to pick up
-// non-dismissed fuzzy suggestions too.
+//
+// Strict-mapping mode: a flag turns on only when the user has explicitly
+// confirmed a mapping for that list — in either the My Accounts column
+// or the Portfolio Companies column on the Lists page. Live fuzzy
+// suggestions don't count, since they can light up flags for raw list
+// entries the user never decided about. Stale flags from before the
+// flag definition tightened were caused by the suggestion path; running
+// this version once resolves them.
 export const LIST_FLAG_SOURCES = [
   { label: 'RECA',     storageKey: 'reca-clients-override', color: { bg: '#DBEAFE', text: '#1E40AF' } },
   { label: 'CSRD',     storageKey: 'csrd-list-override',    color: { bg: '#EDE9FE', text: '#5B21B6' } },
@@ -70,10 +70,14 @@ export function safeReadListMapping(storageKey) {
 }
 
 // Compute which List tabs each of the given company names has been
-// flagged on. Checks both (a) confirmed My-Account mappings on each
-// list and (b) non-dismissed fuzzy suggestions from the raw list
-// rows. Returns a Map keyed by the lowercased-trimmed company name to
-// a Set of list labels (e.g. 'CDP', 'GRESB').
+// explicitly mapped to. Returns a Map keyed by the lowercased-trimmed
+// company name to a Set of list labels (e.g. 'CDP', 'GRESB'). A flag
+// turns on only when the user confirmed a mapping in either the
+// My Accounts or Portfolio Companies column for that list — raw list
+// entries with no decision do not flag.
+//
+// The function is async for backwards compatibility with existing call
+// sites that await it; the body itself runs synchronously.
 export async function computeListFlags(names) {
   const flags = new Map();
   const addFlag = (companyKey, label) => {
@@ -88,12 +92,14 @@ export async function computeListFlags(names) {
   if (!targets.length) return flags;
 
   for (const source of LIST_FLAG_SOURCES) {
-    const mapping = safeReadListMapping(`${source.storageKey}:my-accounts-mapping`);
-    const dismissed = safeReadListMapping(`${source.storageKey}:my-accounts-dismissed`);
-
-    // 1. Confirmed My-Account mappings.
-    for (const confirmed of Object.values(mapping)) {
-      if (typeof confirmed !== 'string') continue;
+    const myAccountsMapping = safeReadListMapping(`${source.storageKey}:my-accounts-mapping`);
+    const portfolioMapping = safeReadListMapping(`${source.storageKey}:portfolio-mapping`);
+    // Confirmed values from either mapping store flag the matching
+    // target. Both stores hold values keyed by an opaque match key —
+    // the values are the prospect/portfolio company names the user
+    // confirmed. We only care about those values.
+    for (const confirmed of [...Object.values(myAccountsMapping), ...Object.values(portfolioMapping)]) {
+      if (typeof confirmed !== 'string' || !confirmed) continue;
       for (const t of targets) {
         if (companiesMatch(t.company, confirmed)) {
           addFlag(t.key, source.label);
@@ -101,30 +107,6 @@ export async function computeListFlags(names) {
         }
       }
     }
-
-    // 2. Non-dismissed fuzzy suggestions from the uploaded list.
-    try {
-      const listRows = await loadListFromIDB(source.storageKey);
-      if (!Array.isArray(listRows) || listRows.length === 0) continue;
-      const headers = Object.keys(listRows[0] || {});
-      const nameKey = pickListNameKey(headers);
-      if (!nameKey) continue;
-      for (const row of listRows) {
-        const rawName = String(row[nameKey] ?? '').trim();
-        if (!rawName) continue;
-        const norm = normalizeListCompany(rawName);
-        if (!norm) continue;
-        const matchKey = `name::${norm}`;
-        if (dismissed[matchKey]) continue;
-        if (mapping[matchKey]) continue;
-        for (const t of targets) {
-          if (companiesMatch(t.company, rawName)) {
-            addFlag(t.key, source.label);
-            break;
-          }
-        }
-      }
-    } catch {}
   }
   return flags;
 }
