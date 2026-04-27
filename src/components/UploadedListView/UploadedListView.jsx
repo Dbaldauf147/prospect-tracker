@@ -158,10 +158,17 @@ function TextEditCell({ value, onChange, placeholder }) {
   );
 }
 
-function MatchPctCell({ row, myAccountSuggestionFor, portfolioSuggestionFor }) {
+function MatchPctCell({ row, myAccountMapping, myAccountDismissed, portfolioMapping, portfolioDismissed, myAccountSuggestionFor, portfolioSuggestionFor }) {
+  const mk = row.__matchKey__;
   const raw = row.__rawName__ || '';
-  const ma = myAccountSuggestionFor(raw);
-  const pc = portfolioSuggestionFor(raw);
+  // Only consider a scope's suggestion if it would actually be visible
+  // in that scope's mapping cell — i.e. the row isn't already mapped
+  // and the suggestion hasn't been dismissed. Otherwise the % column
+  // would advertise a "match" that the user no longer sees on the row.
+  const maAvailable = !myAccountMapping[mk] && !myAccountDismissed[mk];
+  const pcAvailable = !portfolioMapping[mk] && !portfolioDismissed[mk];
+  const ma = maAvailable ? myAccountSuggestionFor(raw) : null;
+  const pc = pcAvailable ? portfolioSuggestionFor(raw) : null;
   // Show the higher of the two scopes' confidence so a single column
   // surfaces the best match available to the row regardless of where
   // it ends up getting mapped.
@@ -297,6 +304,10 @@ function buildColumns(data, ctx) {
     render: (row) => (
       <MatchPctCell
         row={row}
+        myAccountMapping={myAccountMapping}
+        myAccountDismissed={myAccountDismissed}
+        portfolioMapping={portfolioMapping}
+        portfolioDismissed={portfolioDismissed}
         myAccountSuggestionFor={myAccountSuggestionFor}
         portfolioSuggestionFor={portfolioSuggestionFor}
       />
@@ -862,8 +873,8 @@ export function UploadedListView({
         continue;
       }
       const suggestion = r.__rawName__ ? myAccountSuggestionFor(r.__rawName__) : null;
-      if (suggestion) {
-        const key = (suggestion.company || '').toLowerCase().trim();
+      if (suggestion?.prospect) {
+        const key = (suggestion.prospect.company || '').toLowerCase().trim();
         if (accountSet.has(key)) suggestedAccounts.add(key);
       }
     }
@@ -909,8 +920,8 @@ export function UploadedListView({
         continue;
       }
       const suggestion = r.__rawName__ ? portfolioSuggestionFor(r.__rawName__) : null;
-      if (suggestion) {
-        const key = (suggestion.company || '').toLowerCase().trim();
+      if (suggestion?.prospect) {
+        const key = (suggestion.prospect.company || '').toLowerCase().trim();
         if (portfolioSet.has(key)) suggested.add(key);
       }
     }
