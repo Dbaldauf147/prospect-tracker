@@ -1095,7 +1095,13 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
 
   // Inline cell save — updates HubSpot and local cache
   const FIELD_MAP = {};
-  const LOCAL_ONLY_PROPS = new Set(['_zoomCompanyName', '_zoomCompanyId', '_linkedinProfile', '_zoomWebsite', '_emailDomain']);
+  // _companyOverride is a per-contact escape hatch for HubSpot company
+  // edits that won't stick — when our inline update writes the contact
+  // text but HubSpot rejects the corresponding Company-association
+  // reassign (often a permission / duplicate-name issue out of our
+  // hands), the typed value is saved here and the UI uses it instead
+  // of c.company so the next sync can't revert it.
+  const LOCAL_ONLY_PROPS = new Set(['_zoomCompanyName', '_zoomCompanyId', '_linkedinProfile', '_zoomWebsite', '_emailDomain', '_companyOverride']);
   const contactLocalFields = settings?.contactLocalFields || {};
 
   const handleInlineUpdate = useCallback(async (contactId, properties) => {
@@ -1114,6 +1120,7 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
         hubspotProps.dans_tags = tags.filter(t => knownLower.has(t.toLowerCase())).join(';');
       }
       // Only call HubSpot API if there are real HubSpot properties to update
+      let companyOverrideSetTo = undefined; // undefined = no change · null = clear · string = set
       if (Object.keys(hubspotProps).length > 0) {
         const res = await fetch('/api/hubspot?action=update-contact', {
           method: 'POST',
@@ -1124,23 +1131,38 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
         if (json.error) throw new Error(json.error);
         // When the user changed the `company` field, the API also tries
         // to pin the contact's primary Company association so the next
-        // sync doesn't revert the text. If that step failed silently the
-        // edit looks correct on HubSpot's contact UI but our cache
-        // overwrites it with the associated Company name (often empty)
-        // on the next refresh — surface the failure so the user can
-        // fix the association in HubSpot directly.
+        // sync doesn't revert the text. If that step fails, fall back
+        // to a local Prospect Tracker override so the typed value
+        // sticks regardless of HubSpot's sync behavior. When it
+        // succeeds, clear any prior override that's no longer needed.
         const ca = json.companyAssignment;
-        if (ca && ca.ok === false) {
-          const detail = ca.errorText ? ` · ${ca.errorText}` : '';
-          throw new Error(
-            `Company text saved on HubSpot, but the Company association couldn't be reassigned${ca.status ? ` (HTTP ${ca.status})` : ''}${detail}. The next sync will revert this contact's company unless you set the primary Company association manually in HubSpot.`
-          );
+        if (typeof hubspotProps.company === 'string') {
+          if (ca && ca.ok === false) {
+            companyOverrideSetTo = hubspotProps.company;
+            const detail = ca.errorText ? ` · ${ca.errorText}` : '';
+            setPushStatus({
+              type: 'success',
+              message: `Saved "${hubspotProps.company}" locally. HubSpot couldn't pin the Company association${ca.status ? ` (HTTP ${ca.status})` : ''}${detail} — Prospect Tracker will keep your value through future syncs.`,
+            });
+          } else if (ca && ca.ok === true) {
+            companyOverrideSetTo = null;
+          }
         }
       }
-      // Save local-only fields to Firestore settings
-      if (Object.keys(localProps).length > 0) {
+      // Save local-only fields to Firestore settings, plus any
+      // companyOverride decision the API outcome above triggered.
+      if (Object.keys(localProps).length > 0 || companyOverrideSetTo !== undefined) {
         const next = { ...contactLocalFields };
-        next[contactId] = { ...(next[contactId] || {}), ...localProps };
+        const merged = { ...(next[contactId] || {}), ...localProps };
+        if (companyOverrideSetTo === null) {
+          delete merged._companyOverride;
+        } else if (typeof companyOverrideSetTo === 'string') {
+          merged._companyOverride = companyOverrideSetTo;
+        }
+        // Drop the entry entirely when nothing remains so settings
+        // doesn't accumulate empty objects per contact.
+        if (Object.keys(merged).length === 0) delete next[contactId];
+        else next[contactId] = merged;
         updateSettings({ contactLocalFields: next });
       }
       // Update local cache for all properties (including local-only).
@@ -1192,19 +1214,54 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
       if (json.error) throw new Error(json.error);
       const ca = json.companyAssignment;
       if (ca && ca.ok === false) {
+        // Reassign failed even on retry — fall back to a local override
+        // so the user's value sticks regardless. Same shape we use from
+        // the inline-edit path so a manual click here never leaves the
+        // user with a hard error.
+        const next = { ...contactLocalFields };
+        const merged = { ...(next[contactId] || {}), _companyOverride: name };
+        next[contactId] = merged;
+        updateSettings({ contactLocalFields: next });
         const detail = ca.errorText ? ` · ${ca.errorText}` : '';
-        throw new Error(
-          `Reassign failed${ca.status ? ` (HTTP ${ca.status})` : ''}${detail}. Open this contact in HubSpot and set the primary Company association manually.`
-        );
+        setPushStatus({
+          type: 'success',
+          message: `Saved "${name}" locally. HubSpot reassign still failed${ca.status ? ` (HTTP ${ca.status})` : ''}${detail} — Prospect Tracker will keep your value through future syncs.`,
+        });
+      } else {
+        // Reassign worked — clear any prior local override.
+        const cur = contactLocalFields[contactId];
+        if (cur && typeof cur._companyOverride === 'string') {
+          const next = { ...contactLocalFields };
+          const merged = { ...cur };
+          delete merged._companyOverride;
+          if (Object.keys(merged).length === 0) delete next[contactId];
+          else next[contactId] = merged;
+          updateSettings({ contactLocalFields: next });
+        }
+        const created = ca?.created ? ' · created new Company record' : '';
+        setPushStatus({ type: 'success', message: `Reassigned "${name}" on this contact${created}` });
       }
-      const created = ca?.created ? ' · created new Company record' : '';
-      setPushStatus({ type: 'success', message: `Reassigned "${name}" on this contact${created}` });
     } catch (err) {
       console.error('Reassign company failed:', err);
       setPushStatus({ type: 'error', message: `Reassign failed: ${err.message}` });
     }
     setReassigningId(null);
-  }, []);
+  }, [contactLocalFields, updateSettings]);
+
+  // Drop the local company override for one contact, surfacing the
+  // HubSpot-synced value again. Useful once the user has fixed the
+  // association in HubSpot and wants Prospect Tracker to follow that
+  // again instead of pinning the local value.
+  const clearCompanyOverride = useCallback((contactId) => {
+    const next = { ...contactLocalFields };
+    const cur = next[contactId];
+    if (!cur || typeof cur._companyOverride !== 'string') return;
+    const merged = { ...cur };
+    delete merged._companyOverride;
+    if (Object.keys(merged).length === 0) delete next[contactId];
+    else next[contactId] = merged;
+    updateSettings({ contactLocalFields: next });
+  }, [contactLocalFields, updateSettings]);
 
   const handleDeleteContact = useCallback(async (contactId, name) => {
     if (!confirm(`Delete "${name}" from HubSpot? This cannot be undone.`)) return;
@@ -1714,9 +1771,18 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
         return !email.endsWith('@se.com');
       })
       .map(c => {
-        // Merge local-only fields from Firestore settings
+        // Merge local-only fields from Firestore settings. The
+        // _companyOverride takes precedence over the HubSpot-synced
+        // company text when set, so contacts whose HubSpot association
+        // refused to update keep showing the user's typed value.
         const localFields = contactLocalFields[c.id] || {};
+        const hsCompany = c.company;
         c = { ...c, ...localFields };
+        if (typeof localFields._companyOverride === 'string' && localFields._companyOverride) {
+          c.company = localFields._companyOverride;
+          c._companyIsOverride = true;
+          c._companyHubspotValue = hsCompany || '';
+        }
         const companyKey = (c.company || '').toLowerCase();
         const prospect = prospectMap.get(companyKey);
 
@@ -2354,33 +2420,48 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
               { key: 'phone', label: 'Phone', defaultWidth: 130, render: (c) => <HubSpotInlineCell contact={c} field="phone" value={c.phone} onSave={handleInlineUpdate} /> },
               { key: 'company', label: 'Company', defaultWidth: 180, render: (c) => (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <HubSpotInlineCell contact={c} field="company" value={c.company} onSave={handleInlineUpdate} suggestions={prospectCompanyNames} />
+                  <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <HubSpotInlineCell contact={c} field="company" value={c.company} onSave={handleInlineUpdate} suggestions={prospectCompanyNames} />
+                    </div>
+                    {c._companyIsOverride && (
+                      <span
+                        title={`Local Prospect Tracker override active. HubSpot has "${c._companyHubspotValue || '(empty)'}" but Prospect Tracker is using the value you typed. Click ✕ to drop the override and follow HubSpot again.`}
+                        style={{ flexShrink: 0, padding: '0 5px', borderRadius: 999, background: '#DBEAFE', color: '#1E3A8A', border: '1px solid #93C5FD', fontSize: '0.6rem', fontWeight: 700, lineHeight: '1.4' }}
+                      >LOCAL</span>
+                    )}
                   </div>
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); handleReassignCompany(c.id, c.company); }}
-                    disabled={!c.company || reassigningId === c.id}
-                    title={c.company
-                      ? `Re-fire the HubSpot primary-Company association for "${c.company}" — use this when a recent edit's company text shows on the HubSpot contact page but the next sync reverts it (means the association wasn't pinned the first time)`
-                      : 'Set a company name first'}
-                    style={{
-                      flexShrink: 0,
-                      width: 22,
-                      height: 22,
-                      padding: 0,
-                      border: '1px solid var(--color-border)',
-                      borderRadius: 4,
-                      background: reassigningId === c.id ? '#FEF3C7' : '#fff',
-                      color: c.company ? '#475569' : '#CBD5E1',
-                      cursor: c.company && reassigningId !== c.id ? 'pointer' : 'not-allowed',
-                      fontSize: '0.85rem',
-                      lineHeight: 1,
-                      fontFamily: 'inherit',
-                    }}
-                  >
-                    {reassigningId === c.id ? '⋯' : '↻'}
-                  </button>
+                  {c._companyIsOverride ? (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); clearCompanyOverride(c.id); }}
+                      title="Clear the local override and follow HubSpot's company value again"
+                      style={{
+                        flexShrink: 0, width: 22, height: 22, padding: 0,
+                        border: '1px solid #FCA5A5', borderRadius: 4, background: '#fff',
+                        color: '#991B1B', cursor: 'pointer', fontSize: '0.85rem', lineHeight: 1, fontFamily: 'inherit',
+                      }}
+                    >✕</button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); handleReassignCompany(c.id, c.company); }}
+                      disabled={!c.company || reassigningId === c.id}
+                      title={c.company
+                        ? `Re-fire the HubSpot primary-Company association for "${c.company}". Use this if a recent edit's text saved on HubSpot but the next sync reverts the company. If the reassign still fails, Prospect Tracker will keep your value as a local override.`
+                        : 'Set a company name first'}
+                      style={{
+                        flexShrink: 0, width: 22, height: 22, padding: 0,
+                        border: '1px solid var(--color-border)', borderRadius: 4,
+                        background: reassigningId === c.id ? '#FEF3C7' : '#fff',
+                        color: c.company ? '#475569' : '#CBD5E1',
+                        cursor: c.company && reassigningId !== c.id ? 'pointer' : 'not-allowed',
+                        fontSize: '0.85rem', lineHeight: 1, fontFamily: 'inherit',
+                      }}
+                    >
+                      {reassigningId === c.id ? '⋯' : '↻'}
+                    </button>
+                  )}
                 </div>
               ) },
               { key: 'tier', label: 'Tier', defaultWidth: 140, render: (c) => {
