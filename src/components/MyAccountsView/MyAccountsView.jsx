@@ -8,6 +8,7 @@ import { DataTable } from '../common/DataTable';
 import { statusColor, formatAum } from '../../utils/formatters';
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE } from '../../data/enums';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
+import { buildCompanyIndex, findMatchesInIndex, hasMatchInIndex } from '../../utils/companyIndex';
 import * as XLSX from 'xlsx';
 import styles from './MyAccountsView.module.css';
 
@@ -1536,6 +1537,23 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     const t2 = [];
     const counts = {};
 
+    // Precomputed indices over the per-prospect inner-loop data sources.
+    // Each used to be O(prospects × keys) via companiesMatch in a nested
+    // loop; the index lookup turns each per-prospect query into ~O(1).
+    const oppsIndex = buildCompanyIndex(Object.keys(totalOppsByAccount));
+    const openOppsIndex = buildCompanyIndex(Object.keys(openOppsByAccount));
+    const targetAccountsIndex = buildCompanyIndex(targetAccounts.map(t => t.company || ''));
+    const targetByName = new Map();
+    for (const t of targetAccounts) {
+      const k = (t.company || '').toLowerCase().trim();
+      if (k && !targetByName.has(k)) targetByName.set(k, t);
+    }
+    const contactsByCompanyIndex = buildCompanyIndex(Object.keys(contactsByCompany));
+    const dmIndex = buildCompanyIndex(Object.keys(decisionMakerByCompany));
+    const peIndex = buildCompanyIndex([...(pePartnerAccountSet || [])]);
+    const suggestedStatusKeys = Object.keys(suggestedStatusByAccount || {});
+    const suggestedStatusIndex = buildCompanyIndex(suggestedStatusKeys);
+
     const skippedCdm = [];
     for (const p of prospects) {
       // Skip dismissed companies
@@ -1547,8 +1565,9 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       } else {
         tier = findTier(p.company);
         if (!tier) {
-          for (const t of targetAccounts) {
-            if (companiesMatch(p.company, t.company)) { tier = t.tier; break; }
+          for (const tName of findMatchesInIndex(targetAccountsIndex, p.company)) {
+            const t = targetByName.get((tName || '').toLowerCase().trim());
+            if (t) { tier = t.tier; break; }
           }
         }
       }
@@ -1558,8 +1577,8 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       if (!tier) {
         const companyLower = (p.company || '').toLowerCase();
         let hasAnyOpp = false;
-        for (const [oppsCompany, count] of Object.entries(totalOppsByAccount)) {
-          if (count > 0 && companiesMatch(companyLower, oppsCompany)) { hasAnyOpp = true; break; }
+        for (const oppsCompany of findMatchesInIndex(oppsIndex, companyLower)) {
+          if ((totalOppsByAccount[oppsCompany] || 0) > 0) { hasAnyOpp = true; break; }
         }
         if (!hasAnyOpp) continue;
         tier = 'Tier 3';
@@ -1572,8 +1591,8 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         // in My Accounts — that's how JPMC was sneaking in.
         const compLower = (p.company || '').toLowerCase();
         let hasOpenOpp = false;
-        for (const [oppsCompany, count] of Object.entries(openOppsByAccount)) {
-          if (count > 0 && companiesMatch(compLower, oppsCompany)) { hasOpenOpp = true; break; }
+        for (const oppsCompany of findMatchesInIndex(openOppsIndex, compLower)) {
+          if ((openOppsByAccount[oppsCompany] || 0) > 0) { hasOpenOpp = true; break; }
         }
         if (!hasOpenOpp) {
           skippedCdm.push({ company: p.company, cdm: p.cdm });
@@ -1595,12 +1614,13 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         // Exact match
         oppsCount += openOppsByAccount[name] || 0;
         totalOpps += totalOppsByAccount[name] || 0;
-        // Fuzzy match for opps
-        for (const [oppsCompany, count] of Object.entries(openOppsByAccount)) {
-          if (oppsCompany !== name && companiesMatch(name, oppsCompany)) { oppsCount += count; break; }
+        // Fuzzy match for opps — first non-exact hit wins (matches the
+        // original `break`-after-first-match semantics).
+        for (const oppsCompany of findMatchesInIndex(openOppsIndex, name)) {
+          if (oppsCompany !== name) { oppsCount += openOppsByAccount[oppsCompany] || 0; break; }
         }
-        for (const [oppsCompany, count] of Object.entries(totalOppsByAccount)) {
-          if (oppsCompany !== name && companiesMatch(name, oppsCompany)) { totalOpps += count; break; }
+        for (const oppsCompany of findMatchesInIndex(oppsIndex, name)) {
+          if (oppsCompany !== name) { totalOpps += totalOppsByAccount[oppsCompany] || 0; break; }
         }
       }
       const sources = [];
@@ -1617,16 +1637,22 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         if (matched) targetTier = matched.tier;
       } else if (!hasExplicitMapping) {
         // Only fuzzy-match if user never explicitly set/cleared the mapping
-        for (const t of targetAccounts) {
-          if (companiesMatch(p.company, t.company)) { targetNames = [t.company]; targetTier = t.tier; break; }
+        for (const tName of findMatchesInIndex(targetAccountsIndex, p.company)) {
+          const t = targetByName.get((tName || '').toLowerCase().trim());
+          if (t) { targetNames = [t.company]; targetTier = t.tier; break; }
         }
       }
       if (targetNames.length > 0) sources.push('Target List');
       const tierMismatch = targetTier && targetTier !== tier && !p.ignoreTierMismatch;
       // Check for decision maker — fuzzy match across parent + divisions
       let dmNames = null;
-      for (const [dmCompany, names] of Object.entries(decisionMakerByCompany)) {
-        if (allCompanyNames.some(name => companiesMatch(name, dmCompany))) { dmNames = names; break; }
+      for (const name of allCompanyNames) {
+        let found = false;
+        for (const dmCompany of findMatchesInIndex(dmIndex, name)) {
+          dmNames = decisionMakerByCompany[dmCompany];
+          if (dmNames) { found = true; break; }
+        }
+        if (found) break;
       }
       // Find accounts assigned to other salespeople — exact match on this row's mapped Target Account name(s) only
       const targetNameSet = new Set((targetNames || []).map(n => (n || '').toLowerCase().trim()).filter(Boolean));
@@ -1643,13 +1669,17 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       const matchedContactIds = new Set();
       const bucketsSeen = new Set();
       let exactNameMatches = 0;
-      for (const [co, ids] of Object.entries(contactsByCompany)) {
-        if (allCompanyNames.some(name => companiesMatch(name, co))) {
-          for (const id of ids) matchedContactIds.add(id);
-          exactNameMatches += ids.size;
-          if (bucketsByCompany[co]) {
-            for (const b of bucketsByCompany[co]) bucketsSeen.add(b);
-          }
+      const matchedCos = new Set();
+      for (const name of allCompanyNames) {
+        for (const co of findMatchesInIndex(contactsByCompanyIndex, name)) matchedCos.add(co);
+      }
+      for (const co of matchedCos) {
+        const ids = contactsByCompany[co];
+        if (!ids) continue;
+        for (const id of ids) matchedContactIds.add(id);
+        exactNameMatches += ids.size;
+        if (bucketsByCompany[co]) {
+          for (const b of bucketsByCompany[co]) bucketsSeen.add(b);
         }
       }
       const prospectDomains = new Set();
@@ -1714,12 +1744,11 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       // means no data to base a suggestion on, so we stay silent.
       let suggestedStatus = '';
       for (const name of allCompanyNames) {
-        // Try exact match first
         if (suggestedStatusByAccount[name]) { suggestedStatus = suggestedStatusByAccount[name]; break; }
-        // Try fuzzy match
         let found = false;
-        for (const [oppsCompany, status] of Object.entries(suggestedStatusByAccount)) {
-          if (companiesMatch(name, oppsCompany)) { suggestedStatus = status; found = true; break; }
+        for (const oppsCompany of findMatchesInIndex(suggestedStatusIndex, name)) {
+          const status = suggestedStatusByAccount[oppsCompany];
+          if (status) { suggestedStatus = status; found = true; break; }
         }
         if (found) break;
       }
@@ -1730,10 +1759,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       let pePartnerHit = false;
       for (const name of allCompanyNames) {
         if (pePartnerAccountSet.has(name)) { pePartnerHit = true; break; }
-        for (const pe of pePartnerAccountSet) {
-          if (companiesMatch(name, pe)) { pePartnerHit = true; break; }
-        }
-        if (pePartnerHit) break;
+        if (hasMatchInIndex(peIndex, name)) { pePartnerHit = true; break; }
       }
       const suggestedType = pePartnerHit ? 'Portfolio Company' : '';
       const typeMismatch = !!suggestedType
@@ -1769,8 +1795,9 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
           const inList = renderedAccountNamesLower.has((p.company || '').toLowerCase());
           const compLower = (p.company || '').toLowerCase();
           let openHits = 0;
-          for (const [oc, oCount] of Object.entries(openOppsByAccount)) {
-            if (oCount > 0 && companiesMatch(compLower, oc)) openHits += oCount;
+          for (const oc of findMatchesInIndex(openOppsIndex, compLower)) {
+            const oCount = openOppsByAccount[oc] || 0;
+            if (oCount > 0) openHits += oCount;
           }
           return {
             company: p.company,
@@ -1797,6 +1824,15 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       console.log('[MyAccountsView] debug-account JSON:', JSON.stringify(payload, null, 2));
     }
 
+    // Index prospects by company name so the opps-only surface below
+    // can match each opps account against any prospect in O(1) instead
+    // of a full scan per account.
+    const prospectByCompany = new Map();
+    for (const p of prospects) {
+      const k = (p?.company || '').toLowerCase().trim();
+      if (k && !prospectByCompany.has(k)) prospectByCompany.set(k, p);
+    }
+    const prospectsIndex = buildCompanyIndex(prospects.map(p => p?.company || ''));
     for (const [accountLower, count] of Object.entries(totalOppsByAccount)) {
       if (!count || count < 1) continue;
       // Require an open opp (non-closed) for the opps-only surface so it
@@ -1811,8 +1847,9 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       // Skip if any prospect we've already included matches this opps account
       let matched = false;
       let matchedProspect = null;
-      for (const p of prospects) {
-        if (companiesMatch(p.company, displayNameRaw)) { matched = true; matchedProspect = p; break; }
+      for (const pCompany of findMatchesInIndex(prospectsIndex, displayNameRaw)) {
+        const p = prospectByCompany.get((pCompany || '').toLowerCase().trim());
+        if (p) { matched = true; matchedProspect = p; break; }
       }
       if (debugInteresting) {
         console.log('[MyAccountsView] debug opps-only decision:', {

@@ -3,6 +3,7 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { LineChart, Line, BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from 'recharts';
+import { buildCompanyIndex, hasMatchInIndex } from '../../utils/companyIndex';
 
 function EditableCell({ value, onCommit, color, suffix = '', bold = false }) {
   const [editing, setEditing] = useState(false);
@@ -441,11 +442,10 @@ export function ProgressView({ prospects, settings }) {
       }
       return out;
     }
+    const contactCompaniesIndex = buildCompanyIndex([...contactCompanies]);
     function hasContact(p) {
       const lower = (p?.company || '').toLowerCase();
-      for (const co of contactCompanies) {
-        if (companiesMatch(lower, co)) return true;
-      }
+      if (hasMatchInIndex(contactCompaniesIndex, lower)) return true;
       for (const d of prospectDomains(p)) {
         if (contactDomains.has(d)) return true;
       }
@@ -453,17 +453,18 @@ export function ProgressView({ prospects, settings }) {
     }
 
     // Match the Opps column logic: account has opps if totalOppsByAccount > 0 (fuzzy match)
+    const oppsKeysWithCount = Object.keys(totalOppsByAccount).filter(k => totalOppsByAccount[k] > 0);
+    const oppsIndex = buildCompanyIndex(oppsKeysWithCount);
     function hasOpp(company) {
       const lower = (company || '').toLowerCase().trim();
-      // Exact match
       if (totalOppsByAccount[lower] > 0) return true;
-      // Fuzzy match + parent company match (e.g. "Brookfield Asset Management" matches "Brookfield (X)")
+      if (hasMatchInIndex(oppsIndex, lower)) return true;
+      // First-word parent fallback (e.g. "Brookfield Asset Management" matches "Brookfield (X)")
       const firstWord = lower.split(/\s/)[0];
-      for (const [oppsCompany, count] of Object.entries(totalOppsByAccount)) {
-        if (count <= 0) continue;
-        if (companiesMatch(lower, oppsCompany)) return true;
-        // Check if they share the same parent name (first word match + one starts with the other's first word)
-        if (firstWord.length >= 4 && oppsCompany.startsWith(firstWord)) return true;
+      if (firstWord.length >= 4) {
+        for (const oppsCompany of oppsKeysWithCount) {
+          if (oppsCompany.startsWith(firstWord)) return true;
+        }
       }
       return false;
     }
@@ -534,11 +535,10 @@ export function ProgressView({ prospects, settings }) {
       return counts;
     })();
 
+    const dmCompaniesIndex = buildCompanyIndex([...dmCompanies]);
     function hasDM(company) {
       const lower = (company || '').toLowerCase();
-      for (const co of dmCompanies) {
-        if (companiesMatch(lower, co)) return true;
-      }
+      if (hasMatchInIndex(dmCompaniesIndex, lower)) return true;
       // Also check first-word match for parent companies
       const firstWord = lower.split(/\s/)[0];
       if (firstWord.length >= 4) {
