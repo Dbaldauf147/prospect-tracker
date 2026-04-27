@@ -1170,6 +1170,42 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
     }
   }, [user]);
 
+  // Re-fire the Company-association reassignment for one contact without
+  // changing the text. Useful when the original inline edit's reassign
+  // step failed silently — a follow-up click here drives the API
+  // through findCompanyByName + setContactPrimaryCompany again.
+  const [reassigningId, setReassigningId] = useState(null);
+  const handleReassignCompany = useCallback(async (contactId, companyName) => {
+    const name = (companyName || '').trim();
+    if (!name) {
+      setPushStatus({ type: 'error', message: 'No company name to reassign — set a company first.' });
+      return;
+    }
+    setReassigningId(contactId);
+    try {
+      const res = await fetch('/api/hubspot?action=update-contact', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contactId, properties: { company: name } }),
+      });
+      const json = await res.json();
+      if (json.error) throw new Error(json.error);
+      const ca = json.companyAssignment;
+      if (ca && ca.ok === false) {
+        const detail = ca.errorText ? ` · ${ca.errorText}` : '';
+        throw new Error(
+          `Reassign failed${ca.status ? ` (HTTP ${ca.status})` : ''}${detail}. Open this contact in HubSpot and set the primary Company association manually.`
+        );
+      }
+      const created = ca?.created ? ' · created new Company record' : '';
+      setPushStatus({ type: 'success', message: `Reassigned "${name}" on this contact${created}` });
+    } catch (err) {
+      console.error('Reassign company failed:', err);
+      setPushStatus({ type: 'error', message: `Reassign failed: ${err.message}` });
+    }
+    setReassigningId(null);
+  }, []);
+
   const handleDeleteContact = useCallback(async (contactId, name) => {
     if (!confirm(`Delete "${name}" from HubSpot? This cannot be undone.`)) return;
     try {
@@ -2316,7 +2352,37 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
               { key: 'lastname', label: 'Last Name', defaultWidth: 120, render: (c) => <HubSpotInlineCell contact={c} field="lastname" value={c.lastname} onSave={handleInlineUpdate} /> },
               { key: 'email', label: 'Email', defaultWidth: 200, render: (c) => <HubSpotInlineCell contact={c} field="email" value={c.email} onSave={handleInlineUpdate} /> },
               { key: 'phone', label: 'Phone', defaultWidth: 130, render: (c) => <HubSpotInlineCell contact={c} field="phone" value={c.phone} onSave={handleInlineUpdate} /> },
-              { key: 'company', label: 'Company', defaultWidth: 180, render: (c) => <HubSpotInlineCell contact={c} field="company" value={c.company} onSave={handleInlineUpdate} suggestions={prospectCompanyNames} /> },
+              { key: 'company', label: 'Company', defaultWidth: 180, render: (c) => (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <HubSpotInlineCell contact={c} field="company" value={c.company} onSave={handleInlineUpdate} suggestions={prospectCompanyNames} />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); handleReassignCompany(c.id, c.company); }}
+                    disabled={!c.company || reassigningId === c.id}
+                    title={c.company
+                      ? `Re-fire the HubSpot primary-Company association for "${c.company}" — use this when a recent edit's company text shows on the HubSpot contact page but the next sync reverts it (means the association wasn't pinned the first time)`
+                      : 'Set a company name first'}
+                    style={{
+                      flexShrink: 0,
+                      width: 22,
+                      height: 22,
+                      padding: 0,
+                      border: '1px solid var(--color-border)',
+                      borderRadius: 4,
+                      background: reassigningId === c.id ? '#FEF3C7' : '#fff',
+                      color: c.company ? '#475569' : '#CBD5E1',
+                      cursor: c.company && reassigningId !== c.id ? 'pointer' : 'not-allowed',
+                      fontSize: '0.85rem',
+                      lineHeight: 1,
+                      fontFamily: 'inherit',
+                    }}
+                  >
+                    {reassigningId === c.id ? '⋯' : '↻'}
+                  </button>
+                </div>
+              ) },
               { key: 'tier', label: 'Tier', defaultWidth: 140, render: (c) => {
                 if (c.tier === 'Not Targeted') return <span style={{ fontSize: '0.68rem', color: '#9CA3AF', fontStyle: 'italic' }}>Not Targeted</span>;
                 const colors = { 'Tier 1': { bg: '#FEE2E2', color: '#991B1B' }, 'Tier 2': { bg: '#DBEAFE', color: '#1E40AF' } };
