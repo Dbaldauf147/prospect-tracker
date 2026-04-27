@@ -240,7 +240,14 @@ export function DataTable({
   useEffect(() => {
     if (firstRowRef.current) {
       const h = firstRowRef.current.offsetHeight;
-      if (h && Math.abs(h - rowHeight) > 0.5) setRowHeight(h);
+      // One-way ratchet: only grow the row-height estimate, never shrink.
+      // The first visible row changes as the user scrolls (virtualization),
+      // so different rows feed measurements in turn — letting the value
+      // shrink causes oscillation between row heights and an infinite
+      // re-render loop on big lists like GRESB. Settling at the tallest
+      // row seen costs a few empty pixels under shorter rows; that's
+      // far better than the visible "jumping" the loop produces.
+      if (h && h > rowHeight + 0.5) setRowHeight(h);
     }
   });
 
