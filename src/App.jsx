@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { getHubspotContacts } from './utils/hubspotContactsCache';
 import { useAuth } from './contexts/AuthContext';
 import { useProspects } from './hooks/useProspects';
@@ -117,6 +117,26 @@ function App() {
     window.addEventListener('hubspot-cache-updated', refresh);
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
+
+  // Apply per-contact local overrides on top of the cached HubSpot
+  // contacts before passing them down. Specifically, _companyOverride
+  // takes precedence over c.company so contacts whose HubSpot
+  // Company association couldn't be reassigned still surface under
+  // the user's typed company everywhere — not just on the HubSpot
+  // Contacts tab.
+  const effectiveHubspotContacts = useMemo(() => {
+    const local = settings?.contactLocalFields || {};
+    if (!hubspotContacts.length || Object.keys(local).length === 0) return hubspotContacts;
+    return hubspotContacts.map(c => {
+      const f = local[c.id];
+      if (!f) return c;
+      const out = { ...c, ...f };
+      if (typeof f._companyOverride === 'string' && f._companyOverride) {
+        out.company = f._companyOverride;
+      }
+      return out;
+    });
+  }, [hubspotContacts, settings?.contactLocalFields]);
 
   async function migrateClientsServices() {
     if (migrating) return;
@@ -313,7 +333,7 @@ function App() {
           onClose={handleModalClose}
           onDeleteProspect={deleteProspect}
           onUpdateProspect={updateProspect}
-          hubspotContacts={hubspotContacts}
+          hubspotContacts={effectiveHubspotContacts}
           onDeleteContact={handleDeleteContactPropagate}
           orgCharts={settings.orgCharts || EMPTY_OBJ}
           onUpdateOrgChart={handleUpdateOrgChart}
