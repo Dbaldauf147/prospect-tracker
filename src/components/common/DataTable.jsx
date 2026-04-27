@@ -25,6 +25,124 @@ function loadColVisible(tableId, allKeys) {
 }
 function saveColVisible(tableId, set) { localStorage.setItem(COL_VISIBLE_PREFIX + tableId, JSON.stringify([...set])); }
 
+// Combobox-style per-column filter. Holds an array of "picked" values that
+// the row's column value must match (substring). A text input drives both
+// free-text search and an autocomplete dropdown of unique column values
+// gathered from the visible row set; pressing Enter adds the typed value
+// as a free-text chip, clicking a suggestion adds it as a chip.
+function ColumnFilterCell({ value, onChange, suggestions }) {
+  const picks = Array.isArray(value)
+    ? value
+    : (typeof value === 'string' && value.trim() ? [value.trim()] : []);
+  const [draft, setDraft] = useState('');
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    function onDocClick(e) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [open]);
+
+  const matches = useMemo(() => {
+    const q = draft.trim().toLowerCase();
+    const seen = new Set(picks.map(p => p.toLowerCase()));
+    const out = [];
+    for (const s of suggestions) {
+      const sl = s.toLowerCase();
+      if (seen.has(sl)) continue;
+      if (q && !sl.includes(q)) continue;
+      out.push(s);
+      if (out.length >= 30) break;
+    }
+    return out;
+  }, [suggestions, draft, picks]);
+
+  function addPick(s) {
+    const t = String(s || '').trim();
+    if (!t) return;
+    if (picks.some(p => p.toLowerCase() === t.toLowerCase())) { setDraft(''); return; }
+    onChange([...picks, t]);
+    setDraft('');
+  }
+  function removePick(s) {
+    onChange(picks.filter(p => p !== s));
+  }
+  function onKeyDown(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      // First match wins on Enter — picks the highlighted suggestion or
+      // commits the typed text when nothing matches.
+      if (matches.length > 0) addPick(matches[0]);
+      else if (draft.trim()) addPick(draft);
+    } else if (e.key === 'Backspace' && !draft && picks.length > 0) {
+      removePick(picks[picks.length - 1]);
+    } else if (e.key === 'Escape') {
+      setOpen(false);
+    } else if (e.key === 'ArrowDown') {
+      setOpen(true);
+    }
+  }
+
+  return (
+    <div ref={wrapRef} style={{ position: 'relative' }}>
+      <div
+        onClick={() => setOpen(true)}
+        style={{
+          display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'center',
+          padding: '1px 3px',
+          border: '1px solid var(--color-border)', borderRadius: 4,
+          background: '#fff', minHeight: 22, cursor: 'text',
+        }}
+      >
+        {picks.map(p => (
+          <span
+            key={p}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 2, background: '#DBEAFE', border: '1px solid #93C5FD', color: '#1E3A8A', borderRadius: 999, padding: '0 4px 0 6px', fontSize: '0.62rem', fontWeight: 600, lineHeight: 1.5, maxWidth: '100%' }}
+            title={p}
+          >
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 100 }}>{p}</span>
+            <button
+              type="button"
+              onClick={e => { e.stopPropagation(); removePick(p); }}
+              style={{ background: 'transparent', border: 'none', color: '#1E3A8A', cursor: 'pointer', padding: 0, lineHeight: 1, fontSize: '0.85rem' }}
+              title="Remove filter"
+            >×</button>
+          </span>
+        ))}
+        <input
+          type="text"
+          value={draft}
+          onChange={e => { setDraft(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+          onKeyDown={onKeyDown}
+          placeholder={picks.length === 0 ? 'Filter…' : ''}
+          style={{ border: 'none', outline: 'none', flex: '1 0 60px', minWidth: 40, fontSize: '0.68rem', fontFamily: 'inherit', padding: '1px 2px', background: 'transparent' }}
+        />
+      </div>
+      {open && matches.length > 0 && (
+        <div
+          style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 30, background: '#fff', border: '1px solid var(--color-border)', borderRadius: 4, marginTop: 1, maxHeight: 220, overflowY: 'auto', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
+          onMouseDown={e => e.preventDefault() /* keep input focused */}
+        >
+          {matches.map(s => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => addPick(s)}
+              style={{ display: 'block', width: '100%', textAlign: 'left', padding: '3px 6px', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.7rem', color: 'var(--color-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+              onMouseEnter={e => e.currentTarget.style.background = '#F1F5F9'}
+              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+            >{s}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ColumnToggle({ columns, visibleCols, onToggle, alwaysVisible, colNames, onRename }) {
   const [open, setOpen] = useState(false);
   const [editingKey, setEditingKey] = useState(null);
@@ -162,21 +280,66 @@ export function DataTable({
     }
   }
 
-  // Sort rows internally if no external sort
-  // Apply per-column text filters on top of the externally-filtered
-  // rows prop. Substring match (case-insensitive) against String(row[key]).
+  // Sort rows internally if no external sort.
+  // Apply per-column filters on top of the externally-filtered rows prop.
+  // Each colFilters[key] is either a string (legacy) or array of strings
+  // (chips from ColumnFilterCell). A row passes if, for each filtered
+  // column, the cell value (case-insensitive) contains at least one of
+  // the picked values. Columns that supply getFilterValue use that
+  // instead of row[key] so derived/custom-render columns can still
+  // filter on what the user actually sees.
+  const colByKey = useMemo(() => {
+    const m = new Map();
+    for (const c of columns) m.set(c.key, c);
+    return m;
+  }, [columns]);
   const filteredRows = useMemo(() => {
-    const activeFilters = Object.entries(colFilters).filter(([, v]) => v && v.trim());
-    if (activeFilters.length === 0) return rows;
+    const active = [];
+    for (const [key, raw] of Object.entries(colFilters)) {
+      let picks;
+      if (Array.isArray(raw)) picks = raw.map(s => String(s || '').trim()).filter(Boolean);
+      else if (typeof raw === 'string' && raw.trim()) picks = [raw.trim()];
+      else picks = [];
+      if (picks.length > 0) active.push({ key, picks });
+    }
+    if (active.length === 0) return rows;
     return rows.filter(row => {
-      for (const [key, needle] of activeFilters) {
-        const n = needle.toLowerCase();
-        const hay = String(row[key] ?? '').toLowerCase();
-        if (!hay.includes(n)) return false;
+      for (const { key, picks } of active) {
+        const col = colByKey.get(key);
+        const getter = col?.getFilterValue;
+        const raw = getter ? getter(row) : row[key];
+        const hay = String(raw ?? '').toLowerCase();
+        if (!picks.some(p => hay.includes(p.toLowerCase()))) return false;
       }
       return true;
     });
-  }, [rows, colFilters]);
+  }, [rows, colFilters, colByKey]);
+
+  // Distinct values per column from the current row pool, used to feed
+  // the column-filter autocomplete suggestions. Computed lazily and
+  // cached so opening the dropdown is cheap on big lists.
+  const filterSuggestions = useMemo(() => {
+    const cache = new Map();
+    return (key) => {
+      if (cache.has(key)) return cache.get(key);
+      const col = colByKey.get(key);
+      const getter = col?.getFilterValue;
+      const seen = new Set();
+      const out = [];
+      for (const row of rows) {
+        const raw = getter ? getter(row) : row[key];
+        const v = String(raw ?? '').trim();
+        if (!v) continue;
+        const lower = v.toLowerCase();
+        if (seen.has(lower)) continue;
+        seen.add(lower);
+        out.push(v);
+      }
+      out.sort((a, b) => a.localeCompare(b));
+      cache.set(key, out);
+      return out;
+    };
+  }, [rows, colByKey]);
 
   const sortedRows = useMemo(() => {
     if (externalSortConfig || !internalSort.key) return filteredRows;
@@ -389,7 +552,9 @@ export function DataTable({
                 {enableColumnFilters && (
                   <tr>
                     {visibleColumns.map(col => {
-                      const filterable = !String(col.key || '').startsWith('_');
+                      // Skip filtering on the leftmost helper / select / row-action
+                      // columns. Their key starts with "_" by convention.
+                      const filterable = !String(col.key || '').startsWith('_') || !!col.getFilterValue;
                       return (
                         <th
                           key={col.key}
@@ -398,13 +563,15 @@ export function DataTable({
                           className={col.sticky ? styles.stickyCol : undefined}
                         >
                           {filterable ? (
-                            <input
-                              type="text"
-                              value={colFilters[col.key] || ''}
-                              onChange={e => setColFilters(prev => ({ ...prev, [col.key]: e.target.value }))}
-                              onClick={e => e.stopPropagation()}
-                              placeholder="Filter..."
-                              style={{ width: '100%', padding: '2px 6px', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.68rem', fontFamily: 'inherit', boxSizing: 'border-box' }}
+                            <ColumnFilterCell
+                              value={colFilters[col.key]}
+                              onChange={(next) => setColFilters(prev => {
+                                const out = { ...prev };
+                                if (Array.isArray(next) && next.length === 0) delete out[col.key];
+                                else out[col.key] = next;
+                                return out;
+                              })}
+                              suggestions={filterSuggestions(col.key)}
                             />
                           ) : null}
                         </th>

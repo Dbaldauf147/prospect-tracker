@@ -224,6 +224,7 @@ function buildColumns(data, ctx) {
         key: `__text_${textColumn.key}__`,
         label: textColumn.label,
         defaultWidth: 160,
+        getFilterValue: (row) => textValues[row.__matchKey__] || '',
         render: (row) => (
           <TextEditCell
             value={textValues[row.__matchKey__] || ''}
@@ -237,6 +238,19 @@ function buildColumns(data, ctx) {
     key: '__myAccountsList__',
     label: 'My Accounts',
     defaultWidth: 220,
+    // Filter by the company name actually displayed in the cell — either
+    // the confirmed mapping or, if none, the live yellow suggestion.
+    getFilterValue: (row) => {
+      const mk = row.__matchKey__;
+      const confirmed = myAccountMapping[mk];
+      if (confirmed) {
+        const p = myAccountsByNorm.get(normalizeCompany(confirmed));
+        return p?.company || confirmed;
+      }
+      if (myAccountDismissed[mk]) return '';
+      const s = row.__rawName__ ? myAccountSuggestionFor(row.__rawName__) : null;
+      return s?.prospect?.company || '';
+    },
     render: (row) => renderMappingCell({
       row, scope: 'myAccounts',
       mapping: myAccountMapping, dismissed: myAccountDismissed,
@@ -248,6 +262,13 @@ function buildColumns(data, ctx) {
     key: '__myAccountsInfo__',
     label: 'Tier / Status',
     defaultWidth: 180,
+    // Filter on the visible chips, e.g. "Tier 1 Qualifying".
+    getFilterValue: (row) => {
+      const mapped = myAccountMapping[row.__matchKey__];
+      const prospect = mapped ? myAccountsByNorm.get(normalizeCompany(mapped)) : null;
+      if (!prospect) return '';
+      return `${prospect.tier || ''} ${prospect.status || ''}`.trim();
+    },
     render: (row) => {
       const mapped = myAccountMapping[row.__matchKey__];
       const prospect = mapped ? myAccountsByNorm.get(normalizeCompany(mapped)) : null;
@@ -278,6 +299,20 @@ function buildColumns(data, ctx) {
     key: '__portfolioList__',
     label: 'Portfolio Companies',
     defaultWidth: 220,
+    // Filter on the visible portfolio company name (confirmed or
+    // suggested), so typing "Acme" surfaces every list row mapped or
+    // suggested to "Acme Holdings".
+    getFilterValue: (row) => {
+      const mk = row.__matchKey__;
+      const confirmed = portfolioMapping[mk];
+      if (confirmed) {
+        const p = portfolioByNorm.get(normalizeCompany(confirmed));
+        return p?.company || confirmed;
+      }
+      if (portfolioDismissed[mk]) return '';
+      const s = row.__rawName__ ? portfolioSuggestionFor(row.__rawName__) : null;
+      return s?.prospect?.company || '';
+    },
     render: (row) => renderMappingCell({
       row, scope: 'portfolio',
       mapping: portfolioMapping, dismissed: portfolioDismissed,
@@ -289,6 +324,18 @@ function buildColumns(data, ctx) {
     key: '__portfolioInfo__',
     label: 'PE Owner',
     defaultWidth: 180,
+    // Filter on the parent (PE owner) name shown in the cell — either
+    // from the confirmed mapping or from a live suggestion.
+    getFilterValue: (row) => {
+      const mk = row.__matchKey__;
+      const confirmed = portfolioMapping[mk];
+      let entry = confirmed ? portfolioByNorm.get(normalizeCompany(confirmed)) : null;
+      if (!entry && !portfolioDismissed[mk]) {
+        const s = row.__rawName__ ? portfolioSuggestionFor(row.__rawName__) : null;
+        entry = s ? s.prospect : null;
+      }
+      return entry?.parent || '';
+    },
     render: (row) => {
       const mk = row.__matchKey__;
       // Prefer the confirmed mapping's owner; fall back to a live
@@ -317,6 +364,7 @@ function buildColumns(data, ctx) {
     key: '__matchPct__',
     label: '% Match',
     defaultWidth: 90,
+    getFilterValue: (row) => row.__matchPct__ != null ? `${row.__matchPct__}%` : '',
     render: (row) => (
       <MatchPctCell
         row={row}
@@ -1381,6 +1429,7 @@ export function UploadedListView({
           columns={columns}
           rows={filtered}
           alwaysVisible={alwaysVisible}
+          enableColumnFilters
           emptyMessage={`No matching ${plural} found`}
         />
       )}
