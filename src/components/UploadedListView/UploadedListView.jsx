@@ -194,7 +194,8 @@ function buildColumns(data, ctx) {
           mapping, dismissed, myAccountMapping, myAccountDismissed,
           portfolioMapping, portfolioDismissed,
           textColumn, textValues, onTextChange,
-          onPick, onDismiss } = ctx;
+          onPick, onDismiss,
+          selectedKeys, onToggleSelect } = ctx;
   const keys = new Set();
   for (const row of data) for (const k of Object.keys(row)) if (k !== 'id' && k !== '__matchKey__') keys.add(k);
   const baseCols = [...keys].map((k, i) => ({
@@ -203,6 +204,21 @@ function buildColumns(data, ctx) {
     defaultWidth: i === 0 ? 240 : 140,
     ...(i === 0 ? { sticky: true } : {}),
   }));
+  const selectCol = {
+    key: '__select__',
+    label: '',
+    defaultWidth: 32,
+    render: (row) => (
+      <input
+        type="checkbox"
+        checked={!!selectedKeys?.has?.(row.__matchKey__)}
+        onChange={(e) => { e.stopPropagation(); onToggleSelect?.(row.__matchKey__); }}
+        onClick={(e) => e.stopPropagation()}
+        style={{ cursor: 'pointer' }}
+        aria-label="Select row for bulk actions"
+      />
+    ),
+  };
   const textCol = textColumn
     ? [{
         key: `__text_${textColumn.key}__`,
@@ -313,7 +329,7 @@ function buildColumns(data, ctx) {
       />
     ),
   };
-  return [...baseCols, ...textCol, myAccountsCol, myAccountsInfoCol, portfolioCol, portfolioInfoCol, matchPctCol];
+  return [selectCol, ...baseCols, ...textCol, myAccountsCol, myAccountsInfoCol, portfolioCol, portfolioInfoCol, matchPctCol];
 }
 
 export function UploadedListView({
@@ -348,6 +364,7 @@ export function UploadedListView({
   const [uploadError, setUploadError] = useState(null);
   const [uploadInfo, setUploadInfo] = useState(null); // { total, preservedTableView, preservedMyAccounts }
   const [picker, setPicker] = useState(null); // { matchKey, raw, query, scope: 'tableView' | 'myAccounts' }
+  const [selectedKeys, setSelectedKeys] = useState(() => new Set());
   const fileInputRef = useRef(null);
   const { data, source } = store;
 
@@ -675,6 +692,87 @@ export function UploadedListView({
     const { setDis } = mapSettersFor(scope);
     setDis(prev => ({ ...prev, [matchKey]: true }));
   }
+  function toggleSelectKey(matchKey) {
+    setSelectedKeys(prev => {
+      const next = new Set(prev);
+      if (next.has(matchKey)) next.delete(matchKey);
+      else next.add(matchKey);
+      return next;
+    });
+  }
+  function clearSelection() { setSelectedKeys(new Set()); }
+  // Confirms each selected row's live suggestion in `scope` (skipping
+  // rows that are already mapped, dismissed, or have no suggestion).
+  function bulkAccept(scope) {
+    const suggestFn = scope === 'myAccounts' ? myAccountSuggestionFor : portfolioSuggestionFor;
+    const mappingState = scope === 'myAccounts' ? myAccountMapping : portfolioMapping;
+    const dismissedState = scope === 'myAccounts' ? myAccountDismissed : portfolioDismissed;
+    const { setMap, setDis } = mapSettersFor(scope);
+    const updates = {};
+    const unDismiss = [];
+    for (const r of rows) {
+      const mk = r.__matchKey__;
+      if (!selectedKeys.has(mk)) continue;
+      if (mappingState[mk]) continue;
+      if (dismissedState[mk]) continue;
+      const sugg = r.__rawName__ ? suggestFn(r.__rawName__) : null;
+      if (sugg?.prospect?.company) {
+        updates[mk] = sugg.prospect.company;
+      }
+    }
+    if (Object.keys(updates).length === 0) return;
+    setMap(prev => ({ ...prev, ...updates }));
+    setDis(prev => {
+      let changed = false;
+      const next = { ...prev };
+      for (const mk of Object.keys(updates)) {
+        if (next[mk]) { delete next[mk]; changed = true; }
+      }
+      return changed ? next : prev;
+    });
+    // Drop the now-confirmed rows from the selection so a follow-up
+    // "Dismiss" doesn't accidentally hit them.
+    setSelectedKeys(prev => {
+      const next = new Set(prev);
+      for (const mk of Object.keys(updates)) next.delete(mk);
+      return next;
+    });
+  }
+  // Dismisses each selected row's live suggestion in `scope` (skipping
+  // rows that are already mapped or have no live suggestion).
+  function bulkDismiss(scope) {
+    const suggestFn = scope === 'myAccounts' ? myAccountSuggestionFor : portfolioSuggestionFor;
+    const mappingState = scope === 'myAccounts' ? myAccountMapping : portfolioMapping;
+    const dismissedState = scope === 'myAccounts' ? myAccountDismissed : portfolioDismissed;
+    const { setDis } = mapSettersFor(scope);
+    const updates = {};
+    for (const r of rows) {
+      const mk = r.__matchKey__;
+      if (!selectedKeys.has(mk)) continue;
+      if (mappingState[mk]) continue;
+      if (dismissedState[mk]) continue;
+      const sugg = r.__rawName__ ? suggestFn(r.__rawName__) : null;
+      if (sugg?.prospect) updates[mk] = true;
+    }
+    if (Object.keys(updates).length === 0) return;
+    setDis(prev => ({ ...prev, ...updates }));
+  }
+  // Counts of selected rows that currently show a live suggestion in
+  // each scope, used to label the toolbar buttons and to disable them
+  // when there's nothing to do.
+  function pendingCountFor(scope) {
+    const suggestFn = scope === 'myAccounts' ? myAccountSuggestionFor : portfolioSuggestionFor;
+    const mappingState = scope === 'myAccounts' ? myAccountMapping : portfolioMapping;
+    const dismissedState = scope === 'myAccounts' ? myAccountDismissed : portfolioDismissed;
+    let n = 0;
+    for (const r of rows) {
+      if (!selectedKeys.has(r.__matchKey__)) continue;
+      if (mappingState[r.__matchKey__]) continue;
+      if (dismissedState[r.__matchKey__]) continue;
+      if (r.__rawName__ && suggestFn(r.__rawName__)) n++;
+    }
+    return n;
+  }
   function setTextValue(matchKey, value) {
     setTextValues(prev => {
       const next = { ...prev };
@@ -692,18 +790,23 @@ export function UploadedListView({
       portfolioMapping, portfolioDismissed,
       textColumn, textValues, onTextChange: setTextValue,
       onPick: openPicker, onDismiss: dismissSuggestion,
+      selectedKeys, onToggleSelect: toggleSelectKey,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rows, prospectsByNorm, myAccountsByNorm, portfolioByNorm, prospectSuggestionFor, myAccountSuggestionFor, portfolioSuggestionFor, mapping, dismissed, myAccountMapping, myAccountDismissed, portfolioMapping, portfolioDismissed, textColumn, textValues]
+    [rows, prospectsByNorm, myAccountsByNorm, portfolioByNorm, prospectSuggestionFor, myAccountSuggestionFor, portfolioSuggestionFor, mapping, dismissed, myAccountMapping, myAccountDismissed, portfolioMapping, portfolioDismissed, textColumn, textValues, selectedKeys]
   );
   const tableId = useMemo(
     () => `${tableIdPrefix}:` + columns.map(c => c.key).sort().join('|'),
     [columns, tableIdPrefix]
   );
   const alwaysVisible = useMemo(() => {
-    const first = columns[0];
+    // Pin the leftmost helper columns plus the first uploaded-data
+    // column (the company name) so the user can't accidentally hide the
+    // selection checkbox or the row identifier via the column toggle.
     const keys = [];
-    if (first) keys.push(first.key);
+    keys.push('__select__');
+    const firstDataCol = columns.find(c => !String(c.key || '').startsWith('__'));
+    if (firstDataCol) keys.push(firstDataCol.key);
     for (const c of columns) {
       if (
         c.key === '__myAccountsList__' ||
@@ -1179,6 +1282,47 @@ export function UploadedListView({
         </button>
         {(search || suggestedOnly || portfolioOnly || mappedOnly) && <span className={styles.resultCount}>{filtered.length} results</span>}
       </div>
+      {selectedKeys.size > 0 && (() => {
+        const acceptMa = pendingCountFor('myAccounts');
+        const acceptPc = pendingCountFor('portfolio');
+        const filteredKeys = filtered.map(r => r.__matchKey__);
+        const allFilteredSelected = filteredKeys.length > 0 && filteredKeys.every(k => selectedKeys.has(k));
+        const selectAllVisible = () => setSelectedKeys(prev => {
+          const next = new Set(prev);
+          for (const k of filteredKeys) next.add(k);
+          return next;
+        });
+        const baseBtn = { padding: '0.35rem 0.7rem', borderRadius: 6, fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' };
+        const accentBtn = (active) => ({ ...baseBtn, border: `1px solid ${active ? '#16A34A' : 'var(--color-border)'}`, background: active ? '#DCFCE7' : '#fff', color: active ? '#166534' : '#94A3B8' });
+        const dismissBtn = (active) => ({ ...baseBtn, border: `1px solid ${active ? '#DC2626' : 'var(--color-border)'}`, background: active ? '#FEE2E2' : '#fff', color: active ? '#991B1B' : '#94A3B8' });
+        return (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', padding: '0.5rem 1.25rem', background: '#F1F5F9', borderTop: '1px solid var(--color-border)', borderBottom: '1px solid var(--color-border)' }}>
+            <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#1E293B' }}>
+              {selectedKeys.size} selected
+            </span>
+            {!allFilteredSelected && filteredKeys.length > selectedKeys.size && (
+              <button type="button" style={{ ...baseBtn, border: '1px solid var(--color-border)', background: '#fff', color: 'var(--color-text-secondary)' }} onClick={selectAllVisible}>
+                Select all visible ({filteredKeys.length})
+              </button>
+            )}
+            <button type="button" style={accentBtn(acceptMa > 0)} disabled={acceptMa === 0} onClick={() => bulkAccept('myAccounts')}>
+              ★ Accept My Accounts {acceptMa > 0 && `(${acceptMa})`}
+            </button>
+            <button type="button" style={accentBtn(acceptPc > 0)} disabled={acceptPc === 0} onClick={() => bulkAccept('portfolio')}>
+              ◆ Accept Portfolio {acceptPc > 0 && `(${acceptPc})`}
+            </button>
+            <button type="button" style={dismissBtn(acceptMa > 0)} disabled={acceptMa === 0} onClick={() => bulkDismiss('myAccounts')}>
+              Dismiss MA suggestion
+            </button>
+            <button type="button" style={dismissBtn(acceptPc > 0)} disabled={acceptPc === 0} onClick={() => bulkDismiss('portfolio')}>
+              Dismiss PC suggestion
+            </button>
+            <button type="button" style={{ ...baseBtn, border: 'none', background: 'transparent', color: 'var(--color-text-secondary)', textDecoration: 'underline', padding: '0.35rem 0.4rem' }} onClick={clearSelection}>
+              Clear
+            </button>
+          </div>
+        );
+      })()}
       {rows.length === 0 ? (
         <div style={{ padding: '2rem 1.25rem', textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>
           No {title} loaded. Click <strong>Upload Excel</strong> to add your list.
