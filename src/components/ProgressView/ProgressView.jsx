@@ -43,18 +43,39 @@ const CHART_VIEW_OPTIONS = [
   { key: 'stackedArea', label: 'Stacked Area' },
 ];
 
-function ProgressChart({ title, data, series, isPct, defaultView = 'line', secondarySeries, onHide }) {
+function ProgressChart({ title, data, series, isPct, defaultView = 'line', secondarySeries, onHide, onRename }) {
   const [viewType, setViewType] = useState(defaultView);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState('');
   const yProps = isPct
     ? { domain: [0, 100], tickFormatter: v => `${v}%` }
     : { allowDecimals: false };
   const tooltipFmt = isPct ? (v => `${v}%`) : undefined;
   const stacked = viewType === 'stackedBar' || viewType === 'stackedArea' || viewType === 'stackedLine';
   const hasSecondary = Array.isArray(secondarySeries) && secondarySeries.length > 0;
+  function commitTitle() {
+    setEditingTitle(false);
+    if (onRename) onRename(titleDraft);
+  }
   return (
     <div style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', padding: '1rem' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', marginBottom: '0.75rem' }}>
-        <h3 style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-text)', margin: 0 }}>{title}</h3>
+        {editingTitle ? (
+          <input
+            value={titleDraft}
+            onChange={e => setTitleDraft(e.target.value)}
+            onBlur={commitTitle}
+            onKeyDown={e => { if (e.key === 'Enter') commitTitle(); if (e.key === 'Escape') setEditingTitle(false); }}
+            autoFocus
+            style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-text)', padding: '2px 6px', border: '1px solid var(--color-accent)', borderRadius: 4, background: 'var(--color-surface)', fontFamily: 'inherit', width: '100%', maxWidth: 400 }}
+          />
+        ) : (
+          <h3
+            onClick={onRename ? () => { setTitleDraft(title); setEditingTitle(true); } : undefined}
+            title={onRename ? 'Click to rename' : undefined}
+            style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-text)', margin: 0, cursor: onRename ? 'text' : 'default' }}
+          >{title}</h3>
+        )}
         <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
           <select
             value={viewType}
@@ -204,6 +225,7 @@ function companiesMatch(a, b) {
 }
 
 const HIDDEN_CHARTS_KEY = 'progress:hidden-charts';
+const CHART_TITLES_KEY = 'progress:chart-titles';
 const PROGRESS_CHART_DEFS = [
   { id: 'contactPct',     label: '% of Accounts with HubSpot Contacts' },
   { id: 'dmPct',          label: '% of Accounts with Decision Maker Identified' },
@@ -223,6 +245,17 @@ function persistHiddenCharts(set) {
   try { localStorage.setItem(HIDDEN_CHARTS_KEY, JSON.stringify([...set])); } catch {}
 }
 
+function loadChartTitles() {
+  try {
+    const raw = localStorage.getItem(CHART_TITLES_KEY);
+    const obj = raw ? JSON.parse(raw) : null;
+    return obj && typeof obj === 'object' ? obj : {};
+  } catch { return {}; }
+}
+function persistChartTitles(map) {
+  try { localStorage.setItem(CHART_TITLES_KEY, JSON.stringify(map)); } catch {}
+}
+
 export function ProgressView({ prospects, settings }) {
   const { user } = useAuth();
   const [history, setHistory] = useState([]);
@@ -234,6 +267,7 @@ export function ProgressView({ prospects, settings }) {
   const [saveStatus, setSaveStatus] = useState('');
   const [hiddenCharts, setHiddenCharts] = useState(() => loadHiddenCharts());
   const [showChartsMenu, setShowChartsMenu] = useState(false);
+  const [chartTitles, setChartTitles] = useState(() => loadChartTitles());
   const toggleChartHidden = (id) => {
     setHiddenCharts(prev => {
       const next = new Set(prev);
@@ -242,6 +276,17 @@ export function ProgressView({ prospects, settings }) {
       return next;
     });
   };
+  const renameChart = (id, nextTitle) => {
+    setChartTitles(prev => {
+      const next = { ...prev };
+      const trimmed = (nextTitle || '').trim();
+      if (trimmed) next[id] = trimmed;
+      else delete next[id];
+      persistChartTitles(next);
+      return next;
+    });
+  };
+  const titleFor = (id, fallback) => chartTitles[id] || fallback;
 
   // Load history from Firestore + opps data
   useEffect(() => {
@@ -818,43 +863,47 @@ export function ProgressView({ prospects, settings }) {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
             {!hiddenCharts.has('contactPct') && (
               <ProgressChart
-                title="% of Accounts with HubSpot Contacts"
+                title={titleFor('contactPct', '% of Accounts with HubSpot Contacts')}
                 data={chartData}
                 series={[{ key: 't1ContactPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2ContactPct', name: 'Tier 2', color: '#3B82F6' }]}
                 isPct
                 onHide={() => toggleChartHidden('contactPct')}
+                onRename={(t) => renameChart('contactPct', t)}
               />
             )}
             {!hiddenCharts.has('dmPct') && (
               <ProgressChart
-                title="% of Accounts with Decision Maker Identified"
+                title={titleFor('dmPct', '% of Accounts with Decision Maker Identified')}
                 data={chartData}
                 series={[{ key: 't1DMPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2DMPct', name: 'Tier 2', color: '#3B82F6' }]}
                 isPct
                 onHide={() => toggleChartHidden('dmPct')}
+                onRename={(t) => renameChart('dmPct', t)}
               />
             )}
             {!hiddenCharts.has('connectedPct') && (
               <ProgressChart
-                title="% of Accounts Connected (Had Opportunity)"
+                title={titleFor('connectedPct', '% of Accounts Connected (Had Opportunity)')}
                 data={chartData}
                 series={[{ key: 't1ConnectedPct', name: 'Tier 1', color: '#DC2626' }, { key: 't2ConnectedPct', name: 'Tier 2', color: '#3B82F6' }]}
                 isPct
                 onHide={() => toggleChartHidden('connectedPct')}
+                onRename={(t) => renameChart('connectedPct', t)}
               />
             )}
             {!hiddenCharts.has('inactivePct') && (
               <ProgressChart
-                title="% of Accounts Inactive (Lost / Hold Off / Old Client)"
+                title={titleFor('inactivePct', '% of Accounts Inactive (Lost / Hold Off / Old Client)')}
                 data={chartData}
                 series={[{ key: 't1InactivePct', name: 'Tier 1', color: '#DC2626' }, { key: 't2InactivePct', name: 'Tier 2', color: '#3B82F6' }]}
                 isPct
                 onHide={() => toggleChartHidden('inactivePct')}
+                onRename={(t) => renameChart('inactivePct', t)}
               />
             )}
             {!hiddenCharts.has('tierTotals') && (
               <ProgressChart
-                title="My Accounts by Tier"
+                title={titleFor('tierTotals', 'My Accounts by Tier')}
                 data={chartData}
                 series={[
                   { key: 't1Total', name: 'Tier 1', color: '#DC2626' },
@@ -865,11 +914,12 @@ export function ProgressView({ prospects, settings }) {
                   { key: 'totalAccounts', name: 'Total Accounts', color: '#111827' },
                 ]}
                 onHide={() => toggleChartHidden('tierTotals')}
+                onRename={(t) => renameChart('tierTotals', t)}
               />
             )}
             {!hiddenCharts.has('noOppsActivity') && (
               <ProgressChart
-                title="Activity on Accounts with No Opportunities (30d)"
+                title={titleFor('noOppsActivity', 'Activity on Accounts with No Opportunities (30d)')}
                 data={chartData}
                 series={[
                   { key: 'noOppsActivityT1', name: 'Tier 1', color: '#DC2626' },
@@ -880,6 +930,7 @@ export function ProgressView({ prospects, settings }) {
                   { key: 'noOppsAccountCount', name: 'No-Opps Accounts', color: '#111827' },
                 ]}
                 onHide={() => toggleChartHidden('noOppsActivity')}
+                onRename={(t) => renameChart('noOppsActivity', t)}
               />
             )}
           </div>
