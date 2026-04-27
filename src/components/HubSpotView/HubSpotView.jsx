@@ -1122,6 +1122,20 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
         });
         const json = await res.json();
         if (json.error) throw new Error(json.error);
+        // When the user changed the `company` field, the API also tries
+        // to pin the contact's primary Company association so the next
+        // sync doesn't revert the text. If that step failed silently the
+        // edit looks correct on HubSpot's contact UI but our cache
+        // overwrites it with the associated Company name (often empty)
+        // on the next refresh — surface the failure so the user can
+        // fix the association in HubSpot directly.
+        const ca = json.companyAssignment;
+        if (ca && ca.ok === false) {
+          const detail = ca.errorText ? ` · ${ca.errorText}` : '';
+          throw new Error(
+            `Company text saved on HubSpot, but the Company association couldn't be reassigned${ca.status ? ` (HTTP ${ca.status})` : ''}${detail}. The next sync will revert this contact's company unless you set the primary Company association manually in HubSpot.`
+          );
+        }
       }
       // Save local-only fields to Firestore settings
       if (Object.keys(localProps).length > 0) {
