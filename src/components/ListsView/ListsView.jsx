@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { RAClientsView } from '../RAClientsView/RAClientsView';
 import { TargetAccountsView } from '../TargetAccountsView/TargetAccountsView';
 import { RECAClientsView } from '../RECAClientsView/RECAClientsView';
+import { EcoActClientsView } from '../EcoActClientsView/EcoActClientsView';
 import { SitesView } from '../SitesView/SitesView';
 import { UploadedListView } from '../UploadedListView/UploadedListView';
 import { loadList as loadListFromIDB } from '../../utils/uploadedListStore';
@@ -12,6 +13,7 @@ const SUBTABS = [
   { key: 'targets', label: 'Target Accounts' },
   { key: 'sites', label: 'Utility Lookup' },
   { key: 'recaclients', label: 'RECA Clients', storageKey: 'reca-clients-override' },
+  { key: 'ecoactclients', label: 'EcoAct Clients', storageKey: 'ecoact-clients-override' },
   { key: 'csrd', label: 'CSRD', storageKey: 'csrd-list-override' },
   { key: 'cdp', label: 'CDP', storageKey: 'cdp-list-override' },
   { key: 'gresb', label: 'GRESB', storageKey: 'gresb-list-override' },
@@ -328,6 +330,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
         {subtab === 'raclients' && <RAClientsView />}
         {subtab === 'targets' && <TargetAccountsView onDataLoaded={onTargetAccountsLoaded} />}
         {subtab === 'recaclients' && <RECAClientsView prospects={prospects} onSelectProspect={onSelectProspect} />}
+        {subtab === 'ecoactclients' && <EcoActClientsView prospects={prospects} onSelectProspect={onSelectProspect} />}
         {subtab === 'sites' && <SitesView />}
         {subtab === 'csrd' && (
           <UploadedListView
