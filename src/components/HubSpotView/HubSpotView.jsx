@@ -158,10 +158,17 @@ function HubSpotInlineCell({ contact, field, value, onSave, suggestions }) {
   );
 }
 
+// Fire-and-forget cache write for cases where we don't care to block on
+// the IDB transaction. Use saveCacheAwait when the caller needs the
+// write to land before unmount / navigation can race it.
 function saveCache(data) {
   setHubspotCache(data).catch(err => {
     console.error('HubSpot cache write failed:', err?.message || err);
   });
+}
+async function saveCacheAwait(data) {
+  try { await setHubspotCache(data); }
+  catch (err) { console.error('HubSpot cache write failed:', err?.message || err); }
 }
 
 function fmtDate(dateStr) {
@@ -1122,18 +1129,26 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
         next[contactId] = { ...(next[contactId] || {}), ...localProps };
         updateSettings({ contactLocalFields: next });
       }
-      // Update local cache for all properties (including local-only)
+      // Update local cache for all properties (including local-only).
+      // Compute the next-state snapshot outside the setData callback so
+      // we can await the IDB write — otherwise navigating away mid-write
+      // can drop the cache update on the floor and the contact table /
+      // prospect popup re-render the old value until the next 15-min
+      // sync. Awaiting also blocks InlineCell's save() until the cache
+      // is landed, so the user can switch tabs the instant they see
+      // "Saved" and the new value persists across the navigation.
+      let nextSnapshot = null;
       setData(prev => {
         if (!prev) return prev;
-        const updated = {
+        nextSnapshot = {
           ...prev,
           contacts: prev.contacts.map(c =>
             c.id === contactId ? { ...c, ...properties } : c
           ),
         };
-        saveCache(updated);
-        return updated;
+        return nextSnapshot;
       });
+      if (nextSnapshot) await saveCacheAwait(nextSnapshot);
       logAction(user, 'contact_updated', { contactId, properties });
     } catch (err) {
       console.error('Inline update failed:', err);
@@ -1151,13 +1166,17 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
       });
       const json = await res.json();
       if (json.error) throw new Error(json.error);
-      // Remove from local cache
+      // Remove from local cache. Same await pattern as the inline
+      // update — without it, fast clicks can navigate away before the
+      // IDB write lands and the contact reappears in the table on the
+      // next mount.
+      let nextSnapshot = null;
       setData(prev => {
         if (!prev) return prev;
-        const updated = { ...prev, contacts: prev.contacts.filter(c => c.id !== contactId) };
-        saveCache(updated);
-        return updated;
+        nextSnapshot = { ...prev, contacts: prev.contacts.filter(c => c.id !== contactId) };
+        return nextSnapshot;
       });
+      if (nextSnapshot) await saveCacheAwait(nextSnapshot);
       setPushStatus({ type: 'success', message: `Deleted "${name}" from HubSpot` });
     } catch (err) {
       setPushStatus({ type: 'error', message: `Delete failed: ${err.message}` });
