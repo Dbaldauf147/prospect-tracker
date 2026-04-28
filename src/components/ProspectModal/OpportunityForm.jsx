@@ -94,14 +94,27 @@ export const DEFAULT_FORM_TEMPLATE = {
   ],
 };
 
+// Seed values for the very first row of certain tables so a fresh form
+// already has the kickoff line filled in. Keyed by table.key, then column.key.
+const FIRST_ROW_SEEDS = {
+  agenda: { subject: 'Introductions', speaker: 'Dan Baldauf', duration: '5' },
+};
+
 function emptyFormData(template = DEFAULT_FORM_TEMPLATE) {
   const fieldValues = {};
   for (const f of template.fields) fieldValues[f.key] = '';
   const tables = {};
   for (const t of template.tables) {
-    tables[t.key] = Array.from({ length: 2 }, () =>
-      Object.fromEntries(t.columns.map(c => [c.key, '']))
-    );
+    const seed = FIRST_ROW_SEEDS[t.key] || null;
+    tables[t.key] = Array.from({ length: 2 }, (_, idx) => {
+      const row = Object.fromEntries(t.columns.map(c => [c.key, '']));
+      if (idx === 0 && seed) {
+        for (const [k, v] of Object.entries(seed)) {
+          if (k in row) row[k] = v;
+        }
+      }
+      return row;
+    });
   }
   return { fieldValues, tables, linkedBfoLink: null, linkedOppName: null, meeting: null };
 }
