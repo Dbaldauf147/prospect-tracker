@@ -466,13 +466,22 @@ export function KeyContactsView({ prospects = [], onSelectProspect }) {
                       style={{ width: '100%', padding: 0, background: isExpanded ? '#F8FAFC' : '#fff', border: 'none', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', display: 'grid', gridTemplateColumns: GRID, alignItems: 'center' }}
                     >
                       <div
-                        style={{ padding: '0.55rem 0.6rem', fontSize: '0.82rem', fontWeight: 700, color: row.prospect ? '#1E293B' : '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                        title={row.prospect ? row.companyName : `${row.companyName} (no matching prospect)`}
-                        onClick={e => { e.stopPropagation(); if (row.prospect) onSelectProspect?.(row.prospect); }}
+                        style={{ padding: '0.55rem 0.6rem', fontSize: '0.82rem', fontWeight: 700, color: row.prospect ? '#1E293B' : '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 6 }}
+                        title={isExpanded ? 'Click to collapse' : 'Click to expand contact details'}
                       >
-                        {row.companyName}
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.companyName}</span>
                         {!row.prospect && (
-                          <span style={{ marginLeft: 6, padding: '1px 6px', fontSize: '0.55rem', fontWeight: 700, color: '#92400E', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 999 }}>NO PROSPECT</span>
+                          <span style={{ padding: '1px 6px', fontSize: '0.55rem', fontWeight: 700, color: '#92400E', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 999, flexShrink: 0 }}>NO PROSPECT</span>
+                        )}
+                        {row.prospect && (
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            onClick={e => { e.stopPropagation(); onSelectProspect?.(row.prospect); }}
+                            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); onSelectProspect?.(row.prospect); } }}
+                            title="Open prospect record"
+                            style={{ fontSize: '0.65rem', color: '#3B82F6', cursor: 'pointer', flexShrink: 0, fontWeight: 600, padding: '0 4px' }}
+                          >↗</span>
                         )}
                       </div>
 
@@ -556,24 +565,56 @@ export function KeyContactsView({ prospects = [], onSelectProspect }) {
                           <div style={{ fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#475569', marginBottom: '0.4rem' }}>
                             Key Target contacts <span style={{ color: '#94A3B8', fontWeight: 500 }}>({row.contacts.length})</span>
                           </div>
-                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '0.4rem' }}>
-                            {row.contacts.map(c => (
-                              <div
-                                key={c.id}
-                                style={{ background: '#fff', border: '1px solid #E2E8F0', borderRadius: 4, padding: '0.45rem 0.6rem' }}
-                              >
-                                <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#1E293B' }}>{c.name}</div>
-                                {c.jobtitle && <div style={{ fontSize: '0.7rem', color: '#475569' }}>{c.jobtitle}</div>}
-                                {c.email && <div style={{ fontSize: '0.68rem', color: '#3B82F6', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.email}</div>}
-                                {c.phone && <div style={{ fontSize: '0.68rem', color: '#64748B' }}>{c.phone}</div>}
-                                {(c.city || c.state) && <div style={{ fontSize: '0.65rem', color: '#94A3B8' }}>{[c.city, c.state].filter(Boolean).join(', ')}</div>}
-                                {c.linkedin && <a href={c.linkedin} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.65rem', color: '#0A66C2', textDecoration: 'none' }} onClick={e => e.stopPropagation()}>LinkedIn ↗</a>}
-                                {c.metInPerson && (
-                                  <div style={{ marginTop: 4, display: 'inline-block', padding: '1px 6px', fontSize: '0.6rem', fontWeight: 700, background: '#DCFCE7', color: '#166534', border: '1px solid #86EFAC', borderRadius: 999 }}>Met in person</div>
-                                )}
+                          {(() => {
+                            const CONTACT_GRID = '1.4fr 1.6fr 2fr 1.2fr 1.4fr 0.7fr 0.9fr';
+                            return (
+                              <div style={{ background: '#fff', border: '1px solid #E2E8F0', borderRadius: 4, overflow: 'hidden' }}>
+                                <div style={{ display: 'grid', gridTemplateColumns: CONTACT_GRID, gap: '0.5rem', padding: '0.3rem 0.6rem', background: '#F8FAFC', borderBottom: '1px solid #E2E8F0', fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#64748B' }}>
+                                  <div>Name</div>
+                                  <div>Title</div>
+                                  <div>Email</div>
+                                  <div>Phone</div>
+                                  <div>Location</div>
+                                  <div>LinkedIn</div>
+                                  <div>Met</div>
+                                </div>
+                                {row.contacts.map((c, i) => (
+                                  <div
+                                    key={c.id}
+                                    style={{
+                                      display: 'grid', gridTemplateColumns: CONTACT_GRID, gap: '0.5rem',
+                                      padding: '0.4rem 0.6rem',
+                                      borderTop: i === 0 ? 'none' : '1px solid #F1F5F9',
+                                      alignItems: 'center',
+                                      background: i % 2 === 0 ? '#fff' : '#FCFCFD',
+                                    }}
+                                  >
+                                    <div style={{ fontSize: '0.78rem', fontWeight: 700, color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.name}>{c.name}</div>
+                                    <div style={{ fontSize: '0.7rem', color: c.jobtitle ? '#475569' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.jobtitle}>{c.jobtitle || '—'}</div>
+                                    <div style={{ fontSize: '0.7rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.email}>
+                                      {c.email
+                                        ? <a href={`mailto:${c.email}`} style={{ color: '#3B82F6', textDecoration: 'none' }} onClick={e => e.stopPropagation()}>{c.email}</a>
+                                        : <span style={{ color: '#CBD5E1' }}>—</span>}
+                                    </div>
+                                    <div style={{ fontSize: '0.7rem', color: c.phone ? '#64748B' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.phone}>{c.phone || '—'}</div>
+                                    <div style={{ fontSize: '0.68rem', color: (c.city || c.state) ? '#64748B' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                      {[c.city, c.state].filter(Boolean).join(', ') || '—'}
+                                    </div>
+                                    <div style={{ fontSize: '0.68rem' }}>
+                                      {c.linkedin
+                                        ? <a href={c.linkedin} target="_blank" rel="noopener noreferrer" style={{ color: '#0A66C2', textDecoration: 'none', fontWeight: 600 }} onClick={e => e.stopPropagation()}>Open ↗</a>
+                                        : <span style={{ color: '#CBD5E1' }}>—</span>}
+                                    </div>
+                                    <div>
+                                      {c.metInPerson
+                                        ? <span style={{ display: 'inline-block', padding: '1px 6px', fontSize: '0.6rem', fontWeight: 700, background: '#DCFCE7', color: '#166534', border: '1px solid #86EFAC', borderRadius: 999 }}>✓ Yes</span>
+                                        : <span style={{ color: '#CBD5E1', fontSize: '0.68rem' }}>—</span>}
+                                    </div>
+                                  </div>
+                                ))}
                               </div>
-                            ))}
-                          </div>
+                            );
+                          })()}
                         </div>
 
                         {stageOrder.length > 0 && (
