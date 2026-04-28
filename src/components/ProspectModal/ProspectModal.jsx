@@ -5,7 +5,7 @@ import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
 import { asBlob as htmlToDocxBlob } from 'html-docx-js-typescript';
 import mammoth from 'mammoth/mammoth.browser';
-import { OpportunityForm } from './OpportunityForm';
+import { OpportunityForm, DEFAULT_FORM_TEMPLATE } from './OpportunityForm';
 import { loadEffectiveRaClients, raClientName, raClientCm } from '../../utils/raClientsStore';
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES, COUNTRIES, US_STATES } from '../../data/enums';
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
@@ -1922,6 +1922,29 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     [companyOppsData.opportunities, selectedOppId]
   );
 
+  // Other form-type notes for this company that have at least one populated
+  // Key Issues row — used to power the "Import Key Issues from…" picker
+  // inside the active note's OpportunityForm.
+  const importableKeyIssueNotes = useMemo(() => {
+    if (!selectedOppId) return [];
+    const t = (DEFAULT_FORM_TEMPLATE.tables || []).find(x => x.key === 'meetingNotes');
+    if (!t) return [];
+    const cols = t.columns;
+    const isEmptyRow = (r) => {
+      if (!r) return true;
+      for (const c of cols) if ((r[c.key] || '').toString().trim()) return false;
+      return true;
+    };
+    return (companyOppsData.opportunities || [])
+      .filter(o => o.type === 'form' && o.id !== selectedOppId)
+      .map(o => {
+        const rows = (o.formData?.tables?.meetingNotes || []).filter(r => !isEmptyRow(r));
+        return { id: o.id, title: o.title || 'Untitled', rows, rowsCount: rows.length, updatedAt: o.updatedAt || 0 };
+      })
+      .filter(o => o.rows.length > 0)
+      .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  }, [companyOppsData.opportunities, selectedOppId]);
+
   // When selection changes, load its notes into the draft (flush any pending save first)
   useEffect(() => {
     if (oppSaveTimerRef.current) { clearTimeout(oppSaveTimerRef.current); oppSaveTimerRef.current = null; }
@@ -2964,6 +2987,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       {selectedOpp.type === 'form' ? (
                         <OpportunityForm
                           value={selectedOpp.formData}
+                          importableNotes={importableKeyIssueNotes}
                           onChange={(next) => updateOpportunityFormData(selectedOpp.id, next)}
                           onLinkOpp={(_opp, nextFormData) => {
                             // Persist the linked formData without touching

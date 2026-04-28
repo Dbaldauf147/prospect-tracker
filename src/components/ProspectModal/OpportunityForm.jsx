@@ -548,7 +548,7 @@ const SERVICE_THEIR_QUESTIONS = {
   ],
 };
 
-export function OpportunityForm({ value, onChange, onLinkOpp, companyName, companyContacts = [], allHubspotContacts = [], contactNotes = {}, contactReportsTo = {}, prospects = [], onCreateContact }) {
+export function OpportunityForm({ value, onChange, onLinkOpp, companyName, companyContacts = [], allHubspotContacts = [], contactNotes = {}, contactReportsTo = {}, prospects = [], onCreateContact, importableNotes = [] }) {
   const template = DEFAULT_FORM_TEMPLATE;
 
   // Local mirror of the persisted value. All edits update localValue
@@ -908,6 +908,49 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                 {agendaSum > meetingTotalMinutes && ' · over'}
                 {agendaSum < meetingTotalMinutes && ` · ${meetingTotalMinutes - agendaSum} min unassigned`}
               </span>
+            )}
+            {t.key === 'meetingNotes' && importableNotes.length > 0 && (
+              <select
+                defaultValue=""
+                onChange={(e) => {
+                  const sourceId = e.target.value;
+                  e.target.value = '';
+                  if (!sourceId) return;
+                  const source = importableNotes.find(n => n.id === sourceId);
+                  if (!source || !source.rows?.length) return;
+                  // Append source rows to the current Key Issues table after
+                  // trimming any trailing fully-empty rows from the current
+                  // list. Keeps the imported rows visible in order without
+                  // wiping anything the user already typed.
+                  const cols = t.columns;
+                  const isEmptyRow = (r) => {
+                    if (!r) return true;
+                    for (const c of cols) if ((r[c.key] || '').toString().trim()) return false;
+                    return true;
+                  };
+                  const current = [...(formData.tables.meetingNotes || [])];
+                  while (current.length && isEmptyRow(current[current.length - 1])) current.pop();
+                  const incoming = source.rows
+                    .filter(r => !isEmptyRow(r))
+                    .map(r => {
+                      // Copy only known columns + starred flag — drops any
+                      // legacy keys the source might have lying around.
+                      const next = {};
+                      for (const c of cols) next[c.key] = r[c.key] || '';
+                      if (r.starred) next.starred = true;
+                      return next;
+                    });
+                  if (incoming.length === 0) return;
+                  set({ tables: { ...formData.tables, meetingNotes: [...current, ...incoming] } });
+                }}
+                title="Append the Key Issues rows from another note for this company"
+                style={{ fontSize: '0.68rem', padding: '0.15rem 0.35rem', border: '1px solid var(--color-border)', borderRadius: 4, marginLeft: 'auto', cursor: 'pointer', background: '#fff' }}
+              >
+                <option value="">⤓ Import Key Issues from…</option>
+                {importableNotes.map(n => (
+                  <option key={n.id} value={n.id}>{n.title} ({n.rowsCount})</option>
+                ))}
+              </select>
             )}
           </div>
           <table style={sx.table}>
