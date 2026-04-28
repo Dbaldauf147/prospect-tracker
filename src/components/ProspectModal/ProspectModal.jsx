@@ -876,7 +876,14 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
           <div><label style={labelStyle}>City</label><input style={inputStyle} value={f.city} onChange={e => set('city', e.target.value)} /></div>
           <div>
             <label style={labelStyle}>State</label>
-            <input style={inputStyle} list="state-list" value={f.state} onChange={e => set('state', e.target.value)} placeholder="Start typing..." />
+            <input style={inputStyle} list="state-list" value={f.state} onChange={e => {
+              const val = e.target.value;
+              setF(prev => {
+                const next = { ...prev, state: val };
+                if (US_STATES.includes(val)) next.country = 'United States';
+                return next;
+              });
+            }} placeholder="Start typing..." />
             <datalist id="state-list">
               {US_STATES.map(s => <option key={s} value={s} />)}
             </datalist>
