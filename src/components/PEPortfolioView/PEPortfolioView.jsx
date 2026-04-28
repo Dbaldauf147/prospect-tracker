@@ -570,11 +570,22 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
                         if (met > 0) tipParts.push(`Met in person: ${metList}`);
                         else tipParts.push('No decision makers tagged "met in person" yet');
                         if (nyc > 0) tipParts.push(`In NY: ${nycList}`);
-                        const cityChips = (stats.decisionMakerEntries || []).map(e => ({
-                          name: e.name,
-                          city: (e.city || '').trim(),
-                          isNyc: /(new york|nyc)/i.test(e.city || ''),
-                        }));
+                        const cityChips = (() => {
+                          // NYC is already covered by the (N in New York) badge above —
+                          // drop it from the per-city list. Group the rest by city so
+                          // multiples render as "2 in London" instead of two chips.
+                          const groups = new Map();
+                          for (const e of (stats.decisionMakerEntries || [])) {
+                            if (/(new york|nyc)/i.test(e.city || '')) continue;
+                            const city = (e.city || '').trim();
+                            const key = city.toLowerCase() || '__nocity__';
+                            const display = city || 'No city';
+                            const cur = groups.get(key) || { display, names: [], hasCity: !!city };
+                            cur.names.push(e.name);
+                            groups.set(key, cur);
+                          }
+                          return [...groups.values()];
+                        })();
                         return (
                           <div style={{ padding: '0.55rem 0.6rem', display: 'flex', flexDirection: 'column', gap: 4, fontSize: '0.72rem' }} title={tipParts.join('\n')}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
@@ -595,14 +606,16 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
                             {cityChips.length > 0 && (
                               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
                                 {cityChips.map((c, i) => {
-                                  const hasCity = !!c.city;
-                                  const bg = !hasCity ? '#F1F5F9' : (c.isNyc ? '#EDE9FE' : '#FFEDD5');
-                                  const fg = !hasCity ? '#94A3B8' : (c.isNyc ? '#5B21B6' : '#9A3412');
-                                  const bd = !hasCity ? '#E2E8F0' : (c.isNyc ? '#DDD6FE' : '#FED7AA');
+                                  const bg = c.hasCity ? '#FFEDD5' : '#F1F5F9';
+                                  const fg = c.hasCity ? '#9A3412' : '#94A3B8';
+                                  const bd = c.hasCity ? '#FED7AA' : '#E2E8F0';
+                                  const label = c.names.length > 1
+                                    ? `${c.names.length} in ${c.display}`
+                                    : c.display;
                                   return (
                                     <span
-                                      key={`${c.name}-${i}`}
-                                      title={`${c.name}${c.city ? ` — ${c.city}` : ' — city not set'}`}
+                                      key={`${c.display}-${i}`}
+                                      title={c.names.join(', ') + (c.hasCity ? '' : ' (city not set)')}
                                       style={{
                                         fontSize: '0.62rem', fontWeight: 600,
                                         padding: '1px 6px', borderRadius: 999,
@@ -610,7 +623,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
                                         whiteSpace: 'nowrap',
                                       }}
                                     >
-                                      {c.city || 'No city'}
+                                      {label}
                                     </span>
                                   );
                                 })}
