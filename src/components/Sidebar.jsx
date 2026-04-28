@@ -98,6 +98,13 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups }
           PE Portfolio
         </button>
         <button
+          className={view === 'keycontacts' ? styles.navItemActive : styles.navItem}
+          onClick={() => setView('keycontacts')}
+        >
+          <span className={styles.navIcon}>&#11088;</span>
+          Key Contacts
+        </button>
+        <button
           className={view === 'agenda' ? styles.navItemActive : styles.navItem}
           onClick={() => setView('agenda')}
         >
