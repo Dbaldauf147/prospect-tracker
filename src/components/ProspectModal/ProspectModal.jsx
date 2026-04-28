@@ -1922,14 +1922,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     [companyOppsData.opportunities, selectedOppId]
   );
 
-  // Other form-type notes for this company that have at least one populated
-  // Key Issues row — used to power the "Import Key Issues from…" picker
-  // inside the active note's OpportunityForm.
-  const importableKeyIssueNotes = useMemo(() => {
+  // Other form-type notes for this company — used to power the "Import
+  // … from another note" pickers (Key Issues, Call Context, etc.) in the
+  // active note's OpportunityForm. We carry payloads for every supported
+  // section here so the form can decide what to surface per picker.
+  const importableNotes = useMemo(() => {
     if (!selectedOppId) return [];
     const t = (DEFAULT_FORM_TEMPLATE.tables || []).find(x => x.key === 'meetingNotes');
-    if (!t) return [];
-    const cols = t.columns;
+    const cols = t?.columns || [];
     const isEmptyRow = (r) => {
       if (!r) return true;
       for (const c of cols) if ((r[c.key] || '').toString().trim()) return false;
@@ -1939,9 +1939,16 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       .filter(o => o.type === 'form' && o.id !== selectedOppId)
       .map(o => {
         const rows = (o.formData?.tables?.meetingNotes || []).filter(r => !isEmptyRow(r));
-        return { id: o.id, title: o.title || 'Untitled', rows, rowsCount: rows.length, updatedAt: o.updatedAt || 0 };
+        const context = (o.formData?.fieldValues?.context || '').toString();
+        return {
+          id: o.id,
+          title: o.title || 'Untitled',
+          updatedAt: o.updatedAt || 0,
+          rows,
+          rowsCount: rows.length,
+          context,
+        };
       })
-      .filter(o => o.rows.length > 0)
       .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
   }, [companyOppsData.opportunities, selectedOppId]);
 
@@ -2987,7 +2994,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       {selectedOpp.type === 'form' ? (
                         <OpportunityForm
                           value={selectedOpp.formData}
-                          importableNotes={importableKeyIssueNotes}
+                          importableNotes={importableNotes}
                           onChange={(next) => updateOpportunityFormData(selectedOpp.id, next)}
                           onLinkOpp={(_opp, nextFormData) => {
                             // Persist the linked formData without touching

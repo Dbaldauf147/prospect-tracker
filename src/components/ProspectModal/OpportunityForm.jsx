@@ -909,7 +909,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                 {agendaSum < meetingTotalMinutes && ` · ${meetingTotalMinutes - agendaSum} min unassigned`}
               </span>
             )}
-            {t.key === 'meetingNotes' && importableNotes.length > 0 && (
+            {t.key === 'meetingNotes' && importableNotes.some(n => (n.rows?.length || 0) > 0) && (
               <select
                 defaultValue=""
                 onChange={(e) => {
@@ -947,9 +947,11 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                 style={{ fontSize: '0.68rem', padding: '0.15rem 0.35rem', border: '1px solid var(--color-border)', borderRadius: 4, marginLeft: 'auto', cursor: 'pointer', background: '#fff' }}
               >
                 <option value="">⤓ Import Key Issues from…</option>
-                {importableNotes.map(n => (
-                  <option key={n.id} value={n.id}>{n.title} ({n.rowsCount})</option>
-                ))}
+                {importableNotes
+                  .filter(n => (n.rows?.length || 0) > 0)
+                  .map(n => (
+                    <option key={n.id} value={n.id}>{n.title} ({n.rowsCount})</option>
+                  ))}
               </select>
             )}
           </div>
@@ -2738,7 +2740,38 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       </div>
 
       <div>
-        <div style={sx.fieldLabel}>Call Context</div>
+        <div style={{ ...sx.fieldLabel, display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
+          <span>Call Context</span>
+          {importableNotes.some(n => (n.context || '').trim()) && (
+            <select
+              defaultValue=""
+              onChange={(e) => {
+                const sourceId = e.target.value;
+                e.target.value = '';
+                if (!sourceId) return;
+                const source = importableNotes.find(n => n.id === sourceId);
+                const incoming = (source?.context || '').trim();
+                if (!incoming) return;
+                // Append the source's Call Context, with a blank-line separator
+                // when the current field already has text. Replaces in place
+                // when the current field is empty.
+                const current = (formData.fieldValues.context || '').replace(/\s+$/, '');
+                const merged = current ? `${current}\n\n${incoming}` : incoming;
+                updateField('context', merged);
+              }}
+              title="Append the Call Context from another note for this company"
+              style={{ fontSize: '0.68rem', padding: '0.15rem 0.35rem', border: '1px solid var(--color-border)', borderRadius: 4, marginLeft: 'auto', cursor: 'pointer', background: '#fff' }}
+            >
+              <option value="">⤓ Import Call Context from…</option>
+              {importableNotes
+                .filter(n => (n.context || '').trim())
+                .map(n => {
+                  const len = (n.context || '').trim().length;
+                  return <option key={n.id} value={n.id}>{n.title} ({len} chars)</option>;
+                })}
+            </select>
+          )}
+        </div>
         <CommitOnBlurInput
           multiline
           style={{ ...sx.textarea, minHeight: '90px' }}
