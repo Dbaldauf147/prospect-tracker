@@ -587,48 +587,35 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
                           return [...groups.values()];
                         })();
                         return (
-                          <div style={{ padding: '0.55rem 0.6rem', display: 'flex', flexDirection: 'column', gap: 4, fontSize: '0.72rem' }} title={tipParts.join('\n')}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                              <span
-                                style={{
-                                  padding: '1px 8px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700,
-                                  background: met > 0 ? '#DCFCE7' : '#F1F5F9',
-                                  color:      met > 0 ? '#166534' : '#94A3B8',
-                                  border: `1px solid ${met > 0 ? '#86EFAC' : '#E2E8F0'}`,
-                                }}
-                              >{met}/{dmTotal}</span>
-                              {nyc > 0 && (
-                                <span style={{ fontSize: '0.65rem', fontWeight: 600, color: '#5B21B6' }}>
-                                  ({nyc} in New York)
-                                </span>
-                              )}
-                            </div>
-                            {cityChips.length > 0 && (
-                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-                                {cityChips.map((c, i) => {
-                                  const bg = c.hasCity ? '#FFEDD5' : '#F1F5F9';
-                                  const fg = c.hasCity ? '#9A3412' : '#94A3B8';
-                                  const bd = c.hasCity ? '#FED7AA' : '#E2E8F0';
-                                  const label = c.names.length > 1
-                                    ? `${c.names.length} in ${c.display}`
-                                    : c.display;
-                                  return (
-                                    <span
-                                      key={`${c.display}-${i}`}
-                                      title={c.names.join(', ') + (c.hasCity ? '' : ' (city not set)')}
-                                      style={{
-                                        fontSize: '0.62rem', fontWeight: 600,
-                                        padding: '1px 6px', borderRadius: 999,
-                                        background: bg, color: fg, border: `1px solid ${bd}`,
-                                        whiteSpace: 'nowrap',
-                                      }}
-                                    >
-                                      {label}
-                                    </span>
-                                  );
-                                })}
-                              </div>
+                          <div style={{ padding: '0.55rem 0.6rem', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: '0.72rem' }} title={tipParts.join('\n')}>
+                            <span
+                              style={{
+                                padding: '1px 8px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700,
+                                background: met > 0 ? '#DCFCE7' : '#F1F5F9',
+                                color:      met > 0 ? '#166534' : '#94A3B8',
+                                border: `1px solid ${met > 0 ? '#86EFAC' : '#E2E8F0'}`,
+                              }}
+                            >{met}/{dmTotal}</span>
+                            {nyc > 0 && (
+                              <span style={{ fontSize: '0.65rem', fontWeight: 600, color: '#5B21B6' }}>
+                                ({nyc} in New York)
+                              </span>
                             )}
+                            {cityChips.map((c, i) => {
+                              const label = c.names.length > 1
+                                ? `${c.names.length} in ${c.display}`
+                                : c.display;
+                              const fg = c.hasCity ? '#9A3412' : '#94A3B8';
+                              return (
+                                <span
+                                  key={`${c.display}-${i}`}
+                                  title={c.names.join(', ') + (c.hasCity ? '' : ' (city not set)')}
+                                  style={{ fontSize: '0.65rem', fontWeight: 600, color: fg, whiteSpace: 'nowrap' }}
+                                >
+                                  {label}
+                                </span>
+                              );
+                            })}
                           </div>
                         );
                       })()}
