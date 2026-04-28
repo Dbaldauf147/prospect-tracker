@@ -1148,11 +1148,39 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
   const [search, setSearch] = useState('');
 
   useEffect(() => {
-    if (!pickerOpen) return;
+    // Load when the picker opens, or eagerly when there's no linked opp and
+    // we have a company — so we can show suggested open opps for the account.
+    if (!pickerOpen && (formData.linkedBfoLink || !companyName)) return;
     loadOppsFromCache().then(c => setCache(c));
-  }, [pickerOpen]);
+  }, [pickerOpen, formData.linkedBfoLink, companyName]);
 
   const results = useMemo(() => searchOpps(cache, search), [cache, search]);
+
+  // Suggested open opps for the current company — shown when no opp is
+  // linked yet so the user can one-click attach the right one.
+  const suggestedOpps = useMemo(() => {
+    if (formData.linkedBfoLink) return [];
+    if (!cache?.records || !companyName) return [];
+    const strip = s => String(s || '').toLowerCase().replace(/\b(inc|llc|ltd|corp|co|lp|gmbh)\b\.?/g, '').replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+    const target = strip(companyName);
+    if (!target) return [];
+    const CLOSED = new Set(['sold', 'not sold']);
+    const matches = [];
+    for (const r of cache.records) {
+      const acct = strip(r['Account']);
+      if (!acct) continue;
+      const sameAccount = (
+        acct === target ||
+        (target.length >= 4 && acct.includes(target)) ||
+        (acct.length >= 4 && target.includes(acct))
+      );
+      if (!sameAccount) continue;
+      const stage = String(r['Stage'] || '').trim().toLowerCase();
+      if (CLOSED.has(stage)) continue;
+      matches.push(r);
+    }
+    return matches.slice(0, 10);
+  }, [cache, companyName, formData.linkedBfoLink]);
 
   const linkOpp = (opp) => {
     const nextValues = { ...formData.fieldValues };
@@ -2085,6 +2113,72 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
         <div style={{ flex: 1 }} />
         <button type="button" style={sx.primaryBtn} onClick={exportExcel}>Export Excel</button>
       </div>
+
+      {!formData.linkedBfoLink && suggestedOpps.length > 0 && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.4rem',
+          flexWrap: 'wrap',
+          fontSize: '0.72rem',
+          background: '#F8FAFC',
+          border: '1px solid var(--color-border-light)',
+          borderRadius: 6,
+          padding: '0.45rem 0.6rem',
+        }}>
+          <span style={{ color: '#475569', fontWeight: 600 }}>
+            Open opps for {companyName}:
+          </span>
+          {suggestedOpps.map((opp, i) => {
+            const stage = String(opp['Stage'] || '').trim();
+            const scope = String(opp['Scope'] || '').trim();
+            const label = [stage, scope].filter(Boolean).join(' · ') || (opp['Account'] || 'Untitled');
+            return (
+              <button
+                key={opp._id || i}
+                type="button"
+                onClick={() => linkOpp(opp)}
+                title={`Link ${opp['Account'] || ''}${stage ? ' — ' + stage : ''}${scope ? ' · ' + scope : ''}`}
+                style={{
+                  padding: '0.25rem 0.6rem',
+                  border: '1px solid #93C5FD',
+                  background: '#EFF6FF',
+                  color: '#1D4ED8',
+                  borderRadius: 999,
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                  fontSize: '0.72rem',
+                  fontWeight: 600,
+                  maxWidth: 280,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {label}
+              </button>
+            );
+          })}
+          <button
+            type="button"
+            onClick={() => setPickerOpen(true)}
+            title="Search all opportunities"
+            style={{
+              padding: '0.25rem 0.6rem',
+              border: '1px dashed var(--color-border)',
+              background: '#fff',
+              color: '#475569',
+              borderRadius: 999,
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+              fontSize: '0.72rem',
+              fontWeight: 600,
+            }}
+          >
+            Search…
+          </button>
+        </div>
+      )}
 
       {/* Meeting drop zone — drag an Outlook .ics file in to auto-fill */}
       <div
