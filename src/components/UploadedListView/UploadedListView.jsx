@@ -1506,36 +1506,30 @@ export function UploadedListView({
             })
             .map(r => r.__matchKey__);
           if (suggestedKeys.length === 0) return null;
-          const visibleSelected = suggestedKeys.filter(k => selectedKeys.has(k)).length;
-          const allVisibleSelected = visibleSelected === suggestedKeys.length;
+          const suggestedSet = new Set(suggestedKeys);
+          // "Active" only when the current selection is exactly the
+          // suggested set — otherwise clicking should overwrite the
+          // selection so a stale prior selection (from a different
+          // filter, say) can't survive into the next bulk action.
+          const isActive = selectedKeys.size === suggestedSet.size
+            && [...selectedKeys].every(k => suggestedSet.has(k));
           const toggle = () => {
-            if (allVisibleSelected) {
-              setSelectedKeys(prev => {
-                const next = new Set(prev);
-                for (const k of suggestedKeys) next.delete(k);
-                return next;
-              });
-            } else {
-              setSelectedKeys(prev => {
-                const next = new Set(prev);
-                for (const k of suggestedKeys) next.add(k);
-                return next;
-              });
-            }
+            if (isActive) setSelectedKeys(new Set());
+            else setSelectedKeys(suggestedSet);
           };
           return (
             <button
               type="button"
               onClick={toggle}
-              title={allVisibleSelected
-                ? 'Deselect all rows with a live suggestion (the yellow pills)'
-                : 'Select every row showing a yellow suggestion in either My Accounts or Portfolio Companies'}
+              title={isActive
+                ? 'Deselect — clears the entire selection'
+                : 'Replace the current selection with every row showing a yellow suggestion (My Accounts or Portfolio)'}
               style={{
                 padding: '0.35rem 0.7rem',
-                border: `1px solid ${allVisibleSelected ? '#F59E0B' : 'var(--color-border)'}`,
+                border: `1px solid ${isActive ? '#F59E0B' : 'var(--color-border)'}`,
                 borderRadius: 6,
-                background: allVisibleSelected ? '#FEF3C7' : '#fff',
-                color: allVisibleSelected ? '#92400E' : 'var(--color-text-secondary)',
+                background: isActive ? '#FEF3C7' : '#fff',
+                color: isActive ? '#92400E' : 'var(--color-text-secondary)',
                 fontSize: '0.75rem',
                 fontWeight: 600,
                 cursor: 'pointer',
@@ -1543,8 +1537,8 @@ export function UploadedListView({
                 whiteSpace: 'nowrap',
               }}
             >
-              {allVisibleSelected ? 'Deselect suggested' : 'Select all suggested'}
-              <span style={{ marginLeft: 6, fontSize: '0.68rem', color: allVisibleSelected ? '#92400E' : '#94A3B8' }}>
+              {isActive ? 'Deselect suggested' : 'Select all suggested'}
+              <span style={{ marginLeft: 6, fontSize: '0.68rem', color: isActive ? '#92400E' : '#94A3B8' }}>
                 {suggestedKeys.length}
               </span>
             </button>
@@ -1556,36 +1550,30 @@ export function UploadedListView({
           // (not just rows showing yellow suggestion pills).
           if (filtered.length === 0) return null;
           const filteredKeys = filtered.map(r => r.__matchKey__);
-          const visibleSelected = filteredKeys.filter(k => selectedKeys.has(k)).length;
-          const allVisibleSelected = visibleSelected === filteredKeys.length && filteredKeys.length > 0;
+          const filteredSet = new Set(filteredKeys);
+          // Replace-not-union: clicking sets the selection to exactly
+          // the filtered keys, dropping any earlier selection from a
+          // different filter so bulk actions can't accidentally hit
+          // rows that aren't currently visible.
+          const isActive = selectedKeys.size === filteredSet.size
+            && [...selectedKeys].every(k => filteredSet.has(k));
           const toggle = () => {
-            if (allVisibleSelected) {
-              setSelectedKeys(prev => {
-                const next = new Set(prev);
-                for (const k of filteredKeys) next.delete(k);
-                return next;
-              });
-            } else {
-              setSelectedKeys(prev => {
-                const next = new Set(prev);
-                for (const k of filteredKeys) next.add(k);
-                return next;
-              });
-            }
+            if (isActive) setSelectedKeys(new Set());
+            else setSelectedKeys(filteredSet);
           };
           return (
             <button
               type="button"
               onClick={toggle}
-              title={allVisibleSelected
-                ? 'Deselect every visible row'
-                : 'Select every row currently visible after filters and search — then bulk-edit them from the toolbar that appears'}
+              title={isActive
+                ? 'Deselect — clears the entire selection'
+                : 'Replace the current selection with every row currently visible after filters and search — bulk actions will only touch these rows'}
               style={{
                 padding: '0.35rem 0.7rem',
-                border: `1px solid ${allVisibleSelected ? '#3B82F6' : 'var(--color-border)'}`,
+                border: `1px solid ${isActive ? '#3B82F6' : 'var(--color-border)'}`,
                 borderRadius: 6,
-                background: allVisibleSelected ? '#DBEAFE' : '#fff',
-                color: allVisibleSelected ? '#1E3A8A' : 'var(--color-text-secondary)',
+                background: isActive ? '#DBEAFE' : '#fff',
+                color: isActive ? '#1E3A8A' : 'var(--color-text-secondary)',
                 fontSize: '0.75rem',
                 fontWeight: 600,
                 cursor: 'pointer',
@@ -1593,8 +1581,8 @@ export function UploadedListView({
                 whiteSpace: 'nowrap',
               }}
             >
-              {allVisibleSelected ? 'Deselect filtered' : 'Select all filtered'}
-              <span style={{ marginLeft: 6, fontSize: '0.68rem', color: allVisibleSelected ? '#1E3A8A' : '#94A3B8' }}>
+              {isActive ? 'Deselect filtered' : 'Select all filtered'}
+              <span style={{ marginLeft: 6, fontSize: '0.68rem', color: isActive ? '#1E3A8A' : '#94A3B8' }}>
                 {filteredKeys.length}
               </span>
             </button>
@@ -1661,6 +1649,35 @@ export function UploadedListView({
             <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#1E293B' }}>
               {selectedKeys.size} selected
             </span>
+            {(() => {
+              // Count selected rows that the current filters/search are
+              // hiding. Bulk actions still hit those rows, so surface
+              // them clearly with a one-click "drop hidden" escape hatch.
+              const visibleKeys = new Set(filtered.map(r => r.__matchKey__));
+              let hidden = 0;
+              for (const k of selectedKeys) if (!visibleKeys.has(k)) hidden++;
+              if (hidden === 0) return null;
+              const dropHidden = () => {
+                setSelectedKeys(prev => {
+                  const next = new Set();
+                  for (const k of prev) if (visibleKeys.has(k)) next.add(k);
+                  return next;
+                });
+              };
+              return (
+                <span
+                  title="These selected rows aren't visible after the current filter/search. Bulk actions will still hit them — click to drop them from the selection."
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.2rem 0.55rem', background: '#FEF3C7', border: '1px solid #F59E0B', borderRadius: 999, fontSize: '0.7rem', color: '#92400E', fontWeight: 600 }}
+                >
+                  ⚠ {hidden} hidden by filter
+                  <button
+                    type="button"
+                    onClick={dropHidden}
+                    style={{ background: 'transparent', border: '1px solid #F59E0B', borderRadius: 4, padding: '0.05rem 0.35rem', fontSize: '0.65rem', color: '#92400E', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}
+                  >Drop hidden</button>
+                </span>
+              );
+            })()}
             <button type="button" style={accentBtn(acceptMa > 0)} disabled={acceptMa === 0} onClick={() => bulkAccept('myAccounts')}
               title="Confirm each selected row's suggested My Accounts mapping (skips rows already mapped or with no live suggestion)">
               ★ Accept My Accounts {acceptMa > 0 && `(${acceptMa})`}
