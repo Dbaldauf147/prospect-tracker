@@ -1,7 +1,11 @@
 import { useState, useEffect, useMemo, useRef, memo } from 'react';
 import { loadOppsFromCache, searchOpps } from '../../utils/oppsCache';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
-import MsgReader from '@kenjiuno/msgreader';
+import * as MsgReaderModule from '@kenjiuno/msgreader';
+// CJS default-export interop: depending on how Vite resolves the package,
+// the class can land at either MsgReaderModule.default or one extra level
+// down. Unwrap once if needed so `new MsgReader(...)` works either way.
+const MsgReader = (MsgReaderModule?.default?.default || MsgReaderModule?.default || MsgReaderModule);
 // OutlookMeetingPicker exists at ./OutlookMeetingPicker.jsx but is not
 // wired in: it requires a Microsoft Entra ID app registration in the
 // user's tenant (OUTLOOK_CLIENT_ID env var on Vercel), which Schneider
