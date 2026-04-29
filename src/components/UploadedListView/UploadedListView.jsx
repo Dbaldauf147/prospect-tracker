@@ -1598,6 +1598,49 @@ export function UploadedListView({
             </button>
           );
         })()}
+        {(() => {
+          // Selects every row in the entire list — independent of any
+          // active filters/search. Pairs with "Select all filtered" so
+          // the user can pick "everything visible" or "everything in the
+          // list" without having to clear filters first.
+          if (rows.length === 0) return null;
+          const allKeys = rows.map(r => r.__matchKey__);
+          const visibleSelected = allKeys.filter(k => selectedKeys.has(k)).length;
+          const allSelected = visibleSelected === allKeys.length && allKeys.length > 0;
+          const toggle = () => {
+            if (allSelected) {
+              setSelectedKeys(new Set());
+            } else {
+              setSelectedKeys(new Set(allKeys));
+            }
+          };
+          return (
+            <button
+              type="button"
+              onClick={toggle}
+              title={allSelected
+                ? 'Deselect every row in the list'
+                : 'Select every row in the entire list, ignoring any active filters or search'}
+              style={{
+                padding: '0.35rem 0.7rem',
+                border: `1px solid ${allSelected ? '#16A34A' : 'var(--color-border)'}`,
+                borderRadius: 6,
+                background: allSelected ? '#DCFCE7' : '#fff',
+                color: allSelected ? '#166534' : 'var(--color-text-secondary)',
+                fontSize: '0.75rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {allSelected ? 'Deselect all' : 'Select all'}
+              <span style={{ marginLeft: 6, fontSize: '0.68rem', color: allSelected ? '#166534' : '#94A3B8' }}>
+                {allKeys.length}
+              </span>
+            </button>
+          );
+        })()}
         {(search || suggestedOnly || portfolioOnly || mappedOnly) && <span className={styles.resultCount}>{filtered.length} results</span>}
       </div>
       {selectedKeys.size > 0 && (() => {
