@@ -904,6 +904,38 @@ export function UploadedListView({
   function openBulkPicker(scope) {
     setBulkPicker({ scope, query: '' });
   }
+  // Wipes every mapping + dismissal on the selected rows across all
+  // scopes so they look like a freshly-uploaded list — yellow auto
+  // suggestions reappear, confirmed picks are gone.
+  function bulkRefreshMappings() {
+    const keys = [...selectedKeys];
+    if (keys.length === 0) return;
+    const drop = (prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const mk of keys) {
+        if (next[mk] != null) { delete next[mk]; changed = true; }
+      }
+      return changed ? next : prev;
+    };
+    setMapping(drop);
+    setDismissed(drop);
+    setMyAccountMapping(drop);
+    setMyAccountDismissed(drop);
+    setPortfolioMapping(drop);
+    setPortfolioDismissed(drop);
+  }
+  // True for selected rows that carry any mapping or dismissal in any
+  // scope — i.e. rows the refresh action would actually touch.
+  function dirtyCount() {
+    let n = 0;
+    for (const mk of selectedKeys) {
+      if (mapping[mk] || dismissed[mk]
+        || myAccountMapping[mk] || myAccountDismissed[mk]
+        || portfolioMapping[mk] || portfolioDismissed[mk]) n++;
+    }
+    return n;
+  }
   function setTextValue(matchKey, value) {
     setTextValues(prev => {
       const next = { ...prev };
@@ -1573,6 +1605,7 @@ export function UploadedListView({
         const acceptPc = pendingCountFor('portfolio');
         const mappedMa = mappedCountFor('myAccounts');
         const mappedPc = mappedCountFor('portfolio');
+        const dirty = dirtyCount();
         const baseBtn = { padding: '0.35rem 0.7rem', borderRadius: 6, fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' };
         const accentBtn = (active) => ({ ...baseBtn, border: `1px solid ${active ? '#16A34A' : 'var(--color-border)'}`, background: active ? '#DCFCE7' : '#fff', color: active ? '#166534' : '#94A3B8' });
         const dismissBtn = (active) => ({ ...baseBtn, border: `1px solid ${active ? '#DC2626' : 'var(--color-border)'}`, background: active ? '#FEE2E2' : '#fff', color: active ? '#991B1B' : '#94A3B8' });
@@ -1614,6 +1647,18 @@ export function UploadedListView({
             <button type="button" style={dismissBtn(mappedPc > 0)} disabled={mappedPc === 0} onClick={() => bulkClearMapping('portfolio')}
               title="Remove the confirmed Portfolio Companies mapping from every selected row that has one">
               Clear PC mapping {mappedPc > 0 && `(${mappedPc})`}
+            </button>
+            <button
+              type="button"
+              style={{ ...baseBtn, border: `1px solid ${dirty > 0 ? '#F59E0B' : 'var(--color-border)'}`, background: dirty > 0 ? '#FEF3C7' : '#fff', color: dirty > 0 ? '#92400E' : '#94A3B8' }}
+              disabled={dirty === 0}
+              onClick={() => {
+                if (!window.confirm(`Refresh mapping on ${dirty} selected row${dirty === 1 ? '' : 's'}? This wipes every confirmed mapping and dismissal across My Accounts, Portfolio Companies and Table View, putting those rows back to their first-load state with auto suggestions.`)) return;
+                bulkRefreshMappings();
+              }}
+              title="Wipe every confirmed mapping and dismissal on the selected rows so the auto-suggestions reappear, exactly like the first time the list was loaded"
+            >
+              ↻ Refresh mapping {dirty > 0 && `(${dirty})`}
             </button>
             <button type="button" style={{ ...baseBtn, border: 'none', background: 'transparent', color: 'var(--color-text-secondary)', textDecoration: 'underline', padding: '0.35rem 0.4rem' }} onClick={clearSelection}>
               Clear
