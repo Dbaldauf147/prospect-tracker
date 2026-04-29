@@ -10,6 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@kenjiuno/msgreader": "^1.28.0",
     "exceljs": "^4.4.0",
     "firebase": "^12.11.0",
     "firebase-admin": "^13.8.0",

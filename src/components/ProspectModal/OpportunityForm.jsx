@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef, memo } from 'react';
 import { loadOppsFromCache, searchOpps } from '../../utils/oppsCache';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
+import MsgReader from '@kenjiuno/msgreader';
 // OutlookMeetingPicker exists at ./OutlookMeetingPicker.jsx but is not
 // wired in: it requires a Microsoft Entra ID app registration in the
 // user's tenant (OUTLOOK_CLIENT_ID env var on Vercel), which Schneider
@@ -1370,8 +1371,30 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     setMeetingError('');
     if (!file) return;
     const name = (file.name || '').toLowerCase();
+
+    // .msg = Outlook's native binary format. This is what Outlook desktop
+    // actually drops onto the browser when you drag a meeting (NOT a .ics).
+    if (name.endsWith('.msg')) {
+      try {
+        const buf = await file.arrayBuffer();
+        const reader = new MsgReader(buf);
+        const data = reader.getFileData();
+        const parsed = msgToMeeting(data);
+        if (!parsed || (!parsed.subject && !parsed.start && parsed.attendees.length === 0)) {
+          setMeetingError('Could not extract a meeting from that .msg file.');
+          return;
+        }
+        console.log('[OpportunityForm] parsed .msg:', { subject: parsed.subject, start: parsed.start, attendees: parsed.attendees.length, location: parsed.location });
+        set({ meeting: parsed });
+      } catch (err) {
+        console.error('msg parse failed', err);
+        setMeetingError('Failed to read .msg file: ' + (err.message || err));
+      }
+      return;
+    }
+
     if (!name.endsWith('.ics')) {
-      setMeetingError(`${file.name || 'File'} is not a .ics meeting file. Drag an .ics export from Outlook (from the Calendar view or "Save as .ics" on a meeting).`);
+      setMeetingError(`${file.name || 'File'} is not a recognized meeting file. Drag an .ics export from Outlook (or a .msg) — or use "Add attendees manually" below.`);
       return;
     }
     try {
@@ -1393,6 +1416,86 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     } catch (err) {
       setMeetingError('Failed to read meeting file: ' + (err.message || err));
     }
+  }
+
+  // Convert MsgReader's getFileData() output into our meeting shape.
+  // MsgReader exposes meeting items with fields like:
+  //   subject, body, bodyHtml, recipients[{ name, email, recipType }],
+  //   appointment fields (start/end/location/duration)
+  function msgToMeeting(data) {
+    if (!data) return null;
+    const out = {
+      subject: data.subject || data.normalizedSubject || '',
+      start: null,
+      end: null,
+      durationMinutes: null,
+      location: '',
+      organizer: null,
+      attendees: [],
+      manualAttendees: [],
+      sourceTimeZone: null,
+    };
+
+    // Appointment-specific fields. The library exposes start/end as ISO
+    // strings or Date objects depending on version; normalize.
+    const toIso = (v) => {
+      if (!v) return null;
+      if (v instanceof Date) return v.toISOString();
+      const d = new Date(v);
+      return Number.isNaN(d.getTime()) ? null : d.toISOString();
+    };
+    out.start = toIso(data.appointmentStartWhole || data.startDate || data.start);
+    out.end = toIso(data.appointmentEndWhole || data.endDate || data.end);
+    if (out.start && out.end) {
+      const ms = new Date(out.end).getTime() - new Date(out.start).getTime();
+      if (Number.isFinite(ms) && ms > 0) out.durationMinutes = Math.round(ms / 60000);
+    }
+    out.location = data.location || '';
+
+    // Sender becomes organizer.
+    if (data.senderEmail || data.senderName) {
+      out.organizer = { name: data.senderName || '', email: data.senderEmail || '' };
+    }
+
+    // Recipients → attendees. .msg recipType: 1 = To (required),
+    // 2 = Cc (optional), 3 = Bcc.
+    const seen = new Set();
+    for (const r of (data.recipients || [])) {
+      const email = (r.email || r.smtpAddress || '').trim().toLowerCase();
+      const name = (r.name || '').trim() || email;
+      if (!email && !name) continue;
+      const key = email || `name:${name.toLowerCase()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.attendees.push({
+        name, email,
+        required: r.recipType !== 2,
+        role: r.recipType === 2 ? 'OPT-PARTICIPANT' : 'REQ-PARTICIPANT',
+        rawParams: { source: 'msg', recipType: r.recipType },
+      });
+    }
+
+    // If we still don't have a start time, look for "When: ..." in the body.
+    // Also try "Location:" / "Where:" if location came back empty.
+    if ((!out.start || !out.location) && data.body) {
+      const lines = String(data.body).split(/\r?\n/);
+      for (const line of lines) {
+        if (!out.start) {
+          const m = line.match(/^\s*(?:When|Time|Start)\s*[:–—-]\s*(.+)$/i);
+          if (m) {
+            const cleaned = m[1].replace(/\s+\([^)]+\)\s*$/, '').trim();
+            const d = new Date(cleaned);
+            if (!Number.isNaN(d.getTime())) out.start = d.toISOString();
+          }
+        }
+        if (!out.location) {
+          const m = line.match(/^\s*(?:Where|Location)\s*[:–—-]\s*(.+)$/i);
+          if (m) out.location = m[1].trim();
+        }
+      }
+    }
+
+    return out;
   }
 
   // Tries to extract a meeting from non-file drops. Outlook desktop on
@@ -1462,9 +1565,11 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     e.stopPropagation();
     setIsDraggingMeeting(false);
 
-    // 1. Real file drop (the saved-.ics path).
+    // 1. Real file drop. .msg is what Outlook desktop on Windows actually
+    //    drops when you drag a meeting (NOT .ics — that's only when the
+    //    user has explicitly saved as Calendar Format first).
     const files = Array.from(e.dataTransfer?.files || []);
-    if (files.length > 0 && /\.ics$/i.test(files[0].name || '')) {
+    if (files.length > 0 && /\.(ics|msg)$/i.test(files[0].name || '')) {
       ingestMeetingFile(files[0]);
       return;
     }
@@ -2418,7 +2523,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
         <input
           ref={fileInputRef}
           type="file"
-          accept=".ics,text/calendar"
+          accept=".ics,.msg,text/calendar,application/vnd.ms-outlook"
           style={{ display: 'none' }}
           onChange={(e) => { const f = e.target.files?.[0]; if (f) ingestMeetingFile(f); e.target.value = ''; }}
         />
@@ -2440,7 +2545,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                 fontFamily: 'inherit', fontWeight: 600,
               }}
             >
-              Choose .ics file…
+              Choose .ics or .msg file…
             </button>
             <button
               type="button"
