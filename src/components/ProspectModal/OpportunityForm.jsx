@@ -1,7 +1,12 @@
 import { useState, useEffect, useMemo, useRef, memo } from 'react';
 import { loadOppsFromCache, searchOpps } from '../../utils/oppsCache';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
-import { OutlookMeetingPicker } from './OutlookMeetingPicker';
+// OutlookMeetingPicker exists at ./OutlookMeetingPicker.jsx but is not
+// wired in: it requires a Microsoft Entra ID app registration in the
+// user's tenant (OUTLOOK_CLIENT_ID env var on Vercel), which Schneider
+// Electric IT does not provision for personal-tracker tools. Re-enable
+// by importing it and the button block in the meeting drop zone if/when
+// an app is registered.
 
 // Uncontrolled-ish text input / textarea that holds its own local state
 // and only propagates up on blur. Used for the heavy free-form fields
@@ -1356,25 +1361,10 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     set({ meeting: next });
   };
 
-  // ---- Meeting drop zone (drag an Outlook .ics into this form) -----------
+  // ---- Meeting drop zone (drag an Outlook .ics or live meeting in) -------
   const [isDraggingMeeting, setIsDraggingMeeting] = useState(false);
   const [meetingError, setMeetingError] = useState('');
-  const [outlookPickerOpen, setOutlookPickerOpen] = useState(false);
   const fileInputRef = useRef(null);
-
-  // Best-effort domain pulled from the prospect we have in scope, used to
-  // bubble the right meetings to the top of the picker.
-  const prospectForCompany = useMemo(() => {
-    const lower = (companyName || '').toLowerCase().trim();
-    if (!lower) return null;
-    return prospects.find(p => (p.company || '').toLowerCase().trim() === lower) || null;
-  }, [companyName, prospects]);
-  const companyDomainForPicker = (() => {
-    const ed = prospectForCompany?.emailDomain || '';
-    const w = prospectForCompany?.website || '';
-    const first = String(ed).split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)[0] || '';
-    return first || w || '';
-  })();
 
   async function ingestMeetingFile(file) {
     setMeetingError('');
@@ -1405,12 +1395,126 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     }
   }
 
+  // Tries to extract a meeting from non-file drops. Outlook desktop on
+  // Windows doesn't put a real .ics blob in the drag payload, but it
+  // does write something useful into text/html and text/plain. Parse
+  // whatever's there best-effort. Returns null if nothing useful found.
+  function parseDroppedOutlookText({ html, plain }) {
+    const out = {
+      subject: '', start: null, end: null, durationMinutes: null,
+      location: '', organizer: null, attendees: [], manualAttendees: [],
+      sourceTimeZone: null,
+    };
+
+    // Plain text: first non-empty line is usually the subject. Look for
+    // "When: <date>" and "Where: <location>" lines (Outlook desktop
+    // meeting-body format).
+    if (plain) {
+      const lines = plain.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+      if (lines.length > 0 && !out.subject) out.subject = lines[0];
+      for (const line of lines) {
+        const mWhen = line.match(/^When:\s*(.+)$/i);
+        if (mWhen && !out.start) {
+          const parsed = new Date(mWhen[1].replace(/\s+\(.+\)\s*$/, '').trim());
+          if (!Number.isNaN(parsed.getTime())) out.start = parsed.toISOString();
+        }
+        const mWhere = line.match(/^(?:Where|Location):\s*(.+)$/i);
+        if (mWhere && !out.location) out.location = mWhere[1].trim();
+      }
+    }
+
+    // HTML: pull subject from <title>/<h1>, attendees from "Required
+    // Attendees:" / "Optional Attendees:" lines, and a richer date if we
+    // find one.
+    if (html) {
+      const stripTags = (s) => String(s || '').replace(/<[^>]*>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/\s+/g, ' ').trim();
+
+      if (!out.subject) {
+        const t = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+        if (t) out.subject = stripTags(t[1]);
+      }
+      if (!out.subject) {
+        const h = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
+        if (h) out.subject = stripTags(h[1]);
+      }
+
+      // Outlook drag-HTML often surfaces attendees with mailto: links.
+      // Pull every name/email pair out of the HTML and dedupe.
+      const seen = new Set();
+      const attendeeRe = /<a[^>]*href="mailto:([^"?]+)[^"]*"[^>]*>([\s\S]*?)<\/a>/gi;
+      let m;
+      while ((m = attendeeRe.exec(html)) !== null) {
+        const email = m[1].trim().toLowerCase();
+        const name = stripTags(m[2]) || email;
+        if (!email || seen.has(email)) continue;
+        seen.add(email);
+        out.attendees.push({ name, email, required: true, role: 'unknown', rawParams: { source: 'html-drag' } });
+      }
+    }
+
+    // Nothing useful at all → bail.
+    if (!out.subject && !out.start && out.attendees.length === 0) return null;
+    return out;
+  }
+
   function handleMeetingDrop(e) {
     e.preventDefault();
     e.stopPropagation();
     setIsDraggingMeeting(false);
+
+    // 1. Real file drop (the saved-.ics path).
     const files = Array.from(e.dataTransfer?.files || []);
-    if (files.length > 0) ingestMeetingFile(files[0]);
+    if (files.length > 0 && /\.ics$/i.test(files[0].name || '')) {
+      ingestMeetingFile(files[0]);
+      return;
+    }
+
+    // 2. Real ICS payload sometimes comes via text/calendar (rare, but
+    //    happens on Outlook web and a few clients).
+    const ics = e.dataTransfer?.getData?.('text/calendar') || e.dataTransfer?.getData?.('text/x-vcalendar');
+    if (ics && ics.includes('BEGIN:VCALENDAR')) {
+      try {
+        const parsed = parseIcs(ics);
+        if (parsed && (parsed.subject || parsed.start)) {
+          set({ meeting: parsed });
+          return;
+        }
+      } catch {}
+    }
+
+    // 3. Fallback: parse whatever HTML/text Outlook desktop did include.
+    //    On Windows this is what we usually get from a calendar drag —
+    //    not a real .ics, but enough to fill the form most of the way.
+    const html = e.dataTransfer?.getData?.('text/html') || '';
+    const plain = e.dataTransfer?.getData?.('text/plain') || '';
+    const types = Array.from(e.dataTransfer?.types || []);
+    // Diagnostic: helps when the parser misses something — paste the log
+    // back into a chat and we can teach the parser the new format.
+    console.log('[OpportunityForm] non-ics drop. types=', types,
+      'plainPreview=', plain.slice(0, 400),
+      'htmlLen=', html.length);
+    const partial = parseDroppedOutlookText({ html, plain });
+    if (partial) {
+      set({ meeting: partial });
+      setMeetingError(
+        partial.attendees.length === 0 && !partial.start
+          ? 'Imported subject only — Outlook didn\'t include attendees or time in the drag. Fill in the missing pieces, or save the meeting as .ics for full attendee/time import.'
+          : ''
+      );
+      return;
+    }
+
+    // 4. Nothing parseable. Existing legacy file path with .ics-only
+    //    error if there was a non-.ics file dropped.
+    if (files.length > 0) {
+      ingestMeetingFile(files[0]);
+      return;
+    }
+    setMeetingError(
+      'Couldn\'t read the drop. Outlook desktop on Windows sometimes only exposes the meeting in formats browsers can\'t read. ' +
+      'Workaround: open the meeting → File → Save As → Calendar Format (.ics) → drag the saved file in. Or use "Add attendees manually" below.'
+    );
+    return;
   }
 
   const clearMeeting = () => set({ meeting: null });
@@ -2285,22 +2389,12 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
         {!formData.meeting && (
           <>
             <div style={{ fontWeight: 700, color: '#15803D', fontSize: '0.95rem', marginBottom: '0.25rem' }}>
-              {isDraggingMeeting ? 'Drop the meeting file to import' : 'Pick from your Outlook calendar or drag a .ics here'}
+              {isDraggingMeeting ? 'Drop to import' : 'Drag a meeting from Outlook (or a saved .ics) here'}
             </div>
             <div style={{ color: '#475569', marginBottom: '0.6rem' }}>
-              Pulls subject, time, duration, location, and attendees. Unmatched attendees can be added to HubSpot in one click.
+              Tries to pull subject, time, location, and attendees from whatever Outlook puts in the drag.
+              For full attendee/time fidelity, save the meeting as .ics first (File → Save As → Calendar Format) and drop the file.
             </div>
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); setOutlookPickerOpen(true); }}
-              style={{
-                fontSize: '0.8rem', padding: '0.4rem 0.9rem', border: 'none',
-                background: '#0078D4', color: '#fff', borderRadius: 6, cursor: 'pointer',
-                fontFamily: 'inherit', fontWeight: 600, marginRight: '0.5rem',
-              }}
-            >
-              Pick from Outlook calendar…
-            </button>
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}
@@ -2901,14 +2995,6 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       </div>
 
       {renderTables(bottomTables)}
-
-      <OutlookMeetingPicker
-        open={outlookPickerOpen}
-        onClose={() => setOutlookPickerOpen(false)}
-        onPick={(meeting) => set({ meeting })}
-        companyName={companyName}
-        companyDomain={companyDomainForPicker}
-      />
     </div>
   );
 }
