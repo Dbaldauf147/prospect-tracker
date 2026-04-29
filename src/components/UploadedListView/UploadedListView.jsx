@@ -412,6 +412,9 @@ export function UploadedListView({
   const [uploadError, setUploadError] = useState(null);
   const [uploadInfo, setUploadInfo] = useState(null); // { total, preservedTableView, preservedMyAccounts }
   const [picker, setPicker] = useState(null); // { matchKey, raw, query, scope: 'tableView' | 'myAccounts' }
+  // Bulk-mapping picker — like `picker` but applies the chosen company
+  // to every currently selected row in the given scope.
+  const [bulkPicker, setBulkPicker] = useState(null); // { scope, query }
   const [selectedKeys, setSelectedKeys] = useState(() => new Set());
   const fileInputRef = useRef(null);
   const { data, source } = store;
@@ -441,6 +444,8 @@ export function UploadedListView({
     setUploadError(null);
     setUploadInfo(null);
     setPicker(null);
+    setBulkPicker(null);
+    setSelectedKeys(new Set());
     return () => { cancelled = true; };
   }, [storageKey]);
 
@@ -851,6 +856,54 @@ export function UploadedListView({
     }
     return n;
   }
+  // Count of selected rows that already carry a confirmed mapping in
+  // `scope` — i.e. rows that "Clear mapping" would actually act on.
+  function mappedCountFor(scope) {
+    const mappingState = scope === 'myAccounts' ? myAccountMapping : portfolioMapping;
+    let n = 0;
+    for (const mk of selectedKeys) {
+      if (mappingState[mk]) n++;
+    }
+    return n;
+  }
+  // Clears every selected row's confirmed mapping in `scope`, leaving
+  // dismissals alone so previously-suppressed suggestions stay hidden.
+  function bulkClearMapping(scope) {
+    const { setMap } = mapSettersFor(scope);
+    setMap(prev => {
+      let changed = false;
+      const next = { ...prev };
+      for (const mk of selectedKeys) {
+        if (next[mk] != null) { delete next[mk]; changed = true; }
+      }
+      return changed ? next : prev;
+    });
+  }
+  // Maps every selected row to `prospectCompany` in `scope`. Replaces any
+  // existing mapping and un-dismisses the row so the new pick is visible.
+  function bulkSetMapping(scope, prospectCompany) {
+    if (!prospectCompany) return;
+    const { setMap, setDis } = mapSettersFor(scope);
+    const keys = [...selectedKeys];
+    if (keys.length === 0) return;
+    setMap(prev => {
+      const next = { ...prev };
+      for (const mk of keys) next[mk] = prospectCompany;
+      return next;
+    });
+    setDis(prev => {
+      let changed = false;
+      const next = { ...prev };
+      for (const mk of keys) {
+        if (next[mk]) { delete next[mk]; changed = true; }
+      }
+      return changed ? next : prev;
+    });
+    setBulkPicker(null);
+  }
+  function openBulkPicker(scope) {
+    setBulkPicker({ scope, query: '' });
+  }
   function setTextValue(matchKey, value) {
     setTextValues(prev => {
       const next = { ...prev };
@@ -1183,6 +1236,43 @@ export function UploadedListView({
     return out;
   }, [picker, prospects, allPortfolioCompanies, prospectSuggestionFor, myAccountSuggestionFor, portfolioSuggestionFor, myAccountNames, blockedAccountNames]);
 
+  // Search results for the bulk-mapping picker. Same source rules as
+  // the per-row picker, just driven off `bulkPicker.query` instead.
+  const bulkPickerResults = useMemo(() => {
+    if (!bulkPicker) return [];
+    const q = (bulkPicker.query || '').toLowerCase().trim();
+    let source;
+    if (bulkPicker.scope === 'myAccounts') {
+      if (Array.isArray(myAccountNames) && myAccountNames.length > 0) {
+        const nameSet = new Set(
+          myAccountNames
+            .map(n => String(n || '').toLowerCase().trim())
+            .filter(k => k && !blockedAccountNames.has(k))
+        );
+        source = prospects.filter(p => nameSet.has((p.company || '').toLowerCase().trim()));
+      } else {
+        source = prospects.filter(p =>
+          (p.cdm || '').toLowerCase().includes('baldauf')
+          && !blockedAccountNames.has((p.company || '').toLowerCase().trim())
+        );
+      }
+    } else {
+      source = allPortfolioCompanies;
+    }
+    const list = source.filter(p => p.company && (!q || p.company.toLowerCase().includes(q)));
+    list.sort((a, b) => a.company.localeCompare(b.company));
+    const out = [];
+    const seen = new Set();
+    for (const p of list) {
+      const id = p.id || p.company;
+      if (seen.has(id)) continue;
+      out.push(p);
+      seen.add(id);
+      if (out.length >= 30) break;
+    }
+    return out;
+  }, [bulkPicker, prospects, allPortfolioCompanies, myAccountNames, blockedAccountNames]);
+
   return (
     <div className={styles.wrapper}>
       <div className={styles.header}>
@@ -1426,30 +1516,104 @@ export function UploadedListView({
             </button>
           );
         })()}
+        {(() => {
+          // Selects every row currently visible after filters/search,
+          // so the bulk-edit toolbar can act on the entire filtered set
+          // (not just rows showing yellow suggestion pills).
+          if (filtered.length === 0) return null;
+          const filteredKeys = filtered.map(r => r.__matchKey__);
+          const visibleSelected = filteredKeys.filter(k => selectedKeys.has(k)).length;
+          const allVisibleSelected = visibleSelected === filteredKeys.length && filteredKeys.length > 0;
+          const toggle = () => {
+            if (allVisibleSelected) {
+              setSelectedKeys(prev => {
+                const next = new Set(prev);
+                for (const k of filteredKeys) next.delete(k);
+                return next;
+              });
+            } else {
+              setSelectedKeys(prev => {
+                const next = new Set(prev);
+                for (const k of filteredKeys) next.add(k);
+                return next;
+              });
+            }
+          };
+          return (
+            <button
+              type="button"
+              onClick={toggle}
+              title={allVisibleSelected
+                ? 'Deselect every visible row'
+                : 'Select every row currently visible after filters and search — then bulk-edit them from the toolbar that appears'}
+              style={{
+                padding: '0.35rem 0.7rem',
+                border: `1px solid ${allVisibleSelected ? '#3B82F6' : 'var(--color-border)'}`,
+                borderRadius: 6,
+                background: allVisibleSelected ? '#DBEAFE' : '#fff',
+                color: allVisibleSelected ? '#1E3A8A' : 'var(--color-text-secondary)',
+                fontSize: '0.75rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {allVisibleSelected ? 'Deselect filtered' : 'Select all filtered'}
+              <span style={{ marginLeft: 6, fontSize: '0.68rem', color: allVisibleSelected ? '#1E3A8A' : '#94A3B8' }}>
+                {filteredKeys.length}
+              </span>
+            </button>
+          );
+        })()}
         {(search || suggestedOnly || portfolioOnly || mappedOnly) && <span className={styles.resultCount}>{filtered.length} results</span>}
       </div>
       {selectedKeys.size > 0 && (() => {
         const acceptMa = pendingCountFor('myAccounts');
         const acceptPc = pendingCountFor('portfolio');
+        const mappedMa = mappedCountFor('myAccounts');
+        const mappedPc = mappedCountFor('portfolio');
         const baseBtn = { padding: '0.35rem 0.7rem', borderRadius: 6, fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' };
         const accentBtn = (active) => ({ ...baseBtn, border: `1px solid ${active ? '#16A34A' : 'var(--color-border)'}`, background: active ? '#DCFCE7' : '#fff', color: active ? '#166534' : '#94A3B8' });
         const dismissBtn = (active) => ({ ...baseBtn, border: `1px solid ${active ? '#DC2626' : 'var(--color-border)'}`, background: active ? '#FEE2E2' : '#fff', color: active ? '#991B1B' : '#94A3B8' });
+        const setMaBtn = { ...baseBtn, border: '1px solid #3B82F6', background: '#DBEAFE', color: '#1E3A8A' };
+        const setPcBtn = { ...baseBtn, border: '1px solid #8B5CF6', background: '#EDE9FE', color: '#5B21B6' };
         return (
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', padding: '0.5rem 1.25rem', background: '#F1F5F9', borderTop: '1px solid var(--color-border)', borderBottom: '1px solid var(--color-border)' }}>
             <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#1E293B' }}>
               {selectedKeys.size} selected
             </span>
-            <button type="button" style={accentBtn(acceptMa > 0)} disabled={acceptMa === 0} onClick={() => bulkAccept('myAccounts')}>
+            <button type="button" style={accentBtn(acceptMa > 0)} disabled={acceptMa === 0} onClick={() => bulkAccept('myAccounts')}
+              title="Confirm each selected row's suggested My Accounts mapping (skips rows already mapped or with no live suggestion)">
               ★ Accept My Accounts {acceptMa > 0 && `(${acceptMa})`}
             </button>
-            <button type="button" style={accentBtn(acceptPc > 0)} disabled={acceptPc === 0} onClick={() => bulkAccept('portfolio')}>
+            <button type="button" style={accentBtn(acceptPc > 0)} disabled={acceptPc === 0} onClick={() => bulkAccept('portfolio')}
+              title="Confirm each selected row's suggested Portfolio Companies mapping">
               ◆ Accept Portfolio {acceptPc > 0 && `(${acceptPc})`}
             </button>
-            <button type="button" style={dismissBtn(acceptMa > 0)} disabled={acceptMa === 0} onClick={() => bulkDismiss('myAccounts')}>
+            <button type="button" style={setMaBtn} onClick={() => openBulkPicker('myAccounts')}
+              title="Map every selected row to one specific My Accounts company (overwrites any existing mapping)">
+              ★ Set My Accounts…
+            </button>
+            <button type="button" style={setPcBtn} onClick={() => openBulkPicker('portfolio')}
+              title="Map every selected row to one specific Portfolio Company (overwrites any existing mapping)">
+              ◆ Set Portfolio…
+            </button>
+            <button type="button" style={dismissBtn(acceptMa > 0)} disabled={acceptMa === 0} onClick={() => bulkDismiss('myAccounts')}
+              title="Hide the My Accounts suggestion on every selected row that currently shows one">
               Dismiss MA suggestion
             </button>
-            <button type="button" style={dismissBtn(acceptPc > 0)} disabled={acceptPc === 0} onClick={() => bulkDismiss('portfolio')}>
+            <button type="button" style={dismissBtn(acceptPc > 0)} disabled={acceptPc === 0} onClick={() => bulkDismiss('portfolio')}
+              title="Hide the Portfolio Companies suggestion on every selected row that currently shows one">
               Dismiss PC suggestion
+            </button>
+            <button type="button" style={dismissBtn(mappedMa > 0)} disabled={mappedMa === 0} onClick={() => bulkClearMapping('myAccounts')}
+              title="Remove the confirmed My Accounts mapping from every selected row that has one">
+              Clear MA mapping {mappedMa > 0 && `(${mappedMa})`}
+            </button>
+            <button type="button" style={dismissBtn(mappedPc > 0)} disabled={mappedPc === 0} onClick={() => bulkClearMapping('portfolio')}
+              title="Remove the confirmed Portfolio Companies mapping from every selected row that has one">
+              Clear PC mapping {mappedPc > 0 && `(${mappedPc})`}
             </button>
             <button type="button" style={{ ...baseBtn, border: 'none', background: 'transparent', color: 'var(--color-text-secondary)', textDecoration: 'underline', padding: '0.35rem 0.4rem' }} onClick={clearSelection}>
               Clear
@@ -1525,6 +1689,65 @@ export function UploadedListView({
               style={{ marginTop: '0.25rem', padding: '0.3rem 0.5rem', background: 'none', border: 'none', color: '#DC2626', cursor: 'pointer', fontSize: '0.7rem', fontFamily: 'inherit', textAlign: 'left' }}
             >Clear mapping</button>
           )}
+        </div>,
+        document.body
+      )}
+      {bulkPicker && createPortal(
+        <div
+          data-picker="bulk"
+          onClick={() => setBulkPicker(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.35)', zIndex: 9998, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: '12vh' }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ width: 360, background: '#fff', border: '1px solid #e2e8f0', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.18)', padding: '0.6rem', display: 'flex', flexDirection: 'column', maxHeight: '70vh' }}
+          >
+            <div style={{ fontSize: '0.78rem', fontWeight: 700, color: '#1E293B', marginBottom: '0.4rem' }}>
+              {bulkPicker.scope === 'myAccounts'
+                ? `Map ${selectedKeys.size} selected row${selectedKeys.size === 1 ? '' : 's'} to a My Accounts company`
+                : `Map ${selectedKeys.size} selected row${selectedKeys.size === 1 ? '' : 's'} to a Portfolio Company`}
+            </div>
+            <div style={{ fontSize: '0.7rem', color: '#64748B', marginBottom: '0.4rem' }}>
+              This overwrites any existing {bulkPicker.scope === 'myAccounts' ? 'My Accounts' : 'Portfolio'} mapping on the selected rows.
+            </div>
+            <input
+              autoFocus
+              value={bulkPicker.query}
+              onChange={e => setBulkPicker(p => ({ ...p, query: e.target.value }))}
+              onKeyDown={e => { if (e.key === 'Escape') setBulkPicker(null); }}
+              placeholder={bulkPicker.scope === 'myAccounts' ? 'Search My Accounts…' : 'Search Portfolio Companies…'}
+              style={{ width: '100%', padding: '0.35rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 4, fontSize: '0.78rem', fontFamily: 'inherit', marginBottom: '0.35rem', boxSizing: 'border-box' }}
+            />
+            <div style={{ overflowY: 'auto', flex: 1 }}>
+              {bulkPickerResults.map(p => (
+                <button
+                  key={p.id || p.company}
+                  type="button"
+                  onClick={() => bulkSetMapping(bulkPicker.scope, p.company)}
+                  style={{ display: 'block', width: '100%', textAlign: 'left', background: 'none', border: 'none', padding: '0.4rem 0.5rem', borderRadius: 4, cursor: 'pointer', fontSize: '0.78rem', fontFamily: 'inherit' }}
+                  onMouseEnter={e => e.currentTarget.style.background = '#F1F5F9'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                >
+                  <div style={{ fontWeight: 600, color: 'var(--color-text)' }}>{p.company}</div>
+                  {(p.tier || p.cdm || p.parent) && (
+                    <div style={{ fontSize: '0.66rem', color: '#64748B', marginTop: 1 }}>
+                      {[p.parent ? `Owner: ${p.parent}` : null, p.tier, p.cdm].filter(Boolean).join(' · ')}
+                    </div>
+                  )}
+                </button>
+              ))}
+              {bulkPickerResults.length === 0 && (
+                <div style={{ padding: '0.75rem', fontSize: '0.78rem', color: '#64748B', textAlign: 'center' }}>
+                  No matching {bulkPicker.scope === 'myAccounts' ? 'accounts' : 'portfolio companies'} found.
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setBulkPicker(null)}
+              style={{ marginTop: '0.4rem', padding: '0.35rem 0.5rem', background: 'none', border: '1px solid var(--color-border)', borderRadius: 4, cursor: 'pointer', fontSize: '0.72rem', fontFamily: 'inherit' }}
+            >Cancel</button>
+          </div>
         </div>,
         document.body
       )}
