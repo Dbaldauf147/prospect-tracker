@@ -1388,7 +1388,14 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
           setMeetingError('Could not extract a meeting from that .msg file.');
           return;
         }
-        console.log('[OpportunityForm] parsed .msg:', { subject: parsed.subject, start: parsed.start, attendees: parsed.attendees.length, location: parsed.location });
+        console.log('[OpportunityForm] parsed .msg:', {
+          subject: parsed.subject, start: parsed.start, end: parsed.end,
+          attendees: parsed.attendees.length, location: parsed.location,
+          rawKeys: Object.keys(data || {}),
+          rawApptStartWhole: data?.apptStartWhole,
+          rawApptEndWhole: data?.apptEndWhole,
+          rawLocation: data?.location,
+        });
         set({ meeting: parsed });
       } catch (err) {
         console.error('msg parse failed', err);
@@ -1448,8 +1455,10 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       const d = new Date(v);
       return Number.isNaN(d.getTime()) ? null : d.toISOString();
     };
-    out.start = toIso(data.appointmentStartWhole || data.startDate || data.start);
-    out.end = toIso(data.appointmentEndWhole || data.endDate || data.end);
+    // @kenjiuno/msgreader exposes appointment times as apptStartWhole /
+    // apptEndWhole (PidLidAppointmentStartWhole / PidLidAppointmentEndWhole).
+    out.start = toIso(data.apptStartWhole || data.appointmentStartWhole || data.startDate || data.start);
+    out.end = toIso(data.apptEndWhole || data.appointmentEndWhole || data.endDate || data.end);
     if (out.start && out.end) {
       const ms = new Date(out.end).getTime() - new Date(out.start).getTime();
       if (Number.isFinite(ms) && ms > 0) out.durationMinutes = Math.round(ms / 60000);
