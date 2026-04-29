@@ -1457,7 +1457,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     return out;
   }
 
-  function handleMeetingDrop(e) {
+  async function handleMeetingDrop(e) {
     e.preventDefault();
     e.stopPropagation();
     setIsDraggingMeeting(false);
@@ -1482,7 +1482,43 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       } catch {}
     }
 
-    // 3. Fallback: parse whatever HTML/text Outlook desktop did include.
+    // 3. Outlook desktop on Windows often advertises a virtual file via
+    //    types=['Files'] but exposes nothing through dataTransfer.files
+    //    (that's the OLE/CFSTR_FILEDESCRIPTOR clipboard format). The
+    //    .items API can sometimes still hand us a real File object —
+    //    if it can, it's frequently a real .ics under the hood.
+    try {
+      const items = Array.from(e.dataTransfer?.items || []);
+      for (const item of items) {
+        if (item.kind !== 'file') continue;
+        const file = item.getAsFile?.();
+        if (!file) continue;
+        const itemName = (file.name || '').toLowerCase();
+        // Accept .ics, .vcs, or extensionless names — try reading text and
+        // see if it parses as ICS regardless.
+        try {
+          const text = await file.text();
+          if (text && text.includes('BEGIN:VCALENDAR')) {
+            const parsed = parseIcs(text);
+            if (parsed && (parsed.subject || parsed.start)) {
+              set({ meeting: parsed });
+              return;
+            }
+          }
+          // If it's a saved .ics-named file Chrome did expose here but
+          // didn't put in .files, run it through ingestMeetingFile too.
+          if (/\.(ics|vcs)$/i.test(itemName)) {
+            await ingestMeetingFile(file);
+            return;
+          }
+        } catch {
+          // OLE virtual files often throw on .text() — that's the case
+          // where Chrome literally can't read them. Fall through.
+        }
+      }
+    } catch {}
+
+    // 4. Fallback: parse whatever HTML/text Outlook desktop did include.
     //    On Windows this is what we usually get from a calendar drag —
     //    not a real .ics, but enough to fill the form most of the way.
     const html = e.dataTransfer?.getData?.('text/html') || '';
