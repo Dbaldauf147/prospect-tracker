@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef, memo } from 'react';
 import { loadOppsFromCache, searchOpps } from '../../utils/oppsCache';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
+import { OutlookMeetingPicker } from './OutlookMeetingPicker';
 
 // Uncontrolled-ish text input / textarea that holds its own local state
 // and only propagates up on blur. Used for the heavy free-form fields
@@ -1358,7 +1359,22 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
   // ---- Meeting drop zone (drag an Outlook .ics into this form) -----------
   const [isDraggingMeeting, setIsDraggingMeeting] = useState(false);
   const [meetingError, setMeetingError] = useState('');
+  const [outlookPickerOpen, setOutlookPickerOpen] = useState(false);
   const fileInputRef = useRef(null);
+
+  // Best-effort domain pulled from the prospect we have in scope, used to
+  // bubble the right meetings to the top of the picker.
+  const prospectForCompany = useMemo(() => {
+    const lower = (companyName || '').toLowerCase().trim();
+    if (!lower) return null;
+    return prospects.find(p => (p.company || '').toLowerCase().trim() === lower) || null;
+  }, [companyName, prospects]);
+  const companyDomainForPicker = (() => {
+    const ed = prospectForCompany?.emailDomain || '';
+    const w = prospectForCompany?.website || '';
+    const first = String(ed).split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)[0] || '';
+    return first || w || '';
+  })();
 
   async function ingestMeetingFile(file) {
     setMeetingError('');
@@ -2269,11 +2285,22 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
         {!formData.meeting && (
           <>
             <div style={{ fontWeight: 700, color: '#15803D', fontSize: '0.95rem', marginBottom: '0.25rem' }}>
-              {isDraggingMeeting ? 'Drop the meeting file to import' : 'Drag an Outlook meeting (.ics) here'}
+              {isDraggingMeeting ? 'Drop the meeting file to import' : 'Pick from your Outlook calendar or drag a .ics here'}
             </div>
             <div style={{ color: '#475569', marginBottom: '0.6rem' }}>
               Pulls subject, time, duration, location, and attendees. Unmatched attendees can be added to HubSpot in one click.
             </div>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setOutlookPickerOpen(true); }}
+              style={{
+                fontSize: '0.8rem', padding: '0.4rem 0.9rem', border: 'none',
+                background: '#0078D4', color: '#fff', borderRadius: 6, cursor: 'pointer',
+                fontFamily: 'inherit', fontWeight: 600, marginRight: '0.5rem',
+              }}
+            >
+              Pick from Outlook calendar…
+            </button>
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}
@@ -2874,6 +2901,14 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       </div>
 
       {renderTables(bottomTables)}
+
+      <OutlookMeetingPicker
+        open={outlookPickerOpen}
+        onClose={() => setOutlookPickerOpen(false)}
+        onPick={(meeting) => set({ meeting })}
+        companyName={companyName}
+        companyDomain={companyDomainForPicker}
+      />
     </div>
   );
 }

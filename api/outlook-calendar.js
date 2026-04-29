@@ -12,12 +12,15 @@ export default async function handler(req, res) {
   }
   const accessToken = authHeader.slice(7);
 
-  // Build today's range in UTC (the API normalizes to the user's mailbox timezone)
+  // Optional ?startDays=-7&endDays=7 to widen the window. Defaults to today only.
+  const startDays = Number(req.query?.startDays || 0);
+  const endDays = Number(req.query?.endDays || 0);
   const now = new Date();
   const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
-  const startISO = startOfDay.toISOString();
-  const endISO = endOfDay.toISOString();
+  const rangeStart = new Date(startOfDay.getTime() + startDays * 24 * 60 * 60 * 1000);
+  const rangeEnd = new Date(startOfDay.getTime() + (endDays + 1) * 24 * 60 * 60 * 1000);
+  const startISO = rangeStart.toISOString();
+  const endISO = rangeEnd.toISOString();
 
   const graphUrl =
     `https://graph.microsoft.com/v1.0/me/calendarview` +
@@ -25,7 +28,7 @@ export default async function handler(req, res) {
     `&enddatetime=${encodeURIComponent(endISO)}` +
     `&$select=subject,start,end,attendees,organizer,isAllDay,isCancelled,showAs,location` +
     `&$orderby=start/dateTime` +
-    `&$top=50`;
+    `&$top=200`;
 
   try {
     const resp = await fetch(graphUrl, {
@@ -62,7 +65,7 @@ export default async function handler(req, res) {
         })),
       }));
 
-    return res.status(200).json({ events, count: events.length, date: startISO.slice(0, 10) });
+    return res.status(200).json({ events, count: events.length, rangeStart: startISO, rangeEnd: endISO });
   } catch (err) {
     return res.status(500).json({ error: err.message || 'Unknown error' });
   }
