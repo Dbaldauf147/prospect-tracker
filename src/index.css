@@ -67,11 +67,11 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
 a { color: var(--color-accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
-/* Tall rich-text editor for the per-opportunity notes inside the Portfolio Companies modal */
+/* Rich-text editor for the per-opportunity notes inside the Portfolio Companies modal.
+   Grows downward as you write — no max-height / no internal scroll, so the surrounding
+   modal scrolls instead and the editor height tracks the content exactly. */
 .opportunity-notes-editor .ql-editor {
   min-height: 480px;
-  max-height: 70vh;
-  overflow-y: auto;
 }
 
 /* Make the Quill to-do checkboxes in the notes editor bigger and easier to click. */

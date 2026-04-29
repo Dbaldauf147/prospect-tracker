@@ -2774,6 +2774,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                     </div>
                     <CommitOnBlurInput
                       multiline
+                      autoGrow
                       value={ask}
                       onCommit={v => updateDansAsk(a, v)}
                       rows={1}
@@ -3052,6 +3053,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
         </div>
         <CommitOnBlurInput
           multiline
+          autoGrow
           style={{ ...sx.textarea, minHeight: '90px' }}
           value={formData.fieldValues.context || ''}
           onCommit={v => updateField('context', v)}
@@ -3064,6 +3066,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
           <div style={sx.fieldLabel}>Intent</div>
           <CommitOnBlurInput
             multiline
+            autoGrow
             style={sx.textarea}
             value={formData.fieldValues.intent || ''}
             onCommit={v => updateField('intent', v)}
@@ -3074,6 +3077,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
           <div style={sx.fieldLabel}>End In Mind</div>
           <CommitOnBlurInput
             multiline
+            autoGrow
             style={sx.textarea}
             value={formData.fieldValues.endInMind || ''}
             onCommit={v => updateField('endInMind', v)}
@@ -3117,6 +3121,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
               {f.type === 'textarea' ? (
                 <CommitOnBlurInput
                   multiline
+                  autoGrow
                   style={sx.textarea}
                   value={formData.fieldValues[f.key] || ''}
                   onCommit={v => updateField(f.key, v)}
