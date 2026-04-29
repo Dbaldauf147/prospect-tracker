@@ -1326,17 +1326,22 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       }
     }
 
-    // Debug: log all accounts containing pnc
-    for (const [account, stages] of Object.entries(stagesByAccount)) {
-      if (account.includes('pnc') || account.includes('hellman')) {
-        console.log(`Opps debug "${account}": sold=${stages.sold}, notSold=${stages.notSold}, active=${stages.active} → suggested: ${suggested[account]}`);
-        const opps = oppsRecords.filter(r => (r['Account'] || '').toLowerCase() === account);
-        opps.forEach(r => console.log(`  Opp: Stage="${r['Stage']}", Account="${r['Account']}"`));
+    // Debug: log all accounts containing pnc — gated behind
+    // localStorage.debug-myaccounts so production runs don't flood
+    // the console (and crush the main thread) every render.
+    let DBG_OPPS = false;
+    try { DBG_OPPS = !!(typeof localStorage !== 'undefined' && localStorage.getItem('debug-myaccounts')); } catch {}
+    if (DBG_OPPS) {
+      for (const [account, stages] of Object.entries(stagesByAccount)) {
+        if (account.includes('pnc') || account.includes('hellman')) {
+          console.log(`Opps debug "${account}": sold=${stages.sold}, notSold=${stages.notSold}, active=${stages.active} → suggested: ${suggested[account]}`);
+          const opps = oppsRecords.filter(r => (r['Account'] || '').toLowerCase() === account);
+          opps.forEach(r => console.log(`  Opp: Stage="${r['Stage']}", Account="${r['Account']}"`));
+        }
       }
+      const soldOpps = oppsRecords.filter(r => (r['Stage'] || '').toLowerCase().includes('sold') || (r['Stage'] || '').toLowerCase().includes('won'));
+      console.log('All Sold/Won opps:', soldOpps.map(r => `"${r['Account']}" Stage="${r['Stage']}"`));
     }
-    // Log all opps with Sold stage to find PNC's sold deal
-    const soldOpps = oppsRecords.filter(r => (r['Stage'] || '').toLowerCase().includes('sold') || (r['Stage'] || '').toLowerCase().includes('won'));
-    console.log('All Sold/Won opps:', soldOpps.map(r => `"${r['Account']}" Stage="${r['Stage']}"`));
 
     return { activeOppsByAccount: active, totalOppsByAccount: total, openOppsByAccount: open, suggestedStatusByAccount: suggested, displayNameByAccount: displayName, pePartnerAccountSet: peSet };
   }, [oppsRecords]);
@@ -1774,11 +1779,15 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     let oppsOnlyAdded = 0;
     // Diagnostic: dump everything we can see about specific accounts the
     // user has asked about so we can confirm why they're (not) showing.
+    // Gated behind localStorage.debug-myaccounts so production sessions
+    // don't flood the console (and crush the main thread) with these.
+    let DEBUG_MA = false;
+    try { DEBUG_MA = !!(typeof localStorage !== 'undefined' && localStorage.getItem('debug-myaccounts')); } catch {}
     const DEBUG_RX = /(urw|unibail|rodamco|westfield|\bara\b|ara\s*partners|jpmc|jp\s*morgan|jpmorgan)/i;
-    const debugProspects = prospects.filter(p => DEBUG_RX.test(p.company || ''));
-    const debugOppsKeys = Object.keys(totalOppsByAccount).filter(k => DEBUG_RX.test(k));
+    const debugProspects = DEBUG_MA ? prospects.filter(p => DEBUG_RX.test(p.company || '')) : [];
+    const debugOppsKeys = DEBUG_MA ? Object.keys(totalOppsByAccount).filter(k => DEBUG_RX.test(k)) : [];
     const renderedAccountNamesLower = new Set([...t1, ...t2].map(e => (e.company || '').toLowerCase()));
-    if (debugProspects.length > 0 || debugOppsKeys.length > 0) {
+    if (DEBUG_MA && (debugProspects.length > 0 || debugOppsKeys.length > 0)) {
       const payload = {
         prospects: debugProspects.map(p => {
           const inList = renderedAccountNamesLower.has((p.company || '').toLowerCase());
@@ -1828,7 +1837,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       // matches the prospect-path filter above — no closed-only accounts.
       if (!openOppsByAccount[accountLower]) continue;
       const displayNameRaw = displayNameByAccount[accountLower] || accountLower;
-      const debugInteresting = DEBUG_RX.test(displayNameRaw);
+      const debugInteresting = DEBUG_MA && DEBUG_RX.test(displayNameRaw);
       if (isDismissed(displayNameRaw)) {
         if (debugInteresting) console.log('[MyAccountsView] debug skipped by isDismissed:', displayNameRaw);
         continue;
@@ -1884,8 +1893,8 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
 
     const all = [...t1, ...t2];
     all.sort((a, b) => (a.company || '').localeCompare(b.company || ''));
-    if (skippedCdm.length > 0) console.log('My Accounts: skipped (CDM not Baldauf):', skippedCdm);
-    console.log(`My Accounts: ${t1.length} Tier 1, ${t2.length} Tier 2 (incl ${oppsOnlyAdded} opps-only)`);
+    if (DEBUG_MA && skippedCdm.length > 0) console.log('My Accounts: skipped (CDM not Baldauf):', skippedCdm);
+    if (DEBUG_MA) console.log(`My Accounts: ${t1.length} Tier 1, ${t2.length} Tier 2 (incl ${oppsOnlyAdded} opps-only)`);
     return { tier1: t1, tier2: t2, allAccounts: all, statusCounts: counts };
   }, [prospects, targetMap, targetAccounts, allTargetReps, activityByCompany, activeOppsByAccount, totalOppsByAccount, suggestedStatusByAccount, displayNameByAccount, hubspotCompanies, targetCompanies, decisionMakerByCompany, contactsByCompany, bucketsByCompany, contactsByEmailDomain, bucketsByEmailDomain, divisionsMap, pePartnerAccountSet]);
 
@@ -2405,10 +2414,14 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         const mappedTargetNames = new Set(allAccounts.flatMap(a => (a.targetNames || []).map(n => n.toLowerCase())));
         const onlyMyAccounts = allAccounts.filter(a => a.myTier !== 'Tier 3' && (!a.targetNames || a.targetNames.length === 0) && !fuzzyHas(targetNames, a.company));
         const onlyTarget = targetAccounts.filter(t => !fuzzyHas(myNames, t.company) && !mappedTargetNames.has((t.company || '').toLowerCase()));
-        console.log('Target accounts loaded:', targetAccounts.map(t => t.company));
-        console.log('My accounts loaded:', allAccounts.map(a => a.company));
-        console.log('On Target but NOT My Accounts:', onlyTarget.map(t => t.company));
-        console.log('On My Accounts but NOT Target:', onlyMyAccounts.map(a => a.company));
+        try {
+          if (typeof localStorage !== 'undefined' && localStorage.getItem('debug-myaccounts')) {
+            console.log('Target accounts loaded:', targetAccounts.map(t => t.company));
+            console.log('My accounts loaded:', allAccounts.map(a => a.company));
+            console.log('On Target but NOT My Accounts:', onlyTarget.map(t => t.company));
+            console.log('On My Accounts but NOT Target:', onlyMyAccounts.map(a => a.company));
+          }
+        } catch {}
         if (onlyMyAccounts.length === 0 && onlyTarget.length === 0) return null;
         return (
           <div className={styles.mismatchSection}>
