@@ -88,10 +88,22 @@ export function AuthProvider({ children }) {
     }
   }
 
-  async function createAccount(email, password) {
+  async function createAccount(email, password, cdmName) {
     try {
       setAuthError(null);
       const result = await createUserWithEmailAndPassword(auth, email, password);
+      // Seed the new user's userSettings with their chosen CDM name so
+      // every CDM-filtering view immediately scopes to them, not the admin.
+      if (cdmName && cdmName.trim()) {
+        try {
+          await setDoc(doc(db, 'userSettings', result.user.uid), {
+            cdmName: cdmName.trim(),
+            _lastWriteAt: Date.now(),
+          }, { merge: true });
+        } catch (settingsErr) {
+          console.warn('Failed to save initial cdmName:', settingsErr);
+        }
+      }
       await logAction(result.user, 'signup', { method: 'email' });
     } catch (err) {
       setAuthError(err.code === 'auth/email-already-in-use' ? 'Account already exists — try signing in' : err.message || 'Sign-up failed');

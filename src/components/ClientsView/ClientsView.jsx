@@ -1,28 +1,24 @@
 import { useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
+import { matchesCdm } from '../../utils/cdmMatch';
 
 function getServicesCount(p) {
   const svc = p.servicesExplored || {};
   return Object.values(svc).filter(v => v && v !== '-').length;
 }
 
-// Match CDM values that contain the phrase "Dan Baldauf" (case-insensitive).
-function isBaldauf(cdm) {
-  return (cdm || '').toLowerCase().includes('dan baldauf');
-}
-
-export function ClientsView({ prospects = [], onSelectProspect }) {
+export function ClientsView({ prospects = [], onSelectProspect, cdmName }) {
   const [showOld, setShowOld] = useState(false);
   const [query, setQuery] = useState('');
 
-  // Only Dan Baldauf's clients. Additionally filter to active Client by
-  // default, or include Old Client too when the toggle is on.
+  // Only the configured user's clients. Additionally filter to active
+  // Client by default, or include Old Client too when the toggle is on.
   const clients = useMemo(() => (
     prospects
-      .filter(p => isBaldauf(p.cdm))
+      .filter(p => matchesCdm(p.cdm, cdmName))
       .filter(p => p.status === 'Client' || (showOld && p.status === 'Old Client'))
       .sort((a, b) => (a.company || '').localeCompare(b.company || ''))
-  ), [prospects, showOld]);
+  ), [prospects, showOld, cdmName]);
 
   const q = query.trim().toLowerCase();
   const filtered = q
@@ -34,9 +30,9 @@ export function ClientsView({ prospects = [], onSelectProspect }) {
       ))
     : clients;
 
-  const baldaufProspects = useMemo(() => prospects.filter(p => isBaldauf(p.cdm)), [prospects]);
-  const activeCount = baldaufProspects.filter(p => p.status === 'Client').length;
-  const oldCount = baldaufProspects.filter(p => p.status === 'Old Client').length;
+  const myProspects = useMemo(() => prospects.filter(p => matchesCdm(p.cdm, cdmName)), [prospects, cdmName]);
+  const activeCount = myProspects.filter(p => p.status === 'Client').length;
+  const oldCount = myProspects.filter(p => p.status === 'Old Client').length;
 
   // Diagnostic counts for the empty state.
   const totalProspects = prospects.length;
@@ -113,7 +109,7 @@ export function ClientsView({ prospects = [], onSelectProspect }) {
         <div>
           <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#1E293B', margin: 0 }}>Clients</h2>
           <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2 }}>
-            Dan Baldauf&apos;s clients — every prospect with CDM = Baldauf and <strong>Status = Client</strong>
+            {cdmName ? `${cdmName}'s clients` : 'Your clients'} — every prospect with CDM = {cdmName || 'your CDM'} and <strong>Status = Client</strong>
             {showOld ? ' or Old Client' : ''}. Click a row to open the company popup.
           </div>
         </div>
@@ -138,30 +134,30 @@ export function ClientsView({ prospects = [], onSelectProspect }) {
 
       {/* Always-visible diagnostic strip so 'blank page' is never actually blank. */}
       <div style={{ padding: '0 1.25rem 0.5rem', fontSize: '0.68rem', color: '#64748B', flexShrink: 0 }}>
-        Loaded {totalProspects} prospects · {baldaufProspects.length} have CDM containing &quot;Dan Baldauf&quot; · {allClients} are Status=Client · showing {clients.length}
+        Loaded {totalProspects} prospects · {myProspects.length} match CDM &quot;{cdmName || '(unset)'}&quot; · {allClients} are Status=Client · showing {clients.length}
       </div>
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
         {clients.length === 0 ? (
           <div style={{ margin: '0 1.25rem', padding: '1.25rem', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
-            <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem', textAlign: 'center' }}>No Baldauf clients found</div>
+            <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem', textAlign: 'center' }}>No clients found for {cdmName || 'this user'}</div>
             <div style={{ fontSize: '0.78rem', marginBottom: '0.75rem', textAlign: 'center' }}>
-              Set a prospect&apos;s <strong>CDM</strong> to Baldauf and <strong>Status</strong> to <code>Client</code> in My Accounts to list it here.
+              Set a prospect&apos;s <strong>CDM</strong> to {cdmName || 'your CDM name'} and <strong>Status</strong> to <code>Client</code> in My Accounts to list it here.
             </div>
             <div style={{ fontSize: '0.72rem', background: '#F8FAFC', padding: '0.6rem 0.8rem', borderRadius: 6, color: '#334155' }}>
               <div><strong>Diagnostic:</strong></div>
               <div>Total prospects loaded: {totalProspects}</div>
-              <div>Prospects with CDM containing &quot;baldauf&quot;: {baldaufProspects.length}</div>
+              <div>Prospects matching CDM &quot;{cdmName || '(unset)'}&quot;: {myProspects.length}</div>
               <div>Prospects with Status = Client: {allClients}</div>
-              <div>Baldauf + Client: {activeCount}</div>
+              <div>{cdmName || 'Your CDM'} + Client: {activeCount}</div>
               {totalProspects === 0 && (
                 <div style={{ color: '#B91C1C', marginTop: '0.5rem' }}>
                   Prospects haven&apos;t loaded yet. If this sticks, check your network / login.
                 </div>
               )}
-              {totalProspects > 0 && baldaufProspects.length === 0 && uniqueCdms.length > 0 && (
+              {totalProspects > 0 && myProspects.length === 0 && uniqueCdms.length > 0 && (
                 <div style={{ marginTop: '0.5rem' }}>
-                  <div>No CDM value contains &quot;baldauf&quot;. Unique CDMs in your data:</div>
+                  <div>No CDM value matches &quot;{cdmName || '(unset)'}&quot;. Unique CDMs in your data:</div>
                   <div style={{ fontFamily: 'monospace', fontSize: '0.7rem', marginTop: '0.25rem', maxHeight: '120px', overflow: 'auto', background: '#fff', padding: '0.4rem', borderRadius: 4 }}>
                     {uniqueCdms.slice(0, 40).map((c, i) => <div key={i}>{c}</div>)}
                     {uniqueCdms.length > 40 && <div>… and {uniqueCdms.length - 40} more</div>}

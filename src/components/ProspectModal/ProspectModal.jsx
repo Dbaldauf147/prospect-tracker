@@ -1248,7 +1248,7 @@ const ALL_SERVICE_ITEMS_LOWER = new Set(
   SERVICE_CATEGORIES.flatMap(cat => cat.items.map(i => i.toLowerCase()))
 );
 
-export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew, onDeleteProspect, onUpdateProspect, hubspotContacts = [], onDeleteContact, orgCharts = {}, onUpdateOrgChart = () => {}, settings = {}, updateSettings = () => {}, updateSettingsPath = () => {}, targetAccountsData = null }) {
+export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew, onDeleteProspect, onUpdateProspect, hubspotContacts = [], onDeleteContact, orgCharts = {}, onUpdateOrgChart = () => {}, settings = {}, updateSettings = () => {}, updateSettingsPath = () => {}, targetAccountsData = null, cdmName = '' }) {
   const [fields, setFields] = useState(() => {
     if (prospect) return { ...EMPTY, ...prospect };
     return { ...EMPTY };
@@ -3014,6 +3014,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                           contactNotes={settings.contactNotes || {}}
                           contactReportsTo={settings.contactReportsTo || {}}
                           prospects={prospects}
+                          cdmName={cdmName}
                           onCreateContact={async ({ email, firstname, lastname }) => {
                             try {
                               const properties = { email };

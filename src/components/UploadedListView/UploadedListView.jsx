@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { DataTable } from '../common/DataTable';
 import { saveList as saveListToIDB, loadList as loadListFromIDB, clearList as clearListFromIDB } from '../../utils/uploadedListStore';
 import { parseBestSheet } from '../../utils/xlsxParse';
+import { matchesCdm } from '../../utils/cdmMatch';
 import styles from './UploadedListView.module.css';
 
 function loadMapping(key) {
@@ -388,6 +389,7 @@ export function UploadedListView({
   plural = 'entries',
   prospects = [],
   onSelectProspect,
+  cdmName,
   textColumn, // { key: string, label: string, placeholder?: string }
 }) {
   const [store, setStore] = useState({ data: [], source: 'empty' });
@@ -641,12 +643,12 @@ export function UploadedListView({
       }
     } else {
       for (const p of prospects) {
-        if (!(p.cdm || '').toLowerCase().includes('baldauf')) continue;
+        if (!matchesCdm(p.cdm, cdmName)) continue;
         add(p.company, p);
       }
     }
     return { myAccountsByNorm: byNorm, myAccountNorms: norms };
-  }, [prospects, myAccountNames, blockedAccountNames]);
+  }, [prospects, myAccountNames, blockedAccountNames, cdmName]);
 
   // Returns { prospect, score } where score is 0–1. Score is 1 for exact
   // normalized matches, and the shorter/longer length ratio for substring
@@ -1135,7 +1137,7 @@ export function UploadedListView({
     } else {
       accountSet = new Set();
       for (const p of prospects) {
-        if (!(p.cdm || '').toLowerCase().includes('baldauf')) continue;
+        if (!matchesCdm(p.cdm, cdmName)) continue;
         const k = (p.company || '').toLowerCase().trim();
         if (k && !blockedAccountNames.has(k)) accountSet.add(k);
       }
@@ -1175,7 +1177,7 @@ export function UploadedListView({
       pct,
       totalAccounts,
     };
-  }, [rows, myAccountNames, prospects, myAccountMapping, myAccountDismissed, myAccountSuggestionFor, blockedAccountNames]);
+  }, [rows, myAccountNames, prospects, myAccountMapping, myAccountDismissed, myAccountSuggestionFor, blockedAccountNames, cdmName]);
 
   // Portfolio Companies mapping progress — same denominator /
   // numerator shape as myAccountsCoverage, but counted against the
@@ -1238,7 +1240,7 @@ export function UploadedListView({
         source = prospects.filter(p => nameSet.has((p.company || '').toLowerCase().trim()));
       } else {
         source = prospects.filter(p =>
-          (p.cdm || '').toLowerCase().includes('baldauf')
+          matchesCdm(p.cdm, cdmName)
           && !blockedAccountNames.has((p.company || '').toLowerCase().trim())
         );
       }
@@ -1284,7 +1286,7 @@ export function UploadedListView({
         source = prospects.filter(p => nameSet.has((p.company || '').toLowerCase().trim()));
       } else {
         source = prospects.filter(p =>
-          (p.cdm || '').toLowerCase().includes('baldauf')
+          matchesCdm(p.cdm, cdmName)
           && !blockedAccountNames.has((p.company || '').toLowerCase().trim())
         );
       }
@@ -1303,7 +1305,7 @@ export function UploadedListView({
       if (out.length >= 30) break;
     }
     return out;
-  }, [bulkPicker, prospects, allPortfolioCompanies, myAccountNames, blockedAccountNames]);
+  }, [bulkPicker, prospects, allPortfolioCompanies, myAccountNames, blockedAccountNames, cdmName]);
 
   return (
     <div className={styles.wrapper}>

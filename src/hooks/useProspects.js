@@ -16,7 +16,10 @@ export function useProspects(user) {
 
     async function init() {
       try {
-        if (!seededRef.current) {
+        // Only seed the shared prospects collection (admin account). Other
+        // users start with an empty per-user collection so they're not
+        // surprised by 99 admin-owned companies.
+        if (!seededRef.current && user.email === 'baldaufdan@gmail.com') {
           seededRef.current = true;
           const didSeed = await seedProspects(seedData);
           if (didSeed) console.log('Seeded', seedData.length, 'prospects');

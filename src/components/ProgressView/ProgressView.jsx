@@ -6,6 +6,7 @@ import { LineChart, Line, BarChart, Bar, AreaChart, Area, XAxis, YAxis, Cartesia
 import { buildCompanyIndex, hasMatchInIndex } from '../../utils/companyIndex';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { dbGet } from '../../utils/db';
+import { matchesCdm } from '../../utils/cdmMatch';
 
 function EditableCell({ value, onCommit, color, suffix = '', bold = false }) {
   const [editing, setEditing] = useState(false);
@@ -243,7 +244,7 @@ function persistChartTitles(map) {
   try { localStorage.setItem(CHART_TITLES_KEY, JSON.stringify(map)); } catch {}
 }
 
-export function ProgressView({ prospects, settings }) {
+export function ProgressView({ prospects, settings, cdmName }) {
   const { user } = useAuth();
   const [history, setHistory] = useState([]);
   const [historyLoaded, setHistoryLoaded] = useState(false);
@@ -373,11 +374,8 @@ export function ProgressView({ prospects, settings }) {
   // Compute current week's snapshot
   const currentSnapshot = useMemo(() => {
     const targetMap = settings?.targetMap || {};
-    // Only count Baldauf's accounts (same filter as My Accounts)
-    const myProspects = prospects.filter(p => {
-      const cdm = (p.cdm || '').toLowerCase().trim();
-      return cdm.includes('baldauf') || cdm.includes('dan b');
-    });
+    // Only count the configured user's accounts (same filter as My Accounts)
+    const myProspects = prospects.filter(p => matchesCdm(p.cdm, cdmName));
     const t1 = myProspects.filter(p => p.tier === 'Tier 1');
     const t2 = myProspects.filter(p => p.tier === 'Tier 2');
     const t3 = myProspects.filter(p => p.tier === 'Tier 3');
@@ -622,7 +620,7 @@ export function ProgressView({ prospects, settings }) {
         t2Inactive: t2InactiveList.map(p => ({ company: p.company, status: p.status })),
       },
     };
-  }, [prospects, settings, oppsRecordsState, hubspotContactsState]);
+  }, [prospects, settings, oppsRecordsState, hubspotContactsState, cdmName]);
 
   // Auto-save the current week whenever the snapshot numbers settle.
   // Re-fires on any snapshot-number change (not just mount) so the last

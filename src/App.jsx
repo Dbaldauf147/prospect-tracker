@@ -7,6 +7,7 @@ import { useFilters } from './hooks/useFilters';
 import { useUserSettings } from './hooks/useUserSettings';
 import { Sidebar } from './components/Sidebar';
 import { SettingsBackupsModal } from './components/SettingsBackupsModal';
+import { CdmNameModal } from './components/CdmNameModal';
 import { LoginPage } from './components/LoginPage';
 import { FilterBar } from './components/FilterBar/FilterBar';
 import { TableView } from './components/TableView/TableView';
@@ -76,6 +77,12 @@ function App() {
   const { user, loading: authLoading, authError, signInWithEmail, createAccount, resetPassword, logout } = useAuth();
   const { prospects, loading: dataLoading, addProspect, updateProspect, deleteProspect, replaceAll } = useProspects(user);
   const { settings, updateSettings, updateSettingsPath } = useUserSettings(user);
+
+  // The CDM name to filter and default new-prospect ownership against.
+  // Stored per-user in userSettings.cdmName; the admin account falls back
+  // to "Dan Baldauf" so existing data keeps matching even before a value
+  // is written. Other accounts pick this at signup.
+  const cdmName = settings.cdmName || (user?.email === 'baldaufdan@gmail.com' ? 'Dan Baldauf' : (user?.displayName || ''));
   useSheetSync(user);
   const {
     filtered, searchTerm, setSearchTerm,
@@ -104,6 +111,7 @@ function App() {
   const [modal, setModal] = useState(null); // null | { prospect, isNew }
   const [showSync, setShowSync] = useState(false);
   const [showBackups, setShowBackups] = useState(false);
+  const [showCdmName, setShowCdmName] = useState(false);
   const [migrating, setMigrating] = useState(false);
   const [migrateResult, setMigrateResult] = useState(null);
   const [hubspotContacts, setHubspotContacts] = useState([]);
@@ -242,6 +250,7 @@ function App() {
         onLogout={logout}
         onSync={() => setShowSync(true)}
         onOpenBackups={() => setShowBackups(true)}
+        onOpenCdmName={() => setShowCdmName(true)}
       />
       <div className="main">
         {(view === 'table' || view === 'kanban') && (
@@ -269,11 +278,11 @@ function App() {
           ) : view === 'drafts' ? (
             <DraftEmailView prospects={prospects} settings={settings} updateSettings={updateSettings} />
           ) : view === 'progress' ? (
-            <ProgressView prospects={prospects} settings={settings} />
+            <ProgressView prospects={prospects} settings={settings} cdmName={cdmName} />
           ) : view === 'campaigns' ? (
             <EmailCampaignView />
           ) : view === 'vibe' ? (
-            <VibeProspecting prospects={prospects} onUpdate={updateProspect} />
+            <VibeProspecting prospects={prospects} onUpdate={updateProspect} cdmName={cdmName} />
           ) : view === 'dedupe' ? (
             <DedupeView />
           ) : view === 'privacy' ? (
@@ -285,11 +294,11 @@ function App() {
           ) : view === 'keycontacts' ? (
             <KeyContactsView prospects={prospects} onSelectProspect={handleSelect} />
           ) : view === 'agenda' ? (
-            <AgendaView prospects={prospects} onSelectProspect={handleSelect} onUpdateProspect={updateProspect} />
+            <AgendaView prospects={prospects} onSelectProspect={handleSelect} onUpdateProspect={updateProspect} cdmName={cdmName} />
           ) : view === 'lists' ? (
-            <ListsView onTargetAccountsLoaded={setTargetAccountsData} prospects={prospects} onSelectProspect={handleSelect} />
+            <ListsView onTargetAccountsLoaded={setTargetAccountsData} prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} />
           ) : view === 'clients' ? (
-            <ClientsView prospects={prospects} onSelectProspect={handleSelect} />
+            <ClientsView prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} />
           ) : view === 'opps' ? (
             <OppsView />
           ) : view === 'hubspot' ? (
@@ -304,6 +313,7 @@ function App() {
               targetAccountsData={targetAccountsData}
               settings={settings}
               updateSettings={updateSettings}
+              cdmName={cdmName}
             />
           ) : view === 'table' ? (
             <TableView
@@ -343,11 +353,18 @@ function App() {
           settings={settings}
           updateSettings={updateSettings}
           updateSettingsPath={updateSettingsPath}
+          cdmName={cdmName}
           targetAccountsData={targetAccountsData}
         />
       )}
 
       {showSync && <SyncPanel prospects={prospects} onClose={() => setShowSync(false)} />}
+      <CdmNameModal
+        open={showCdmName}
+        onClose={() => setShowCdmName(false)}
+        currentName={cdmName}
+        onSave={(next) => updateSettings({ cdmName: next })}
+      />
       <SettingsBackupsModal
         open={showBackups}
         onClose={() => setShowBackups(false)}

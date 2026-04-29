@@ -11,6 +11,7 @@ import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { buildCompanyIndex, findMatchesInIndex, hasMatchInIndex } from '../../utils/companyIndex';
 import { getHubspotCache, setHubspotCache } from '../../utils/hubspotContactsCache';
 import { dbGet } from '../../utils/db';
+import { matchesCdm } from '../../utils/cdmMatch';
 import * as XLSX from 'xlsx';
 import styles from './MyAccountsView.module.css';
 
@@ -834,7 +835,7 @@ function parseXlsx(file) {
   });
 }
 
-export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd, targetAccountsData, settings, updateSettings }) {
+export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd, targetAccountsData, settings, updateSettings, cdmName }) {
   const { user } = useAuth();
   const savedView = settings?.viewFilters?.myAccounts;
   const [search, setSearch] = useState(savedView?.search || '');
@@ -1104,15 +1105,16 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       if (!sheet?.records) continue;
       if (sheet.headers) console.log(`Target Accounts sheet "${sheetName}" columns:`, sheet.headers.filter(Boolean));
 
+      const cdmLastName = (cdmName || '').toLowerCase().split(/\s+/).filter(Boolean).pop() || '';
       for (const r of sheet.records) {
         const companyForLog = findCol(r, ['Account', 'Company', 'Account Name', 'Client', 'Name']);
         let cdm = findCol(r, ['CDM', 'Salesperson', 'Sales Rep', 'Account Owner', 'Owner', 'Rep', 'Assigned', 'Team Member', 'Sales']).toLowerCase();
-        if (!cdm) {
-          cdm = Object.values(r).find(v => String(v || '').toLowerCase().includes('baldauf')) || '';
+        if (!cdm && cdmLastName) {
+          cdm = Object.values(r).find(v => String(v || '').toLowerCase().includes(cdmLastName)) || '';
           cdm = String(cdm).toLowerCase();
         }
-        if (!cdm.includes('baldauf') && !cdm.includes('dan b')) {
-          if (companyForLog) skippedAccounts.push({ company: companyForLog, reason: `CDM="${cdm}" (not Baldauf)` });
+        if (!matchesCdm(cdm, cdmName)) {
+          if (companyForLog) skippedAccounts.push({ company: companyForLog, reason: `CDM="${cdm}" (not ${cdmName || 'configured CDM'})` });
           continue;
         }
         let tier = findCol(r, ['Tier', 'Account Tier', 'Tier Level', 'Target']);
@@ -1130,10 +1132,10 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         accounts.push({ company: company.trim(), tier: normalizedTier, ...r });
       }
     }
-    console.log(`Target Accounts: found ${accounts.length} Dan Baldauf Tier 1/2 accounts`);
+    console.log(`Target Accounts: found ${accounts.length} ${cdmName || 'CDM'} Tier 1/2 accounts`);
     if (skippedAccounts.length > 0) console.log('Target Accounts SKIPPED:', skippedAccounts);
     return accounts;
-  }, [targetAccountsData]);
+  }, [targetAccountsData, cdmName]);
 
   // All Target Accounts with their salesperson (for cross-rep detection)
   const allTargetReps = useMemo(() => {
@@ -1159,14 +1161,13 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         if (!company) continue;
         let rep = findCol(r, ['CDM', 'Salesperson', 'Sales Rep', 'Account Owner', 'Owner', 'Rep', 'Assigned', 'Team Member']);
         if (!rep) continue;
-        const repLower = rep.toLowerCase();
-        // Skip Dan's own entries
-        if (repLower.includes('baldauf') || repLower.includes('dan b')) continue;
+        // Skip the current user's own entries — we only want OTHER reps here
+        if (matchesCdm(rep, cdmName)) continue;
         results.push({ company: company.trim(), rep: rep.trim() });
       }
     }
     return results;
-  }, [targetAccountsData]);
+  }, [targetAccountsData, cdmName]);
 
   // Load activity cache and count per company
   const activityByCompany = useMemo(() => {
@@ -1400,10 +1401,10 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       console.log(`Auto-creating ${missing.length} prospects from opps:`, missing.map(m => m.name));
       for (const { key, name } of missing) {
         autoCreateRanRef.current.add(key);
-        onAdd({ company: name, status: 'Inside Sales', tier: '', type: '', geography: '', publicPrivate: '', assetTypes: [], peAum: null, reAum: null, numberOfSites: null, rank: '', hqRegion: '', frameworks: [], notes: '', website: '', emailDomain: '', cdm: 'Dan Baldauf' });
+        onAdd({ company: name, status: 'Inside Sales', tier: '', type: '', geography: '', publicPrivate: '', assetTypes: [], peAum: null, reAum: null, numberOfSites: null, rank: '', hqRegion: '', frameworks: [], notes: '', website: '', emailDomain: '', cdm: cdmName || '' });
       }
     }
-  }, [openOppsByAccount, prospects.length]);
+  }, [openOppsByAccount, prospects.length, cdmName]);
 
   // Clean up auto-created prospects that no longer have open opps and have no tier
   useEffect(() => {
@@ -1578,10 +1579,10 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         tier = 'Tier 3';
       }
       const cdm = (p.cdm || '').toLowerCase().trim();
-      const isBaldauf = cdm.includes('baldauf');
+      const isBaldauf = matchesCdm(p.cdm, cdmName);
       if (!isBaldauf) {
         // Still include if the company has an OPEN opp. Closed-only history
-        // (Sold/Not Sold) on a non-Baldauf account isn't enough to keep it
+        // (Sold/Not Sold) on a non-CDM account isn't enough to keep it
         // in My Accounts — that's how JPMC was sneaking in.
         const compLower = (p.company || '').toLowerCase();
         let hasOpenOpp = false;
@@ -1802,7 +1803,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
             cdm: p.cdm,
             status: p.status,
             tier: p.tier,
-            isBaldauf: ((p.cdm || '').toLowerCase().includes('baldauf')),
+            isBaldauf: matchesCdm(p.cdm, cdmName),
             openOppsForCompany: openHits,
             isInRenderedList: inList,
           };
@@ -2452,7 +2453,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
                       <Badge label={t.tier} color={t.tier === 'Tier 1' ? '#DC2626' : '#3B82F6'} />
                       <button className={styles.addChipBtn} onClick={() => onAdd({
                         company: t.company,
-                        cdm: 'Dan Baldauf',
+                        cdm: cdmName || '',
                         status: '',
                         type: '',
                         geography: '',

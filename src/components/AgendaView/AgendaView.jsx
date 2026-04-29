@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx';
 import { logAction } from '../../utils/auditLog';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotContacts, updateHubspotCache } from '../../utils/hubspotContactsCache';
+import { matchesCdm } from '../../utils/cdmMatch';
 import styles from './AgendaView.module.css';
 
 const STORAGE_KEY = 'bulk-contacts-cache';
@@ -374,7 +375,7 @@ function ensureProtocol(url) {
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
 }
 
-export function AgendaView({ prospects = [], onUpdateProspect }) {
+export function AgendaView({ prospects = [], onUpdateProspect, cdmName }) {
   const { user } = useAuth();
   const [rows, setRows] = useState(() => loadCache());
   const [dragActive, setDragActive] = useState(false);
@@ -1230,7 +1231,7 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
             if (!p) return '';
             const explicit = (p.tier || '').trim();
             if (explicit === 'Tier 1' || explicit === 'Tier 2') return explicit;
-            if ((p.cdm || '').toLowerCase().includes('baldauf')) return 'Tier 3';
+            if (matchesCdm(p.cdm, cdmName)) return 'Tier 3';
             return '';
           }
           default:                 return '';
@@ -1273,7 +1274,7 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
             if (!p) return '';
             const explicit = (p.tier || '').trim();
             if (explicit === 'Tier 1' || explicit === 'Tier 2') return explicit;
-            if ((p.cdm || '').toLowerCase().includes('baldauf')) return 'Tier 3';
+            if (matchesCdm(p.cdm, cdmName)) return 'Tier 3';
             return '';
           }
           default:                 return '';
@@ -2086,8 +2087,8 @@ export function AgendaView({ prospects = [], onUpdateProspect }) {
                         let t;
                         if (explicit === 'Tier 1' || explicit === 'Tier 2') {
                           t = explicit;
-                        } else if ((prospect.cdm || '').toLowerCase().includes('baldauf')) {
-                          // Prospect is in My Accounts (Baldauf CDM) but
+                        } else if (matchesCdm(prospect.cdm, cdmName)) {
+                          // Prospect is in My Accounts (matching CDM) but
                           // has no explicit Tier 1/2 marker — default
                           // to Tier 3 the same way MyAccountsView does.
                           t = 'Tier 3';

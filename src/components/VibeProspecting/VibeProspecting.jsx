@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import * as XLSX from 'xlsx';
+import { matchesCdm } from '../../utils/cdmMatch';
 import styles from './VibeProspecting.module.css';
 
 const INDUSTRY_OPTIONS = [
@@ -29,11 +30,11 @@ const REVENUE_OPTIONS = [
 const HISTORY_KEY = 'vibe-prospecting-history';
 const MAX_HISTORY = 10;
 
-function getInitialFilters() {
+function getInitialFilters(cdmName) {
   return {
     companyName: '',
     accountList: '',
-    cdm: 'Dan Baldauf',
+    cdm: cdmName || '',
     industry: '',
     titleKeywords: '',
     titleExclude: '',
@@ -107,8 +108,8 @@ function companiesMatch(a, b) {
   return false;
 }
 
-export function VibeProspecting({ prospects = [], onUpdate }) {
-  const [filters, setFilters] = useState(getInitialFilters);
+export function VibeProspecting({ prospects = [], onUpdate, cdmName }) {
+  const [filters, setFilters] = useState(() => getInitialFilters(cdmName));
   const [results, setResults] = useState([]);
   const [selected, setSelected] = useState(new Set());
   const [loading, setLoading] = useState(false);
@@ -953,12 +954,11 @@ export function VibeProspecting({ prospects = [], onUpdate }) {
               onClick={() => {
                 const myAccounts = prospects.filter(p => {
                   if (!p.company) return false;
-                  const cdm = (p.cdm || '').toLowerCase();
-                  if (!cdm.includes('baldauf') && !cdm.includes('dan b')) return false;
+                  if (!matchesCdm(p.cdm, cdmName)) return false;
                   return p.tier === 'Tier 1' || p.tier === 'Tier 2' || p.tier === 'Tier 3';
                 }).sort((a, b) => (a.company || '').localeCompare(b.company || ''));
                 const wsData = [
-                  ["Dan's Account Name", 'Zoom Company Name', 'Website', 'Zoom Company ID'],
+                  [`${cdmName || 'Your'} Account Name`, 'Zoom Company Name', 'Website', 'Zoom Company ID'],
                   ...myAccounts.map(p => [p.company, p.zoomCompanyName || '', p.website || '', p.zoomCompanyId || '']),
                 ];
                 const csv = wsData.map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');

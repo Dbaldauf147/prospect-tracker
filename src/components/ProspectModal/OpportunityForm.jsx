@@ -96,16 +96,19 @@ export const DEFAULT_FORM_TEMPLATE = {
 
 // Seed values for the very first row of certain tables so a fresh form
 // already has the kickoff line filled in. Keyed by table.key, then column.key.
-const FIRST_ROW_SEEDS = {
-  agenda: { subject: 'Introductions', speaker: 'Dan Baldauf', duration: '5' },
-};
+function buildFirstRowSeeds(cdmName) {
+  return {
+    agenda: { subject: 'Introductions', speaker: cdmName || '', duration: '5' },
+  };
+}
 
-function emptyFormData(template = DEFAULT_FORM_TEMPLATE) {
+function emptyFormData(template = DEFAULT_FORM_TEMPLATE, cdmName) {
   const fieldValues = {};
   for (const f of template.fields) fieldValues[f.key] = '';
   const tables = {};
+  const firstRowSeeds = buildFirstRowSeeds(cdmName);
   for (const t of template.tables) {
-    const seed = FIRST_ROW_SEEDS[t.key] || null;
+    const seed = firstRowSeeds[t.key] || null;
     tables[t.key] = Array.from({ length: 2 }, (_, idx) => {
       const row = Object.fromEntries(t.columns.map(c => [c.key, '']));
       if (idx === 0 && seed) {
@@ -548,7 +551,7 @@ const SERVICE_THEIR_QUESTIONS = {
   ],
 };
 
-export function OpportunityForm({ value, onChange, onLinkOpp, companyName, companyContacts = [], allHubspotContacts = [], contactNotes = {}, contactReportsTo = {}, prospects = [], onCreateContact, importableNotes = [] }) {
+export function OpportunityForm({ value, onChange, onLinkOpp, companyName, companyContacts = [], allHubspotContacts = [], contactNotes = {}, contactReportsTo = {}, prospects = [], onCreateContact, importableNotes = [], cdmName }) {
   const template = DEFAULT_FORM_TEMPLATE;
 
   // Local mirror of the persisted value. All edits update localValue
@@ -603,7 +606,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
   }, []);
 
   const formData = useMemo(() => {
-    const base = emptyFormData(template);
+    const base = emptyFormData(template, cdmName);
     const src = localValue;
     if (!src) return base;
     return {
@@ -615,7 +618,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       linkedOppName: src.linkedOppName || null,
       meeting: src.meeting || null,
     };
-  }, [localValue, template]);
+  }, [localValue, template, cdmName]);
 
   // Optimistic local update — feels instant; debounced useEffect above
   // flushes to the parent ~350ms after the last edit.

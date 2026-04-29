@@ -6,6 +6,7 @@ import { EcoActClientsView } from '../EcoActClientsView/EcoActClientsView';
 import { SitesView } from '../SitesView/SitesView';
 import { UploadedListView } from '../UploadedListView/UploadedListView';
 import { loadList as loadListFromIDB } from '../../utils/uploadedListStore';
+import { matchesCdm } from '../../utils/cdmMatch';
 import styles from './ListsView.module.css';
 
 const SUBTABS = [
@@ -151,7 +152,7 @@ function DataSourceLink({ storageKey }) {
   );
 }
 
-export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectProspect }) {
+export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectProspect, cdmName }) {
   const [subtab, setSubtab] = useState('raclients');
   // { [subtabKey]: { mapped, touched, pct } } — green subtab when pct===100.
   const [coverageByKey, setCoverageByKey] = useState({});
@@ -179,8 +180,8 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
     let cancelled = false;
     (async () => {
       // Resolve the "My Accounts" set: prefer MyAccountsView's published
-      // list (exact ~132), fall back to Baldauf-CDM prospects so we
-      // still have a signal before My Accounts is opened.
+      // list, fall back to CDM-matching prospects so we still have a
+      // signal before My Accounts is opened.
       let myAccountNames = null;
       try {
         const raw = localStorage.getItem('my-accounts:active-names');
@@ -194,7 +195,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
         }
       } else {
         for (const p of prospects) {
-          if (!(p.cdm || '').toLowerCase().includes('baldauf')) continue;
+          if (!matchesCdm(p.cdm, cdmName)) continue;
           const k = (p.company || '').toLowerCase().trim();
           if (k) accountSet.add(k);
         }
@@ -278,7 +279,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
       if (!cancelled) setCoverageByKey(result);
     })();
     return () => { cancelled = true; };
-  }, [prospects, coverageVersion, listDefinitions]);
+  }, [prospects, coverageVersion, listDefinitions, cdmName]);
 
   return (
     <div className={styles.wrapper}>
@@ -329,8 +330,8 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
       <div className={styles.content}>
         {subtab === 'raclients' && <RAClientsView />}
         {subtab === 'targets' && <TargetAccountsView onDataLoaded={onTargetAccountsLoaded} />}
-        {subtab === 'recaclients' && <RECAClientsView prospects={prospects} onSelectProspect={onSelectProspect} />}
-        {subtab === 'ecoactclients' && <EcoActClientsView prospects={prospects} onSelectProspect={onSelectProspect} />}
+        {subtab === 'recaclients' && <RECAClientsView prospects={prospects} onSelectProspect={onSelectProspect} cdmName={cdmName} />}
+        {subtab === 'ecoactclients' && <EcoActClientsView prospects={prospects} onSelectProspect={onSelectProspect} cdmName={cdmName} />}
         {subtab === 'sites' && <SitesView />}
         {subtab === 'csrd' && (
           <UploadedListView
@@ -341,6 +342,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             plural="companies"
             prospects={prospects}
             onSelectProspect={onSelectProspect}
+            cdmName={cdmName}
           />
         )}
         {subtab === 'cdp' && (
@@ -352,6 +354,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             plural="companies"
             prospects={prospects}
             onSelectProspect={onSelectProspect}
+            cdmName={cdmName}
           />
         )}
         {subtab === 'gresb' && (
@@ -363,6 +366,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             plural="companies"
             prospects={prospects}
             onSelectProspect={onSelectProspect}
+            cdmName={cdmName}
           />
         )}
         {subtab === 'sbt' && (
@@ -374,6 +378,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             plural="companies"
             prospects={prospects}
             onSelectProspect={onSelectProspect}
+            cdmName={cdmName}
           />
         )}
         {subtab === 'ecovadis' && (
@@ -385,6 +390,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             plural="companies"
             prospects={prospects}
             onSelectProspect={onSelectProspect}
+            cdmName={cdmName}
           />
         )}
         {subtab === 'unpri' && (
@@ -396,6 +402,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             plural="signatories"
             prospects={prospects}
             onSelectProspect={onSelectProspect}
+            cdmName={cdmName}
           />
         )}
         {subtab === 'casb' && (
@@ -407,6 +414,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             plural="companies"
             prospects={prospects}
             onSelectProspect={onSelectProspect}
+            cdmName={cdmName}
           />
         )}
         {subtab === 'nzam' && (
@@ -418,6 +426,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             plural="signatories"
             prospects={prospects}
             onSelectProspect={onSelectProspect}
+            cdmName={cdmName}
           />
         )}
       </div>

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import styles from './Sidebar.module.css';
 
-export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups }) {
+export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, onOpenCdmName }) {
   const initials = user?.displayName
     ? user.displayName.split(' ').map(n => n[0]).join('').toUpperCase()
     : user?.email?.[0]?.toUpperCase() || '?';
@@ -35,6 +35,7 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups }
   const settingsItems = [
     { kind: 'view',    key: 'vibe',    label: 'Vibe Prospecting',  icon: '\u{1F50D}' },
     { kind: 'action',  key: 'sync',    label: 'Sync Google Sheets', icon: '↻',          onClick: () => { onSync?.(); setSettingsOpen(false); } },
+    { kind: 'action',  key: 'cdm',     label: 'CDM Name',           icon: '\u{1F464}',   onClick: () => { onOpenCdmName?.(); setSettingsOpen(false); } },
     { kind: 'action',  key: 'backups', label: 'Backups',            icon: '\u{1F4BE}',   onClick: () => { onOpenBackups?.(); setSettingsOpen(false); } },
     { kind: 'view',    key: 'privacy', label: 'Privacy & Security', icon: '\u{1F512}' },
   ];

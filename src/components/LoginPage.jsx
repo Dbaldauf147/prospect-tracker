@@ -4,6 +4,7 @@ import styles from './LoginPage.module.css';
 export function LoginPage({ onSignInWithEmail, onCreateAccount, onResetPassword, error }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [cdmName, setCdmName] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [isCreateMode, setIsCreateMode] = useState(false);
   const [resetting, setResetting] = useState(false);
@@ -36,9 +37,10 @@ export function LoginPage({ onSignInWithEmail, onCreateAccount, onResetPassword,
   async function handleSubmit(e) {
     e.preventDefault();
     if (!email.trim() || !password) return;
+    if (isCreateMode && !cdmName.trim()) return;
     setSubmitting(true);
     if (isCreateMode) {
-      await onCreateAccount(email.trim(), password);
+      await onCreateAccount(email.trim(), password, cdmName.trim());
     } else {
       await onSignInWithEmail(email.trim(), password);
     }
@@ -59,6 +61,20 @@ export function LoginPage({ onSignInWithEmail, onCreateAccount, onResetPassword,
             onChange={e => setEmail(e.target.value)}
             style={{ padding: '0.5rem 0.75rem', border: '1px solid #D1D5DB', borderRadius: '6px', fontSize: '0.85rem', fontFamily: 'inherit' }}
           />
+          {isCreateMode && (
+            <>
+              <input
+                type="text"
+                placeholder="Your CDM name (e.g. Jane Smith)"
+                value={cdmName}
+                onChange={e => setCdmName(e.target.value)}
+                style={{ padding: '0.5rem 0.75rem', border: '1px solid #D1D5DB', borderRadius: '6px', fontSize: '0.85rem', fontFamily: 'inherit' }}
+              />
+              <p style={{ fontSize: '0.7rem', color: '#6B7280', margin: '-0.15rem 0 0.1rem 0.1rem' }}>
+                The name your prospects&apos; CDM field will be matched against. You can change this later in Settings.
+              </p>
+            </>
+          )}
           <div style={{ position: 'relative' }}>
             <input
               type={showPassword ? 'text' : 'password'}
@@ -90,12 +106,12 @@ export function LoginPage({ onSignInWithEmail, onCreateAccount, onResetPassword,
           </div>
           <button
             type="submit"
-            disabled={submitting || !email.trim() || !password}
+            disabled={submitting || !email.trim() || !password || (isCreateMode && !cdmName.trim())}
             style={{
               padding: '0.55rem 1rem', border: 'none', borderRadius: '6px',
               background: isCreateMode ? '#10B981' : '#1A2332', color: '#fff', fontSize: '0.85rem',
               fontWeight: 600, fontFamily: 'inherit', cursor: submitting ? 'wait' : 'pointer',
-              opacity: (!email.trim() || !password) ? 0.5 : 1,
+              opacity: (!email.trim() || !password || (isCreateMode && !cdmName.trim())) ? 0.5 : 1,
             }}
           >
             {submitting ? (isCreateMode ? 'Creating...' : 'Signing in...') : (isCreateMode ? 'Create Account' : 'Sign In')}
