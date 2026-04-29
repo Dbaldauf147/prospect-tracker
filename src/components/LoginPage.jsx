@@ -1,25 +1,14 @@
 import { useState } from 'react';
 import styles from './LoginPage.module.css';
 
-export function LoginPage({ onSignIn, onSignInWithEmail, onCreateAccount, onResetPassword, error }) {
+export function LoginPage({ onSignInWithEmail, onCreateAccount, onResetPassword, error }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [isCreateMode, setIsCreateMode] = useState(false);
-  const [googleSigningIn, setGoogleSigningIn] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [resetMessage, setResetMessage] = useState(null);
   const [showPassword, setShowPassword] = useState(false);
-
-  async function handleGoogleClick() {
-    if (googleSigningIn) return;
-    setGoogleSigningIn(true);
-    try {
-      await onSignIn();
-    } finally {
-      setGoogleSigningIn(false);
-    }
-  }
 
   async function handleResetPassword() {
     setResetMessage(null);
@@ -111,6 +100,7 @@ export function LoginPage({ onSignIn, onSignInWithEmail, onCreateAccount, onRese
           >
             {submitting ? (isCreateMode ? 'Creating...' : 'Signing in...') : (isCreateMode ? 'Create Account' : 'Sign In')}
           </button>
+          {error && <p className={styles.error}>{error}</p>}
         </form>
 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
@@ -145,22 +135,6 @@ export function LoginPage({ onSignIn, onSignInWithEmail, onCreateAccount, onRese
           </p>
         )}
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
-          <div style={{ flex: 1, height: '1px', background: '#D1D5DB' }} />
-          <span style={{ fontSize: '0.72rem', color: '#9CA3AF' }}>or</span>
-          <div style={{ flex: 1, height: '1px', background: '#D1D5DB' }} />
-        </div>
-
-        <button
-          className={styles.googleBtn}
-          onClick={handleGoogleClick}
-          disabled={googleSigningIn || submitting}
-          style={googleSigningIn || submitting ? { opacity: 0.6, cursor: 'wait' } : undefined}
-        >
-          <span className={styles.googleIcon}>G</span>
-          {googleSigningIn ? 'Opening Google…' : 'Sign in with Google'}
-        </button>
-        {error && <p className={styles.error}>{error}</p>}
       </div>
     </div>
   );

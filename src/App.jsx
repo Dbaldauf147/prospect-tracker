@@ -73,7 +73,7 @@ function parseCsvRow(line) {
 }
 
 function App() {
-  const { user, loading: authLoading, authError, signInWithGoogle, signInWithEmail, createAccount, resetPassword, logout } = useAuth();
+  const { user, loading: authLoading, authError, signInWithEmail, createAccount, resetPassword, logout } = useAuth();
   const { prospects, loading: dataLoading, addProspect, updateProspect, deleteProspect, replaceAll } = useProspects(user);
   const { settings, updateSettings, updateSettingsPath } = useUserSettings(user);
   useSheetSync(user);
@@ -222,7 +222,7 @@ function App() {
   }
 
   if (!user) {
-    return <LoginPage onSignIn={signInWithGoogle} onSignInWithEmail={signInWithEmail} onCreateAccount={createAccount} onResetPassword={resetPassword} error={authError} />;
+    return <LoginPage onSignInWithEmail={signInWithEmail} onCreateAccount={createAccount} onResetPassword={resetPassword} error={authError} />;
   }
 
   function handleAddNew() {
