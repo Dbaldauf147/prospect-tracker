@@ -26,17 +26,17 @@ const SOLUTION_DESC_RE = /^solution\s*description$/i;
 const START_ANCHOR_RE = /^\s*delivery\s*team\s*inputs\b/i;
 const END_ANCHOR_RE = /^\s*cost\s*summary\b/i;
 
-// Header-cell matchers for the columns we recognize.
+// Header-cell matchers for the 5 columns we display.
 const COL_MATCHERS = {
-  description: /alternative\s*fee\s*structure|schedule|service|description/i,
+  description: /^line\s*item$|alternative\s*fee\s*structure|^description$/i,
   type: /^type$/i,
-  fee: /^fee$|cost\s*to\s*serve/i,
-  unit: /^unit$/i,
-  unitCount: /unit\s*count|#\s*of\s*sites|#\s*of\s*accounts/i,
-  startMonth: /(fee\s*)?start\s*month/i,
-  gmPct: /gm\s*%|individual\s*gm/i,
+  cts: /^cts$|cost\s*to\s*serve/i,
+  startMonth: /^start\s*month$|fee\s*start\s*month/i,
   comments: /^comment/i,
 };
+// GM% is read separately so per-row sheet GM% can still feed the
+// markup math even though the column isn't displayed.
+const GM_MATCHER = /gm\s*%|individual\s*gm/i;
 
 function cellStr(v) {
   if (v === null || v === undefined) return '';
@@ -48,21 +48,19 @@ function rowIsBlank(row) {
   return row.every(c => cellStr(c) === '');
 }
 
-// A header row is one whose cells include either an "Alternative Fee
-// Structure/Schedule" label OR the trio Fee + Unit + Type — both
-// shapes show up across different fee templates.
+// A header row is one whose cells include the trio
+// "Line Item" (or equivalent) + "Type" + "CTS" (or "Cost to Serve").
 function isHeaderRow(row) {
   if (!Array.isArray(row)) return false;
-  let altFee = false, hasFee = false, hasUnit = false, hasType = false;
+  let hasLineItem = false, hasType = false, hasCts = false;
   for (const c of row) {
     const s = cellStr(c);
     if (!s) continue;
-    if (/alternative\s*fee\s*structure/i.test(s)) altFee = true;
-    if (/^fee$/i.test(s) || /cost\s*to\s*serve/i.test(s)) hasFee = true;
-    if (/^unit$/i.test(s)) hasUnit = true;
+    if (/^line\s*item$|alternative\s*fee\s*structure/i.test(s)) hasLineItem = true;
     if (/^type$/i.test(s)) hasType = true;
+    if (/^cts$|cost\s*to\s*serve/i.test(s)) hasCts = true;
   }
-  return altFee || (hasFee && hasUnit && hasType);
+  return hasLineItem && hasType && hasCts;
 }
 
 function classifyColumns(headerRow) {
@@ -70,13 +68,12 @@ function classifyColumns(headerRow) {
   headerRow.forEach((cell, i) => {
     const s = cellStr(cell);
     if (!s) return;
+    if (map.gmPct === undefined && GM_MATCHER.test(s)) map.gmPct = i;
     for (const [field, re] of Object.entries(COL_MATCHERS)) {
       if (map[field] !== undefined) continue;
       if (re.test(s)) { map[field] = i; break; }
     }
   });
-  // Fall back: if no description column was tagged, treat col 0 as
-  // the description column.
   if (map.description === undefined) map.description = 0;
   return map;
 }
@@ -190,20 +187,20 @@ function parseOptionSheet(sheet, sheetName) {
         if (!desc) continue;
         // Skip placeholder "Enter X here" rows.
         if (/^enter\s+.+\s+here$/i.test(desc)) continue;
-        // Don't consume the end anchor or another section title.
+        // Don't consume the end anchor, the GM%/Use Target setup
+        // rows, or another section title.
         if (END_ANCHOR_RE.test(desc)) break;
+        if (/^(target\s*gm\s*%|use\s*target|delivery\s*team\s*inputs|solution\s*description|are\s+all\s+values)/i.test(desc)) continue;
 
         const item = {
           id: `${sheetName}::${title}::${items.length}::${desc.slice(0, 40)}`,
           raw: row.slice(),
           description: desc,
           type: cols.type !== undefined ? cellStr(row[cols.type]) : '',
-          unit: cols.unit !== undefined ? cellStr(row[cols.unit]) : '',
-          unitCount: cols.unitCount !== undefined ? toNumber(row[cols.unitCount]) : null,
+          cts: cols.cts !== undefined ? toNumber(row[cols.cts]) : null,
           startMonth: cols.startMonth !== undefined ? cellStr(row[cols.startMonth]) : '',
-          gmPct: cols.gmPct !== undefined ? toPct(row[cols.gmPct]) : null,
           comments: cols.comments !== undefined ? cellStr(row[cols.comments]) : '',
-          fee: cols.fee !== undefined ? toNumber(row[cols.fee]) : null,
+          gmPct: cols.gmPct !== undefined ? toPct(row[cols.gmPct]) : null,
         };
         items.push(item);
       }
@@ -215,8 +212,13 @@ function parseOptionSheet(sheet, sheetName) {
   }
 
   // Diagnostic sample so the in-app fallback panel can show the user
-  // what was actually read when nothing parses.
-  const rawSample = rows.slice(0, 60).map(r => (r || []).map(cellStr));
+  // what was actually read when nothing parses. Trim to the bounded
+  // range when the anchors were found so we don't dump the
+  // sheet-level metadata (Date / Salesperson / Annual kWh / ...).
+  const sampleStart = startIdx >= 0 ? startIdx : 0;
+  const sampleEnd = endIdx >= 0 ? Math.min(rows.length, endIdx + 1) : Math.min(rows.length, sampleStart + 80);
+  const rawSample = rows.slice(sampleStart, sampleEnd).map(r => (r || []).map(cellStr));
+  const rawSampleOffset = sampleStart;
 
   return {
     sheetName,
@@ -224,6 +226,7 @@ function parseOptionSheet(sheet, sheetName) {
     solutionDescription,
     sections,
     rawSample,
+    rawSampleOffset,
     totalRows: rows.length,
     startIdx,
     endIdx,

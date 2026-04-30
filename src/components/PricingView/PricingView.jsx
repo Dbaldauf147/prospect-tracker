@@ -33,7 +33,7 @@ const KEY = 'current';
 // Bump this whenever the parser output shape changes — older cached
 // parses are silently discarded on hydration so the user re-uploads
 // against the current parser.
-const PARSER_VERSION = 3;
+const PARSER_VERSION = 4;
 
 const fmtMoney = (n) => {
   if (n === null || n === undefined || Number.isNaN(n)) return '';
@@ -149,42 +149,30 @@ export function PricingView() {
     return { gm: null, source: 'none' };
   }
 
-  // For an item: marked-up unit fee, plus extended totals using
-  // unit count when the sheet provides one.
   function priceFor(item) {
     const { gm, source } = effectiveGm(item);
-    const unitPrice = priceFromCostAndGm(item.fee ?? null, gm);
-    const extCost = (typeof item.fee === 'number' && typeof item.unitCount === 'number')
-      ? item.fee * item.unitCount
-      : null;
-    const extPrice = (typeof unitPrice === 'number' && typeof item.unitCount === 'number')
-      ? unitPrice * item.unitCount
-      : null;
-    return { gm, source, unitPrice, extCost, extPrice };
+    const price = priceFromCostAndGm(item.cts ?? null, gm);
+    return { gm, source, price };
   }
 
   function exportCsv() {
     if (!workbook) return;
-    const rows = [['Option', 'Section', 'Alternative Fee Structure/Schedule', 'Type', 'Fee', 'Unit', 'Unit Count', 'Fee Start Month', 'Effective GM%', 'GM Source', 'Marked-up Unit Price', 'Extended Cost', 'Extended Marked-up', 'Comments']];
+    const rows = [['Option', 'Section', 'Line Item', 'Type', 'CTS', 'Start Month', 'Comments', 'Effective GM%', 'GM Source', 'Marked-up Price']];
     for (const opt of workbook.options) {
       for (const sec of opt.sections) {
         for (const item of sec.items) {
-          const { gm, source, unitPrice, extCost, extPrice } = priceFor(item);
+          const { gm, source, price } = priceFor(item);
           rows.push([
             opt.sheetName,
             sec.title,
             item.description || '',
             item.type || '',
-            item.fee ?? '',
-            item.unit || '',
-            item.unitCount ?? '',
+            item.cts ?? '',
             item.startMonth || '',
+            item.comments || '',
             gm === null ? '' : (gm * 100).toFixed(2),
             source,
-            unitPrice === null ? '' : unitPrice.toFixed(2),
-            extCost === null ? '' : extCost.toFixed(2),
-            extPrice === null ? '' : extPrice.toFixed(2),
-            item.comments || '',
+            price === null ? '' : price.toFixed(2),
           ]);
         }
       }
@@ -202,13 +190,9 @@ export function PricingView() {
       let cost = 0, price = 0;
       for (const sec of opt.sections) {
         for (const item of sec.items) {
-          const { unitPrice, extCost, extPrice } = priceFor(item);
-          // Use extended values when a unit count is present, otherwise
-          // fall back to the unit-level numbers.
-          if (typeof extCost === 'number') cost += extCost;
-          else if (typeof item.fee === 'number') cost += item.fee;
-          if (typeof extPrice === 'number') price += extPrice;
-          else if (typeof unitPrice === 'number') price += unitPrice;
+          const { price: p } = priceFor(item);
+          if (typeof item.cts === 'number') cost += item.cts;
+          if (typeof p === 'number') price += p;
         }
       }
       perOption[opt.optionNumber] = { cost, price };
@@ -343,7 +327,7 @@ export function PricingView() {
                       No line items detected on this sheet.
                     </div>
                     <div style={{ marginBottom: '0.5rem' }}>
-                      The parser scans between a "Delivery Team Inputs" anchor and a "Cost Summary" anchor, then looks for tables whose header row contains <em>Alternative Fee Structure/Schedule</em>, or the columns <em>Fee + Unit + Type</em>. Below are the first {opt.rawSample?.length || 0} rows of <strong>{opt.sheetName}</strong>; if you can spot the fee table here, share a screenshot of the relevant rows and I'll tune the detection.
+                      The parser scans between a "Delivery Team Inputs" anchor and a "Cost Summary" anchor, then looks for tables whose header row contains <em>Line Item + Type + CTS</em> (Cost to Serve). Below are the {opt.rawSample?.length || 0} rows we read inside that range on <strong>{opt.sheetName}</strong>; if you can spot the line-item table here, share a screenshot of the relevant rows and I'll tune the detection.
                     </div>
                     <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', marginBottom: '0.5rem' }}>
                       Cells in sheet: {opt.cellCount ?? '?'} ·
@@ -357,7 +341,7 @@ export function PricingView() {
                         <tbody>
                           {(opt.rawSample || []).map((row, ri) => (
                             <tr key={ri}>
-                              <td className={styles.rawIdx}>{ri + 1}</td>
+                              <td className={styles.rawIdx}>{(opt.rawSampleOffset ?? 0) + ri + 1}</td>
                               {row.map((cell, ci) => (
                                 <td key={ci}>{cell}</td>
                               ))}
@@ -369,17 +353,10 @@ export function PricingView() {
                   </div>
                 )}
                 {opt.sections.map((sec, sIdx) => {
-                  const subtotalCost = sec.items.reduce((s, i) => {
-                    const { extCost } = priceFor(i);
-                    if (typeof extCost === 'number') return s + extCost;
-                    if (typeof i.fee === 'number') return s + i.fee;
-                    return s;
-                  }, 0);
+                  const subtotalCost = sec.items.reduce((s, i) => s + (typeof i.cts === 'number' ? i.cts : 0), 0);
                   const subtotalPrice = sec.items.reduce((s, i) => {
-                    const { extPrice, unitPrice } = priceFor(i);
-                    if (typeof extPrice === 'number') return s + extPrice;
-                    if (typeof unitPrice === 'number') return s + unitPrice;
-                    return s;
+                    const { price } = priceFor(i);
+                    return s + (typeof price === 'number' ? price : 0);
                   }, 0);
                   return (
                     <div key={sIdx} className={styles.section}>
@@ -387,30 +364,26 @@ export function PricingView() {
                       <table className={styles.table}>
                         <thead>
                           <tr>
-                            <th>Alternative Fee Structure/Schedule</th>
+                            <th>Line Item</th>
                             <th>Type</th>
-                            <th className={styles.numCell}>Fee</th>
-                            <th>Unit</th>
-                            <th className={styles.numCell}>Unit Count</th>
-                            <th>Fee Start Month</th>
-                            <th className={styles.gmCell}>GM%</th>
-                            <th className={styles.priceCell}>Marked-up Unit Price</th>
-                            <th className={styles.priceCell}>Extended</th>
+                            <th className={styles.numCell}>CTS</th>
+                            <th>Start Month</th>
                             <th>Comments</th>
+                            <th className={styles.gmCell}>GM%</th>
+                            <th className={styles.priceCell}>Marked-up Price</th>
                           </tr>
                         </thead>
                         <tbody>
                           {sec.items.map(item => {
-                            const { gm, source, unitPrice, extPrice } = priceFor(item);
+                            const { gm, source, price } = priceFor(item);
                             const overrideVal = overrides[item.id]?.gmPct;
                             return (
                               <tr key={item.id}>
                                 <td>{item.description}</td>
                                 <td>{item.type || ''}</td>
-                                <td className={styles.numCell}>{item.fee === null || item.fee === undefined ? '' : fmtMoney(item.fee)}</td>
-                                <td>{item.unit || ''}</td>
-                                <td className={styles.numCell}>{item.unitCount === null || item.unitCount === undefined ? '' : item.unitCount}</td>
+                                <td className={styles.numCell}>{item.cts === null || item.cts === undefined ? '' : fmtMoney(item.cts)}</td>
                                 <td>{item.startMonth || ''}</td>
+                                <td>{item.comments || ''}</td>
                                 <td className={styles.gmCell}>
                                   <GmInput
                                     key={`${item.id}:${overrideVal === undefined ? 'unset' : overrideVal}`}
@@ -429,19 +402,15 @@ export function PricingView() {
                                     onCommit={(raw) => setItemGm(item.id, raw)}
                                   />
                                 </td>
-                                <td className={styles.priceCell}>{fmtMoney(unitPrice)}</td>
-                                <td className={styles.priceCell}>{fmtMoney(extPrice)}</td>
-                                <td>{item.comments || ''}</td>
+                                <td className={styles.priceCell}>{fmtMoney(price)}</td>
                               </tr>
                             );
                           })}
                           <tr className={styles.totalsRow}>
                             <td colSpan={2}>Section subtotal</td>
                             <td className={styles.numCell}>{fmtMoney(subtotalCost)}</td>
-                            <td colSpan={4} />
-                            <td />
+                            <td colSpan={3} />
                             <td className={styles.priceCell}>{fmtMoney(subtotalPrice)}</td>
-                            <td />
                           </tr>
                         </tbody>
                       </table>
