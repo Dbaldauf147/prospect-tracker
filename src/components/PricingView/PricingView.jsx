@@ -28,6 +28,113 @@ function GmInput({ initialPct, placeholder, title, isOverride, onCommit }) {
   );
 }
 
+// Local-draft text cell — commits on blur/Enter so re-renders don't
+// fight typing.
+function CellTextInput({ initial, placeholder, type, align, onCommit }) {
+  const [draft, setDraft] = useState(initial == null ? '' : String(initial));
+  return (
+    <input
+      type={type || 'text'}
+      className={styles.altCellInput}
+      style={align === 'right' ? { textAlign: 'right' } : undefined}
+      value={draft}
+      placeholder={placeholder}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => onCommit(draft)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.currentTarget.blur();
+        if (e.key === 'Escape') { setDraft(initial == null ? '' : String(initial)); e.currentTarget.blur(); }
+      }}
+    />
+  );
+}
+
+function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow }) {
+  return (
+    <div className={styles.altFeeWrap}>
+      <h3 className={styles.summaryTitle}>Alternative Fee Structure / Schedule</h3>
+      <table className={styles.altTable}>
+        <thead>
+          <tr>
+            <th style={{ minWidth: 220 }}>Alternative Fee Structure/Schedule</th>
+            <th style={{ minWidth: 140 }}>Type</th>
+            <th className={styles.numCell} style={{ minWidth: 120 }}>Fee</th>
+            <th style={{ minWidth: 120 }}>Unit</th>
+            <th className={styles.numCell} style={{ minWidth: 180 }}>Unit Count (# of Sites or Accounts)</th>
+            <th className={styles.numCell} style={{ minWidth: 110 }}>Fee Start Month</th>
+            <th style={{ width: 32 }} />
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, idx) => (
+            <tr key={idx}>
+              <td>
+                <CellTextInput
+                  key={`alt-${idx}-altItem`}
+                  initial={row.altItem}
+                  onCommit={(v) => onChange(idx, 'altItem', v)}
+                />
+              </td>
+              <td>
+                <CellTextInput
+                  key={`alt-${idx}-type`}
+                  initial={row.type}
+                  onCommit={(v) => onChange(idx, 'type', v)}
+                />
+              </td>
+              <td className={styles.numCell}>
+                <CellTextInput
+                  key={`alt-${idx}-fee`}
+                  initial={typeof row.fee === 'number' ? row.fee.toFixed(2) : row.fee}
+                  align="right"
+                  onCommit={(v) => {
+                    const n = Number(String(v).replace(/[$,\s]/g, ''));
+                    onChange(idx, 'fee', Number.isFinite(n) ? n : 0);
+                  }}
+                />
+              </td>
+              <td>
+                <CellTextInput
+                  key={`alt-${idx}-unit`}
+                  initial={row.unit}
+                  onCommit={(v) => onChange(idx, 'unit', v)}
+                />
+              </td>
+              <td className={styles.numCell}>
+                <CellTextInput
+                  key={`alt-${idx}-unitCount`}
+                  initial={row.unitCount}
+                  align="right"
+                  onCommit={(v) => onChange(idx, 'unitCount', v)}
+                />
+              </td>
+              <td className={styles.numCell}>
+                <CellTextInput
+                  key={`alt-${idx}-startMonth`}
+                  initial={row.startMonth}
+                  align="right"
+                  onCommit={(v) => onChange(idx, 'startMonth', v)}
+                />
+              </td>
+              <td>
+                <button
+                  type="button"
+                  className={styles.rowDelBtn}
+                  title="Remove row"
+                  onClick={() => onRemoveRow(idx)}
+                >×</button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <button type="button" className={styles.actionBtn} onClick={onAddRow} style={{ marginTop: '0.5rem' }}>
+        + Add row
+      </button>
+    </div>
+  );
+}
+
 // Free-text per-row cell input. Local-draft like GmInput so typing
 // doesn't fight a re-rendered controlled value.
 function LinkedToInput({ initial, onCommit }) {
@@ -89,6 +196,7 @@ export function PricingView() {
   const [overrides, setOverrides] = useState({}); // { [itemId]: { gmPct } }
   const [activeOption, setActiveOption] = useState(null); // optionNumber or null
   const [colWidths, setColWidths] = useState({}); // { [colKey]: pixelWidth }
+  const [altFees, setAltFees] = useState({}); // { [optionNumber]: [{ altItem, type, fee, unit, unitCount, startMonth }] }
   const [error, setError] = useState('');
   const fileInputRef = useRef(null);
   const hydratedRef = useRef(false);
@@ -112,6 +220,7 @@ export function PricingView() {
         if (saved.overrides) setOverrides(saved.overrides);
         if (typeof saved.activeOption === 'number') setActiveOption(saved.activeOption);
         if (saved.colWidths) setColWidths(saved.colWidths);
+        if (saved.altFees) setAltFees(saved.altFees);
       } catch (err) {
         console.warn('Failed to load pricing cache:', err);
       } finally {
@@ -124,9 +233,9 @@ export function PricingView() {
   // Persist on changes (skip the first render until hydration finishes).
   useEffect(() => {
     if (!hydratedRef.current) return;
-    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths };
+    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees };
     dbPut(STORE, payload, KEY).catch(err => console.warn('Failed to save pricing cache:', err));
-  }, [workbook, globalGmPct, overrides, activeOption, colWidths]);
+  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees]);
 
   // Drag-to-resize column handler. Captures the starting width and
   // mouse X, then updates `colWidths[key]` on mousemove until mouseup.
@@ -180,6 +289,37 @@ export function PricingView() {
     setActiveOption(null);
     setError('');
     dbDelete(STORE, KEY).catch(() => {});
+  }
+
+  // 9 empty starter rows that match the Excel template — used when
+  // an option's alt-fee table hasn't been edited yet.
+  const altFeeStarter = () => Array.from({ length: 9 }, () => ({
+    altItem: '', type: '', fee: 0, unit: '', unitCount: '', startMonth: 1,
+  }));
+
+  function updateAltFeeCell(optionNumber, idx, field, value) {
+    setAltFees(prev => {
+      const list = (prev[optionNumber] || altFeeStarter()).slice();
+      const row = { ...(list[idx] || {}), [field]: value };
+      list[idx] = row;
+      return { ...prev, [optionNumber]: list };
+    });
+  }
+
+  function addAltFeeRow(optionNumber) {
+    setAltFees(prev => {
+      const list = (prev[optionNumber] || altFeeStarter()).slice();
+      list.push({ altItem: '', type: '', fee: 0, unit: '', unitCount: '', startMonth: 1 });
+      return { ...prev, [optionNumber]: list };
+    });
+  }
+
+  function removeAltFeeRow(optionNumber, idx) {
+    setAltFees(prev => {
+      const list = (prev[optionNumber] || []).slice();
+      list.splice(idx, 1);
+      return { ...prev, [optionNumber]: list };
+    });
   }
 
   function setItemLinkedTo(itemId, raw) {
@@ -557,6 +697,13 @@ export function PricingView() {
                           </tbody>
                         </table>
                       </div>
+
+                      <AltFeeTable
+                        rows={altFees[opt.optionNumber] || altFeeStarter()}
+                        onChange={(idx, field, value) => updateAltFeeCell(opt.optionNumber, idx, field, value)}
+                        onAddRow={() => addAltFeeRow(opt.optionNumber)}
+                        onRemoveRow={(idx) => removeAltFeeRow(opt.optionNumber, idx)}
+                      />
                     </div>
                   );
                 })()}
