@@ -33,7 +33,7 @@ const KEY = 'current';
 // Bump this whenever the parser output shape changes — older cached
 // parses are silently discarded on hydration so the user re-uploads
 // against the current parser.
-const PARSER_VERSION = 6;
+const PARSER_VERSION = 7;
 
 const fmtMoney = (n) => {
   if (n === null || n === undefined || Number.isNaN(n)) return '';

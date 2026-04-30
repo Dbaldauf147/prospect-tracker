@@ -51,19 +51,19 @@ function rowIsBlank(row) {
   return row.every(c => cellStr(c) === '');
 }
 
-// A header row is one whose cells include the trio
-// "Line Item" (or equivalent) + "Type" + "CTS" (or "Cost to Serve").
+// A header row is one whose cells include both a "Type" header and
+// a "Cost to Serve" / "CTS" header. The section title is then read
+// from column A of that same row (e.g. "SB Services (CTS)").
 function isHeaderRow(row) {
   if (!Array.isArray(row)) return false;
-  let hasLineItem = false, hasType = false, hasCts = false;
+  let hasType = false, hasCts = false;
   for (const c of row) {
     const s = cellStr(c);
     if (!s) continue;
-    if (/^line\s*item$|alternative\s*fee\s*structure/i.test(s)) hasLineItem = true;
     if (/^type$/i.test(s)) hasType = true;
     if (/^cts$|cost\s*to\s*serve/i.test(s)) hasCts = true;
   }
-  return hasLineItem && hasType && hasCts;
+  return hasType && hasCts;
 }
 
 function classifyColumns(headerRow) {
