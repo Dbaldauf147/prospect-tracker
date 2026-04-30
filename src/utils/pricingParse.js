@@ -1,13 +1,19 @@
 // Parses cost data out of "Option 1/2/3/4" sheets in an uploaded fee
-// workbook. Each Option sheet has a free-text "Solution description"
-// up top and one or more sub-tables of line items underneath.
+// workbook. The data we care about is bounded between two anchor
+// rows on each sheet:
 //
-// The parser is header-anchored: it scans every row for one that
-// contains a "Cost to Serve" cell (or a Description-only header for
-// shared-savings sub-tables). Each such row is treated as a section
-// header; everything between that header and the next one — even if
-// blank rows are interspersed — is collected as line items, as long
-// as the row's first cell is non-empty.
+//   start: "Delivery Team Inputs"
+//   end:   "Cost Summary"
+//
+// Inside that range, line items live in one or more sub-tables whose
+// header rows match the columns:
+//
+//   Alternative Fee Structure/Schedule | Type | Fee | Unit |
+//   Unit Count (# of Sites or Accounts) | Fee Start Month
+//
+// Each detected header row starts a new section; the rows below it
+// (until the next header or the Cost Summary anchor) are line items
+// keyed by the value in the first column.
 //
 // Hidden sheets are read just like visible ones — XLSX preserves
 // `Sheet.Hidden` (1 = hidden, 2 = very hidden) on the workbook, which
@@ -16,9 +22,21 @@
 import * as XLSX from 'xlsx';
 
 const OPTION_RE = /^\s*Option\s*([1-4])\b/i;
-const COST_HEADER_RE = /cost\s*to\s*serve/i;
 const SOLUTION_DESC_RE = /^solution\s*description$/i;
-const SKIP_LABEL_RE = /^(target\s*gm\s*%|use\s*target|delivery\s*team\s*inputs|solution\s*description)/i;
+const START_ANCHOR_RE = /^\s*delivery\s*team\s*inputs\b/i;
+const END_ANCHOR_RE = /^\s*cost\s*summary\b/i;
+
+// Header-cell matchers for the columns we recognize.
+const COL_MATCHERS = {
+  description: /alternative\s*fee\s*structure|schedule|service|description/i,
+  type: /^type$/i,
+  fee: /^fee$|cost\s*to\s*serve/i,
+  unit: /^unit$/i,
+  unitCount: /unit\s*count|#\s*of\s*sites|#\s*of\s*accounts/i,
+  startMonth: /(fee\s*)?start\s*month/i,
+  gmPct: /gm\s*%|individual\s*gm/i,
+  comments: /^comment/i,
+};
 
 function cellStr(v) {
   if (v === null || v === undefined) return '';
@@ -30,20 +48,37 @@ function rowIsBlank(row) {
   return row.every(c => cellStr(c) === '');
 }
 
-function rowHasHeaderCue(row) {
+// A header row is one whose cells include either an "Alternative Fee
+// Structure/Schedule" label OR the trio Fee + Unit + Type — both
+// shapes show up across different fee templates.
+function isHeaderRow(row) {
   if (!Array.isArray(row)) return false;
-  // Treat as a header row if any cell matches "Cost to Serve" OR if
-  // the row has a non-empty col 0 plus a "Description" header in cols
-  // 1+ (the shared-savings layout).
-  for (let i = 0; i < row.length; i++) {
-    if (COST_HEADER_RE.test(cellStr(row[i]))) return true;
+  let altFee = false, hasFee = false, hasUnit = false, hasType = false;
+  for (const c of row) {
+    const s = cellStr(c);
+    if (!s) continue;
+    if (/alternative\s*fee\s*structure/i.test(s)) altFee = true;
+    if (/^fee$/i.test(s) || /cost\s*to\s*serve/i.test(s)) hasFee = true;
+    if (/^unit$/i.test(s)) hasUnit = true;
+    if (/^type$/i.test(s)) hasType = true;
   }
-  if (cellStr(row[0])) {
-    for (let i = 1; i < row.length; i++) {
-      if (/^description$/i.test(cellStr(row[i]))) return true;
+  return altFee || (hasFee && hasUnit && hasType);
+}
+
+function classifyColumns(headerRow) {
+  const map = {};
+  headerRow.forEach((cell, i) => {
+    const s = cellStr(cell);
+    if (!s) return;
+    for (const [field, re] of Object.entries(COL_MATCHERS)) {
+      if (map[field] !== undefined) continue;
+      if (re.test(s)) { map[field] = i; break; }
     }
-  }
-  return false;
+  });
+  // Fall back: if no description column was tagged, treat col 0 as
+  // the description column.
+  if (map.description === undefined) map.description = 0;
+  return map;
 }
 
 function parseOptionSheet(sheet, sheetName) {
@@ -54,10 +89,21 @@ function parseOptionSheet(sheet, sheetName) {
     raw: true,
   });
 
-  let solutionDescription = '';
-  let targetGmPct = null;
+  // Locate the anchors.
+  let startIdx = -1, endIdx = -1;
+  for (let i = 0; i < rows.length; i++) {
+    const a = cellStr((rows[i] || [])[0]);
+    if (!a) continue;
+    if (startIdx === -1 && START_ANCHOR_RE.test(a)) startIdx = i;
+    else if (startIdx !== -1 && endIdx === -1 && END_ANCHOR_RE.test(a)) {
+      endIdx = i;
+      break;
+    }
+  }
 
-  // First pass: extract Solution description + Target GM%.
+  // Solution description — captured from anywhere on the sheet, even
+  // outside the anchor range, since it's typically up at the top.
+  let solutionDescription = '';
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i] || [];
     const a = cellStr(row[0]);
@@ -67,97 +113,96 @@ function parseOptionSheet(sheet, sheetName) {
       if (here) {
         solutionDescription = here;
       } else {
-        // Look at the next non-blank row.
         for (let j = i + 1; j < Math.min(rows.length, i + 4); j++) {
           const next = rows[j] || [];
           const nv = cellStr(next[0]) || cellStr(next[1]);
           if (nv) { solutionDescription = nv; break; }
         }
       }
+      break;
     }
-    if (/target\s*gm\s*%/i.test(a)) {
-      const v = (row.slice(1).map(cellStr).find(Boolean) || '');
-      if (v) {
-        const n = Number(String(v).replace('%', '').trim());
-        if (!Number.isNaN(n)) targetGmPct = n > 1 ? n / 100 : n;
-      }
-    }
-  }
-
-  // Second pass: locate every header row, then collect items between
-  // each pair of headers.
-  const headerIdxs = [];
-  for (let i = 0; i < rows.length; i++) {
-    if (rowHasHeaderCue(rows[i] || [])) headerIdxs.push(i);
   }
 
   const sections = [];
-  for (let hi = 0; hi < headerIdxs.length; hi++) {
-    const idx = headerIdxs[hi];
-    const headerRow = (rows[idx] || []).map(cellStr);
-    const nextHeaderIdx = headerIdxs[hi + 1] ?? rows.length;
+  if (startIdx !== -1) {
+    const stop = endIdx === -1 ? rows.length : endIdx;
+    // Find every header row inside the bounded range.
+    const headerIdxs = [];
+    for (let i = startIdx + 1; i < stop; i++) {
+      if (isHeaderRow(rows[i] || [])) headerIdxs.push(i);
+    }
 
-    // Section title: col 0 of the header row. If that cell is empty
-    // (Cost to Serve in col 0 of an unusual layout), look back for the
-    // nearest non-blank single-label row above.
-    let title = headerRow[0] || '';
-    if (!title) {
-      for (let j = idx - 1; j >= 0 && j > (headerIdxs[hi - 1] ?? -1); j--) {
-        const t = cellStr((rows[j] || [])[0]);
-        if (t && !SKIP_LABEL_RE.test(t)) { title = t; break; }
+    for (let hi = 0; hi < headerIdxs.length; hi++) {
+      const idx = headerIdxs[hi];
+      const headerRow = (rows[idx] || []).map(cellStr);
+      const cols = classifyColumns(headerRow);
+      const nextHeaderIdx = headerIdxs[hi + 1] ?? stop;
+
+      // Section title: nearest non-blank single-label row above the
+      // header (e.g. "SB Services (CTS w/recommended GM%)"), bounded
+      // by the previous header so we don't reach across sections.
+      let title = '';
+      const lowBound = (headerIdxs[hi - 1] ?? startIdx) + 1;
+      for (let j = idx - 1; j >= lowBound; j--) {
+        const r = rows[j] || [];
+        if (rowIsBlank(r)) continue;
+        const a = cellStr(r[0]);
+        const others = r.slice(1).filter(c => cellStr(c)).length;
+        // A section-title row has text in col 0 and is otherwise empty.
+        if (a && others === 0) { title = a; break; }
+        // Stop walking up once we hit something with multiple cells
+        // populated (likely another sub-table's data).
+        if (others >= 1) break;
       }
-      if (!title) title = `Section ${hi + 1}`;
-    }
+      if (!title) {
+        title = cellStr(headerRow[cols.description]) || `Section ${hi + 1}`;
+      }
 
-    const items = [];
-    for (let r = idx + 1; r < nextHeaderIdx; r++) {
-      const row = rows[r] || [];
-      const a = cellStr(row[0]);
-      if (!a) continue;
-      // Skip rows that are themselves key/value pairs (Target GM%,
-      // Use Target, etc.) or section title strings.
-      if (SKIP_LABEL_RE.test(a)) continue;
-      if (rowIsBlank(row)) continue;
-      // Skip placeholder / "Enter X here" rows.
-      if (/^enter\s+.+\s+here$/i.test(a)) continue;
+      const items = [];
+      for (let r = idx + 1; r < nextHeaderIdx; r++) {
+        const row = rows[r] || [];
+        if (rowIsBlank(row)) continue;
+        const desc = cellStr(row[cols.description ?? 0]);
+        if (!desc) continue;
+        // Skip placeholder "Enter X here" rows.
+        if (/^enter\s+.+\s+here$/i.test(desc)) continue;
+        // Don't consume the end anchor or another section title.
+        if (END_ANCHOR_RE.test(desc)) break;
 
-      const item = {
-        id: `${sheetName}::${title}::${items.length}::${a.slice(0, 40)}`,
-        raw: row.slice(),
-        description: a,
-      };
-      headerRow.forEach((h, i2) => {
-        if (i2 === 0) return;
-        const hl = h.toLowerCase();
-        const v = row[i2];
-        if (/^type$/.test(hl)) item.type = cellStr(v);
-        else if (COST_HEADER_RE.test(h)) item.cost = toNumber(v);
-        else if (/start\s*month/i.test(hl)) item.startMonth = cellStr(v);
-        else if (/gm\s*%/i.test(hl)) item.gmPct = toPct(v);
-        else if (/comment/i.test(hl)) item.comments = cellStr(v);
-        else if (/description/i.test(hl) && !item.description2) item.description2 = cellStr(v);
-      });
-      items.push(item);
-    }
+        const item = {
+          id: `${sheetName}::${title}::${items.length}::${desc.slice(0, 40)}`,
+          raw: row.slice(),
+          description: desc,
+          type: cols.type !== undefined ? cellStr(row[cols.type]) : '',
+          unit: cols.unit !== undefined ? cellStr(row[cols.unit]) : '',
+          unitCount: cols.unitCount !== undefined ? toNumber(row[cols.unitCount]) : null,
+          startMonth: cols.startMonth !== undefined ? cellStr(row[cols.startMonth]) : '',
+          gmPct: cols.gmPct !== undefined ? toPct(row[cols.gmPct]) : null,
+          comments: cols.comments !== undefined ? cellStr(row[cols.comments]) : '',
+          fee: cols.fee !== undefined ? toNumber(row[cols.fee]) : null,
+        };
+        items.push(item);
+      }
 
-    if (items.length > 0) {
-      sections.push({ title, headers: headerRow, items });
+      if (items.length > 0) {
+        sections.push({ title, headers: headerRow, cols, items });
+      }
     }
   }
 
-  // Capture a small slice of raw rows for the in-app diagnostic panel
-  // when nothing parses.
-  const rawSample = rows.slice(0, 40).map(r => (r || []).map(cellStr));
+  // Diagnostic sample so the in-app fallback panel can show the user
+  // what was actually read when nothing parses.
+  const rawSample = rows.slice(0, 60).map(r => (r || []).map(cellStr));
 
   return {
     sheetName,
     hidden: false, // overwritten by caller
     solutionDescription,
-    targetGmPct,
     sections,
     rawSample,
     totalRows: rows.length,
-    headerIdxs,
+    startIdx,
+    endIdx,
   };
 }
 
@@ -203,9 +248,8 @@ export function parsePricingWorkbook(buffer) {
   return { options, sheetNames: wb.SheetNames || [] };
 }
 
-// Compute marked-up price from cost + gross-margin %. GM is the
-// fraction of the *price* that is margin, so price = cost / (1 - gm).
-// Returns null if either input is missing or gm >= 1.
+// Marked-up unit price from cost + gross-margin %. GM is the fraction
+// of the *price* that is margin, so price = cost / (1 - gm).
 export function priceFromCostAndGm(cost, gmPct) {
   if (cost === null || cost === undefined) return null;
   if (gmPct === null || gmPct === undefined) return null;

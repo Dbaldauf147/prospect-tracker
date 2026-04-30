@@ -138,23 +138,41 @@ export function PricingView() {
     return { gm: null, source: 'none' };
   }
 
+  // For an item: marked-up unit fee, plus extended totals using
+  // unit count when the sheet provides one.
+  function priceFor(item) {
+    const { gm, source } = effectiveGm(item);
+    const unitPrice = priceFromCostAndGm(item.fee ?? null, gm);
+    const extCost = (typeof item.fee === 'number' && typeof item.unitCount === 'number')
+      ? item.fee * item.unitCount
+      : null;
+    const extPrice = (typeof unitPrice === 'number' && typeof item.unitCount === 'number')
+      ? unitPrice * item.unitCount
+      : null;
+    return { gm, source, unitPrice, extCost, extPrice };
+  }
+
   function exportCsv() {
     if (!workbook) return;
-    const rows = [['Option', 'Section', 'Description', 'Type', 'Cost to Serve', 'Effective GM%', 'GM Source', 'Marked-up Price', 'Comments']];
+    const rows = [['Option', 'Section', 'Alternative Fee Structure/Schedule', 'Type', 'Fee', 'Unit', 'Unit Count', 'Fee Start Month', 'Effective GM%', 'GM Source', 'Marked-up Unit Price', 'Extended Cost', 'Extended Marked-up', 'Comments']];
     for (const opt of workbook.options) {
       for (const sec of opt.sections) {
         for (const item of sec.items) {
-          const { gm, source } = effectiveGm(item);
-          const price = priceFromCostAndGm(item.cost ?? null, gm);
+          const { gm, source, unitPrice, extCost, extPrice } = priceFor(item);
           rows.push([
             opt.sheetName,
             sec.title,
             item.description || '',
             item.type || '',
-            item.cost ?? '',
+            item.fee ?? '',
+            item.unit || '',
+            item.unitCount ?? '',
+            item.startMonth || '',
             gm === null ? '' : (gm * 100).toFixed(2),
             source,
-            price === null ? '' : price.toFixed(2),
+            unitPrice === null ? '' : unitPrice.toFixed(2),
+            extCost === null ? '' : extCost.toFixed(2),
+            extPrice === null ? '' : extPrice.toFixed(2),
             item.comments || '',
           ]);
         }
@@ -173,10 +191,13 @@ export function PricingView() {
       let cost = 0, price = 0;
       for (const sec of opt.sections) {
         for (const item of sec.items) {
-          if (typeof item.cost === 'number') cost += item.cost;
-          const { gm } = effectiveGm(item);
-          const p = priceFromCostAndGm(item.cost ?? null, gm);
-          if (typeof p === 'number') price += p;
+          const { unitPrice, extCost, extPrice } = priceFor(item);
+          // Use extended values when a unit count is present, otherwise
+          // fall back to the unit-level numbers.
+          if (typeof extCost === 'number') cost += extCost;
+          else if (typeof item.fee === 'number') cost += item.fee;
+          if (typeof extPrice === 'number') price += extPrice;
+          else if (typeof unitPrice === 'number') price += unitPrice;
         }
       }
       perOption[opt.optionNumber] = { cost, price };
@@ -256,7 +277,7 @@ export function PricingView() {
           <div className={styles.empty}>
             <div>No workbook loaded.</div>
             <div style={{ fontSize: 'var(--font-size-xs)' }}>
-              Click <strong>Upload workbook</strong> above. We'll read every sheet named "Option 1" through "Option 4" — including hidden ones — and pull each section's line items into the table below. Set a global GM% (gross margin) to apply across all rows, or override individual line items.
+              Click <strong>Upload workbook</strong> above. We'll read every sheet named "Option 1" through "Option 4" — including hidden ones — and pull line items from the section bounded by <strong>Delivery Team Inputs</strong> at the top and <strong>Cost Summary</strong> at the bottom. Set a global GM% (gross margin) to apply across all rows, or override individual line items.
             </div>
           </div>
         )}
@@ -311,10 +332,12 @@ export function PricingView() {
                       No line items detected on this sheet.
                     </div>
                     <div style={{ marginBottom: '0.5rem' }}>
-                      The parser looks for a row containing a "Cost to Serve" header cell, then collects rows below it as line items. Below is the raw content of the first {opt.rawSample?.length || 0} rows of <strong>{opt.sheetName}</strong> so you can see what was actually read. If you can spot the cost table here, share a screenshot of the first 30-ish rows and I'll tune the detection.
+                      The parser scans between a "Delivery Team Inputs" anchor and a "Cost Summary" anchor, then looks for tables whose header row contains <em>Alternative Fee Structure/Schedule</em>, or the columns <em>Fee + Unit + Type</em>. Below are the first {opt.rawSample?.length || 0} rows of <strong>{opt.sheetName}</strong>; if you can spot the fee table here, share a screenshot of the relevant rows and I'll tune the detection.
                     </div>
                     <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', marginBottom: '0.5rem' }}>
-                      Total rows in sheet: {opt.totalRows ?? '?'} · header rows found: {opt.headerIdxs?.length ?? 0}
+                      Total rows: {opt.totalRows ?? '?'} ·
+                      Delivery Team Inputs row: {opt.startIdx >= 0 ? opt.startIdx + 1 : 'not found'} ·
+                      Cost Summary row: {opt.endIdx >= 0 ? opt.endIdx + 1 : 'not found'}
                     </div>
                     <div className={styles.rawScroll}>
                       <table className={styles.rawTable}>
@@ -332,72 +355,86 @@ export function PricingView() {
                     </div>
                   </div>
                 )}
-                {opt.sections.map((sec, sIdx) => (
-                  <div key={sIdx} className={styles.section}>
-                    <h3 className={styles.sectionTitle}>{sec.title}</h3>
-                    <table className={styles.table}>
-                      <thead>
-                        <tr>
-                          <th>Description</th>
-                          <th>Type</th>
-                          <th className={styles.numCell}>Cost to Serve</th>
-                          <th className={styles.gmCell}>GM%</th>
-                          <th className={styles.priceCell}>Marked-up Price</th>
-                          <th>Comments</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sec.items.map(item => {
-                          const { gm, source } = effectiveGm(item);
-                          const price = priceFromCostAndGm(item.cost ?? null, gm);
-                          const overrideVal = overrides[item.id]?.gmPct;
-                          return (
-                            <tr key={item.id}>
-                              <td>{item.description}</td>
-                              <td>{item.type || ''}</td>
-                              <td className={styles.numCell}>{item.cost === null || item.cost === undefined ? '' : fmtMoney(item.cost)}</td>
-                              <td className={styles.gmCell}>
-                                <GmInput
-                                  key={`${item.id}:${overrideVal === undefined ? 'unset' : overrideVal}`}
-                                  initialPct={overrideVal !== undefined ? overrideVal * 100 : null}
-                                  isOverride={overrideVal !== undefined}
-                                  placeholder={gm === null ? '' : `${(gm * 100).toFixed(1)}${source === 'override' ? '' : ` (${source[0]})`}`}
-                                  title={
-                                    source === 'override'
-                                      ? 'Per-line override. Clear to revert to global GM%.'
-                                      : source === 'global'
-                                      ? `Using global GM% (${fmtPct(globalGmPct)}). Type a value to override.`
-                                      : source === 'sheet'
-                                      ? `Using sheet GM% (${fmtPct(item.gmPct)}). Type a value to override.`
-                                      : 'No GM% set.'
-                                  }
-                                  onCommit={(raw) => setItemGm(item.id, raw)}
-                                />
-                              </td>
-                              <td className={styles.priceCell}>{fmtMoney(price)}</td>
-                              <td>{item.comments || ''}</td>
-                            </tr>
-                          );
-                        })}
-                        <tr className={styles.totalsRow}>
-                          <td colSpan={2}>Section subtotal</td>
-                          <td className={styles.numCell}>
-                            {fmtMoney(sec.items.reduce((s, i) => s + (typeof i.cost === 'number' ? i.cost : 0), 0))}
-                          </td>
-                          <td />
-                          <td className={styles.priceCell}>
-                            {fmtMoney(sec.items.reduce((s, i) => {
-                              const { gm } = effectiveGm(i);
-                              const p = priceFromCostAndGm(i.cost ?? null, gm);
-                              return s + (typeof p === 'number' ? p : 0);
-                            }, 0))}
-                          </td>
-                          <td />
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                ))}
+                {opt.sections.map((sec, sIdx) => {
+                  const subtotalCost = sec.items.reduce((s, i) => {
+                    const { extCost } = priceFor(i);
+                    if (typeof extCost === 'number') return s + extCost;
+                    if (typeof i.fee === 'number') return s + i.fee;
+                    return s;
+                  }, 0);
+                  const subtotalPrice = sec.items.reduce((s, i) => {
+                    const { extPrice, unitPrice } = priceFor(i);
+                    if (typeof extPrice === 'number') return s + extPrice;
+                    if (typeof unitPrice === 'number') return s + unitPrice;
+                    return s;
+                  }, 0);
+                  return (
+                    <div key={sIdx} className={styles.section}>
+                      <h3 className={styles.sectionTitle}>{sec.title}</h3>
+                      <table className={styles.table}>
+                        <thead>
+                          <tr>
+                            <th>Alternative Fee Structure/Schedule</th>
+                            <th>Type</th>
+                            <th className={styles.numCell}>Fee</th>
+                            <th>Unit</th>
+                            <th className={styles.numCell}>Unit Count</th>
+                            <th>Fee Start Month</th>
+                            <th className={styles.gmCell}>GM%</th>
+                            <th className={styles.priceCell}>Marked-up Unit Price</th>
+                            <th className={styles.priceCell}>Extended</th>
+                            <th>Comments</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {sec.items.map(item => {
+                            const { gm, source, unitPrice, extPrice } = priceFor(item);
+                            const overrideVal = overrides[item.id]?.gmPct;
+                            return (
+                              <tr key={item.id}>
+                                <td>{item.description}</td>
+                                <td>{item.type || ''}</td>
+                                <td className={styles.numCell}>{item.fee === null || item.fee === undefined ? '' : fmtMoney(item.fee)}</td>
+                                <td>{item.unit || ''}</td>
+                                <td className={styles.numCell}>{item.unitCount === null || item.unitCount === undefined ? '' : item.unitCount}</td>
+                                <td>{item.startMonth || ''}</td>
+                                <td className={styles.gmCell}>
+                                  <GmInput
+                                    key={`${item.id}:${overrideVal === undefined ? 'unset' : overrideVal}`}
+                                    initialPct={overrideVal !== undefined ? overrideVal * 100 : null}
+                                    isOverride={overrideVal !== undefined}
+                                    placeholder={gm === null ? '' : `${(gm * 100).toFixed(1)}${source === 'override' ? '' : ` (${source[0]})`}`}
+                                    title={
+                                      source === 'override'
+                                        ? 'Per-line override. Clear to revert to global GM%.'
+                                        : source === 'global'
+                                        ? `Using global GM% (${fmtPct(globalGmPct)}). Type a value to override.`
+                                        : source === 'sheet'
+                                        ? `Using sheet GM% (${fmtPct(item.gmPct)}). Type a value to override.`
+                                        : 'No GM% set.'
+                                    }
+                                    onCommit={(raw) => setItemGm(item.id, raw)}
+                                  />
+                                </td>
+                                <td className={styles.priceCell}>{fmtMoney(unitPrice)}</td>
+                                <td className={styles.priceCell}>{fmtMoney(extPrice)}</td>
+                                <td>{item.comments || ''}</td>
+                              </tr>
+                            );
+                          })}
+                          <tr className={styles.totalsRow}>
+                            <td colSpan={2}>Section subtotal</td>
+                            <td className={styles.numCell}>{fmtMoney(subtotalCost)}</td>
+                            <td colSpan={4} />
+                            <td />
+                            <td className={styles.priceCell}>{fmtMoney(subtotalPrice)}</td>
+                            <td />
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })}
               </div>
             </>
           );
