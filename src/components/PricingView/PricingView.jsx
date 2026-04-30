@@ -119,7 +119,7 @@ function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onA
             <th style={{ minWidth: 140 }}>Type</th>
             <th className={styles.numCell} style={{ minWidth: 120 }}>Fee</th>
             <th style={{ minWidth: 120 }}>Unit</th>
-            <th className={styles.numCell} style={{ width: 110, maxWidth: 130 }}>Unit Count (# of Sites or Accounts)</th>
+            <th className={styles.numCell} style={{ width: 90 }}>Unit Count</th>
             <th className={styles.numCell} style={{ minWidth: 110 }}>Fee Start Month</th>
             <th className={styles.numCell} style={{ width: 90 }}>Fee GM%</th>
             <th style={{ width: 32 }} />
