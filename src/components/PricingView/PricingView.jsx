@@ -30,6 +30,10 @@ function GmInput({ initialPct, placeholder, title, isOverride, onCommit }) {
 
 const STORE = 'pricing-cache';
 const KEY = 'current';
+// Bump this whenever the parser output shape changes — older cached
+// parses are silently discarded on hydration so the user re-uploads
+// against the current parser.
+const PARSER_VERSION = 3;
 
 const fmtMoney = (n) => {
   if (n === null || n === undefined || Number.isNaN(n)) return '';
@@ -64,6 +68,13 @@ export function PricingView() {
       try {
         const saved = await dbGet(STORE, KEY);
         if (cancelled || !saved) { hydratedRef.current = true; return; }
+        // Drop caches written by an older parser — their workbook
+        // shape may not match what the UI now expects.
+        if (saved.parserVersion !== PARSER_VERSION) {
+          await dbDelete(STORE, KEY).catch(() => {});
+          hydratedRef.current = true;
+          return;
+        }
         if (saved.workbook) setWorkbook(saved.workbook);
         if (typeof saved.globalGmPct === 'number') setGlobalGmPct(saved.globalGmPct);
         if (saved.overrides) setOverrides(saved.overrides);
@@ -80,7 +91,7 @@ export function PricingView() {
   // Persist on changes (skip the first render until hydration finishes).
   useEffect(() => {
     if (!hydratedRef.current) return;
-    const payload = { workbook, globalGmPct, overrides, activeOption };
+    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption };
     dbPut(STORE, payload, KEY).catch(err => console.warn('Failed to save pricing cache:', err));
   }, [workbook, globalGmPct, overrides, activeOption]);
 
