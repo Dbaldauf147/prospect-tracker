@@ -78,7 +78,7 @@ function parseAltFeePaste(text) {
   return out;
 }
 
-function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onAppendRows, globalGmPct }) {
+function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onAppendRows, globalGmPct, marginFor }) {
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState('');
   const [flash, setFlash] = useState('');
@@ -186,21 +186,32 @@ function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onA
                   onCommit={(v) => onChange(idx, 'startMonth', v)}
                 />
               </td>
-              <td className={styles.numCell}>
-                <CellTextInput
-                  key={`alt-${idx}-feeGm-${row.feeGmPct ?? ''}`}
-                  initial={typeof row.feeGmPct === 'number' ? (row.feeGmPct * 100).toString() : ''}
-                  placeholder={typeof globalGmPct === 'number' ? `${Math.round(globalGmPct * 100)}%` : ''}
-                  align="right"
-                  onCommit={(v) => {
-                    const trimmed = String(v ?? '').replace('%', '').trim();
-                    if (!trimmed) { onChange(idx, 'feeGmPct', null); return; }
-                    const n = Number(trimmed);
-                    if (!Number.isFinite(n)) return;
-                    onChange(idx, 'feeGmPct', n > 1 ? n / 100 : n);
-                  }}
-                />
-              </td>
+              {(() => {
+                const computed = marginFor ? marginFor(row.altItem, row.fee) : null;
+                const placeholder = computed
+                  ? `${(computed.marginPct * 100).toFixed(1)}%`
+                  : (typeof globalGmPct === 'number' ? `${Math.round(globalGmPct * 100)}%` : '');
+                const title = computed
+                  ? `Auto: linked CTS sum $${computed.costSum.toFixed(2)} across ${computed.matchCount} item(s); fee $${(row.fee || 0).toFixed(2)} → margin ${(computed.marginPct * 100).toFixed(1)}%. Type a value to override.`
+                  : 'No CTS items are linked to this Alt Fee item — falls back to the global GM%.';
+                return (
+                  <td className={styles.numCell} title={title}>
+                    <CellTextInput
+                      key={`alt-${idx}-feeGm-${row.feeGmPct ?? ''}-${computed ? computed.marginPct.toFixed(4) : 'n'}`}
+                      initial={typeof row.feeGmPct === 'number' ? (row.feeGmPct * 100).toString() : ''}
+                      placeholder={placeholder}
+                      align="right"
+                      onCommit={(v) => {
+                        const trimmed = String(v ?? '').replace('%', '').trim();
+                        if (!trimmed) { onChange(idx, 'feeGmPct', null); return; }
+                        const n = Number(trimmed);
+                        if (!Number.isFinite(n)) return;
+                        onChange(idx, 'feeGmPct', n > 1 ? n / 100 : n);
+                      }}
+                    />
+                  </td>
+                );
+              })()}
               <td>
                 <button
                   type="button"
@@ -363,8 +374,30 @@ export function PricingView() {
     dbPut(STORE, payload, KEY).catch(err => console.warn('Failed to save pricing cache:', err));
   }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, termMonths, annualEscalator]);
 
-  // Term-value of a monthly amount under an annual escalator: each
-  // 12-month band charges at month1 × (1 + esc)^yearIndex.
+  // For an Alt Fee row, sum the CTS of every upper-table item that
+  // is "Linked To" this Alt Fee row's name (case-insensitive,
+  // trimmed). Returns null when there's no fee or no linked items.
+  function altFeeMarginFor(altItemName, fee) {
+    if (typeof fee !== 'number' || fee <= 0) return null;
+    if (!workbook) return null;
+    const target = (altItemName || '').trim().toLowerCase();
+    if (!target) return null;
+    const opt = workbook.options.find(o => o.optionNumber === activeOption);
+    if (!opt) return null;
+    let costSum = 0;
+    let matchCount = 0;
+    for (const sec of opt.sections) {
+      for (const item of sec.items) {
+        const linked = resolvedLinkedTo(item).trim().toLowerCase();
+        if (linked === target && typeof item.cts === 'number') {
+          costSum += item.cts;
+          matchCount++;
+        }
+      }
+    }
+    if (matchCount === 0) return null;
+    return { costSum, matchCount, marginPct: (fee - costSum) / fee };
+  }
   function projectMonthlyOverTerm(monthly, escPct, months) {
     if (typeof monthly !== 'number' || !Number.isFinite(monthly)) return 0;
     if (!months || months <= 0) return 0;
@@ -933,6 +966,7 @@ export function PricingView() {
                       <AltFeeTable
                         rows={altFees[opt.optionNumber] || altFeeStarter()}
                         globalGmPct={globalGmPct}
+                        marginFor={altFeeMarginFor}
                         onChange={(idx, field, value) => updateAltFeeCell(opt.optionNumber, idx, field, value)}
                         onAddRow={() => addAltFeeRow(opt.optionNumber)}
                         onRemoveRow={(idx) => removeAltFeeRow(opt.optionNumber, idx)}
