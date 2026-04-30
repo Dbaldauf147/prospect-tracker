@@ -38,7 +38,7 @@ function CellTextInput({ initial, placeholder, type, align, onCommit }) {
       className={styles.altCellInput}
       style={align === 'right' ? { textAlign: 'right' } : undefined}
       value={draft}
-      placeholder={placeholder}
+      placeholder={placeholder || ''}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={() => onCommit(draft)}
       onKeyDown={(e) => {
@@ -63,6 +63,8 @@ function parseAltFeePaste(text) {
     const feeNum = Number(cell(2).replace(/[$,\s]/g, ''));
     const ucNum = Number(cell(4));
     const smNum = Number(cell(5));
+    const gmRaw = cell(6).replace('%', '').trim();
+    const gmNum = gmRaw === '' ? null : Number(gmRaw);
     out.push({
       altItem: cell(0),
       type: cell(1),
@@ -70,12 +72,13 @@ function parseAltFeePaste(text) {
       unit: cell(3),
       unitCount: Number.isFinite(ucNum) ? ucNum : cell(4),
       startMonth: Number.isFinite(smNum) ? smNum : cell(5) || 1,
+      feeGmPct: Number.isFinite(gmNum) ? (gmNum > 1 ? gmNum / 100 : gmNum) : null,
     });
   }
   return out;
 }
 
-function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onAppendRows }) {
+function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onAppendRows, globalGmPct }) {
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState('');
   const [flash, setFlash] = useState('');
@@ -118,6 +121,7 @@ function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onA
             <th style={{ minWidth: 120 }}>Unit</th>
             <th className={styles.numCell} style={{ width: 110, maxWidth: 130 }}>Unit Count (# of Sites or Accounts)</th>
             <th className={styles.numCell} style={{ minWidth: 110 }}>Fee Start Month</th>
+            <th className={styles.numCell} style={{ width: 90 }}>Fee GM%</th>
             <th style={{ width: 32 }} />
           </tr>
         </thead>
@@ -181,6 +185,21 @@ function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onA
                   initial={row.startMonth}
                   align="right"
                   onCommit={(v) => onChange(idx, 'startMonth', v)}
+                />
+              </td>
+              <td className={styles.numCell}>
+                <CellTextInput
+                  key={`alt-${idx}-feeGm-${row.feeGmPct ?? ''}`}
+                  initial={typeof row.feeGmPct === 'number' ? (row.feeGmPct * 100).toString() : ''}
+                  placeholder={typeof globalGmPct === 'number' ? `${Math.round(globalGmPct * 100)}%` : ''}
+                  align="right"
+                  onCommit={(v) => {
+                    const trimmed = String(v ?? '').replace('%', '').trim();
+                    if (!trimmed) { onChange(idx, 'feeGmPct', null); return; }
+                    const n = Number(trimmed);
+                    if (!Number.isFinite(n)) return;
+                    onChange(idx, 'feeGmPct', n > 1 ? n / 100 : n);
+                  }}
                 />
               </td>
               <td>
@@ -987,6 +1006,7 @@ export function PricingView() {
 
                       <AltFeeTable
                         rows={altFees[opt.optionNumber] || altFeeStarter()}
+                        globalGmPct={globalGmPct}
                         onChange={(idx, field, value) => updateAltFeeCell(opt.optionNumber, idx, field, value)}
                         onAddRow={() => addAltFeeRow(opt.optionNumber)}
                         onRemoveRow={(idx) => removeAltFeeRow(opt.optionNumber, idx)}
