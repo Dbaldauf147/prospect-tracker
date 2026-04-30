@@ -28,6 +28,16 @@ function GmInput({ initialPct, placeholder, title, isOverride, onCommit }) {
   );
 }
 
+const COLS = [
+  { key: 'lineItem',  label: 'Line Item',         defaultWidth: 280 },
+  { key: 'type',      label: 'Type',              defaultWidth: 140 },
+  { key: 'cts',       label: 'CTS',               defaultWidth: 110, cellClass: undefined },
+  { key: 'start',     label: 'Start Month',       defaultWidth: 100 },
+  { key: 'comments',  label: 'Comments',          defaultWidth: 280 },
+  { key: 'gm',        label: 'GM%',               defaultWidth: 90 },
+  { key: 'price',     label: 'Marked-up Price',   defaultWidth: 140 },
+];
+
 const STORE = 'pricing-cache';
 const KEY = 'current';
 // Bump this whenever the parser output shape changes — older cached
@@ -57,6 +67,7 @@ export function PricingView() {
   const [globalGmPct, setGlobalGmPct] = useState(0.5);
   const [overrides, setOverrides] = useState({}); // { [itemId]: { gmPct } }
   const [activeOption, setActiveOption] = useState(null); // optionNumber or null
+  const [colWidths, setColWidths] = useState({}); // { [colKey]: pixelWidth }
   const [error, setError] = useState('');
   const fileInputRef = useRef(null);
   const hydratedRef = useRef(false);
@@ -79,6 +90,7 @@ export function PricingView() {
         if (typeof saved.globalGmPct === 'number') setGlobalGmPct(saved.globalGmPct);
         if (saved.overrides) setOverrides(saved.overrides);
         if (typeof saved.activeOption === 'number') setActiveOption(saved.activeOption);
+        if (saved.colWidths) setColWidths(saved.colWidths);
       } catch (err) {
         console.warn('Failed to load pricing cache:', err);
       } finally {
@@ -91,9 +103,29 @@ export function PricingView() {
   // Persist on changes (skip the first render until hydration finishes).
   useEffect(() => {
     if (!hydratedRef.current) return;
-    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption };
+    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths };
     dbPut(STORE, payload, KEY).catch(err => console.warn('Failed to save pricing cache:', err));
-  }, [workbook, globalGmPct, overrides, activeOption]);
+  }, [workbook, globalGmPct, overrides, activeOption, colWidths]);
+
+  // Drag-to-resize column handler. Captures the starting width and
+  // mouse X, then updates `colWidths[key]` on mousemove until mouseup.
+  function startColResize(key, evt) {
+    evt.preventDefault();
+    evt.stopPropagation();
+    const startX = evt.clientX;
+    const colDef = COLS.find(c => c.key === key);
+    const startW = colWidths[key] ?? colDef?.defaultWidth ?? 140;
+    const onMove = (e) => {
+      const next = Math.max(60, startW + (e.clientX - startX));
+      setColWidths(w => ({ ...w, [key]: next }));
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
 
   // Keep activeOption pointing at a real tab whenever the workbook changes.
   useEffect(() => {
@@ -351,29 +383,39 @@ export function PricingView() {
                     </div>
                   </div>
                 )}
-                {opt.sections.map((sec, sIdx) => {
-                  const subtotalCost = sec.items.reduce((s, i) => s + (typeof i.cts === 'number' ? i.cts : 0), 0);
-                  const subtotalPrice = sec.items.reduce((s, i) => {
+                {(() => {
+                  const flatItems = opt.sections.flatMap(s => s.items);
+                  if (flatItems.length === 0) return null;
+                  const totalCost = flatItems.reduce((s, i) => s + (typeof i.cts === 'number' ? i.cts : 0), 0);
+                  const totalPrice = flatItems.reduce((s, i) => {
                     const { price } = priceFor(i);
                     return s + (typeof price === 'number' ? price : 0);
                   }, 0);
                   return (
-                    <div key={sIdx} className={styles.section}>
-                      <h3 className={styles.sectionTitle}>{sec.title}</h3>
+                    <div className={styles.section}>
                       <table className={styles.table}>
                         <thead>
                           <tr>
-                            <th>Line Item</th>
-                            <th>Type</th>
-                            <th className={styles.numCell}>CTS</th>
-                            <th>Start Month</th>
-                            <th>Comments</th>
-                            <th className={styles.gmCell}>GM%</th>
-                            <th className={styles.priceCell}>Marked-up Price</th>
+                            {COLS.map(col => (
+                              <th
+                                key={col.key}
+                                className={col.cellClass}
+                                style={{ width: colWidths[col.key] ?? col.defaultWidth }}
+                              >
+                                <span className={styles.thInner}>
+                                  <span className={styles.thLabel}>{col.label}</span>
+                                  <span
+                                    className={styles.colResizer}
+                                    onMouseDown={(e) => startColResize(col.key, e)}
+                                    title="Drag to resize column"
+                                  />
+                                </span>
+                              </th>
+                            ))}
                           </tr>
                         </thead>
                         <tbody>
-                          {sec.items.map(item => {
+                          {flatItems.map(item => {
                             const { gm, source, price } = priceFor(item);
                             const overrideVal = overrides[item.id]?.gmPct;
                             return (
@@ -406,16 +448,16 @@ export function PricingView() {
                             );
                           })}
                           <tr className={styles.totalsRow}>
-                            <td colSpan={2}>Section subtotal</td>
-                            <td className={styles.numCell}>{fmtMoney(subtotalCost)}</td>
+                            <td colSpan={2}>Total</td>
+                            <td className={styles.numCell}>{fmtMoney(totalCost)}</td>
                             <td colSpan={3} />
-                            <td className={styles.priceCell}>{fmtMoney(subtotalPrice)}</td>
+                            <td className={styles.priceCell}>{fmtMoney(totalPrice)}</td>
                           </tr>
                         </tbody>
                       </table>
                     </div>
                   );
-                })}
+                })()}
               </div>
             </>
           );

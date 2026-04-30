@@ -248,6 +248,42 @@
   width: 100%;
   border-collapse: collapse;
   font-size: var(--font-size-xs);
+  table-layout: fixed;
+}
+
+.thInner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: relative;
+  gap: 0.4rem;
+}
+
+.thLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.colResizer {
+  position: absolute;
+  top: -0.4rem;
+  right: -0.55rem;
+  bottom: -0.4rem;
+  width: 6px;
+  cursor: col-resize;
+  user-select: none;
+  background: transparent;
+}
+
+.colResizer:hover {
+  background: var(--color-accent, #2563eb);
+  opacity: 0.4;
+}
+
+.table td {
+  overflow: hidden;
+  word-break: break-word;
 }
 
 .table th,
