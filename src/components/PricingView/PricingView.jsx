@@ -76,11 +76,16 @@ function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow }) {
                 />
               </td>
               <td>
-                <CellTextInput
-                  key={`alt-${idx}-type`}
-                  initial={row.type}
-                  onCommit={(v) => onChange(idx, 'type', v)}
-                />
+                <select
+                  className={styles.altCellInput}
+                  value={row.type || ''}
+                  onChange={(e) => onChange(idx, 'type', e.target.value)}
+                >
+                  <option value="">—</option>
+                  <option value="Setup">Setup</option>
+                  <option value="One Time">One Time</option>
+                  <option value="Recurring (monthly)">Recurring (monthly)</option>
+                </select>
               </td>
               <td className={styles.numCell}>
                 <CellTextInput
