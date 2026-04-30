@@ -33,7 +33,7 @@ const KEY = 'current';
 // Bump this whenever the parser output shape changes — older cached
 // parses are silently discarded on hydration so the user re-uploads
 // against the current parser.
-const PARSER_VERSION = 7;
+const PARSER_VERSION = 8;
 
 const fmtMoney = (n) => {
   if (n === null || n === undefined || Number.isNaN(n)) return '';
@@ -54,7 +54,7 @@ function parsePctInput(s) {
 
 export function PricingView() {
   const [workbook, setWorkbook] = useState(null); // { fileName, options, sheetNames, loadedAt }
-  const [globalGmPct, setGlobalGmPct] = useState(0.6);
+  const [globalGmPct, setGlobalGmPct] = useState(0.5);
   const [overrides, setOverrides] = useState({}); // { [itemId]: { gmPct } }
   const [activeOption, setActiveOption] = useState(null); // optionNumber or null
   const [error, setError] = useState('');
@@ -388,7 +388,7 @@ export function PricingView() {
                                     key={`${item.id}:${overrideVal === undefined ? 'unset' : overrideVal}`}
                                     initialPct={overrideVal !== undefined ? overrideVal * 100 : null}
                                     isOverride={overrideVal !== undefined}
-                                    placeholder={gm === null ? '' : `${(gm * 100).toFixed(1)}${source === 'override' ? '' : ` (${source[0]})`}`}
+                                    placeholder={gm === null ? '' : `${Math.round(gm * 100)}%`}
                                     title={
                                       source === 'override'
                                         ? 'Per-line override. Clear to revert to global GM%.'

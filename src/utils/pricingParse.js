@@ -170,6 +170,8 @@ function parseOptionSheet(sheet, sheetName) {
         if (rowIsBlank(r)) continue;
         const a = cellStr(r[0]);
         const others = r.slice(1).filter(c => cellStr(c)).length;
+        // Skip placeholder lines so they don't become section titles.
+        if (/^enter\s+.+\s+here$/i.test(a)) continue;
         // A section-title row has text in col 0 and is otherwise empty.
         if (a && others === 0) { title = a; break; }
         // Stop walking up once we hit something with multiple cells
@@ -197,6 +199,14 @@ function parseOptionSheet(sheet, sheetName) {
         // Skip rows whose Type cell is blank — those are unfilled
         // template stubs that show up between real line items.
         if (cols.type !== undefined && !cellStr(row[cols.type])) continue;
+        // Skip rows whose Type cell is a header label (e.g. the
+        // "Services (per event or shared savings) | Description" row
+        // that sits between sub-tables — its col B reads "Description"
+        // which clearly isn't a real Type).
+        if (cols.type !== undefined) {
+          const tval = cellStr(row[cols.type]);
+          if (/^(description|type|comments?|fee|unit|cts|cost\s*to\s*serve|gm\s*%|individual\s*gm|start\s*month)$/i.test(tval)) continue;
+        }
 
         const item = {
           id: `${sheetName}::${title}::${items.length}::${desc.slice(0, 40)}`,
