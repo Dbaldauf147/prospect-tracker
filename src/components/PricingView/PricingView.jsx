@@ -423,7 +423,7 @@ export function PricingView() {
   function resolvedLinkedTo(item) {
     const ov = overrides[item.id]?.linkedTo;
     if (ov !== undefined) return ov;
-    return linkedToDefaults[linkedToDefaultKey(item.description, item.type)] || '';
+    return linkedToDefaults[linkedToDefaultKey(item.description, effectiveType(item))] || '';
   }
 
   // Drag-to-resize column handler. Captures the starting width and
@@ -532,6 +532,27 @@ export function PricingView() {
     });
   }
 
+  function effectiveType(item) {
+    const ov = overrides[item.id]?.typeOverride;
+    return (ov === undefined || ov === null || ov === '') ? (item.type || '') : ov;
+  }
+
+  function setItemType(itemId, newType) {
+    setOverrides(prev => {
+      const next = { ...prev };
+      if (!newType) {
+        if (next[itemId]) {
+          const { typeOverride: _drop, ...rest } = next[itemId];
+          if (Object.keys(rest).length === 0) delete next[itemId];
+          else next[itemId] = rest;
+        }
+      } else {
+        next[itemId] = { ...next[itemId], typeOverride: newType };
+      }
+      return next;
+    });
+  }
+
   function setItemLinkedTo(item, raw) {
     const itemId = item.id;
     const trimmed = (raw || '').trim();
@@ -553,7 +574,7 @@ export function PricingView() {
   // Save / clear the (Line Item, Type) default from the row's
   // currently-resolved value via the star button next to the input.
   function toggleLinkedToDefault(item) {
-    const key = linkedToDefaultKey(item.description, item.type);
+    const key = linkedToDefaultKey(item.description, effectiveType(item));
     const currentValue = resolvedLinkedTo(item).trim();
     const existing = linkedToDefaults[key] || '';
     setLinkedToDefaults(prev => {
@@ -611,7 +632,7 @@ export function PricingView() {
             opt.sheetName,
             sec.title,
             item.description || '',
-            item.type || '',
+            effectiveType(item),
             item.cts ?? '',
             item.startMonth || '',
             item.comments || '',
@@ -841,11 +862,12 @@ export function PricingView() {
                     const { price } = priceFor(i);
                     return s + (typeof price === 'number' ? price : 0);
                   }, 0);
-                  // Aggregate by Type for the summary panel under the table.
-                  // For "Recurring (monthly)" we also project the term value
-                  // using the annual escalator and term length from the toolbar.
+                  // Aggregate by effective Type for the summary panel.
+                  // "Rolled" variants still bucket under Setup / One Time.
+                  // Recurring projects the term value with the escalator.
                   const sumByType = (typeRe, isRecurring) => flatItems.reduce((acc, i) => {
-                    if (!typeRe.test(i.type || '')) return acc;
+                    const t = effectiveType(i);
+                    if (!typeRe.test(t)) return acc;
                     const { price } = priceFor(i);
                     if (typeof i.cts === 'number') acc.cost += i.cts;
                     if (typeof price === 'number') acc.price += price;
@@ -855,9 +877,10 @@ export function PricingView() {
                     }
                     return acc;
                   }, { cost: 0, price: 0, termCost: 0, termPrice: 0 });
-                  const setup = sumByType(/^setup$/i, false);
+                  // Both plain and "Rolled" variants count toward Setup / One Time.
+                  const setup = sumByType(/^setup(\s+rolled)?$/i, false);
                   const recurring = sumByType(/recurring.*monthly|monthly.*recurring|^recurring/i, true);
-                  const oneTime = sumByType(/^one\s*time$/i, false);
+                  const oneTime = sumByType(/^one\s*time(\s+rolled)?$/i, false);
                   const grandTermCost = setup.cost + oneTime.cost + recurring.termCost;
                   const grandTermPrice = setup.price + oneTime.price + recurring.termPrice;
                   return (
@@ -890,7 +913,28 @@ export function PricingView() {
                             return (
                               <tr key={item.id}>
                                 <td>{item.description}</td>
-                                <td>{item.type || ''}</td>
+                                <td>
+                                  {(() => {
+                                    const t = effectiveType(item);
+                                    const knownOptions = ['Setup', 'Setup Rolled', 'One Time', 'One Time Rolled', 'Recurring (monthly)'];
+                                    return (
+                                      <select
+                                        className={styles.typeSelect}
+                                        value={t}
+                                        onChange={(e) => setItemType(item.id, e.target.value)}
+                                        title="Click to change type. 'Rolled' variants amortize the cost over the term but still bucket under Setup or One Time."
+                                      >
+                                        {t && !knownOptions.includes(t) && <option value={t}>{t}</option>}
+                                        <option value="">—</option>
+                                        <option value="Setup">Setup</option>
+                                        <option value="Setup Rolled">Setup Rolled</option>
+                                        <option value="One Time">One Time</option>
+                                        <option value="One Time Rolled">One Time Rolled</option>
+                                        <option value="Recurring (monthly)">Recurring (monthly)</option>
+                                      </select>
+                                    );
+                                  })()}
+                                </td>
                                 <td className={styles.numCell}>{item.cts === null || item.cts === undefined ? '' : fmtMoney(item.cts)}</td>
                                 <td>{item.startMonth || ''}</td>
                                 <td>{item.comments || ''}</td>
@@ -915,7 +959,8 @@ export function PricingView() {
                                 <td className={styles.priceCell}>{fmtMoney(price)}</td>
                                 <td>
                                   {(() => {
-                                    const key = linkedToDefaultKey(item.description, item.type);
+                                    const effType = effectiveType(item);
+                                    const key = linkedToDefaultKey(item.description, effType);
                                     const savedDefault = linkedToDefaults[key] || '';
                                     const currentVal = resolvedLinkedTo(item);
                                     const isFromDefault = overrides[item.id]?.linkedTo === undefined && !!savedDefault;
@@ -937,9 +982,9 @@ export function PricingView() {
                                           disabled={!canSetDefault && !canClearDefault}
                                           title={
                                             matchesDefault
-                                              ? `Default for "${item.description}" · ${item.type || '(no type)'}. Click to clear.`
+                                              ? `Default for "${item.description}" · ${effType || '(no type)'}. Click to clear.`
                                               : canSetDefault
-                                              ? `Save "${currentVal}" as the default for "${item.description}" · ${item.type || '(no type)'}.`
+                                              ? `Save "${currentVal}" as the default for "${item.description}" · ${effType || '(no type)'}.`
                                               : 'Type a value above, then click to save it as the default.'
                                           }
                                         >

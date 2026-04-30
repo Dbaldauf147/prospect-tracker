@@ -342,6 +342,36 @@
   font-style: italic;
 }
 
+.typeSelect {
+  width: 100%;
+  background: transparent;
+  border: 1px solid transparent;
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  color: var(--color-text);
+  padding: 0.2rem 0.35rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image: none;
+}
+
+.typeSelect:hover {
+  border-color: var(--color-border);
+}
+
+.typeSelect:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  background: var(--color-bg);
+}
+
+.typeSelect::-ms-expand {
+  display: none;
+}
+
 .linkedCell {
   display: flex;
   align-items: center;
