@@ -594,6 +594,16 @@ select.altCellInput::-ms-expand {
   white-space: normal;
   word-break: break-word;
   vertical-align: top;
+  text-align: left;
+}
+
+.altTable td.numCell,
+.altTable th.numCell {
+  text-align: left;
+}
+
+.altTable .altCellInput {
+  text-align: left !important;
 }
 
 .fileMeta {
