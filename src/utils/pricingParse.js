@@ -81,7 +81,31 @@ function classifyColumns(headerRow) {
   return map;
 }
 
+// Some workbooks (especially sheets that are hidden) ship with no
+// `!ref` set or a `!ref` that doesn't actually cover the data. Without
+// a valid range, sheet_to_json returns []. Recompute the range from
+// every A1-style cell key on the sheet and patch it in before reading.
+function ensureSheetRange(sheet) {
+  let minR = Infinity, maxR = -1, minC = Infinity, maxC = -1;
+  for (const key of Object.keys(sheet)) {
+    if (key.startsWith('!')) continue;
+    const addr = XLSX.utils.decode_cell(key);
+    if (!addr || !Number.isFinite(addr.r) || !Number.isFinite(addr.c)) continue;
+    if (addr.r < minR) minR = addr.r;
+    if (addr.r > maxR) maxR = addr.r;
+    if (addr.c < minC) minC = addr.c;
+    if (addr.c > maxC) maxC = addr.c;
+  }
+  if (maxR < 0) return; // truly empty
+  const computed = XLSX.utils.encode_range({ s: { r: minR, c: minC }, e: { r: maxR, c: maxC } });
+  // Always overwrite — a too-small `!ref` would clip our read.
+  sheet['!ref'] = computed;
+}
+
 function parseOptionSheet(sheet, sheetName) {
+  ensureSheetRange(sheet);
+  const cellCount = Object.keys(sheet).filter(k => !k.startsWith('!')).length;
+  const refUsed = sheet['!ref'] || '';
   const rows = XLSX.utils.sheet_to_json(sheet, {
     header: 1,
     defval: '',
@@ -203,6 +227,8 @@ function parseOptionSheet(sheet, sheetName) {
     totalRows: rows.length,
     startIdx,
     endIdx,
+    cellCount,
+    refUsed,
   };
 }
 

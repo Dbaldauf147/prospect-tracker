@@ -335,7 +335,9 @@ export function PricingView() {
                       The parser scans between a "Delivery Team Inputs" anchor and a "Cost Summary" anchor, then looks for tables whose header row contains <em>Alternative Fee Structure/Schedule</em>, or the columns <em>Fee + Unit + Type</em>. Below are the first {opt.rawSample?.length || 0} rows of <strong>{opt.sheetName}</strong>; if you can spot the fee table here, share a screenshot of the relevant rows and I'll tune the detection.
                     </div>
                     <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', marginBottom: '0.5rem' }}>
-                      Total rows: {opt.totalRows ?? '?'} ·
+                      Cells in sheet: {opt.cellCount ?? '?'} ·
+                      Range: {opt.refUsed || '(none)'} ·
+                      Total rows read: {opt.totalRows ?? '?'} ·
                       Delivery Team Inputs row: {opt.startIdx >= 0 ? opt.startIdx + 1 : 'not found'} ·
                       Cost Summary row: {opt.endIdx >= 0 ? opt.endIdx + 1 : 'not found'}
                     </div>
