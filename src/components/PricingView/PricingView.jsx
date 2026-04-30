@@ -804,7 +804,35 @@ export function PricingView() {
                       <div className={styles.summaryPanel}>
                         <h3 className={styles.summaryTitle}>Totals by type</h3>
                         <div className={styles.summaryMeta}>
-                          Term: {termMonths} months · Annual escalator: {(annualEscalator * 100).toFixed(1)}%
+                          Term:{' '}
+                          <input
+                            className={styles.metaInput}
+                            type="number"
+                            step="1"
+                            min="0"
+                            max="240"
+                            value={termMonths}
+                            onChange={(e) => {
+                              const n = Number(e.target.value);
+                              if (!Number.isFinite(n)) return;
+                              setTermMonths(Math.max(0, Math.min(240, Math.round(n))));
+                            }}
+                          />
+                          {' '}months · Annual escalator:{' '}
+                          <input
+                            className={styles.metaInput}
+                            type="number"
+                            step="0.5"
+                            min="0"
+                            max="50"
+                            value={Math.round(annualEscalator * 1000) / 10}
+                            onChange={(e) => {
+                              const n = Number(e.target.value);
+                              if (!Number.isFinite(n)) return;
+                              setAnnualEscalator(Math.max(0, Math.min(0.5, n / 100)));
+                            }}
+                          />
+                          %
                         </div>
                         <table className={styles.summaryTable}>
                           <thead>
