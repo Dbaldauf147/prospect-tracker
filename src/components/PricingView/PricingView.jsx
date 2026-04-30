@@ -306,8 +306,30 @@ export function PricingView() {
                   <div className={styles.solutionDesc}>{opt.solutionDescription}</div>
                 )}
                 {opt.sections.length === 0 && (
-                  <div style={{ fontStyle: 'italic', color: 'var(--color-text-muted)' }}>
-                    No line items detected on this sheet.
+                  <div className={styles.diagnostic}>
+                    <div style={{ fontWeight: 600, marginBottom: '0.4rem' }}>
+                      No line items detected on this sheet.
+                    </div>
+                    <div style={{ marginBottom: '0.5rem' }}>
+                      The parser looks for a row containing a "Cost to Serve" header cell, then collects rows below it as line items. Below is the raw content of the first {opt.rawSample?.length || 0} rows of <strong>{opt.sheetName}</strong> so you can see what was actually read. If you can spot the cost table here, share a screenshot of the first 30-ish rows and I'll tune the detection.
+                    </div>
+                    <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', marginBottom: '0.5rem' }}>
+                      Total rows in sheet: {opt.totalRows ?? '?'} · header rows found: {opt.headerIdxs?.length ?? 0}
+                    </div>
+                    <div className={styles.rawScroll}>
+                      <table className={styles.rawTable}>
+                        <tbody>
+                          {(opt.rawSample || []).map((row, ri) => (
+                            <tr key={ri}>
+                              <td className={styles.rawIdx}>{ri + 1}</td>
+                              {row.map((cell, ci) => (
+                                <td key={ci}>{cell}</td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 )}
                 {opt.sections.map((sec, sIdx) => (

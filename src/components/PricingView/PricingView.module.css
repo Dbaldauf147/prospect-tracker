@@ -315,3 +315,47 @@
   color: var(--color-text-muted);
   margin-left: 0.5rem;
 }
+
+.diagnostic {
+  border: 1px dashed var(--color-border);
+  background: #fffbeb;
+  border-radius: var(--radius-md);
+  padding: 0.75rem 0.9rem;
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  margin-top: 0.5rem;
+}
+
+.rawScroll {
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  border-radius: var(--radius-sm);
+}
+
+.rawTable {
+  border-collapse: collapse;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  width: 100%;
+}
+
+.rawTable td {
+  border: 1px solid #e5e7eb;
+  padding: 0.15rem 0.35rem;
+  vertical-align: top;
+  white-space: nowrap;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rawIdx {
+  background: #f3f4f6;
+  color: #6b7280;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  position: sticky;
+  left: 0;
+}
