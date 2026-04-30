@@ -558,6 +558,28 @@
   border-color: var(--color-accent);
 }
 
+.pasteFlash {
+  margin-bottom: 0.5rem;
+  padding: 0.35rem 0.6rem;
+  border-radius: var(--radius-sm);
+  background: #d1fae5;
+  border: 1px solid #34d399;
+  color: #065f46;
+  font-size: var(--font-size-xs);
+}
+
+.altTable th {
+  white-space: normal;
+  word-break: break-word;
+  vertical-align: bottom;
+}
+
+.altTable td {
+  white-space: normal;
+  word-break: break-word;
+  vertical-align: top;
+}
+
 .fileMeta {
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);

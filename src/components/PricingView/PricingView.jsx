@@ -78,10 +78,37 @@ function parseAltFeePaste(text) {
 function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onAppendRows }) {
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState('');
+  const [flash, setFlash] = useState('');
   const parsed = pasteOpen ? parseAltFeePaste(pasteText) : [];
+
+  // Intercept paste anywhere on the table. If the clipboard text
+  // looks like multi-row tabular data (more than one row, or any
+  // tabs), parse it and replace the table with the pasted rows.
+  // Single-value pastes are left alone so a normal paste into a
+  // single cell still works.
+  function handleTablePaste(e) {
+    const cd = e.clipboardData;
+    if (!cd) return;
+    const text = cd.getData('text/plain');
+    if (!text) return;
+    const looksTabular = text.includes('\t') || text.includes('\n');
+    if (!looksTabular) return; // let the browser paste into the focused input
+    e.preventDefault();
+    e.stopPropagation();
+    const newRows = parseAltFeePaste(text);
+    if (newRows.length === 0) return;
+    onReplaceRows(newRows);
+    setFlash(`Pasted ${newRows.length} row${newRows.length === 1 ? '' : 's'} from clipboard.`);
+    window.setTimeout(() => setFlash(''), 2500);
+  }
+
   return (
-    <div className={styles.altFeeWrap}>
+    <div className={styles.altFeeWrap} onPaste={handleTablePaste}>
       <h3 className={styles.summaryTitle}>Alternative Fee Structure / Schedule</h3>
+      <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', marginBottom: '0.4rem' }}>
+        Tip: select cells in Google Sheets / Excel and paste (⌘V / Ctrl+V) anywhere on this table to fill all rows at once.
+      </div>
+      {flash && <div className={styles.pasteFlash}>{flash}</div>}
       <table className={styles.altTable}>
         <thead>
           <tr>
@@ -89,7 +116,7 @@ function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onA
             <th style={{ minWidth: 140 }}>Type</th>
             <th className={styles.numCell} style={{ minWidth: 120 }}>Fee</th>
             <th style={{ minWidth: 120 }}>Unit</th>
-            <th className={styles.numCell} style={{ minWidth: 180 }}>Unit Count (# of Sites or Accounts)</th>
+            <th className={styles.numCell} style={{ width: 110, maxWidth: 130 }}>Unit Count (# of Sites or Accounts)</th>
             <th className={styles.numCell} style={{ minWidth: 110 }}>Fee Start Month</th>
             <th style={{ width: 32 }} />
           </tr>
