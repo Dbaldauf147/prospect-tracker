@@ -437,6 +437,17 @@ export function PricingView() {
                     const { price } = priceFor(i);
                     return s + (typeof price === 'number' ? price : 0);
                   }, 0);
+                  // Aggregate by Type for the summary panel under the table.
+                  const sumByType = (typeRe) => flatItems.reduce((acc, i) => {
+                    if (!typeRe.test(i.type || '')) return acc;
+                    const { price } = priceFor(i);
+                    if (typeof i.cts === 'number') acc.cost += i.cts;
+                    if (typeof price === 'number') acc.price += price;
+                    return acc;
+                  }, { cost: 0, price: 0 });
+                  const setup = sumByType(/^setup$/i);
+                  const recurring = sumByType(/recurring.*monthly|monthly.*recurring|^recurring/i);
+                  const oneTime = sumByType(/^one\s*time$/i);
                   return (
                     <div className={styles.section}>
                       <table className={styles.table}>
@@ -509,6 +520,43 @@ export function PricingView() {
                           </tr>
                         </tbody>
                       </table>
+
+                      <div className={styles.summaryPanel}>
+                        <h3 className={styles.summaryTitle}>Totals by type</h3>
+                        <table className={styles.summaryTable}>
+                          <thead>
+                            <tr>
+                              <th>Bucket</th>
+                              <th className={styles.numCell}>Cost</th>
+                              <th className={styles.priceCell}>Marked-up</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr>
+                              <td>Setup</td>
+                              <td className={styles.numCell}>{fmtMoney(setup.cost)}</td>
+                              <td className={styles.priceCell}>{fmtMoney(setup.price)}</td>
+                            </tr>
+                            <tr>
+                              <td>Recurring (monthly)</td>
+                              <td className={styles.numCell}>{fmtMoney(recurring.cost)}</td>
+                              <td className={styles.priceCell}>{fmtMoney(recurring.price)}</td>
+                            </tr>
+                            {(oneTime.cost > 0 || oneTime.price > 0) && (
+                              <tr>
+                                <td>One Time</td>
+                                <td className={styles.numCell}>{fmtMoney(oneTime.cost)}</td>
+                                <td className={styles.priceCell}>{fmtMoney(oneTime.price)}</td>
+                              </tr>
+                            )}
+                            <tr className={styles.summaryGrandRow}>
+                              <td>All line items</td>
+                              <td className={styles.numCell}>{fmtMoney(totalCost)}</td>
+                              <td className={styles.priceCell}>{fmtMoney(totalPrice)}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                   );
                 })()}
