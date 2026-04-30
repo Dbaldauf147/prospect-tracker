@@ -52,7 +52,7 @@ export function PricingView() {
   const [workbook, setWorkbook] = useState(null); // { fileName, options, sheetNames, loadedAt }
   const [globalGmPct, setGlobalGmPct] = useState(0.6);
   const [overrides, setOverrides] = useState({}); // { [itemId]: { gmPct } }
-  const [collapsed, setCollapsed] = useState({}); // { [optionNumber]: bool }
+  const [activeOption, setActiveOption] = useState(null); // optionNumber or null
   const [error, setError] = useState('');
   const fileInputRef = useRef(null);
   const hydratedRef = useRef(false);
@@ -67,7 +67,7 @@ export function PricingView() {
         if (saved.workbook) setWorkbook(saved.workbook);
         if (typeof saved.globalGmPct === 'number') setGlobalGmPct(saved.globalGmPct);
         if (saved.overrides) setOverrides(saved.overrides);
-        if (saved.collapsed) setCollapsed(saved.collapsed);
+        if (typeof saved.activeOption === 'number') setActiveOption(saved.activeOption);
       } catch (err) {
         console.warn('Failed to load pricing cache:', err);
       } finally {
@@ -80,9 +80,16 @@ export function PricingView() {
   // Persist on changes (skip the first render until hydration finishes).
   useEffect(() => {
     if (!hydratedRef.current) return;
-    const payload = { workbook, globalGmPct, overrides, collapsed };
+    const payload = { workbook, globalGmPct, overrides, activeOption };
     dbPut(STORE, payload, KEY).catch(err => console.warn('Failed to save pricing cache:', err));
-  }, [workbook, globalGmPct, overrides, collapsed]);
+  }, [workbook, globalGmPct, overrides, activeOption]);
+
+  // Keep activeOption pointing at a real tab whenever the workbook changes.
+  useEffect(() => {
+    if (!workbook?.options?.length) return;
+    const exists = workbook.options.some(o => o.optionNumber === activeOption);
+    if (!exists) setActiveOption(workbook.options[0].optionNumber);
+  }, [workbook, activeOption]);
 
   async function handleFile(file) {
     setError('');
@@ -96,7 +103,7 @@ export function PricingView() {
         loadedAt: Date.now(),
       });
       setOverrides({});
-      setCollapsed({});
+      setActiveOption(parsed.options[0]?.optionNumber ?? null);
     } catch (err) {
       setError(err?.message || 'Failed to parse file.');
     }
@@ -106,7 +113,7 @@ export function PricingView() {
     if (!confirm('Clear the loaded workbook and all markup overrides?')) return;
     setWorkbook(null);
     setOverrides({});
-    setCollapsed({});
+    setActiveOption(null);
     setError('');
     dbDelete(STORE, KEY).catch(() => {});
   }
@@ -254,113 +261,125 @@ export function PricingView() {
           </div>
         )}
 
-        {workbook?.options.map(opt => {
-          const isCollapsed = !!collapsed[opt.optionNumber];
+        {workbook && workbook.options.length > 0 && (() => {
+          const opt = workbook.options.find(o => o.optionNumber === activeOption) || workbook.options[0];
           const t = totals?.[opt.optionNumber];
           return (
-            <div key={opt.sheetName} className={styles.optionCard}>
-              <div
-                className={styles.optionHeader}
-                onClick={() => setCollapsed(c => ({ ...c, [opt.optionNumber]: !c[opt.optionNumber] }))}
-              >
-                <div className={styles.optionHeaderLeft}>
-                  <h2 className={styles.optionTitle}>
-                    {isCollapsed ? '▸' : '▾'} {opt.sheetName}
-                  </h2>
-                  {opt.hidden && <span className={styles.hiddenPill}>hidden in workbook</span>}
-                  {opt.solutionDescription && (
-                    <span className={styles.optionMeta}>· {opt.solutionDescription}</span>
-                  )}
-                </div>
-                {t && (
-                  <div className={styles.optionSummary}>
-                    <span>Cost: <span className={styles.summaryNum}>{fmtMoney(t.cost)}</span></span>
-                    <span>Marked-up: <span className={styles.summaryNum}>{fmtMoney(t.price)}</span></span>
-                  </div>
-                )}
+            <>
+              <div className={styles.tabStrip}>
+                {workbook.options.map(o => {
+                  const isActive = o.optionNumber === opt.optionNumber;
+                  const tt = totals?.[o.optionNumber];
+                  return (
+                    <button
+                      key={o.sheetName}
+                      type="button"
+                      className={isActive ? styles.tabActive : styles.tab}
+                      onClick={() => setActiveOption(o.optionNumber)}
+                      title={o.solutionDescription || o.sheetName}
+                    >
+                      <span className={styles.tabLabel}>{o.sheetName}</span>
+                      {o.hidden && <span className={styles.tabHidden} title="Hidden in source workbook">·</span>}
+                      {tt && typeof tt.price === 'number' && tt.price > 0 && (
+                        <span className={styles.tabPrice}>{fmtMoney(tt.price)}</span>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
 
-              {!isCollapsed && (
-                <div className={styles.optionBody}>
-                  {opt.solutionDescription && (
-                    <div className={styles.solutionDesc}>{opt.solutionDescription}</div>
-                  )}
-                  {opt.sections.length === 0 && (
-                    <div style={{ fontStyle: 'italic', color: 'var(--color-text-muted)' }}>
-                      No line items detected on this sheet.
+              <div className={styles.optionPanel}>
+                <div className={styles.optionPanelHeader}>
+                  <div className={styles.optionHeaderLeft}>
+                    <h2 className={styles.optionTitle}>{opt.sheetName}</h2>
+                    {opt.hidden && <span className={styles.hiddenPill}>hidden in workbook</span>}
+                  </div>
+                  {t && (
+                    <div className={styles.optionSummary}>
+                      <span>Cost: <span className={styles.summaryNum}>{fmtMoney(t.cost)}</span></span>
+                      <span>Marked-up: <span className={styles.summaryNum}>{fmtMoney(t.price)}</span></span>
                     </div>
                   )}
-                  {opt.sections.map((sec, sIdx) => (
-                    <div key={sIdx} className={styles.section}>
-                      <h3 className={styles.sectionTitle}>{sec.title}</h3>
-                      <table className={styles.table}>
-                        <thead>
-                          <tr>
-                            <th>Description</th>
-                            <th>Type</th>
-                            <th className={styles.numCell}>Cost to Serve</th>
-                            <th className={styles.gmCell}>GM%</th>
-                            <th className={styles.priceCell}>Marked-up Price</th>
-                            <th>Comments</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {sec.items.map(item => {
-                            const { gm, source } = effectiveGm(item);
-                            const price = priceFromCostAndGm(item.cost ?? null, gm);
-                            const overrideVal = overrides[item.id]?.gmPct;
-                            return (
-                              <tr key={item.id}>
-                                <td>{item.description}</td>
-                                <td>{item.type || ''}</td>
-                                <td className={styles.numCell}>{item.cost === null || item.cost === undefined ? '' : fmtMoney(item.cost)}</td>
-                                <td className={styles.gmCell}>
-                                  <GmInput
-                                    key={`${item.id}:${overrideVal === undefined ? 'unset' : overrideVal}`}
-                                    initialPct={overrideVal !== undefined ? overrideVal * 100 : null}
-                                    isOverride={overrideVal !== undefined}
-                                    placeholder={gm === null ? '' : `${(gm * 100).toFixed(1)}${source === 'override' ? '' : ` (${source[0]})`}`}
-                                    title={
-                                      source === 'override'
-                                        ? 'Per-line override. Clear to revert to global GM%.'
-                                        : source === 'global'
-                                        ? `Using global GM% (${fmtPct(globalGmPct)}). Type a value to override.`
-                                        : source === 'sheet'
-                                        ? `Using sheet GM% (${fmtPct(item.gmPct)}). Type a value to override.`
-                                        : 'No GM% set.'
-                                    }
-                                    onCommit={(raw) => setItemGm(item.id, raw)}
-                                  />
-                                </td>
-                                <td className={styles.priceCell}>{fmtMoney(price)}</td>
-                                <td>{item.comments || ''}</td>
-                              </tr>
-                            );
-                          })}
-                          <tr className={styles.totalsRow}>
-                            <td colSpan={2}>Section subtotal</td>
-                            <td className={styles.numCell}>
-                              {fmtMoney(sec.items.reduce((s, i) => s + (typeof i.cost === 'number' ? i.cost : 0), 0))}
-                            </td>
-                            <td />
-                            <td className={styles.priceCell}>
-                              {fmtMoney(sec.items.reduce((s, i) => {
-                                const { gm } = effectiveGm(i);
-                                const p = priceFromCostAndGm(i.cost ?? null, gm);
-                                return s + (typeof p === 'number' ? p : 0);
-                              }, 0))}
-                            </td>
-                            <td />
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
-                  ))}
                 </div>
-              )}
-            </div>
+
+                {opt.solutionDescription && (
+                  <div className={styles.solutionDesc}>{opt.solutionDescription}</div>
+                )}
+                {opt.sections.length === 0 && (
+                  <div style={{ fontStyle: 'italic', color: 'var(--color-text-muted)' }}>
+                    No line items detected on this sheet.
+                  </div>
+                )}
+                {opt.sections.map((sec, sIdx) => (
+                  <div key={sIdx} className={styles.section}>
+                    <h3 className={styles.sectionTitle}>{sec.title}</h3>
+                    <table className={styles.table}>
+                      <thead>
+                        <tr>
+                          <th>Description</th>
+                          <th>Type</th>
+                          <th className={styles.numCell}>Cost to Serve</th>
+                          <th className={styles.gmCell}>GM%</th>
+                          <th className={styles.priceCell}>Marked-up Price</th>
+                          <th>Comments</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sec.items.map(item => {
+                          const { gm, source } = effectiveGm(item);
+                          const price = priceFromCostAndGm(item.cost ?? null, gm);
+                          const overrideVal = overrides[item.id]?.gmPct;
+                          return (
+                            <tr key={item.id}>
+                              <td>{item.description}</td>
+                              <td>{item.type || ''}</td>
+                              <td className={styles.numCell}>{item.cost === null || item.cost === undefined ? '' : fmtMoney(item.cost)}</td>
+                              <td className={styles.gmCell}>
+                                <GmInput
+                                  key={`${item.id}:${overrideVal === undefined ? 'unset' : overrideVal}`}
+                                  initialPct={overrideVal !== undefined ? overrideVal * 100 : null}
+                                  isOverride={overrideVal !== undefined}
+                                  placeholder={gm === null ? '' : `${(gm * 100).toFixed(1)}${source === 'override' ? '' : ` (${source[0]})`}`}
+                                  title={
+                                    source === 'override'
+                                      ? 'Per-line override. Clear to revert to global GM%.'
+                                      : source === 'global'
+                                      ? `Using global GM% (${fmtPct(globalGmPct)}). Type a value to override.`
+                                      : source === 'sheet'
+                                      ? `Using sheet GM% (${fmtPct(item.gmPct)}). Type a value to override.`
+                                      : 'No GM% set.'
+                                  }
+                                  onCommit={(raw) => setItemGm(item.id, raw)}
+                                />
+                              </td>
+                              <td className={styles.priceCell}>{fmtMoney(price)}</td>
+                              <td>{item.comments || ''}</td>
+                            </tr>
+                          );
+                        })}
+                        <tr className={styles.totalsRow}>
+                          <td colSpan={2}>Section subtotal</td>
+                          <td className={styles.numCell}>
+                            {fmtMoney(sec.items.reduce((s, i) => s + (typeof i.cost === 'number' ? i.cost : 0), 0))}
+                          </td>
+                          <td />
+                          <td className={styles.priceCell}>
+                            {fmtMoney(sec.items.reduce((s, i) => {
+                              const { gm } = effectiveGm(i);
+                              const p = priceFromCostAndGm(i.cost ?? null, gm);
+                              return s + (typeof p === 'number' ? p : 0);
+                            }, 0))}
+                          </td>
+                          <td />
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                ))}
+              </div>
+            </>
           );
-        })}
+        })()}
       </div>
     </div>
   );

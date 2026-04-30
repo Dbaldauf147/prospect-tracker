@@ -97,23 +97,90 @@
   align-items: center;
 }
 
-.optionCard {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  margin-bottom: 1.25rem;
-  background: var(--color-bg);
-  overflow: hidden;
+/* Chrome-style tab strip across the top of the pricing body. */
+.tabStrip {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: 0;
+  overflow-x: auto;
+  padding-top: 0.25rem;
 }
 
-.optionHeader {
+.tab,
+.tabActive {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.9rem;
+  border: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
+  border-top-left-radius: 8px;
+  border-top-right-radius: 8px;
+  background: #f1f5f9;
+  color: #64748b;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+  position: relative;
+  top: 1px;
+  font-family: inherit;
+}
+
+.tab:hover {
+  background: #e2e8f0;
+  color: #334155;
+}
+
+.tabActive {
+  background: var(--color-bg);
+  color: #1e293b;
+  font-weight: 600;
+  border-bottom-color: var(--color-bg);
+}
+
+.tabLabel {
+  font-variant-numeric: tabular-nums;
+}
+
+.tabPrice {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  padding-left: 0.4rem;
+  border-left: 1px solid var(--color-border);
+}
+
+.tabActive .tabPrice {
+  color: var(--color-text);
+}
+
+.tabHidden {
+  color: #f59e0b;
+  font-weight: 700;
+}
+
+.optionPanel {
+  border: 1px solid var(--color-border);
+  border-top: none;
+  border-bottom-left-radius: var(--radius-lg);
+  border-bottom-right-radius: var(--radius-lg);
+  background: var(--color-bg);
+  padding: 0.85rem 1rem 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.optionPanelHeader {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.75rem 1rem;
-  background: var(--color-bg-muted, #f8f9fa);
-  border-bottom: 1px solid var(--color-border);
-  cursor: pointer;
-  user-select: none;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.4rem;
 }
 
 .optionHeaderLeft {
@@ -154,10 +221,6 @@
 
 .summaryNum {
   font-weight: 600;
-}
-
-.optionBody {
-  padding: 0.75rem 1rem 1rem;
 }
 
 .solutionDesc {
