@@ -126,7 +126,7 @@ function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onA
             <tr key={idx}>
               <td>
                 <CellTextInput
-                  key={`alt-${idx}-altItem`}
+                  key={`alt-${idx}-altItem-${row.altItem ?? ''}`}
                   initial={row.altItem}
                   onCommit={(v) => onChange(idx, 'altItem', v)}
                 />
@@ -145,7 +145,7 @@ function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onA
               </td>
               <td className={styles.numCell}>
                 <CellTextInput
-                  key={`alt-${idx}-fee`}
+                  key={`alt-${idx}-fee-${row.fee ?? ''}`}
                   initial={typeof row.fee === 'number' ? row.fee.toFixed(2) : row.fee}
                   align="right"
                   onCommit={(v) => {
@@ -169,7 +169,7 @@ function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onA
               </td>
               <td className={styles.numCell}>
                 <CellTextInput
-                  key={`alt-${idx}-unitCount`}
+                  key={`alt-${idx}-unitCount-${row.unitCount ?? ''}`}
                   initial={row.unitCount}
                   align="right"
                   onCommit={(v) => onChange(idx, 'unitCount', v)}
@@ -177,7 +177,7 @@ function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onA
               </td>
               <td className={styles.numCell}>
                 <CellTextInput
-                  key={`alt-${idx}-startMonth`}
+                  key={`alt-${idx}-startMonth-${row.startMonth ?? ''}`}
                   initial={row.startMonth}
                   align="right"
                   onCommit={(v) => onChange(idx, 'startMonth', v)}
