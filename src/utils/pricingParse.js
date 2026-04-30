@@ -186,12 +186,17 @@ function parseOptionSheet(sheet, sheetName) {
         if (rowIsBlank(row)) continue;
         const desc = cellStr(row[cols.description ?? 0]);
         if (!desc) continue;
-        // Skip placeholder "Enter X here" rows.
+        // Skip placeholder rows ("Enter department here", "Enter
+        // service here", etc.).
         if (/^enter\s+.+\s+here$/i.test(desc)) continue;
+        if (/enter\s+department\s+here/i.test(desc)) continue;
         // Don't consume the end anchor, the GM%/Use Target setup
         // rows, or another section title.
         if (END_ANCHOR_RE.test(desc)) break;
         if (/^(target\s*gm\s*%|use\s*target|delivery\s*team\s*inputs|solution\s*description|are\s+all\s+values)/i.test(desc)) continue;
+        // Skip rows whose Type cell is blank — those are unfilled
+        // template stubs that show up between real line items.
+        if (cols.type !== undefined && !cellStr(row[cols.type])) continue;
 
         const item = {
           id: `${sheetName}::${title}::${items.length}::${desc.slice(0, 40)}`,
