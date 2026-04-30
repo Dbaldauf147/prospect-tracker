@@ -463,12 +463,15 @@
   border: 1px solid var(--color-border);
   padding: 0.4rem 0.6rem;
   vertical-align: middle;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .summaryTable th {
   background: var(--color-bg-muted, #f1f5f9);
   font-weight: 600;
   text-align: left;
+  vertical-align: bottom;
 }
 
 .summaryGrandRow td {
