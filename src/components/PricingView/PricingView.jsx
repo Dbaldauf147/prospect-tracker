@@ -28,6 +28,26 @@ function GmInput({ initialPct, placeholder, title, isOverride, onCommit }) {
   );
 }
 
+// Free-text per-row cell input. Local-draft like GmInput so typing
+// doesn't fight a re-rendered controlled value.
+function LinkedToInput({ initial, onCommit }) {
+  const [draft, setDraft] = useState(initial || '');
+  return (
+    <input
+      className={styles.linkedInput}
+      type="text"
+      value={draft}
+      placeholder="Tie to…"
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => onCommit(draft)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.currentTarget.blur();
+        if (e.key === 'Escape') { setDraft(initial || ''); e.currentTarget.blur(); }
+      }}
+    />
+  );
+}
+
 const COLS = [
   { key: 'lineItem',  label: 'Line Item',         defaultWidth: 280 },
   { key: 'type',      label: 'Type',              defaultWidth: 140 },
@@ -36,6 +56,7 @@ const COLS = [
   { key: 'comments',  label: 'Comments',          defaultWidth: 280 },
   { key: 'gm',        label: 'GM%',               defaultWidth: 90 },
   { key: 'price',     label: 'Marked-up Price',   defaultWidth: 140 },
+  { key: 'linkedTo',  label: 'Linked To',         defaultWidth: 200 },
 ];
 
 const STORE = 'pricing-cache';
@@ -161,16 +182,40 @@ export function PricingView() {
     dbDelete(STORE, KEY).catch(() => {});
   }
 
+  function setItemLinkedTo(itemId, raw) {
+    setOverrides(prev => {
+      const next = { ...prev };
+      const trimmed = (raw || '').trim();
+      if (!trimmed) {
+        if (next[itemId]) {
+          const { linkedTo: _drop, ...rest } = next[itemId];
+          if (Object.keys(rest).length === 0) delete next[itemId];
+          else next[itemId] = rest;
+        }
+      } else {
+        next[itemId] = { ...next[itemId], linkedTo: trimmed };
+      }
+      return next;
+    });
+  }
+
   function setItemGm(itemId, raw) {
-    const next = { ...overrides };
-    const parsed = parsePctInput(raw);
-    if (parsed === null) {
-      // Empty -> remove override (revert to global / sheet GM%).
-      delete next[itemId];
-    } else {
-      next[itemId] = { ...next[itemId], gmPct: parsed };
-    }
-    setOverrides(next);
+    setOverrides(prev => {
+      const next = { ...prev };
+      const parsed = parsePctInput(raw);
+      if (parsed === null) {
+        // Clearing GM% -> drop just the gmPct field, keep other
+        // per-row state (e.g. linkedTo).
+        if (next[itemId]) {
+          const { gmPct: _drop, ...rest } = next[itemId];
+          if (Object.keys(rest).length === 0) delete next[itemId];
+          else next[itemId] = rest;
+        }
+      } else {
+        next[itemId] = { ...next[itemId], gmPct: parsed };
+      }
+      return next;
+    });
   }
 
   function effectiveGm(item) {
@@ -189,7 +234,7 @@ export function PricingView() {
 
   function exportCsv() {
     if (!workbook) return;
-    const rows = [['Option', 'Section', 'Line Item', 'Type', 'CTS', 'Start Month', 'Comments', 'Effective GM%', 'GM Source', 'Marked-up Price']];
+    const rows = [['Option', 'Section', 'Line Item', 'Type', 'CTS', 'Start Month', 'Comments', 'Effective GM%', 'GM Source', 'Marked-up Price', 'Linked To']];
     for (const opt of workbook.options) {
       for (const sec of opt.sections) {
         for (const item of sec.items) {
@@ -205,6 +250,7 @@ export function PricingView() {
             gm === null ? '' : (gm * 100).toFixed(2),
             source,
             price === null ? '' : price.toFixed(2),
+            overrides[item.id]?.linkedTo || '',
           ]);
         }
       }
@@ -444,6 +490,13 @@ export function PricingView() {
                                   />
                                 </td>
                                 <td className={styles.priceCell}>{fmtMoney(price)}</td>
+                                <td>
+                                  <LinkedToInput
+                                    key={`linked:${item.id}:${overrides[item.id]?.linkedTo || ''}`}
+                                    initial={overrides[item.id]?.linkedTo || ''}
+                                    onCommit={(raw) => setItemLinkedTo(item.id, raw)}
+                                  />
+                                </td>
                               </tr>
                             );
                           })}
@@ -452,6 +505,7 @@ export function PricingView() {
                             <td className={styles.numCell}>{fmtMoney(totalCost)}</td>
                             <td colSpan={3} />
                             <td className={styles.priceCell}>{fmtMoney(totalPrice)}</td>
+                            <td />
                           </tr>
                         </tbody>
                       </table>

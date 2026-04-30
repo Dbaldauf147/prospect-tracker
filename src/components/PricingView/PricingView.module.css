@@ -316,6 +316,27 @@
   white-space: nowrap;
 }
 
+.linkedInput {
+  width: 100%;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  font-family: inherit;
+  background: transparent;
+  color: var(--color-text);
+}
+
+.linkedInput:hover {
+  border-color: var(--color-border);
+}
+
+.linkedInput:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  background: var(--color-bg);
+}
+
 .cellInput {
   width: 100%;
   padding: 0.2rem 0.35rem;
