@@ -147,6 +147,13 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
           <span className={styles.navIcon}>&#x2702;</span>
           Deduplication
         </button>
+        <button
+          className={view === 'pricing' ? styles.navItemActive : styles.navItem}
+          onClick={() => setView('pricing')}
+        >
+          <span className={styles.navIcon}>&#128181;</span>
+          Pricing
+        </button>
       </nav>
 
       <div className={styles.settingsWrap} ref={settingsWrapRef}>

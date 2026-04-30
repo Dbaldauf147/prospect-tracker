@@ -12,6 +12,7 @@ const STORES = [
   { name: 'clients-cache',    keyPath: null },
   { name: 'settings-backups', keyPath: 'timestamp' },
   { name: 'hubspot-contacts', keyPath: null },
+  { name: 'pricing-cache',    keyPath: null },
 ];
 
 let dbPromise = null;

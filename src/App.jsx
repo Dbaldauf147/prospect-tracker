@@ -31,6 +31,7 @@ import { ListsView } from './components/ListsView/ListsView';
 import { AgendaView } from './components/AgendaView/AgendaView';
 import { PEPortfolioView } from './components/PEPortfolioView/PEPortfolioView';
 import { KeyContactsView } from './components/KeyContactsView/KeyContactsView';
+import { PricingView } from './components/PricingView/PricingView';
 import { SERVICE_CATEGORIES } from './data/enums';
 import './App.css';
 
@@ -285,6 +286,8 @@ function App() {
             <VibeProspecting prospects={prospects} onUpdate={updateProspect} cdmName={cdmName} />
           ) : view === 'dedupe' ? (
             <DedupeView />
+          ) : view === 'pricing' ? (
+            <PricingView />
           ) : view === 'privacy' ? (
             <PrivacyPolicy />
           ) : view === 'activity' ? (
