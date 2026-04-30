@@ -762,6 +762,7 @@ export function PricingView() {
                         </tbody>
                       </table>
 
+                      <div className={styles.bottomRow}>
                       <div className={styles.summaryPanel}>
                         <h3 className={styles.summaryTitle}>Totals by type</h3>
                         <div className={styles.summaryMeta}>
@@ -813,6 +814,7 @@ export function PricingView() {
                         onAddRow={() => addAltFeeRow(opt.optionNumber)}
                         onRemoveRow={(idx) => removeAltFeeRow(opt.optionNumber, idx)}
                       />
+                      </div>
                     </div>
                   );
                 })()}
