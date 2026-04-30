@@ -514,6 +514,19 @@
   color: var(--color-text);
 }
 
+select.altCellInput {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image: none;
+  cursor: pointer;
+  padding-right: 0.4rem;
+}
+
+select.altCellInput::-ms-expand {
+  display: none;
+}
+
 .altCellInput:hover {
   border-color: var(--color-border);
 }
