@@ -931,6 +931,15 @@ export function PricingView() {
                       </table>
 
                       <div className={styles.bottomRow}>
+                      <AltFeeTable
+                        rows={altFees[opt.optionNumber] || altFeeStarter()}
+                        globalGmPct={globalGmPct}
+                        onChange={(idx, field, value) => updateAltFeeCell(opt.optionNumber, idx, field, value)}
+                        onAddRow={() => addAltFeeRow(opt.optionNumber)}
+                        onRemoveRow={(idx) => removeAltFeeRow(opt.optionNumber, idx)}
+                        onReplaceRows={(rows) => replaceAltFeeRows(opt.optionNumber, rows)}
+                        onAppendRows={(rows) => appendAltFeeRows(opt.optionNumber, rows)}
+                      />
                       <div className={styles.summaryPanel}>
                         <h3 className={styles.summaryTitle}>Totals by type</h3>
                         <div className={styles.summaryMeta}>
@@ -1004,15 +1013,6 @@ export function PricingView() {
                         </table>
                       </div>
 
-                      <AltFeeTable
-                        rows={altFees[opt.optionNumber] || altFeeStarter()}
-                        globalGmPct={globalGmPct}
-                        onChange={(idx, field, value) => updateAltFeeCell(opt.optionNumber, idx, field, value)}
-                        onAddRow={() => addAltFeeRow(opt.optionNumber)}
-                        onRemoveRow={(idx) => removeAltFeeRow(opt.optionNumber, idx)}
-                        onReplaceRows={(rows) => replaceAltFeeRows(opt.optionNumber, rows)}
-                        onAppendRows={(rows) => appendAltFeeRows(opt.optionNumber, rows)}
-                      />
                       </div>
                     </div>
                   );
