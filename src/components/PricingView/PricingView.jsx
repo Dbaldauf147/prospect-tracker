@@ -49,7 +49,36 @@ function CellTextInput({ initial, placeholder, type, align, onCommit }) {
   );
 }
 
-function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow }) {
+// Parse tab- or comma-separated text into alt-fee rows. Each row is
+// expected to have 6 columns matching the table: Item / Type / Fee /
+// Unit / UnitCount / StartMonth. Excess columns are ignored, missing
+// ones become empty.
+function parseAltFeePaste(text) {
+  if (!text) return [];
+  const lines = text.replace(/\r\n?/g, '\n').split('\n').map(l => l.trim()).filter(Boolean);
+  const out = [];
+  for (const line of lines) {
+    const cols = line.includes('\t') ? line.split('\t') : line.split(/\s*,\s*/);
+    const cell = (i) => (cols[i] ?? '').trim();
+    const feeNum = Number(cell(2).replace(/[$,\s]/g, ''));
+    const ucNum = Number(cell(4));
+    const smNum = Number(cell(5));
+    out.push({
+      altItem: cell(0),
+      type: cell(1),
+      fee: Number.isFinite(feeNum) ? feeNum : 0,
+      unit: cell(3),
+      unitCount: Number.isFinite(ucNum) ? ucNum : cell(4),
+      startMonth: Number.isFinite(smNum) ? smNum : cell(5) || 1,
+    });
+  }
+  return out;
+}
+
+function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onAppendRows }) {
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasteText, setPasteText] = useState('');
+  const parsed = pasteOpen ? parseAltFeePaste(pasteText) : [];
   return (
     <div className={styles.altFeeWrap}>
       <h3 className={styles.summaryTitle}>Alternative Fee Structure / Schedule</h3>
@@ -139,9 +168,43 @@ function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow }) {
           ))}
         </tbody>
       </table>
-      <button type="button" className={styles.actionBtn} onClick={onAddRow} style={{ marginTop: '0.5rem' }}>
-        + Add row
-      </button>
+      <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
+        <button type="button" className={styles.actionBtn} onClick={onAddRow}>+ Add row</button>
+        <button type="button" className={styles.actionBtn} onClick={() => setPasteOpen(o => !o)}>
+          {pasteOpen ? 'Hide paste box' : 'Paste from spreadsheet…'}
+        </button>
+      </div>
+      {pasteOpen && (
+        <div className={styles.pasteBox}>
+          <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', marginBottom: '0.35rem' }}>
+            Paste tab-separated rows (6 columns: Item · Type · Fee · Unit · Unit Count · Fee Start Month). Type values like "One Time" / "Recurring (monthly)" and Unit values like "Per Site" / "Per Account" will round-trip into the dropdowns.
+          </div>
+          <textarea
+            className={styles.pasteArea}
+            value={pasteText}
+            onChange={(e) => setPasteText(e.target.value)}
+            placeholder={'New sites\tOne Time\t$130.00\tPer Site\t25\t1\n…'}
+            rows={8}
+          />
+          <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>
+              {parsed.length} row{parsed.length === 1 ? '' : 's'} parsed
+            </span>
+            <button
+              type="button"
+              className={styles.actionBtn}
+              disabled={parsed.length === 0}
+              onClick={() => { onAppendRows(parsed); setPasteText(''); setPasteOpen(false); }}
+            >Append</button>
+            <button
+              type="button"
+              className={styles.actionBtn}
+              disabled={parsed.length === 0}
+              onClick={() => { onReplaceRows(parsed); setPasteText(''); setPasteOpen(false); }}
+            >Replace all</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -367,6 +430,27 @@ export function PricingView() {
       const list = (prev[optionNumber] || []).slice();
       list.splice(idx, 1);
       return { ...prev, [optionNumber]: list };
+    });
+  }
+
+  function replaceAltFeeRows(optionNumber, newRows) {
+    setAltFees(prev => ({ ...prev, [optionNumber]: newRows.slice() }));
+  }
+
+  function appendAltFeeRows(optionNumber, newRows) {
+    setAltFees(prev => {
+      const existing = (prev[optionNumber] || altFeeStarter()).slice();
+      // Drop trailing fully-empty starter rows so the appended rows
+      // don't sit below a wall of blanks.
+      while (existing.length > 0) {
+        const r = existing[existing.length - 1];
+        const isEmpty = !r.altItem && !r.type && !r.unit && !r.unitCount &&
+          (typeof r.fee !== 'number' || r.fee === 0) &&
+          (r.startMonth === '' || r.startMonth === 1);
+        if (!isEmpty) break;
+        existing.pop();
+      }
+      return { ...prev, [optionNumber]: [...existing, ...newRows] };
     });
   }
 
@@ -879,6 +963,8 @@ export function PricingView() {
                         onChange={(idx, field, value) => updateAltFeeCell(opt.optionNumber, idx, field, value)}
                         onAddRow={() => addAltFeeRow(opt.optionNumber)}
                         onRemoveRow={(idx) => removeAltFeeRow(opt.optionNumber, idx)}
+                        onReplaceRows={(rows) => replaceAltFeeRows(opt.optionNumber, rows)}
+                        onAppendRows={(rows) => appendAltFeeRows(opt.optionNumber, rows)}
                       />
                       </div>
                     </div>
