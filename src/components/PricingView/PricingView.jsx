@@ -108,9 +108,6 @@ function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onA
   return (
     <div className={styles.altFeeWrap} onPaste={handleTablePaste}>
       <h3 className={styles.summaryTitle}>Alternative Fee Structure / Schedule</h3>
-      <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', marginBottom: '0.4rem' }}>
-        Tip: select cells in Google Sheets / Excel and paste (⌘V / Ctrl+V) anywhere on this table to fill all rows at once.
-      </div>
       {flash && <div className={styles.pasteFlash}>{flash}</div>}
       <table className={styles.altTable}>
         <thead>
