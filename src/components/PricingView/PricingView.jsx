@@ -199,6 +199,8 @@ export function PricingView() {
   const [colWidths, setColWidths] = useState({}); // { [colKey]: pixelWidth }
   const [altFees, setAltFees] = useState({}); // { [optionNumber]: [{ altItem, type, fee, unit, unitCount, startMonth }] }
   const [linkedToDefaults, setLinkedToDefaults] = useState({}); // { [`${lineItem}::${type}`]: 'value' }
+  const [termMonths, setTermMonths] = useState(36);
+  const [annualEscalator, setAnnualEscalator] = useState(0.03);
   const [error, setError] = useState('');
   const fileInputRef = useRef(null);
   const hydratedRef = useRef(false);
@@ -224,6 +226,8 @@ export function PricingView() {
         if (saved.colWidths) setColWidths(saved.colWidths);
         if (saved.altFees) setAltFees(saved.altFees);
         if (saved.linkedToDefaults) setLinkedToDefaults(saved.linkedToDefaults);
+        if (typeof saved.termMonths === 'number') setTermMonths(saved.termMonths);
+        if (typeof saved.annualEscalator === 'number') setAnnualEscalator(saved.annualEscalator);
       } catch (err) {
         console.warn('Failed to load pricing cache:', err);
       } finally {
@@ -236,9 +240,27 @@ export function PricingView() {
   // Persist on changes (skip the first render until hydration finishes).
   useEffect(() => {
     if (!hydratedRef.current) return;
-    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults };
+    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, termMonths, annualEscalator };
     dbPut(STORE, payload, KEY).catch(err => console.warn('Failed to save pricing cache:', err));
-  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults]);
+  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, termMonths, annualEscalator]);
+
+  // Term-value of a monthly amount under an annual escalator: each
+  // 12-month band charges at month1 × (1 + esc)^yearIndex.
+  function projectMonthlyOverTerm(monthly, escPct, months) {
+    if (typeof monthly !== 'number' || !Number.isFinite(monthly)) return 0;
+    if (!months || months <= 0) return 0;
+    const esc = typeof escPct === 'number' && Number.isFinite(escPct) ? escPct : 0;
+    let total = 0;
+    let remaining = months;
+    let mult = 1;
+    while (remaining > 0) {
+      const band = Math.min(12, remaining);
+      total += monthly * mult * band;
+      remaining -= band;
+      mult *= (1 + esc);
+    }
+    return total;
+  }
 
   const linkedToDefaultKey = (lineItem, type) =>
     `${(lineItem || '').trim().toLowerCase()}::${(type || '').trim().toLowerCase()}`;
@@ -482,6 +504,42 @@ export function PricingView() {
             <span>%</span>
           </label>
 
+          <label className={styles.gmField} title="Number of months in the contract term — used to project recurring (monthly) totals.">
+            Term
+            <input
+              className={styles.gmInput}
+              type="number"
+              step="1"
+              min="0"
+              max="240"
+              value={termMonths}
+              onChange={(e) => {
+                const n = Number(e.target.value);
+                if (!Number.isFinite(n)) return;
+                setTermMonths(Math.max(0, Math.min(240, Math.round(n))));
+              }}
+            />
+            <span>mo</span>
+          </label>
+
+          <label className={styles.gmField} title="Annual fee escalator applied to recurring (monthly) fees year-over-year.">
+            Escalator
+            <input
+              className={styles.gmInput}
+              type="number"
+              step="0.5"
+              min="0"
+              max="50"
+              value={Math.round(annualEscalator * 1000) / 10}
+              onChange={(e) => {
+                const n = Number(e.target.value);
+                if (!Number.isFinite(n)) return;
+                setAnnualEscalator(Math.max(0, Math.min(0.5, n / 100)));
+              }}
+            />
+            <span>%/yr</span>
+          </label>
+
           <input
             ref={fileInputRef}
             type="file"
@@ -612,16 +670,24 @@ export function PricingView() {
                     return s + (typeof price === 'number' ? price : 0);
                   }, 0);
                   // Aggregate by Type for the summary panel under the table.
-                  const sumByType = (typeRe) => flatItems.reduce((acc, i) => {
+                  // For "Recurring (monthly)" we also project the term value
+                  // using the annual escalator and term length from the toolbar.
+                  const sumByType = (typeRe, isRecurring) => flatItems.reduce((acc, i) => {
                     if (!typeRe.test(i.type || '')) return acc;
                     const { price } = priceFor(i);
                     if (typeof i.cts === 'number') acc.cost += i.cts;
                     if (typeof price === 'number') acc.price += price;
+                    if (isRecurring) {
+                      acc.termCost += projectMonthlyOverTerm(i.cts ?? null, annualEscalator, termMonths);
+                      acc.termPrice += projectMonthlyOverTerm(price ?? null, annualEscalator, termMonths);
+                    }
                     return acc;
-                  }, { cost: 0, price: 0 });
-                  const setup = sumByType(/^setup$/i);
-                  const recurring = sumByType(/recurring.*monthly|monthly.*recurring|^recurring/i);
-                  const oneTime = sumByType(/^one\s*time$/i);
+                  }, { cost: 0, price: 0, termCost: 0, termPrice: 0 });
+                  const setup = sumByType(/^setup$/i, false);
+                  const recurring = sumByType(/recurring.*monthly|monthly.*recurring|^recurring/i, true);
+                  const oneTime = sumByType(/^one\s*time$/i, false);
+                  const grandTermCost = setup.cost + oneTime.cost + recurring.termCost;
+                  const grandTermPrice = setup.price + oneTime.price + recurring.termPrice;
                   return (
                     <div className={styles.section}>
                       <table className={styles.table}>
@@ -698,12 +764,16 @@ export function PricingView() {
 
                       <div className={styles.summaryPanel}>
                         <h3 className={styles.summaryTitle}>Totals by type</h3>
+                        <div className={styles.summaryMeta}>
+                          Term: {termMonths} months · Annual escalator: {(annualEscalator * 100).toFixed(1)}%
+                        </div>
                         <table className={styles.summaryTable}>
                           <thead>
                             <tr>
                               <th>Bucket</th>
                               <th className={styles.numCell}>Cost</th>
                               <th className={styles.priceCell}>Marked-up</th>
+                              <th className={styles.priceCell}>Term value (marked-up)</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -711,23 +781,27 @@ export function PricingView() {
                               <td>Setup</td>
                               <td className={styles.numCell}>{fmtMoney(setup.cost)}</td>
                               <td className={styles.priceCell}>{fmtMoney(setup.price)}</td>
+                              <td className={styles.priceCell}>{fmtMoney(setup.price)}</td>
                             </tr>
                             <tr>
                               <td>Recurring (monthly)</td>
                               <td className={styles.numCell}>{fmtMoney(recurring.cost)}</td>
                               <td className={styles.priceCell}>{fmtMoney(recurring.price)}</td>
+                              <td className={styles.priceCell}>{fmtMoney(recurring.termPrice)}</td>
                             </tr>
                             {(oneTime.cost > 0 || oneTime.price > 0) && (
                               <tr>
                                 <td>One Time</td>
                                 <td className={styles.numCell}>{fmtMoney(oneTime.cost)}</td>
                                 <td className={styles.priceCell}>{fmtMoney(oneTime.price)}</td>
+                                <td className={styles.priceCell}>{fmtMoney(oneTime.price)}</td>
                               </tr>
                             )}
                             <tr className={styles.summaryGrandRow}>
-                              <td>All line items</td>
-                              <td className={styles.numCell}>{fmtMoney(totalCost)}</td>
+                              <td>Total contract value</td>
+                              <td className={styles.numCell}>{fmtMoney(grandTermCost)}</td>
                               <td className={styles.priceCell}>{fmtMoney(totalPrice)}</td>
+                              <td className={styles.priceCell}>{fmtMoney(grandTermPrice)}</td>
                             </tr>
                           </tbody>
                         </table>
