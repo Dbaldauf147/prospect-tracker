@@ -137,14 +137,15 @@ function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow }) {
 
 // Free-text per-row cell input. Local-draft like GmInput so typing
 // doesn't fight a re-rendered controlled value.
-function LinkedToInput({ initial, onCommit }) {
+function LinkedToInput({ initial, isDefault, onCommit }) {
   const [draft, setDraft] = useState(initial || '');
   return (
     <input
-      className={styles.linkedInput}
+      className={`${styles.linkedInput} ${isDefault ? styles.linkedDefault : ''}`}
       type="text"
       value={draft}
       placeholder="Tie to…"
+      title={isDefault ? 'Auto-filled from saved default for this Line Item + Type. Edit to override.' : undefined}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={() => onCommit(draft)}
       onKeyDown={(e) => {
@@ -197,6 +198,7 @@ export function PricingView() {
   const [activeOption, setActiveOption] = useState(null); // optionNumber or null
   const [colWidths, setColWidths] = useState({}); // { [colKey]: pixelWidth }
   const [altFees, setAltFees] = useState({}); // { [optionNumber]: [{ altItem, type, fee, unit, unitCount, startMonth }] }
+  const [linkedToDefaults, setLinkedToDefaults] = useState({}); // { [`${lineItem}::${type}`]: 'value' }
   const [error, setError] = useState('');
   const fileInputRef = useRef(null);
   const hydratedRef = useRef(false);
@@ -221,6 +223,7 @@ export function PricingView() {
         if (typeof saved.activeOption === 'number') setActiveOption(saved.activeOption);
         if (saved.colWidths) setColWidths(saved.colWidths);
         if (saved.altFees) setAltFees(saved.altFees);
+        if (saved.linkedToDefaults) setLinkedToDefaults(saved.linkedToDefaults);
       } catch (err) {
         console.warn('Failed to load pricing cache:', err);
       } finally {
@@ -233,9 +236,21 @@ export function PricingView() {
   // Persist on changes (skip the first render until hydration finishes).
   useEffect(() => {
     if (!hydratedRef.current) return;
-    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees };
+    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults };
     dbPut(STORE, payload, KEY).catch(err => console.warn('Failed to save pricing cache:', err));
-  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees]);
+  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults]);
+
+  const linkedToDefaultKey = (lineItem, type) =>
+    `${(lineItem || '').trim().toLowerCase()}::${(type || '').trim().toLowerCase()}`;
+
+  // Resolve the displayed Linked To value for an item: per-row
+  // override wins; otherwise fall back to the saved default for the
+  // (Line Item, Type) pair.
+  function resolvedLinkedTo(item) {
+    const ov = overrides[item.id]?.linkedTo;
+    if (ov !== undefined) return ov;
+    return linkedToDefaults[linkedToDefaultKey(item.description, item.type)] || '';
+  }
 
   // Drag-to-resize column handler. Captures the starting width and
   // mouse X, then updates `colWidths[key]` on mousemove until mouseup.
@@ -322,10 +337,11 @@ export function PricingView() {
     });
   }
 
-  function setItemLinkedTo(itemId, raw) {
+  function setItemLinkedTo(item, raw) {
+    const itemId = item.id;
+    const trimmed = (raw || '').trim();
     setOverrides(prev => {
       const next = { ...prev };
-      const trimmed = (raw || '').trim();
       if (!trimmed) {
         if (next[itemId]) {
           const { linkedTo: _drop, ...rest } = next[itemId];
@@ -337,6 +353,24 @@ export function PricingView() {
       }
       return next;
     });
+    // Offer to save the value as the default for this (Line Item,
+    // Type) combo so future workbooks auto-populate the same link.
+    if (trimmed) {
+      const key = linkedToDefaultKey(item.description, item.type);
+      const existing = linkedToDefaults[key];
+      if (existing !== trimmed) {
+        const verb = existing ? 'replace' : 'save';
+        const detail = existing
+          ? `\nCurrent default: "${existing}"\nNew default: "${trimmed}"`
+          : '';
+        const ok = window.confirm(
+          `${verb === 'replace' ? 'Replace the' : 'Save as'} default for\n"${item.description}" · ${item.type || '(no type)'}?${detail}\n\nFuture rows matching this Line Item + Type will auto-fill with this value.`
+        );
+        if (ok) {
+          setLinkedToDefaults(prev => ({ ...prev, [key]: trimmed }));
+        }
+      }
+    }
   }
 
   function setItemGm(itemId, raw) {
@@ -390,7 +424,7 @@ export function PricingView() {
             gm === null ? '' : (gm * 100).toFixed(2),
             source,
             price === null ? '' : price.toFixed(2),
-            overrides[item.id]?.linkedTo || '',
+            resolvedLinkedTo(item),
           ]);
         }
       }
@@ -643,9 +677,10 @@ export function PricingView() {
                                 <td className={styles.priceCell}>{fmtMoney(price)}</td>
                                 <td>
                                   <LinkedToInput
-                                    key={`linked:${item.id}:${overrides[item.id]?.linkedTo || ''}`}
-                                    initial={overrides[item.id]?.linkedTo || ''}
-                                    onCommit={(raw) => setItemLinkedTo(item.id, raw)}
+                                    key={`linked:${item.id}:${resolvedLinkedTo(item)}`}
+                                    initial={resolvedLinkedTo(item)}
+                                    isDefault={overrides[item.id]?.linkedTo === undefined && !!linkedToDefaults[linkedToDefaultKey(item.description, item.type)]}
+                                    onCommit={(raw) => setItemLinkedTo(item, raw)}
                                   />
                                 </td>
                               </tr>

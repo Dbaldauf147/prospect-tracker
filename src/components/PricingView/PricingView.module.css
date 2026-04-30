@@ -337,6 +337,11 @@
   background: var(--color-bg);
 }
 
+.linkedDefault {
+  color: #6b7280;
+  font-style: italic;
+}
+
 .cellInput {
   width: 100%;
   padding: 0.2rem 0.35rem;
