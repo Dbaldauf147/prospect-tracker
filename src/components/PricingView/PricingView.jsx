@@ -99,11 +99,17 @@ function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow }) {
                 />
               </td>
               <td>
-                <CellTextInput
-                  key={`alt-${idx}-unit`}
-                  initial={row.unit}
-                  onCommit={(v) => onChange(idx, 'unit', v)}
-                />
+                <select
+                  className={styles.altCellInput}
+                  value={row.unit || ''}
+                  onChange={(e) => onChange(idx, 'unit', e.target.value)}
+                >
+                  <option value="">—</option>
+                  <option value="Fixed">Fixed</option>
+                  <option value="Per Site">Per Site</option>
+                  <option value="Per Account">Per Account</option>
+                  <option value="Per Meter">Per Meter</option>
+                </select>
               </td>
               <td className={styles.numCell}>
                 <CellTextInput
