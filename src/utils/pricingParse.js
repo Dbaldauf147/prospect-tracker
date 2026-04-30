@@ -23,8 +23,11 @@ import * as XLSX from 'xlsx';
 
 const OPTION_RE = /^\s*Option\s*([1-4])\b/i;
 const SOLUTION_DESC_RE = /^solution\s*description$/i;
-const START_ANCHOR_RE = /^\s*delivery\s*team\s*inputs\b/i;
 const END_ANCHOR_RE = /^\s*cost\s*summary\b/i;
+// Per the SIA template, the first 18 rows are sheet metadata (Date,
+// Salesperson, Currency Conversion, Solution description, Target
+// GM%, Use Target). The line-item tables always begin below row 18.
+const SKIP_LEADING_ROWS = 18;
 
 // Header-cell matchers for the 5 columns we display.
 const COL_MATCHERS = {
@@ -110,16 +113,14 @@ function parseOptionSheet(sheet, sheetName) {
     raw: true,
   });
 
-  // Locate the anchors.
-  let startIdx = -1, endIdx = -1;
-  for (let i = 0; i < rows.length; i++) {
+  // Skip a fixed block of leading metadata rows; locate the Cost
+  // Summary end anchor below it.
+  const startIdx = Math.min(SKIP_LEADING_ROWS, rows.length);
+  let endIdx = -1;
+  for (let i = startIdx; i < rows.length; i++) {
     const a = cellStr((rows[i] || [])[0]);
     if (!a) continue;
-    if (startIdx === -1 && START_ANCHOR_RE.test(a)) startIdx = i;
-    else if (startIdx !== -1 && endIdx === -1 && END_ANCHOR_RE.test(a)) {
-      endIdx = i;
-      break;
-    }
+    if (END_ANCHOR_RE.test(a)) { endIdx = i; break; }
   }
 
   // Solution description — captured from anywhere on the sheet, even
@@ -145,11 +146,11 @@ function parseOptionSheet(sheet, sheetName) {
   }
 
   const sections = [];
-  if (startIdx !== -1) {
+  {
     const stop = endIdx === -1 ? rows.length : endIdx;
     // Find every header row inside the bounded range.
     const headerIdxs = [];
-    for (let i = startIdx + 1; i < stop; i++) {
+    for (let i = startIdx; i < stop; i++) {
       if (isHeaderRow(rows[i] || [])) headerIdxs.push(i);
     }
 
@@ -163,7 +164,7 @@ function parseOptionSheet(sheet, sheetName) {
       // header (e.g. "SB Services (CTS w/recommended GM%)"), bounded
       // by the previous header so we don't reach across sections.
       let title = '';
-      const lowBound = (headerIdxs[hi - 1] ?? startIdx) + 1;
+      const lowBound = (headerIdxs[hi - 1] ?? (startIdx - 1)) + 1;
       for (let j = idx - 1; j >= lowBound; j--) {
         const r = rows[j] || [];
         if (rowIsBlank(r)) continue;

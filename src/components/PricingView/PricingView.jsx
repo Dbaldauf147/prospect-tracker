@@ -33,7 +33,7 @@ const KEY = 'current';
 // Bump this whenever the parser output shape changes — older cached
 // parses are silently discarded on hydration so the user re-uploads
 // against the current parser.
-const PARSER_VERSION = 4;
+const PARSER_VERSION = 5;
 
 const fmtMoney = (n) => {
   if (n === null || n === undefined || Number.isNaN(n)) return '';
@@ -327,13 +327,12 @@ export function PricingView() {
                       No line items detected on this sheet.
                     </div>
                     <div style={{ marginBottom: '0.5rem' }}>
-                      The parser scans between a "Delivery Team Inputs" anchor and a "Cost Summary" anchor, then looks for tables whose header row contains <em>Line Item + Type + CTS</em> (Cost to Serve). Below are the {opt.rawSample?.length || 0} rows we read inside that range on <strong>{opt.sheetName}</strong>; if you can spot the line-item table here, share a screenshot of the relevant rows and I'll tune the detection.
+                      The parser skips the first 18 rows of metadata, then looks for tables whose header row contains <em>Line Item + Type + CTS</em> (Cost to Serve), stopping at <em>Cost Summary</em>. Below are the {opt.rawSample?.length || 0} rows we read inside that range on <strong>{opt.sheetName}</strong>; if you can spot the line-item table here, share a screenshot of the relevant rows and I'll tune the detection.
                     </div>
                     <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', marginBottom: '0.5rem' }}>
                       Cells in sheet: {opt.cellCount ?? '?'} ·
                       Range: {opt.refUsed || '(none)'} ·
                       Total rows read: {opt.totalRows ?? '?'} ·
-                      Delivery Team Inputs row: {opt.startIdx >= 0 ? opt.startIdx + 1 : 'not found'} ·
                       Cost Summary row: {opt.endIdx >= 0 ? opt.endIdx + 1 : 'not found'}
                     </div>
                     <div className={styles.rawScroll}>
