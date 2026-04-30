@@ -342,6 +342,38 @@
   font-style: italic;
 }
 
+.linkedCell {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.defaultStar {
+  background: transparent;
+  border: 1px solid transparent;
+  color: #9ca3af;
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0.15rem 0.3rem;
+  border-radius: var(--radius-sm);
+  flex: 0 0 auto;
+}
+
+.defaultStar:hover:not(:disabled) {
+  color: #f59e0b;
+  border-color: var(--color-border);
+}
+
+.defaultStar:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.defaultStarOn {
+  color: #f59e0b;
+}
+
 .cellInput {
   width: 100%;
   padding: 0.2rem 0.35rem;

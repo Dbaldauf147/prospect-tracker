@@ -375,24 +375,23 @@ export function PricingView() {
       }
       return next;
     });
-    // Offer to save the value as the default for this (Line Item,
-    // Type) combo so future workbooks auto-populate the same link.
-    if (trimmed) {
-      const key = linkedToDefaultKey(item.description, item.type);
-      const existing = linkedToDefaults[key];
-      if (existing !== trimmed) {
-        const verb = existing ? 'replace' : 'save';
-        const detail = existing
-          ? `\nCurrent default: "${existing}"\nNew default: "${trimmed}"`
-          : '';
-        const ok = window.confirm(
-          `${verb === 'replace' ? 'Replace the' : 'Save as'} default for\n"${item.description}" · ${item.type || '(no type)'}?${detail}\n\nFuture rows matching this Line Item + Type will auto-fill with this value.`
-        );
-        if (ok) {
-          setLinkedToDefaults(prev => ({ ...prev, [key]: trimmed }));
-        }
+  }
+
+  // Save / clear the (Line Item, Type) default from the row's
+  // currently-resolved value via the star button next to the input.
+  function toggleLinkedToDefault(item) {
+    const key = linkedToDefaultKey(item.description, item.type);
+    const currentValue = resolvedLinkedTo(item).trim();
+    const existing = linkedToDefaults[key] || '';
+    setLinkedToDefaults(prev => {
+      const next = { ...prev };
+      if (currentValue && existing !== currentValue) {
+        next[key] = currentValue;
+      } else if (existing) {
+        delete next[key];
       }
-    }
+      return next;
+    });
   }
 
   function setItemGm(itemId, raw) {
@@ -742,12 +741,40 @@ export function PricingView() {
                                 </td>
                                 <td className={styles.priceCell}>{fmtMoney(price)}</td>
                                 <td>
-                                  <LinkedToInput
-                                    key={`linked:${item.id}:${resolvedLinkedTo(item)}`}
-                                    initial={resolvedLinkedTo(item)}
-                                    isDefault={overrides[item.id]?.linkedTo === undefined && !!linkedToDefaults[linkedToDefaultKey(item.description, item.type)]}
-                                    onCommit={(raw) => setItemLinkedTo(item, raw)}
-                                  />
+                                  {(() => {
+                                    const key = linkedToDefaultKey(item.description, item.type);
+                                    const savedDefault = linkedToDefaults[key] || '';
+                                    const currentVal = resolvedLinkedTo(item);
+                                    const isFromDefault = overrides[item.id]?.linkedTo === undefined && !!savedDefault;
+                                    const matchesDefault = !!savedDefault && savedDefault === currentVal.trim();
+                                    const canSetDefault = !!currentVal.trim() && !matchesDefault;
+                                    const canClearDefault = matchesDefault;
+                                    return (
+                                      <div className={styles.linkedCell}>
+                                        <LinkedToInput
+                                          key={`linked:${item.id}:${currentVal}`}
+                                          initial={currentVal}
+                                          isDefault={isFromDefault}
+                                          onCommit={(raw) => setItemLinkedTo(item, raw)}
+                                        />
+                                        <button
+                                          type="button"
+                                          className={`${styles.defaultStar} ${matchesDefault ? styles.defaultStarOn : ''}`}
+                                          onClick={() => toggleLinkedToDefault(item)}
+                                          disabled={!canSetDefault && !canClearDefault}
+                                          title={
+                                            matchesDefault
+                                              ? `Default for "${item.description}" · ${item.type || '(no type)'}. Click to clear.`
+                                              : canSetDefault
+                                              ? `Save "${currentVal}" as the default for "${item.description}" · ${item.type || '(no type)'}.`
+                                              : 'Type a value above, then click to save it as the default.'
+                                          }
+                                        >
+                                          {matchesDefault ? '★' : '☆'}
+                                        </button>
+                                      </div>
+                                    );
+                                  })()}
                                 </td>
                               </tr>
                             );
