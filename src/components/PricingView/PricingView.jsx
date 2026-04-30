@@ -150,7 +150,9 @@ function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onA
               <td className={styles.numCell}>
                 <CellTextInput
                   key={`alt-${idx}-fee-${row.fee ?? ''}`}
-                  initial={typeof row.fee === 'number' ? row.fee.toFixed(2) : row.fee}
+                  initial={typeof row.fee === 'number'
+                    ? `$${row.fee.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                    : (row.fee ? `$${row.fee}` : '')}
                   align="right"
                   onCommit={(v) => {
                     const n = Number(String(v).replace(/[$,\s]/g, ''));
