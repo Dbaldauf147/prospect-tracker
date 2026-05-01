@@ -395,7 +395,18 @@ export function PipelineView() {
       <div className={styles.body} key={hydrated ? 'h' : 'pre'}>
         {/* Pipeline metrics */}
         <div className={styles.section}>
-          <div className={styles.sectionTitle}>PIPELINE METRICS</div>
+          <div className={styles.sectionTitle} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span>PIPELINE METRICS</span>
+            <button
+              type="button"
+              onClick={() => {
+                if (!confirm('Reset all Pipeline Metrics rows to default values?')) return;
+                setState(s => ({ ...s, stages: DEFAULT_STATE.stages }));
+              }}
+              style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.4)', color: '#fff', borderRadius: 4, fontSize: 11, padding: '0.15rem 0.5rem', cursor: 'pointer', fontFamily: 'inherit' }}
+              title="Restore the stage rows + goal seeds to defaults if the table looks blank or corrupted."
+            >Reset table</button>
+          </div>
           <table className={styles.grid}>
             <thead>
               <tr>
