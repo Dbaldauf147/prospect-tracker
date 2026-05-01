@@ -3,12 +3,63 @@
 // stored together in a single IndexedDB record keyed `current` so
 // the layout persists across reloads.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import styles from './PipelineView.module.css';
 import { dbGet, dbPut } from '../../utils/db';
 
 const STORE = 'pipeline-dashboard';
 const KEY = 'current';
+const BFO_STORE = 'bfo-activity';
+const BFO_KEY = 'current';
+
+// Parse "USD 15,000.00" / "$15,000" / "15000" -> 15000.
+function parseMoney(v) {
+  if (v === null || v === undefined) return null;
+  const s = String(v).replace(/[^0-9.\-]/g, '');
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+// Pull the leading stage digit from values like "6 - Negotiate to..."
+function stageNumber(v) {
+  const m = String(v ?? '').match(/(\d)/);
+  return m ? Number(m[1]) : null;
+}
+
+// Aggregate BFO rows -> { 3: { count, total, avg, avgAge }, 4: …, 5: …, 6: … }.
+function bfoStageMetrics(bfo) {
+  const out = { 3: null, 4: null, 5: null, 6: null };
+  if (!bfo || !bfo.headers || !bfo.rows || bfo.rows.length === 0) return out;
+  // Find the relevant column names case-insensitively.
+  const findCol = (re) => bfo.headers.find(h => re.test(h));
+  const stageCol = findCol(/sales\s*stage|^stage$/i);
+  const amountCol = findCol(/^amount$/i);
+  const ageCol = findCol(/^age$/i);
+  if (!stageCol) return out;
+  const buckets = {};
+  for (const r of bfo.rows) {
+    const n = stageNumber(r[stageCol]);
+    if (!n || n < 3 || n > 6) continue;
+    const amt = amountCol ? parseMoney(r[amountCol]) : null;
+    const age = ageCol ? Number(String(r[ageCol]).replace(/[^0-9.\-]/g, '')) : null;
+    if (!buckets[n]) buckets[n] = { count: 0, total: 0, ageSum: 0, ageCount: 0, amtCount: 0 };
+    buckets[n].count += 1;
+    if (amt !== null) { buckets[n].total += amt; buckets[n].amtCount += 1; }
+    if (Number.isFinite(age)) { buckets[n].ageSum += age; buckets[n].ageCount += 1; }
+  }
+  for (const n of [3, 4, 5, 6]) {
+    const b = buckets[n];
+    if (!b) { out[n] = null; continue; }
+    out[n] = {
+      count: b.count,
+      total: b.total,
+      avg: b.amtCount ? b.total / b.amtCount : null,
+      avgAge: b.ageCount ? Math.round(b.ageSum / b.ageCount) : null,
+    };
+  }
+  return out;
+}
 
 const DEFAULT_STATE = {
   // Pipeline metrics by stage. Each stage row is a dict of values.
@@ -140,6 +191,7 @@ function compareClass(actual, goal, dir = 'higher-better') {
 export function PipelineView() {
   const [state, setState] = useState(DEFAULT_STATE);
   const [hydrated, setHydrated] = useState(false);
+  const [bfo, setBfo] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -148,14 +200,24 @@ export function PipelineView() {
         const saved = await dbGet(STORE, KEY);
         if (cancelled) return;
         if (saved) setState(s => ({ ...DEFAULT_STATE, ...saved, stages: saved.stages || s.stages }));
+        const bfoSaved = await dbGet(BFO_STORE, BFO_KEY);
+        if (!cancelled && bfoSaved) setBfo(bfoSaved);
       } catch (e) {
         console.warn('Pipeline hydrate failed', e);
       } finally {
         if (!cancelled) setHydrated(true);
       }
     })();
-    return () => { cancelled = true; };
+    // Refresh BFO data whenever the user navigates back to this tab.
+    function onFocus() {
+      dbGet(BFO_STORE, BFO_KEY).then(b => { if (b) setBfo(b); }).catch(() => {});
+    }
+    window.addEventListener('focus', onFocus);
+    return () => { cancelled = true; window.removeEventListener('focus', onFocus); };
   }, []);
+
+  const bfoMetrics = useMemo(() => bfoStageMetrics(bfo), [bfo]);
+  const hasBfo = bfo && bfo.rows && bfo.rows.length > 0;
 
   useEffect(() => {
     if (!hydrated) return;
@@ -169,13 +231,19 @@ export function PipelineView() {
     setState(s => ({ ...s, [key]: value }));
   }
 
-  const stageTotals = state.stages.reduce((acc, st) => ({
-    activeActual: acc.activeActual + (Number(st.activeActual) || 0),
-    activeGoal: acc.activeGoal + (Number(st.activeGoal) || 0),
-    pipelineActual: acc.pipelineActual + (Number(st.pipelineActual) || 0),
-    pipelineGoal: acc.pipelineGoal + (Number(st.pipelineGoal) || 0),
-    targetProj: acc.targetProj + (Number(st.targetProj) || 0),
-  }), { activeActual: 0, activeGoal: 0, pipelineActual: 0, pipelineGoal: 0, targetProj: 0 });
+  const stageTotals = state.stages.reduce((acc, st) => {
+    const stageNum = Number(String(st.key).replace(/[^0-9]/g, ''));
+    const m = bfoMetrics[stageNum];
+    const liveCount = hasBfo && m?.count !== null && m?.count !== undefined ? m.count : null;
+    const liveTotal = hasBfo && m?.total !== null && m?.total !== undefined ? m.total : null;
+    return {
+      activeActual: acc.activeActual + (liveCount ?? Number(st.activeActual) || 0),
+      activeGoal: acc.activeGoal + (Number(st.activeGoal) || 0),
+      pipelineActual: acc.pipelineActual + (liveTotal ?? Number(st.pipelineActual) || 0),
+      pipelineGoal: acc.pipelineGoal + (Number(st.pipelineGoal) || 0),
+      targetProj: acc.targetProj + (Number(st.targetProj) || 0),
+    };
+  }, { activeActual: 0, activeGoal: 0, pipelineActual: 0, pipelineGoal: 0, targetProj: 0 });
 
   const dealSizeAvgGoal = stageTotals.pipelineGoal && stageTotals.activeGoal
     ? Math.round(stageTotals.pipelineGoal / stageTotals.activeGoal) : 0;
@@ -215,32 +283,51 @@ export function PipelineView() {
               </tr>
             </thead>
             <tbody>
-              {state.stages.map((st, i) => (
-                <tr key={st.key}>
-                  <td className={styles.label}>{st.label}</td>
-                  <td><NumCell value={st.activeGoal} onCommit={(v) => setStage(i, { activeGoal: v })} /></td>
-                  <td className={compareClass(st.activeActual, st.activeGoal, 'higher-better')}>
-                    <NumCell value={st.activeActual} onCommit={(v) => setStage(i, { activeActual: v })} />
-                  </td>
-                  <td><NumCell value={st.dealSizeGoal} kind="money" onCommit={(v) => setStage(i, { dealSizeGoal: v })} /></td>
-                  <td className={compareClass(st.dealSizeActual, st.dealSizeGoal, 'higher-better')}>
-                    <NumCell value={st.dealSizeActual} kind="money" onCommit={(v) => setStage(i, { dealSizeActual: v })} />
-                  </td>
-                  <td><NumCell value={st.pipelineGoal} kind="money" onCommit={(v) => setStage(i, { pipelineGoal: v })} /></td>
-                  <td className={compareClass(st.pipelineActual, st.pipelineGoal, 'higher-better')}>
-                    <NumCell value={st.pipelineActual} kind="money" onCommit={(v) => setStage(i, { pipelineActual: v })} />
-                  </td>
-                  <td><NumCell value={st.closeGoal} kind="pct" onCommit={(v) => setStage(i, { closeGoal: v })} /></td>
-                  <td className={compareClass(st.closeActual, st.closeGoal, 'higher-better')}>
-                    <NumCell value={st.closeActual} kind="pct" onCommit={(v) => setStage(i, { closeActual: v })} />
-                  </td>
-                  <td><NumCell value={st.targetProj} kind="money" onCommit={(v) => setStage(i, { targetProj: v })} /></td>
-                  <td><NumCell value={st.lifeGoal} onCommit={(v) => setStage(i, { lifeGoal: v })} /></td>
-                  <td className={compareClass(st.lifeActual, st.lifeGoal, 'lower-better')}>
-                    <NumCell value={st.lifeActual} onCommit={(v) => setStage(i, { lifeActual: v })} />
-                  </td>
-                </tr>
-              ))}
+              {state.stages.map((st, i) => {
+                const stageNum = Number(String(st.key).replace(/[^0-9]/g, ''));
+                const m = bfoMetrics[stageNum];
+                const live = (val) => hasBfo && val !== null && val !== undefined ? val : null;
+                const activeActual = live(m?.count) ?? st.activeActual;
+                const dealSizeActual = live(m?.avg) ?? st.dealSizeActual;
+                const pipelineActual = live(m?.total) ?? st.pipelineActual;
+                const lifeActual = live(m?.avgAge) ?? st.lifeActual;
+                const fromBfo = (v) => hasBfo && v !== null && v !== undefined;
+                const liveTip = 'Auto-fed from BFO Activity. Re-paste BFO data to refresh.';
+                return (
+                  <tr key={st.key}>
+                    <td className={styles.label}>{st.label}</td>
+                    <td><NumCell value={st.activeGoal} onCommit={(v) => setStage(i, { activeGoal: v })} /></td>
+                    <td className={compareClass(activeActual, st.activeGoal, 'higher-better')}>
+                      {fromBfo(m?.count)
+                        ? <span title={liveTip} className={styles.liveCell}>{activeActual}</span>
+                        : <NumCell value={st.activeActual} onCommit={(v) => setStage(i, { activeActual: v })} />}
+                    </td>
+                    <td><NumCell value={st.dealSizeGoal} kind="money" onCommit={(v) => setStage(i, { dealSizeGoal: v })} /></td>
+                    <td className={compareClass(dealSizeActual, st.dealSizeGoal, 'higher-better')}>
+                      {fromBfo(m?.avg)
+                        ? <span title={liveTip} className={styles.liveCell}>{fmtMoney(Math.round(dealSizeActual))}</span>
+                        : <NumCell value={st.dealSizeActual} kind="money" onCommit={(v) => setStage(i, { dealSizeActual: v })} />}
+                    </td>
+                    <td><NumCell value={st.pipelineGoal} kind="money" onCommit={(v) => setStage(i, { pipelineGoal: v })} /></td>
+                    <td className={compareClass(pipelineActual, st.pipelineGoal, 'higher-better')}>
+                      {fromBfo(m?.total)
+                        ? <span title={liveTip} className={styles.liveCell}>{fmtMoney(Math.round(pipelineActual))}</span>
+                        : <NumCell value={st.pipelineActual} kind="money" onCommit={(v) => setStage(i, { pipelineActual: v })} />}
+                    </td>
+                    <td><NumCell value={st.closeGoal} kind="pct" onCommit={(v) => setStage(i, { closeGoal: v })} /></td>
+                    <td className={compareClass(st.closeActual, st.closeGoal, 'higher-better')}>
+                      <NumCell value={st.closeActual} kind="pct" onCommit={(v) => setStage(i, { closeActual: v })} />
+                    </td>
+                    <td><NumCell value={st.targetProj} kind="money" onCommit={(v) => setStage(i, { targetProj: v })} /></td>
+                    <td><NumCell value={st.lifeGoal} onCommit={(v) => setStage(i, { lifeGoal: v })} /></td>
+                    <td className={compareClass(lifeActual, st.lifeGoal, 'lower-better')}>
+                      {fromBfo(m?.avgAge)
+                        ? <span title={liveTip} className={styles.liveCell}>{lifeActual}</span>
+                        : <NumCell value={st.lifeActual} onCommit={(v) => setStage(i, { lifeActual: v })} />}
+                    </td>
+                  </tr>
+                );
+              })}
               <tr>
                 <td className={styles.label}>Total</td>
                 <td className={styles.numCell}>{stageTotals.activeGoal}</td>

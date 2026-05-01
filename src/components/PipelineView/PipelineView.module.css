@@ -126,6 +126,14 @@
   background: #fecaca;
 }
 
+.liveCell {
+  display: inline-block;
+  padding: 0.15rem 0.3rem;
+  font-size: 0.72rem;
+  border-bottom: 1px dotted #2563eb;
+  cursor: help;
+}
+
 .cellAmber {
   background: #fef3c7;
 }
