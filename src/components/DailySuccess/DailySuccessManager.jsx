@@ -132,6 +132,91 @@ async function buildPipelineSummary() {
       lines.push('No BFO Activity data loaded — pipeline metrics are placeholder targets only.');
     }
 
+    // Opps tab — granular per-deal data with Stage / Scope / Quoted
+    // Amount / Last Client Heard / Follow Up / Notes.
+    const opps = await dbGet('opps-cache', 'data');
+    if (opps && Array.isArray(opps.records) && opps.records.length > 0) {
+      const ACTIVE_STAGES = new Set(['Lead', 'Not Started', 'Qualifying', 'Quoting', 'Quoted', 'Verbal']);
+      const QUOTING_STAGES = new Set(['Quoting', 'Quoted', 'Verbal']);
+      const records = opps.records;
+      const active = records.filter(r => ACTIVE_STAGES.has((r.Stage || '').trim()));
+      const closed = records.filter(r => ['Sold', 'Not Sold'].includes((r.Stage || '').trim()));
+      const wins = closed.filter(r => (r.Stage || '').trim() === 'Sold');
+      const losses = closed.filter(r => (r.Stage || '').trim() === 'Not Sold');
+      const totalQuoted = active.reduce((s, r) => s + (parseMoney(r['Quoted Amount']) || 0), 0);
+      lines.push('');
+      lines.push(`Opps tab: ${active.length} active opps · ${fmt$(totalQuoted)} total quoted · ${wins.length} wins / ${losses.length} losses recorded.`);
+
+      // Top 5 stuck quotes (Quoting/Quoted/Verbal, sorted by oldest
+      // "Last Client Heard From Us" or no contact recorded).
+      const parseDate = (v) => {
+        if (!v) return null;
+        const t = Date.parse(v);
+        return Number.isNaN(t) ? null : t;
+      };
+      const today = Date.now();
+      const stuck = active
+        .filter(r => QUOTING_STAGES.has((r.Stage || '').trim()))
+        .map(r => ({
+          account: r.Account,
+          scope: r.Scope || '',
+          stage: r.Stage,
+          amount: parseMoney(r['Quoted Amount']),
+          lastHeard: parseDate(r['Last Client Heard From Us']),
+          followUp: parseDate(r['Follow Up']),
+          notes: r.Notes,
+        }))
+        .sort((a, b) => {
+          const aL = a.lastHeard ?? 0;
+          const bL = b.lastHeard ?? 0;
+          return aL - bL;
+        })
+        .slice(0, 5);
+      if (stuck.length) {
+        lines.push('Stuck quotes (oldest client contact first):');
+        for (const s of stuck) {
+          const days = s.lastHeard ? Math.round((today - s.lastHeard) / 86400000) : null;
+          const heard = days !== null ? `${days}d since contact` : 'no contact recorded';
+          lines.push(`  • ${s.account} — ${s.stage} — ${s.scope || '(no scope)'}${typeof s.amount === 'number' ? ` · ${fmt$(s.amount)}` : ''} · ${heard}`);
+        }
+      }
+
+      // Overdue follow-ups (Follow Up date < today, still active).
+      const overdue = active
+        .map(r => ({
+          account: r.Account,
+          stage: r.Stage,
+          scope: r.Scope || '',
+          amount: parseMoney(r['Quoted Amount']),
+          followUp: parseDate(r['Follow Up']),
+        }))
+        .filter(r => r.followUp && r.followUp < today)
+        .sort((a, b) => a.followUp - b.followUp)
+        .slice(0, 5);
+      if (overdue.length) {
+        lines.push('Overdue follow-ups (oldest first):');
+        for (const o of overdue) {
+          const dueDays = Math.round((today - o.followUp) / 86400000);
+          lines.push(`  • ${o.account} — ${o.stage} — ${o.scope || '(no scope)'}${typeof o.amount === 'number' ? ` · ${fmt$(o.amount)}` : ''} · ${dueDays}d overdue`);
+        }
+      }
+
+      // Top 5 active opps by Quoted Amount.
+      const topByAmount = [...active]
+        .map(r => ({ account: r.Account, stage: r.Stage, scope: r.Scope, amount: parseMoney(r['Quoted Amount']) || 0 }))
+        .filter(r => r.amount > 0)
+        .sort((a, b) => b.amount - a.amount)
+        .slice(0, 5);
+      if (topByAmount.length) {
+        lines.push('Top 5 active opps by Quoted Amount:');
+        for (const o of topByAmount) {
+          lines.push(`  • ${o.account} — ${o.stage} — ${o.scope || '(no scope)'} · ${fmt$(o.amount)}`);
+        }
+      }
+    } else {
+      lines.push('Opps tab: no opportunities loaded.');
+    }
+
     return lines.join('\n');
   } catch (err) {
     console.warn('buildPipelineSummary failed', err);
