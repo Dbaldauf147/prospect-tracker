@@ -78,7 +78,11 @@ function parseAltFeePaste(text) {
   return out;
 }
 
-function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onAppendRows, globalGmPct, marginFor }) {
+function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onAppendRows, globalGmPct, marginFor, yearRevenue, numYears = 1 }) {
+  const fmtMoneyCell = (n) => {
+    if (typeof n !== 'number' || !Number.isFinite(n)) return '';
+    return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+  };
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState('');
   const [flash, setFlash] = useState('');
@@ -118,6 +122,9 @@ function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onA
             <th style={{ minWidth: 120 }}>Unit</th>
             <th className={styles.numCell} style={{ width: 90 }}>Unit Count</th>
             <th className={styles.numCell} style={{ width: 80, maxWidth: 90 }}>Fee Start Month</th>
+            {Array.from({ length: numYears }, (_, i) => (
+              <th key={`yh-${i}`} className={styles.numCell} style={{ width: 90 }}>{`Y${i + 1}`}</th>
+            ))}
             <th className={styles.numCell} style={{ width: 90 }}>Fee GM%</th>
             <th style={{ width: 32 }} />
           </tr>
@@ -186,6 +193,14 @@ function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onA
                   onCommit={(v) => onChange(idx, 'startMonth', v)}
                 />
               </td>
+              {Array.from({ length: numYears }, (_, yi) => {
+                const rev = yearRevenue ? yearRevenue(row, yi + 1) : 0;
+                return (
+                  <td key={`y-${idx}-${yi}`} className={styles.numCell}>
+                    {rev > 0 ? fmtMoneyCell(rev) : ''}
+                  </td>
+                );
+              })}
               {(() => {
                 const computed = marginFor ? marginFor(row.altItem) : null;
                 const placeholder = computed
@@ -378,6 +393,32 @@ export function PricingView() {
     const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, termMonths, annualEscalator };
     dbPut(STORE, payload, KEY).catch(err => console.warn('Failed to save pricing cache:', err));
   }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, termMonths, annualEscalator]);
+
+  // Revenue from a single Alt Fee row in calendar year `yearIndex`
+  // (1-based). Setup / One Time charges land in the year containing
+  // their start month. Recurring (monthly) bills every month from
+  // startMonth through termMonths, escalated each year.
+  function altFeeYearRevenue(row, yearIndex) {
+    const fee = Number(row.fee);
+    const uc = Number(row.unitCount);
+    if (!Number.isFinite(fee) || !Number.isFinite(uc) || uc <= 0) return 0;
+    const startMonth = Math.max(1, Math.round(Number(row.startMonth) || 1));
+    const yearStart = (yearIndex - 1) * 12 + 1;
+    const yearEnd = yearIndex * 12;
+    const isRecurring = /recurring/i.test(row.type || '');
+
+    if (!isRecurring) {
+      if (startMonth > termMonths) return 0;
+      if (startMonth >= yearStart && startMonth <= yearEnd) return fee * uc;
+      return 0;
+    }
+    const billStart = Math.max(yearStart, startMonth);
+    const billEnd = Math.min(yearEnd, termMonths);
+    if (billEnd < billStart) return 0;
+    const monthCount = billEnd - billStart + 1;
+    const escMult = Math.pow(1 + annualEscalator, yearIndex - 1);
+    return fee * uc * monthCount * escMult;
+  }
 
   // For an Alt Fee tag, compute the total margin across ALL alt-fee
   // rows sharing that tag and ALL upper-table CTS rows linked to it.
@@ -1072,16 +1113,6 @@ export function PricingView() {
                       </table>
 
                       <div className={styles.bottomRow}>
-                      <AltFeeTable
-                        rows={altFees[opt.optionNumber] || altFeeStarter()}
-                        globalGmPct={globalGmPct}
-                        marginFor={altFeeMarginFor}
-                        onChange={(idx, field, value) => updateAltFeeCell(opt.optionNumber, idx, field, value)}
-                        onAddRow={() => addAltFeeRow(opt.optionNumber)}
-                        onRemoveRow={(idx) => removeAltFeeRow(opt.optionNumber, idx)}
-                        onReplaceRows={(rows) => replaceAltFeeRows(opt.optionNumber, rows)}
-                        onAppendRows={(rows) => appendAltFeeRows(opt.optionNumber, rows)}
-                      />
                       <div className={styles.summaryPanel}>
                         <h3 className={styles.summaryTitle}>Totals by type</h3>
                         <div className={styles.summaryMeta}>
@@ -1155,6 +1186,18 @@ export function PricingView() {
                         </table>
                       </div>
 
+                      <AltFeeTable
+                        rows={altFees[opt.optionNumber] || altFeeStarter()}
+                        globalGmPct={globalGmPct}
+                        marginFor={altFeeMarginFor}
+                        yearRevenue={altFeeYearRevenue}
+                        numYears={Math.max(1, Math.ceil(termMonths / 12))}
+                        onChange={(idx, field, value) => updateAltFeeCell(opt.optionNumber, idx, field, value)}
+                        onAddRow={() => addAltFeeRow(opt.optionNumber)}
+                        onRemoveRow={(idx) => removeAltFeeRow(opt.optionNumber, idx)}
+                        onReplaceRows={(rows) => replaceAltFeeRows(opt.optionNumber, rows)}
+                        onAppendRows={(rows) => appendAltFeeRows(opt.optionNumber, rows)}
+                      />
                       </div>
                     </div>
                   );

@@ -438,9 +438,8 @@
 
 .bottomRow {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 1.25rem;
-  align-items: flex-start;
   margin-top: 1rem;
 }
 
@@ -449,8 +448,7 @@
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: #f8fafc;
-  flex: 0 1 720px;
-  min-width: 380px;
+  max-width: 720px;
 }
 
 .summaryTitle {
