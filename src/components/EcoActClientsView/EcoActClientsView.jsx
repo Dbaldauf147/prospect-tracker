@@ -2,7 +2,7 @@ import { UploadedListView } from '../UploadedListView/UploadedListView';
 
 // Thin wrapper around UploadedListView so EcoAct Clients inherits the
 // shared upload + My Account mapping behavior, mirroring RECA Clients.
-export function EcoActClientsView({ prospects = [], onSelectProspect, cdmName, settings, updateSettings }) {
+export function EcoActClientsView({ prospects = [], onSelectProspect, cdmName, settings, updateSettings, updateSettingsPath }) {
   return (
     <UploadedListView
       storageKey="ecoact-clients-override"
@@ -16,6 +16,7 @@ export function EcoActClientsView({ prospects = [], onSelectProspect, cdmName, s
       textColumn={{ key: 'ecoact-cdm', label: 'EcoAct CDM', placeholder: 'Add CDM…' }}
       settings={settings}
       updateSettings={updateSettings}
+      updateSettingsPath={updateSettingsPath}
     />
   );
 }

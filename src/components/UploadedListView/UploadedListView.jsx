@@ -393,6 +393,7 @@ export function UploadedListView({
   textColumn, // { key: string, label: string, placeholder?: string }
   settings,
   updateSettings,
+  updateSettingsPath,
 }) {
   const [store, setStore] = useState({ data: [], source: 'empty' });
   const mappingKey = storageKey ? `${storageKey}:account-mapping` : '';
@@ -402,13 +403,79 @@ export function UploadedListView({
   const portfolioMappingKey = storageKey ? `${storageKey}:portfolio-mapping` : '';
   const portfolioDismissedKey = storageKey ? `${storageKey}:portfolio-dismissed` : '';
   const textValuesKey = storageKey && textColumn ? `${storageKey}:${textColumn.key}-values` : '';
-  const [mapping, setMapping] = useState(() => loadMapping(mappingKey));
-  const [dismissed, setDismissed] = useState(() => loadMapping(dismissedKey));
-  const [myAccountMapping, setMyAccountMapping] = useState(() => loadMapping(myAccountMappingKey));
-  const [myAccountDismissed, setMyAccountDismissed] = useState(() => loadMapping(myAccountDismissedKey));
-  const [portfolioMapping, setPortfolioMapping] = useState(() => loadMapping(portfolioMappingKey));
-  const [portfolioDismissed, setPortfolioDismissed] = useState(() => loadMapping(portfolioDismissedKey));
-  const [textValues, setTextValues] = useState(() => loadMapping(textValuesKey));
+
+  // Firestore-backed mappings — these survive a browser "Clear site
+  // data" and sync across devices. Written via updateSettingsPath when
+  // available so two lists (or two tabs) editing different paths can't
+  // clobber each other. Localstorage continues to be mirrored every
+  // save as a fast/offline cache. On read we prefer Firestore once
+  // settings has loaded; fall back to localStorage otherwise.
+  const settingsLoaded = !!(settings && settings._lastWriteAt);
+  const remoteMappings = settings?.listMappings?.[storageKey];
+  const initFromRemote = (field, lsKey) => {
+    if (remoteMappings && remoteMappings[field] && typeof remoteMappings[field] === 'object') {
+      return remoteMappings[field];
+    }
+    return loadMapping(lsKey);
+  };
+  const [mapping, setMapping] = useState(() => initFromRemote('mapping', mappingKey));
+  const [dismissed, setDismissed] = useState(() => initFromRemote('dismissed', dismissedKey));
+  const [myAccountMapping, setMyAccountMapping] = useState(() => initFromRemote('myAccountMapping', myAccountMappingKey));
+  const [myAccountDismissed, setMyAccountDismissed] = useState(() => initFromRemote('myAccountDismissed', myAccountDismissedKey));
+  const [portfolioMapping, setPortfolioMapping] = useState(() => initFromRemote('portfolioMapping', portfolioMappingKey));
+  const [portfolioDismissed, setPortfolioDismissed] = useState(() => initFromRemote('portfolioDismissed', portfolioDismissedKey));
+  const [textValues, setTextValues] = useState(() => {
+    if (!textColumn) return {};
+    const remote = remoteMappings?.textValues?.[textColumn.key];
+    if (remote && typeof remote === 'object') return remote;
+    return loadMapping(textValuesKey);
+  });
+
+  // Persist any state change to BOTH localStorage (instant, offline)
+  // and Firestore (durable, cross-device). Firestore writes use
+  // updateSettingsPath so we touch only the specific list/field path
+  // and don't risk clobbering another list's mappings if the local
+  // settings snapshot is stale.
+  function persistMapping(field, lsKey, value) {
+    try {
+      if (Object.keys(value).length === 0) localStorage.removeItem(lsKey);
+      else localStorage.setItem(lsKey, JSON.stringify(value));
+    } catch {}
+    if (!storageKey) return;
+    if (updateSettingsPath) {
+      updateSettingsPath({ [`listMappings.${storageKey}.${field}`]: value });
+    } else if (updateSettings) {
+      const currentList = settings?.listMappings?.[storageKey] || {};
+      updateSettings({
+        listMappings: {
+          ...(settings?.listMappings || {}),
+          [storageKey]: { ...currentList, [field]: value },
+        },
+      });
+    }
+  }
+  function persistTextValues(value) {
+    try {
+      if (Object.keys(value).length === 0 && textValuesKey) localStorage.removeItem(textValuesKey);
+      else if (textValuesKey) localStorage.setItem(textValuesKey, JSON.stringify(value));
+    } catch {}
+    if (!storageKey || !textColumn) return;
+    if (updateSettingsPath) {
+      updateSettingsPath({ [`listMappings.${storageKey}.textValues.${textColumn.key}`]: value });
+    } else if (updateSettings) {
+      const currentList = settings?.listMappings?.[storageKey] || {};
+      const currentText = currentList.textValues || {};
+      updateSettings({
+        listMappings: {
+          ...(settings?.listMappings || {}),
+          [storageKey]: {
+            ...currentList,
+            textValues: { ...currentText, [textColumn.key]: value },
+          },
+        },
+      });
+    }
+  }
   const [search, setSearch] = useState('');
   const [suggestedOnly, setSuggestedOnly] = useState(false);
   const [portfolioOnly, setPortfolioOnly] = useState(false);
@@ -434,13 +501,25 @@ export function UploadedListView({
           : { data: [], source: 'empty' });
       }
     })();
-    setMapping(loadMapping(`${storageKey}:account-mapping`));
-    setDismissed(loadMapping(`${storageKey}:account-dismissed`));
-    setMyAccountMapping(loadMapping(`${storageKey}:my-accounts-mapping`));
-    setMyAccountDismissed(loadMapping(`${storageKey}:my-accounts-dismissed`));
-    setPortfolioMapping(loadMapping(`${storageKey}:portfolio-mapping`));
-    setPortfolioDismissed(loadMapping(`${storageKey}:portfolio-dismissed`));
-    setTextValues(textColumn ? loadMapping(`${storageKey}:${textColumn.key}-values`) : {});
+    // Re-init mappings for the new storageKey. Prefer Firestore when it
+    // has data for this list; otherwise fall back to localStorage.
+    const newRemote = settings?.listMappings?.[storageKey];
+    const pickRemote = (field, lsKey) => {
+      if (newRemote && newRemote[field] && typeof newRemote[field] === 'object') return newRemote[field];
+      return loadMapping(lsKey);
+    };
+    setMapping(pickRemote('mapping', `${storageKey}:account-mapping`));
+    setDismissed(pickRemote('dismissed', `${storageKey}:account-dismissed`));
+    setMyAccountMapping(pickRemote('myAccountMapping', `${storageKey}:my-accounts-mapping`));
+    setMyAccountDismissed(pickRemote('myAccountDismissed', `${storageKey}:my-accounts-dismissed`));
+    setPortfolioMapping(pickRemote('portfolioMapping', `${storageKey}:portfolio-mapping`));
+    setPortfolioDismissed(pickRemote('portfolioDismissed', `${storageKey}:portfolio-dismissed`));
+    if (textColumn) {
+      const remoteText = newRemote?.textValues?.[textColumn.key];
+      setTextValues(remoteText && typeof remoteText === 'object' ? remoteText : loadMapping(`${storageKey}:${textColumn.key}-values`));
+    } else {
+      setTextValues({});
+    }
     setSearch('');
     setSuggestedOnly(false);
     setPortfolioOnly(false);
@@ -470,64 +549,52 @@ export function UploadedListView({
     return () => window.removeEventListener('storage', onStorage);
   }, [mappingKey, dismissedKey, myAccountMappingKey, myAccountDismissedKey, portfolioMappingKey, portfolioDismissedKey, textValuesKey]);
 
-  // Persist mapping + dismissed set back to localStorage whenever
-  // either changes.
+  // Persist every mapping change to BOTH localStorage AND Firestore via
+  // persistMapping / persistTextValues defined above. Firestore is the
+  // durable source of truth across devices and survives clear-site-data;
+  // localStorage is the fast/offline mirror.
+  useEffect(() => { persistMapping('mapping', mappingKey, mapping); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [mapping, mappingKey]);
+  useEffect(() => { persistMapping('dismissed', dismissedKey, dismissed); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [dismissed, dismissedKey]);
   useEffect(() => {
-    if (!mappingKey) return;
-    try {
-      if (Object.keys(mapping).length === 0) localStorage.removeItem(mappingKey);
-      else localStorage.setItem(mappingKey, JSON.stringify(mapping));
-    } catch {}
-  }, [mapping, mappingKey]);
-  useEffect(() => {
-    if (!dismissedKey) return;
-    try {
-      if (Object.keys(dismissed).length === 0) localStorage.removeItem(dismissedKey);
-      else localStorage.setItem(dismissedKey, JSON.stringify(dismissed));
-    } catch {}
-  }, [dismissed, dismissedKey]);
-  useEffect(() => {
-    if (!myAccountMappingKey) return;
-    try {
-      if (Object.keys(myAccountMapping).length === 0) localStorage.removeItem(myAccountMappingKey);
-      else localStorage.setItem(myAccountMappingKey, JSON.stringify(myAccountMapping));
-      // Let ListsView (and anyone else watching) recompute coverage.
-      // storage events don't fire in the originating tab, so the
-      // custom bump is the reliable signal.
-      window.dispatchEvent(new Event('my-accounts-coverage-changed'));
-    } catch {}
+    persistMapping('myAccountMapping', myAccountMappingKey, myAccountMapping);
+    window.dispatchEvent(new Event('my-accounts-coverage-changed'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myAccountMapping, myAccountMappingKey]);
   useEffect(() => {
-    if (!myAccountDismissedKey) return;
-    try {
-      if (Object.keys(myAccountDismissed).length === 0) localStorage.removeItem(myAccountDismissedKey);
-      else localStorage.setItem(myAccountDismissedKey, JSON.stringify(myAccountDismissed));
-      window.dispatchEvent(new Event('my-accounts-coverage-changed'));
-    } catch {}
+    persistMapping('myAccountDismissed', myAccountDismissedKey, myAccountDismissed);
+    window.dispatchEvent(new Event('my-accounts-coverage-changed'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myAccountDismissed, myAccountDismissedKey]);
   useEffect(() => {
-    if (!portfolioMappingKey) return;
-    try {
-      if (Object.keys(portfolioMapping).length === 0) localStorage.removeItem(portfolioMappingKey);
-      else localStorage.setItem(portfolioMappingKey, JSON.stringify(portfolioMapping));
-      window.dispatchEvent(new Event('my-accounts-coverage-changed'));
-    } catch {}
+    persistMapping('portfolioMapping', portfolioMappingKey, portfolioMapping);
+    window.dispatchEvent(new Event('my-accounts-coverage-changed'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [portfolioMapping, portfolioMappingKey]);
   useEffect(() => {
-    if (!portfolioDismissedKey) return;
-    try {
-      if (Object.keys(portfolioDismissed).length === 0) localStorage.removeItem(portfolioDismissedKey);
-      else localStorage.setItem(portfolioDismissedKey, JSON.stringify(portfolioDismissed));
-      window.dispatchEvent(new Event('my-accounts-coverage-changed'));
-    } catch {}
+    persistMapping('portfolioDismissed', portfolioDismissedKey, portfolioDismissed);
+    window.dispatchEvent(new Event('my-accounts-coverage-changed'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [portfolioDismissed, portfolioDismissedKey]);
+  useEffect(() => { persistTextValues(textValues); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [textValues, textValuesKey]);
+
+  // Sync local state from Firestore when it loads or changes
+  // cross-device. Gated on settings._lastWriteAt so an early
+  // settings={} render can't be mistaken for "no remote data."
   useEffect(() => {
-    if (!textValuesKey) return;
-    try {
-      if (Object.keys(textValues).length === 0) localStorage.removeItem(textValuesKey);
-      else localStorage.setItem(textValuesKey, JSON.stringify(textValues));
-    } catch {}
-  }, [textValues, textValuesKey]);
+    if (!settingsLoaded || !remoteMappings) return;
+    const sameJson = (a, b) => JSON.stringify(a || {}) === JSON.stringify(b || {});
+    if (remoteMappings.mapping && !sameJson(remoteMappings.mapping, mapping)) setMapping(remoteMappings.mapping);
+    if (remoteMappings.dismissed && !sameJson(remoteMappings.dismissed, dismissed)) setDismissed(remoteMappings.dismissed);
+    if (remoteMappings.myAccountMapping && !sameJson(remoteMappings.myAccountMapping, myAccountMapping)) setMyAccountMapping(remoteMappings.myAccountMapping);
+    if (remoteMappings.myAccountDismissed && !sameJson(remoteMappings.myAccountDismissed, myAccountDismissed)) setMyAccountDismissed(remoteMappings.myAccountDismissed);
+    if (remoteMappings.portfolioMapping && !sameJson(remoteMappings.portfolioMapping, portfolioMapping)) setPortfolioMapping(remoteMappings.portfolioMapping);
+    if (remoteMappings.portfolioDismissed && !sameJson(remoteMappings.portfolioDismissed, portfolioDismissed)) setPortfolioDismissed(remoteMappings.portfolioDismissed);
+    if (textColumn) {
+      const remoteText = remoteMappings.textValues?.[textColumn.key];
+      if (remoteText && !sameJson(remoteText, textValues)) setTextValues(remoteText);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settingsLoaded, remoteMappings, textColumn?.key]);
 
   // Close the picker dropdown when clicking outside it.
   useEffect(() => {

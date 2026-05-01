@@ -152,7 +152,7 @@ function DataSourceLink({ storageKey }) {
   );
 }
 
-export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectProspect, cdmName, settings, updateSettings }) {
+export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectProspect, cdmName, settings, updateSettings, updateSettingsPath }) {
   const [subtab, setSubtab] = useState('raclients');
   // { [subtabKey]: { mapped, touched, pct } } — green subtab when pct===100.
   const [coverageByKey, setCoverageByKey] = useState({});
@@ -330,8 +330,8 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
       <div className={styles.content}>
         {subtab === 'raclients' && <RAClientsView settings={settings} updateSettings={updateSettings} />}
         {subtab === 'targets' && <TargetAccountsView onDataLoaded={onTargetAccountsLoaded} settings={settings} updateSettings={updateSettings} />}
-        {subtab === 'recaclients' && <RECAClientsView prospects={prospects} onSelectProspect={onSelectProspect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} />}
-        {subtab === 'ecoactclients' && <EcoActClientsView prospects={prospects} onSelectProspect={onSelectProspect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} />}
+        {subtab === 'recaclients' && <RECAClientsView prospects={prospects} onSelectProspect={onSelectProspect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} />}
+        {subtab === 'ecoactclients' && <EcoActClientsView prospects={prospects} onSelectProspect={onSelectProspect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} />}
         {subtab === 'sites' && <SitesView settings={settings} updateSettings={updateSettings} />}
         {subtab === 'csrd' && (
           <UploadedListView
@@ -345,6 +345,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             cdmName={cdmName}
             settings={settings}
             updateSettings={updateSettings}
+            updateSettingsPath={updateSettingsPath}
           />
         )}
         {subtab === 'cdp' && (
@@ -359,6 +360,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             cdmName={cdmName}
             settings={settings}
             updateSettings={updateSettings}
+            updateSettingsPath={updateSettingsPath}
           />
         )}
         {subtab === 'gresb' && (
@@ -373,6 +375,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             cdmName={cdmName}
             settings={settings}
             updateSettings={updateSettings}
+            updateSettingsPath={updateSettingsPath}
           />
         )}
         {subtab === 'sbt' && (
@@ -387,6 +390,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             cdmName={cdmName}
             settings={settings}
             updateSettings={updateSettings}
+            updateSettingsPath={updateSettingsPath}
           />
         )}
         {subtab === 'ecovadis' && (
@@ -401,6 +405,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             cdmName={cdmName}
             settings={settings}
             updateSettings={updateSettings}
+            updateSettingsPath={updateSettingsPath}
           />
         )}
         {subtab === 'unpri' && (
@@ -415,6 +420,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             cdmName={cdmName}
             settings={settings}
             updateSettings={updateSettings}
+            updateSettingsPath={updateSettingsPath}
           />
         )}
         {subtab === 'casb' && (
@@ -429,6 +435,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             cdmName={cdmName}
             settings={settings}
             updateSettings={updateSettings}
+            updateSettingsPath={updateSettingsPath}
           />
         )}
         {subtab === 'nzam' && (
@@ -443,6 +450,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             cdmName={cdmName}
             settings={settings}
             updateSettings={updateSettings}
+            updateSettingsPath={updateSettingsPath}
           />
         )}
       </div>
