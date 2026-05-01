@@ -55,22 +55,30 @@
 .grid {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.8rem;
+  font-size: 0.72rem;
+  table-layout: fixed;
 }
 
 .grid th,
 .grid td {
   border: 1px solid var(--color-border);
-  padding: 0.35rem 0.5rem;
+  padding: 0.25rem 0.3rem;
   vertical-align: middle;
-  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .grid th {
   background: #f8fafc;
   font-weight: 700;
   text-align: center;
-  font-size: 0.78rem;
+  font-size: 0.7rem;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.grid td {
+  white-space: nowrap;
 }
 
 .grid th.headerLeft {
@@ -88,8 +96,8 @@
   border: 1px solid transparent;
   background: transparent;
   font-family: inherit;
-  font-size: 0.8rem;
-  padding: 0.2rem 0.35rem;
+  font-size: 0.72rem;
+  padding: 0.15rem 0.3rem;
   border-radius: 4px;
   color: var(--color-text);
   text-align: right;
@@ -134,8 +142,8 @@
 }
 
 .bottomRow {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: 1fr 1.2fr 1fr;
   gap: 1rem;
 }
 
