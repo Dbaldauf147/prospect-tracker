@@ -164,6 +164,13 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
           <span className={styles.navIcon}>&#128202;</span>
           Pipeline
         </button>
+        <button
+          className={view === 'bfo' ? styles.navItemActive : styles.navItem}
+          onClick={() => setView('bfo')}
+        >
+          <span className={styles.navIcon}>&#128203;</span>
+          BFO Activity
+        </button>
       </nav>
 
       <div className={styles.settingsWrap} ref={settingsWrapRef}>

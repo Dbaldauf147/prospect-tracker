@@ -33,6 +33,7 @@ import { PEPortfolioView } from './components/PEPortfolioView/PEPortfolioView';
 import { KeyContactsView } from './components/KeyContactsView/KeyContactsView';
 import { PricingView } from './components/PricingView/PricingView';
 import { PipelineView } from './components/PipelineView/PipelineView';
+import { BFOActivityView } from './components/BFOActivityView/BFOActivityView';
 import { DailySuccessManager } from './components/DailySuccess/DailySuccessManager';
 import { DailySuccessLogModal } from './components/DailySuccess/DailySuccessLogModal';
 import { SERVICE_CATEGORIES } from './data/enums';
@@ -296,6 +297,8 @@ function App() {
             <PricingView />
           ) : view === 'pipeline' ? (
             <PipelineView />
+          ) : view === 'bfo' ? (
+            <BFOActivityView />
           ) : view === 'privacy' ? (
             <PrivacyPolicy />
           ) : view === 'activity' ? (

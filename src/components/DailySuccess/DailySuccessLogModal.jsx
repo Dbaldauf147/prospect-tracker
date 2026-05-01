@@ -80,6 +80,16 @@ export function DailySuccessLogModal({ open, onClose }) {
           )}
         </div>
         <div className={styles.foot}>
+          <button
+            type="button"
+            className={styles.btn}
+            onClick={() => {
+              window.dispatchEvent(new CustomEvent('daily-success:open-morning'));
+              onClose();
+            }}
+            title="Reopen the 'What does success look like today?' prompt"
+          >Open morning prompt</button>
+          <div style={{ flex: 1 }} />
           <button type="button" className={styles.btnPrimary} onClick={onClose}>Close</button>
         </div>
       </div>

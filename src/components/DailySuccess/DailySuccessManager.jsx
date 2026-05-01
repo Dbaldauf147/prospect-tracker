@@ -48,6 +48,21 @@ export function DailySuccessManager({ user }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled]);
 
+  // Allow the Daily Success Log modal (or anything else) to force the
+  // morning prompt open by dispatching `daily-success:open-morning`.
+  useEffect(() => {
+    if (!enabled) return undefined;
+    const handler = async () => {
+      const dk = todayKey();
+      const e = await getEntry(dk);
+      if (e?.bullets?.length) setMorningText(e.bullets.map(b => b.text).join('\n'));
+      setEntry(e || { date: dk, bullets: [], shownMid: false, shownEnd: false });
+      setPhase('morning');
+    };
+    window.addEventListener('daily-success:open-morning', handler);
+    return () => window.removeEventListener('daily-success:open-morning', handler);
+  }, [enabled]);
+
   if (!enabled || !phase) return null;
 
   function close() {
