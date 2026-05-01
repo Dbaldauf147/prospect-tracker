@@ -382,6 +382,7 @@ export function PricingView() {
   const [termMonths, setTermMonths] = useState(36);
   const [annualEscalator, setAnnualEscalator] = useState(0.03);
   const [chartTag, setChartTag] = useState(''); // selected line-item / tag for the breakdown chart
+  const [chartView, setChartView] = useState('chart'); // 'chart' | 'table'
   const [error, setError] = useState('');
   const fileInputRef = useRef(null);
   const hydratedRef = useRef(false);
@@ -410,6 +411,7 @@ export function PricingView() {
         if (typeof saved.termMonths === 'number') setTermMonths(saved.termMonths);
         if (typeof saved.annualEscalator === 'number') setAnnualEscalator(saved.annualEscalator);
         if (typeof saved.chartTag === 'string') setChartTag(saved.chartTag);
+        if (saved.chartView === 'chart' || saved.chartView === 'table') setChartView(saved.chartView);
       } catch (err) {
         console.warn('Failed to load pricing cache:', err);
       } finally {
@@ -422,9 +424,9 @@ export function PricingView() {
   // Persist on changes (skip the first render until hydration finishes).
   useEffect(() => {
     if (!hydratedRef.current) return;
-    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, termMonths, annualEscalator, chartTag };
+    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, termMonths, annualEscalator, chartTag, chartView };
     dbPut(STORE, payload, KEY).catch(err => console.warn('Failed to save pricing cache:', err));
-  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, termMonths, annualEscalator, chartTag]);
+  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, termMonths, annualEscalator, chartTag, chartView]);
 
   // Per-year cost contribution from a single upper-table CTS item.
   // Setup / One Time hit year 1 in full; Rolled variants amortize
@@ -1303,33 +1305,83 @@ export function PricingView() {
                           <div className={styles.chartPanel}>
                             <div className={styles.chartHeader}>
                               <h3 className={styles.summaryTitle} style={{ margin: 0 }}>Line item year-over-year</h3>
-                              <label className={styles.chartTagLabel}>
-                                Line item:{' '}
-                                <select
-                                  className={styles.chartTagSelect}
-                                  value={tag}
-                                  onChange={(e) => setChartTag(e.target.value)}
-                                  disabled={tagOptions.length === 0}
-                                >
-                                  {tagOptions.length === 0 && <option value="">(no tagged items yet)</option>}
-                                  {tagOptions.map(t => <option key={t} value={t}>{t}</option>)}
-                                </select>
-                              </label>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+                                <div className={styles.viewToggle}>
+                                  <button
+                                    type="button"
+                                    className={chartView === 'chart' ? styles.viewToggleOn : styles.viewToggleBtn}
+                                    onClick={() => setChartView('chart')}
+                                  >Chart</button>
+                                  <button
+                                    type="button"
+                                    className={chartView === 'table' ? styles.viewToggleOn : styles.viewToggleBtn}
+                                    onClick={() => setChartView('table')}
+                                  >Table</button>
+                                </div>
+                                <label className={styles.chartTagLabel}>
+                                  Line item:{' '}
+                                  <select
+                                    className={styles.chartTagSelect}
+                                    value={tag}
+                                    onChange={(e) => setChartTag(e.target.value)}
+                                    disabled={tagOptions.length === 0}
+                                  >
+                                    {tagOptions.length === 0 && <option value="">(no tagged items yet)</option>}
+                                    {tagOptions.map(t => <option key={t} value={t}>{t}</option>)}
+                                  </select>
+                                </label>
+                              </div>
                             </div>
                             {tag ? (
-                              <div style={{ width: '100%', height: 280 }}>
-                                <ResponsiveContainer>
-                                  <BarChart data={chartData} margin={{ top: 8, right: 24, left: 0, bottom: 4 }}>
-                                    <CartesianGrid strokeDasharray="3 3" />
-                                    <XAxis dataKey="year" />
-                                    <YAxis tickFormatter={(v) => v >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${v}`} />
-                                    <Tooltip formatter={(v) => v.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })} />
-                                    <Legend />
-                                    <Bar dataKey="Cost" fill="#ef4444" />
-                                    <Bar dataKey="Fee" fill="#2563eb" />
-                                  </BarChart>
-                                </ResponsiveContainer>
-                              </div>
+                              chartView === 'table' ? (
+                                <table className={styles.summaryTable}>
+                                  <thead>
+                                    <tr>
+                                      <th>Year</th>
+                                      <th className={styles.numCell}>Cost</th>
+                                      <th className={styles.priceCell}>Fee</th>
+                                      <th className={styles.priceCell}>Margin</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {chartData.map(d => {
+                                      const margin = d.Fee > 0 ? ((d.Fee - d.Cost) / d.Fee) : null;
+                                      return (
+                                        <tr key={d.year}>
+                                          <td>{d.year}</td>
+                                          <td className={styles.numCell}>{fmtMoney(d.Cost)}</td>
+                                          <td className={styles.priceCell}>{fmtMoney(d.Fee)}</td>
+                                          <td className={styles.priceCell}>{margin === null ? '' : `${(margin * 100).toFixed(1)}%`}</td>
+                                        </tr>
+                                      );
+                                    })}
+                                    <tr className={styles.summaryGrandRow}>
+                                      <td>Total</td>
+                                      <td className={styles.numCell}>{fmtMoney(chartData.reduce((s, d) => s + d.Cost, 0))}</td>
+                                      <td className={styles.priceCell}>{fmtMoney(chartData.reduce((s, d) => s + d.Fee, 0))}</td>
+                                      <td className={styles.priceCell}>{(() => {
+                                        const tc = chartData.reduce((s, d) => s + d.Cost, 0);
+                                        const tf = chartData.reduce((s, d) => s + d.Fee, 0);
+                                        return tf > 0 ? `${(((tf - tc) / tf) * 100).toFixed(1)}%` : '';
+                                      })()}</td>
+                                    </tr>
+                                  </tbody>
+                                </table>
+                              ) : (
+                                <div style={{ width: '100%', height: 280 }}>
+                                  <ResponsiveContainer>
+                                    <BarChart data={chartData} margin={{ top: 8, right: 24, left: 0, bottom: 4 }}>
+                                      <CartesianGrid strokeDasharray="3 3" />
+                                      <XAxis dataKey="year" />
+                                      <YAxis tickFormatter={(v) => v >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${v}`} />
+                                      <Tooltip formatter={(v) => v.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })} />
+                                      <Legend />
+                                      <Bar dataKey="Cost" fill="#ef4444" />
+                                      <Bar dataKey="Fee" fill="#2563eb" />
+                                    </BarChart>
+                                  </ResponsiveContainer>
+                                </div>
+                              )
                             ) : (
                               <div style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)', padding: '1rem 0' }}>
                                 Tag at least one CTS row's <strong>Linked To</strong> column or fill in the <strong>Alternative Fee Structure / Schedule</strong> with an item name to populate this chart.
