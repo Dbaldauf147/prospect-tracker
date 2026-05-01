@@ -66,6 +66,8 @@ export function BFOActivityView() {
   const [pasteText, setPasteText] = useState('');
   const [flash, setFlash] = useState('');
   const [colWidths, setColWidths] = useState({}); // { [headerName]: pixelWidth }
+  const [hiddenCols, setHiddenCols] = useState({}); // { [headerName]: true }
+  const [colMenuOpen, setColMenuOpen] = useState(false);
   const hydratedRef = useRef(false);
 
   useEffect(() => {
@@ -76,6 +78,7 @@ export function BFOActivityView() {
         if (cancelled) return;
         if (saved && saved.headers && saved.rows) setData(saved);
         if (saved && saved.colWidths) setColWidths(saved.colWidths);
+        if (saved && saved.hiddenCols) setHiddenCols(saved.hiddenCols);
       } finally {
         hydratedRef.current = true;
       }
@@ -85,8 +88,17 @@ export function BFOActivityView() {
 
   useEffect(() => {
     if (!hydratedRef.current) return;
-    dbPut(STORE, { ...data, colWidths }, KEY).catch(err => console.warn('BFO save failed', err));
-  }, [data, colWidths]);
+    dbPut(STORE, { ...data, colWidths, hiddenCols }, KEY).catch(err => console.warn('BFO save failed', err));
+  }, [data, colWidths, hiddenCols]);
+
+  function toggleHidden(col) {
+    setHiddenCols(h => {
+      const next = { ...h };
+      if (next[col]) delete next[col];
+      else next[col] = true;
+      return next;
+    });
+  }
 
   function startColResize(col, evt) {
     evt.preventDefault();
@@ -195,6 +207,27 @@ export function BFOActivityView() {
           <button type="button" className={styles.btn} onClick={() => setPasteOpen(o => !o)}>
             {pasteOpen ? 'Hide paste box' : 'Paste from BFO…'}
           </button>
+          {data.headers.length > 0 && (
+            <div className={styles.colsMenuWrap}>
+              <button type="button" className={styles.btn} onClick={() => setColMenuOpen(o => !o)}>
+                Columns ▾
+              </button>
+              {colMenuOpen && (
+                <div className={styles.colsMenu}>
+                  {data.headers.map(h => (
+                    <label key={h} className={styles.colsMenuItem}>
+                      <input
+                        type="checkbox"
+                        checked={!hiddenCols[h]}
+                        onChange={() => toggleHidden(h)}
+                      />
+                      <span>{h}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           {data.rows.length > 0 && (
             <>
               <button type="button" className={styles.btn} onClick={exportCsv}>Export CSV</button>
@@ -248,13 +281,17 @@ export function BFOActivityView() {
         ) : (
           <>
             <div className={styles.summary}>
-              {filtered.length} of {data.rows.length} rows{search ? ` matching "${search}"` : ''} · {data.headers.length} columns
+              {(() => {
+                const visible = data.headers.filter(h => !hiddenCols[h]);
+                const hidden = data.headers.length - visible.length;
+                return `${filtered.length} of ${data.rows.length} rows${search ? ` matching "${search}"` : ''} · ${visible.length} of ${data.headers.length} columns visible${hidden ? ` (${hidden} hidden)` : ''}`;
+              })()}
             </div>
             <div className={styles.tableWrap}>
               <table className={styles.table}>
                 <thead>
                   <tr>
-                    {data.headers.map(h => {
+                    {data.headers.filter(h => !hiddenCols[h]).map(h => {
                       const isSorted = sortBy?.col === h;
                       return (
                         <th key={h} style={{ width: colWidths[h] ?? 160 }}>
@@ -277,7 +314,7 @@ export function BFOActivityView() {
                 <tbody>
                   {filtered.map((r, i) => (
                     <tr key={i}>
-                      {data.headers.map(h => {
+                      {data.headers.filter(h => !hiddenCols[h]).map(h => {
                         const v = r[h] ?? '';
                         const isAge = /^age$/i.test(h);
                         const isAmount = /^amount$/i.test(h);
