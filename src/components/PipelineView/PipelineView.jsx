@@ -407,7 +407,8 @@ export function PipelineView() {
               title="Restore the stage rows + goal seeds to defaults if the table looks blank or corrupted."
             >Reset table</button>
           </div>
-          <table className={styles.grid}>
+          <div style={{ overflowX: 'auto' }}>
+          <table className={styles.grid} style={{ minWidth: 1400 }}>
             <thead>
               <tr>
                 <th rowSpan={2} className={styles.headerLeft}>Stage</th>
@@ -522,6 +523,7 @@ export function PipelineView() {
               })()}
             </tbody>
           </table>
+          </div>
         </div>
 
         {/* Mid row — Client/Greenfield + Coverage + % not Quoted + Quota */}

@@ -56,7 +56,6 @@
   width: 100%;
   border-collapse: collapse;
   font-size: 0.72rem;
-  table-layout: fixed;
 }
 
 .grid th,
