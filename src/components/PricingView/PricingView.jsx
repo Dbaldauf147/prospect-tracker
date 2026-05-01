@@ -374,11 +374,12 @@ const COLS = [
 ];
 
 const SUMMARY_COLS = [
-  { key: 'bucket',   label: 'Bucket',                  defaultWidth: 200 },
-  { key: 'cost',     label: 'Cost',                    defaultWidth: 110 },
-  { key: 'techDepr', label: 'Tech Depr.',              defaultWidth: 110 },
-  { key: 'price',    label: 'Marked-up',               defaultWidth: 130 },
-  { key: 'termPrice',label: 'Term value (marked-up)',  defaultWidth: 160 },
+  { key: 'bucket',     label: 'Bucket',                       defaultWidth: 200 },
+  { key: 'cost',       label: 'Cost',                         defaultWidth: 110 },
+  { key: 'techDepr',   label: 'Tech Depr.',                   defaultWidth: 110 },
+  { key: 'totalCost',  label: 'Total cost (incl. tech depr)', defaultWidth: 150 },
+  { key: 'price',      label: 'Marked-up',                    defaultWidth: 130 },
+  { key: 'termPrice',  label: 'Term value (marked-up)',       defaultWidth: 160 },
 ];
 
 const STORE = 'pricing-cache';
@@ -391,6 +392,11 @@ const PARSER_VERSION = 8;
 const fmtMoney = (n) => {
   if (n === null || n === undefined || Number.isNaN(n)) return '';
   return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
+};
+
+const fmtMoneyWhole = (n) => {
+  if (n === null || n === undefined || Number.isNaN(n)) return '';
+  return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 };
 
 const fmtPct = (n) => {
@@ -1347,7 +1353,7 @@ export function PricingView() {
                           %
                         </div>
                         {(() => {
-                          const cellClassFor = (k) => k === 'bucket' ? '' : (k === 'cost' || k === 'techDepr') ? styles.numCell : styles.priceCell;
+                          const cellClassFor = (k) => k === 'bucket' ? '' : (k === 'cost' || k === 'techDepr' || k === 'totalCost') ? styles.numCell : styles.priceCell;
                           const renderHeaders = () => SUMMARY_COLS.filter(c => !summaryColHidden(c.key)).map(col => (
                             <th key={col.key} style={{ width: summaryColWidths[col.key] ?? col.defaultWidth }} className={cellClassFor(col.key)}>
                               <span className={styles.thInner}>
@@ -1374,19 +1380,20 @@ export function PricingView() {
                             <table className={styles.summaryTable}>
                               <thead><tr>{renderHeaders()}</tr></thead>
                               <tbody>
-                                {renderRow('Setup', { cost: setup.cost, techDepr: setup.cost * techDeprPct, price: setup.price, termPrice: setup.termPrice })}
-                                {renderRow('Recurring (monthly)', { cost: recurring.cost, techDepr: recurring.cost * techDeprPct, price: recurring.price, termPrice: recurring.termPrice })}
-                                {(oneTime.cost > 0 || oneTime.price > 0) && renderRow('One Time', { cost: oneTime.cost, techDepr: oneTime.cost * techDeprPct, price: oneTime.price, termPrice: oneTime.termPrice })}
+                                {renderRow('Setup', { cost: setup.cost, techDepr: setup.cost * techDeprPct, totalCost: setup.cost * (1 + techDeprPct), price: setup.price, termPrice: setup.termPrice })}
+                                {renderRow('Recurring (monthly)', { cost: recurring.cost, techDepr: recurring.cost * techDeprPct, totalCost: recurring.cost * (1 + techDeprPct), price: recurring.price, termPrice: recurring.termPrice })}
+                                {(oneTime.cost > 0 || oneTime.price > 0) && renderRow('One Time', { cost: oneTime.cost, techDepr: oneTime.cost * techDeprPct, totalCost: oneTime.cost * (1 + techDeprPct), price: oneTime.price, termPrice: oneTime.termPrice })}
                                 <tr className={styles.summaryGrandRow}>
                                   {SUMMARY_COLS.filter(c => !summaryColHidden(c.key)).map(col => {
                                     if (col.key === 'bucket') return <td key={col.key}>Total contract value</td>;
                                     const map = {
                                       cost: grandTermCost,
                                       techDepr: totalDeprAll,
+                                      totalCost: grandTermCost + totalDeprAll,
                                       price: totalPrice,
                                       termPrice: grandTermPrice,
                                     };
-                                    return <td key={col.key} className={cellClassFor(col.key)}>{fmtMoney(map[col.key])}</td>;
+                                    return <td key={col.key} className={cellClassFor(col.key)}>{fmtMoneyWhole(map[col.key])}</td>;
                                   })}
                                 </tr>
                               </tbody>
