@@ -49,6 +49,14 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
+      // Partition all browser-local IndexedDB reads/writes by user
+      // before any consumer hook starts loading data.
+      try {
+        const { setDbUserId } = await import('../utils/db');
+        setDbUserId(firebaseUser?.uid || null);
+      } catch (err) {
+        console.warn('Failed to set IndexedDB user scope', err);
+      }
       setUser(firebaseUser);
       await resolveRole(firebaseUser);
       setLoading(false);

@@ -42,7 +42,7 @@ export async function getAllEntries() {
 export async function upsertEntry(date, patch) {
   const existing = (await dbGet(STORE, date)) || { date, bullets: [], shownMid: false, shownEnd: false };
   const next = { ...existing, ...patch, date };
-  await dbPut(STORE, next);
+  await dbPut(STORE, next, date);
   return next;
 }
 
