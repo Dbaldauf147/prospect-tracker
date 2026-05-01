@@ -14,6 +14,7 @@ const STORES = [
   { name: 'hubspot-contacts', keyPath: null },
   { name: 'pricing-cache',    keyPath: null },
   { name: 'daily-success-log', keyPath: 'date' },
+  { name: 'pipeline-dashboard', keyPath: null },
 ];
 
 let dbPromise = null;

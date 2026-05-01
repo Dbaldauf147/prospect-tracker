@@ -32,6 +32,7 @@ import { AgendaView } from './components/AgendaView/AgendaView';
 import { PEPortfolioView } from './components/PEPortfolioView/PEPortfolioView';
 import { KeyContactsView } from './components/KeyContactsView/KeyContactsView';
 import { PricingView } from './components/PricingView/PricingView';
+import { PipelineView } from './components/PipelineView/PipelineView';
 import { DailySuccessManager } from './components/DailySuccess/DailySuccessManager';
 import { DailySuccessLogModal } from './components/DailySuccess/DailySuccessLogModal';
 import { SERVICE_CATEGORIES } from './data/enums';
@@ -293,6 +294,8 @@ function App() {
             <DedupeView />
           ) : view === 'pricing' ? (
             <PricingView />
+          ) : view === 'pipeline' ? (
+            <PipelineView />
           ) : view === 'privacy' ? (
             <PrivacyPolicy />
           ) : view === 'activity' ? (
