@@ -2589,6 +2589,8 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
             return (s === 'Lost - Not Sold' || s === 'Hold Off' || s === 'Old Client') ? { opacity: 0.45 } : undefined;
           }}
           emptyMessage="No matching accounts found"
+          settings={settings}
+          updateSettings={updateSettings}
         />
       </div>
 

@@ -208,6 +208,28 @@ function ColumnToggle({ columns, visibleCols, onToggle, alwaysVisible, colNames,
   );
 }
 
+// When settings + updateSettings are provided, column prefs (widths,
+// visibility, renames) are mirrored to Firestore at
+// settings.tablePrefs[tableId]. Localstorage continues to be written
+// as a fast/offline mirror. This makes the prefs survive a browser
+// "Clear site data" — Firestore reseeds localStorage on the next
+// load. Tables not wired to settings keep the legacy localStorage-only
+// behavior.
+function persistPrefs(tableId, settings, updateSettings, prefsUpdate) {
+  if (prefsUpdate.widths !== undefined) saveColWidths(tableId, prefsUpdate.widths);
+  if (prefsUpdate.visible !== undefined) saveColVisible(tableId, prefsUpdate.visible);
+  if (prefsUpdate.names !== undefined) saveColNames(tableId, prefsUpdate.names);
+  if (!settings || !updateSettings || !tableId) return;
+  const current = settings.tablePrefs?.[tableId] || {};
+  const nextEntry = { ...current };
+  if (prefsUpdate.widths !== undefined) nextEntry.widths = prefsUpdate.widths;
+  if (prefsUpdate.visible !== undefined) nextEntry.visible = [...prefsUpdate.visible];
+  if (prefsUpdate.names !== undefined) nextEntry.names = prefsUpdate.names;
+  updateSettings({
+    tablePrefs: { ...(settings.tablePrefs || {}), [tableId]: nextEntry },
+  });
+}
+
 /**
  * Reusable data table with resizable columns and column visibility toggle.
  *
@@ -248,17 +270,71 @@ export function DataTable({
   // its header. Rows are filtered (substring, case-insensitive) by
   // the raw cell value for each column that has a non-empty filter.
   enableColumnFilters = false,
+  // Optional Firestore-backed settings store. When provided, column
+  // prefs (widths, visibility, renames) persist to settings.tablePrefs[tableId]
+  // in addition to localStorage so they survive a clear-site-data.
+  settings,
+  updateSettings,
 }) {
-  const [colWidths, setColWidths] = useState(() => loadColWidths(tableId));
-  const [visibleCols, setVisibleCols] = useState(() => loadColVisible(tableId, columns.map(c => c.key)));
-  const [colNames, setColNames] = useState(() => loadColNames(tableId));
+  const remotePrefs = settings?.tablePrefs?.[tableId];
+  const [colWidths, setColWidths] = useState(() => remotePrefs?.widths || loadColWidths(tableId));
+  const [visibleCols, setVisibleCols] = useState(() => (
+    Array.isArray(remotePrefs?.visible)
+      ? new Set(remotePrefs.visible)
+      : loadColVisible(tableId, columns.map(c => c.key))
+  ));
+  const [colNames, setColNames] = useState(() => remotePrefs?.names || loadColNames(tableId));
   const [colFilters, setColFilters] = useState({});
   const resizingRef = useRef(null);
+  const migratedRef = useRef(false);
+
+  // Sync local state when Firestore-backed prefs arrive or change on
+  // another device. Stringify-compare so we don't churn state when the
+  // values are equivalent.
+  useEffect(() => {
+    if (!remotePrefs) return;
+    if (remotePrefs.widths && JSON.stringify(remotePrefs.widths) !== JSON.stringify(colWidths)) {
+      setColWidths(remotePrefs.widths);
+    }
+    if (Array.isArray(remotePrefs.visible)) {
+      const incoming = new Set(remotePrefs.visible);
+      const same = incoming.size === visibleCols.size && [...incoming].every(k => visibleCols.has(k));
+      if (!same) setVisibleCols(incoming);
+    }
+    if (remotePrefs.names && JSON.stringify(remotePrefs.names) !== JSON.stringify(colNames)) {
+      setColNames(remotePrefs.names);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [remotePrefs]);
+
+  // One-time migration: if settings is wired up but Firestore has no
+  // entry for this table yet AND localStorage has non-default prefs,
+  // push them up so future site clears don't wipe them.
+  useEffect(() => {
+    if (migratedRef.current) return;
+    if (!settings || !updateSettings || !tableId) return;
+    if (settings.tablePrefs?.[tableId]) { migratedRef.current = true; return; }
+    const lsWidths = loadColWidths(tableId);
+    const lsVisible = loadColVisible(tableId, columns.map(c => c.key));
+    const lsNames = loadColNames(tableId);
+    const allKeys = columns.map(c => c.key);
+    const hasNonDefault = Object.keys(lsWidths).length > 0
+      || lsVisible.size !== allKeys.length
+      || ![...lsVisible].every(k => allKeys.includes(k))
+      || Object.keys(lsNames).length > 0;
+    if (!hasNonDefault) { migratedRef.current = true; return; }
+    persistPrefs(tableId, settings, updateSettings, {
+      widths: lsWidths,
+      visible: lsVisible,
+      names: lsNames,
+    });
+    migratedRef.current = true;
+  }, [settings, updateSettings, tableId, columns]);
 
   function renameCol(key, name) {
     setColNames(prev => {
       const next = { ...prev, [key]: name };
-      saveColNames(tableId, next);
+      persistPrefs(tableId, settings, updateSettings, { names: next });
       return next;
     });
   }
@@ -422,7 +498,7 @@ export function DataTable({
     setVisibleCols(prev => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key); else next.add(key);
-      saveColVisible(tableId, next);
+      persistPrefs(tableId, settings, updateSettings, { visible: next });
       return next;
     });
   }
@@ -439,7 +515,7 @@ export function DataTable({
       const newWidth = Math.max(50, startWidth + diff);
       setColWidths(prev => {
         const next = { ...prev, [colKey]: newWidth };
-        saveColWidths(tableId, next);
+        persistPrefs(tableId, settings, updateSettings, { widths: next });
         return next;
       });
     }
@@ -462,7 +538,7 @@ export function DataTable({
     <div className={styles.outerWrap}>
       <div className={styles.toolbar}>
         <ColumnToggle columns={columns} visibleCols={visibleCols} onToggle={toggleCol} alwaysVisible={alwaysVisible} colNames={colNames} onRename={renameCol} />
-        <button className={styles.resetBtn} onClick={() => { setColWidths({}); saveColWidths(tableId, {}); }}>
+        <button className={styles.resetBtn} onClick={() => { setColWidths({}); persistPrefs(tableId, settings, updateSettings, { widths: {} }); }}>
           Reset widths
         </button>
         <button className={styles.exportBtn} onClick={() => {
