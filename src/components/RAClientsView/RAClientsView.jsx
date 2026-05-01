@@ -51,7 +51,7 @@ function buildColumns(data) {
   });
 }
 
-export function RAClientsView() {
+export function RAClientsView({ settings, updateSettings } = {}) {
   const [{ data, source }, setStore] = useState(() => loadEffectiveRaClients());
   const [search, setSearch] = useState('');
   const [uploadError, setUploadError] = useState(null);
@@ -212,6 +212,8 @@ export function RAClientsView() {
         rows={filtered}
         alwaysVisible={alwaysVisible}
         emptyMessage="No matching RA clients found"
+        settings={settings}
+        updateSettings={updateSettings}
       />
     </div>
   );

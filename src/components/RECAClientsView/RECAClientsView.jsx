@@ -4,7 +4,7 @@ import { UploadedListView } from '../UploadedListView/UploadedListView';
 // shared upload + My Account mapping behavior. The localStorage key
 // stays reca-clients-override so any existing uploaded list is
 // preserved across this refactor.
-export function RECAClientsView({ prospects = [], onSelectProspect, cdmName }) {
+export function RECAClientsView({ prospects = [], onSelectProspect, cdmName, settings, updateSettings }) {
   return (
     <UploadedListView
       storageKey="reca-clients-override"
@@ -16,6 +16,8 @@ export function RECAClientsView({ prospects = [], onSelectProspect, cdmName }) {
       onSelectProspect={onSelectProspect}
       cdmName={cdmName}
       textColumn={{ key: 'reca-cdm', label: 'RECA CDM', placeholder: 'Add CDM…' }}
+      settings={settings}
+      updateSettings={updateSettings}
     />
   );
 }

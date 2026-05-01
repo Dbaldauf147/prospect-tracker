@@ -38,7 +38,7 @@ function fmtDuration(ms) {
   return rem > 0 ? `${min}m ${rem}s` : `${min}m`;
 }
 
-export function ActivityView({ prospects = [] }) {
+export function ActivityView({ prospects = [], settings, updateSettings }) {
   const { user } = useAuth();
   const [data, setData] = useState(loadCache);
   const [loading, setLoading] = useState(false);
@@ -698,6 +698,8 @@ export function ActivityView({ prospects = [] }) {
           rows={filtered}
           alwaysVisible={[]}
           emptyMessage="No activity found"
+          settings={settings}
+          updateSettings={updateSettings}
         />
       )}
 

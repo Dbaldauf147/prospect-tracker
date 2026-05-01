@@ -99,7 +99,7 @@ function classifyUtility(name) {
   return 'Deregulated';
 }
 
-export function SitesView() {
+export function SitesView({ settings, updateSettings } = {}) {
   const [sitesData, setSitesData] = useState([]);
   const [sitesLoaded, setSitesLoaded] = useState(false);
   const [utility, setUtility] = useState(null); // { zipMap, meta }
@@ -1321,6 +1321,8 @@ export function SitesView() {
           exportPrimarySheetName="Raw Data"
           exportExtraSheets={exportExtraSheets}
           onExport={handleExport}
+          settings={settings}
+          updateSettings={updateSettings}
         />
       )}
 

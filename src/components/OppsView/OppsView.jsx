@@ -77,7 +77,7 @@ async function saveToFirestore(userId, data) {
   } catch (err) { console.error('Failed to save opps to Firestore:', err); }
 }
 
-export function OppsView() {
+export function OppsView({ settings, updateSettings } = {}) {
   const { user } = useAuth();
   const [data, setData] = useState(loadCacheLegacy);
   const [loading, setLoading] = useState(false);
@@ -492,6 +492,8 @@ export function OppsView() {
               rows={filtered}
               alwaysVisible={['Account']}
               emptyMessage="No opportunities found"
+              settings={settings}
+              updateSettings={updateSettings}
             />
           )}
         </>
@@ -524,6 +526,8 @@ export function OppsView() {
             alwaysVisible={['scope']}
             rowStyle={(row) => row._hidden ? { opacity: 0.5 } : undefined}
             emptyMessage="No services to display."
+            settings={settings}
+            updateSettings={updateSettings}
           />
         </>
       )}

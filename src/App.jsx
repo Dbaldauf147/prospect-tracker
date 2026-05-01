@@ -302,7 +302,7 @@ function App() {
           ) : view === 'privacy' ? (
             <PrivacyPolicy />
           ) : view === 'activity' ? (
-            <ActivityView prospects={prospects} />
+            <ActivityView prospects={prospects} settings={settings} updateSettings={updateSettings} />
           ) : view === 'pe' ? (
             <PEPortfolioView prospects={prospects} onSelectProspect={handleSelect} />
           ) : view === 'keycontacts' ? (
@@ -310,11 +310,11 @@ function App() {
           ) : view === 'agenda' ? (
             <AgendaView prospects={prospects} onSelectProspect={handleSelect} onUpdateProspect={updateProspect} cdmName={cdmName} />
           ) : view === 'lists' ? (
-            <ListsView onTargetAccountsLoaded={setTargetAccountsData} prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} />
+            <ListsView onTargetAccountsLoaded={setTargetAccountsData} prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} />
           ) : view === 'clients' ? (
-            <ClientsView prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} />
+            <ClientsView prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} />
           ) : view === 'opps' ? (
-            <OppsView />
+            <OppsView settings={settings} updateSettings={updateSettings} />
           ) : view === 'hubspot' ? (
             <HubSpotView prospects={prospects} settings={settings} updateSettings={updateSettings} />
           ) : view === 'accounts' ? (

@@ -142,7 +142,7 @@ function InlineEditCell({ value, rowIndex, colKey, onSave }) {
   return <span style={{ cursor: 'default', padding: '1px 3px', borderRadius: '4px' }} onDoubleClick={startEdit}>{value || '—'}</span>;
 }
 
-export function TargetAccountsView({ onDataLoaded }) {
+export function TargetAccountsView({ onDataLoaded, settings, updateSettings }) {
   const { user } = useAuth();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -550,6 +550,8 @@ export function TargetAccountsView({ onDataLoaded }) {
             rows={filtered}
             alwaysVisible={[]}
             emptyMessage="No records found"
+            settings={settings}
+            updateSettings={updateSettings}
           />
         </>
       )}

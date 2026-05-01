@@ -152,7 +152,7 @@ function DataSourceLink({ storageKey }) {
   );
 }
 
-export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectProspect, cdmName }) {
+export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectProspect, cdmName, settings, updateSettings }) {
   const [subtab, setSubtab] = useState('raclients');
   // { [subtabKey]: { mapped, touched, pct } } — green subtab when pct===100.
   const [coverageByKey, setCoverageByKey] = useState({});
@@ -328,11 +328,11 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
         </div>
       </div>
       <div className={styles.content}>
-        {subtab === 'raclients' && <RAClientsView />}
-        {subtab === 'targets' && <TargetAccountsView onDataLoaded={onTargetAccountsLoaded} />}
-        {subtab === 'recaclients' && <RECAClientsView prospects={prospects} onSelectProspect={onSelectProspect} cdmName={cdmName} />}
-        {subtab === 'ecoactclients' && <EcoActClientsView prospects={prospects} onSelectProspect={onSelectProspect} cdmName={cdmName} />}
-        {subtab === 'sites' && <SitesView />}
+        {subtab === 'raclients' && <RAClientsView settings={settings} updateSettings={updateSettings} />}
+        {subtab === 'targets' && <TargetAccountsView onDataLoaded={onTargetAccountsLoaded} settings={settings} updateSettings={updateSettings} />}
+        {subtab === 'recaclients' && <RECAClientsView prospects={prospects} onSelectProspect={onSelectProspect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} />}
+        {subtab === 'ecoactclients' && <EcoActClientsView prospects={prospects} onSelectProspect={onSelectProspect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} />}
+        {subtab === 'sites' && <SitesView settings={settings} updateSettings={updateSettings} />}
         {subtab === 'csrd' && (
           <UploadedListView
             storageKey="csrd-list-override"
@@ -343,6 +343,8 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             prospects={prospects}
             onSelectProspect={onSelectProspect}
             cdmName={cdmName}
+            settings={settings}
+            updateSettings={updateSettings}
           />
         )}
         {subtab === 'cdp' && (
@@ -355,6 +357,8 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             prospects={prospects}
             onSelectProspect={onSelectProspect}
             cdmName={cdmName}
+            settings={settings}
+            updateSettings={updateSettings}
           />
         )}
         {subtab === 'gresb' && (
@@ -367,6 +371,8 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             prospects={prospects}
             onSelectProspect={onSelectProspect}
             cdmName={cdmName}
+            settings={settings}
+            updateSettings={updateSettings}
           />
         )}
         {subtab === 'sbt' && (
@@ -379,6 +385,8 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             prospects={prospects}
             onSelectProspect={onSelectProspect}
             cdmName={cdmName}
+            settings={settings}
+            updateSettings={updateSettings}
           />
         )}
         {subtab === 'ecovadis' && (
@@ -391,6 +399,8 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             prospects={prospects}
             onSelectProspect={onSelectProspect}
             cdmName={cdmName}
+            settings={settings}
+            updateSettings={updateSettings}
           />
         )}
         {subtab === 'unpri' && (
@@ -403,6 +413,8 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             prospects={prospects}
             onSelectProspect={onSelectProspect}
             cdmName={cdmName}
+            settings={settings}
+            updateSettings={updateSettings}
           />
         )}
         {subtab === 'casb' && (
@@ -415,6 +427,8 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             prospects={prospects}
             onSelectProspect={onSelectProspect}
             cdmName={cdmName}
+            settings={settings}
+            updateSettings={updateSettings}
           />
         )}
         {subtab === 'nzam' && (
@@ -427,6 +441,8 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             prospects={prospects}
             onSelectProspect={onSelectProspect}
             cdmName={cdmName}
+            settings={settings}
+            updateSettings={updateSettings}
           />
         )}
       </div>

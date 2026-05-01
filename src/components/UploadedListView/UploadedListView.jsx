@@ -391,6 +391,8 @@ export function UploadedListView({
   onSelectProspect,
   cdmName,
   textColumn, // { key: string, label: string, placeholder?: string }
+  settings,
+  updateSettings,
 }) {
   const [store, setStore] = useState({ data: [], source: 'empty' });
   const mappingKey = storageKey ? `${storageKey}:account-mapping` : '';
@@ -1741,6 +1743,8 @@ export function UploadedListView({
           alwaysVisible={alwaysVisible}
           enableColumnFilters
           emptyMessage={`No matching ${plural} found`}
+          settings={settings}
+          updateSettings={updateSettings}
         />
       )}
       {picker && createPortal(

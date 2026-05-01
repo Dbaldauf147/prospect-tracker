@@ -7,7 +7,7 @@ function getServicesCount(p) {
   return Object.values(svc).filter(v => v && v !== '-').length;
 }
 
-export function ClientsView({ prospects = [], onSelectProspect, cdmName }) {
+export function ClientsView({ prospects = [], onSelectProspect, cdmName, settings, updateSettings }) {
   const [showOld, setShowOld] = useState(false);
   const [query, setQuery] = useState('');
 
@@ -174,6 +174,8 @@ export function ClientsView({ prospects = [], onSelectProspect, cdmName }) {
             alwaysVisible={['company']}
             onRowClick={(row) => onSelectProspect?.(row)}
             emptyMessage={q ? `No clients match "${query}"` : 'No clients to display'}
+            settings={settings}
+            updateSettings={updateSettings}
           />
         )}
       </div>
