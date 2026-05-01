@@ -1371,7 +1371,7 @@ export function PricingView() {
                               {SUMMARY_COLS.filter(c => !summaryColHidden(c.key)).map(col => {
                                 if (col.key === 'bucket') return <td key={col.key}>{label}</td>;
                                 const v = vals[col.key];
-                                return <td key={col.key} className={cellClassFor(col.key)}>{typeof v === 'number' ? fmtMoney(v) : ''}</td>;
+                                return <td key={col.key} className={cellClassFor(col.key)}>{typeof v === 'number' ? fmtMoneyWhole(v) : ''}</td>;
                               })}
                             </tr>
                           );
