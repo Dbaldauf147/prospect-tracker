@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, CartesianGrid, ResponsiveContainer } from 'recharts';
 import styles from './PricingView.module.css';
 import { parsePricingWorkbook, priceFromCostAndGm } from '../../utils/pricingParse';
 import { dbGet, dbPut, dbDelete } from '../../utils/db';
@@ -351,6 +352,7 @@ export function PricingView() {
   const [linkedToDefaults, setLinkedToDefaults] = useState({}); // { [`${lineItem}::${type}`]: 'value' }
   const [termMonths, setTermMonths] = useState(36);
   const [annualEscalator, setAnnualEscalator] = useState(0.03);
+  const [chartTag, setChartTag] = useState(''); // selected line-item / tag for the breakdown chart
   const [error, setError] = useState('');
   const fileInputRef = useRef(null);
   const hydratedRef = useRef(false);
@@ -378,6 +380,7 @@ export function PricingView() {
         if (saved.linkedToDefaults) setLinkedToDefaults(saved.linkedToDefaults);
         if (typeof saved.termMonths === 'number') setTermMonths(saved.termMonths);
         if (typeof saved.annualEscalator === 'number') setAnnualEscalator(saved.annualEscalator);
+        if (typeof saved.chartTag === 'string') setChartTag(saved.chartTag);
       } catch (err) {
         console.warn('Failed to load pricing cache:', err);
       } finally {
@@ -390,9 +393,43 @@ export function PricingView() {
   // Persist on changes (skip the first render until hydration finishes).
   useEffect(() => {
     if (!hydratedRef.current) return;
-    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, termMonths, annualEscalator };
+    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, termMonths, annualEscalator, chartTag };
     dbPut(STORE, payload, KEY).catch(err => console.warn('Failed to save pricing cache:', err));
-  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, termMonths, annualEscalator]);
+  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, termMonths, annualEscalator, chartTag]);
+
+  // Per-year cost contribution from a single upper-table CTS item.
+  // Setup / One Time hit year 1 in full; Rolled variants amortize
+  // evenly across the term and escalate; Recurring (monthly) bills
+  // 12 months per year and escalates.
+  function ctsItemYearCost(item, yearIndex) {
+    if (typeof item.cts !== 'number') return 0;
+    const t = effectiveType(item);
+    const isRecurring = /recurring.*monthly|monthly.*recurring|^recurring/i.test(t);
+    const isRolled = /\brolled\b/i.test(t);
+    const yearStart = (yearIndex - 1) * 12 + 1;
+    const yearEnd = yearIndex * 12;
+    if (isRecurring) {
+      const billStart = Math.max(yearStart, 1);
+      const billEnd = Math.min(yearEnd, termMonths);
+      if (billEnd < billStart) return 0;
+      const months = billEnd - billStart + 1;
+      const esc = Math.pow(1 + annualEscalator, yearIndex - 1);
+      return item.cts * months * esc;
+    }
+    if (isRolled && termMonths > 0) {
+      // Amortize CTS across the term, then bill each year's months at
+      // an escalated monthly rate.
+      const monthlyAmt = item.cts / termMonths;
+      const billStart = Math.max(yearStart, 1);
+      const billEnd = Math.min(yearEnd, termMonths);
+      if (billEnd < billStart) return 0;
+      const months = billEnd - billStart + 1;
+      const esc = Math.pow(1 + annualEscalator, yearIndex - 1);
+      return monthlyAmt * months * esc;
+    }
+    // Setup / One Time: lands entirely in Y1.
+    return yearIndex === 1 ? item.cts : 0;
+  }
 
   // Revenue from a single Alt Fee row in calendar year `yearIndex`
   // (1-based). Setup / One Time charges land in the year containing
@@ -1199,6 +1236,79 @@ export function PricingView() {
                         onAppendRows={(rows) => appendAltFeeRows(opt.optionNumber, rows)}
                       />
                       </div>
+
+                      {(() => {
+                        // Build list of unique tags from this Option:
+                        // every alt-fee row's altItem + every linked-to
+                        // value (override + saved default) on a CTS row.
+                        const seen = new Map(); // canonical key -> displayed name
+                        const add = (name) => {
+                          const trimmed = (name || '').trim();
+                          if (!trimmed) return;
+                          const k = trimmed.toLowerCase();
+                          if (!seen.has(k)) seen.set(k, trimmed);
+                        };
+                        for (const r of (altFees[opt.optionNumber] || [])) add(r.altItem);
+                        for (const sec of opt.sections) {
+                          for (const it of sec.items) add(resolvedLinkedTo(it));
+                        }
+                        const tagOptions = [...seen.values()].sort((a, b) => a.localeCompare(b));
+                        const tag = chartTag && seen.has(chartTag.toLowerCase())
+                          ? seen.get(chartTag.toLowerCase())
+                          : (tagOptions[0] || '');
+                        const numYears = Math.max(1, Math.ceil(termMonths / 12));
+                        const years = Array.from({ length: numYears }, (_, i) => i + 1);
+                        const target = (tag || '').trim().toLowerCase();
+                        const linkedItems = target
+                          ? opt.sections.flatMap(s => s.items).filter(i => resolvedLinkedTo(i).trim().toLowerCase() === target)
+                          : [];
+                        const matchingAltRows = target
+                          ? (altFees[opt.optionNumber] || []).filter(r => (r.altItem || '').trim().toLowerCase() === target)
+                          : [];
+                        const chartData = years.map(y => {
+                          const cost = linkedItems.reduce((s, it) => s + ctsItemYearCost(it, y), 0);
+                          const fee = matchingAltRows.reduce((s, r) => s + altFeeYearRevenue(r, y), 0);
+                          return { year: `Y${y}`, Cost: Math.round(cost), Fee: Math.round(fee) };
+                        });
+                        return (
+                          <div className={styles.chartPanel}>
+                            <div className={styles.chartHeader}>
+                              <h3 className={styles.summaryTitle} style={{ margin: 0 }}>Line item year-over-year</h3>
+                              <label className={styles.chartTagLabel}>
+                                Line item:{' '}
+                                <select
+                                  className={styles.chartTagSelect}
+                                  value={tag}
+                                  onChange={(e) => setChartTag(e.target.value)}
+                                  disabled={tagOptions.length === 0}
+                                >
+                                  {tagOptions.length === 0 && <option value="">(no tagged items yet)</option>}
+                                  {tagOptions.map(t => <option key={t} value={t}>{t}</option>)}
+                                </select>
+                              </label>
+                            </div>
+                            {tag ? (
+                              <div style={{ width: '100%', height: 280 }}>
+                                <ResponsiveContainer>
+                                  <BarChart data={chartData} margin={{ top: 8, right: 24, left: 0, bottom: 4 }}>
+                                    <CartesianGrid strokeDasharray="3 3" />
+                                    <XAxis dataKey="year" />
+                                    <YAxis tickFormatter={(v) => v >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${v}`} />
+                                    <Tooltip formatter={(v) => v.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })} />
+                                    <Legend />
+                                    <Bar dataKey="Cost" fill="#ef4444" />
+                                    <Bar dataKey="Fee" fill="#2563eb" />
+                                  </BarChart>
+                                </ResponsiveContainer>
+                              </div>
+                            ) : (
+                              <div style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)', padding: '1rem 0' }}>
+                                Tag at least one CTS row's <strong>Linked To</strong> column or fill in the <strong>Alternative Fee Structure / Schedule</strong> with an item name to populate this chart.
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
                   );
                 })()}
