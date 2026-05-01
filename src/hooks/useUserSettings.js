@@ -46,19 +46,34 @@ export function useUserSettings(user) {
     setSettings(optimistic);
     writingRef.current = true;
 
+    // Column prefs (table widths/visibility/renames) are per-device UX
+    // state — not user data — and they fire on every drag, toggle, and
+    // rename. The cross-device merge prompt is too noisy for this
+    // traffic, so silently force-write when an update is purely
+    // tablePrefs. Pre-save backup above still snapshots the prior state
+    // for recovery. Any update that touches anything else still goes
+    // through the prompt.
+    const updateKeys = Object.keys(updates);
+    const isLowImpact = updateKeys.length === 1 && updateKeys[0] === 'tablePrefs';
+
     try {
       const result = await saveUserSettings(userIdRef.current, updates, { expectedAt });
 
       if (result.stale) {
-        // Someone wrote to Firestore between our last sync and this save.
-        // Ask the user before overwriting their other-device work.
-        const choice = window.confirm(
-          'Your settings have been changed on another device since this page loaded.\n\n' +
-          'OK = Overwrite the other device\'s changes with yours.\n' +
-          'Cancel = Keep the other device\'s changes and discard yours.\n\n' +
-          'Tip: Either way, your pre-save state has been backed up locally. You can restore it from the Backups panel.'
-        );
-        if (choice) {
+        let overwrite;
+        if (isLowImpact) {
+          overwrite = true;
+        } else {
+          // Someone wrote to Firestore between our last sync and this save.
+          // Ask the user before overwriting their other-device work.
+          overwrite = window.confirm(
+            'Your settings have been changed on another device since this page loaded.\n\n' +
+            'OK = Overwrite the other device\'s changes with yours.\n' +
+            'Cancel = Keep the other device\'s changes and discard yours.\n\n' +
+            'Tip: Either way, your pre-save state has been backed up locally. You can restore it from the Backups panel.'
+          );
+        }
+        if (overwrite) {
           const forced = await saveUserSettings(userIdRef.current, updates, { force: true });
           const next = { ...optimistic, _lastWriteAt: forced.writtenAt };
           settingsRef.current = next;
@@ -114,16 +129,25 @@ export function useUserSettings(user) {
     setSettings(optimistic);
     writingRef.current = true;
 
+    // Same low-impact carve-out as updateSettings: if every path being
+    // written is under tablePrefs.*, silently force-write on stale.
+    const isLowImpact = Object.keys(pathUpdates).every(p => p === 'tablePrefs' || p.startsWith('tablePrefs.'));
+
     try {
       const result = await savePathUpdates(userIdRef.current, pathUpdates, { expectedAt });
       if (result.stale) {
-        const choice = window.confirm(
-          'Your settings have been changed on another device since this page loaded.\n\n' +
-          'OK = Overwrite the other device\'s changes with yours.\n' +
-          'Cancel = Keep the other device\'s changes and discard yours.\n\n' +
-          'Either way, your pre-save state has been backed up locally.'
-        );
-        if (choice) {
+        let overwrite;
+        if (isLowImpact) {
+          overwrite = true;
+        } else {
+          overwrite = window.confirm(
+            'Your settings have been changed on another device since this page loaded.\n\n' +
+            'OK = Overwrite the other device\'s changes with yours.\n' +
+            'Cancel = Keep the other device\'s changes and discard yours.\n\n' +
+            'Either way, your pre-save state has been backed up locally.'
+          );
+        }
+        if (overwrite) {
           const forced = await savePathUpdates(userIdRef.current, pathUpdates, { force: true });
           const next = { ...optimistic, _lastWriteAt: forced.writtenAt };
           settingsRef.current = next;
