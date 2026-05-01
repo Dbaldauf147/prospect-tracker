@@ -117,10 +117,10 @@ function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onA
         <thead>
           <tr>
             <th style={{ minWidth: 220 }}>Alternative Fee Structure/Schedule</th>
-            <th style={{ minWidth: 140 }}>Type</th>
-            <th className={styles.numCell} style={{ minWidth: 120 }}>Fee</th>
-            <th style={{ minWidth: 120 }}>Unit</th>
-            <th className={styles.numCell} style={{ width: 90 }}>Unit Count</th>
+            <th style={{ width: 110, whiteSpace: 'nowrap' }}>Type</th>
+            <th className={styles.numCell} style={{ width: 95, whiteSpace: 'nowrap' }}>Fee</th>
+            <th style={{ width: 100, whiteSpace: 'nowrap' }}>Unit</th>
+            <th className={styles.numCell} style={{ width: 95, whiteSpace: 'nowrap' }}>Unit Count</th>
             <th className={styles.numCell} style={{ width: 80, maxWidth: 90 }}>Fee Start Month</th>
             {Array.from({ length: numYears }, (_, i) => (
               <th key={`yh-${i}`} className={styles.numCell} style={{ width: 90 }}>{`Y${i + 1}`}</th>
