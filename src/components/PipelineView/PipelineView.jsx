@@ -11,6 +11,8 @@ const STORE = 'pipeline-dashboard';
 const KEY = 'current';
 const BFO_STORE = 'bfo-activity';
 const BFO_KEY = 'current';
+const OPPS_STORE = 'opps-cache';
+const OPPS_KEY = 'data';
 
 // Parse "USD 15,000.00" / "$15,000" / "15000" -> 15000.
 function parseMoney(v) {
@@ -236,6 +238,7 @@ export function PipelineView() {
   const [state, setState] = useState(DEFAULT_STATE);
   const [hydrated, setHydrated] = useState(false);
   const [bfo, setBfo] = useState(null);
+  const [opps, setOpps] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -246,6 +249,8 @@ export function PipelineView() {
         if (saved) setState(s => ({ ...DEFAULT_STATE, ...saved, stages: saved.stages || s.stages }));
         const bfoSaved = await dbGet(BFO_STORE, BFO_KEY);
         if (!cancelled && bfoSaved) setBfo(bfoSaved);
+        const oppsSaved = await dbGet(OPPS_STORE, OPPS_KEY);
+        if (!cancelled && oppsSaved) setOpps(oppsSaved);
       } catch (e) {
         console.warn('Pipeline hydrate failed', e);
       } finally {
@@ -254,10 +259,11 @@ export function PipelineView() {
     })();
     // Refresh BFO data whenever the user navigates back to this tab.
     function onFocus() {
-      // Always reflect the current BFO record — including its absence
-      // (e.g. user clicked Clear on the BFO tab). Without the explicit
-      // null fallback, deletions wouldn't propagate to this view.
+      // Always reflect the current BFO + Opps records — including their
+      // absence (e.g. user clicked Clear). Without explicit null
+      // fallback, deletions wouldn't propagate to this view.
       dbGet(BFO_STORE, BFO_KEY).then(b => setBfo(b || null)).catch(() => setBfo(null));
+      dbGet(OPPS_STORE, OPPS_KEY).then(o => setOpps(o || null)).catch(() => setOpps(null));
     }
     window.addEventListener('focus', onFocus);
     return () => { cancelled = true; window.removeEventListener('focus', onFocus); };
@@ -265,6 +271,35 @@ export function PipelineView() {
 
   const bfoMetrics = useMemo(() => bfoStageMetrics(bfo), [bfo]);
   const hasBfo = bfo && bfo.rows && bfo.rows.length > 0;
+
+  // Lists derived from the Opps tab.
+  const oppsRecords = opps && Array.isArray(opps.records) ? opps.records : [];
+  const notSoldFromOpps = useMemo(() => {
+    return oppsRecords
+      .filter(r => (r.Stage || '').trim() === 'Not Sold')
+      .map(r => ({
+        account: r.Account || '',
+        scope: r.Scope || '',
+        age: Number(r.Age) || null,
+        finalMargin: r['Final Margin'] || r['Margin'] || '',
+        quoted: parseMoney(r['Quoted Amount']),
+      }))
+      .filter(r => typeof r.quoted === 'number' && r.quoted > 0)
+      .sort((a, b) => (a.age ?? 0) - (b.age ?? 0));
+  }, [oppsRecords]);
+
+  const notQuotedFromOpps = useMemo(() => {
+    const NOT_QUOTED_STAGES = new Set(['Lead', 'Not Started', 'Qualifying']);
+    return oppsRecords
+      .filter(r => NOT_QUOTED_STAGES.has((r.Stage || '').trim()))
+      .map(r => ({
+        account: r.Account || '',
+        scope: r.Scope || '',
+        closeDate: r['Close Date'] || '',
+        age: Number(r.Age) || null,
+      }))
+      .sort((a, b) => (b.age ?? 0) - (a.age ?? 0));
+  }, [oppsRecords]);
 
   // Smallest stage-5 and stage-6 deals from BFO, sorted by amount asc.
   const bfoSmallestDeals = useMemo(() => {
@@ -573,33 +608,68 @@ export function PipelineView() {
 
           <div className={styles.section}>
             <div className={styles.sectionTitle}>Not Sold Quoted Deals</div>
-            <EditableList
-              rows={state.notSoldQuoted}
-              setRows={(rows) => setField('notSoldQuoted', rows)}
-              cols={[
-                { key: 'account', label: 'Account', kind: 'text' },
-                { key: 'scope', label: 'Scope', kind: 'text' },
-                { key: 'age', label: 'Age', kind: 'num' },
-                { key: 'finalMargin', label: 'Final Margin', kind: 'pct' },
-                { key: 'quoted', label: 'Quoted Amount', kind: 'money' },
-              ]}
-              newRow={() => ({ id: `n_${Date.now()}`, account: '', scope: '', age: 0, finalMargin: 0, quoted: 0 })}
-            />
+            <table className={styles.tinyTable} title="Auto-fed from Opps tab — opportunities with Stage = 'Not Sold' and a Quoted Amount.">
+              <thead>
+                <tr>
+                  <th>Account</th>
+                  <th>Scope</th>
+                  <th>Age</th>
+                  <th>Final Margin</th>
+                  <th>Quoted Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {notSoldFromOpps.length > 0 ? (
+                  notSoldFromOpps.map((r, i) => (
+                    <tr key={i}>
+                      <td>{r.account}</td>
+                      <td>{r.scope}</td>
+                      <td>{r.age ?? ''}</td>
+                      <td>{r.finalMargin}</td>
+                      <td>{fmtMoney(r.quoted)}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={5} style={{ color: '#94a3b8', fontStyle: 'italic', textAlign: 'center', padding: '0.6rem' }}>
+                      No "Not Sold" quoted opps found in the Opps tab.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
 
           <div className={styles.section}>
             <div className={styles.sectionTitle}>Not Quoted Opps</div>
-            <EditableList
-              rows={state.notQuoted}
-              setRows={(rows) => setField('notQuoted', rows)}
-              cols={[
-                { key: 'account', label: 'Account', kind: 'text' },
-                { key: 'scope', label: 'Scope', kind: 'text' },
-                { key: 'closeDate', label: 'Close Date', kind: 'text' },
-                { key: 'age', label: 'Age', kind: 'num' },
-              ]}
-              newRow={() => ({ id: `q_${Date.now()}`, account: '', scope: '', closeDate: '', age: 0 })}
-            />
+            <table className={styles.tinyTable} title="Auto-fed from Opps tab — active opportunities (Lead / Not Started / Qualifying) that haven't been quoted yet.">
+              <thead>
+                <tr>
+                  <th>Account</th>
+                  <th>Scope</th>
+                  <th>Close Date</th>
+                  <th>Age</th>
+                </tr>
+              </thead>
+              <tbody>
+                {notQuotedFromOpps.length > 0 ? (
+                  notQuotedFromOpps.map((r, i) => (
+                    <tr key={i}>
+                      <td>{r.account}</td>
+                      <td>{r.scope}</td>
+                      <td>{r.closeDate}</td>
+                      <td>{r.age ?? ''}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={4} style={{ color: '#94a3b8', fontStyle: 'italic', textAlign: 'center', padding: '0.6rem' }}>
+                      No un-quoted active opps found in the Opps tab.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       </div>

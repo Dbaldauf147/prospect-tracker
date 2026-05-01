@@ -232,6 +232,7 @@ export function DailySuccessManager({ user }) {
   const [morningText, setMorningText] = useState('');
   const [suggesting, setSuggesting] = useState(false);
   const [suggestions, setSuggestions] = useState([]); // string[] from Claude, awaiting keep/drop
+  const [barriers, setBarriers] = useState([]); // string[] of biggest barriers (read-only)
   const tickerRef = useRef(null);
 
   const enabled = (user?.email || '').toLowerCase() === TARGET_EMAIL;
@@ -283,6 +284,7 @@ export function DailySuccessManager({ user }) {
     setPhase(null);
     setMorningText('');
     setSuggestions([]);
+    setBarriers([]);
   }
 
   async function submitMorning() {
@@ -352,6 +354,7 @@ export function DailySuccessManager({ user }) {
         .filter(Boolean);
       const fresh = data.bullets.filter(b => !existing.includes(b.toLowerCase()));
       setSuggestions(fresh);
+      setBarriers(Array.isArray(data?.barriers) ? data.barriers : []);
     } catch (err) {
       alert(err?.message || 'Suggestion request failed.');
     } finally {
@@ -427,6 +430,24 @@ export function DailySuccessManager({ user }) {
               placeholder={'• Land 3 outreach replies\n• Finish Option 2 pricing\n• Prep client deck'}
             />
             <p className={styles.smallNote}>Lines starting with -, •, or * are auto-cleaned.</p>
+            {barriers.length > 0 && (
+              <div className={styles.barrierBox}>
+                <div className={styles.barrierHead}>
+                  <strong>Biggest barriers to success</strong>
+                  <button
+                    type="button"
+                    className={styles.btnGhost}
+                    onClick={() => setBarriers([])}
+                    title="Hide barriers list"
+                  >×</button>
+                </div>
+                <ul className={styles.barrierList}>
+                  {barriers.map((b, i) => (
+                    <li key={i}>{b}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
             {suggestions.length > 0 && (
               <div className={styles.suggestionBox}>
                 <div className={styles.suggestionHead}>
