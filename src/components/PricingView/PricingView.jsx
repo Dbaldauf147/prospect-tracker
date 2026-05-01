@@ -243,6 +243,35 @@ Type a value to override.`
               </td>
             </tr>
           ))}
+          {(() => {
+            // Per-year totals split into Setup + One Time vs Recurring (monthly).
+            const isRecurring = (t) => /recurring/i.test(t || '');
+            const isOneTimeOrSetup = (t) => /^setup$|^one\s*time$/i.test(t || '');
+            const sums = (predicate) => Array.from({ length: numYears }, (_, i) =>
+              rows.reduce((s, r) => predicate(r.type) && yearRevenue ? s + yearRevenue(r, i + 1) : s, 0)
+            );
+            const setupOneTime = sums(isOneTimeOrSetup);
+            const recurring = sums(isRecurring);
+            const grand = setupOneTime.map((v, i) => v + recurring[i]);
+            const renderTotalsRow = (label, values) => (
+              <tr className={styles.totalsRow}>
+                <td colSpan={6} style={{ textAlign: 'right', fontWeight: 600 }}>{label}</td>
+                {values.map((v, i) => (
+                  <td key={`tot-${label}-${i}`} className={styles.numCell}>
+                    {v > 0 ? fmtMoneyCell(v) : ''}
+                  </td>
+                ))}
+                <td colSpan={2} />
+              </tr>
+            );
+            return (
+              <>
+                {renderTotalsRow('Setup + One Time', setupOneTime)}
+                {renderTotalsRow('Recurring (monthly)', recurring)}
+                {renderTotalsRow('Total', grand)}
+              </>
+            );
+          })()}
         </tbody>
       </table>
       <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
