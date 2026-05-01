@@ -194,8 +194,8 @@ function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onA
                 const fmt = (n) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
                 const title = computed
                   ? `Auto-margin for "${row.altItem}":
-  • Total fee revenue: ${fmt(computed.totalFee)} (${computed.altRowCount} alt-fee row${computed.altRowCount === 1 ? '' : 's'} × unit count, recurring projected over term)
-  • Total cost: ${fmt(computed.totalCost)} (${computed.matchCount} linked CTS row${computed.matchCount === 1 ? '' : 's'} × ${computed.totalUnits} total units, type-weighted over term)
+  • Total fee revenue: ${fmt(computed.totalFee)} (${computed.altRowCount} alt-fee row${computed.altRowCount === 1 ? '' : 's'} × unit count, recurring projected over term; total units = ${computed.totalUnits})
+  • Total cost: ${fmt(computed.totalCost)} (${computed.matchCount} linked CTS row${computed.matchCount === 1 ? '' : 's'}, treated as totals; recurring/rolled projected over term)
   • Margin: (${fmt(computed.totalFee)} − ${fmt(computed.totalCost)}) ÷ ${fmt(computed.totalFee)} = ${(computed.marginPct * 100).toFixed(1)}%
 Type a value to override.`
                   : 'No CTS items are linked to this Alt Fee item — falls back to the global GM%.';
@@ -379,17 +379,18 @@ export function PricingView() {
     dbPut(STORE, payload, KEY).catch(err => console.warn('Failed to save pricing cache:', err));
   }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, termMonths, annualEscalator]);
 
-  // For an Alt Fee tag (= the Alt Fee row's first column), compute
-  // the total margin across ALL alt-fee rows sharing that tag and
-  // ALL upper-table CTS rows linked to it.
+  // For an Alt Fee tag, compute the total margin across ALL alt-fee
+  // rows sharing that tag and ALL upper-table CTS rows linked to it.
   //
   //   totalUnits = Σ unitCount over alt-fee rows with this tag
+  //                (used to compute fee revenue, not cost)
   //   totalFee   = Σ over alt-fee rows of fee × unitCount, with
   //                Recurring (monthly) rows projected over the term
   //                using the annual escalator
-  //   totalCost  = Σ over linked upper-table CTS rows of
-  //                (per-unit term cost × totalUnits), where per-unit
-  //                term cost is:
+  //   totalCost  = Σ over linked upper-table CTS rows of their term
+  //                cost. CTS values are treated as totals (not
+  //                per-unit), so no unit-count multiplication. Per
+  //                type:
   //                  Setup / One Time          → CTS (face)
   //                  Setup Rolled / One Time Rolled → CTS amortized
   //                                              over the term with
@@ -436,15 +437,9 @@ export function PricingView() {
       const t = effectiveType(item);
       const isRecurring = /recurring.*monthly|monthly.*recurring|^recurring/i.test(t);
       const isRolled = /\brolled\b/i.test(t);
-      let perUnit;
-      if (isRecurring) {
-        perUnit = projectMonthlyOverTerm(item.cts, annualEscalator, termMonths);
-      } else if (isRolled && termMonths > 0) {
-        perUnit = projectMonthlyOverTerm(item.cts / termMonths, annualEscalator, termMonths);
-      } else {
-        perUnit = item.cts;
-      }
-      return s + perUnit * totalUnits;
+      if (isRecurring) return s + projectMonthlyOverTerm(item.cts, annualEscalator, termMonths);
+      if (isRolled && termMonths > 0) return s + projectMonthlyOverTerm(item.cts / termMonths, annualEscalator, termMonths);
+      return s + item.cts;
     }, 0);
 
     return {
