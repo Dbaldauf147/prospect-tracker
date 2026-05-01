@@ -3,7 +3,7 @@
 // stored together in a single IndexedDB record keyed `current` so
 // the layout persists across reloads.
 
-import { useEffect, useMemo, useState } from 'react';
+import { Component, useEffect, useMemo, useState } from 'react';
 import styles from './PipelineView.module.css';
 import { dbGet, dbPut } from '../../utils/db';
 
@@ -163,6 +163,84 @@ const DEFAULT_STATE = {
   ],
 };
 
+// Per-stage numeric fields. Anything not in this list is left to the
+// default — keeps render-time `<NumCell value={…} />` from receiving
+// objects/arrays that would crash the metrics table.
+const STAGE_NUMERIC_FIELDS = [
+  'activeGoal', 'activeActual',
+  'dealSizeGoal', 'dealSizeActual',
+  'pipelineGoal', 'pipelineActual',
+  'closeGoal', 'closeActual',
+  'targetProj',
+  'lifeGoal', 'lifeActual',
+];
+
+// Merge each saved stage row with the matching DEFAULT_STATE row so
+// every field has the expected shape. If a saved row is missing or
+// malformed (wrong length, non-object, non-string key/label, non-numeric
+// numeric field), the default for that slot is used. Returns an array
+// the same length as DEFAULT_STATE.stages.
+function sanitizeStages(savedStages) {
+  if (!Array.isArray(savedStages) || savedStages.length !== DEFAULT_STATE.stages.length) {
+    return DEFAULT_STATE.stages;
+  }
+  return savedStages.map((saved, i) => {
+    const def = DEFAULT_STATE.stages[i];
+    if (!saved || typeof saved !== 'object') return def;
+    const row = { ...def };
+    if (typeof saved.key === 'string' && saved.key) row.key = saved.key;
+    if (typeof saved.label === 'string') row.label = saved.label;
+    for (const f of STAGE_NUMERIC_FIELDS) {
+      const v = saved[f];
+      if (v === null) row[f] = null; // user blanked the cell
+      else if (typeof v === 'number' && Number.isFinite(v)) row[f] = v;
+      // anything else (undefined, object, array, NaN, string) → keep default
+    }
+    return row;
+  });
+}
+
+// Render-time safety net for the PIPELINE METRICS table. If a single
+// row throws (e.g., saved data shaped unexpectedly after a schema
+// change) we show a recoverable fallback instead of blanking the whole
+// section. Click "Try again" after fixing state, or use the Reset
+// table button above to restore defaults.
+class MetricsTableBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+  componentDidCatch(error, info) {
+    console.warn('Pipeline metrics table render error', error, info);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ padding: '0.85rem 1rem', fontSize: 13, color: '#475569', background: '#fef9c3', borderTop: '1px solid #fde68a' }}>
+          <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>
+            Couldn't render the metrics table.
+          </div>
+          <div style={{ marginBottom: '0.5rem' }}>
+            Click <strong>Reset table</strong> above to restore defaults, or{' '}
+            <button
+              type="button"
+              onClick={() => this.setState({ error: null })}
+              style={{ background: 'transparent', border: '1px solid #94a3b8', borderRadius: 4, padding: '0.1rem 0.45rem', fontSize: 12, cursor: 'pointer', fontFamily: 'inherit', color: '#334155' }}
+            >Try again</button>
+          </div>
+          <div style={{ fontSize: 11, color: '#64748b', fontFamily: 'monospace' }}>
+            {String(this.state.error?.message || this.state.error)}
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 const fmtMoney = (n) => {
   if (n === null || n === undefined || Number.isNaN(n)) return '';
   return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
@@ -246,19 +324,11 @@ export function PipelineView() {
       try {
         const saved = await dbGet(STORE, KEY);
         if (cancelled) return;
-        if (saved) setState(s => {
-          // Fall back to the seeded stages whenever the saved value is
-          // missing, not an array, empty, or doesn't have a `key` on
-          // each row — otherwise the metrics table renders nothing.
-          const validStages = Array.isArray(saved.stages)
-            && saved.stages.length === DEFAULT_STATE.stages.length
-            && saved.stages.every(r => r && typeof r.key === 'string');
-          return {
-            ...DEFAULT_STATE,
-            ...saved,
-            stages: validStages ? saved.stages : DEFAULT_STATE.stages,
-          };
-        });
+        if (saved) setState(() => ({
+          ...DEFAULT_STATE,
+          ...saved,
+          stages: sanitizeStages(saved.stages),
+        }));
         const bfoSaved = await dbGet(BFO_STORE, BFO_KEY);
         if (!cancelled && bfoSaved) setBfo(bfoSaved);
         const oppsSaved = await dbGet(OPPS_STORE, OPPS_KEY);
@@ -345,19 +415,20 @@ export function PipelineView() {
     setState(s => ({ ...s, [key]: value }));
   }
 
-  // Always have a usable stages array to render — fall back to seed
-  // whenever state.stages is missing, wrong length, or malformed.
-  const stagesValid = Array.isArray(state.stages)
-    && state.stages.length === DEFAULT_STATE.stages.length
-    && state.stages.every(r => r && typeof r.key === 'string');
-  const renderStages = stagesValid ? state.stages : DEFAULT_STATE.stages;
-  // Self-heal: if the saved state was bad, write the seed back so the
-  // user's persisted record stops being broken.
+  // Always have a usable stages array to render — sanitizeStages merges
+  // each row with its DEFAULT_STATE counterpart and replaces any wrong-
+  // typed field, so render-time `<NumCell value={…} />` and `{st.label}`
+  // can never receive an object/array that would crash the table.
+  const renderStages = useMemo(() => sanitizeStages(state.stages), [state.stages]);
+  // Self-heal: if the sanitized rows differ from what's in state, write
+  // them back so the persisted record is no longer malformed.
   useEffect(() => {
-    if (hydrated && !stagesValid) {
-      setState(s => ({ ...s, stages: DEFAULT_STATE.stages }));
+    if (!hydrated) return;
+    if (state.stages !== renderStages
+        && JSON.stringify(state.stages) !== JSON.stringify(renderStages)) {
+      setState(s => ({ ...s, stages: renderStages }));
     }
-  }, [hydrated, stagesValid]);
+  }, [hydrated, state.stages, renderStages]);
 
   // Per-row Opps Needed columns + their totals, computed outside the
   // JSX so any future error here surfaces in dev tools instead of
@@ -423,6 +494,7 @@ export function PipelineView() {
               title="Restore the stage rows + goal seeds to defaults if the table looks blank or corrupted."
             >Reset table</button>
           </div>
+          <MetricsTableBoundary>
           <div style={{ overflowX: 'auto' }}>
           <table className={styles.grid} style={{ minWidth: 1400 }}>
             <thead>
@@ -515,6 +587,7 @@ export function PipelineView() {
             </tbody>
           </table>
           </div>
+          </MetricsTableBoundary>
         </div>
 
         {/* Mid row — Client/Greenfield + Coverage + % not Quoted + Quota */}
