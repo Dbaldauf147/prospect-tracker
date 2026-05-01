@@ -403,7 +403,19 @@ export function PipelineView() {
               </tr>
             </thead>
             <tbody>
-              {state.stages.map((st, i) => {
+              {(() => {
+                // Render-time safety net: never let a bad state.stages
+                // collapse the entire metrics table. If the current
+                // value isn't a populated array, recover from the seed
+                // (and self-heal state on the next tick).
+                const stagesValid = Array.isArray(state.stages)
+                  && state.stages.length === DEFAULT_STATE.stages.length
+                  && state.stages.every(r => r && typeof r.key === 'string');
+                if (!stagesValid && hydrated) {
+                  setTimeout(() => setState(s => ({ ...s, stages: DEFAULT_STATE.stages })), 0);
+                }
+                const renderStages = stagesValid ? state.stages : DEFAULT_STATE.stages;
+                return renderStages.map((st, i) => {
                 const stageNum = Number(String(st.key).replace(/[^0-9]/g, ''));
                 const m = bfoMetrics[stageNum];
                 const live = (val) => hasBfo && val !== null && val !== undefined ? val : null;
@@ -447,7 +459,8 @@ export function PipelineView() {
                     </td>
                   </tr>
                 );
-              })}
+              });
+              })()}
               <tr>
                 <td className={styles.label}>Total</td>
                 <td className={styles.numCell}>{stageTotals.activeGoal}</td>
