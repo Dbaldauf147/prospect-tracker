@@ -246,7 +246,19 @@ export function PipelineView() {
       try {
         const saved = await dbGet(STORE, KEY);
         if (cancelled) return;
-        if (saved) setState(s => ({ ...DEFAULT_STATE, ...saved, stages: saved.stages || s.stages }));
+        if (saved) setState(s => {
+          // Fall back to the seeded stages whenever the saved value is
+          // missing, not an array, empty, or doesn't have a `key` on
+          // each row — otherwise the metrics table renders nothing.
+          const validStages = Array.isArray(saved.stages)
+            && saved.stages.length === DEFAULT_STATE.stages.length
+            && saved.stages.every(r => r && typeof r.key === 'string');
+          return {
+            ...DEFAULT_STATE,
+            ...saved,
+            stages: validStages ? saved.stages : DEFAULT_STATE.stages,
+          };
+        });
         const bfoSaved = await dbGet(BFO_STORE, BFO_KEY);
         if (!cancelled && bfoSaved) setBfo(bfoSaved);
         const oppsSaved = await dbGet(OPPS_STORE, OPPS_KEY);
