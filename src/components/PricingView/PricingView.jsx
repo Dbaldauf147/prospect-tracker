@@ -187,12 +187,17 @@ function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onA
                 />
               </td>
               {(() => {
-                const computed = marginFor ? marginFor(row.altItem, row.fee) : null;
+                const computed = marginFor ? marginFor(row.altItem) : null;
                 const placeholder = computed
                   ? `${(computed.marginPct * 100).toFixed(1)}%`
                   : (typeof globalGmPct === 'number' ? `${Math.round(globalGmPct * 100)}%` : '');
+                const fmt = (n) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
                 const title = computed
-                  ? `Auto: linked CTS sum $${computed.costSum.toFixed(2)} across ${computed.matchCount} item(s); fee $${(row.fee || 0).toFixed(2)} → margin ${(computed.marginPct * 100).toFixed(1)}%. Type a value to override.`
+                  ? `Auto-margin for "${row.altItem}":
+  • Total fee revenue: ${fmt(computed.totalFee)} (${computed.altRowCount} alt-fee row${computed.altRowCount === 1 ? '' : 's'} × unit count, recurring projected over term)
+  • Total cost: ${fmt(computed.totalCost)} (${computed.matchCount} linked CTS row${computed.matchCount === 1 ? '' : 's'} × ${computed.totalUnits} total units, type-weighted over term)
+  • Margin: (${fmt(computed.totalFee)} − ${fmt(computed.totalCost)}) ÷ ${fmt(computed.totalFee)} = ${(computed.marginPct * 100).toFixed(1)}%
+Type a value to override.`
                   : 'No CTS items are linked to this Alt Fee item — falls back to the global GM%.';
                 return (
                   <td className={styles.numCell} title={title}>
@@ -374,29 +379,82 @@ export function PricingView() {
     dbPut(STORE, payload, KEY).catch(err => console.warn('Failed to save pricing cache:', err));
   }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, termMonths, annualEscalator]);
 
-  // For an Alt Fee row, sum the CTS of every upper-table item that
-  // is "Linked To" this Alt Fee row's name (case-insensitive,
-  // trimmed). Returns null when there's no fee or no linked items.
-  function altFeeMarginFor(altItemName, fee) {
-    if (typeof fee !== 'number' || fee <= 0) return null;
+  // For an Alt Fee tag (= the Alt Fee row's first column), compute
+  // the total margin across ALL alt-fee rows sharing that tag and
+  // ALL upper-table CTS rows linked to it.
+  //
+  //   totalUnits = Σ unitCount over alt-fee rows with this tag
+  //   totalFee   = Σ over alt-fee rows of fee × unitCount, with
+  //                Recurring (monthly) rows projected over the term
+  //                using the annual escalator
+  //   totalCost  = Σ over linked upper-table CTS rows of
+  //                (per-unit term cost × totalUnits), where per-unit
+  //                term cost is:
+  //                  Setup / One Time          → CTS (face)
+  //                  Setup Rolled / One Time Rolled → CTS amortized
+  //                                              over the term with
+  //                                              the escalator
+  //                  Recurring (monthly)       → CTS projected over
+  //                                              the term with the
+  //                                              escalator
+  //   marginPct  = (totalFee − totalCost) / totalFee
+  function altFeeMarginFor(altItemName) {
     if (!workbook) return null;
     const target = (altItemName || '').trim().toLowerCase();
     if (!target) return null;
     const opt = workbook.options.find(o => o.optionNumber === activeOption);
     if (!opt) return null;
-    let costSum = 0;
-    let matchCount = 0;
+
+    const altRows = (altFees[opt.optionNumber] || []).filter(r =>
+      (r.altItem || '').trim().toLowerCase() === target);
+    if (altRows.length === 0) return null;
+
+    const totalUnits = altRows.reduce((s, r) => {
+      const uc = Number(r.unitCount);
+      return s + (Number.isFinite(uc) ? uc : 0);
+    }, 0);
+
+    const totalFee = altRows.reduce((s, r) => {
+      const fee = Number(r.fee);
+      const uc = Number(r.unitCount);
+      if (!Number.isFinite(fee) || !Number.isFinite(uc) || uc <= 0) return s;
+      const isRecurring = /recurring/i.test(r.type || '');
+      if (isRecurring) return s + projectMonthlyOverTerm(fee, annualEscalator, termMonths) * uc;
+      return s + fee * uc;
+    }, 0);
+    if (totalFee <= 0) return null;
+
+    const linked = [];
     for (const sec of opt.sections) {
       for (const item of sec.items) {
-        const linked = resolvedLinkedTo(item).trim().toLowerCase();
-        if (linked === target && typeof item.cts === 'number') {
-          costSum += item.cts;
-          matchCount++;
-        }
+        if (resolvedLinkedTo(item).trim().toLowerCase() === target) linked.push(item);
       }
     }
-    if (matchCount === 0) return null;
-    return { costSum, matchCount, marginPct: (fee - costSum) / fee };
+
+    const totalCost = linked.reduce((s, item) => {
+      if (typeof item.cts !== 'number') return s;
+      const t = effectiveType(item);
+      const isRecurring = /recurring.*monthly|monthly.*recurring|^recurring/i.test(t);
+      const isRolled = /\brolled\b/i.test(t);
+      let perUnit;
+      if (isRecurring) {
+        perUnit = projectMonthlyOverTerm(item.cts, annualEscalator, termMonths);
+      } else if (isRolled && termMonths > 0) {
+        perUnit = projectMonthlyOverTerm(item.cts / termMonths, annualEscalator, termMonths);
+      } else {
+        perUnit = item.cts;
+      }
+      return s + perUnit * totalUnits;
+    }, 0);
+
+    return {
+      totalCost,
+      totalFee,
+      totalUnits,
+      matchCount: linked.length,
+      altRowCount: altRows.length,
+      marginPct: (totalFee - totalCost) / totalFee,
+    };
   }
   function projectMonthlyOverTerm(monthly, escPct, months) {
     if (typeof monthly !== 'number' || !Number.isFinite(monthly)) return 0;
