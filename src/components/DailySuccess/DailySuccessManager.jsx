@@ -18,6 +18,7 @@ export function DailySuccessManager({ user }) {
   const [entry, setEntry] = useState(null);
   const [morningText, setMorningText] = useState('');
   const [suggesting, setSuggesting] = useState(false);
+  const [suggestions, setSuggestions] = useState([]); // string[] from Claude, awaiting keep/drop
   const tickerRef = useRef(null);
 
   const enabled = (user?.email || '').toLowerCase() === TARGET_EMAIL;
@@ -68,6 +69,7 @@ export function DailySuccessManager({ user }) {
   function close() {
     setPhase(null);
     setMorningText('');
+    setSuggestions([]);
   }
 
   async function submitMorning() {
@@ -127,16 +129,48 @@ export function DailySuccessManager({ user }) {
         alert(data?.error || 'Could not get suggestions.');
         return;
       }
-      const existingLines = morningText
+      // Drop suggestions that are already in the textarea so we don't
+      // repeat what the user just typed.
+      const existing = morningText
         .split('\n')
-        .map(l => l.trim().replace(/^[-•*]\s*/, ''))
+        .map(l => l.trim().replace(/^[-•*]\s*/, '').toLowerCase())
         .filter(Boolean);
-      const merged = [...existingLines];
-      for (const b of data.bullets) {
-        if (!merged.some(l => l.toLowerCase() === b.toLowerCase())) merged.push(b);
-      }
-      setMorningText(merged.join('\n'));
+      const fresh = data.bullets.filter(b => !existing.includes(b.toLowerCase()));
+      setSuggestions(fresh);
     } catch (err) {
+      alert(err?.message || 'Suggestion request failed.');
+    } finally {
+      setSuggesting(false);
+    }
+  }
+
+  function keepSuggestion(idx) {
+    const text = suggestions[idx];
+    if (!text) return;
+    setMorningText(prev => {
+      const lines = prev.split('\n').map(l => l.trim().replace(/^[-•*]\s*/, '')).filter(Boolean);
+      if (lines.some(l => l.toLowerCase() === text.toLowerCase())) return prev;
+      const next = prev.endsWith('\n') || prev === '' ? `${prev}${text}` : `${prev}\n${text}`;
+      return next;
+    });
+    setSuggestions(prev => prev.filter((_, i) => i !== idx));
+  }
+
+  function dropSuggestion(idx) {
+    setSuggestions(prev => prev.filter((_, i) => i !== idx));
+  }
+
+  function keepAllSuggestions() {
+    setMorningText(prev => {
+      const lines = prev.split('\n').map(l => l.trim().replace(/^[-•*]\s*/, '')).filter(Boolean);
+      const lower = new Set(lines.map(l => l.toLowerCase()));
+      const additions = suggestions.filter(s => !lower.has(s.toLowerCase()));
+      if (additions.length === 0) return prev;
+      const sep = prev === '' || prev.endsWith('\n') ? '' : '\n';
+      return `${prev}${sep}${additions.join('\n')}`;
+    });
+    setSuggestions([]);
+  }
       alert(err?.message || 'Suggestion request failed.');
     } finally {
       setSuggesting(false);
@@ -183,6 +217,34 @@ export function DailySuccessManager({ user }) {
               placeholder={'• Land 3 outreach replies\n• Finish Option 2 pricing\n• Prep client deck'}
             />
             <p className={styles.smallNote}>Lines starting with -, •, or * are auto-cleaned.</p>
+            {suggestions.length > 0 && (
+              <div className={styles.suggestionBox}>
+                <div className={styles.suggestionHead}>
+                  <strong>Claude's suggestions</strong>
+                  <button type="button" className={styles.btnGhost} onClick={keepAllSuggestions}>Keep all</button>
+                  <button type="button" className={styles.btnGhost} onClick={() => setSuggestions([])}>Drop all</button>
+                </div>
+                <ul className={styles.suggestionList}>
+                  {suggestions.map((s, i) => (
+                    <li key={i} className={styles.suggestionItem}>
+                      <span className={styles.suggestionText}>{s}</span>
+                      <button
+                        type="button"
+                        className={styles.suggestionKeep}
+                        onClick={() => keepSuggestion(i)}
+                        title="Add this bullet to your plan"
+                      >Keep</button>
+                      <button
+                        type="button"
+                        className={styles.suggestionDrop}
+                        onClick={() => dropSuggestion(i)}
+                        title="Discard this suggestion"
+                      >×</button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
           <div className={styles.foot}>
             <button
