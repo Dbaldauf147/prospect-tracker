@@ -100,7 +100,7 @@
   padding: 0.15rem 0.3rem;
   border-radius: 4px;
   color: var(--color-text);
-  text-align: right;
+  text-align: left;
 }
 
 .cell:hover {
@@ -131,7 +131,7 @@
 }
 
 .numCell {
-  text-align: right;
+  text-align: left;
   font-variant-numeric: tabular-nums;
 }
 
