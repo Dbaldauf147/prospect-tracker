@@ -863,26 +863,37 @@ export function PricingView() {
                     return s + (typeof price === 'number' ? price : 0);
                   }, 0);
                   // Aggregate by effective Type for the summary panel.
-                  // "Rolled" variants still bucket under Setup / One Time.
-                  // Recurring projects the term value with the escalator.
+                  // "Rolled" variants amortize the cost across the term and
+                  // project with the annual escalator (same shape as the
+                  // recurring-monthly projection). Plain Setup / One Time
+                  // contribute their face value to the term column.
                   const sumByType = (typeRe, isRecurring) => flatItems.reduce((acc, i) => {
                     const t = effectiveType(i);
                     if (!typeRe.test(t)) return acc;
                     const { price } = priceFor(i);
+                    const isRolled = /\brolled\b/i.test(t);
                     if (typeof i.cts === 'number') acc.cost += i.cts;
                     if (typeof price === 'number') acc.price += price;
+
                     if (isRecurring) {
                       acc.termCost += projectMonthlyOverTerm(i.cts ?? null, annualEscalator, termMonths);
                       acc.termPrice += projectMonthlyOverTerm(price ?? null, annualEscalator, termMonths);
+                    } else if (isRolled && termMonths > 0) {
+                      const monthlyCost = typeof i.cts === 'number' ? i.cts / termMonths : null;
+                      const monthlyPrice = typeof price === 'number' ? price / termMonths : null;
+                      acc.termCost += projectMonthlyOverTerm(monthlyCost, annualEscalator, termMonths);
+                      acc.termPrice += projectMonthlyOverTerm(monthlyPrice, annualEscalator, termMonths);
+                    } else {
+                      if (typeof i.cts === 'number') acc.termCost += i.cts;
+                      if (typeof price === 'number') acc.termPrice += price;
                     }
                     return acc;
                   }, { cost: 0, price: 0, termCost: 0, termPrice: 0 });
-                  // Both plain and "Rolled" variants count toward Setup / One Time.
                   const setup = sumByType(/^setup(\s+rolled)?$/i, false);
                   const recurring = sumByType(/recurring.*monthly|monthly.*recurring|^recurring/i, true);
                   const oneTime = sumByType(/^one\s*time(\s+rolled)?$/i, false);
-                  const grandTermCost = setup.cost + oneTime.cost + recurring.termCost;
-                  const grandTermPrice = setup.price + oneTime.price + recurring.termPrice;
+                  const grandTermCost = setup.termCost + oneTime.termCost + recurring.termCost;
+                  const grandTermPrice = setup.termPrice + oneTime.termPrice + recurring.termPrice;
                   return (
                     <div className={styles.section}>
                       <table className={styles.table}>
@@ -1065,7 +1076,7 @@ export function PricingView() {
                               <td>Setup</td>
                               <td className={styles.numCell}>{fmtMoney(setup.cost)}</td>
                               <td className={styles.priceCell}>{fmtMoney(setup.price)}</td>
-                              <td className={styles.priceCell}>{fmtMoney(setup.price)}</td>
+                              <td className={styles.priceCell}>{fmtMoney(setup.termPrice)}</td>
                             </tr>
                             <tr>
                               <td>Recurring (monthly)</td>
@@ -1078,7 +1089,7 @@ export function PricingView() {
                                 <td>One Time</td>
                                 <td className={styles.numCell}>{fmtMoney(oneTime.cost)}</td>
                                 <td className={styles.priceCell}>{fmtMoney(oneTime.price)}</td>
-                                <td className={styles.priceCell}>{fmtMoney(oneTime.price)}</td>
+                                <td className={styles.priceCell}>{fmtMoney(oneTime.termPrice)}</td>
                               </tr>
                             )}
                             <tr className={styles.summaryGrandRow}>
