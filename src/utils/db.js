@@ -13,6 +13,7 @@ const STORES = [
   { name: 'settings-backups', keyPath: 'timestamp' },
   { name: 'hubspot-contacts', keyPath: null },
   { name: 'pricing-cache',    keyPath: null },
+  { name: 'daily-success-log', keyPath: 'date' },
 ];
 
 let dbPromise = null;

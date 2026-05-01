@@ -32,6 +32,8 @@ import { AgendaView } from './components/AgendaView/AgendaView';
 import { PEPortfolioView } from './components/PEPortfolioView/PEPortfolioView';
 import { KeyContactsView } from './components/KeyContactsView/KeyContactsView';
 import { PricingView } from './components/PricingView/PricingView';
+import { DailySuccessManager } from './components/DailySuccess/DailySuccessManager';
+import { DailySuccessLogModal } from './components/DailySuccess/DailySuccessLogModal';
 import { SERVICE_CATEGORIES } from './data/enums';
 import './App.css';
 
@@ -113,6 +115,7 @@ function App() {
   const [showSync, setShowSync] = useState(false);
   const [showBackups, setShowBackups] = useState(false);
   const [showCdmName, setShowCdmName] = useState(false);
+  const [showDailyLog, setShowDailyLog] = useState(false);
   const [migrating, setMigrating] = useState(false);
   const [migrateResult, setMigrateResult] = useState(null);
   const [hubspotContacts, setHubspotContacts] = useState([]);
@@ -252,6 +255,8 @@ function App() {
         onSync={() => setShowSync(true)}
         onOpenBackups={() => setShowBackups(true)}
         onOpenCdmName={() => setShowCdmName(true)}
+        onOpenDailyLog={() => setShowDailyLog(true)}
+        userEmail={user?.email}
       />
       <div className="main">
         {(view === 'table' || view === 'kanban') && (
@@ -377,6 +382,11 @@ function App() {
           updateSettings(data);
         }}
       />
+      <DailySuccessLogModal
+        open={showDailyLog}
+        onClose={() => setShowDailyLog(false)}
+      />
+      <DailySuccessManager user={user} />
       {/* One-time migration button */}
       {!settings.clientsServicesMigrated && (
         <div style={{ position: 'fixed', bottom: '1rem', right: '1rem', zIndex: 300, background: '#fff', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '0.75rem 1rem', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', maxWidth: '320px' }}>
