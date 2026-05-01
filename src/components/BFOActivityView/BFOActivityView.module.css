@@ -179,6 +179,10 @@
   margin: 0.25rem 0 0.5rem;
 }
 
+.nowrapCell {
+  white-space: nowrap;
+}
+
 .ageGreen { background: #d1fae5; }
 .ageAmber { background: #fef3c7; }
 .ageRed   { background: #fecaca; }

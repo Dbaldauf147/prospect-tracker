@@ -251,8 +251,13 @@ export function BFOActivityView() {
                     <tr key={i}>
                       {data.headers.map(h => {
                         const v = r[h] ?? '';
-                        const cls = /^age$/i.test(h) ? ageClass(v) : '';
-                        return <td key={h} className={cls}>{v}</td>;
+                        const isAge = /^age$/i.test(h);
+                        const isAmount = /^amount$/i.test(h);
+                        const classes = [
+                          isAge ? ageClass(v) : '',
+                          (isAge || isAmount) ? styles.nowrapCell : '',
+                        ].filter(Boolean).join(' ');
+                        return <td key={h} className={classes}>{v}</td>;
                       })}
                     </tr>
                   ))}
