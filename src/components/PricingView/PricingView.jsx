@@ -29,6 +29,31 @@ function GmInput({ initialPct, placeholder, title, isOverride, onCommit }) {
   );
 }
 
+// Multi-checkbox menu for toggling column visibility on a table.
+function ColumnsMenu({ open, onToggle, columns, hiddenFn, onItemToggle }) {
+  return (
+    <div className={styles.colsMenuWrap}>
+      <button type="button" className={styles.actionBtn} onClick={onToggle}>
+        Columns ▾
+      </button>
+      {open && (
+        <div className={styles.colsMenu}>
+          {columns.map(col => (
+            <label key={col.key} className={styles.colsMenuItem}>
+              <input
+                type="checkbox"
+                checked={!hiddenFn(col.key)}
+                onChange={() => onItemToggle(col.key)}
+              />
+              {col.label}
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Local-draft text cell — commits on blur/Enter so re-renders don't
 // fight typing.
 function CellTextInput({ initial, placeholder, type, align, onCommit }) {
@@ -339,12 +364,21 @@ function LinkedToInput({ initial, isDefault, onCommit }) {
 const COLS = [
   { key: 'lineItem',  label: 'Line Item',         defaultWidth: 280 },
   { key: 'type',      label: 'Type',              defaultWidth: 140 },
-  { key: 'cts',       label: 'CTS',               defaultWidth: 110, cellClass: undefined },
+  { key: 'cts',       label: 'CTS',               defaultWidth: 110 },
+  { key: 'techDepr',  label: 'Tech Depr.',        defaultWidth: 110 },
   { key: 'start',     label: 'Start Month',       defaultWidth: 100 },
   { key: 'comments',  label: 'Comments',          defaultWidth: 280 },
   { key: 'gm',        label: 'GM%',               defaultWidth: 90 },
   { key: 'price',     label: 'Marked-up Price',   defaultWidth: 140 },
   { key: 'linkedTo',  label: 'Linked To',         defaultWidth: 200 },
+];
+
+const SUMMARY_COLS = [
+  { key: 'bucket',   label: 'Bucket',                  defaultWidth: 200 },
+  { key: 'cost',     label: 'Cost',                    defaultWidth: 110 },
+  { key: 'techDepr', label: 'Tech Depr.',              defaultWidth: 110 },
+  { key: 'price',    label: 'Marked-up',               defaultWidth: 130 },
+  { key: 'termPrice',label: 'Term value (marked-up)',  defaultWidth: 160 },
 ];
 
 const STORE = 'pricing-cache';
@@ -383,6 +417,12 @@ export function PricingView() {
   const [annualEscalator, setAnnualEscalator] = useState(0.03);
   const [chartTag, setChartTag] = useState(''); // selected line-item / tag for the breakdown chart
   const [chartView, setChartView] = useState('chart'); // 'chart' | 'table'
+  const [techDeprPct, setTechDeprPct] = useState(0.04);
+  const [colVisibility, setColVisibility] = useState({}); // upper table: { [colKey]: bool, default true }
+  const [summaryColWidths, setSummaryColWidths] = useState({});
+  const [summaryColVisibility, setSummaryColVisibility] = useState({});
+  const [colMenuOpen, setColMenuOpen] = useState(false);
+  const [summaryMenuOpen, setSummaryMenuOpen] = useState(false);
   const [error, setError] = useState('');
   const fileInputRef = useRef(null);
   const hydratedRef = useRef(false);
@@ -412,6 +452,10 @@ export function PricingView() {
         if (typeof saved.annualEscalator === 'number') setAnnualEscalator(saved.annualEscalator);
         if (typeof saved.chartTag === 'string') setChartTag(saved.chartTag);
         if (saved.chartView === 'chart' || saved.chartView === 'table') setChartView(saved.chartView);
+        if (typeof saved.techDeprPct === 'number') setTechDeprPct(saved.techDeprPct);
+        if (saved.colVisibility) setColVisibility(saved.colVisibility);
+        if (saved.summaryColWidths) setSummaryColWidths(saved.summaryColWidths);
+        if (saved.summaryColVisibility) setSummaryColVisibility(saved.summaryColVisibility);
       } catch (err) {
         console.warn('Failed to load pricing cache:', err);
       } finally {
@@ -424,9 +468,9 @@ export function PricingView() {
   // Persist on changes (skip the first render until hydration finishes).
   useEffect(() => {
     if (!hydratedRef.current) return;
-    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, termMonths, annualEscalator, chartTag, chartView };
+    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, termMonths, annualEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility };
     dbPut(STORE, payload, KEY).catch(err => console.warn('Failed to save pricing cache:', err));
-  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, termMonths, annualEscalator, chartTag, chartView]);
+  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, termMonths, annualEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility]);
 
   // Per-year cost contribution from a single upper-table CTS item.
   // Setup / One Time hit year 1 in full; Rolled variants amortize
@@ -588,17 +632,19 @@ export function PricingView() {
     return linkedToDefaults[linkedToDefaultKey(item.description, effectiveType(item))] || '';
   }
 
-  // Drag-to-resize column handler. Captures the starting width and
-  // mouse X, then updates `colWidths[key]` on mousemove until mouseup.
-  function startColResize(key, evt) {
+  // Drag-to-resize for either the upper-table or summary-table cols.
+  function startColResize(scope, key, evt) {
     evt.preventDefault();
     evt.stopPropagation();
+    const cols = scope === 'summary' ? SUMMARY_COLS : COLS;
+    const colDef = cols.find(c => c.key === key);
+    const widthsState = scope === 'summary' ? summaryColWidths : colWidths;
+    const setWidths = scope === 'summary' ? setSummaryColWidths : setColWidths;
     const startX = evt.clientX;
-    const colDef = COLS.find(c => c.key === key);
-    const startW = colWidths[key] ?? colDef?.defaultWidth ?? 140;
+    const startW = widthsState[key] ?? colDef?.defaultWidth ?? 140;
     const onMove = (e) => {
       const next = Math.max(60, startW + (e.clientX - startX));
-      setColWidths(w => ({ ...w, [key]: next }));
+      setWidths(w => ({ ...w, [key]: next }));
     };
     const onUp = () => {
       window.removeEventListener('mousemove', onMove);
@@ -606,6 +652,15 @@ export function PricingView() {
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
+  }
+
+  const colHidden = (key) => colVisibility[key] === false;
+  const summaryColHidden = (key) => summaryColVisibility[key] === false;
+  function toggleColVisible(key) {
+    setColVisibility(v => ({ ...v, [key]: v[key] === false }));
+  }
+  function toggleSummaryColVisible(key) {
+    setSummaryColVisibility(v => ({ ...v, [key]: v[key] === false }));
   }
 
   // Keep activeOption pointing at a real tab whenever the workbook changes.
@@ -895,6 +950,24 @@ export function PricingView() {
             <span>%/yr</span>
           </label>
 
+          <label className={styles.gmField} title="Tech depreciation rate applied as a derived column on each cost.">
+            Tech Depr.
+            <input
+              className={styles.gmInput}
+              type="number"
+              step="0.5"
+              min="0"
+              max="50"
+              value={Math.round(techDeprPct * 1000) / 10}
+              onChange={(e) => {
+                const n = Number(e.target.value);
+                if (!Number.isFinite(n)) return;
+                setTechDeprPct(Math.max(0, Math.min(0.5, n / 100)));
+              }}
+            />
+            <span>%</span>
+          </label>
+
           <input
             ref={fileInputRef}
             type="file"
@@ -975,12 +1048,21 @@ export function PricingView() {
                     <h2 className={styles.optionTitle}>{opt.sheetName}</h2>
                     {opt.hidden && <span className={styles.hiddenPill}>hidden in workbook</span>}
                   </div>
-                  {t && (
-                    <div className={styles.optionSummary}>
-                      <span>Cost: <span className={styles.summaryNum}>{fmtMoney(t.cost)}</span></span>
-                      <span>Marked-up: <span className={styles.summaryNum}>{fmtMoney(t.price)}</span></span>
-                    </div>
-                  )}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+                    <ColumnsMenu
+                      open={colMenuOpen}
+                      onToggle={() => setColMenuOpen(o => !o)}
+                      columns={COLS}
+                      hiddenFn={colHidden}
+                      onItemToggle={toggleColVisible}
+                    />
+                    {t && (
+                      <div className={styles.optionSummary}>
+                        <span>Cost: <span className={styles.summaryNum}>{fmtMoney(t.cost)}</span></span>
+                        <span>Marked-up: <span className={styles.summaryNum}>{fmtMoney(t.price)}</span></span>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {opt.solutionDescription && (
@@ -1061,17 +1143,16 @@ export function PricingView() {
                       <table className={styles.table}>
                         <thead>
                           <tr>
-                            {COLS.map(col => (
+                            {COLS.filter(c => !colHidden(c.key)).map(col => (
                               <th
                                 key={col.key}
-                                className={col.cellClass}
                                 style={{ width: colWidths[col.key] ?? col.defaultWidth }}
                               >
                                 <span className={styles.thInner}>
                                   <span className={styles.thLabel}>{col.label}</span>
                                   <span
                                     className={styles.colResizer}
-                                    onMouseDown={(e) => startColResize(col.key, e)}
+                                    onMouseDown={(e) => startColResize('main', col.key, e)}
                                     title="Drag to resize column"
                                   />
                                 </span>
@@ -1083,106 +1164,143 @@ export function PricingView() {
                           {flatItems.map(item => {
                             const { gm, source, price } = priceFor(item);
                             const overrideVal = overrides[item.id]?.gmPct;
+                            const techDepr = typeof item.cts === 'number' ? item.cts * techDeprPct : null;
                             return (
                               <tr key={item.id}>
-                                <td>{item.description}</td>
-                                <td>
-                                  {(() => {
-                                    const t = effectiveType(item);
-                                    const knownOptions = ['Setup', 'Setup Rolled', 'One Time', 'One Time Rolled', 'Recurring (monthly)'];
-                                    return (
-                                      <select
-                                        className={styles.typeSelect}
-                                        value={t}
-                                        onChange={(e) => setItemType(item.id, e.target.value)}
-                                        title="Click to change type. 'Rolled' variants amortize the cost over the term but still bucket under Setup or One Time."
-                                      >
-                                        {t && !knownOptions.includes(t) && <option value={t}>{t}</option>}
-                                        <option value="">—</option>
-                                        <option value="Setup">Setup</option>
-                                        <option value="Setup Rolled">Setup Rolled</option>
-                                        <option value="One Time">One Time</option>
-                                        <option value="One Time Rolled">One Time Rolled</option>
-                                        <option value="Recurring (monthly)">Recurring (monthly)</option>
-                                      </select>
-                                    );
-                                  })()}
-                                </td>
-                                <td className={styles.numCell}>{item.cts === null || item.cts === undefined ? '' : fmtMoney(item.cts)}</td>
-                                <td>{item.startMonth || ''}</td>
-                                <td>{item.comments || ''}</td>
-                                <td className={styles.gmCell}>
-                                  <GmInput
-                                    key={`${item.id}:${overrideVal === undefined ? 'unset' : overrideVal}`}
-                                    initialPct={overrideVal !== undefined ? overrideVal * 100 : null}
-                                    isOverride={overrideVal !== undefined}
-                                    placeholder={gm === null ? '' : `${Math.round(gm * 100)}%`}
-                                    title={
-                                      source === 'override'
-                                        ? 'Per-line override. Clear to revert to global GM%.'
-                                        : source === 'global'
-                                        ? `Using global GM% (${fmtPct(globalGmPct)}). Type a value to override.`
-                                        : source === 'sheet'
-                                        ? `Using sheet GM% (${fmtPct(item.gmPct)}). Type a value to override.`
-                                        : 'No GM% set.'
-                                    }
-                                    onCommit={(raw) => setItemGm(item.id, raw)}
-                                  />
-                                </td>
-                                <td className={styles.priceCell}>{fmtMoney(price)}</td>
-                                <td>
-                                  {(() => {
-                                    const effType = effectiveType(item);
-                                    const key = linkedToDefaultKey(item.description, effType);
-                                    const savedDefault = linkedToDefaults[key] || '';
-                                    const currentVal = resolvedLinkedTo(item);
-                                    const isFromDefault = overrides[item.id]?.linkedTo === undefined && !!savedDefault;
-                                    const matchesDefault = !!savedDefault && savedDefault === currentVal.trim();
-                                    const canSetDefault = !!currentVal.trim() && !matchesDefault;
-                                    const canClearDefault = matchesDefault;
-                                    return (
-                                      <div className={styles.linkedCell}>
-                                        <LinkedToInput
-                                          key={`linked:${item.id}:${currentVal}`}
-                                          initial={currentVal}
-                                          isDefault={isFromDefault}
-                                          onCommit={(raw) => setItemLinkedTo(item, raw)}
-                                        />
-                                        <button
-                                          type="button"
-                                          className={`${styles.defaultStar} ${matchesDefault ? styles.defaultStarOn : ''}`}
-                                          onClick={() => toggleLinkedToDefault(item)}
-                                          disabled={!canSetDefault && !canClearDefault}
-                                          title={
-                                            matchesDefault
-                                              ? `Default for "${item.description}" · ${effType || '(no type)'}. Click to clear.`
-                                              : canSetDefault
-                                              ? `Save "${currentVal}" as the default for "${item.description}" · ${effType || '(no type)'}.`
-                                              : 'Type a value above, then click to save it as the default.'
-                                          }
+                                {!colHidden('lineItem') && <td>{item.description}</td>}
+                                {!colHidden('type') && (
+                                  <td>
+                                    {(() => {
+                                      const t = effectiveType(item);
+                                      const knownOptions = ['Setup', 'Setup Rolled', 'One Time', 'One Time Rolled', 'Recurring (monthly)'];
+                                      return (
+                                        <select
+                                          className={styles.typeSelect}
+                                          value={t}
+                                          onChange={(e) => setItemType(item.id, e.target.value)}
+                                          title="Click to change type. 'Rolled' variants amortize the cost over the term but still bucket under Setup or One Time."
                                         >
-                                          {matchesDefault ? '★' : '☆'}
-                                        </button>
-                                      </div>
-                                    );
-                                  })()}
-                                </td>
+                                          {t && !knownOptions.includes(t) && <option value={t}>{t}</option>}
+                                          <option value="">—</option>
+                                          <option value="Setup">Setup</option>
+                                          <option value="Setup Rolled">Setup Rolled</option>
+                                          <option value="One Time">One Time</option>
+                                          <option value="One Time Rolled">One Time Rolled</option>
+                                          <option value="Recurring (monthly)">Recurring (monthly)</option>
+                                        </select>
+                                      );
+                                    })()}
+                                  </td>
+                                )}
+                                {!colHidden('cts') && <td className={styles.numCell}>{item.cts === null || item.cts === undefined ? '' : fmtMoney(item.cts)}</td>}
+                                {!colHidden('techDepr') && (
+                                  <td className={styles.numCell} title={`${(techDeprPct * 100).toFixed(1)}% of CTS`}>
+                                    {techDepr === null ? '' : fmtMoney(techDepr)}
+                                  </td>
+                                )}
+                                {!colHidden('start') && <td>{item.startMonth || ''}</td>}
+                                {!colHidden('comments') && <td>{item.comments || ''}</td>}
+                                {!colHidden('gm') && (
+                                  <td className={styles.gmCell}>
+                                    <GmInput
+                                      key={`${item.id}:${overrideVal === undefined ? 'unset' : overrideVal}`}
+                                      initialPct={overrideVal !== undefined ? overrideVal * 100 : null}
+                                      isOverride={overrideVal !== undefined}
+                                      placeholder={gm === null ? '' : `${Math.round(gm * 100)}%`}
+                                      title={
+                                        source === 'override'
+                                          ? 'Per-line override. Clear to revert to global GM%.'
+                                          : source === 'global'
+                                          ? `Using global GM% (${fmtPct(globalGmPct)}). Type a value to override.`
+                                          : source === 'sheet'
+                                          ? `Using sheet GM% (${fmtPct(item.gmPct)}). Type a value to override.`
+                                          : 'No GM% set.'
+                                      }
+                                      onCommit={(raw) => setItemGm(item.id, raw)}
+                                    />
+                                  </td>
+                                )}
+                                {!colHidden('price') && <td className={styles.priceCell}>{fmtMoney(price)}</td>}
+                                {!colHidden('linkedTo') && (
+                                  <td>
+                                    {(() => {
+                                      const effType = effectiveType(item);
+                                      const key = linkedToDefaultKey(item.description, effType);
+                                      const savedDefault = linkedToDefaults[key] || '';
+                                      const currentVal = resolvedLinkedTo(item);
+                                      const isFromDefault = overrides[item.id]?.linkedTo === undefined && !!savedDefault;
+                                      const matchesDefault = !!savedDefault && savedDefault === currentVal.trim();
+                                      const canSetDefault = !!currentVal.trim() && !matchesDefault;
+                                      const canClearDefault = matchesDefault;
+                                      return (
+                                        <div className={styles.linkedCell}>
+                                          <LinkedToInput
+                                            key={`linked:${item.id}:${currentVal}`}
+                                            initial={currentVal}
+                                            isDefault={isFromDefault}
+                                            onCommit={(raw) => setItemLinkedTo(item, raw)}
+                                          />
+                                          <button
+                                            type="button"
+                                            className={`${styles.defaultStar} ${matchesDefault ? styles.defaultStarOn : ''}`}
+                                            onClick={() => toggleLinkedToDefault(item)}
+                                            disabled={!canSetDefault && !canClearDefault}
+                                            title={
+                                              matchesDefault
+                                                ? `Default for "${item.description}" · ${effType || '(no type)'}. Click to clear.`
+                                                : canSetDefault
+                                                ? `Save "${currentVal}" as the default for "${item.description}" · ${effType || '(no type)'}.`
+                                                : 'Type a value above, then click to save it as the default.'
+                                            }
+                                          >
+                                            {matchesDefault ? '★' : '☆'}
+                                          </button>
+                                        </div>
+                                      );
+                                    })()}
+                                  </td>
+                                )}
                               </tr>
                             );
                           })}
-                          <tr className={styles.totalsRow}>
-                            <td colSpan={2}>Total</td>
-                            <td className={styles.numCell}>{fmtMoney(totalCost)}</td>
-                            <td colSpan={3} />
-                            <td className={styles.priceCell}>{fmtMoney(totalPrice)}</td>
-                            <td />
-                          </tr>
+                          {(() => {
+                            const totalDepr = flatItems.reduce((s, i) => s + (typeof i.cts === 'number' ? i.cts * techDeprPct : 0), 0);
+                            const cells = [];
+                            COLS.filter(c => !colHidden(c.key)).forEach(col => {
+                              switch (col.key) {
+                                case 'lineItem':
+                                  cells.push(<td key={col.key}>Total</td>);
+                                  break;
+                                case 'cts':
+                                  cells.push(<td key={col.key} className={styles.numCell}>{fmtMoney(totalCost)}</td>);
+                                  break;
+                                case 'techDepr':
+                                  cells.push(<td key={col.key} className={styles.numCell}>{fmtMoney(totalDepr)}</td>);
+                                  break;
+                                case 'price':
+                                  cells.push(<td key={col.key} className={styles.priceCell}>{fmtMoney(totalPrice)}</td>);
+                                  break;
+                                default:
+                                  cells.push(<td key={col.key} />);
+                              }
+                            });
+                            return <tr className={styles.totalsRow}>{cells}</tr>;
+                          })()}
                         </tbody>
                       </table>
 
                       <div className={styles.bottomRow}>
                       <div className={styles.summaryPanel}>
-                        <h3 className={styles.summaryTitle}>Totals by type</h3>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.6rem', flexWrap: 'wrap', marginBottom: '0.25rem' }}>
+                          <h3 className={styles.summaryTitle} style={{ margin: 0 }}>Totals by type</h3>
+                          <ColumnsMenu
+                            open={summaryMenuOpen}
+                            onToggle={() => setSummaryMenuOpen(o => !o)}
+                            columns={SUMMARY_COLS}
+                            hiddenFn={summaryColHidden}
+                            onItemToggle={toggleSummaryColVisible}
+                          />
+                        </div>
                         <div className={styles.summaryMeta}>
                           Term:{' '}
                           <input
@@ -1212,46 +1330,69 @@ export function PricingView() {
                               setAnnualEscalator(Math.max(0, Math.min(0.5, n / 100)));
                             }}
                           />
+                          % · Tech depr:{' '}
+                          <input
+                            className={styles.metaInput}
+                            type="number"
+                            step="0.5"
+                            min="0"
+                            max="50"
+                            value={Math.round(techDeprPct * 1000) / 10}
+                            onChange={(e) => {
+                              const n = Number(e.target.value);
+                              if (!Number.isFinite(n)) return;
+                              setTechDeprPct(Math.max(0, Math.min(0.5, n / 100)));
+                            }}
+                          />
                           %
                         </div>
-                        <table className={styles.summaryTable}>
-                          <thead>
+                        {(() => {
+                          const cellClassFor = (k) => k === 'bucket' ? '' : (k === 'cost' || k === 'techDepr') ? styles.numCell : styles.priceCell;
+                          const renderHeaders = () => SUMMARY_COLS.filter(c => !summaryColHidden(c.key)).map(col => (
+                            <th key={col.key} style={{ width: summaryColWidths[col.key] ?? col.defaultWidth }} className={cellClassFor(col.key)}>
+                              <span className={styles.thInner}>
+                                <span className={styles.thLabel}>{col.label}</span>
+                                <span
+                                  className={styles.colResizer}
+                                  onMouseDown={(e) => startColResize('summary', col.key, e)}
+                                  title="Drag to resize column"
+                                />
+                              </span>
+                            </th>
+                          ));
+                          const renderRow = (label, vals) => (
                             <tr>
-                              <th>Bucket</th>
-                              <th className={styles.numCell}>Cost</th>
-                              <th className={styles.priceCell}>Marked-up</th>
-                              <th className={styles.priceCell}>Term value (marked-up)</th>
+                              {SUMMARY_COLS.filter(c => !summaryColHidden(c.key)).map(col => {
+                                if (col.key === 'bucket') return <td key={col.key}>{label}</td>;
+                                const v = vals[col.key];
+                                return <td key={col.key} className={cellClassFor(col.key)}>{typeof v === 'number' ? fmtMoney(v) : ''}</td>;
+                              })}
                             </tr>
-                          </thead>
-                          <tbody>
-                            <tr>
-                              <td>Setup</td>
-                              <td className={styles.numCell}>{fmtMoney(setup.cost)}</td>
-                              <td className={styles.priceCell}>{fmtMoney(setup.price)}</td>
-                              <td className={styles.priceCell}>{fmtMoney(setup.termPrice)}</td>
-                            </tr>
-                            <tr>
-                              <td>Recurring (monthly)</td>
-                              <td className={styles.numCell}>{fmtMoney(recurring.cost)}</td>
-                              <td className={styles.priceCell}>{fmtMoney(recurring.price)}</td>
-                              <td className={styles.priceCell}>{fmtMoney(recurring.termPrice)}</td>
-                            </tr>
-                            {(oneTime.cost > 0 || oneTime.price > 0) && (
-                              <tr>
-                                <td>One Time</td>
-                                <td className={styles.numCell}>{fmtMoney(oneTime.cost)}</td>
-                                <td className={styles.priceCell}>{fmtMoney(oneTime.price)}</td>
-                                <td className={styles.priceCell}>{fmtMoney(oneTime.termPrice)}</td>
-                              </tr>
-                            )}
-                            <tr className={styles.summaryGrandRow}>
-                              <td>Total contract value</td>
-                              <td className={styles.numCell}>{fmtMoney(grandTermCost)}</td>
-                              <td className={styles.priceCell}>{fmtMoney(totalPrice)}</td>
-                              <td className={styles.priceCell}>{fmtMoney(grandTermPrice)}</td>
-                            </tr>
-                          </tbody>
-                        </table>
+                          );
+                          const totalDeprAll = (setup.cost + recurring.cost + oneTime.cost) * techDeprPct;
+                          return (
+                            <table className={styles.summaryTable}>
+                              <thead><tr>{renderHeaders()}</tr></thead>
+                              <tbody>
+                                {renderRow('Setup', { cost: setup.cost, techDepr: setup.cost * techDeprPct, price: setup.price, termPrice: setup.termPrice })}
+                                {renderRow('Recurring (monthly)', { cost: recurring.cost, techDepr: recurring.cost * techDeprPct, price: recurring.price, termPrice: recurring.termPrice })}
+                                {(oneTime.cost > 0 || oneTime.price > 0) && renderRow('One Time', { cost: oneTime.cost, techDepr: oneTime.cost * techDeprPct, price: oneTime.price, termPrice: oneTime.termPrice })}
+                                <tr className={styles.summaryGrandRow}>
+                                  {SUMMARY_COLS.filter(c => !summaryColHidden(c.key)).map(col => {
+                                    if (col.key === 'bucket') return <td key={col.key}>Total contract value</td>;
+                                    const map = {
+                                      cost: grandTermCost,
+                                      techDepr: totalDeprAll,
+                                      price: totalPrice,
+                                      termPrice: grandTermPrice,
+                                    };
+                                    return <td key={col.key} className={cellClassFor(col.key)}>{fmtMoney(map[col.key])}</td>;
+                                  })}
+                                </tr>
+                              </tbody>
+                            </table>
+                          );
+                        })()}
                       </div>
 
                       <AltFeeTable
