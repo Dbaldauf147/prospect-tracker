@@ -219,6 +219,27 @@ export function PipelineView() {
   const bfoMetrics = useMemo(() => bfoStageMetrics(bfo), [bfo]);
   const hasBfo = bfo && bfo.rows && bfo.rows.length > 0;
 
+  // Smallest stage-5 and stage-6 deals from BFO, sorted by amount asc.
+  const bfoSmallestDeals = useMemo(() => {
+    if (!hasBfo) return null;
+    const findCol = (re) => bfo.headers.find(h => re.test(h));
+    const stageCol = findCol(/sales\s*stage|^stage$/i);
+    const amountCol = findCol(/^amount$/i);
+    const accountCol = findCol(/^account\s*name$/i) || findCol(/^account$/i);
+    const oppCol = findCol(/opportunity\s*name|^opportunity$/i);
+    if (!stageCol || !amountCol) return null;
+    return bfo.rows
+      .map(r => ({
+        account: accountCol ? r[accountCol] : '',
+        oppName: oppCol ? r[oppCol] : '',
+        amount: parseMoney(r[amountCol]),
+        stage: stageNumber(r[stageCol]),
+      }))
+      .filter(r => (r.stage === 5 || r.stage === 6) && typeof r.amount === 'number')
+      .sort((a, b) => a.amount - b.amount)
+      .slice(0, 5);
+  }, [bfo, hasBfo]);
+
   useEffect(() => {
     if (!hydrated) return;
     dbPut(STORE, state, KEY).catch(err => console.warn('Pipeline save failed', err));
@@ -453,16 +474,37 @@ export function PipelineView() {
         <div className={styles.bottomRow}>
           <div className={styles.section}>
             <div className={styles.sectionTitle}>Smallest 5 &amp; 6 Deals</div>
-            <EditableList
-              rows={state.smallestDeals}
-              setRows={(rows) => setField('smallestDeals', rows)}
-              cols={[
-                { key: 'account', label: 'Account Name', kind: 'text' },
-                { key: 'oppName', label: 'Opportunity Name', kind: 'text' },
-                { key: 'amount', label: 'Amount USD', kind: 'money' },
-              ]}
-              newRow={() => ({ id: `d_${Date.now()}`, account: '', oppName: '', amount: 0 })}
-            />
+            {bfoSmallestDeals && bfoSmallestDeals.length > 0 ? (
+              <table className={styles.tinyTable} title="Auto-fed from BFO Activity. Re-paste BFO data to refresh.">
+                <thead>
+                  <tr>
+                    <th>Account Name</th>
+                    <th>Opportunity Name</th>
+                    <th>Amount USD</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {bfoSmallestDeals.map((r, i) => (
+                    <tr key={i}>
+                      <td>{r.account}</td>
+                      <td>{r.oppName}</td>
+                      <td>{fmtMoney(r.amount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <EditableList
+                rows={state.smallestDeals}
+                setRows={(rows) => setField('smallestDeals', rows)}
+                cols={[
+                  { key: 'account', label: 'Account Name', kind: 'text' },
+                  { key: 'oppName', label: 'Opportunity Name', kind: 'text' },
+                  { key: 'amount', label: 'Amount USD', kind: 'money' },
+                ]}
+                newRow={() => ({ id: `d_${Date.now()}`, account: '', oppName: '', amount: 0 })}
+              />
+            )}
           </div>
 
           <div className={styles.section}>
