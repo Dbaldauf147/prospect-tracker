@@ -4,6 +4,7 @@ import {
   todayKey,
   isWeekday,
   getEntry,
+  getAllEntries,
   upsertEntry,
   newBullet,
   pickPhase,
@@ -80,6 +81,53 @@ export function DailySuccessManager({ user }) {
     close();
   }
 
+  async function skipForToday() {
+    // Suppress until midnight local time so the modal doesn't keep
+    // re-popping for the rest of the day.
+    const eod = new Date();
+    eod.setHours(23, 59, 59, 999);
+    await upsertEntry(todayKey(), { snoozeUntil: eod.getTime() });
+    close();
+  }
+
+  const [suggesting, setSuggesting] = useState(false);
+  async function suggestWithClaude() {
+    setSuggesting(true);
+    try {
+      const all = await getAllEntries();
+      const recent = all
+        .filter(e => e.date < todayKey())
+        .slice(0, 7);
+      const resp = await fetch('/api/daily-goals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          recent,
+          notes: morningText,
+          userName: 'Dan',
+        }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || !Array.isArray(data?.bullets)) {
+        alert(data?.error || 'Could not get suggestions.');
+        return;
+      }
+      const existingLines = morningText
+        .split('\n')
+        .map(l => l.trim().replace(/^[-•*]\s*/, ''))
+        .filter(Boolean);
+      const merged = [...existingLines];
+      for (const b of data.bullets) {
+        if (!merged.some(l => l.toLowerCase() === b.toLowerCase())) merged.push(b);
+      }
+      setMorningText(merged.join('\n'));
+    } catch (err) {
+      alert(err?.message || 'Suggestion request failed.');
+    } finally {
+      setSuggesting(false);
+    }
+  }
+
   async function toggleBullet(id, field) {
     const next = {
       ...entry,
@@ -122,8 +170,16 @@ export function DailySuccessManager({ user }) {
             <p className={styles.smallNote}>Lines starting with -, •, or * are auto-cleaned.</p>
           </div>
           <div className={styles.foot}>
+            <button
+              type="button"
+              className={styles.btn}
+              onClick={suggestWithClaude}
+              disabled={suggesting}
+              title="Use Claude to suggest 3-5 focus bullets based on your recent log entries and any notes you've typed above."
+            >{suggesting ? 'Asking Claude…' : '✨ Suggest with Claude'}</button>
+            <div style={{ flex: 1 }} />
             <button type="button" className={styles.btnGhost} onClick={snoozeMorning}>Snooze 1h</button>
-            <button type="button" className={styles.btnGhost} onClick={close}>Skip</button>
+            <button type="button" className={styles.btnGhost} onClick={skipForToday}>Skip today</button>
             <button type="button" className={styles.btnPrimary} onClick={submitMorning}>Save</button>
           </div>
         </div>
