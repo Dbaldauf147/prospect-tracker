@@ -461,9 +461,26 @@ export function PipelineView() {
               <tbody>
                 <tr>
                   <td><NumCell value={state.coverageGoal} kind="ratio" onCommit={(v) => setField('coverageGoal', v)} /></td>
-                  <td className={compareClass(state.coverageActual, state.coverageGoal, 'higher-better')}>
-                    <NumCell value={state.coverageActual} kind="ratio" onCommit={(v) => setField('coverageActual', v)} />
-                  </td>
+                  {(() => {
+                    // Coverage Ratio Actual = total Actual Pipeline ÷ Target.
+                    // Auto-fed; only meaningful when BFO data is loaded
+                    // (otherwise we'd be dividing by seeded numbers).
+                    const computedCoverage = hasBfo && state.target > 0
+                      ? stageTotals.pipelineActual / state.target
+                      : null;
+                    return (
+                      <td className={compareClass(computedCoverage, state.coverageGoal, 'higher-better')}>
+                        {computedCoverage !== null ? (
+                          <span
+                            className={styles.liveCell}
+                            title={`Actual Pipeline (${fmtMoney(stageTotals.pipelineActual)}) ÷ Target (${fmtMoney(state.target)})`}
+                          >{computedCoverage.toFixed(2)}</span>
+                        ) : (
+                          <span className={styles.noBfoCell}>—</span>
+                        )}
+                      </td>
+                    );
+                  })()}
                   <td><NumCell value={state.notQuotedGoal} kind="pct" onCommit={(v) => setField('notQuotedGoal', v)} /></td>
                   <td className={compareClass(state.notQuotedYear, state.notQuotedGoal, 'lower-better')}>
                     <NumCell value={state.notQuotedYear} kind="pct" onCommit={(v) => setField('notQuotedYear', v)} />
