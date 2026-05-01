@@ -116,7 +116,7 @@ function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onA
       <table className={styles.altTable}>
         <thead>
           <tr>
-            <th style={{ minWidth: 220 }}>Alternative Fee Structure/Schedule</th>
+            <th style={{ width: 260, whiteSpace: 'nowrap' }}>Alternative Fee Structure/Schedule</th>
             <th style={{ width: 110, whiteSpace: 'nowrap' }}>Type</th>
             <th className={styles.numCell} style={{ width: 95, whiteSpace: 'nowrap' }}>Fee</th>
             <th style={{ width: 100, whiteSpace: 'nowrap' }}>Unit</th>
