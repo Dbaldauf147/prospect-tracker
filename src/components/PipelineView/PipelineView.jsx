@@ -345,7 +345,21 @@ export function PipelineView() {
     setState(s => ({ ...s, [key]: value }));
   }
 
-  const stageTotals = state.stages.reduce((acc, st) => {
+  // Always have a usable stages array to render — fall back to seed
+  // whenever state.stages is missing, wrong length, or malformed.
+  const stagesValid = Array.isArray(state.stages)
+    && state.stages.length === DEFAULT_STATE.stages.length
+    && state.stages.every(r => r && typeof r.key === 'string');
+  const renderStages = stagesValid ? state.stages : DEFAULT_STATE.stages;
+  // Self-heal: if the saved state was bad, write the seed back so the
+  // user's persisted record stops being broken.
+  useEffect(() => {
+    if (hydrated && !stagesValid) {
+      setState(s => ({ ...s, stages: DEFAULT_STATE.stages }));
+    }
+  }, [hydrated, stagesValid]);
+
+  const stageTotals = renderStages.reduce((acc, st) => {
     const stageNum = Number(String(st.key).replace(/[^0-9]/g, ''));
     const m = bfoMetrics[stageNum];
     const liveCount = hasBfo && m?.count !== null && m?.count !== undefined ? m.count : null;
@@ -403,19 +417,7 @@ export function PipelineView() {
               </tr>
             </thead>
             <tbody>
-              {(() => {
-                // Render-time safety net: never let a bad state.stages
-                // collapse the entire metrics table. If the current
-                // value isn't a populated array, recover from the seed
-                // (and self-heal state on the next tick).
-                const stagesValid = Array.isArray(state.stages)
-                  && state.stages.length === DEFAULT_STATE.stages.length
-                  && state.stages.every(r => r && typeof r.key === 'string');
-                if (!stagesValid && hydrated) {
-                  setTimeout(() => setState(s => ({ ...s, stages: DEFAULT_STATE.stages })), 0);
-                }
-                const renderStages = stagesValid ? state.stages : DEFAULT_STATE.stages;
-                return renderStages.map((st, i) => {
+              {renderStages.map((st, i) => {
                 const stageNum = Number(String(st.key).replace(/[^0-9]/g, ''));
                 const m = bfoMetrics[stageNum];
                 const live = (val) => hasBfo && val !== null && val !== undefined ? val : null;
@@ -459,8 +461,7 @@ export function PipelineView() {
                     </td>
                   </tr>
                 );
-              });
-              })()}
+              })}
               <tr>
                 <td className={styles.label}>Total</td>
                 <td className={styles.numCell}>{stageTotals.activeGoal}</td>
