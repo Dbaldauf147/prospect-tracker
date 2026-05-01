@@ -408,19 +408,19 @@ export function PipelineView() {
                     <td className={compareClass(activeActual, st.activeGoal, 'higher-better')}>
                       {fromBfo(m?.count)
                         ? <span title={liveTip} className={styles.liveCell}>{activeActual}</span>
-                        : <span className={styles.noBfoCell}>—</span>}
+                        : <NumCell value={st.activeActual} onCommit={(v) => setStage(i, { activeActual: v })} />}
                     </td>
                     <td><NumCell value={st.dealSizeGoal} kind="money" onCommit={(v) => setStage(i, { dealSizeGoal: v })} /></td>
                     <td className={compareClass(dealSizeActual, st.dealSizeGoal, 'higher-better')}>
                       {fromBfo(m?.avg)
                         ? <span title={liveTip} className={styles.liveCell}>{fmtMoney(Math.round(dealSizeActual))}</span>
-                        : <span className={styles.noBfoCell}>—</span>}
+                        : <NumCell value={st.dealSizeActual} kind="money" onCommit={(v) => setStage(i, { dealSizeActual: v })} />}
                     </td>
                     <td><NumCell value={st.pipelineGoal} kind="money" onCommit={(v) => setStage(i, { pipelineGoal: v })} /></td>
                     <td className={compareClass(pipelineActual, st.pipelineGoal, 'higher-better')}>
                       {fromBfo(m?.total)
                         ? <span title={liveTip} className={styles.liveCell}>{fmtMoney(Math.round(pipelineActual))}</span>
-                        : <span className={styles.noBfoCell}>—</span>}
+                        : <NumCell value={st.pipelineActual} kind="money" onCommit={(v) => setStage(i, { pipelineActual: v })} />}
                     </td>
                     <td><NumCell value={st.closeGoal} kind="pct" onCommit={(v) => setStage(i, { closeGoal: v })} /></td>
                     <td className={compareClass(st.closeActual, st.closeGoal, 'higher-better')}>
@@ -431,7 +431,7 @@ export function PipelineView() {
                     <td className={compareClass(lifeActual, st.lifeGoal, 'lower-better')}>
                       {fromBfo(m?.avgAge)
                         ? <span title={liveTip} className={styles.liveCell}>{lifeActual}</span>
-                        : <span className={styles.noBfoCell}>—</span>}
+                        : <NumCell value={st.lifeActual} onCommit={(v) => setStage(i, { lifeActual: v })} />}
                     </td>
                   </tr>
                 );
@@ -439,11 +439,11 @@ export function PipelineView() {
               <tr>
                 <td className={styles.label}>Total</td>
                 <td className={styles.numCell}>{stageTotals.activeGoal}</td>
-                <td className={styles.numCell}>{hasBfo ? stageTotals.activeActual : <span className={styles.noBfoCell}>—</span>}</td>
+                <td className={styles.numCell}>{stageTotals.activeActual}</td>
                 <td className={styles.numCell}>{fmtMoney(dealSizeAvgGoal)}</td>
-                <td className={styles.numCell}>{hasBfo ? fmtMoney(dealSizeAvgActual) : <span className={styles.noBfoCell}>—</span>}</td>
+                <td className={styles.numCell}>{fmtMoney(dealSizeAvgActual)}</td>
                 <td className={styles.numCell}>{fmtMoney(stageTotals.pipelineGoal)}</td>
-                <td className={styles.numCell}>{hasBfo ? fmtMoney(stageTotals.pipelineActual) : <span className={styles.noBfoCell}>—</span>}</td>
+                <td className={styles.numCell}>{fmtMoney(stageTotals.pipelineActual)}</td>
                 <td colSpan={2} />
                 <td className={styles.numCell}>{fmtMoney(stageTotals.targetProj)}</td>
                 <td colSpan={2} />
