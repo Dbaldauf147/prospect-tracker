@@ -423,6 +423,9 @@ export function PipelineView() {
               title="Restore the stage rows + goal seeds to defaults if the table looks blank or corrupted."
             >Reset table</button>
           </div>
+          <div style={{ padding: '0.4rem 0.7rem', fontSize: 11, color: '#475569', background: '#fef9c3' }}>
+            Debug: rendering {renderStages.length} stage rows · stagesValid={String(stagesValid)} · hasBfo={String(hasBfo)} · hydrated={String(hydrated)}
+          </div>
           <div style={{ overflowX: 'auto' }}>
           <table className={styles.grid} style={{ minWidth: 1400 }}>
             <thead>
