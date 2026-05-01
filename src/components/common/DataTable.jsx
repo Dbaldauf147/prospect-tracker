@@ -277,6 +277,12 @@ export function DataTable({
   updateSettings,
 }) {
   const remotePrefs = settings?.tablePrefs?.[tableId];
+  // settings._lastWriteAt is the canonical "Firestore subscription has
+  // produced data" signal — it's stamped by every saveUserSettings call.
+  // We use it to distinguish "Firestore has no entry for this table"
+  // (don't sync, leave defaults / localStorage) from "Firestore is
+  // still loading" (don't do anything; wait).
+  const settingsLoaded = !!(settings && settings._lastWriteAt);
   const [colWidths, setColWidths] = useState(() => remotePrefs?.widths || loadColWidths(tableId));
   const [visibleCols, setVisibleCols] = useState(() => (
     Array.isArray(remotePrefs?.visible)
@@ -286,12 +292,14 @@ export function DataTable({
   const [colNames, setColNames] = useState(() => remotePrefs?.names || loadColNames(tableId));
   const [colFilters, setColFilters] = useState({});
   const resizingRef = useRef(null);
-  const migratedRef = useRef(false);
 
   // Sync local state when Firestore-backed prefs arrive or change on
   // another device. Stringify-compare so we don't churn state when the
-  // values are equivalent.
+  // values are equivalent. Only acts once settings is loaded — guards
+  // against an early-render where settings={} reads as "no entry"
+  // and races with a later real value.
   useEffect(() => {
+    if (!settingsLoaded) return;
     if (!remotePrefs) return;
     if (remotePrefs.widths && JSON.stringify(remotePrefs.widths) !== JSON.stringify(colWidths)) {
       setColWidths(remotePrefs.widths);
@@ -305,31 +313,7 @@ export function DataTable({
       setColNames(remotePrefs.names);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [remotePrefs]);
-
-  // One-time migration: if settings is wired up but Firestore has no
-  // entry for this table yet AND localStorage has non-default prefs,
-  // push them up so future site clears don't wipe them.
-  useEffect(() => {
-    if (migratedRef.current) return;
-    if (!settings || !updateSettings || !tableId) return;
-    if (settings.tablePrefs?.[tableId]) { migratedRef.current = true; return; }
-    const lsWidths = loadColWidths(tableId);
-    const lsVisible = loadColVisible(tableId, columns.map(c => c.key));
-    const lsNames = loadColNames(tableId);
-    const allKeys = columns.map(c => c.key);
-    const hasNonDefault = Object.keys(lsWidths).length > 0
-      || lsVisible.size !== allKeys.length
-      || ![...lsVisible].every(k => allKeys.includes(k))
-      || Object.keys(lsNames).length > 0;
-    if (!hasNonDefault) { migratedRef.current = true; return; }
-    persistPrefs(tableId, settings, updateSettings, {
-      widths: lsWidths,
-      visible: lsVisible,
-      names: lsNames,
-    });
-    migratedRef.current = true;
-  }, [settings, updateSettings, tableId, columns]);
+  }, [settingsLoaded, remotePrefs]);
 
   function renameCol(key, name) {
     setColNames(prev => {
