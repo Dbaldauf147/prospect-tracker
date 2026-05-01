@@ -283,8 +283,7 @@ export function PipelineView() {
         stage: stageNumber(r[stageCol]),
       }))
       .filter(r => (r.stage === 5 || r.stage === 6) && typeof r.amount === 'number')
-      .sort((a, b) => a.amount - b.amount)
-      .slice(0, 5);
+      .sort((a, b) => a.amount - b.amount);
   }, [bfo, hasBfo]);
 
   useEffect(() => {
