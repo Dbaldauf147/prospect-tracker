@@ -359,6 +359,22 @@ export function PipelineView() {
     }
   }, [hydrated, stagesValid]);
 
+  // Per-row Opps Needed columns + their totals, computed outside the
+  // JSX so any future error here surfaces in dev tools instead of
+  // silently dropping the metrics table.
+  const stageOppsNeeded = renderStages.map(st => {
+    const ds = Number(st.dealSizeActual) || 0;
+    const pg = Number(st.pipelineGoal) || 0;
+    const cr = Number(st.closeActual) || 0;
+    return {
+      key: st.key,
+      forDeal: ds > 0 ? Math.round(pg / ds) : null,
+      forClose: ds > 0 && cr > 0 ? Math.round(pg / (ds * cr)) : null,
+    };
+  });
+  const totalOppsForDeal = stageOppsNeeded.reduce((s, r) => s + (r.forDeal || 0), 0);
+  const totalOppsForClose = stageOppsNeeded.reduce((s, r) => s + (r.forClose || 0), 0);
+
   const stageTotals = renderStages.reduce((acc, st) => {
     const stageNum = Number(String(st.key).replace(/[^0-9]/g, ''));
     const m = bfoMetrics[stageNum];
@@ -392,7 +408,7 @@ export function PipelineView() {
         <h1 className={styles.title}>Pipeline</h1>
         <div className={styles.subtitle}>Pipeline metrics dashboard. Every cell is editable; values save to your browser.</div>
       </div>
-      <div className={styles.body} key={hydrated ? 'h' : 'pre'}>
+      <div className={styles.body}>
         {/* Pipeline metrics */}
         <div className={styles.section}>
           <div className={styles.sectionTitle} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -473,54 +489,29 @@ export function PipelineView() {
                         ? <span title={liveTip} className={styles.liveCell}>{lifeActual}</span>
                         : <NumCell value={st.lifeActual} onCommit={(v) => setStage(i, { lifeActual: v })} />}
                     </td>
-                    {(() => {
-                      const dsActual = Number(dealSizeActual) || 0;
-                      const pgGoal = Number(st.pipelineGoal) || 0;
-                      const crActual = Number(st.closeActual) || 0;
-                      const oppsForDeal = dsActual > 0 ? Math.round(pgGoal / dsActual) : null;
-                      const oppsForClose = (dsActual > 0 && crActual > 0)
-                        ? Math.round(pgGoal / (dsActual * crActual))
-                        : null;
-                      return (
-                        <>
-                          <td className={styles.numCell} title="Pipeline Goal ÷ Deal Size Actual">
-                            {oppsForDeal === null ? '' : oppsForDeal}
-                          </td>
-                          <td className={styles.numCell} title="Pipeline Goal ÷ (Deal Size Actual × Close Rate Actual)">
-                            {oppsForClose === null ? '' : oppsForClose}
-                          </td>
-                        </>
-                      );
-                    })()}
+                    <td className={styles.numCell} title="Pipeline Goal ÷ Deal Size Actual">
+                      {stageOppsNeeded[i]?.forDeal ?? ''}
+                    </td>
+                    <td className={styles.numCell} title="Pipeline Goal ÷ (Deal Size Actual × Close Rate Actual)">
+                      {stageOppsNeeded[i]?.forClose ?? ''}
+                    </td>
                   </tr>
                 );
               })}
-              {(() => {
-                let totalOppsForDeal = 0, totalOppsForClose = 0;
-                for (const st of renderStages) {
-                  const ds = Number(st.dealSizeActual) || 0;
-                  const pg = Number(st.pipelineGoal) || 0;
-                  const cr = Number(st.closeActual) || 0;
-                  if (ds > 0) totalOppsForDeal += Math.round(pg / ds);
-                  if (ds > 0 && cr > 0) totalOppsForClose += Math.round(pg / (ds * cr));
-                }
-                return (
-                  <tr>
-                    <td className={styles.label}>Total</td>
-                    <td className={styles.numCell}>{stageTotals.activeGoal}</td>
-                    <td className={styles.numCell}>{stageTotals.activeActual}</td>
-                    <td className={styles.numCell}>{fmtMoney(dealSizeAvgGoal)}</td>
-                    <td className={styles.numCell}>{fmtMoney(dealSizeAvgActual)}</td>
-                    <td className={styles.numCell}>{fmtMoney(stageTotals.pipelineGoal)}</td>
-                    <td className={styles.numCell}>{fmtMoney(stageTotals.pipelineActual)}</td>
-                    <td colSpan={2} />
-                    <td className={styles.numCell}>{fmtMoney(stageTotals.targetProj)}</td>
-                    <td colSpan={2} />
-                    <td className={styles.numCell}>{totalOppsForDeal}</td>
-                    <td className={styles.numCell}>{totalOppsForClose}</td>
-                  </tr>
-                );
-              })()}
+              <tr>
+                <td className={styles.label}>Total</td>
+                <td className={styles.numCell}>{stageTotals.activeGoal}</td>
+                <td className={styles.numCell}>{stageTotals.activeActual}</td>
+                <td className={styles.numCell}>{fmtMoney(dealSizeAvgGoal)}</td>
+                <td className={styles.numCell}>{fmtMoney(dealSizeAvgActual)}</td>
+                <td className={styles.numCell}>{fmtMoney(stageTotals.pipelineGoal)}</td>
+                <td className={styles.numCell}>{fmtMoney(stageTotals.pipelineActual)}</td>
+                <td colSpan={2} />
+                <td className={styles.numCell}>{fmtMoney(stageTotals.targetProj)}</td>
+                <td colSpan={2} />
+                <td className={styles.numCell}>{totalOppsForDeal}</td>
+                <td className={styles.numCell}>{totalOppsForClose}</td>
+              </tr>
             </tbody>
           </table>
           </div>
