@@ -17,6 +17,7 @@ export function DailySuccessManager({ user }) {
   const [phase, setPhase] = useState(null); // 'morning' | 'mid' | 'end' | null
   const [entry, setEntry] = useState(null);
   const [morningText, setMorningText] = useState('');
+  const [suggesting, setSuggesting] = useState(false);
   const tickerRef = useRef(null);
 
   const enabled = (user?.email || '').toLowerCase() === TARGET_EMAIL;
@@ -90,7 +91,6 @@ export function DailySuccessManager({ user }) {
     close();
   }
 
-  const [suggesting, setSuggesting] = useState(false);
   async function suggestWithClaude() {
     setSuggesting(true);
     try {
