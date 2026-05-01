@@ -60,38 +60,21 @@ function matchStage(stageVal) {
   return m ? Number(m[1]) : null;
 }
 
-// Aggregate BFO rows -> { 3: …, 4: …, 5: …, 6: …, all: { allAmtAvg }, debug }.
+// Aggregate BFO rows -> { 3: …, 4: …, 5: …, 6: …, all: { allAmtAvg } }.
 function bfoStageMetrics(bfo) {
-  const out = { 3: null, 4: null, 5: null, 6: null, all: { allAmtAvg: null }, debug: null };
+  const out = { 3: null, 4: null, 5: null, 6: null, all: { allAmtAvg: null } };
   if (!bfo || !bfo.headers || !bfo.rows || bfo.rows.length === 0) return out;
   const findCol = (re) => bfo.headers.find(h => re.test(h));
   const stageCol = findCol(/sales\s*stage|^stage$/i);
   const amountCol = findCol(/^amount$/i);
   const ageCol = findCol(/^age$/i);
-  const debug = {
-    stageCol: stageCol || null,
-    amountCol: amountCol || null,
-    ageCol: ageCol || null,
-    headers: bfo.headers.slice(),
-    totalRows: bfo.rows.length,
-    unmatchedSamples: {}, // { rawStageValue: count }
-    unmatchedSum: 0,
-  };
-  out.debug = debug;
   if (!stageCol) return out;
   const buckets = {};
   let allAmtSum = 0;
   let allAmtCount = 0;
   for (const r of bfo.rows) {
-    const rawStage = r[stageCol];
-    const n = matchStage(rawStage);
-    if (!n || n < 3 || n > 6) {
-      const key = String(rawStage ?? '(blank)');
-      debug.unmatchedSamples[key] = (debug.unmatchedSamples[key] || 0) + 1;
-      const amt = amountCol ? parseMoney(r[amountCol]) : null;
-      if (amt !== null) debug.unmatchedSum += amt;
-      continue;
-    }
+    const n = matchStage(r[stageCol]);
+    if (!n || n < 3 || n > 6) continue;
     const amt = amountCol ? parseMoney(r[amountCol]) : null;
     const age = ageCol ? Number(String(r[ageCol]).replace(/[^0-9.\-]/g, '')) : null;
     if (!buckets[n]) buckets[n] = { count: 0, total: 0, ageSum: 0, ageCount: 0, amtSum: 0, amtCount: 0 };
@@ -440,26 +423,6 @@ export function PipelineView() {
               title="Restore the stage rows + goal seeds to defaults if the table looks blank or corrupted."
             >Reset table</button>
           </div>
-          {hasBfo && bfoMetrics.debug && (() => {
-            const d = bfoMetrics.debug;
-            const stageRows = [3, 4, 5, 6].map(n => ({
-              n,
-              count: bfoMetrics[n]?.count ?? 0,
-              total: bfoMetrics[n]?.total ?? 0,
-            }));
-            const matchedTotal = stageRows.reduce((s, r) => s + r.total, 0);
-            const unmatchedEntries = Object.entries(d.unmatchedSamples).sort((a, b) => b[1] - a[1]);
-            return (
-              <div style={{ background: '#fffbe6', border: '1px solid #f0c36d', padding: '0.5rem 0.75rem', margin: '0.5rem 0', fontSize: 11, fontFamily: 'monospace', color: '#333', whiteSpace: 'pre-wrap' }}>
-                <strong>BFO debug (temporary)</strong>{'\n'}
-                stageCol = {String(d.stageCol)} · amountCol = {String(d.amountCol)} · ageCol = {String(d.ageCol)}{'\n'}
-                totalRows = {d.totalRows} · matchedPipelineSum = {fmtMoney(matchedTotal)} · unmatchedRows = {Object.values(d.unmatchedSamples).reduce((a, b) => a + b, 0)} · unmatchedSum = {fmtMoney(d.unmatchedSum)}{'\n'}
-                {stageRows.map(r => `Stage ${r.n}: count=${r.count}, sum=${fmtMoney(r.total)}`).join('\n')}{'\n'}
-                {unmatchedEntries.length > 0 ? `Unmatched stage values:\n${unmatchedEntries.map(([k, v]) => `  "${k}" × ${v}`).join('\n')}` : 'No unmatched stage values.'}{'\n'}
-                Headers: {d.headers.join(' | ')}
-              </div>
-            );
-          })()}
           <div style={{ overflowX: 'auto' }}>
           <table className={styles.grid} style={{ minWidth: 1400 }}>
             <thead>
