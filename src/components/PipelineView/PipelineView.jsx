@@ -237,9 +237,9 @@ export function PipelineView() {
     const liveCount = hasBfo && m?.count !== null && m?.count !== undefined ? m.count : null;
     const liveTotal = hasBfo && m?.total !== null && m?.total !== undefined ? m.total : null;
     return {
-      activeActual: acc.activeActual + (liveCount ?? Number(st.activeActual) || 0),
+      activeActual: acc.activeActual + (liveCount ?? (Number(st.activeActual) || 0)),
       activeGoal: acc.activeGoal + (Number(st.activeGoal) || 0),
-      pipelineActual: acc.pipelineActual + (liveTotal ?? Number(st.pipelineActual) || 0),
+      pipelineActual: acc.pipelineActual + (liveTotal ?? (Number(st.pipelineActual) || 0)),
       pipelineGoal: acc.pipelineGoal + (Number(st.pipelineGoal) || 0),
       targetProj: acc.targetProj + (Number(st.targetProj) || 0),
     };
