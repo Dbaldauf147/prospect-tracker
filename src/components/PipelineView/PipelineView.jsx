@@ -194,6 +194,7 @@ export function PipelineView() {
         {/* Pipeline metrics */}
         <div className={styles.section}>
           <div className={styles.sectionTitle}>PIPELINE METRICS</div>
+          <div className={styles.scrollX}>
           <table className={styles.grid}>
             <thead>
               <tr>
@@ -255,6 +256,7 @@ export function PipelineView() {
               </tr>
             </tbody>
           </table>
+          </div>
         </div>
 
         {/* Mid row — Client/Greenfield + Coverage + % not Quoted + Quota */}
