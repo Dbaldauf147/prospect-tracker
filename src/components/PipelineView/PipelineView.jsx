@@ -5,7 +5,7 @@
 
 import { Component, useEffect, useMemo, useState } from 'react';
 import styles from './PipelineView.module.css';
-import { dbGet, dbPut } from '../../utils/db';
+import { dbGet, dbPut, dbDelete } from '../../utils/db';
 
 const STORE = 'pipeline-dashboard';
 const KEY = 'current';
@@ -200,6 +200,60 @@ function sanitizeStages(savedStages) {
   });
 }
 
+// Outermost safety net for the entire Pipeline page. If anything below
+// the title bar throws — sanitizer, BFO aggregation, JSX render — we
+// show a "wipe Pipeline state and reload" button so the user can
+// recover without DevTools, hard-refresh, or clear-site-data.
+class PipelineRootBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+  componentDidCatch(error, info) {
+    console.error('PipelineView render crashed', error, info);
+  }
+  async resetAndReload() {
+    try { await dbDelete(STORE, KEY); } catch {}
+    window.location.reload();
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ padding: '1.25rem 1.5rem', fontFamily: 'inherit' }}>
+          <h2 style={{ marginTop: 0 }}>Pipeline failed to render</h2>
+          <p style={{ color: '#475569', fontSize: 14 }}>
+            Something in your saved Pipeline state crashed the page. The fix wipes
+            the saved <code>pipeline-dashboard</code> record from this browser and
+            reloads — your BFO Activity, Opps, and column prefs are not affected.
+          </p>
+          <div style={{ display: 'flex', gap: '0.5rem', margin: '0.75rem 0' }}>
+            <button
+              type="button"
+              onClick={() => this.resetAndReload()}
+              style={{ background: '#dc2626', color: '#fff', border: 'none', borderRadius: 6, padding: '0.45rem 0.9rem', fontSize: 13, fontFamily: 'inherit', cursor: 'pointer', fontWeight: 600 }}
+            >Wipe Pipeline state and reload</button>
+            <button
+              type="button"
+              onClick={() => this.setState({ error: null })}
+              style={{ background: 'transparent', color: '#334155', border: '1px solid #94a3b8', borderRadius: 6, padding: '0.45rem 0.9rem', fontSize: 13, fontFamily: 'inherit', cursor: 'pointer' }}
+            >Try again</button>
+          </div>
+          <details style={{ fontSize: 12, color: '#64748b', marginTop: '0.75rem' }}>
+            <summary style={{ cursor: 'pointer' }}>Error details</summary>
+            <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', marginTop: '0.5rem', background: '#f1f5f9', padding: '0.5rem', borderRadius: 4 }}>
+              {String(this.state.error?.stack || this.state.error?.message || this.state.error)}
+            </pre>
+          </details>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 // Render-time safety net for the PIPELINE METRICS table. If a single
 // row throws (e.g., saved data shaped unexpectedly after a schema
 // change) we show a recoverable fallback instead of blanking the whole
@@ -313,6 +367,14 @@ function compareClass(actual, goal, dir = 'higher-better') {
 }
 
 export function PipelineView() {
+  return (
+    <PipelineRootBoundary>
+      <PipelineViewInner />
+    </PipelineRootBoundary>
+  );
+}
+
+function PipelineViewInner() {
   const [state, setState] = useState(DEFAULT_STATE);
   const [hydrated, setHydrated] = useState(false);
   const [bfo, setBfo] = useState(null);
