@@ -13,7 +13,7 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured' });
   }
 
-  const { recent = [], notes = '', userName = '' } = req.body || {};
+  const { recent = [], notes = '', userName = '', pipelineSummary = '' } = req.body || {};
 
   // Build a compact context string from recent entries.
   const recentContext = (recent || [])
@@ -26,22 +26,26 @@ export default async function handler(req, res) {
     })
     .join('\n');
 
-  const systemPrompt = `You are a focused daily-planning coach helping ${userName || 'the user'} pick 3 to 5 high-leverage things to accomplish today.
+  const systemPrompt = `You are a sharp sales-pipeline coach helping ${userName || 'the user'} pick 3 to 4 high-leverage goals for today, anchored in their actual pipeline state.
+
+Your job:
+- Read the pipeline snapshot carefully. Find the highest-leverage moves: late-stage opps without a next step, oldest active opps, gaps to quota, gaps to weekly activity goals, smallest deals dragging average deal size down, etc.
+- Suggest 3 to 4 specific goals that could realistically be done in one workday and that move the pipeline forward.
+- Reference specific accounts/opportunity names when the data points to them.
+- Mix one quick win with one strategic move when possible.
+- Avoid generic advice like "stay focused" or "answer email."
 
 Output rules:
-- Return ONLY a JSON array of strings — no prose, no markdown fences.
-- Each string is one bullet, ≤ 12 words, action-oriented (start with a verb).
-- Prefer items that build on what was unfinished from recent days.
-- Avoid generic items ("answer email", "stay focused"); be specific where context allows.
-- Mix one quick win with one harder/strategic item.
-- 3 to 5 bullets total.`;
+- Return ONLY a JSON array of 3 to 4 strings. No prose, no markdown fences.
+- Each string is one goal, ≤ 16 words, action-oriented (start with a verb).
+- Reference specific opportunity / account names when the snapshot supports it.`;
 
   const userMessage = `Today is ${new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}.
 
-Recent days' planned bullets (✓ = done by 5 PM, (mid) = done by 1 PM only):
+${pipelineSummary ? `Current pipeline snapshot:\n${pipelineSummary}\n\n` : 'No pipeline snapshot was provided.\n\n'}Recent days' planned bullets (✓ = done by 5 PM, (mid) = done by 1 PM only):
 ${recentContext || '(no prior days on record)'}
 
-${notes ? `Notes from me about today / this week:\n${notes}\n\n` : ''}Suggest 3-5 focused bullets for today as a JSON array of strings.`;
+${notes ? `Notes from me about today / this week:\n${notes}\n\n` : ''}Suggest 3 to 4 focused goals for today as a JSON array of strings, prioritizing what the pipeline state suggests will move the needle.`;
 
   try {
     const resp = await fetch('https://api.anthropic.com/v1/messages', {
