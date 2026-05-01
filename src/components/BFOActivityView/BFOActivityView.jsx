@@ -65,6 +65,7 @@ export function BFOActivityView() {
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState('');
   const [flash, setFlash] = useState('');
+  const [colWidths, setColWidths] = useState({}); // { [headerName]: pixelWidth }
   const hydratedRef = useRef(false);
 
   useEffect(() => {
@@ -74,6 +75,7 @@ export function BFOActivityView() {
         const saved = await dbGet(STORE, KEY);
         if (cancelled) return;
         if (saved && saved.headers && saved.rows) setData(saved);
+        if (saved && saved.colWidths) setColWidths(saved.colWidths);
       } finally {
         hydratedRef.current = true;
       }
@@ -83,8 +85,25 @@ export function BFOActivityView() {
 
   useEffect(() => {
     if (!hydratedRef.current) return;
-    dbPut(STORE, data, KEY).catch(err => console.warn('BFO save failed', err));
-  }, [data]);
+    dbPut(STORE, { ...data, colWidths }, KEY).catch(err => console.warn('BFO save failed', err));
+  }, [data, colWidths]);
+
+  function startColResize(col, evt) {
+    evt.preventDefault();
+    evt.stopPropagation();
+    const startX = evt.clientX;
+    const startW = colWidths[col] ?? 160;
+    const onMove = (e) => {
+      const next = Math.max(60, startW + (e.clientX - startX));
+      setColWidths(w => ({ ...w, [col]: next }));
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
 
   function importPaste(text) {
     const parsed = parseTSV(text);
@@ -238,9 +257,18 @@ export function BFOActivityView() {
                     {data.headers.map(h => {
                       const isSorted = sortBy?.col === h;
                       return (
-                        <th key={h} onClick={() => toggleSort(h)} title="Click to sort">
-                          {h}
-                          {isSorted && <span className={styles.sortArrow}>{sortBy.dir === 'asc' ? '▲' : '▼'}</span>}
+                        <th key={h} style={{ width: colWidths[h] ?? 160 }}>
+                          <span className={styles.thInner}>
+                            <span onClick={() => toggleSort(h)} title="Click to sort" style={{ flex: 1 }}>
+                              {h}
+                              {isSorted && <span className={styles.sortArrow}>{sortBy.dir === 'asc' ? '▲' : '▼'}</span>}
+                            </span>
+                            <span
+                              className={styles.colResizer}
+                              onMouseDown={(e) => startColResize(h, e)}
+                              title="Drag to resize column"
+                            />
+                          </span>
                         </th>
                       );
                     })}

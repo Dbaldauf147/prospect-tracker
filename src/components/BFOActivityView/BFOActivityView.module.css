@@ -136,6 +136,7 @@
   width: 100%;
   border-collapse: collapse;
   font-size: 0.78rem;
+  table-layout: fixed;
 }
 
 .table th,
@@ -144,18 +145,44 @@
   padding: 0.35rem 0.55rem;
   vertical-align: top;
   text-align: left;
+  overflow: hidden;
 }
 
 .table th {
   background: #f8fafc;
   font-weight: 700;
   font-size: 0.74rem;
-  white-space: nowrap;
+  white-space: normal;
+  word-break: break-word;
   position: sticky;
   top: 0;
   z-index: 1;
-  cursor: pointer;
   user-select: none;
+}
+
+.thInner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.35rem;
+  position: relative;
+  cursor: pointer;
+}
+
+.colResizer {
+  position: absolute;
+  top: -0.4rem;
+  right: -0.55rem;
+  bottom: -0.4rem;
+  width: 6px;
+  cursor: col-resize;
+  user-select: none;
+  background: transparent;
+}
+
+.colResizer:hover {
+  background: var(--color-accent, #2563eb);
+  opacity: 0.4;
 }
 
 .table th:hover {
