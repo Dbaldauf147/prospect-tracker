@@ -27,25 +27,68 @@ function stageNumber(v) {
   return m ? Number(m[1]) : null;
 }
 
-// Aggregate BFO rows -> { 3: { count, total, avg, avgAge }, 4: …, 5: …, 6: … }.
+// Match BFO rows to the same Sales Stage labels the Excel formulas
+// hard-code, so the website's totals line up with the spreadsheet.
+//
+//   Stage 6 active count   = COUNTIFS(K, "6 - Negotiate to Win")
+//   Stage 5 active count   = COUNTIFS(K, "5 - Prepare & Bid")
+//   Stage 4 active count   = COUNTIFS(K, "4 - Influence and Develop")
+//   Stage 3 active count   = COUNTIFS(K, "3 - Qualify Opportunity")
+//   Stage 6 deal size      = AVERAGEIFS(U, U "<>80000", K "6 - Negotiate to Win")
+//   Other stages deal size = AVERAGEIFS(U, K "<stage label>")
+//   Total deal size        = AVERAGE(U)         (every numeric amount)
+//   Stage pipeline (sum)   = SUMIFS(U, K "<stage label>")
+const STAGE_LABEL = {
+  6: /^\s*6\s*-\s*negotiate\s*to\s*win\b/i,
+  5: /^\s*5\s*-\s*prepare\s*&?\s*bid\b/i,
+  4: /^\s*4\s*-\s*influence\s*and\s*develop\b/i,
+  3: /^\s*3\s*-\s*qualify\s*opportunity\b/i,
+};
+// Amount values that should be ignored when averaging Stage 6 deal
+// size (template default placeholder).
+const STAGE_6_DEAL_SIZE_EXCLUDE = 80000;
+
+function matchStage(stageVal) {
+  const s = String(stageVal ?? '');
+  for (const n of [3, 4, 5, 6]) {
+    if (STAGE_LABEL[n].test(s)) return n;
+  }
+  // Fallback: leading digit match if the label drifts (e.g. truncated).
+  const m = s.match(/^\s*([3-6])\b/);
+  return m ? Number(m[1]) : null;
+}
+
+// Aggregate BFO rows -> { 3: …, 4: …, 5: …, 6: …, all: { allAmtAvg } }.
 function bfoStageMetrics(bfo) {
-  const out = { 3: null, 4: null, 5: null, 6: null };
+  const out = { 3: null, 4: null, 5: null, 6: null, all: { allAmtAvg: null } };
   if (!bfo || !bfo.headers || !bfo.rows || bfo.rows.length === 0) return out;
-  // Find the relevant column names case-insensitively.
   const findCol = (re) => bfo.headers.find(h => re.test(h));
   const stageCol = findCol(/sales\s*stage|^stage$/i);
   const amountCol = findCol(/^amount$/i);
   const ageCol = findCol(/^age$/i);
   if (!stageCol) return out;
   const buckets = {};
+  let allAmtSum = 0;
+  let allAmtCount = 0;
   for (const r of bfo.rows) {
-    const n = stageNumber(r[stageCol]);
+    const n = matchStage(r[stageCol]);
     if (!n || n < 3 || n > 6) continue;
     const amt = amountCol ? parseMoney(r[amountCol]) : null;
     const age = ageCol ? Number(String(r[ageCol]).replace(/[^0-9.\-]/g, '')) : null;
-    if (!buckets[n]) buckets[n] = { count: 0, total: 0, ageSum: 0, ageCount: 0, amtCount: 0 };
+    if (!buckets[n]) buckets[n] = { count: 0, total: 0, ageSum: 0, ageCount: 0, amtSum: 0, amtCount: 0 };
     buckets[n].count += 1;
-    if (amt !== null) { buckets[n].total += amt; buckets[n].amtCount += 1; }
+    if (amt !== null) {
+      buckets[n].total += amt;
+      // Stage 6 averaging excludes the $80k template placeholder.
+      if (!(n === 6 && amt === STAGE_6_DEAL_SIZE_EXCLUDE)) {
+        buckets[n].amtSum += amt;
+        buckets[n].amtCount += 1;
+      }
+      // Total deal size (Excel row-8 formula) averages every amount,
+      // including stage 6's placeholder.
+      allAmtSum += amt;
+      allAmtCount += 1;
+    }
     if (Number.isFinite(age)) { buckets[n].ageSum += age; buckets[n].ageCount += 1; }
   }
   for (const n of [3, 4, 5, 6]) {
@@ -54,10 +97,11 @@ function bfoStageMetrics(bfo) {
     out[n] = {
       count: b.count,
       total: b.total,
-      avg: b.amtCount ? b.total / b.amtCount : null,
+      avg: b.amtCount ? b.amtSum / b.amtCount : null,
       avgAge: b.ageCount ? Math.round(b.ageSum / b.ageCount) : null,
     };
   }
+  out.all = { allAmtAvg: allAmtCount ? allAmtSum / allAmtCount : null };
   return out;
 }
 
@@ -268,8 +312,14 @@ export function PipelineView() {
 
   const dealSizeAvgGoal = stageTotals.pipelineGoal && stageTotals.activeGoal
     ? Math.round(stageTotals.pipelineGoal / stageTotals.activeGoal) : 0;
-  const dealSizeAvgActual = stageTotals.pipelineActual && stageTotals.activeActual
-    ? Math.round(stageTotals.pipelineActual / stageTotals.activeActual) : 0;
+  // Total Deal Size Actual matches the Excel `=AVERAGE(Activity!U2:U70)`
+  // — straight average of every Amount across all stages — when BFO
+  // data is loaded. Falls back to the weighted average otherwise.
+  const dealSizeAvgActual = hasBfo && bfoMetrics.all && typeof bfoMetrics.all.allAmtAvg === 'number'
+    ? Math.round(bfoMetrics.all.allAmtAvg)
+    : (stageTotals.pipelineActual && stageTotals.activeActual
+        ? Math.round(stageTotals.pipelineActual / stageTotals.activeActual)
+        : 0);
 
   const closedPctOfQuota = state.target ? state.closedYTD / state.target : 0;
 

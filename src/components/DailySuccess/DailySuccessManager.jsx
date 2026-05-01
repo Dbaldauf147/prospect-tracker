@@ -171,11 +171,6 @@ export function DailySuccessManager({ user }) {
     });
     setSuggestions([]);
   }
-      alert(err?.message || 'Suggestion request failed.');
-    } finally {
-      setSuggesting(false);
-    }
-  }
 
   async function toggleBullet(id, field) {
     const next = {
