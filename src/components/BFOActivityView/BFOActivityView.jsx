@@ -10,6 +10,7 @@ import { dbGet, dbPut, dbDelete } from '../../utils/db';
 
 const STORE = 'bfo-activity';
 const KEY = 'current';
+const PREFS_KEY = 'prefs';
 
 function parseTSV(text) {
   if (!text) return { headers: [], rows: [] };
@@ -75,10 +76,22 @@ export function BFOActivityView() {
     (async () => {
       try {
         const saved = await dbGet(STORE, KEY);
-        if (cancelled) return;
-        if (saved && saved.headers && saved.rows) setData(saved);
-        if (saved && saved.colWidths) setColWidths(saved.colWidths);
-        if (saved && saved.hiddenCols) setHiddenCols(saved.hiddenCols);
+        if (!cancelled && saved && saved.headers && saved.rows) {
+          setData({ headers: saved.headers, rows: saved.rows });
+        }
+        // Prefs in a separate key so Clear can wipe data without losing
+        // column widths or visibility.
+        const prefs = await dbGet(STORE, PREFS_KEY);
+        if (!cancelled && prefs) {
+          if (prefs.colWidths) setColWidths(prefs.colWidths);
+          if (prefs.hiddenCols) setHiddenCols(prefs.hiddenCols);
+        }
+        // Back-compat: if prefs are still embedded in the legacy
+        // combined record, lift them out.
+        if (!cancelled && !prefs && saved) {
+          if (saved.colWidths) setColWidths(saved.colWidths);
+          if (saved.hiddenCols) setHiddenCols(saved.hiddenCols);
+        }
       } finally {
         hydratedRef.current = true;
       }
@@ -88,8 +101,13 @@ export function BFOActivityView() {
 
   useEffect(() => {
     if (!hydratedRef.current) return;
-    dbPut(STORE, { ...data, colWidths, hiddenCols }, KEY).catch(err => console.warn('BFO save failed', err));
-  }, [data, colWidths, hiddenCols]);
+    dbPut(STORE, { headers: data.headers, rows: data.rows }, KEY).catch(err => console.warn('BFO data save failed', err));
+  }, [data]);
+
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    dbPut(STORE, { colWidths, hiddenCols }, PREFS_KEY).catch(err => console.warn('BFO prefs save failed', err));
+  }, [colWidths, hiddenCols]);
 
   function toggleHidden(col) {
     setHiddenCols(h => {

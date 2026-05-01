@@ -254,7 +254,10 @@ export function PipelineView() {
     })();
     // Refresh BFO data whenever the user navigates back to this tab.
     function onFocus() {
-      dbGet(BFO_STORE, BFO_KEY).then(b => { if (b) setBfo(b); }).catch(() => {});
+      // Always reflect the current BFO record — including its absence
+      // (e.g. user clicked Clear on the BFO tab). Without the explicit
+      // null fallback, deletions wouldn't propagate to this view.
+      dbGet(BFO_STORE, BFO_KEY).then(b => setBfo(b || null)).catch(() => setBfo(null));
     }
     window.addEventListener('focus', onFocus);
     return () => { cancelled = true; window.removeEventListener('focus', onFocus); };
@@ -524,37 +527,32 @@ export function PipelineView() {
         <div className={styles.bottomRow}>
           <div className={styles.section}>
             <div className={styles.sectionTitle}>Smallest 5 &amp; 6 Deals</div>
-            {bfoSmallestDeals && bfoSmallestDeals.length > 0 ? (
-              <table className={styles.tinyTable} title="Auto-fed from BFO Activity. Re-paste BFO data to refresh.">
-                <thead>
-                  <tr>
-                    <th>Account Name</th>
-                    <th>Opportunity Name</th>
-                    <th>Amount USD</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {bfoSmallestDeals.map((r, i) => (
+            <table className={styles.tinyTable} title="Auto-fed from BFO Activity. Paste BFO rows on the BFO Activity tab to populate.">
+              <thead>
+                <tr>
+                  <th>Account Name</th>
+                  <th>Opportunity Name</th>
+                  <th>Amount USD</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(bfoSmallestDeals && bfoSmallestDeals.length > 0) ? (
+                  bfoSmallestDeals.map((r, i) => (
                     <tr key={i}>
                       <td>{r.account}</td>
                       <td>{r.oppName}</td>
                       <td>{fmtMoney(r.amount)}</td>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : (
-              <EditableList
-                rows={state.smallestDeals}
-                setRows={(rows) => setField('smallestDeals', rows)}
-                cols={[
-                  { key: 'account', label: 'Account Name', kind: 'text' },
-                  { key: 'oppName', label: 'Opportunity Name', kind: 'text' },
-                  { key: 'amount', label: 'Amount USD', kind: 'money' },
-                ]}
-                newRow={() => ({ id: `d_${Date.now()}`, account: '', oppName: '', amount: 0 })}
-              />
-            )}
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={3} style={{ color: '#94a3b8', fontStyle: 'italic', textAlign: 'center', padding: '0.6rem' }}>
+                      No BFO data — paste an export on the BFO Activity tab.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
 
           <div className={styles.section}>
