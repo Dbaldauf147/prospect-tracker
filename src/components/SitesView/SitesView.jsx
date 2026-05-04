@@ -42,6 +42,29 @@ function pickZipColumn(headers) {
     || headers[0];
 }
 
+// Auto-detect every Utility-Lookup target field on a fresh sites
+// header list. Ordered patterns inside each detectColumn call go from
+// most-specific to most-generic so that e.g. "Annual Electric Spend ($)"
+// wins over "Electricity" when picking the cost column.
+function detectSitesMapping(headers) {
+  if (!headers.length) return { siteName: '', zip: '' };
+  const siteName = headers.find(h => /\b(site\s*name|site|property|location|facility|building|name)\b/i.test(String(h))) || headers[0];
+  return {
+    siteName,
+    zip: pickZipColumn(headers),
+    electric: detectColumn(headers, [/electric.*kwh|kwh.*electric/i, /annual.*electric.*kwh/i, /annual.*kwh/i, /^kwh$/i, /electric.*usage/i, /electric.*consumption/i]) || '',
+    gas: detectColumn(headers, [/gas.*therm|therm.*gas/i, /annual.*gas.*(therm|dth|mmbtu)/i, /natural\s*gas.*usage/i, /gas.*usage/i, /gas.*consumption/i, /^therms?$/i, /^dth$/i, /^mmbtu$/i]) || '',
+    electricCost: detectColumn(headers, [/electric.*(actual|annual).*(cost|spend|amount|\$)/i, /(actual|annual).*electric.*(cost|spend)/i, /electric.*cost/i, /electric.*spend/i, /electric.*\$/i]) || '',
+    gasCost: detectColumn(headers, [/gas.*(actual|annual).*(cost|spend|amount|\$)/i, /(actual|annual).*gas.*(cost|spend)/i, /gas.*cost/i, /gas.*spend/i, /gas.*\$/i]) || '',
+    electricSupplier: detectColumn(headers, [/electric.*(supplier|provider|vendor)/i, /(supplier|provider|vendor).*electric/i]) || '',
+    gasSupplier: detectColumn(headers, [/gas.*(supplier|provider|vendor)/i, /(supplier|provider|vendor).*gas/i]) || '',
+    electricStart: detectColumn(headers, [/electric.*contract.*start/i, /electric.*start.*date/i, /electric.*begin/i]) || '',
+    electricEnd: detectColumn(headers, [/electric.*contract.*end/i, /electric.*(end|expir).*date/i, /electric.*term.*end/i]) || '',
+    gasStart: detectColumn(headers, [/gas.*contract.*start/i, /gas.*start.*date/i, /gas.*begin/i]) || '',
+    gasEnd: detectColumn(headers, [/gas.*contract.*end/i, /gas.*(end|expir).*date/i, /gas.*term.*end/i]) || '',
+  };
+}
+
 // Classify a utility provider as "Regulated" (monopoly market — usually
 // municipally owned, public power, or a cooperative) or "Deregulated"
 // (competitive retail market). Based on the provider name only, since
@@ -113,6 +136,18 @@ export function SitesView({ settings, updateSettings } = {}) {
   const [gasColOverride, setGasColOverride] = useState(null);
   const [siteNameOverride, setSiteNameOverride] = useState(null);
   const [zipColOverride, setZipColOverride] = useState(null);
+  // Optional supplier / contract / actual-cost overrides — captured
+  // from the column-mapping popup. Each one is the file header that
+  // should fill the corresponding column on the Utility Lookup table,
+  // or null when the user left it on Ignore.
+  const [electricCostOverride, setElectricCostOverride] = useState(null);
+  const [gasCostOverride, setGasCostOverride] = useState(null);
+  const [electricSupplierOverride, setElectricSupplierOverride] = useState(null);
+  const [gasSupplierOverride, setGasSupplierOverride] = useState(null);
+  const [electricStartOverride, setElectricStartOverride] = useState(null);
+  const [electricEndOverride, setElectricEndOverride] = useState(null);
+  const [gasStartOverride, setGasStartOverride] = useState(null);
+  const [gasEndOverride, setGasEndOverride] = useState(null);
   // Column-mapping confirmation popup for the Sites File upload —
   // null when no upload is mid-flight; otherwise carries the parsed
   // rows + headers + auto-detected mapping the user can adjust before
@@ -171,21 +206,12 @@ export function SitesView({ settings, updateSettings } = {}) {
         preferSheetName: /site\s*list|^\s*sites?\s*$/i,
       });
       const headers = rows.length ? Object.keys(rows[0]) : [];
-      const detectedSiteName = headers.find(h => /\b(site\s*name|site|property|location|facility|building|name)\b/i.test(String(h))) || headers[0] || '';
-      const detectedZip = pickZipColumn(headers);
-      const detectedElectric = detectColumn(headers, [/electric.*kwh|kwh.*electric/i, /annual.*electric/i, /electric/i, /kwh/i]);
-      const detectedGas = detectColumn(headers, [/gas.*therm|therm.*gas/i, /annual.*gas/i, /natural\s*gas/i, /gas/i, /therm/i, /mmbtu/i]);
       setSitesMappingModal({
         rows,
         headers,
         sheetName,
         fileName: file.name,
-        mapping: {
-          siteName: detectedSiteName,
-          zip: detectedZip,
-          electric: detectedElectric || '',
-          gas: detectedGas || '',
-        },
+        mapping: detectSitesMapping(headers),
       });
     } catch (err) {
       setUploadError(err?.message || 'Failed to read the sites file');
@@ -203,10 +229,14 @@ export function SitesView({ settings, updateSettings } = {}) {
     try {
       // Drop columns the user didn't assign a target — otherwise every
       // pass-through column ends up rendered on the Utility Lookup
-      // table even though the user only wanted four fields.
-      const mappedHeaders = ['siteName', 'zip', 'electric', 'gas']
-        .map(k => mapping[k])
-        .filter(Boolean);
+      // table even though the user only wanted these specific fields.
+      const TARGET_KEYS = [
+        'siteName', 'zip', 'electric', 'gas',
+        'electricCost', 'gasCost',
+        'electricSupplier', 'gasSupplier',
+        'electricStart', 'electricEnd', 'gasStart', 'gasEnd',
+      ];
+      const mappedHeaders = TARGET_KEYS.map(k => mapping[k]).filter(Boolean);
       const keep = new Set(mappedHeaders);
       const filteredRows = keep.size === 0
         ? rows
@@ -221,6 +251,14 @@ export function SitesView({ settings, updateSettings } = {}) {
       setZipColOverride(mapping.zip || null);
       setElectricColOverride(mapping.electric || '__none__');
       setGasColOverride(mapping.gas || '__none__');
+      setElectricCostOverride(mapping.electricCost || null);
+      setGasCostOverride(mapping.gasCost || null);
+      setElectricSupplierOverride(mapping.electricSupplier || null);
+      setGasSupplierOverride(mapping.gasSupplier || null);
+      setElectricStartOverride(mapping.electricStart || null);
+      setElectricEndOverride(mapping.electricEnd || null);
+      setGasStartOverride(mapping.gasStart || null);
+      setGasEndOverride(mapping.gasEnd || null);
       if (sheetName && !/site/i.test(sheetName)) {
         setUploadError(`No tab named "Site List" found — loaded sheet "${sheetName}" instead (${rows.length.toLocaleString()} rows). Rename the tab or drop a different file if that's not what you wanted.`);
       }
@@ -273,22 +311,13 @@ export function SitesView({ settings, updateSettings } = {}) {
       headers.forEach((h, i) => { obj[h] = (cells[i] ?? '').trim(); });
       return obj;
     });
-    const detectedSiteName = headers.find(h => /\b(site\s*name|site|property|location|facility|building|name)\b/i.test(String(h))) || headers[0] || '';
-    const detectedZip = pickZipColumn(headers);
-    const detectedElectric = detectColumn(headers, [/electric.*kwh|kwh.*electric/i, /annual.*electric/i, /electric/i, /kwh/i]);
-    const detectedGas = detectColumn(headers, [/gas.*therm|therm.*gas/i, /annual.*gas/i, /natural\s*gas/i, /gas/i, /therm/i, /mmbtu/i]);
     setUploadError('');
     setSitesMappingModal({
       rows,
       headers,
       sheetName: '',
       fileName: `(pasted ${rows.length.toLocaleString()} row${rows.length === 1 ? '' : 's'})`,
-      mapping: {
-        siteName: detectedSiteName,
-        zip: detectedZip,
-        electric: detectedElectric || '',
-        gas: detectedGas || '',
-      },
+      mapping: detectSitesMapping(headers),
     });
   }
 
@@ -495,6 +524,28 @@ export function SitesView({ settings, updateSettings } = {}) {
     return { value: null, sourceHeader: null };
   };
 
+  // Set of every utility name we know about (collected from the
+  // uploaded utility-rates lookup). Used to decide whether a vendor
+  // string from the sites file is a regulated utility (→ goes in the
+  // Utility column) or a competitive retailer (→ Supplier column).
+  const knownUtilityNames = useMemo(() => {
+    const set = new Set();
+    if (!utility?.zipMap) return set;
+    const normalize = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    for (const entry of Object.values(utility.zipMap)) {
+      if (entry?.electric) set.add(normalize(entry.electric));
+      if (entry?.gas) set.add(normalize(entry.gas));
+      if (entry?.water) set.add(normalize(entry.water));
+    }
+    return set;
+  }, [utility]);
+  const isKnownUtility = (name) => {
+    if (!name) return false;
+    const norm = String(name).toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (!norm) return false;
+    return knownUtilityNames.has(norm);
+  };
+
   const rows = useMemo(() => {
     return cleanSitesData.map((r, i) => {
       const zip = zipColumn ? normalizeZip(r[zipColumn]) : '';
@@ -504,15 +555,36 @@ export function SitesView({ settings, updateSettings } = {}) {
       const gasRate = state ? stateRate(state, 'gas') : null;
       const elec = pickFirstConsumption(r, consumption.electric, toKwh);
       const gas = pickFirstConsumption(r, consumption.gas, toTherms);
-      const electricCost = electricRate != null && elec.value != null ? electricRate * elec.value : null;
-      const gasCost = gasRate != null && gas.value != null ? gasRate * gas.value : null;
+      const estElectricCost = electricRate != null && elec.value != null ? electricRate * elec.value : null;
+      const estGasCost = gasRate != null && gas.value != null ? gasRate * gas.value : null;
+      // Actual cost columns from the file when the user mapped them.
+      // Strings like "$1,234.56" parse cleanly; null when blank or
+      // unparseable so the per-row total can fall back to the rate
+      // estimate.
+      const parseDollar = (v) => {
+        if (v == null || v === '') return null;
+        const n = Number(String(v).replace(/[^0-9.\-]/g, ''));
+        return Number.isFinite(n) && n !== 0 ? n : null;
+      };
+      const actualElectricCost = electricCostOverride ? parseDollar(r[electricCostOverride]) : null;
+      const actualGasCost = gasCostOverride ? parseDollar(r[gasCostOverride]) : null;
+      const electricCost = actualElectricCost ?? estElectricCost;
+      const gasCost = actualGasCost ?? estGasCost;
       const totalCost = (electricCost ?? 0) + (gasCost ?? 0);
+      // Vendor column from the sites file. If it names a utility we
+      // already know about (from the loaded utility-rates lookup) it
+      // replaces the zip-derived utility; if it doesn't, it falls
+      // through to the Supplier column (competitive retailer).
+      const electricVendorRaw = electricSupplierOverride ? String(r[electricSupplierOverride] || '').trim() : '';
+      const gasVendorRaw = gasSupplierOverride ? String(r[gasSupplierOverride] || '').trim() : '';
+      const electricVendorIsUtility = electricVendorRaw && isKnownUtility(electricVendorRaw);
+      const gasVendorIsUtility = gasVendorRaw && isKnownUtility(gasVendorRaw);
       return {
         ...r,
         id: i,
         __zipNorm__: zip,
-        __electric__: match?.electric,
-        __gas__: match?.gas,
+        __electric__: electricVendorIsUtility ? electricVendorRaw : match?.electric,
+        __gas__: gasVendorIsUtility ? gasVendorRaw : match?.gas,
         __water__: match?.water,
         __city__: match?.city,
         __country__: match?.country,
@@ -525,11 +597,21 @@ export function SitesView({ settings, updateSettings } = {}) {
         __gasRate__: gasRate,
         __electricCost__: electricCost,
         __gasCost__: gasCost,
+        __electricCostActual__: actualElectricCost,
+        __gasCostActual__: actualGasCost,
+        __electricCostEstimated__: estElectricCost,
+        __gasCostEstimated__: estGasCost,
         __totalCost__: (electricCost != null || gasCost != null) ? totalCost : null,
-        __matched__: !!match,
+        __electricSupplier__: electricVendorIsUtility ? null : (electricVendorRaw || null),
+        __gasSupplier__: gasVendorIsUtility ? null : (gasVendorRaw || null),
+        __electricStart__: electricStartOverride ? r[electricStartOverride] : null,
+        __electricEnd__: electricEndOverride ? r[electricEndOverride] : null,
+        __gasStart__: gasStartOverride ? r[gasStartOverride] : null,
+        __gasEnd__: gasEndOverride ? r[gasEndOverride] : null,
+        __matched__: !!match || electricVendorIsUtility || gasVendorIsUtility,
       };
     });
-  }, [cleanSitesData, zipColumn, utility, consumption]);
+  }, [cleanSitesData, zipColumn, utility, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, knownUtilityNames]);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return rows;
@@ -656,10 +738,18 @@ export function SitesView({ settings, updateSettings } = {}) {
         if (val == null) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
         const text = formatMoney(val);
         let title = label;
-        if (key === 'electricCost' && row.__kwh__ != null) {
-          title = `${row.__kwh__.toLocaleString()} kWh × ${formatRate(row.__electricRate__, 'electric')}${row.__kwhSource__ ? ` · from "${row.__kwhSource__}"` : ''}`;
+        const fromActual = (key === 'electricCost' && row.__electricCostActual__ != null)
+          || (key === 'gasCost' && row.__gasCostActual__ != null);
+        if (fromActual) {
+          title = `Actual cost from your file. Estimate would be ${
+            key === 'electricCost'
+              ? formatMoney(row.__electricCostEstimated__ || 0)
+              : formatMoney(row.__gasCostEstimated__ || 0)
+          }.`;
+        } else if (key === 'electricCost' && row.__kwh__ != null) {
+          title = `Estimated: ${row.__kwh__.toLocaleString()} kWh × ${formatRate(row.__electricRate__, 'electric')}${row.__kwhSource__ ? ` · from "${row.__kwhSource__}"` : ''}`;
         } else if (key === 'gasCost' && row.__therms__ != null) {
-          title = `${Math.round(row.__therms__).toLocaleString()} therms × ${formatRate(row.__gasRate__, 'gas')}${row.__thermsSource__ ? ` · from "${row.__thermsSource__}"` : ''}`;
+          title = `Estimated: ${Math.round(row.__therms__).toLocaleString()} therms × ${formatRate(row.__gasRate__, 'gas')}${row.__thermsSource__ ? ` · from "${row.__thermsSource__}"` : ''}`;
         } else if (key === 'totalCost') {
           const parts = [];
           if (row.__electricCost__ != null) parts.push(`Electric ${formatMoney(row.__electricCost__)}`);
@@ -709,19 +799,59 @@ export function SitesView({ settings, updateSettings } = {}) {
         },
       };
     };
+    // Existing supplier (competitive retailer) — only populated when
+    // the file's vendor column held a name we don't recognize as a
+    // utility from the loaded utility-rates lookup.
+    const makeSupplierCol = (commodity, label) => ({
+      key: `${commodity}_supplier`,
+      label,
+      defaultWidth: 160,
+      render: (row) => {
+        const val = commodity === 'electric' ? row.__electricSupplier__ : row.__gasSupplier__;
+        if (!val) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
+        return (
+          <span
+            title={`${label}: ${val} (not matched to a known utility, so treated as a competitive retailer)`}
+            style={{ background: '#F5F3FF', border: '1px solid #C4B5FD', color: '#5B21B6', padding: '1px 8px', borderRadius: 999, fontSize: '0.7rem', fontWeight: 600, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block' }}
+          >{String(val)}</span>
+        );
+      },
+      exportValue: (row) => (commodity === 'electric' ? row.__electricSupplier__ : row.__gasSupplier__) || '',
+    });
+    // Contract dates from the file — pass through as text since the
+    // file may already contain a friendly format the user prefers.
+    const makeDateCol = (key, label, color) => ({
+      key,
+      label,
+      defaultWidth: 120,
+      render: (row) => {
+        const val = row[`__${key}__`];
+        if (val == null || val === '') return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
+        return (
+          <span style={{ fontSize: '0.72rem', color, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{String(val)}</span>
+        );
+      },
+      exportValue: (row) => row[`__${key}__`] ?? '',
+    });
     return [
       ...base,
       makeStateCol(),
       makeUtilityCol('electric', 'Electric Utility', { bg: '#FEF3C7', border: '#FCD34D', text: '#92400E' }),
+      makeSupplierCol('electric', 'Electric Supplier'),
       makeMarketCol('electric', 'Electric Market'),
       makeConsumptionCol('electric'),
       makeRateCol('electric', 'Electric Rate'),
-      makeCostCol('electricCost', 'Electric Cost', { bg: '#FEF3C7', border: '#FCD34D', text: '#92400E' }),
+      makeCostCol('electricCost', 'Total Electric Cost', { bg: '#FEF3C7', border: '#FCD34D', text: '#92400E' }),
+      makeDateCol('electricStart', 'Electric Contract Start', '#92400E'),
+      makeDateCol('electricEnd', 'Electric Contract End', '#92400E'),
       makeUtilityCol('gas', 'Gas Utility', { bg: '#DBEAFE', border: '#93C5FD', text: '#1E3A8A' }),
+      makeSupplierCol('gas', 'Gas Supplier'),
       makeMarketCol('gas', 'Gas Market'),
       makeConsumptionCol('gas'),
       makeRateCol('gas', 'Gas Rate'),
-      makeCostCol('gasCost', 'Gas Cost', { bg: '#DBEAFE', border: '#93C5FD', text: '#1E3A8A' }),
+      makeCostCol('gasCost', 'Total Natural Gas Cost', { bg: '#DBEAFE', border: '#93C5FD', text: '#1E3A8A' }),
+      makeDateCol('gasStart', 'Gas Contract Start', '#1E3A8A'),
+      makeDateCol('gasEnd', 'Gas Contract End', '#1E3A8A'),
       makeCostCol('totalCost', 'Total Est. Cost', { bg: '#EDE9FE', border: '#C4B5FD', text: '#5B21B6' }),
       makeUtilityCol('water', 'Water Utility', { bg: '#DCFCE7', border: '#86EFAC', text: '#166534' }),
       makeLocationCol('city', 'Lookup City'),
@@ -1497,27 +1627,35 @@ export function SitesView({ settings, updateSettings } = {}) {
           const TARGET_FIELDS = [
             { key: 'siteName', label: 'Site Name', required: true, hint: 'Row label / blank-row filter.' },
             { key: 'zip', label: 'Zip / Postal Code', required: true, hint: 'Drives the utility lookup.' },
-            { key: 'electric', label: 'Electric Consumption (kWh)', required: false, hint: 'Annual electric usage for cost estimates.' },
-            { key: 'gas', label: 'Gas Consumption (therms / MMBtu / Dth)', required: false, hint: 'Annual gas usage for cost estimates.' },
+            { key: 'electric', label: 'Annual Electric (kWh)', required: false, hint: 'Annual electric usage for cost estimates.' },
+            { key: 'gas', label: 'Annual Gas (therms / MMBtu / Dth)', required: false, hint: 'Annual gas usage for cost estimates.' },
+            { key: 'electricCost', label: 'Total Electric Cost ($)', required: false, hint: 'Actual annual electric spend. Used in place of the kWh × rate estimate when present.' },
+            { key: 'gasCost', label: 'Total Natural Gas Cost ($)', required: false, hint: 'Actual annual gas spend. Used in place of the Dth × rate estimate when present.' },
+            { key: 'electricSupplier', label: 'Electric Supplier / Vendor', required: false, hint: 'If the value matches a known utility from the rates file it goes in the Electric Utility column; otherwise it lands in the Supplier column.' },
+            { key: 'electricStart', label: 'Electric Contract Start', required: false, hint: 'Start date of the existing electric supply contract.' },
+            { key: 'electricEnd', label: 'Electric Contract End', required: false, hint: 'End / expiration date of the existing electric supply contract.' },
+            { key: 'gasSupplier', label: 'Gas Supplier / Vendor', required: false, hint: 'If the value matches a known utility from the rates file it goes in the Gas Utility column; otherwise it lands in the Supplier column.' },
+            { key: 'gasStart', label: 'Gas Contract Start', required: false, hint: 'Start date of the existing gas supply contract.' },
+            { key: 'gasEnd', label: 'Gas Contract End', required: false, hint: 'End / expiration date of the existing gas supply contract.' },
           ];
           // The full set of columns that show up on the Utility Lookup
-          // table after import — split into the four mapped inputs
-          // above and the auto-derived / lookup-driven columns the
-          // page generates for free.
+          // table after import — split into the mapped inputs above
+          // and the auto-derived / lookup-driven columns the page
+          // generates for free.
           const DERIVED_COLUMNS = [
             { name: 'State', from: 'looked up from Zip' },
-            { name: 'Electric Utility', from: 'utility-rates file × Zip' },
+            { name: 'Electric Utility', from: 'rates file × Zip (or Supplier when known)' },
             { name: 'Electric Market', from: 'regulated vs. deregulated rule' },
             { name: 'Electric Rate', from: 'state commercial average' },
-            { name: 'Electric Cost', from: 'kWh × rate' },
-            { name: 'Gas Utility', from: 'utility-rates file × Zip' },
+            { name: 'Total Electric Cost', from: 'actual cost when mapped, else kWh × rate' },
+            { name: 'Gas Utility', from: 'rates file × Zip (or Supplier when known)' },
             { name: 'Gas Market', from: 'regulated vs. deregulated rule' },
             { name: 'Gas Rate', from: 'state commercial average' },
-            { name: 'Gas Cost', from: 'Dth × rate' },
+            { name: 'Total Natural Gas Cost', from: 'actual cost when mapped, else Dth × rate' },
             { name: 'Total Est. Cost', from: 'Electric + Gas cost' },
-            { name: 'Water Utility', from: 'utility-rates file × Zip' },
-            { name: 'Lookup City', from: 'utility-rates file × Zip' },
-            { name: 'Lookup Country', from: 'utility-rates file × Zip' },
+            { name: 'Water Utility', from: 'rates file × Zip' },
+            { name: 'Lookup City', from: 'rates file × Zip' },
+            { name: 'Lookup Country', from: 'rates file × Zip' },
           ];
           const targetForHeader = {};
           for (const t of TARGET_FIELDS) {
