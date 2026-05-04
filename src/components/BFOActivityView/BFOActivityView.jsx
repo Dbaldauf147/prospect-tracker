@@ -18,13 +18,12 @@ function parseTSV(text) {
   if (lines.length === 0) return { headers: [], rows: [] };
   const split = (line) => line.split('\t');
   // BFO copies the active sort indicator into the header text — e.g.
-  // "Age Sorted Descending" or "Account Sorted Ascending" — which
-  // breaks downstream column-name lookups (Daily Success matches
-  // /^account/i, /opportunity name/i, etc.). Strip the suffix so the
-  // canonical column name survives the paste.
+  // "Age Sorted Descending" or "Close DateSorted Ascending" (note: BFO
+  // sometimes drops the space between the column name and "Sorted").
+  // Strip the suffix so the canonical column name survives the paste.
   const cleanHeader = (h) => String(h || '')
     .replace(/\s*[▲▼↑↓]\s*$/, '')
-    .replace(/\s+sorted\s+(ascending|descending)\s*$/i, '')
+    .replace(/\s*sorted\s+(ascending|descending)\s*$/i, '')
     .trim();
   const rawHeaders = split(lines[0]).map(cleanHeader);
   // Make headers unique
@@ -92,7 +91,7 @@ export function BFOActivityView() {
           // requiring a fresh paste.
           const cleanHeader = (h) => String(h || '')
             .replace(/\s*[▲▼↑↓]\s*$/, '')
-            .replace(/\s+sorted\s+(ascending|descending)\s*$/i, '')
+            .replace(/\s*sorted\s+(ascending|descending)\s*$/i, '')
             .trim();
           const cleaned = saved.headers.map(cleanHeader);
           const needsRemap = cleaned.some((h, i) => h !== saved.headers[i]);
