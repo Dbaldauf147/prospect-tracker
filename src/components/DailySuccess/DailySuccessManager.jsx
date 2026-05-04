@@ -47,7 +47,33 @@ async function buildPipelineSummary() {
   try {
     const pipeline = await dbGet('pipeline-dashboard', 'current');
     const bfo = await dbGet('bfo-activity', 'current');
-    if (!pipeline && !bfo) return '';
+    // Load Opps cache early so we can cross-link each BFO opp to
+    // per-deal data (next steps / notes the user keeps on the Opps
+    // tab against the BFO Opportunity Name in the "BFO Link" column).
+    const opps = await dbGet('opps-cache', 'data');
+    if (!pipeline && !bfo && !opps) return '';
+
+    const oppsRecords = (opps && Array.isArray(opps.records)) ? opps.records : [];
+    const oppsByBfoLink = new Map();
+    for (const r of oppsRecords) {
+      const k = String(r['BFO Link'] || '').trim().toLowerCase();
+      if (k) oppsByBfoLink.set(k, r);
+    }
+    // Returns the first populated next-step-like field on the Opps
+    // record matched by BFO Opportunity Name, or null when nothing is
+    // recorded. Tries explicit Next Step columns first, then Notes /
+    // Waiting On — wherever the user actually documents the next move.
+    function findOppsNextStep(bfoOppName) {
+      const k = String(bfoOppName || '').trim().toLowerCase();
+      if (!k) return null;
+      const rec = oppsByBfoLink.get(k);
+      if (!rec) return null;
+      for (const field of ['Next Step', 'Next Steps', 'Notes', 'Waiting On']) {
+        const v = String(rec[field] || '').trim();
+        if (v && v !== '-' && v !== '#N/A') return { field, text: v };
+      }
+      return null;
+    }
 
     const lines = [];
     // Goals + quota.
@@ -95,35 +121,48 @@ async function buildPipelineSummary() {
       // Top 5 oldest opps overall — likely candidates for follow-up.
       if (acctCol && ageCol) {
         const oldest = bfo.rows
-          .map(r => ({
-            account: r[acctCol],
-            opp: oppCol ? r[oppCol] : '',
-            stage: r[stageCol] || '',
-            age: Number(String(r[ageCol]).replace(/[^0-9.\-]/g, '')),
-            amount: amtCol ? parseMoney(r[amtCol]) : null,
-            nextStep: nextStepCol ? r[nextStepCol] : '',
-          }))
+          .map(r => {
+            const oppName = oppCol ? r[oppCol] : '';
+            const bfoNext = nextStepCol ? String(r[nextStepCol] || '').trim() : '';
+            const oppsHit = !bfoNext ? findOppsNextStep(oppName) : null;
+            return {
+              account: r[acctCol],
+              opp: oppName,
+              stage: r[stageCol] || '',
+              age: Number(String(r[ageCol]).replace(/[^0-9.\-]/g, '')),
+              amount: amtCol ? parseMoney(r[amtCol]) : null,
+              nextStep: bfoNext,
+              oppsNextStep: oppsHit, // { field, text } | null
+            };
+          })
           .filter(o => Number.isFinite(o.age) && matchStage(o.stage) >= 3)
           .sort((a, b) => b.age - a.age)
           .slice(0, 5);
         if (oldest.length) {
           lines.push('Oldest active opportunities (potential follow-up targets):');
           for (const o of oldest) {
-            const next = o.nextStep ? ` · next: "${String(o.nextStep).slice(0, 60)}"` : '';
+            let next = '';
+            if (o.nextStep) next = ` · next: "${String(o.nextStep).slice(0, 60)}"`;
+            else if (o.oppsNextStep) next = ` · Opps ${o.oppsNextStep.field}: "${o.oppsNextStep.text.slice(0, 60)}"`;
             lines.push(`  • ${o.account} — ${o.stage} — ${o.age}d${typeof o.amount === 'number' ? ` · ${fmt$(o.amount)}` : ''}${next}`);
           }
         }
 
-        // Stage 5/6 opps with no Next Step set — at risk.
+        // Stage 5/6 opps with NO next step in either BFO or the
+        // matched Opps record — these are the genuinely uncovered ones.
         if (nextStepCol) {
           const stuck = bfo.rows
             .filter(r => {
               const s = matchStage(r[stageCol]);
-              return (s === 5 || s === 6) && !String(r[nextStepCol] || '').trim();
+              if (s !== 5 && s !== 6) return false;
+              if (String(r[nextStepCol] || '').trim()) return false;
+              const oppName = oppCol ? r[oppCol] : '';
+              if (findOppsNextStep(oppName)) return false;
+              return true;
             })
             .slice(0, 5);
           if (stuck.length) {
-            lines.push(`Late-stage opps with no Next Step (action needed):`);
+            lines.push(`Late-stage opps with no Next Step in BFO or Opps (action needed):`);
             for (const r of stuck) {
               lines.push(`  • ${r[acctCol]} — ${r[stageCol]}${amtCol ? ` · ${fmt$(parseMoney(r[amtCol]))}` : ''}`);
             }
@@ -136,7 +175,6 @@ async function buildPipelineSummary() {
 
     // Opps tab — granular per-deal data with Stage / Scope / Quoted
     // Amount / Last Client Heard / Follow Up / Notes.
-    const opps = await dbGet('opps-cache', 'data');
     if (opps && Array.isArray(opps.records) && opps.records.length > 0) {
       const ACTIVE_STAGES = new Set(['Lead', 'Not Started', 'Qualifying', 'Quoting', 'Quoted', 'Verbal']);
       const QUOTING_STAGES = new Set(['Quoting', 'Quoted', 'Verbal']);

@@ -216,8 +216,8 @@ export function OppsView({ settings, updateSettings } = {}) {
       })
       .map(h => ({
         key: h,
-        label: h,
-        defaultWidth: h === 'Notes' ? 250 : h === 'Account' ? 200 : h === 'BFO Link' ? 180 : h.length > 20 ? 160 : 120,
+        label: h === 'BFO Link' ? 'BFO Opportunity Name' : h,
+        defaultWidth: h === 'Notes' ? 250 : h === 'Account' ? 200 : h === 'BFO Link' ? 220 : h.length > 20 ? 160 : 120,
         sticky: h === 'Account',
         render: h === 'BFO Link' ? (row) => {
           const url = row[h];

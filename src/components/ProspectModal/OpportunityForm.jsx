@@ -2401,7 +2401,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                 <input
                   style={sx.input}
                   autoFocus
-                  placeholder="Search by Account, Contact, BFO Link, Scope, Stage…"
+                  placeholder="Search by Account, Contact, BFO Opportunity Name, Scope, Stage…"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                 />
@@ -2424,7 +2424,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                   <div style={{ fontSize: '0.72rem', color: '#64748B' }}>
                     {[r['Contact'], r['Stage'], r['Scope']].filter(Boolean).join(' · ')}
                   </div>
-                  <div style={{ fontSize: '0.68rem', color: '#94A3B8' }}>BFO: {r['BFO Link'] || '—'}</div>
+                  <div style={{ fontSize: '0.68rem', color: '#94A3B8' }}>BFO Opp: {r['BFO Link'] || '—'}</div>
                 </div>
               ))}
             </div>
