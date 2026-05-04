@@ -15,7 +15,7 @@ import { matchesCdm } from '../../utils/cdmMatch';
 import * as XLSX from 'xlsx';
 import styles from './MyAccountsView.module.css';
 
-function InlineCell({ row, field, value, onUpdate, type, options }) {
+function InlineCell({ row, field, value, onUpdate, type, options, displayValue }) {
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
 
@@ -35,7 +35,11 @@ function InlineCell({ row, field, value, onUpdate, type, options }) {
   if (editing) {
     return <input className={styles.inlineInput} type={type === 'number' ? 'number' : 'text'} value={editValue} onChange={e => setEditValue(e.target.value)} onBlur={save} onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false); }} autoFocus onClick={e => e.stopPropagation()} />;
   }
-  return <span className={styles.cellEditable} onDoubleClick={startEdit}>{value || '—'}</span>;
+  // displayValue lets callers render a friendly label (e.g. "1") while
+  // the underlying value stored on the row stays canonical ("Tier 1")
+  // so dropdown options and filters keep working.
+  const shown = (displayValue !== undefined ? displayValue : value) || '—';
+  return <span className={styles.cellEditable} onDoubleClick={startEdit}>{shown}</span>;
 }
 
 function FilterDrop({ label, options, selected, onToggle }) {
@@ -2221,16 +2225,26 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         };
       }
       if (col.key === 'myTier') {
-        return { ...col, render: (row) => (
-          <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-            <InlineCell row={row} field="tier" value={row.myTier} onUpdate={onUpdate} options={TIERS} />
-            {row.tierMismatch && <TierMismatchWarning
-              row={row}
-              onApply={() => onUpdate(row.id, { tier: row.targetTier })}
-              onDismiss={() => onUpdate(row.id, { ignoreTierMismatch: true })}
-            />}
-          </span>
-        )};
+        return { ...col, render: (row) => {
+          const stripped = (row.myTier || '').replace(/^\s*tier\s*/i, '').trim();
+          return (
+            <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+              <InlineCell
+                row={row}
+                field="tier"
+                value={row.myTier}
+                displayValue={stripped || row.myTier}
+                onUpdate={onUpdate}
+                options={TIERS}
+              />
+              {row.tierMismatch && <TierMismatchWarning
+                row={row}
+                onApply={() => onUpdate(row.id, { tier: row.targetTier })}
+                onDismiss={() => onUpdate(row.id, { ignoreTierMismatch: true })}
+              />}
+            </span>
+          );
+        }};
       }
       if (col.key === 'targetName') {
         return { ...col, render: (row) => <TargetNamePicker values={row.targetNames || []} companyId={row.id} companyName={row.company} targetOptions={allTargetNames} onToggle={toggleTargetMapping} duplicates={duplicateTargetNames} /> };
