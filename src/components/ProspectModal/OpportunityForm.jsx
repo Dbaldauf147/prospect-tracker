@@ -2454,6 +2454,61 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
             return out;
           });
         }
+        // Key Issues: lift the single starred row out and render it as
+        // a "★ THEIR TOP ISSUE" callout block above the regular table,
+        // styled in an amber palette so the top issue is impossible to
+        // miss in the export. Remaining issues fall through to the
+        // standard Key Issues table.
+        if (t.key === 'meetingNotes') {
+          const starred = tableRows.find(r => r?.starred);
+          if (starred) {
+            const TOP_BG = 'FFFEF3C7';     // amber-100
+            const TOP_BG_SOFT = 'FFFFFBEB'; // amber-50
+            const TOP_TEXT = 'FF7C2D12';   // amber-900
+            const labelRow = ws.addRow([]);
+            const labelCell = ws.getCell(labelRow.number, 1);
+            labelCell.value = '★ THEIR TOP ISSUE';
+            labelCell.font = { name: 'Nunito Sans', bold: true, size: 13, color: { argb: TOP_TEXT } };
+            labelCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TOP_BG } };
+            labelCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+            labelCell.border = borderAll;
+            ws.mergeCells(labelRow.number, 1, labelRow.number, SPAN);
+            labelRow.height = 22;
+            for (const col of t.columns) {
+              const row = ws.addRow([]);
+              const lc = ws.getCell(row.number, 1);
+              // Trim long instructional column labels like
+              // "Issue - Capture all issues (What else is there?)"
+              // down to just "Issue" / "Evidence" / "Impact" for the
+              // callout block.
+              lc.value = String(col.label || '').split(/\s*-\s*/)[0];
+              lc.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: TOP_TEXT } };
+              lc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TOP_BG_SOFT } };
+              lc.alignment = { vertical: 'top', horizontal: 'left', indent: 1, wrapText: true };
+              lc.border = borderAll;
+              ws.mergeCells(row.number, 1, row.number, 2);
+              const vc = ws.getCell(row.number, 3);
+              vc.value = starred[col.key] || '';
+              vc.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+              vc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TOP_BG_SOFT } };
+              vc.alignment = { vertical: 'top', horizontal: 'left', indent: 1, wrapText: true };
+              vc.border = borderAll;
+              ws.mergeCells(row.number, 3, row.number, SPAN);
+              let mergedWidth = 0;
+              for (let k = 3; k <= SPAN; k++) mergedWidth += colWidths[k - 1] || 0;
+              row.height = rowHeightForLines(estimateWrappedLines(starred[col.key] || '', mergedWidth));
+            }
+            tableRows = tableRows.filter(r => r !== starred);
+            // No remaining rows → skip the empty Key Issues table
+            // entirely; the callout above already says everything.
+            if (tableRows.length === 0) {
+              colWidths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+              continue;
+            }
+            // Visual breathing room before the rest of the issues table
+            addBlankRow();
+          }
+        }
         addTable(t.label, t.columns, tableRows, widths);
         // Restore defaults for next block
         colWidths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
