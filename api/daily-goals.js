@@ -15,38 +15,10 @@ export default async function handler(req, res) {
 
   const { recent = [], notes = '', userName = '', pipelineSummary = '', coachingRules = null } = req.body || {};
 
-  const fmtMoney = (n) => Number(n).toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
-
-  // Render the user's standing rules into a block the model can reason
-  // over. Thresholds set to 0 are treated as "no rule" and skipped.
-  function buildRulesBlock(r) {
-    if (!r) return '';
-    const t = r.thresholds || {};
-    const lines = [];
-    if (Number(t.leadGenPauseAtActiveOpps) > 0) {
-      lines.push(`- If active opps in the Opps tab is ≥ ${t.leadGenPauseAtActiveOpps}, do NOT suggest lead-generation / prospecting / outreach goals today. Prioritize advancing existing opps instead.`);
-    }
-    if (Number(t.leadGenPauseAtQuotedTotal) > 0) {
-      lines.push(`- If total quoted across active opps is ≥ ${fmtMoney(t.leadGenPauseAtQuotedTotal)}, do NOT suggest lead-generation goals today. Prioritize closing what's already quoted.`);
-    }
-    if (Number(t.followUpUrgencyDays) > 0) {
-      lines.push(`- Treat any follow-up that is ≥ ${t.followUpUrgencyDays} days overdue as a top-priority barrier and propose a goal that resolves it.`);
-    }
-    if (Number(t.stuckQuoteDays) > 0) {
-      lines.push(`- Treat any Quoting/Quoted/Verbal opp with no client contact for ≥ ${t.stuckQuoteDays} days as a "stuck quote" — surface it as a barrier and recommend a specific re-engagement.`);
-    }
-    const notesText = (r.notes || '').trim();
-    let block = '';
-    if (lines.length) {
-      block += `Standing threshold rules (apply these to today's pipeline state before suggesting anything):\n${lines.join('\n')}\n`;
-    }
-    if (notesText) {
-      block += `${block ? '\n' : ''}Additional standing instructions from ${userName || 'the user'}:\n${notesText}\n`;
-    }
-    return block;
-  }
-
-  const rulesBlock = buildRulesBlock(coachingRules);
+  const coachingNotes = (coachingRules?.notes || '').trim();
+  const rulesBlock = coachingNotes
+    ? `Standing coaching rules from ${userName || 'the user'} (apply these strictly to today's pipeline state before suggesting anything):\n${coachingNotes}\n`
+    : '';
 
   // Build a compact context string from recent entries.
   const recentContext = (recent || [])
@@ -64,7 +36,7 @@ export default async function handler(req, res) {
 You will receive three layers of context:
 1. **High-level metrics** — quota, activity goals, per-stage roll-ups, late-stage opps with no next step.
 2. **Per-deal Opps tab data** — individual opportunities with stage, scope, quoted amount, last client contact date, follow-up date, and notes. The Opps tab includes "stuck quotes" (oldest client contact), overdue follow-ups, and top opps by quoted amount.
-3. **Standing coaching rules** — thresholds and free-form instructions the user has set to shape your suggestions over time. These OVERRIDE your default judgement. Apply them strictly: if a threshold rule says to skip lead-gen, do not propose lead-gen goals even if the pipeline looks thin.
+3. **Standing coaching rules** — free-form instructions the user has written to shape your suggestions over time. These OVERRIDE your default judgement. Read them carefully and apply them strictly: if a rule says to skip lead-gen when active opps are above some level, do not propose lead-gen goals even if the pipeline looks thin. Interpret thresholds the user writes in plain language ("when I have enough opps", "if I'm above $500k quoted") against the pipeline numbers in front of you.
 
 Read all three layers, then return a JSON object with two arrays:
 - "barriers": 2–4 short observations (≤ 18 words each) describing the biggest things blocking pipeline progress right now. Reference specific accounts/numbers when possible. Keep them factual and diagnostic — what's wrong / what's stuck / what's missing — not prescriptive. If a standing rule trips (e.g. "active opps ≥ 15 → skip lead-gen"), call that out as a barrier-context line.

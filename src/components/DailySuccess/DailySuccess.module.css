@@ -366,73 +366,14 @@
   color: #1e293b;
 }
 
-.rulesGrid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.5rem 0.7rem;
-  margin-bottom: 0.6rem;
-}
-
-.rulesField {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  font-size: 0.78rem;
-  color: #334155;
-  cursor: help;
-}
-
-.rulesFieldLabel {
-  line-height: 1.2;
-}
-
-.rulesFieldInputWrap {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
-  padding: 0.2rem 0.5rem;
-}
-
-.rulesFieldInputWrap:focus-within {
-  border-color: #2563eb;
-}
-
-.rulesAffix {
-  color: #64748b;
-  font-size: 0.78rem;
-  flex: 0 0 auto;
-}
-
-.rulesInput {
-  border: none;
-  outline: none;
-  background: transparent;
-  font-family: inherit;
-  font-size: 0.85rem;
-  width: 100%;
-  min-width: 0;
-  padding: 0;
-  color: #0f172a;
-}
-
-.rulesNotesLabel {
-  display: block;
-  font-size: 0.78rem;
-  color: #334155;
-  margin: 0.2rem 0 0.25rem;
-}
-
 .rulesNotes {
   width: 100%;
-  min-height: 80px;
+  min-height: 140px;
   font-family: inherit;
-  font-size: 0.85rem;
+  font-size: 0.88rem;
   border: 1px solid #e5e7eb;
   border-radius: 6px;
-  padding: 0.45rem 0.55rem;
+  padding: 0.55rem 0.65rem;
   background: #fff;
   resize: vertical;
 }
@@ -440,10 +381,4 @@
 .rulesNotes:focus {
   outline: none;
   border-color: #2563eb;
-}
-
-@media (max-width: 520px) {
-  .rulesGrid {
-    grid-template-columns: 1fr;
-  }
 }
