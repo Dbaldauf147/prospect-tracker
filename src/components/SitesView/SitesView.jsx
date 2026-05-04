@@ -1171,6 +1171,249 @@ export function SitesView({ settings, updateSettings } = {}) {
     return sheets;
   }, [overviewByCommodity, summaryRows]);
 
+  // Schneider-branded "Indicative Savings by State" workbook. Single
+  // sheet, two sections (Electric Power + Natural Gas), per-state
+  // rows with 2 % – 4 % indicative savings on the deregulated spend
+  // plus supplier name and contract dates trailing the standard
+  // savings columns. Triggered by its own button so it ships
+  // independent of the raw-data export.
+  async function exportIndicativeSavings() {
+    if (!rows.length) return;
+    const { Workbook } = await import('exceljs');
+    const SE_GREEN_DARK = 'FF009530';
+    const SE_NAVY = 'FF1A365D';
+    const SE_NAVY_LIGHT = 'FFEBF1F8';
+    const SE_TEXT_DARK = 'FF1E293B';
+    const SE_BORDER = 'FFD4DDE1';
+    const SE_GREEN = 'FF3DCD58';
+    const LOW_PCT = 0.02;
+    const HIGH_PCT = 0.04;
+    const SAVINGS_RANGE = '2% - 4%';
+
+    // Distinct list joined with ", "; trims to a sensible cap so a
+    // state with dozens of suppliers doesn't blow up the cell.
+    const joinDistinct = (vals, max = 5) => {
+      const seen = new Set();
+      const out = [];
+      for (const v of vals) {
+        const t = String(v ?? '').trim();
+        if (!t) continue;
+        const k = t.toLowerCase();
+        if (seen.has(k)) continue;
+        seen.add(k);
+        out.push(t);
+        if (out.length >= max) break;
+      }
+      const trailing = vals.length - out.length;
+      return trailing > 0 ? `${out.join(', ')} +${trailing} more` : out.join(', ');
+    };
+    const parseDate = (v) => {
+      if (!v) return null;
+      const t = Date.parse(v);
+      return Number.isNaN(t) ? null : new Date(t);
+    };
+    const fmtDate = (d) => d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+
+    function buildBucket(commodity) {
+      const providerKey = `__${commodity}__`;
+      const consumptionKey = commodity === 'electric' ? '__kwh__' : '__therms__';
+      const costKey = `__${commodity}Cost__`;
+      const supplierKey = commodity === 'electric' ? '__electricSupplier__' : '__gasSupplier__';
+      const startKey = commodity === 'electric' ? '__electricStart__' : '__gasStart__';
+      const endKey = commodity === 'electric' ? '__electricEnd__' : '__gasEnd__';
+      const states = new Map();
+      for (const r of rows) {
+        const state = r.__state__ || '';
+        if (!state) continue;
+        let g = states.get(state);
+        if (!g) {
+          g = {
+            state,
+            totalSites: 0,
+            deregulatedSites: 0,
+            consumption: 0,
+            spend: 0,
+            suppliers: [],
+            starts: [],
+            ends: [],
+          };
+          states.set(state, g);
+        }
+        g.totalSites += 1;
+        const provider = r[providerKey];
+        const isDereg = classifyUtility(provider) === 'Deregulated' || !!r[supplierKey];
+        if (!isDereg) continue;
+        g.deregulatedSites += 1;
+        const consumption = r[consumptionKey];
+        if (typeof consumption === 'number' && Number.isFinite(consumption)) {
+          // Gas: kWh-equivalent therms → Dth (÷10) for the export column.
+          g.consumption += commodity === 'gas' ? consumption / 10 : consumption;
+        }
+        const cost = r[costKey];
+        if (typeof cost === 'number' && Number.isFinite(cost)) g.spend += cost;
+        if (r[supplierKey]) g.suppliers.push(r[supplierKey]);
+        else if (provider) g.suppliers.push(provider);
+        const ds = parseDate(r[startKey]);
+        const de = parseDate(r[endKey]);
+        if (ds) g.starts.push(ds);
+        if (de) g.ends.push(de);
+      }
+      const out = [...states.values()].sort((a, b) => a.state.localeCompare(b.state));
+      return out.map(g => {
+        const status = g.deregulatedSites === 0
+          ? 'no'
+          : g.deregulatedSites === g.totalSites ? 'yes' : 'Limited';
+        const earliest = g.starts.length ? new Date(Math.min(...g.starts.map(d => d.getTime()))) : null;
+        const latest = g.ends.length ? new Date(Math.max(...g.ends.map(d => d.getTime()))) : null;
+        return {
+          state: g.state,
+          status,
+          totalSites: g.totalSites,
+          deregulatedSites: g.deregulatedSites,
+          consumption: Math.round(g.consumption),
+          spend: Math.round(g.spend),
+          range: g.deregulatedSpend === 0 && g.deregulatedSites === 0 ? '' : SAVINGS_RANGE,
+          low: Math.round(g.spend * LOW_PCT),
+          high: Math.round(g.spend * HIGH_PCT),
+          suppliers: joinDistinct(g.suppliers),
+          earliestStart: fmtDate(earliest),
+          latestEnd: fmtDate(latest),
+        };
+      });
+    }
+
+    const electricRows = buildBucket('electric');
+    const gasRows = buildBucket('gas');
+
+    const wb = new Workbook();
+    wb.creator = 'Schneider Electric · Prospect Tracker';
+    wb.created = new Date();
+    const ws = wb.addWorksheet('Indicative Savings by State', {
+      properties: { tabColor: { argb: SE_GREEN } },
+      views: [{ showGridLines: false }],
+    });
+
+    const SPAN = 12;
+    const widths = [10, 14, 11, 13, 18, 16, 14, 14, 14, 24, 14, 14];
+    ws.columns = widths.map(w => ({ width: w }));
+
+    // Title row
+    ws.mergeCells(1, 1, 1, SPAN);
+    const title = ws.getCell(1, 1);
+    title.value = 'Indicative Savings by State';
+    title.font = { name: 'Nunito Sans', bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
+    title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_NAVY } };
+    title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    ws.getRow(1).height = 28;
+
+    let r = 3;
+    function writeSection(label, sectionRows, columnDefs) {
+      // Section header band
+      ws.mergeCells(r, 1, r, SPAN);
+      const head = ws.getCell(r, 1);
+      head.value = label;
+      head.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_NAVY } };
+      head.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_NAVY_LIGHT } };
+      head.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(r).height = 22;
+      r += 1;
+      // Column headers
+      const headerRow = ws.getRow(r);
+      columnDefs.forEach((c, i) => {
+        const cell = headerRow.getCell(i + 1);
+        cell.value = c.label;
+        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_NAVY } };
+        cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
+        cell.border = { bottom: { style: 'thin', color: { argb: SE_NAVY } } };
+      });
+      headerRow.height = 32;
+      r += 1;
+      // Data rows
+      for (const row of sectionRows) {
+        const dataRow = ws.getRow(r);
+        columnDefs.forEach((c, i) => {
+          const cell = dataRow.getCell(i + 1);
+          const v = c.get(row);
+          cell.value = (v === '' || v == null) ? null : v;
+          cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+          cell.alignment = { vertical: 'middle', horizontal: c.numFmt ? 'right' : 'left', indent: 1 };
+          if (c.numFmt) cell.numFmt = c.numFmt;
+          cell.border = { bottom: { style: 'hair', color: { argb: SE_BORDER } } };
+        });
+        dataRow.height = 18;
+        r += 1;
+      }
+      // Total row
+      const totalRow = ws.getRow(r);
+      const totals = sectionRows.reduce((acc, row) => {
+        for (const c of columnDefs) {
+          if (!c.sumKey) continue;
+          acc[c.sumKey] = (acc[c.sumKey] || 0) + (Number(c.get(row)) || 0);
+        }
+        return acc;
+      }, {});
+      columnDefs.forEach((c, i) => {
+        const cell = totalRow.getCell(i + 1);
+        let v = '';
+        if (i === 0) v = 'Total';
+        else if (c.sumKey) v = totals[c.sumKey] || 0;
+        cell.value = v === '' ? null : v;
+        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_TEXT_DARK } };
+        cell.alignment = { vertical: 'middle', horizontal: c.numFmt ? 'right' : 'left', indent: 1 };
+        if (c.numFmt) cell.numFmt = c.numFmt;
+        cell.border = {
+          top: { style: 'thin', color: { argb: SE_NAVY } },
+          bottom: { style: 'thin', color: { argb: SE_NAVY } },
+        };
+      });
+      totalRow.height = 20;
+      r += 2;
+    }
+
+    const electricCols = [
+      { label: 'ST/Prov', get: (g) => g.state },
+      { label: 'Deregulated Status', get: (g) => g.status },
+      { label: 'Total Sites', get: (g) => g.totalSites, numFmt: '#,##0', sumKey: 'totalSites' },
+      { label: 'Deregulated Sites', get: (g) => g.deregulatedSites, numFmt: '#,##0', sumKey: 'deregulatedSites' },
+      { label: 'Annual Deregulated Consumption kWh', get: (g) => g.consumption, numFmt: '#,##0', sumKey: 'consumption' },
+      { label: 'Annual Deregulated Spend', get: (g) => g.spend, numFmt: '"$"#,##0', sumKey: 'spend' },
+      { label: 'Indicative Savings Range', get: (g) => g.range },
+      { label: 'Indicative Savings Low', get: (g) => g.low, numFmt: '"$"#,##0', sumKey: 'low' },
+      { label: 'Indicative Savings High', get: (g) => g.high, numFmt: '"$"#,##0', sumKey: 'high' },
+      { label: 'Supplier Name', get: (g) => g.suppliers },
+      { label: 'Contract Start', get: (g) => g.earliestStart },
+      { label: 'Contract End', get: (g) => g.latestEnd },
+    ];
+    const gasCols = [
+      { label: 'ST/Prov', get: (g) => g.state },
+      { label: 'Deregulated Status', get: (g) => g.status },
+      { label: 'Sites', get: (g) => g.totalSites, numFmt: '#,##0', sumKey: 'totalSites' },
+      { label: 'Deregulated Sites', get: (g) => g.deregulatedSites, numFmt: '#,##0', sumKey: 'deregulatedSites' },
+      { label: 'Consumption Dth', get: (g) => g.consumption, numFmt: '#,##0', sumKey: 'consumption' },
+      { label: 'Spend', get: (g) => g.spend, numFmt: '"$"#,##0', sumKey: 'spend' },
+      { label: 'Indicative Savings Range', get: (g) => g.range },
+      { label: 'Indicative Savings Low', get: (g) => g.low, numFmt: '"$"#,##0', sumKey: 'low' },
+      { label: 'Indicative Savings High', get: (g) => g.high, numFmt: '"$"#,##0', sumKey: 'high' },
+      { label: 'Supplier Name', get: (g) => g.suppliers },
+      { label: 'Contract Start', get: (g) => g.earliestStart },
+      { label: 'Contract End', get: (g) => g.latestEnd },
+    ];
+
+    writeSection('Electric Power', electricRows, electricCols);
+    writeSection('Natural Gas', gasRows, gasCols);
+
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Indicative Savings by State - ${new Date().toISOString().slice(0, 10)}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   // Schneider Electric branded export — title band, green headers,
   // Nunito Sans everywhere, frozen header row, auto-filter, tab
   // colour. One sheet per overview plus the raw-data sheet.
@@ -1502,6 +1745,16 @@ export function SitesView({ settings, updateSettings } = {}) {
           >
             {sitesData.length ? 'Replace Sites File' : 'Upload Sites File'}
           </button>
+          {sitesData.length > 0 && (
+            <button
+              type="button"
+              onClick={exportIndicativeSavings}
+              title="Download an Indicative Savings by State workbook (Schneider-branded). Aggregates the loaded sites by state with 2 % – 4 % savings on the deregulated spend, plus supplier name + contract dates."
+              style={{ padding: '0.4rem 0.8rem', border: '1px solid #009530', background: '#009530', color: '#fff', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}
+            >
+              ⬇ Indicative Savings
+            </button>
+          )}
           {sitesData.length > 0 && (
             <button
               type="button"
