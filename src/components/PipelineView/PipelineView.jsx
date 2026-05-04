@@ -453,6 +453,62 @@ function PipelineViewInner() {
     return Math.round(total);
   }, [oppsRecords]);
 
+  // Live Current Client vs Greenfield stats. Joins BFO Activity rows
+  // to the Opps tab's Lead Source / Source via the BFO Opportunity
+  // Name → Opps "BFO Link" map, then classifies each BFO opp using
+  // a keyword heuristic (anything mentioning client / existing /
+  // renewal / cross-sell / expansion / upsell counts as "current
+  // client", everything else — including unmatched rows — counts as
+  // "greenfield"). Returns null when BFO data isn't loaded so the
+  // editable manual cells stay in place.
+  const clientGreenfieldFromBfo = useMemo(() => {
+    if (!hasBfo) return null;
+    const findCol = (re) => bfo.headers.find(h => re.test(h));
+    const oppCol = findCol(/opportunity\s*name/i);
+    const amountCol = findCol(/^amount$/i);
+    const stageCol = findCol(/sales\s*stage|^stage$/i);
+    if (!oppCol) return null;
+    const sourceByName = new Map();
+    for (const r of oppsRecords) {
+      const k = String(r['BFO Link'] || '').trim().toLowerCase();
+      if (!k) continue;
+      const src = (r['Lead Source'] || r['Source'] || '').toString().trim();
+      sourceByName.set(k, src);
+    }
+    const isClient = (src) => /client|existing|renewal|cross[\s-]?sell|expansion|upsell/i.test(src || '');
+    let clientCount = 0;
+    let greenfieldCount = 0;
+    let clientAmt = 0;
+    let greenfieldAmt = 0;
+    for (const r of bfo.rows) {
+      // Active opps only — skip any closed-stage rows so the figures
+      // mirror the rest of the Pipeline table (Stages 3-6 plus
+      // anything BFO marks as in-stream).
+      const stageVal = stageCol ? r[stageCol] : '';
+      const stageMatch = matchStage(stageVal);
+      if (stageMatch !== null && (stageMatch < 3 || stageMatch > 6)) continue;
+      const oppName = String(r[oppCol] || '').trim().toLowerCase();
+      const src = sourceByName.get(oppName) || '';
+      const amt = amountCol ? parseMoney(r[amountCol]) : null;
+      if (isClient(src)) {
+        clientCount += 1;
+        if (typeof amt === 'number' && Number.isFinite(amt)) clientAmt += amt;
+      } else {
+        greenfieldCount += 1;
+        if (typeof amt === 'number' && Number.isFinite(amt)) greenfieldAmt += amt;
+      }
+    }
+    const total = clientCount + greenfieldCount;
+    const clientActualPct = total > 0 ? clientCount / total : null;
+    return {
+      clientCount,
+      greenfieldCount,
+      clientAmt: Math.round(clientAmt),
+      greenfieldAmt: Math.round(greenfieldAmt),
+      clientActualPct,
+    };
+  }, [hasBfo, bfo, oppsRecords]);
+
   const notQuotedFromOpps = useMemo(() => {
     const NOT_QUOTED_STAGES = new Set(['Lead', 'Not Started', 'Qualifying']);
     return oppsRecords
@@ -726,28 +782,57 @@ function PipelineViewInner() {
                 <tr><th /><th>Count / $</th><th>Goal - Client</th><th>Actual - Client</th></tr>
               </thead>
               <tbody>
-                <tr>
-                  <td className={styles.label}>Current client opps</td>
-                  <td><NumCell value={state.currentClientCount} onCommit={(v) => setField('currentClientCount', v)} /></td>
-                  <td rowSpan={2}><NumCell value={state.clientGoalPct} kind="pct" onCommit={(v) => setField('clientGoalPct', v)} /></td>
-                  <td rowSpan={2} className={compareClass(state.clientActualPct, state.clientGoalPct, 'higher-better')}>
-                    <NumCell value={state.clientActualPct} kind="pct" onCommit={(v) => setField('clientActualPct', v)} />
-                  </td>
-                </tr>
-                <tr>
-                  <td className={styles.label}>Greenfield opps</td>
-                  <td><NumCell value={state.greenfieldCount} onCommit={(v) => setField('greenfieldCount', v)} /></td>
-                </tr>
-                <tr>
-                  <td className={styles.label}>Current client $</td>
-                  <td><NumCell value={state.currentClientAmt} kind="money" onCommit={(v) => setField('currentClientAmt', v)} /></td>
-                  <td colSpan={2} />
-                </tr>
-                <tr>
-                  <td className={styles.label}>Greenfield $</td>
-                  <td><NumCell value={state.greenfieldAmt} kind="money" onCommit={(v) => setField('greenfieldAmt', v)} /></td>
-                  <td colSpan={2} />
-                </tr>
+                {(() => {
+                  const cg = clientGreenfieldFromBfo;
+                  const live = !!cg;
+                  const liveTip = 'Auto-fed from BFO Activity rows (Stages 3–6) joined to the Opps tab Lead Source. Re-paste BFO or Opps to refresh.';
+                  const liveCell = (val) => <span title={liveTip} className={styles.liveCell}>{val}</span>;
+                  const liveActualPct = cg && cg.clientActualPct !== null
+                    ? `${(cg.clientActualPct * 100).toFixed(0)}%`
+                    : null;
+                  const goalForCompare = Number(state.clientGoalPct);
+                  const actualForCompare = cg?.clientActualPct ?? state.clientActualPct;
+                  return (
+                    <>
+                      <tr>
+                        <td className={styles.label}>Current client opps</td>
+                        <td>{live
+                          ? liveCell(cg.clientCount)
+                          : <NumCell value={state.currentClientCount} onCommit={(v) => setField('currentClientCount', v)} />}
+                        </td>
+                        <td rowSpan={2}><NumCell value={state.clientGoalPct} kind="pct" onCommit={(v) => setField('clientGoalPct', v)} /></td>
+                        <td rowSpan={2} className={compareClass(actualForCompare, goalForCompare, 'higher-better')}>
+                          {live && liveActualPct !== null
+                            ? liveCell(liveActualPct)
+                            : <NumCell value={state.clientActualPct} kind="pct" onCommit={(v) => setField('clientActualPct', v)} />}
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className={styles.label}>Greenfield opps</td>
+                        <td>{live
+                          ? liveCell(cg.greenfieldCount)
+                          : <NumCell value={state.greenfieldCount} onCommit={(v) => setField('greenfieldCount', v)} />}
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className={styles.label}>Current client $</td>
+                        <td>{live
+                          ? liveCell(fmtMoney(cg.clientAmt))
+                          : <NumCell value={state.currentClientAmt} kind="money" onCommit={(v) => setField('currentClientAmt', v)} />}
+                        </td>
+                        <td colSpan={2} />
+                      </tr>
+                      <tr>
+                        <td className={styles.label}>Greenfield $</td>
+                        <td>{live
+                          ? liveCell(fmtMoney(cg.greenfieldAmt))
+                          : <NumCell value={state.greenfieldAmt} kind="money" onCommit={(v) => setField('greenfieldAmt', v)} />}
+                        </td>
+                        <td colSpan={2} />
+                      </tr>
+                    </>
+                  );
+                })()}
               </tbody>
             </table>
           </div>
