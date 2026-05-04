@@ -7,10 +7,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import styles from './BFOActivityView.module.css';
 import { dbGet, dbPut, dbDelete } from '../../utils/db';
+import { loadOppsFromCache } from '../../utils/oppsCache';
 
 const STORE = 'bfo-activity';
 const KEY = 'current';
 const PREFS_KEY = 'prefs';
+const LEAD_SOURCE_COL = 'Lead Source';
 
 function parseTSV(text) {
   if (!text) return { headers: [], rows: [] };
@@ -77,6 +79,19 @@ export function BFOActivityView() {
   const [colWidths, setColWidths] = useState({}); // { [headerName]: pixelWidth }
   const [hiddenCols, setHiddenCols] = useState({}); // { [headerName]: true }
   const [colMenuOpen, setColMenuOpen] = useState(false);
+  // Opps cache drives the Lead Source lookup column. We refresh on
+  // mount and whenever the window regains focus so that pasting on
+  // the Opps tab and switching back here surfaces the new sources.
+  const [opps, setOpps] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      loadOppsFromCache().then(o => { if (!cancelled) setOpps(o || null); }).catch(() => {});
+    };
+    refresh();
+    window.addEventListener('focus', refresh);
+    return () => { cancelled = true; window.removeEventListener('focus', refresh); };
+  }, []);
   const hydratedRef = useRef(false);
 
   useEffect(() => {
@@ -211,11 +226,47 @@ export function BFOActivityView() {
     URL.revokeObjectURL(url);
   }
 
+  // Lead Source lookup: map BFO Link (lowercase trimmed) → Source string.
+  // Source on the Opps tab can be labeled either "Lead Source" or just
+  // "Source" — try both. BFO Link on the Opps tab IS the BFO
+  // Opportunity Name (we renamed the visible label earlier; the data
+  // key is still "BFO Link").
+  const leadSourceByOppName = useMemo(() => {
+    const map = new Map();
+    const records = (opps && Array.isArray(opps.records)) ? opps.records : [];
+    for (const r of records) {
+      const k = String(r['BFO Link'] || '').trim().toLowerCase();
+      if (!k) continue;
+      const src = (r['Lead Source'] || r['Source'] || '').toString().trim();
+      if (src) map.set(k, src);
+    }
+    return map;
+  }, [opps]);
+
+  // Build a derived view of the BFO data with the synthetic Lead
+  // Source column injected. Persisted `data` is left untouched so the
+  // saved BFO snapshot doesn't accumulate the lookup column on each
+  // load — we add it here only for filter / sort / render.
+  const displayData = useMemo(() => {
+    if (!data?.headers?.length) return data;
+    const oppCol = data.headers.find(h => /opportunity\s*name/i.test(h));
+    if (!oppCol || leadSourceByOppName.size === 0) return data;
+    const headers = data.headers.includes(LEAD_SOURCE_COL)
+      ? data.headers
+      : [...data.headers, LEAD_SOURCE_COL];
+    const rows = data.rows.map(r => {
+      const k = String(r[oppCol] || '').trim().toLowerCase();
+      const src = leadSourceByOppName.get(k) || '';
+      return { ...r, [LEAD_SOURCE_COL]: src };
+    });
+    return { ...data, headers, rows };
+  }, [data, leadSourceByOppName]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    let rows = data.rows;
+    let rows = displayData.rows;
     if (q) {
-      rows = rows.filter(r => data.headers.some(h => String(r[h] ?? '').toLowerCase().includes(q)));
+      rows = rows.filter(r => displayData.headers.some(h => String(r[h] ?? '').toLowerCase().includes(q)));
     }
     if (sortBy) {
       const col = sortBy.col;
@@ -223,7 +274,7 @@ export function BFOActivityView() {
       rows = [...rows].sort((a, b) => compareValues(a[col], b[col]) * dir);
     }
     return rows;
-  }, [data, search, sortBy]);
+  }, [displayData, search, sortBy]);
 
   function toggleSort(col) {
     setSortBy(prev => {
@@ -259,7 +310,7 @@ export function BFOActivityView() {
               </button>
               {colMenuOpen && (
                 <div className={styles.colsMenu}>
-                  {data.headers.map(h => (
+                  {displayData.headers.map(h => (
                     <label key={h} className={styles.colsMenuItem}>
                       <input
                         type="checkbox"
@@ -327,16 +378,16 @@ export function BFOActivityView() {
           <>
             <div className={styles.summary}>
               {(() => {
-                const visible = data.headers.filter(h => !hiddenCols[h]);
-                const hidden = data.headers.length - visible.length;
-                return `${filtered.length} of ${data.rows.length} rows${search ? ` matching "${search}"` : ''} · ${visible.length} of ${data.headers.length} columns visible${hidden ? ` (${hidden} hidden)` : ''}`;
+                const visible = displayData.headers.filter(h => !hiddenCols[h]);
+                const hidden = displayData.headers.length - visible.length;
+                return `${filtered.length} of ${displayData.rows.length} rows${search ? ` matching "${search}"` : ''} · ${visible.length} of ${displayData.headers.length} columns visible${hidden ? ` (${hidden} hidden)` : ''}`;
               })()}
             </div>
             <div className={styles.tableWrap}>
               <table className={styles.table}>
                 <thead>
                   <tr>
-                    {data.headers.filter(h => !hiddenCols[h]).map(h => {
+                    {displayData.headers.filter(h => !hiddenCols[h]).map(h => {
                       const isSorted = sortBy?.col === h;
                       return (
                         <th key={h} style={{ width: colWidths[h] ?? 160 }}>
@@ -359,7 +410,7 @@ export function BFOActivityView() {
                 <tbody>
                   {filtered.map((r, i) => (
                     <tr key={i}>
-                      {data.headers.filter(h => !hiddenCols[h]).map(h => {
+                      {displayData.headers.filter(h => !hiddenCols[h]).map(h => {
                         const v = r[h] ?? '';
                         const isAge = /^age$/i.test(h);
                         const isAmount = /^amount$/i.test(h);
