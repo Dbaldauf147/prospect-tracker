@@ -1411,8 +1411,25 @@ export function SitesView({ settings, updateSettings } = {}) {
             { key: 'electric', label: 'Electric Consumption (kWh)', required: false, hint: 'Annual electric usage for cost estimates.' },
             { key: 'gas', label: 'Gas Consumption (therms / MMBtu / Dth)', required: false, hint: 'Annual gas usage for cost estimates.' },
           ];
-          // Reverse the mapping so we can render one row per file header
-          // with its currently-assigned target.
+          // The full set of columns that show up on the Utility Lookup
+          // table after import — split into the four mapped inputs
+          // above and the auto-derived / lookup-driven columns the
+          // page generates for free.
+          const DERIVED_COLUMNS = [
+            { name: 'State', from: 'looked up from Zip' },
+            { name: 'Electric Utility', from: 'utility-rates file × Zip' },
+            { name: 'Electric Market', from: 'regulated vs. deregulated rule' },
+            { name: 'Electric Rate', from: 'state commercial average' },
+            { name: 'Electric Cost', from: 'kWh × rate' },
+            { name: 'Gas Utility', from: 'utility-rates file × Zip' },
+            { name: 'Gas Market', from: 'regulated vs. deregulated rule' },
+            { name: 'Gas Rate', from: 'state commercial average' },
+            { name: 'Gas Cost', from: 'Dth × rate' },
+            { name: 'Total Est. Cost', from: 'Electric + Gas cost' },
+            { name: 'Water Utility', from: 'utility-rates file × Zip' },
+            { name: 'Lookup City', from: 'utility-rates file × Zip' },
+            { name: 'Lookup Country', from: 'utility-rates file × Zip' },
+          ];
           const targetForHeader = {};
           for (const t of TARGET_FIELDS) {
             const h = sitesMappingModal.mapping[t.key];
@@ -1422,68 +1439,97 @@ export function SitesView({ settings, updateSettings } = {}) {
             setSitesMappingModal(m => {
               if (!m) return m;
               const next = { ...m.mapping };
-              // Clear any previous assignment of this target.
-              if (targetKey) {
-                for (const t of TARGET_FIELDS) {
-                  if (next[t.key] === header) next[t.key] = '';
-                }
-                next[targetKey] = header;
-              } else {
-                // "Ignore" — drop whichever target this header was on.
-                for (const t of TARGET_FIELDS) {
-                  if (next[t.key] === header) next[t.key] = '';
-                }
+              for (const t of TARGET_FIELDS) {
+                if (next[t.key] === header) next[t.key] = '';
               }
+              if (targetKey) next[targetKey] = header;
               return { ...m, mapping: next };
             });
           }
           const missingRequired = TARGET_FIELDS
             .filter(t => t.required && !sitesMappingModal.mapping[t.key])
             .map(t => t.label);
+          const targetLabel = (key) => TARGET_FIELDS.find(t => t.key === key)?.label || key;
+          const colHeader = { fontSize: '0.7rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em', padding: '0.5rem 0.75rem', background: '#F8FAFC', borderBottom: '1px solid #E2E8F0' };
+          const cellBase = { padding: '0.4rem 0.75rem', borderBottom: '1px solid #F1F5F9', fontSize: '0.78rem' };
           return (
             <div className={styles.modalBackdrop} onClick={() => setSitesMappingModal(null)}>
-              <div className={styles.modalCard} onClick={e => e.stopPropagation()} style={{ maxWidth: 720, width: '90vw' }}>
+              <div className={styles.modalCard} onClick={e => e.stopPropagation()} style={{ maxWidth: 1000, width: '95vw' }}>
                 <div className={styles.modalHeader}>
                   <h3 className={styles.modalTitle}>Sites File — Column Mapping</h3>
                   <button className={styles.modalClose} onClick={() => setSitesMappingModal(null)}>×</button>
                 </div>
                 <p className={styles.modalHelp}>
-                  {sitesMappingModal.rows.length.toLocaleString()} rows found{sitesMappingModal.sheetName ? ` on sheet "${sitesMappingModal.sheetName}"` : ''} in <code>{sitesMappingModal.fileName}</code>. Every column from the file is listed below — pick which field each one should fill (or leave it on "Ignore" to skip).
+                  {sitesMappingModal.rows.length.toLocaleString()} rows found{sitesMappingModal.sheetName ? ` on sheet "${sitesMappingModal.sheetName}"` : ''} in <code>{sitesMappingModal.fileName}</code>. The left side lists every column that shows up on the Utility Lookup page; the right side lists every column from your file. Pick which file column should fill each Utility Lookup field.
                 </p>
                 {missingRequired.length > 0 && (
                   <div style={{ margin: '0 0 0.5rem', padding: '0.4rem 0.6rem', background: '#FEE2E2', border: '1px solid #FCA5A5', borderRadius: 6, fontSize: '0.75rem', color: '#991B1B', fontWeight: 600 }}>
                     Still need to map: {missingRequired.join(', ')}
                   </div>
                 )}
-                <div style={{ maxHeight: '60vh', overflowY: 'auto', border: '1px solid #E2E8F0', borderRadius: 6 }}>
-                  {sitesMappingModal.headers.map(h => {
-                    const target = targetForHeader[h] || '';
-                    return (
-                      <div
-                        key={h}
-                        className={styles.modalRow}
-                        style={{ borderBottom: '1px solid #F1F5F9', padding: '0.4rem 0.6rem' }}
-                      >
-                        <div className={styles.modalLabel} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={h}>
-                          {h}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', maxHeight: '60vh' }}>
+                  {/* LEFT — Utility Lookup page columns */}
+                  <div style={{ border: '1px solid #E2E8F0', borderRadius: 6, overflow: 'auto' }}>
+                    <div style={colHeader}>Utility Lookup page columns</div>
+                    {TARGET_FIELDS.map(t => {
+                      const header = sitesMappingModal.mapping[t.key];
+                      return (
+                        <div key={t.key} style={{ ...cellBase, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={t.hint}>
+                            {t.label}
+                            {t.required && <span style={{ color: '#DC2626', marginLeft: 2 }}>*</span>}
+                          </span>
+                          {header ? (
+                            <span style={{ background: '#DCFCE7', border: '1px solid #86EFAC', color: '#166534', padding: '1px 8px', borderRadius: 999, fontSize: '0.68rem', fontWeight: 600, maxWidth: '55%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`Mapped from "${header}"`}>
+                              ← {header}
+                            </span>
+                          ) : (
+                            <span style={{ color: t.required ? '#DC2626' : '#94A3B8', fontSize: '0.68rem', fontWeight: 600 }}>
+                              {t.required ? '— not mapped —' : '— optional —'}
+                            </span>
+                          )}
                         </div>
-                        <span style={{ color: '#94A3B8', fontSize: '0.75rem' }}>→</span>
-                        <select
-                          className={`${styles.modalSelect} ${target ? styles.modalSelectMapped : ''}`}
-                          value={target}
-                          onChange={e => setTargetForHeader(h, e.target.value)}
-                        >
-                          <option value="">— Ignore —</option>
-                          {TARGET_FIELDS.map(t => (
-                            <option key={t.key} value={t.key}>
-                              {t.label}{t.required ? ' *' : ''}
-                            </option>
-                          ))}
-                        </select>
-                        {target && <span style={{ color: '#10B981', fontSize: '0.75rem', fontWeight: 600 }}>✓</span>}
+                      );
+                    })}
+                    <div style={{ ...cellBase, fontSize: '0.66rem', color: '#64748B', fontStyle: 'italic', background: '#F8FAFC' }}>
+                      Auto-derived columns (no mapping needed)
+                    </div>
+                    {DERIVED_COLUMNS.map(d => (
+                      <div key={d.name} style={{ ...cellBase, display: 'flex', alignItems: 'center', gap: '0.4rem', background: '#FAFBFC' }}>
+                        <span style={{ flex: 1, color: '#475569' }}>{d.name}</span>
+                        <span style={{ color: '#94A3B8', fontSize: '0.66rem', fontStyle: 'italic' }}>{d.from}</span>
                       </div>
-                    );
-                  })}
+                    ))}
+                  </div>
+                  {/* RIGHT — file columns */}
+                  <div style={{ border: '1px solid #E2E8F0', borderRadius: 6, overflow: 'auto' }}>
+                    <div style={colHeader}>Columns in your file ({sitesMappingModal.headers.length})</div>
+                    {sitesMappingModal.headers.map(h => {
+                      const target = targetForHeader[h] || '';
+                      return (
+                        <div key={h} style={{ ...cellBase, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={h}>
+                            {h}
+                          </span>
+                          <span style={{ color: '#94A3B8', fontSize: '0.7rem' }}>→</span>
+                          <select
+                            className={`${styles.modalSelect} ${target ? styles.modalSelectMapped : ''}`}
+                            value={target}
+                            onChange={e => setTargetForHeader(h, e.target.value)}
+                            style={{ minWidth: 170, maxWidth: 220 }}
+                          >
+                            <option value="">— Ignore —</option>
+                            {TARGET_FIELDS.map(t => (
+                              <option key={t.key} value={t.key}>
+                                {t.label}{t.required ? ' *' : ''}
+                              </option>
+                            ))}
+                          </select>
+                          {target && <span style={{ color: '#10B981', fontSize: '0.75rem', fontWeight: 600 }} title={`Mapped to ${targetLabel(target)}`}>✓</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
                 <div className={styles.modalActions}>
                   <button className={styles.modalCancel} onClick={() => setSitesMappingModal(null)}>Cancel</button>
