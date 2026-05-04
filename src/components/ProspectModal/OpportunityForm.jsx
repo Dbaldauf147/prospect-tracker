@@ -725,29 +725,41 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
   }, [companyName, prospects, formData.fieldValues?.companyWebsite, formData.fieldValues?.currentScope, formData.fieldValues?.clientManager, formData.fieldValues?.currentClientScope]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Self-heal: for every service listed in Scope Being Explored, add its
-  // canned 'Questions to Ask Them' to the ourQuestions table if not
-  // already present. Existing rows (including manually added or edited
-  // ones) are preserved. Removing a service from the scope does NOT
-  // remove its questions — user can delete those rows manually.
+  // canned 'Questions to Ask Them' to the ourQuestions table — but only
+  // ONCE per service per form. We persist a list of services that have
+  // already been seeded inside formData so a refresh (or scope re-edit)
+  // never re-imports questions the user has since deleted. For legacy
+  // forms (no seededScopeServices key), every service that already has
+  // populated rows is treated as already seeded so the first refresh
+  // after this change doesn't resurrect previously-deleted questions.
   useEffect(() => {
     const scope = (formData.fieldValues?.scope || '').trim();
     if (!scope) return;
     const services = scope.split(',').map(s => s.trim()).filter(Boolean);
     if (services.length === 0) return;
 
+    const seedKey = 'ourQuestions';
     const existingRows = formData.tables?.ourQuestions || [];
-    // Keep populated rows, drop fully-empty trailing ones so we don't
-    // interleave new auto-fills with blank user-typing placeholders.
     const populated = existingRows.filter(r =>
       (r.service || '').trim() || (r.question || '').trim()
     );
+
+    const prior = new Set((formData.seededScopeServices?.[seedKey] || []).map(s => s.toLowerCase()));
+    const hasSeedRecord = !!formData.seededScopeServices?.[seedKey];
+    if (!hasSeedRecord) {
+      for (const r of populated) {
+        const s = (r.service || '').toLowerCase().trim();
+        if (s) prior.add(s);
+      }
+    }
+
     const existingKeys = new Set(
       populated.map(r => `${(r.service || '').toLowerCase().trim()}::${(r.question || '').trim()}`)
     );
-
     const additions = [];
     for (const svc of services) {
       const key = svc.toLowerCase();
+      if (prior.has(key)) continue;
       const canned = SERVICE_QUESTIONS[key];
       if (!canned) continue;
       for (const q of canned) {
@@ -757,44 +769,85 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
         existingKeys.add(k);
       }
     }
-    if (additions.length === 0) return;
 
-    set({ tables: { ...formData.tables, ourQuestions: [...populated, ...additions] } });
+    const fullSeed = new Set(prior);
+    for (const svc of services) fullSeed.add(svc.toLowerCase());
+    const priorList = formData.seededScopeServices?.[seedKey] || [];
+    const seedListChanged = fullSeed.size !== priorList.length || [...fullSeed].some(s => !priorList.includes(s));
+    if (additions.length === 0 && !seedListChanged) return;
+
+    const patch = {};
+    if (additions.length > 0) {
+      patch.tables = { ...formData.tables, ourQuestions: [...populated, ...additions] };
+    }
+    if (seedListChanged) {
+      patch.seededScopeServices = {
+        ...(formData.seededScopeServices || {}),
+        [seedKey]: [...fullSeed],
+      };
+    }
+    set(patch);
   }, [formData.fieldValues?.scope]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Self-heal: mirror the ourQuestions auto-fill for theirQuestions —
-  // every service in Scope Being Explored seeds a set of likely customer
-  // questions (with suggested responses) into the 'Questions They Might
-  // Ask' table. Dedup by question text so re-saving or re-linking doesn't
-  // pile on duplicates.
+  // Self-heal: mirror the ourQuestions auto-fill for theirQuestions.
+  // Same one-shot-per-service-per-form rule via seededScopeServices.
   useEffect(() => {
     const scope = (formData.fieldValues?.scope || '').trim();
     if (!scope) return;
     const services = scope.split(',').map(s => s.trim()).filter(Boolean);
     if (services.length === 0) return;
 
+    const seedKey = 'theirQuestions';
     const existingRows = formData.tables?.theirQuestions || [];
     const populated = existingRows.filter(r =>
       (r.service || '').trim() || (r.question || '').trim() || (r.response || '').trim()
     );
+
+    const prior = new Set((formData.seededScopeServices?.[seedKey] || []).map(s => s.toLowerCase()));
+    const hasSeedRecord = !!formData.seededScopeServices?.[seedKey];
+    if (!hasSeedRecord) {
+      for (const r of populated) {
+        const s = (r.service || '').toLowerCase().trim();
+        if (s) prior.add(s);
+      }
+    }
+
     const existingKeys = new Set(
       populated.map(r => `${(r.service || '').toLowerCase().trim()}::${(r.question || '').trim().toLowerCase()}`)
     );
-
     const additions = [];
     for (const svc of services) {
-      const canned = SERVICE_THEIR_QUESTIONS[svc.toLowerCase()];
+      const key = svc.toLowerCase();
+      if (prior.has(key)) continue;
+      const canned = SERVICE_THEIR_QUESTIONS[key];
       if (!canned) continue;
       for (const pair of canned) {
-        const k = `${svc.toLowerCase()}::${(pair.question || '').trim().toLowerCase()}`;
-        if (!(pair.question || '').trim() || existingKeys.has(k)) continue;
+        const qText = (pair.question || '').trim();
+        if (!qText) continue;
+        const k = `${key}::${qText.toLowerCase()}`;
+        if (existingKeys.has(k)) continue;
         additions.push({ service: svc, question: pair.question, response: pair.response });
         existingKeys.add(k);
       }
     }
-    if (additions.length === 0) return;
 
-    set({ tables: { ...formData.tables, theirQuestions: [...populated, ...additions] } });
+    const fullSeed = new Set(prior);
+    for (const svc of services) fullSeed.add(svc.toLowerCase());
+    const priorList = formData.seededScopeServices?.[seedKey] || [];
+    const seedListChanged = fullSeed.size !== priorList.length || [...fullSeed].some(s => !priorList.includes(s));
+    if (additions.length === 0 && !seedListChanged) return;
+
+    const patch = {};
+    if (additions.length > 0) {
+      patch.tables = { ...formData.tables, theirQuestions: [...populated, ...additions] };
+    }
+    if (seedListChanged) {
+      patch.seededScopeServices = {
+        ...(formData.seededScopeServices || {}),
+        [seedKey]: [...fullSeed],
+      };
+    }
+    set(patch);
   }, [formData.fieldValues?.scope]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Always keep at least one empty row at the bottom of Questions to
