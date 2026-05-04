@@ -111,6 +111,13 @@ export function SitesView({ settings, updateSettings } = {}) {
   const [dragOver, setDragOver] = useState(false);
   const [electricColOverride, setElectricColOverride] = useState(null);
   const [gasColOverride, setGasColOverride] = useState(null);
+  const [siteNameOverride, setSiteNameOverride] = useState(null);
+  const [zipColOverride, setZipColOverride] = useState(null);
+  // Column-mapping confirmation popup for the Sites File upload —
+  // null when no upload is mid-flight; otherwise carries the parsed
+  // rows + headers + auto-detected mapping the user can adjust before
+  // committing.
+  const [sitesMappingModal, setSitesMappingModal] = useState(null);
   // { rows, headers, mapping: { zip, electric, gas, water } }
   const sitesFileRef = useRef(null);
   const utilityFileRef = useRef(null);
@@ -143,16 +150,50 @@ export function SitesView({ settings, updateSettings } = {}) {
       const { rows, sheetName } = parseBestSheet(new Uint8Array(buf), {
         preferSheetName: /site\s*list|^\s*sites?\s*$/i,
       });
-      await saveListToIDB(SITES_STORAGE_KEY, rows);
-      setSitesData(rows);
-      if (sheetName && !/site/i.test(sheetName)) {
-        // Helpful nudge when we grabbed something that wasn't a sites
-        // tab — e.g. user dropped a file that has no Site List tab.
-        setUploadError(`No tab named "Site List" found — loaded sheet "${sheetName}" instead (${rows.length.toLocaleString()} rows). Rename the tab or drop a different file if that's not what you wanted.`);
-      }
+      const headers = rows.length ? Object.keys(rows[0]) : [];
+      const detectedSiteName = headers.find(h => /\b(site\s*name|site|property|location|facility|building|name)\b/i.test(String(h))) || headers[0] || '';
+      const detectedZip = pickZipColumn(headers);
+      const detectedElectric = detectColumn(headers, [/electric.*kwh|kwh.*electric/i, /annual.*electric/i, /electric/i, /kwh/i]);
+      const detectedGas = detectColumn(headers, [/gas.*therm|therm.*gas/i, /annual.*gas/i, /natural\s*gas/i, /gas/i, /therm/i, /mmbtu/i]);
+      setSitesMappingModal({
+        rows,
+        headers,
+        sheetName,
+        fileName: file.name,
+        mapping: {
+          siteName: detectedSiteName,
+          zip: detectedZip,
+          electric: detectedElectric || '',
+          gas: detectedGas || '',
+        },
+      });
     } catch (err) {
       setUploadError(err?.message || 'Failed to read the sites file');
     }
+  }
+
+  // Commit the popup's chosen mapping, persist the data + override
+  // settings, and close the modal. If the user blanks out the site
+  // name or zip column we fall back to auto-detection so the lookup
+  // can still try to match.
+  async function executeSitesImport() {
+    if (!sitesMappingModal) return;
+    const { rows, mapping, sheetName } = sitesMappingModal;
+    setUploadError('');
+    try {
+      await saveListToIDB(SITES_STORAGE_KEY, rows);
+      setSitesData(rows);
+      setSiteNameOverride(mapping.siteName || null);
+      setZipColOverride(mapping.zip || null);
+      setElectricColOverride(mapping.electric || '__none__');
+      setGasColOverride(mapping.gas || '__none__');
+      if (sheetName && !/site/i.test(sheetName)) {
+        setUploadError(`No tab named "Site List" found — loaded sheet "${sheetName}" instead (${rows.length.toLocaleString()} rows). Rename the tab or drop a different file if that's not what you wanted.`);
+      }
+    } catch (err) {
+      setUploadError(err?.message || 'Failed to save the sites file');
+    }
+    setSitesMappingModal(null);
   }
 
   async function handleSitesUpload(e) {
@@ -286,8 +327,10 @@ export function SitesView({ settings, updateSettings } = {}) {
 
   const zipColumn = useMemo(() => {
     if (!sitesData.length) return '';
-    return pickZipColumn(Object.keys(sitesData[0]));
-  }, [sitesData]);
+    const headers = Object.keys(sitesData[0]);
+    if (zipColOverride && headers.includes(zipColOverride)) return zipColOverride;
+    return pickZipColumn(headers);
+  }, [sitesData, zipColOverride]);
 
   // Detect the column that holds the site name so we can drop blank
   // rows. Falls back to the sticky first column if no obvious
@@ -295,9 +338,10 @@ export function SitesView({ settings, updateSettings } = {}) {
   const siteNameColumn = useMemo(() => {
     if (!sitesData.length) return '';
     const headers = Object.keys(sitesData[0]);
+    if (siteNameOverride && headers.includes(siteNameOverride)) return siteNameOverride;
     const match = headers.find(h => /\b(site\s*name|site|property|location|facility|building|name)\b/i.test(String(h)));
     return match || headers[0] || '';
-  }, [sitesData]);
+  }, [sitesData, siteNameOverride]);
 
   // Rows that don't carry a site name are junk for this analysis —
   // filter them out before anything else sees them.
@@ -1324,6 +1368,57 @@ export function SitesView({ settings, updateSettings } = {}) {
           settings={settings}
           updateSettings={updateSettings}
         />
+      )}
+
+      {sitesMappingModal && createPortal(
+        <div className={styles.modalBackdrop} onClick={() => setSitesMappingModal(null)}>
+          <div className={styles.modalCard} onClick={e => e.stopPropagation()}>
+            <div className={styles.modalHeader}>
+              <h3 className={styles.modalTitle}>Sites File — Column Mapping</h3>
+              <button className={styles.modalClose} onClick={() => setSitesMappingModal(null)}>×</button>
+            </div>
+            <p className={styles.modalHelp}>
+              {sitesMappingModal.rows.length.toLocaleString()} rows found{sitesMappingModal.sheetName ? ` on sheet "${sitesMappingModal.sheetName}"` : ''} in <code>{sitesMappingModal.fileName}</code>. Confirm or override the column the lookup should use for each field below before importing.
+            </p>
+            {[
+              { key: 'siteName', label: 'Site Name', required: true, hint: 'Used as the row label and to drop blank rows.' },
+              { key: 'zip', label: 'Zip / Postal Code', required: true, hint: 'Used to look up the utility provider for each site.' },
+              { key: 'electric', label: 'Electric Consumption', required: false, hint: 'kWh column. Used for cost estimates. Pick "Not mapped" if not in the file.' },
+              { key: 'gas', label: 'Gas Consumption', required: false, hint: 'Therms / MMBtu column. Used for cost estimates. Pick "Not mapped" if not in the file.' },
+            ].map(({ key, label, required, hint }) => {
+              const val = sitesMappingModal.mapping[key] || '';
+              return (
+                <div key={key} className={styles.modalRow} title={hint}>
+                  <div className={styles.modalLabel}>
+                    {label}
+                    {required && <span style={{ color: '#DC2626', marginLeft: 2 }}>*</span>}
+                  </div>
+                  <span style={{ color: '#94A3B8', fontSize: '0.75rem' }}>→</span>
+                  <select
+                    className={`${styles.modalSelect} ${val ? styles.modalSelectMapped : (required ? styles.modalSelectUnmapped : '')}`}
+                    value={val}
+                    onChange={e => setSitesMappingModal(m => ({ ...m, mapping: { ...m.mapping, [key]: e.target.value } }))}
+                  >
+                    <option value="">— Not mapped —</option>
+                    {sitesMappingModal.headers.map(h => <option key={h} value={h}>{h}</option>)}
+                  </select>
+                  {val && <span style={{ color: '#10B981', fontSize: '0.75rem', fontWeight: 600 }}>✓</span>}
+                </div>
+              );
+            })}
+            <div className={styles.modalActions}>
+              <button className={styles.modalCancel} onClick={() => setSitesMappingModal(null)}>Cancel</button>
+              <button
+                className={styles.modalConfirm}
+                onClick={executeSitesImport}
+                disabled={!sitesMappingModal.mapping.siteName || !sitesMappingModal.mapping.zip}
+              >
+                Import {sitesMappingModal.rows.length.toLocaleString()} sites
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
 
       {mappingModal && createPortal(
