@@ -1221,9 +1221,12 @@ export function SitesView({ settings, updateSettings } = {}) {
     const SE_TEXT_DARK = 'FF1E293B';
     const SE_BORDER = 'FFD4DDE1';
     const SE_GREEN = 'FF3DCD58';
-    const LOW_PCT = 0.02;
-    const HIGH_PCT = 0.04;
-    const SAVINGS_RANGE = '2% - 4%';
+    // Gas keeps a flat 2 % – 4 % across the board; electric uses a
+    // per-state curated range (see ELECTRIC_DEREGULATION above) so
+    // CA / TX / etc. land at the right percentages.
+    const GAS_LOW = 0.02;
+    const GAS_HIGH = 0.04;
+    const GAS_SAVINGS_RANGE = '2% - 4%';
 
     // Distinct list joined with ", "; trims to a sensible cap so a
     // state with dozens of suppliers doesn't blow up the cell.
@@ -1300,9 +1303,34 @@ export function SitesView({ settings, updateSettings } = {}) {
       }
       const out = [...states.values()].sort((a, b) => a.state.localeCompare(b.state));
       return out.map(g => {
-        const status = g.deregulatedSites === 0
-          ? 'no'
-          : g.deregulatedSites === g.totalSites ? 'yes' : 'Limited';
+        // Electric: per-state curated status / range / pct from
+        // ELECTRIC_DEREGULATION. Gas: flat 2 % – 4 % whenever any
+        // deregulated activity is on the row.
+        let status;
+        let range;
+        let lowPct;
+        let highPct;
+        if (commodity === 'electric') {
+          const entry = ELECTRIC_DEREGULATION[g.state];
+          status = entry?.status || 'no';
+          range = entry?.range ?? '';
+          lowPct = entry?.lowPct;
+          highPct = entry?.highPct;
+        } else {
+          if (g.deregulatedSites > 0) {
+            status = g.deregulatedSites === g.totalSites ? 'yes' : 'Limited';
+            range = GAS_SAVINGS_RANGE;
+            lowPct = GAS_LOW;
+            highPct = GAS_HIGH;
+          } else {
+            status = 'no';
+            range = '';
+            lowPct = null;
+            highPct = null;
+          }
+        }
+        const low = (lowPct != null && g.spend > 0) ? Math.round(g.spend * lowPct) : (lowPct != null ? 0 : '');
+        const high = (highPct != null && g.spend > 0) ? Math.round(g.spend * highPct) : (highPct != null ? 0 : '');
         const earliest = g.starts.length ? new Date(Math.min(...g.starts.map(d => d.getTime()))) : null;
         const latest = g.ends.length ? new Date(Math.max(...g.ends.map(d => d.getTime()))) : null;
         return {
@@ -1312,9 +1340,9 @@ export function SitesView({ settings, updateSettings } = {}) {
           deregulatedSites: g.deregulatedSites,
           consumption: Math.round(g.consumption),
           spend: Math.round(g.spend),
-          range: g.deregulatedSpend === 0 && g.deregulatedSites === 0 ? '' : SAVINGS_RANGE,
-          low: Math.round(g.spend * LOW_PCT),
-          high: Math.round(g.spend * HIGH_PCT),
+          range,
+          low,
+          high,
           utilities: joinDistinct(g.utilities),
           suppliers: joinDistinct(g.suppliers),
           // When the state has a supplier on record but no parseable
