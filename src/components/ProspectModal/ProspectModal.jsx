@@ -3284,6 +3284,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                           allHubspotContacts={hubspotContacts}
                           contactNotes={settings.contactNotes || {}}
                           contactReportsTo={settings.contactReportsTo || {}}
+                          contactNicknames={settings.contactNicknames || {}}
                           prospects={prospects}
                           cdmName={cdmName}
                           onCreateContact={async ({ email, firstname, lastname }) => {

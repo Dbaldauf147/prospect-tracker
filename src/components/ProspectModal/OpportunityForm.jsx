@@ -383,13 +383,22 @@ function formatDuration(min) {
 // containment with a length ratio).
 // Prefer the live HubSpot contact's name over whatever was parsed from
 // the ICS/manual entry, so edits made in the contact table propagate to
-// the form immediately.
-function displayAttendeeName(a) {
+// the form immediately. When a nickname is recorded for the matched
+// contact, append " - Goes by <Nick>" so e.g. "Daniel Baldauf" reads as
+// "Daniel Baldauf - Goes by Dan" everywhere we list client contacts.
+function displayAttendeeName(a, nicknames = {}) {
   const fn = (a?.match?.firstname || '').trim();
   const ln = (a?.match?.lastname || '').trim();
   const combined = [fn, ln].filter(Boolean).join(' ');
-  if (combined) return combined;
-  return a?.name || a?.email || '(unknown)';
+  const cid = a?.match?.id || a?.match?.vid;
+  const nick = (cid && nicknames && nicknames[cid] ? String(nicknames[cid]).trim() : '');
+  const base = combined || a?.name || a?.email || '(unknown)';
+  if (!nick) return base;
+  // Skip the "goes by" suffix if the nickname is already part of the
+  // displayed name (e.g. when name is a single token that happens to
+  // match the nickname).
+  if (base.toLowerCase().includes(nick.toLowerCase())) return base;
+  return `${base} - Goes by ${nick}`;
 }
 
 function matchProspectByName(name, prospects) {
@@ -562,7 +571,7 @@ const SERVICE_THEIR_QUESTIONS = {
   ],
 };
 
-export function OpportunityForm({ value, onChange, onLinkOpp, companyName, companyContacts = [], allHubspotContacts = [], contactNotes = {}, contactReportsTo = {}, prospects = [], onCreateContact, importableNotes = [], cdmName }) {
+export function OpportunityForm({ value, onChange, onLinkOpp, companyName, companyContacts = [], allHubspotContacts = [], contactNotes = {}, contactReportsTo = {}, contactNicknames = {}, prospects = [], onCreateContact, importableNotes = [], cdmName }) {
   const template = DEFAULT_FORM_TEMPLATE;
 
   // Local mirror of the persisted value. All edits update localValue
@@ -1713,7 +1722,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     // Required first, optional after, alphabetical within each group.
     const sorter = (a, b) => {
       if (!!a.required !== !!b.required) return a.required ? -1 : 1;
-      return displayAttendeeName(a).localeCompare(displayAttendeeName(b));
+      return displayAttendeeName(a, contactNicknames).localeCompare(displayAttendeeName(b, contactNicknames));
     };
     se.sort(sorter);
     cust.sort(sorter);
@@ -1801,8 +1810,8 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
   // organization rather than a specific person.
   const agendaSpeakerGroups = useMemo(() => {
     const opts = [];
-    const se = (seAttendees || []).map(a => displayAttendeeName(a)).filter(n => n && n !== '(unknown)');
-    const cust = (customerAttendees || []).map(a => displayAttendeeName(a)).filter(n => n && n !== '(unknown)');
+    const se = (seAttendees || []).map(a => displayAttendeeName(a, contactNicknames)).filter(n => n && n !== '(unknown)');
+    const cust = (customerAttendees || []).map(a => displayAttendeeName(a, contactNicknames)).filter(n => n && n !== '(unknown)');
     const customerLabel = companyName || 'Customer';
     if (se.length > 0 || true) {
       opts.push({ label: 'Schneider Electric', items: ['Schneider Electric', ...se] });
@@ -2187,7 +2196,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
           const se = seAttendees[i];
           const seVals = se
             ? [
-                displayAttendeeName(se),
+                displayAttendeeName(se, contactNicknames),
                 se.required ? 'Required' : 'Optional',
                 dansAskMap[dansAskKey(se)] || '',
                 '',
@@ -2248,7 +2257,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
               .filter(Boolean)
               .join(', ');
             custVals = [
-              displayAttendeeName(cust),
+              displayAttendeeName(cust, contactNicknames),
               reportsToText,
               cust.match?.jobtitle || '',
               [city, country].filter(Boolean).join(', '),
@@ -2653,11 +2662,11 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                           style={{ fontWeight: 600, fontSize: '0.8rem', color: '#0A66C2', textDecoration: 'none', ...wrap }}
                           title="Open LinkedIn profile"
                         >
-                          {displayAttendeeName(a)}
+                          {displayAttendeeName(a, contactNicknames)}
                         </a>
                       ) : (
                         <span style={{ fontWeight: 600, fontSize: '0.8rem', color: '#1E293B', ...wrap }}>
-                          {displayAttendeeName(a)}
+                          {displayAttendeeName(a, contactNicknames)}
                         </span>
                       )}
                     </div>
@@ -2764,11 +2773,11 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                           style={{ fontWeight: 600, fontSize: '0.8rem', color: '#0A66C2', textDecoration: 'none', ...wrap }}
                           title="Open LinkedIn profile"
                         >
-                          {displayAttendeeName(a)}
+                          {displayAttendeeName(a, contactNicknames)}
                         </a>
                       ) : (
                         <span style={{ fontWeight: 600, fontSize: '0.8rem', color: '#1E293B', ...wrap }}>
-                          {displayAttendeeName(a)}
+                          {displayAttendeeName(a, contactNicknames)}
                         </span>
                       )}
                     </div>
