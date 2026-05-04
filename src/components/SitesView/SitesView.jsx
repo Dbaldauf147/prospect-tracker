@@ -167,8 +167,30 @@ export function SitesView({ settings, updateSettings } = {}) {
         loadUtilityRates(),
       ]);
       if (cancelled) return;
-      setSitesData(Array.isArray(sites) ? sites : []);
+      const sitesArr = Array.isArray(sites) ? sites : [];
+      setSitesData(sitesArr);
       setSitesLoaded(true);
+      // Re-derive the column overrides from the persisted data on
+      // mount. The import path drops everything the user marked
+      // Ignore, so the saved columns are exactly the mapped ones —
+      // detectSitesMapping picks them back up by header pattern and
+      // the per-row supplier / cost / date logic flows again.
+      if (sitesArr.length) {
+        const persistedHeaders = Object.keys(sitesArr[0]);
+        const m = detectSitesMapping(persistedHeaders);
+        setSiteNameOverride(m.siteName || null);
+        setZipColOverride(m.zip || null);
+        setElectricColOverride(m.electric || '__none__');
+        setGasColOverride(m.gas || '__none__');
+        setElectricCostOverride(m.electricCost || null);
+        setGasCostOverride(m.gasCost || null);
+        setElectricSupplierOverride(m.electricSupplier || null);
+        setGasSupplierOverride(m.gasSupplier || null);
+        setElectricStartOverride(m.electricStart || null);
+        setElectricEndOverride(m.electricEnd || null);
+        setGasStartOverride(m.gasStart || null);
+        setGasEndOverride(m.gasEnd || null);
+      }
       setUtility(util);
       setUtilityLoaded(true);
     })();
