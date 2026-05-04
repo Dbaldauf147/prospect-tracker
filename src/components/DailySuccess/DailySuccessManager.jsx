@@ -88,6 +88,35 @@ async function buildPipelineSummary() {
       if (pipeline.activitiesGoal !== undefined) {
         lines.push(`Activities: ${pipeline.activitiesThisWeek ?? 0} this week vs goal of ${pipeline.activitiesGoal} (last week: ${pipeline.activitiesLastWeek ?? 0}).`);
       }
+      // Per-stage close rates (goal vs actual). The biggest systemic
+      // signals live here — e.g. a Stage 4 close rate of 4 % vs a 25 %
+      // goal usually outranks any single stuck deal.
+      if (Array.isArray(pipeline.stages) && pipeline.stages.length > 0) {
+        const closeBits = [];
+        for (const st of pipeline.stages) {
+          const ca = Number(st.closeActual);
+          const cg = Number(st.closeGoal);
+          if (!Number.isFinite(ca) && !Number.isFinite(cg)) continue;
+          const fmtPct = (v) => Number.isFinite(v) ? `${(v * 100).toFixed(0)}%` : '—';
+          const gap = (Number.isFinite(ca) && Number.isFinite(cg)) ? (ca - cg) : null;
+          const flag = gap !== null && gap <= -0.10 ? ' ⚠ gap' : '';
+          closeBits.push(`${st.label || st.key}: actual ${fmtPct(ca)} vs goal ${fmtPct(cg)}${flag}`);
+        }
+        if (closeBits.length) {
+          lines.push(`Close rates by stage — ${closeBits.join('; ')}.`);
+        }
+        const lifeBits = [];
+        for (const st of pipeline.stages) {
+          const la = Number(st.lifeActual);
+          const lg = Number(st.lifeGoal);
+          if (!Number.isFinite(la) && !Number.isFinite(lg)) continue;
+          const flag = (Number.isFinite(la) && Number.isFinite(lg) && la > lg * 1.5) ? ' ⚠ slow' : '';
+          lifeBits.push(`${st.label || st.key}: ${Number.isFinite(la) ? la : '—'}d vs goal ${Number.isFinite(lg) ? lg : '—'}d${flag}`);
+        }
+        if (lifeBits.length) {
+          lines.push(`Avg opp life by stage — ${lifeBits.join('; ')}.`);
+        }
+      }
     }
 
     // Per-stage live aggregates from BFO.
@@ -185,7 +214,17 @@ async function buildPipelineSummary() {
       const losses = closed.filter(r => (r.Stage || '').trim() === 'Not Sold');
       const totalQuoted = active.reduce((s, r) => s + (parseMoney(r['Quoted Amount']) || 0), 0);
       lines.push('');
-      lines.push(`Opps tab: ${active.length} active opps · ${fmt$(totalQuoted)} total quoted · ${wins.length} wins / ${losses.length} losses recorded.`);
+      const closedTotal = wins.length + losses.length;
+      const winPct = closedTotal > 0 ? (wins.length / closedTotal * 100) : null;
+      const wonValue = wins.reduce((s, r) => s + (parseMoney(r['Quoted Amount']) || 0), 0);
+      const lostValue = losses.reduce((s, r) => s + (parseMoney(r['Quoted Amount']) || 0), 0);
+      const dollarTotal = wonValue + lostValue;
+      const dollarWinPct = dollarTotal > 0 ? (wonValue / dollarTotal * 100) : null;
+      lines.push(
+        `Opps tab roll-up: ${active.length} active · ${fmt$(totalQuoted)} total quoted · ${wins.length} wins / ${losses.length} losses` +
+        (winPct !== null ? ` · win rate ${winPct.toFixed(1)}% by count` : '') +
+        (dollarWinPct !== null ? `, ${dollarWinPct.toFixed(1)}% by $` : '') + '.'
+      );
 
       // Top 5 stuck quotes (Quoting/Quoted/Verbal, sorted by oldest
       // "Last Client Heard From Us" or no contact recorded).

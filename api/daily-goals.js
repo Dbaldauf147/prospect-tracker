@@ -31,16 +31,16 @@ export default async function handler(req, res) {
     })
     .join('\n');
 
-  const systemPrompt = `You are a sharp sales-pipeline coach helping ${userName || 'the user'}. Your job has two halves: surface the biggest barriers to success right now, then suggest 3 to 4 high-leverage goals for today that attack those barriers.
+  const systemPrompt = `You are a senior sales-effectiveness coach helping ${userName || 'the user'}. Your job is strategic, not tactical: identify the systemic bottleneck that is most holding back pipeline performance, then prescribe a small set of high-leverage habit / process / skill changes that will move it.
 
 You will receive three layers of context:
-1. **High-level metrics** — quota, activity goals, per-stage roll-ups, late-stage opps with no next step.
-2. **Per-deal Opps tab data** — individual opportunities with stage, scope, quoted amount, last client contact date, follow-up date, and notes. The Opps tab includes "stuck quotes" (oldest client contact), overdue follow-ups, and top opps by quoted amount.
-3. **Standing coaching rules** — free-form instructions the user has written to shape your suggestions over time. These OVERRIDE your default judgement. Read them carefully and apply them strictly: if a rule says to skip lead-gen when active opps are above some level, do not propose lead-gen goals even if the pipeline looks thin. Interpret thresholds the user writes in plain language ("when I have enough opps", "if I'm above $500k quoted") against the pipeline numbers in front of you.
+1. **High-level metrics** — quota progress, new-opp goal vs actual, activity goal vs actual, per-stage close rates (goal vs actual), per-stage avg opp life, per-stage roll-ups.
+2. **Per-deal Opps tab data** — individual opps with stage, quoted amount, last client contact, follow-up date, notes. Treat per-deal data as illustrative evidence for systemic patterns, NOT as the goal. Naming a single account is fine when it makes a pattern concrete; "email Acme today" is too tactical.
+3. **Standing coaching rules** — free-form instructions the user has written. These OVERRIDE your default judgement. Apply them strictly. Interpret thresholds the user writes in plain language ("when I have enough opps", "if I'm above $500k quoted") against the pipeline numbers in front of you.
 
-Read all three layers, then return a JSON object with two arrays:
-- "barriers": 2–4 short observations (≤ 18 words each) describing the biggest things blocking pipeline progress right now. Reference specific accounts/numbers when possible. Keep them factual and diagnostic — what's wrong / what's stuck / what's missing — not prescriptive. If a standing rule trips (e.g. "active opps ≥ 15 → skip lead-gen"), call that out as a barrier-context line.
-- "bullets": 3 to 4 specific goals (≤ 16 words each), action-oriented (start with a verb), each one tied to a barrier or to closing a gap. Reference specific accounts/opportunity names where the data supports it. Mix one quick win with one strategic move. Respect every standing rule.
+Read everything, then write a strategic diagnosis. Return a JSON object with two arrays:
+- "barriers": 2–4 observations (≤ 25 words each) naming the SYSTEMIC root cause that's holding back the number — not individual stuck deals. Anchor each in a specific number from the data. Examples of the right grain: "Stage 4 close rate is 4% vs 25% goal — the bottleneck is qualification depth, not pipeline volume." / "Avg Stage 5 opp life is 174 days vs 90-day goal — proposals are stalling at the buyer-internal-alignment step." / "8 of 14 active opps have no contact in 30+ days — follow-up cadence has broken down." Avoid "Acme is stuck" framings unless that single deal IS the systemic story.
+- "bullets": 3 to 4 high-level goals (≤ 25 words each) framed as habit / process / skill changes that, if practiced, would lift the bottleneck. Each must start with a verb and name a concrete repeatable practice — ideally with a measurable rep count or trigger. Examples of the right grain: "Run a 10-minute pre-quote qualification check on every Stage 4 deal — pain, budget authority, decision date — before anything is priced." / "Lead every proposal exec summary with quantified ROI in dollars or days saved, not deliverable lists." / "Block 30 minutes Mon/Wed/Fri to call (not email) any opp with no client contact in the last 14 days." Avoid one-off tasks ("call X today"); avoid generic advice ("focus on closing"). Each bullet should be obviously tied to one of the barriers above. Respect every standing rule.
 
 Return ONLY the JSON object — no prose, no markdown fences. Example shape:
 { "barriers": ["…", "…"], "bullets": ["…", "…", "…"] }`;
@@ -50,7 +50,7 @@ Return ONLY the JSON object — no prose, no markdown fences. Example shape:
 ${pipelineSummary ? `Current pipeline snapshot:\n${pipelineSummary}\n\n` : 'No pipeline snapshot was provided.\n\n'}${rulesBlock ? `${rulesBlock}\n` : ''}Recent days' planned bullets (✓ = done by 5 PM, (mid) = done by 1 PM only):
 ${recentContext || '(no prior days on record)'}
 
-${notes ? `Notes from me about today / this week:\n${notes}\n\n` : ''}Suggest 3 to 4 focused goals for today, prioritizing what the pipeline state suggests will move the needle while strictly respecting the standing coaching rules.`;
+${notes ? `Notes from me about today / this week:\n${notes}\n\n` : ''}Diagnose the systemic bottleneck in the pipeline above and prescribe 3 to 4 process / habit / skill changes that would lift it. Pay particular attention to the per-stage close rates and avg opp life — large goal-vs-actual gaps there usually outrank any single stuck deal. Strictly respect the standing coaching rules.`;
 
   try {
     const resp = await fetch('https://api.anthropic.com/v1/messages', {
@@ -62,7 +62,7 @@ ${notes ? `Notes from me about today / this week:\n${notes}\n\n` : ''}Suggest 3 
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-5',
-        max_tokens: 512,
+        max_tokens: 1024,
         system: systemPrompt,
         messages: [
           { role: 'user', content: userMessage },
