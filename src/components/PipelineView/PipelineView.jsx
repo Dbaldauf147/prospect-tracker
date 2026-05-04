@@ -585,7 +585,7 @@ function PipelineViewInner() {
                 <th colSpan={2}>Deal Size</th>
                 <th colSpan={2}>Pipeline</th>
                 <th colSpan={2}>Close Rate</th>
-                <th colSpan={2}>Target Projection</th>
+                <th>Target Projection</th>
                 <th colSpan={2}>Avg Opp Life</th>
                 <th rowSpan={2}>Opps Needed w Deal Sizes</th>
                 <th rowSpan={2}>Opps Needed w Close Rates</th>
@@ -595,7 +595,7 @@ function PipelineViewInner() {
                 <th>Goal (above)</th><th>Actual</th>
                 <th>Goal (above)</th><th>Actual</th>
                 <th>Goal (above)</th><th>Actual</th>
-                <th>Goal</th><th>Actual</th>
+                <th>Goal</th>
                 <th>Goal (less than)</th><th>Actual</th>
               </tr>
             </thead>
@@ -640,19 +640,10 @@ function PipelineViewInner() {
                       const dg = Number(st.dealSizeGoal) || 0;
                       const cg = Number(st.closeGoal) || 0;
                       const projGoal = Math.round(ag * dg * cg);
-                      const aa = Number(activeActual) || 0;
-                      const da = Number(dealSizeActual) || 0;
-                      const ca = Number(st.closeActual) || 0;
-                      const projActual = Math.round(aa * da * ca);
                       return (
-                        <>
-                          <td className={styles.numCell} title="Active Opp Goal × Deal Size Goal × Close Rate Goal">
-                            {projGoal ? fmtMoney(projGoal) : ''}
-                          </td>
-                          <td className={`${styles.numCell} ${compareClass(projActual, projGoal, 'higher-better')}`.trim()} title="Active Opp Actual × Deal Size Actual × Close Rate Actual">
-                            {projActual ? fmtMoney(projActual) : ''}
-                          </td>
-                        </>
+                        <td className={styles.numCell} title="Active Opp Goal × Deal Size Goal × Close Rate Goal">
+                          {projGoal ? fmtMoney(projGoal) : ''}
+                        </td>
                       );
                     })()}
                     <td><NumCell value={st.lifeGoal} onCommit={(v) => setStage(i, { lifeGoal: v })} /></td>
@@ -680,7 +671,6 @@ function PipelineViewInner() {
                 <td className={styles.numCell}>{fmtMoney(stageTotals.pipelineActual)}</td>
                 <td colSpan={2} />
                 <td className={styles.numCell} title="Sum of stage Target Projection Goals (Active Goal × Deal Size Goal × Close Rate Goal).">{fmtMoney(Math.round(stageTotals.targetProjGoal))}</td>
-                <td className={`${styles.numCell} ${compareClass(stageTotals.targetProjActual, stageTotals.targetProjGoal, 'higher-better')}`.trim()} title="Sum of stage Target Projection Actuals (Active Actual × Deal Size Actual × Close Rate Actual).">{fmtMoney(Math.round(stageTotals.targetProjActual))}</td>
                 <td className={styles.numCell} title="Average of stage goals (less is better).">{lifeGoalAvg ?? ''}</td>
                 <td className={`${styles.numCell} ${compareClass(lifeActualAvg, lifeGoalAvg, 'lower-better')}`.trim()} title="Average of stage actual life. Pulled from BFO Activity when loaded; otherwise from manual stage Actual values.">{lifeActualAvg ?? ''}</td>
                 <td className={styles.numCell}>{totalOppsForDeal}</td>
