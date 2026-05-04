@@ -892,15 +892,15 @@ function PipelineViewInner() {
           </MetricsTableBoundary>
         </div>
 
-        {/* Mid row — sized so each section sits directly under the
-            matching metrics-table column group above. The metrics
-            colgroup pins col widths (140px Stage label + 12 × 105px
-            data cols = 1400px total). We mirror those widths here
-            so Coverage Ratio lands under Pipeline (cols 6-7) and
-            % deals not Quoted under Close Rate (cols 8-9). */}
-        <div style={{ overflowX: 'auto' }}>
-        <div className={`${styles.midRow}`} style={{ minWidth: 1400, flexWrap: 'nowrap' }}>
-          <div className={styles.section} style={{ flex: '0 0 560px' }}>
+        {/* Mid row — Client/Greenfield + Coverage Ratio + % deals
+            not Quoted. Section widths roughly track the metrics
+            columns above (~108px per metrics col), but we let things
+            wrap on narrow viewports rather than force a horizontal
+            scroll. Coverage Ratio gets a blue outline that matches
+            the column border traced through the metrics Pipeline
+            cells above so the two read as a vertical block. */}
+        <div className={styles.midRow}>
+          <div className={styles.section} style={{ flex: '1 1 540px', minWidth: 480 }}>
             <table className={styles.grid} style={{ width: '100%' }}>
               <thead>
                 <tr><th /><th>Count / $</th><th>Goal - Client</th><th>Actual - Client</th></tr>
@@ -1015,7 +1015,6 @@ function PipelineViewInner() {
             </table>
           </div>
 
-        </div>
         </div>
 
         {/* Goals / Activities */}
