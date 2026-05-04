@@ -84,7 +84,7 @@ export const DEFAULT_FORM_TEMPLATE = {
     {
       key: 'meetingNotes',
       label: 'Key Issues',
-      underField: 'summary', // rendered inline beneath the Meeting Summary / Notes field
+      aboveField: 'summary', // rendered inline ABOVE the Meeting Summary / Notes field
       starrable: true, // star-to-promote: one row at a time bubbles to the top
       wrapCells: true, // long-form note taking — textareas that grow with content
       columns: [
@@ -96,7 +96,7 @@ export const DEFAULT_FORM_TEMPLATE = {
     {
       key: 'actionItems',
       label: 'Action Items / Next Steps',
-      underField: 'summary', // nests directly under Key Issues beneath Meeting Summary / Notes
+      underField: 'summary', // nests directly under Meeting Summary / Notes
       columns: [
         { key: 'item', label: 'Action Item' },
         { key: 'owner', label: 'Owner', attendeePicker: true },
@@ -1214,12 +1214,16 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
   }
 
   const topTables = template.tables.filter(t => t.placement === 'top');
-  const bottomTables = template.tables.filter(t => t.placement !== 'top' && !t.underField);
-  const tablesByField = {};
+  const bottomTables = template.tables.filter(t => t.placement !== 'top' && !t.underField && !t.aboveField);
+  const tablesByField = {};   // rendered AFTER the field input
+  const tablesAboveField = {}; // rendered BEFORE the field input
   for (const t of template.tables) {
     if (t.underField) {
       if (!tablesByField[t.underField]) tablesByField[t.underField] = [];
       tablesByField[t.underField].push(t);
+    } else if (t.aboveField) {
+      if (!tablesAboveField[t.aboveField]) tablesAboveField[t.aboveField] = [];
+      tablesAboveField[t.aboveField].push(t);
     }
   }
 
@@ -3105,11 +3109,17 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
           const statusValue = formData.fieldValues.status || '';
           const notCurrentClient = isStatus && statusValue && statusValue !== 'Client';
           const nestedTables = tablesByField[f.key] || [];
+          const aboveTables = tablesAboveField[f.key] || [];
           // Any field that has nested tables takes the full grid width so
           // the table actually fits. Textareas already do this.
-          const spanFull = f.type === 'textarea' || nestedTables.length > 0;
+          const spanFull = f.type === 'textarea' || nestedTables.length > 0 || aboveTables.length > 0;
           return (
             <div key={f.key} style={spanFull ? { gridColumn: 'span 2' } : undefined}>
+              {aboveTables.length > 0 && (
+                <div style={{ marginBottom: '0.5rem' }}>
+                  {renderTables(aboveTables)}
+                </div>
+              )}
               <div style={sx.fieldLabel}>
                 {f.label}
                 {notCurrentClient && (
