@@ -11,6 +11,8 @@ import {
   completionStats,
 } from './dailySuccessStore';
 import { dbGet } from '../../utils/db';
+import { CoachingRulesPanel } from './CoachingRulesPanel';
+import { subscribeToCoachingRules, DEFAULT_COACHING_RULES } from './coachingRulesStore';
 
 const STAGE_LABEL = {
   6: /^\s*6\s*-\s*negotiate\s*to\s*win\b/i,
@@ -233,9 +235,17 @@ export function DailySuccessManager({ user }) {
   const [suggesting, setSuggesting] = useState(false);
   const [suggestions, setSuggestions] = useState([]); // string[] from Claude, awaiting keep/drop
   const [barriers, setBarriers] = useState([]); // string[] of biggest barriers (read-only)
+  const [showRules, setShowRules] = useState(false);
+  const [rules, setRules] = useState(DEFAULT_COACHING_RULES);
   const tickerRef = useRef(null);
 
   const enabled = (user?.email || '').toLowerCase() === TARGET_EMAIL;
+
+  useEffect(() => {
+    if (!enabled || !user?.uid) return undefined;
+    const unsub = subscribeToCoachingRules(user.uid, setRules);
+    return () => unsub();
+  }, [enabled, user?.uid]);
 
   useEffect(() => {
     if (!enabled) return undefined;
@@ -339,6 +349,7 @@ export function DailySuccessManager({ user }) {
           notes: morningText,
           userName: 'Dan',
           pipelineSummary,
+          coachingRules: rules,
         }),
       });
       const data = await resp.json();
@@ -430,6 +441,9 @@ export function DailySuccessManager({ user }) {
               placeholder={'• Land 3 outreach replies\n• Finish Option 2 pricing\n• Prep client deck'}
             />
             <p className={styles.smallNote}>Lines starting with -, •, or * are auto-cleaned.</p>
+            {showRules && (
+              <CoachingRulesPanel user={user} onClose={() => setShowRules(false)} />
+            )}
             {barriers.length > 0 && (
               <div className={styles.barrierBox}>
                 <div className={styles.barrierHead}>
@@ -485,6 +499,12 @@ export function DailySuccessManager({ user }) {
               disabled={suggesting}
               title="Use Claude to suggest 3-5 focus bullets based on your recent log entries and any notes you've typed above."
             >{suggesting ? 'Asking Claude…' : '✨ Suggest with Claude'}</button>
+            <button
+              type="button"
+              className={styles.btnGhost}
+              onClick={() => setShowRules(s => !s)}
+              title="Edit the thresholds and notes that shape Claude's suggestions every morning."
+            >{showRules ? 'Hide rules' : '⚙ Rules'}</button>
             <div style={{ flex: 1 }} />
             <button type="button" className={styles.btnGhost} onClick={snoozeMorning}>Snooze 1h</button>
             <button type="button" className={styles.btnGhost} onClick={skipForToday}>Skip today</button>
