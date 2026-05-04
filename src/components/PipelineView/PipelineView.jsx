@@ -432,6 +432,27 @@ function PipelineViewInner() {
       .sort((a, b) => (a.age ?? 0) - (b.age ?? 0));
   }, [oppsRecords]);
 
+  // Sum of Quoted Amount for Opps tab records with Stage === 'Sold' and
+  // a Close Date in the current calendar year. Drives the Closed YTD
+  // cell on the Pipeline header. Returns null when the Opps cache has
+  // no records — Closed YTD then falls back to the editable input.
+  const oppsClosedYTD = useMemo(() => {
+    if (oppsRecords.length === 0) return null;
+    const thisYear = new Date().getFullYear();
+    let total = 0;
+    for (const r of oppsRecords) {
+      if ((r.Stage || '').trim() !== 'Sold') continue;
+      const cd = r['Close Date'];
+      if (!cd) continue;
+      const ts = Date.parse(cd);
+      if (Number.isNaN(ts)) continue;
+      if (new Date(ts).getFullYear() !== thisYear) continue;
+      const amt = parseMoney(r['Quoted Amount']);
+      if (typeof amt === 'number' && Number.isFinite(amt)) total += amt;
+    }
+    return Math.round(total);
+  }, [oppsRecords]);
+
   const notQuotedFromOpps = useMemo(() => {
     const NOT_QUOTED_STAGES = new Set(['Lead', 'Not Started', 'Qualifying']);
     return oppsRecords
@@ -553,7 +574,10 @@ function PipelineViewInner() {
         ? Math.round(stageTotals.pipelineActual / stageTotals.activeActual)
         : 0);
 
-  const closedPctOfQuota = state.target ? state.closedYTD / state.target : 0;
+  // Prefer the live Opps-derived Closed YTD when the Opps cache is
+  // populated; falls back to the manually entered state.closedYTD.
+  const effectiveClosedYTD = oppsClosedYTD !== null ? oppsClosedYTD : (Number(state.closedYTD) || 0);
+  const closedPctOfQuota = state.target ? effectiveClosedYTD / state.target : 0;
   // Weighted-by-count averages — SUMPRODUCT(life, count) / SUM(count).
   // Goal weights are activeGoal; Actual weights are the live count
   // (BFO when loaded, manual activeActual otherwise).
@@ -775,7 +799,11 @@ function PipelineViewInner() {
               <tbody>
                 <tr>
                   <td><NumCell value={state.target} kind="money" onCommit={(v) => setField('target', v)} /></td>
-                  <td><NumCell value={state.closedYTD} kind="money" onCommit={(v) => setField('closedYTD', v)} /></td>
+                  <td>
+                    {oppsClosedYTD !== null
+                      ? <span title="Auto-fed from Opps tab — sum of Quoted Amount for Stage = 'Sold' opps with a Close Date in the current calendar year." className={styles.liveCell}>{fmtMoney(oppsClosedYTD)}</span>
+                      : <NumCell value={state.closedYTD} kind="money" onCommit={(v) => setField('closedYTD', v)} />}
+                  </td>
                   <td className={styles.numCell}>{(closedPctOfQuota * 100).toFixed(2)}%</td>
                 </tr>
               </tbody>
