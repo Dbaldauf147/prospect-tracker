@@ -595,15 +595,48 @@ export function SitesView({ settings, updateSettings } = {}) {
         return val == null ? '' : Math.round(Number(val) * 100) / 100;
       },
     });
+    // Pull the parsed annual consumption straight off the row. kWh
+    // is stored natively; Dth = therms ÷ 10. Tooltip shows the
+    // source column header so the user can verify which sheet
+    // column drove the value.
+    const makeConsumptionCol = (commodity) => {
+      const isElectric = commodity === 'electric';
+      const label = isElectric ? 'Annual Electric (kWh)' : 'Annual Gas (Dth)';
+      return {
+        key: `${commodity}_consumption`,
+        label,
+        defaultWidth: 140,
+        render: (row) => {
+          const raw = isElectric ? row.__kwh__ : row.__therms__;
+          if (raw == null) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
+          const val = isElectric ? raw : raw / 10; // therms → Dth
+          const sourceHeader = isElectric ? row.__kwhSource__ : row.__thermsSource__;
+          const tip = sourceHeader ? `From "${sourceHeader}" column` : `${isElectric ? 'kWh' : 'Dth'} pulled from the uploaded sites file`;
+          return (
+            <span
+              title={tip}
+              style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
+            >{Math.round(val).toLocaleString()}</span>
+          );
+        },
+        exportValue: (row) => {
+          const raw = isElectric ? row.__kwh__ : row.__therms__;
+          if (raw == null) return '';
+          return isElectric ? Math.round(raw) : Math.round(raw / 10);
+        },
+      };
+    };
     return [
       ...base,
       makeStateCol(),
       makeUtilityCol('electric', 'Electric Utility', { bg: '#FEF3C7', border: '#FCD34D', text: '#92400E' }),
       makeMarketCol('electric', 'Electric Market'),
+      makeConsumptionCol('electric'),
       makeRateCol('electric', 'Electric Rate'),
       makeCostCol('electricCost', 'Electric Cost', { bg: '#FEF3C7', border: '#FCD34D', text: '#92400E' }),
       makeUtilityCol('gas', 'Gas Utility', { bg: '#DBEAFE', border: '#93C5FD', text: '#1E3A8A' }),
       makeMarketCol('gas', 'Gas Market'),
+      makeConsumptionCol('gas'),
       makeRateCol('gas', 'Gas Rate'),
       makeCostCol('gasCost', 'Gas Cost', { bg: '#DBEAFE', border: '#93C5FD', text: '#1E3A8A' }),
       makeCostCol('totalCost', 'Total Est. Cost', { bg: '#EDE9FE', border: '#C4B5FD', text: '#5B21B6' }),
