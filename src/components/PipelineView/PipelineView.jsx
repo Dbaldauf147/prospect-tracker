@@ -796,7 +796,10 @@ function PipelineViewInner() {
                         const tip = `Auto-fed from Opps tab: ${live.sold} Sold / ${live.notSold} Not Sold this year with ${signal} and Scope without "pull through". Re-paste the Opps tab to refresh.`;
                         return (
                           <td className={`${cls} ${styles.numCell}`.trim()}>
-                            <span title={tip} className={styles.liveCell}>{`${(liveRate * 100).toFixed(0)}%`}</span>
+                            <span title={tip} className={styles.liveCell} style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: 1.15 }}>
+                              <span>{`${(liveRate * 100).toFixed(0)}%`}</span>
+                              <span style={{ fontSize: '0.65rem', opacity: 0.75, fontWeight: 500 }}>{live.sold}/{live.sold + live.notSold}</span>
+                            </span>
                           </td>
                         );
                       }
@@ -842,7 +845,12 @@ function PipelineViewInner() {
                 <td className={styles.numCell} title={oppsCloseRateActual
                   ? `Sold ÷ (Sold + Not Sold) for this-year closed Opps with "pull through" excluded — ${oppsCloseRateActual.sold} sold / ${oppsCloseRateActual.notSold} not sold.`
                   : 'Add Sold / Not Sold opps with a Close Date this year (and a Scope without "pull through") on the Opps tab to populate.'}>
-                  {oppsCloseRateActual ? `${(oppsCloseRateActual.rate * 100).toFixed(0)}%` : ''}
+                  {oppsCloseRateActual ? (
+                    <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: 1.15 }}>
+                      <span>{`${(oppsCloseRateActual.rate * 100).toFixed(0)}%`}</span>
+                      <span style={{ fontSize: '0.65rem', opacity: 0.75, fontWeight: 500 }}>{oppsCloseRateActual.sold}/{oppsCloseRateActual.sold + oppsCloseRateActual.notSold}</span>
+                    </span>
+                  ) : ''}
                 </td>
                 <td className={styles.numCell} title="Sum of stage Target Projection Goals (Active Goal × Deal Size Goal × Close Rate Goal).">{fmtMoney(Math.round(stageTotals.targetProjGoal))}</td>
                 <td className={styles.numCell} title="Stage goals weighted by Active Opp Goal — SUMPRODUCT(lifeGoal, activeGoal) ÷ SUM(activeGoal). Less is better.">{lifeGoalAvg ?? ''}</td>
@@ -920,8 +928,8 @@ function PipelineViewInner() {
           <div className={styles.section}>
             <table className={styles.grid}>
               <thead>
-                <tr><th colSpan={2}>Coverage Ratio</th><th colSpan={3}>% of deals not Quoted</th></tr>
-                <tr><th>Goal</th><th>Actual</th><th>Goal</th><th>Actual Year</th><th>Actual Month</th></tr>
+                <tr><th colSpan={2}>Coverage Ratio</th></tr>
+                <tr><th>Goal</th><th>Actual</th></tr>
               </thead>
               <tbody>
                 <tr>
@@ -946,6 +954,19 @@ function PipelineViewInner() {
                       </td>
                     );
                   })()}
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div className={styles.section}>
+            <table className={styles.grid}>
+              <thead>
+                <tr><th colSpan={3}>% of deals not Quoted</th></tr>
+                <tr><th>Goal</th><th>Actual Year</th><th>Actual Month</th></tr>
+              </thead>
+              <tbody>
+                <tr>
                   <td><NumCell value={state.notQuotedGoal} kind="pct" onCommit={(v) => setField('notQuotedGoal', v)} /></td>
                   <td className={compareClass(state.notQuotedYear, state.notQuotedGoal, 'lower-better')}>
                     <NumCell value={state.notQuotedYear} kind="pct" onCommit={(v) => setField('notQuotedYear', v)} />
