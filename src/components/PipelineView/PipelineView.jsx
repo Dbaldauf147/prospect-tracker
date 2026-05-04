@@ -714,6 +714,26 @@ function PipelineViewInner() {
         <div className={styles.subtitle}>Pipeline metrics dashboard. Every cell is editable; values save to your browser.</div>
       </div>
       <div className={styles.body}>
+        {/* Quota header — sits directly above the Pipeline Metrics
+            table so the YTD / % of Quota framing is visible before
+            you read any of the per-stage rows. */}
+        <div className={styles.section} style={{ maxWidth: 480 }}>
+          <table className={styles.grid}>
+            <thead><tr><th>Target</th><th>Closed YTD</th><th>% of Quota</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><NumCell value={state.target} kind="money" onCommit={(v) => setField('target', v)} /></td>
+                <td>
+                  {oppsClosedYTD !== null
+                    ? <span title="Auto-fed from Opps tab — sum of Quoted Amount for Stage = 'Sold' opps with a Close Date in the current calendar year." className={styles.liveCell}>{fmtMoney(oppsClosedYTD)}</span>
+                    : <NumCell value={state.closedYTD} kind="money" onCommit={(v) => setField('closedYTD', v)} />}
+                </td>
+                <td className={styles.numCell}>{(closedPctOfQuota * 100).toFixed(2)}%</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
         {/* Pipeline metrics */}
         <div className={styles.section}>
           <div className={styles.sectionTitle} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -980,22 +1000,6 @@ function PipelineViewInner() {
             </table>
           </div>
 
-          <div className={styles.section}>
-            <table className={styles.grid}>
-              <thead><tr><th>Target</th><th>Closed YTD</th><th>% of Quota</th></tr></thead>
-              <tbody>
-                <tr>
-                  <td><NumCell value={state.target} kind="money" onCommit={(v) => setField('target', v)} /></td>
-                  <td>
-                    {oppsClosedYTD !== null
-                      ? <span title="Auto-fed from Opps tab — sum of Quoted Amount for Stage = 'Sold' opps with a Close Date in the current calendar year." className={styles.liveCell}>{fmtMoney(oppsClosedYTD)}</span>
-                      : <NumCell value={state.closedYTD} kind="money" onCommit={(v) => setField('closedYTD', v)} />}
-                  </td>
-                  <td className={styles.numCell}>{(closedPctOfQuota * 100).toFixed(2)}%</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
         </div>
 
         {/* Goals / Activities */}
