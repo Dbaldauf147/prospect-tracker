@@ -801,7 +801,7 @@ function PipelineViewInner() {
                           : <NumCell value={state.currentClientCount} onCommit={(v) => setField('currentClientCount', v)} />}
                         </td>
                         <td rowSpan={2}><NumCell value={state.clientGoalPct} kind="pct" onCommit={(v) => setField('clientGoalPct', v)} /></td>
-                        <td rowSpan={2} className={compareClass(actualForCompare, goalForCompare, 'higher-better')}>
+                        <td rowSpan={2} className={compareClass(actualForCompare, goalForCompare, 'lower-better')}>
                           {live && liveActualPct !== null
                             ? liveCell(liveActualPct)
                             : <NumCell value={state.clientActualPct} kind="pct" onCommit={(v) => setField('clientActualPct', v)} />}
