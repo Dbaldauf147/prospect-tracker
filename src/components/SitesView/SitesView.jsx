@@ -1480,6 +1480,109 @@ export function SitesView({ settings, updateSettings } = {}) {
     writeSection('Electric Power', electricRows, electricCols);
     writeSection('Natural Gas', gasRows, gasCols);
 
+    // ---- Second sheet: Site Detail ---------------------------------
+    // Flat per-site listing so the user can see the underlying data
+    // that rolled up into the by-state summary above.
+    const detailSheet = wb.addWorksheet('Site Detail', {
+      properties: { tabColor: { argb: SE_GREEN } },
+      views: [{ showGridLines: false, state: 'frozen', ySplit: 2 }],
+    });
+    const detailCols = [
+      { label: 'Site Name', get: (s) => s.siteName, width: 28 },
+      { label: 'ST/Prov', get: (s) => s.state, width: 9 },
+      { label: 'Zip', get: (s) => s.zip, width: 9 },
+      { label: 'Electric Utility', get: (s) => s.electricUtility, width: 22 },
+      { label: 'Electric Supplier', get: (s) => s.electricSupplier, width: 22 },
+      { label: 'Annual Electric (kWh)', get: (s) => s.kwh, numFmt: '#,##0', width: 18 },
+      { label: 'Total Electric Cost', get: (s) => s.electricCost, numFmt: '"$"#,##0', width: 16 },
+      { label: 'Electric Contract Start', get: (s) => s.electricStart, width: 18 },
+      { label: 'Electric Contract End', get: (s) => s.electricEnd, width: 18 },
+      { label: 'Gas Utility', get: (s) => s.gasUtility, width: 22 },
+      { label: 'Gas Supplier', get: (s) => s.gasSupplier, width: 22 },
+      { label: 'Annual Gas (Dth)', get: (s) => s.dth, numFmt: '#,##0', width: 16 },
+      { label: 'Total Natural Gas Cost', get: (s) => s.gasCost, numFmt: '"$"#,##0', width: 18 },
+      { label: 'Gas Contract Start', get: (s) => s.gasStart, width: 18 },
+      { label: 'Gas Contract End', get: (s) => s.gasEnd, width: 18 },
+    ];
+    detailSheet.columns = detailCols.map(c => ({ width: c.width }));
+
+    // Title band — same Schneider green as the by-state sheet.
+    detailSheet.mergeCells(1, 1, 1, detailCols.length);
+    const detailTitle = detailSheet.getCell(1, 1);
+    detailTitle.value = 'Site Detail';
+    detailTitle.font = { name: 'Nunito Sans', bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
+    detailTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+    detailTitle.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    detailSheet.getRow(1).height = 28;
+
+    // Header row.
+    const detailHeader = detailSheet.getRow(2);
+    detailCols.forEach((c, i) => {
+      const cell = detailHeader.getCell(i + 1);
+      cell.value = c.label;
+      cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+      cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
+      cell.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
+    });
+    detailHeader.height = 32;
+
+    // Build the per-site rows from the same `rows` collection that
+    // feeds the Utility Lookup table on screen. Apply the same
+    // TBD-when-no-date rule used in the by-state aggregation so the
+    // two sheets read the same way.
+    const sitesForDetail = rows
+      .map(r => {
+        const electricSupplier = r.__electricSupplier__;
+        const gasSupplier = r.__gasSupplier__;
+        const therms = r.__therms__;
+        const dth = (typeof therms === 'number' && Number.isFinite(therms)) ? Math.round(therms / 10) : null;
+        const tbdIfMissing = (date, supplierPresent) => {
+          const trimmed = String(date || '').trim();
+          if (trimmed) return trimmed;
+          return supplierPresent ? 'TBD' : '';
+        };
+        return {
+          siteName: siteNameColumn ? String(r[siteNameColumn] || '').trim() : '',
+          state: r.__state__ || '',
+          zip: r.__zipNorm__ || '',
+          electricUtility: r.__electric__ || '',
+          electricSupplier: electricSupplier || '',
+          kwh: typeof r.__kwh__ === 'number' ? Math.round(r.__kwh__) : null,
+          electricCost: typeof r.__electricCost__ === 'number' ? Math.round(r.__electricCost__) : null,
+          electricStart: tbdIfMissing(r.__electricStart__, !!electricSupplier),
+          electricEnd: tbdIfMissing(r.__electricEnd__, !!electricSupplier),
+          gasUtility: r.__gas__ || '',
+          gasSupplier: gasSupplier || '',
+          dth,
+          gasCost: typeof r.__gasCost__ === 'number' ? Math.round(r.__gasCost__) : null,
+          gasStart: tbdIfMissing(r.__gasStart__, !!gasSupplier),
+          gasEnd: tbdIfMissing(r.__gasEnd__, !!gasSupplier),
+        };
+      })
+      .filter(s => s.siteName)
+      .sort((a, b) => (a.state || '').localeCompare(b.state || '') || a.siteName.localeCompare(b.siteName));
+
+    sitesForDetail.forEach((s, idx) => {
+      const dataRow = detailSheet.getRow(3 + idx);
+      detailCols.forEach((c, i) => {
+        const cell = dataRow.getCell(i + 1);
+        const v = c.get(s);
+        cell.value = (v === '' || v == null) ? null : v;
+        cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+        cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        if (c.numFmt) cell.numFmt = c.numFmt;
+        cell.border = { bottom: { style: 'hair', color: { argb: SE_BORDER } } };
+      });
+      dataRow.height = 18;
+    });
+    if (sitesForDetail.length > 0) {
+      detailSheet.autoFilter = {
+        from: { row: 2, column: 1 },
+        to: { row: 2 + sitesForDetail.length, column: detailCols.length },
+      };
+    }
+
     const buf = await wb.xlsx.writeBuffer();
     const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const url = URL.createObjectURL(blob);
