@@ -1459,6 +1459,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const [addingContact, setAddingContact] = useState(false);
   const [showSaved, setShowSaved] = useState(false);
   const [deletingContact, setDeletingContact] = useState(null);
+  const [bulkSelected, setBulkSelected] = useState(() => new Set()); // Set<cid string>
+  const [bulkEditOpen, setBulkEditOpen] = useState(false);
+  const [bulkApplying, setBulkApplying] = useState(false);
+  const [bulkField, setBulkField] = useState('jobtitle');
+  const [bulkValue, setBulkValue] = useState('');
+  const [bulkMode, setBulkMode] = useState('replace'); // 'replace' | 'append'
   const [servicesOpen, setServicesOpen] = useState(false);
   const [servicesEditMode, setServicesEditMode] = useState(false);
   const [editingServiceName, setEditingServiceName] = useState(null);
@@ -2536,6 +2542,131 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     }
     setDeletingContact(null);
   }
+
+  // Bulk-edit / bulk-delete contacts in the company popup. Loops the
+  // selected contact ids and pushes either an /api/hubspot update or a
+  // local-cache-only write (for _localOnly contacts), then clears the
+  // selection. Notes are stored in user settings so they bypass HubSpot
+  // entirely.
+  async function applyBulkEdit() {
+    if (bulkSelected.size === 0) return;
+    setBulkApplying(true);
+    const targets = companyContacts.filter(c => bulkSelected.has(String(c.id || c.vid)));
+
+    if (bulkField === 'notes') {
+      const current = settings.contactNotes || {};
+      const next = { ...current };
+      for (const c of targets) {
+        const cid = c.id || c.vid;
+        if (!cid) continue;
+        const existing = next[cid] || '';
+        const trimmed = (bulkValue || '').trim();
+        const merged = bulkMode === 'append' && existing
+          ? `${existing}\n${trimmed}`
+          : trimmed;
+        if (merged) next[cid] = merged;
+        else delete next[cid];
+      }
+      updateSettings({ contactNotes: next });
+      setBulkApplying(false);
+      setBulkEditOpen(false);
+      setBulkSelected(new Set());
+      setBulkValue('');
+      return;
+    }
+
+    const errors = [];
+    for (const c of targets) {
+      const cid = c.id || c.vid;
+      if (!cid) continue;
+      let nextVal = bulkValue;
+      if (bulkField === 'dans_tags' && bulkMode === 'append') {
+        const existing = (c.dans_tags || c.dan_s_tags || c.dans_tag || '')
+          .split(';').map(s => s.trim()).filter(Boolean);
+        const incoming = (bulkValue || '').split(';').map(s => s.trim()).filter(Boolean);
+        const seen = new Set(existing.map(t => t.toLowerCase()));
+        for (const t of incoming) if (!seen.has(t.toLowerCase())) { existing.push(t); seen.add(t.toLowerCase()); }
+        nextVal = existing.join(';');
+      }
+      const properties = { [bulkField]: nextVal };
+      if (c._localOnly) {
+        try {
+          await updateHubspotCache(draft => {
+            const i = draft.contacts.findIndex(x => String(x.id || x.vid) === String(cid));
+            if (i !== -1) draft.contacts[i] = { ...draft.contacts[i], ...properties };
+          });
+        } catch (err) { errors.push(`${cid}: ${err.message || err}`); }
+        continue;
+      }
+      try {
+        const res = await fetch('/api/hubspot?action=update-contact', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contactId: cid, properties }),
+        });
+        const json = await res.json();
+        if (!res.ok || json.error) throw new Error(json?.message || json?.error || `HubSpot ${res.status}`);
+        try {
+          await updateHubspotCache(draft => {
+            const i = draft.contacts.findIndex(x => String(x.id || x.vid) === String(cid));
+            if (i !== -1) draft.contacts[i] = { ...draft.contacts[i], ...properties };
+          });
+        } catch {}
+      } catch (err) {
+        errors.push(`${cid}: ${err.message || err}`);
+      }
+    }
+    setBulkApplying(false);
+    setBulkEditOpen(false);
+    setBulkSelected(new Set());
+    setBulkValue('');
+    if (errors.length) alert(`Bulk edit completed with ${errors.length} error(s):\n${errors.slice(0, 5).join('\n')}${errors.length > 5 ? `\n…and ${errors.length - 5} more` : ''}`);
+  }
+
+  async function applyBulkDelete() {
+    const targets = companyContacts.filter(c => bulkSelected.has(String(c.id || c.vid)));
+    if (targets.length === 0) return;
+    if (!window.confirm(`Delete ${targets.length} contact${targets.length === 1 ? '' : 's'} from HubSpot? This cannot be undone.`)) return;
+    setBulkApplying(true);
+    const errors = [];
+    for (const c of targets) {
+      const cid = c.id || c.vid;
+      if (!cid) continue;
+      if (c._localOnly) {
+        try {
+          await updateHubspotCache(draft => {
+            draft.contacts = draft.contacts.filter(x => String(x.id || x.vid) !== String(cid));
+          });
+        } catch (err) { errors.push(`${cid}: ${err.message || err}`); }
+        if (onDeleteContact) onDeleteContact(cid);
+        continue;
+      }
+      try {
+        const res = await fetch('/api/hubspot?action=delete-contact', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contactId: cid }),
+        });
+        if (!res.ok) throw new Error('Delete failed');
+        try {
+          await updateHubspotCache(draft => {
+            draft.contacts = draft.contacts.filter(x => String(x.id || x.vid) !== String(cid));
+          });
+        } catch {}
+        if (onDeleteContact) onDeleteContact(cid);
+      } catch (err) {
+        errors.push(`${cid}: ${err.message || err}`);
+      }
+    }
+    setBulkApplying(false);
+    setBulkSelected(new Set());
+    if (errors.length) alert(`Bulk delete completed with ${errors.length} error(s):\n${errors.slice(0, 5).join('\n')}${errors.length > 5 ? `\n…and ${errors.length - 5} more` : ''}`);
+  }
+
+  // Reset selection whenever the underlying contact list changes
+  // (e.g. user switches prospect or HubSpot cache refreshes).
+  useEffect(() => { setBulkSelected(new Set()); }, [fields.company]);
+
   const initialRef = useRef(true);
   const saveTimerRef = useRef(null);
 
@@ -5638,10 +5769,60 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               {contactView === 'orgchart' ? (
                 <OrgChart contacts={companyContacts} onDeleteContact={handleDeleteContact} deletingContact={deletingContact} onEditContact={setEditingContact} reportsTo={settings.contactReportsTo || {}} />
               ) : companyContacts.length > 0 ? (
+                <>
+                {bulkSelected.size > 0 && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.4rem 0.6rem', marginBottom: '0.4rem', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '6px', fontSize: '0.75rem', color: '#1E3A8A' }}>
+                    <strong style={{ fontWeight: 700 }}>{bulkSelected.size} selected</strong>
+                    <div style={{ flex: 1 }} />
+                    <button
+                      type="button"
+                      onClick={() => { setBulkField('jobtitle'); setBulkValue(''); setBulkMode('replace'); setBulkEditOpen(true); }}
+                      disabled={bulkApplying}
+                      style={{ padding: '0.25rem 0.7rem', border: '1px solid #2563EB', background: '#2563EB', color: '#fff', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 600, cursor: bulkApplying ? 'wait' : 'pointer', fontFamily: 'inherit' }}
+                    >Bulk Edit</button>
+                    <button
+                      type="button"
+                      onClick={applyBulkDelete}
+                      disabled={bulkApplying}
+                      style={{ padding: '0.25rem 0.7rem', border: '1px solid #DC2626', background: '#fff', color: '#DC2626', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 600, cursor: bulkApplying ? 'wait' : 'pointer', fontFamily: 'inherit' }}
+                    >Delete {bulkSelected.size}</button>
+                    <button
+                      type="button"
+                      onClick={() => setBulkSelected(new Set())}
+                      disabled={bulkApplying}
+                      style={{ padding: '0.25rem 0.7rem', border: '1px solid transparent', background: 'transparent', color: '#475569', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+                    >Clear</button>
+                  </div>
+                )}
                 <div style={{ maxHeight: '400px', overflowY: 'auto', border: '1px solid #E2E8F0', borderRadius: '6px' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.75rem' }}>
                     <thead>
                       <tr style={{ background: '#F8FAFC', position: 'sticky', top: 0, zIndex: 1 }}>
+                        <th style={{ padding: '0.4rem 0.4rem', textAlign: 'center', borderBottom: '1px solid #E2E8F0', width: '34px' }}>
+                          {(() => {
+                            const visibleIds = companyContacts.map(c => String(c.id || c.vid || '')).filter(Boolean);
+                            const allSelected = visibleIds.length > 0 && visibleIds.every(id => bulkSelected.has(id));
+                            const someSelected = visibleIds.some(id => bulkSelected.has(id));
+                            return (
+                              <input
+                                type="checkbox"
+                                checked={allSelected}
+                                ref={el => { if (el) el.indeterminate = !allSelected && someSelected; }}
+                                onChange={() => {
+                                  setBulkSelected(prev => {
+                                    const next = new Set(prev);
+                                    if (allSelected) for (const id of visibleIds) next.delete(id);
+                                    else for (const id of visibleIds) next.add(id);
+                                    return next;
+                                  });
+                                }}
+                                onClick={e => e.stopPropagation()}
+                                title="Select all visible"
+                                style={{ cursor: 'pointer' }}
+                              />
+                            );
+                          })()}
+                        </th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Name</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }} title="Where this contact was created — HubSpot sync, bulk upload, or manual entry.">Source</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Full Name</th>
@@ -5680,6 +5861,24 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         const counts = getContactEmailCounts(c);
                         return (
                           <tr key={c.id || i} onClick={() => setEditingContact(c)} style={{ borderBottom: '1px solid #F1F5F9', cursor: 'pointer', background: isDM ? '#FEFCE8' : '', borderLeft: isDM ? '3px solid #F59E0B' : '' }} onMouseEnter={e => e.currentTarget.style.background = isDM ? '#FEF9C3' : '#F8FAFC'} onMouseLeave={e => e.currentTarget.style.background = isDM ? '#FEFCE8' : ''}>
+                            <td style={{ padding: '0.35rem 0.4rem', textAlign: 'center', width: '34px' }} onClick={e => e.stopPropagation()}>
+                              {(() => {
+                                const cid = String(c.id || c.vid || '');
+                                if (!cid) return null;
+                                return (
+                                  <input
+                                    type="checkbox"
+                                    checked={bulkSelected.has(cid)}
+                                    onChange={() => setBulkSelected(prev => {
+                                      const next = new Set(prev);
+                                      if (next.has(cid)) next.delete(cid); else next.add(cid);
+                                      return next;
+                                    })}
+                                    style={{ cursor: 'pointer' }}
+                                  />
+                                );
+                              })()}
+                            </td>
                             <td style={{ padding: '0.35rem 0.5rem', fontWeight: 600, color: '#1E293B', whiteSpace: 'nowrap' }}>
                               {name || '—'}
                               {isDM && <span style={{ marginLeft: '0.3rem', fontSize: '0.55rem', fontWeight: 700, color: '#92400E', background: '#FDE68A', padding: '0px 5px', borderRadius: '3px' }}>DM</span>}
@@ -5743,6 +5942,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     </tbody>
                   </table>
                 </div>
+                </>
               ) : (() => {
                 const totalContacts = Array.isArray(hubspotContacts) ? hubspotContacts.length : 0;
                 const exactCompany = totalContacts > 0
@@ -5793,6 +5993,142 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           )}
         </div>
       </div>
+      {bulkEditOpen && createPortal(
+        (() => {
+          const FIELD_OPTIONS = [
+            { key: 'jobtitle', label: 'Title', mode: 'single' },
+            { key: 'dans_tags', label: 'Tags / Categories', mode: 'tags' },
+            { key: 'city', label: 'City', mode: 'single' },
+            { key: 'country', label: 'Country', mode: 'single' },
+            { key: 'notes', label: 'Notes (per-user)', mode: 'multi' },
+          ];
+          const def = FIELD_OPTIONS.find(f => f.key === bulkField) || FIELD_OPTIONS[0];
+          const supportsMode = bulkField === 'dans_tags' || bulkField === 'notes';
+          const onCancel = () => { if (!bulkApplying) { setBulkEditOpen(false); setBulkValue(''); } };
+          const submitDisabled = bulkApplying || (bulkField !== 'notes' && bulkValue.trim() === '' && bulkMode === 'replace');
+          // Tag chip helper for the dans_tags picker
+          const tagsList = (bulkValue || '').split(';').map(s => s.trim()).filter(Boolean);
+          function setTagsList(arr) { setBulkValue(arr.join(';')); }
+          function toggleTag(t) {
+            const lower = t.toLowerCase();
+            if (tagsList.some(x => x.toLowerCase() === lower)) setTagsList(tagsList.filter(x => x.toLowerCase() !== lower));
+            else setTagsList([...tagsList, t]);
+          }
+          return (
+            <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.55)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }} onClick={onCancel}>
+              <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 10, width: 520, maxWidth: '100%', maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 10px 40px rgba(0,0,0,0.25)' }}>
+                <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div>
+                    <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#1E293B' }}>Bulk Edit {bulkSelected.size} contact{bulkSelected.size === 1 ? '' : 's'}</div>
+                    <div style={{ fontSize: '0.7rem', color: '#64748B' }}>
+                      Writes to HubSpot via the update-contact API for every selected row (Notes is per-user only and skips HubSpot).
+                    </div>
+                  </div>
+                  <button onClick={onCancel} disabled={bulkApplying} style={{ border: 'none', background: 'none', fontSize: '1.2rem', color: '#94A3B8', cursor: bulkApplying ? 'wait' : 'pointer' }}>×</button>
+                </div>
+                <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.7rem', overflowY: 'auto' }}>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', fontSize: '0.75rem', color: '#334155', fontWeight: 600 }}>
+                    Field
+                    <select
+                      value={bulkField}
+                      onChange={e => { setBulkField(e.target.value); setBulkValue(''); setBulkMode('replace'); }}
+                      disabled={bulkApplying}
+                      style={{ padding: '0.4rem 0.5rem', border: '1px solid #CBD5E1', borderRadius: 4, fontSize: '0.85rem', fontFamily: 'inherit' }}
+                    >
+                      {FIELD_OPTIONS.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
+                    </select>
+                  </label>
+                  {supportsMode && (
+                    <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', fontSize: '0.75rem', color: '#334155', fontWeight: 600 }}>
+                      Mode
+                      <select
+                        value={bulkMode}
+                        onChange={e => setBulkMode(e.target.value)}
+                        disabled={bulkApplying}
+                        style={{ padding: '0.4rem 0.5rem', border: '1px solid #CBD5E1', borderRadius: 4, fontSize: '0.85rem', fontFamily: 'inherit' }}
+                      >
+                        <option value="replace">Replace existing value</option>
+                        <option value="append">Append to existing value</option>
+                      </select>
+                    </label>
+                  )}
+                  {def.mode === 'multi' ? (
+                    <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', fontSize: '0.75rem', color: '#334155', fontWeight: 600 }}>
+                      Value
+                      <textarea
+                        value={bulkValue}
+                        onChange={e => setBulkValue(e.target.value)}
+                        disabled={bulkApplying}
+                        rows={4}
+                        placeholder="Enter the note text…"
+                        style={{ padding: '0.45rem 0.55rem', border: '1px solid #CBD5E1', borderRadius: 4, fontSize: '0.85rem', fontFamily: 'inherit', resize: 'vertical' }}
+                      />
+                    </label>
+                  ) : def.mode === 'tags' ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                      <div style={{ fontSize: '0.75rem', color: '#334155', fontWeight: 600 }}>Tags</div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
+                        {[...new Set([...TAG_OPTIONS, ...BUCKETS.map(b => b.label), ...tagsList])].map(t => {
+                          const active = tagsList.some(x => x.toLowerCase() === t.toLowerCase());
+                          return (
+                            <button
+                              key={t}
+                              type="button"
+                              onClick={() => toggleTag(t)}
+                              disabled={bulkApplying}
+                              style={{ padding: '0.2rem 0.55rem', border: `1px solid ${active ? '#2563EB' : '#CBD5E1'}`, background: active ? '#2563EB' : '#fff', color: active ? '#fff' : '#334155', borderRadius: '999px', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+                            >{t}</button>
+                          );
+                        })}
+                      </div>
+                      <input
+                        type="text"
+                        value={bulkValue}
+                        onChange={e => setBulkValue(e.target.value)}
+                        disabled={bulkApplying}
+                        placeholder="Or type tags as a semicolon-separated list (e.g. ESG;EU)"
+                        style={{ padding: '0.4rem 0.5rem', border: '1px solid #CBD5E1', borderRadius: 4, fontSize: '0.8rem', fontFamily: 'inherit' }}
+                      />
+                      <div style={{ fontSize: '0.68rem', color: '#64748B' }}>
+                        {bulkMode === 'append'
+                          ? 'Appends new tags to each contact, keeping existing ones.'
+                          : 'Replaces every existing tag on each contact with the list above.'}
+                      </div>
+                    </div>
+                  ) : (
+                    <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', fontSize: '0.75rem', color: '#334155', fontWeight: 600 }}>
+                      Value
+                      <input
+                        type="text"
+                        value={bulkValue}
+                        onChange={e => setBulkValue(e.target.value)}
+                        disabled={bulkApplying}
+                        placeholder={`New ${def.label.toLowerCase()} for all selected contacts`}
+                        style={{ padding: '0.4rem 0.5rem', border: '1px solid #CBD5E1', borderRadius: 4, fontSize: '0.85rem', fontFamily: 'inherit' }}
+                      />
+                    </label>
+                  )}
+                </div>
+                <div style={{ padding: '0.7rem 1rem', borderTop: '1px solid #E2E8F0', display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+                  <button
+                    type="button"
+                    onClick={onCancel}
+                    disabled={bulkApplying}
+                    style={{ padding: '0.4rem 0.9rem', border: '1px solid #CBD5E1', background: '#fff', color: '#334155', borderRadius: 4, fontSize: '0.8rem', fontWeight: 600, cursor: bulkApplying ? 'wait' : 'pointer', fontFamily: 'inherit' }}
+                  >Cancel</button>
+                  <button
+                    type="button"
+                    onClick={applyBulkEdit}
+                    disabled={submitDisabled}
+                    style={{ padding: '0.4rem 0.9rem', border: '1px solid #2563EB', background: submitDisabled ? '#94A3B8' : '#2563EB', color: '#fff', borderRadius: 4, fontSize: '0.8rem', fontWeight: 600, cursor: submitDisabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit' }}
+                  >{bulkApplying ? 'Applying…' : `Apply to ${bulkSelected.size}`}</button>
+                </div>
+              </div>
+            </div>
+          );
+        })(),
+        document.body
+      )}
       {editingContact && (
         <ContactEditModal
           contact={editingContact}
