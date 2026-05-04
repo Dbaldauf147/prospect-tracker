@@ -92,21 +92,39 @@ function App() {
     sortConfig, toggleSort,
   } = useFilters(prospects, settings, updateSettings);
 
-  // Global guard: stop Backspace from triggering browser back-navigation when
-  // focus isn't in a text field. Firefox/older Edge otherwise pop the user
-  // out of the app (and any open modal). Applies once for the whole app.
+  // Global guard: stop Backspace from triggering browser back-navigation
+  // anywhere in the app. Firefox / older Edge still navigate back on
+  // Backspace whenever focus isn't in a real text input — the listener
+  // runs in capture on both document and window so it fires before any
+  // child handlers, regardless of which surface owns focus.
   useEffect(() => {
+    const NON_TEXT_INPUT_TYPES = new Set([
+      'button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'image',
+      'color', 'range', 'hidden',
+    ]);
     function onKey(e) {
-      if (e.key !== 'Backspace') return;
+      if (e.key !== 'Backspace' && e.keyCode !== 8) return;
       const t = e.target;
-      if (!t) return;
+      if (!t || t.isContentEditable) return;
       const tag = (t.tagName || '').toLowerCase();
-      const editableInput = tag === 'input' && !/^(button|submit|reset|checkbox|radio|file|image)$/i.test(t.type || 'text');
-      const isEditable = editableInput || tag === 'textarea' || tag === 'select' || t.isContentEditable;
-      if (!isEditable) e.preventDefault();
+      if (tag === 'textarea' || tag === 'select') return;
+      if (tag === 'input') {
+        const type = (t.type || 'text').toLowerCase();
+        // Read-only / disabled / non-text inputs would let the browser
+        // navigate back, so block here.
+        if (NON_TEXT_INPUT_TYPES.has(type) || t.readOnly || t.disabled) {
+          e.preventDefault();
+        }
+        return;
+      }
+      e.preventDefault();
     }
     document.addEventListener('keydown', onKey, true);
-    return () => document.removeEventListener('keydown', onKey, true);
+    window.addEventListener('keydown', onKey, true);
+    return () => {
+      document.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('keydown', onKey, true);
+    };
   }, []);
 
   const [view, setView] = useState('accounts');
