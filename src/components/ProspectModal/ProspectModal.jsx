@@ -593,6 +593,39 @@ function computePortfolioFitScore(row, maxEnergy, maxSites, yearRange) {
   return Math.round(raw * 100);
 }
 
+// Look up a contact's State / Country from a free-text City via the
+// public OpenStreetMap Nominatim search API. Returns full state name
+// (e.g. "California") so it lines up with the US_STATES enum, plus
+// the resolved country. Returns null on any failure — callers should
+// silently no-op in that case rather than blocking the save.
+async function lookupStateForCity(city, countryHint) {
+  const trimmed = (city || '').trim();
+  if (trimmed.length < 2) return null;
+  try {
+    const params = new URLSearchParams({
+      city: trimmed,
+      format: 'json',
+      addressdetails: '1',
+      limit: '1',
+    });
+    const ch = (countryHint || '').trim();
+    if (ch) params.set('country', ch);
+    const res = await fetch(`https://nominatim.openstreetmap.org/search?${params.toString()}`, {
+      headers: { 'Accept': 'application/json' },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!Array.isArray(data) || data.length === 0) return null;
+    const addr = data[0].address || {};
+    return {
+      state: addr.state || addr.region || addr.province || '',
+      country: addr.country || '',
+    };
+  } catch {
+    return null;
+  }
+}
+
 const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, companyContacts = [], emailDomains = [] }) {
   const rawTags = contact.dans_tags || contact.dan_s_tags || contact.dans_tag || '';
   // Parse existing tags; track which known tags are checked separately from free-text extras
@@ -669,6 +702,10 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
   }, [tagsOpen]);
 
   const [tagsSaveStatus, setTagsSaveStatus] = useState('');
+  // '' | 'loading' | 'auto' | 'none' — drives the small label next to
+  // the City field while a Nominatim lookup is in flight or after it
+  // resolves. Reset whenever the user edits city/state manually.
+  const [cityLookupStatus, setCityLookupStatus] = useState('');
 
   function buildTagsStringFrom(set) {
     return [...set, ...extraTags].join(';');
@@ -873,11 +910,39 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
           <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>Job Title</label><input style={inputStyle} value={f.jobtitle} onChange={e => set('jobtitle', e.target.value)} /></div>
           <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>Company</label><input style={inputStyle} value={f.company} onChange={e => set('company', e.target.value)} /></div>
           <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>LinkedIn URL</label><input style={inputStyle} value={f.hs_linkedin_url} onChange={e => set('hs_linkedin_url', e.target.value)} /></div>
-          <div><label style={labelStyle}>City</label><input style={inputStyle} value={f.city} onChange={e => set('city', e.target.value)} /></div>
+          <div>
+            <label style={labelStyle}>
+              City
+              {cityLookupStatus === 'loading' && <span style={{ marginLeft: 6, fontSize: '0.65rem', color: '#94A3B8', fontWeight: 500 }}>looking up…</span>}
+              {cityLookupStatus === 'auto' && <span style={{ marginLeft: 6, fontSize: '0.65rem', color: '#059669', fontWeight: 600 }}>state auto-filled</span>}
+              {cityLookupStatus === 'none' && <span style={{ marginLeft: 6, fontSize: '0.65rem', color: '#94A3B8', fontWeight: 500 }}>no match</span>}
+            </label>
+            <input
+              style={inputStyle}
+              value={f.city}
+              onChange={e => { setCityLookupStatus(''); set('city', e.target.value); }}
+              onBlur={async () => {
+                const city = (f.city || '').trim();
+                if (!city) return;
+                if ((f.state || '').trim()) return; // don't override user's state
+                setCityLookupStatus('loading');
+                const result = await lookupStateForCity(city, f.country);
+                if (!result || !result.state) { setCityLookupStatus('none'); return; }
+                setF(prev => {
+                  const next = { ...prev };
+                  if (result.state && !(prev.state || '').trim()) next.state = result.state;
+                  if (result.country && !(prev.country || '').trim()) next.country = result.country;
+                  return next;
+                });
+                setCityLookupStatus('auto');
+              }}
+            />
+          </div>
           <div>
             <label style={labelStyle}>State</label>
             <input style={inputStyle} list="state-list" value={f.state} onChange={e => {
               const val = e.target.value;
+              setCityLookupStatus('');
               setF(prev => {
                 const next = { ...prev, state: val };
                 if (US_STATES.includes(val)) next.country = 'United States';
