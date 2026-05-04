@@ -102,25 +102,11 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
           PE Portfolio
         </button>
         <button
-          className={view === 'keycontacts' ? styles.navItemActive : styles.navItem}
-          onClick={() => setView('keycontacts')}
+          className={view === 'contacts' ? styles.navItemActive : styles.navItem}
+          onClick={() => setView('contacts')}
         >
-          <span className={styles.navIcon}>&#11088;</span>
-          Key Contacts
-        </button>
-        <button
-          className={view === 'agenda' ? styles.navItemActive : styles.navItem}
-          onClick={() => setView('agenda')}
-        >
-          <span className={styles.navIcon}>&#10133;</span>
-          Bulk Add Contacts
-        </button>
-        <button
-          className={view === 'hubspot' ? styles.navItemActive : styles.navItem}
-          onClick={() => setView('hubspot')}
-        >
-          <span className={styles.navIcon}>&#9993;</span>
-          HubSpot Contacts
+          <span className={styles.navIcon}>&#128100;</span>
+          Contacts
         </button>
         <button
           className={view === 'drafts' ? styles.navItemActive : styles.navItem}
@@ -142,13 +128,6 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
         >
           <span className={styles.navIcon}>&#128231;</span>
           Email Campaigns
-        </button>
-        <button
-          className={view === 'dedupe' ? styles.navItemActive : styles.navItem}
-          onClick={() => setView('dedupe')}
-        >
-          <span className={styles.navIcon}>&#x2702;</span>
-          Deduplication
         </button>
         <button
           className={view === 'pricing' ? styles.navItemActive : styles.navItem}

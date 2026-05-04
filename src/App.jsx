@@ -17,20 +17,17 @@ import { ProspectModal } from './components/ProspectModal/ProspectModal';
 import { UpdateBanner } from './components/UpdateBanner';
 import { SyncPanel } from './components/SyncPanel';
 import { MyAccountsView } from './components/MyAccountsView/MyAccountsView';
-import { HubSpotView } from './components/HubSpotView/HubSpotView';
+import { ContactsView } from './components/ContactsView/ContactsView';
 import { OppsView } from './components/OppsView/OppsView';
 import { ClientsView } from './components/ClientsView/ClientsView';
 import { ActivityView } from './components/ActivityView/ActivityView';
 import { loadTargetAccountsFromDB } from './components/TargetAccountsView/TargetAccountsView';
-import { DedupeView } from './components/DedupeView/DedupeView';
 import { DraftEmailView } from './components/DraftEmailView/DraftEmailView';
 import { VibeProspecting } from './components/VibeProspecting/VibeProspecting';
 import { EmailCampaignView } from './components/EmailCampaignView/EmailCampaignView';
 import { ProgressView } from './components/ProgressView/ProgressView';
 import { ListsView } from './components/ListsView/ListsView';
-import { AgendaView } from './components/AgendaView/AgendaView';
 import { PEPortfolioView } from './components/PEPortfolioView/PEPortfolioView';
-import { KeyContactsView } from './components/KeyContactsView/KeyContactsView';
 import { PricingView } from './components/PricingView/PricingView';
 import { PipelineView } from './components/PipelineView/PipelineView';
 import { BFOActivityView } from './components/BFOActivityView/BFOActivityView';
@@ -291,8 +288,6 @@ function App() {
             <EmailCampaignView />
           ) : view === 'vibe' ? (
             <VibeProspecting prospects={prospects} onUpdate={updateProspect} cdmName={cdmName} />
-          ) : view === 'dedupe' ? (
-            <DedupeView />
           ) : view === 'pricing' ? (
             <PricingView />
           ) : view === 'pipeline' ? (
@@ -305,18 +300,21 @@ function App() {
             <ActivityView prospects={prospects} settings={settings} updateSettings={updateSettings} />
           ) : view === 'pe' ? (
             <PEPortfolioView prospects={prospects} onSelectProspect={handleSelect} />
-          ) : view === 'keycontacts' ? (
-            <KeyContactsView prospects={prospects} onSelectProspect={handleSelect} />
-          ) : view === 'agenda' ? (
-            <AgendaView prospects={prospects} onSelectProspect={handleSelect} onUpdateProspect={updateProspect} cdmName={cdmName} />
+          ) : view === 'contacts' ? (
+            <ContactsView
+              prospects={prospects}
+              onSelectProspect={handleSelect}
+              onUpdateProspect={updateProspect}
+              cdmName={cdmName}
+              settings={settings}
+              updateSettings={updateSettings}
+            />
           ) : view === 'lists' ? (
             <ListsView onTargetAccountsLoaded={setTargetAccountsData} prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} />
           ) : view === 'clients' ? (
             <ClientsView prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} />
           ) : view === 'opps' ? (
             <OppsView settings={settings} updateSettings={updateSettings} />
-          ) : view === 'hubspot' ? (
-            <HubSpotView prospects={prospects} settings={settings} updateSettings={updateSettings} />
           ) : view === 'accounts' ? (
             <MyAccountsView
               prospects={prospects}
