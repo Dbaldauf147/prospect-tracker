@@ -482,12 +482,13 @@ function PipelineViewInner() {
     return { sold, notSold, rate: sold / total };
   }, [oppsRecords]);
 
-  // Per-stage Close Rate Actual. Stage 5 (Prepare & Bid / Quoted) is
-  // the only one we can derive directly today: a Not Sold opp counts
-  // against Stage 5 only when it has a date in the "Quoted On" column
-  // — i.e. it actually made it to a quote. Sold opps are filtered the
-  // same way for consistency. Other stages return null until the user
-  // gives us a comparable signal column.
+  // Per-stage Close Rate Actual. Each stage uses a different "did it
+  // actually reach this stage?" signal on the Opps tab:
+  //   Stage 5 (Prepare & Bid / Quoted) — non-empty Quoted On date.
+  //   Stage 6 (Negotiate to Win)       — non-empty Entity Outside the US
+  //                                      Approval value (blank or "-"
+  //                                      means it never made it to 6).
+  // Other stages return null until we get a comparable signal column.
   const oppsCloseRateByStage = useMemo(() => {
     const out = { 3: null, 4: null, 5: null, 6: null };
     if (oppsRecords.length === 0) return out;
@@ -499,8 +500,17 @@ function PipelineViewInner() {
       const ts = Date.parse(v);
       return !Number.isNaN(ts);
     };
-    let s5Sold = 0;
-    let s5NotSold = 0;
+    const hasEntityApproval = (r) => {
+      const v = String(r['Entity Outside the US Approval'] || '').trim();
+      if (!v) return false;
+      if (v === '-' || v === '—' || v === 'N/A' || v === '#N/A') return false;
+      return true;
+    };
+    const stagePredicates = {
+      5: hasQuotedOn,
+      6: hasEntityApproval,
+    };
+    const tallies = { 5: { sold: 0, notSold: 0 }, 6: { sold: 0, notSold: 0 } };
     for (const r of oppsRecords) {
       const stage = (r.Stage || '').trim();
       if (stage !== 'Sold' && stage !== 'Not Sold') continue;
@@ -509,13 +519,16 @@ function PipelineViewInner() {
       const ts = Date.parse(cd);
       if (Number.isNaN(ts) || new Date(ts).getFullYear() !== thisYear) continue;
       if (PULL_THROUGH.test(String(r.Scope || ''))) continue;
-      if (!hasQuotedOn(r)) continue;
-      if (stage === 'Sold') s5Sold += 1;
-      else s5NotSold += 1;
+      for (const stageNum of Object.keys(stagePredicates)) {
+        if (!stagePredicates[stageNum](r)) continue;
+        if (stage === 'Sold') tallies[stageNum].sold += 1;
+        else tallies[stageNum].notSold += 1;
+      }
     }
-    const s5Total = s5Sold + s5NotSold;
-    if (s5Total > 0) {
-      out[5] = { sold: s5Sold, notSold: s5NotSold, rate: s5Sold / s5Total };
+    for (const stageNum of [5, 6]) {
+      const { sold, notSold } = tallies[stageNum];
+      const total = sold + notSold;
+      if (total > 0) out[stageNum] = { sold, notSold, rate: sold / total };
     }
     return out;
   }, [oppsRecords]);
@@ -775,7 +788,12 @@ function PipelineViewInner() {
                       const actualForCmp = liveRate !== null ? liveRate : st.closeActual;
                       const cls = compareClass(actualForCmp, st.closeGoal, 'higher-better');
                       if (liveRate !== null) {
-                        const tip = `Auto-fed from Opps tab: ${live.sold} Sold / ${live.notSold} Not Sold this year with a Quoted On date and Scope without "pull through". Re-paste the Opps tab to refresh.`;
+                        const signal = stageNum === 5
+                          ? 'a Quoted On date'
+                          : stageNum === 6
+                          ? 'a non-empty Entity Outside the US Approval value'
+                          : 'the stage signal';
+                        const tip = `Auto-fed from Opps tab: ${live.sold} Sold / ${live.notSold} Not Sold this year with ${signal} and Scope without "pull through". Re-paste the Opps tab to refresh.`;
                         return (
                           <td className={`${cls} ${styles.numCell}`.trim()}>
                             <span title={tip} className={styles.liveCell}>{`${(liveRate * 100).toFixed(0)}%`}</span>
