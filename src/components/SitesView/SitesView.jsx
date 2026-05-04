@@ -24,6 +24,7 @@ import {
   formatRate,
 } from '../../utils/utilityRates';
 import { parseBestSheet } from '../../utils/xlsxParse';
+import { findFuzzyMatch } from '../../utils/utilityNameMatch';
 import styles from './SitesView.module.css';
 
 const SITES_STORAGE_KEY = 'sites-list-override';
@@ -524,27 +525,31 @@ export function SitesView({ settings, updateSettings } = {}) {
     return { value: null, sourceHeader: null };
   };
 
-  // Set of every utility name we know about (collected from the
-  // uploaded utility-rates lookup). Used to decide whether a vendor
-  // string from the sites file is a regulated utility (→ goes in the
-  // Utility column) or a competitive retailer (→ Supplier column).
+  // Distinct list of every utility name we know about (collected from
+  // the uploaded utility-rates lookup). Vendors from the sites file
+  // get fuzzy-matched against this list — anything that hits a known
+  // utility goes in the Utility column (with the canonical name);
+  // anything that doesn't lands in the Supplier column.
   const knownUtilityNames = useMemo(() => {
-    const set = new Set();
-    if (!utility?.zipMap) return set;
-    const normalize = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const arr = [];
+    const seen = new Set();
+    if (!utility?.zipMap) return arr;
     for (const entry of Object.values(utility.zipMap)) {
-      if (entry?.electric) set.add(normalize(entry.electric));
-      if (entry?.gas) set.add(normalize(entry.gas));
-      if (entry?.water) set.add(normalize(entry.water));
+      for (const k of ['electric', 'gas', 'water']) {
+        const name = entry?.[k];
+        if (name && !seen.has(name)) { seen.add(name); arr.push(name); }
+      }
     }
-    return set;
+    return arr;
   }, [utility]);
-  const isKnownUtility = (name) => {
-    if (!name) return false;
-    const norm = String(name).toLowerCase().replace(/[^a-z0-9]/g, '');
-    if (!norm) return false;
-    return knownUtilityNames.has(norm);
-  };
+  // Returns { canonical, score } when the vendor matches a known
+  // utility above threshold, else null. The matcher is reusable —
+  // see src/utils/utilityNameMatch.js.
+  function matchVendorToUtility(vendor) {
+    if (!vendor) return null;
+    const hit = findFuzzyMatch(vendor, knownUtilityNames);
+    return hit ? { canonical: hit.name, score: hit.score } : null;
+  }
 
   const rows = useMemo(() => {
     return cleanSitesData.map((r, i) => {
@@ -571,20 +576,27 @@ export function SitesView({ settings, updateSettings } = {}) {
       const electricCost = actualElectricCost ?? estElectricCost;
       const gasCost = actualGasCost ?? estGasCost;
       const totalCost = (electricCost ?? 0) + (gasCost ?? 0);
-      // Vendor column from the sites file. If it names a utility we
-      // already know about (from the loaded utility-rates lookup) it
-      // replaces the zip-derived utility; if it doesn't, it falls
-      // through to the Supplier column (competitive retailer).
+      // Vendor column from the sites file. If it fuzzy-matches a
+      // utility we already know about (from the loaded utility-rates
+      // lookup), the canonical utility name goes into the Utility
+      // column; if it doesn't match, the vendor falls through to the
+      // Supplier column (competitive retailer).
       const electricVendorRaw = electricSupplierOverride ? String(r[electricSupplierOverride] || '').trim() : '';
       const gasVendorRaw = gasSupplierOverride ? String(r[gasSupplierOverride] || '').trim() : '';
-      const electricVendorIsUtility = electricVendorRaw && isKnownUtility(electricVendorRaw);
-      const gasVendorIsUtility = gasVendorRaw && isKnownUtility(gasVendorRaw);
+      const electricVendorMatch = matchVendorToUtility(electricVendorRaw);
+      const gasVendorMatch = matchVendorToUtility(gasVendorRaw);
+      const electricVendorIsUtility = !!electricVendorMatch;
+      const gasVendorIsUtility = !!gasVendorMatch;
       return {
         ...r,
         id: i,
         __zipNorm__: zip,
-        __electric__: electricVendorIsUtility ? electricVendorRaw : match?.electric,
-        __gas__: gasVendorIsUtility ? gasVendorRaw : match?.gas,
+        __electric__: electricVendorIsUtility ? electricVendorMatch.canonical : match?.electric,
+        __gas__: gasVendorIsUtility ? gasVendorMatch.canonical : match?.gas,
+        __electricVendorRaw__: electricVendorRaw || null,
+        __electricVendorMatchScore__: electricVendorMatch?.score || null,
+        __gasVendorRaw__: gasVendorRaw || null,
+        __gasVendorMatchScore__: gasVendorMatch?.score || null,
         __water__: match?.water,
         __city__: match?.city,
         __country__: match?.country,
@@ -655,9 +667,18 @@ export function SitesView({ settings, updateSettings } = {}) {
         const val = row[`__${key}__`];
         if (val == null || val === '') return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
         const text = String(val);
+        // Tooltip mentions when the value came from a vendor fuzzy
+        // match so the user can see why "Pepco MD" became "PEPCO …".
+        const vendorRaw = key === 'electric' ? row.__electricVendorRaw__ : key === 'gas' ? row.__gasVendorRaw__ : null;
+        const vendorScore = key === 'electric' ? row.__electricVendorMatchScore__ : key === 'gas' ? row.__gasVendorMatchScore__ : null;
+        const matchedFromVendor = vendorRaw && vendorScore && String(vendorRaw).toLowerCase() !== String(text).toLowerCase();
+        const baseTitle = `${label} · ${text}${row.__city__ ? ` · ${row.__city__}` : ''}${row.__country__ ? ` · ${row.__country__}` : ''}`;
+        const tip = matchedFromVendor
+          ? `${baseTitle} · matched from vendor "${vendorRaw}" (fuzzy score ${vendorScore}/100)`
+          : baseTitle;
         return (
           <span
-            title={`${label} · ${text}${row.__city__ ? ` · ${row.__city__}` : ''}${row.__country__ ? ` · ${row.__country__}` : ''}`}
+            title={tip}
             style={{ background: color.bg, border: `1px solid ${color.border}`, color: color.text, padding: '1px 8px', borderRadius: 999, fontSize: '0.7rem', fontWeight: 600, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block' }}
           >{text}</span>
         );
