@@ -1268,6 +1268,7 @@ export function SitesView({ settings, updateSettings } = {}) {
             deregulatedSites: 0,
             consumption: 0,
             spend: 0,
+            utilities: [],
             suppliers: [],
             starts: [],
             ends: [],
@@ -1276,6 +1277,10 @@ export function SitesView({ settings, updateSettings } = {}) {
         }
         g.totalSites += 1;
         const provider = r[providerKey];
+        // Track the regulated utility for every site (not just the
+        // deregulated ones) so the Utility column captures PG&E /
+        // ComEd / Dominion etc. even on regulated rows.
+        if (provider) g.utilities.push(provider);
         const isDereg = classifyUtility(provider) === 'Deregulated' || !!r[supplierKey];
         if (!isDereg) continue;
         g.deregulatedSites += 1;
@@ -1310,6 +1315,7 @@ export function SitesView({ settings, updateSettings } = {}) {
           range: g.deregulatedSpend === 0 && g.deregulatedSites === 0 ? '' : SAVINGS_RANGE,
           low: Math.round(g.spend * LOW_PCT),
           high: Math.round(g.spend * HIGH_PCT),
+          utilities: joinDistinct(g.utilities),
           suppliers: joinDistinct(g.suppliers),
           // When the state has a supplier on record but no parseable
           // contract dates, surface "TBD" so the export tells the user
@@ -1332,8 +1338,8 @@ export function SitesView({ settings, updateSettings } = {}) {
       views: [{ showGridLines: false }],
     });
 
-    const SPAN = 12;
-    const widths = [10, 14, 11, 13, 18, 16, 14, 14, 14, 24, 14, 14];
+    const SPAN = 13;
+    const widths = [10, 14, 11, 13, 18, 16, 14, 14, 14, 24, 24, 14, 14];
     ws.columns = widths.map(w => ({ width: w }));
 
     // Title row — Schneider green band, white text.
@@ -1422,6 +1428,7 @@ export function SitesView({ settings, updateSettings } = {}) {
       { label: 'Indicative Savings Range', get: (g) => g.range },
       { label: 'Indicative Savings Low', get: (g) => g.low, numFmt: '"$"#,##0', sumKey: 'low' },
       { label: 'Indicative Savings High', get: (g) => g.high, numFmt: '"$"#,##0', sumKey: 'high' },
+      { label: 'Utility Vendor', get: (g) => g.utilities },
       { label: 'Supplier Name', get: (g) => g.suppliers },
       { label: 'Contract Start', get: (g) => g.earliestStart },
       { label: 'Contract End', get: (g) => g.latestEnd },
@@ -1436,6 +1443,7 @@ export function SitesView({ settings, updateSettings } = {}) {
       { label: 'Indicative Savings Range', get: (g) => g.range },
       { label: 'Indicative Savings Low', get: (g) => g.low, numFmt: '"$"#,##0', sumKey: 'low' },
       { label: 'Indicative Savings High', get: (g) => g.high, numFmt: '"$"#,##0', sumKey: 'high' },
+      { label: 'Utility Vendor', get: (g) => g.utilities },
       { label: 'Supplier Name', get: (g) => g.suppliers },
       { label: 'Contract Start', get: (g) => g.earliestStart },
       { label: 'Contract End', get: (g) => g.latestEnd },
