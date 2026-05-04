@@ -482,6 +482,44 @@ function PipelineViewInner() {
     return { sold, notSold, rate: sold / total };
   }, [oppsRecords]);
 
+  // Per-stage Close Rate Actual. Stage 5 (Prepare & Bid / Quoted) is
+  // the only one we can derive directly today: a Not Sold opp counts
+  // against Stage 5 only when it has a date in the "Quoted On" column
+  // — i.e. it actually made it to a quote. Sold opps are filtered the
+  // same way for consistency. Other stages return null until the user
+  // gives us a comparable signal column.
+  const oppsCloseRateByStage = useMemo(() => {
+    const out = { 3: null, 4: null, 5: null, 6: null };
+    if (oppsRecords.length === 0) return out;
+    const thisYear = new Date().getFullYear();
+    const PULL_THROUGH = /pull[\s-]?through/i;
+    const hasQuotedOn = (r) => {
+      const v = r['Quoted On'] || r['Quoted Date'] || '';
+      if (!v) return false;
+      const ts = Date.parse(v);
+      return !Number.isNaN(ts);
+    };
+    let s5Sold = 0;
+    let s5NotSold = 0;
+    for (const r of oppsRecords) {
+      const stage = (r.Stage || '').trim();
+      if (stage !== 'Sold' && stage !== 'Not Sold') continue;
+      const cd = r['Close Date'];
+      if (!cd) continue;
+      const ts = Date.parse(cd);
+      if (Number.isNaN(ts) || new Date(ts).getFullYear() !== thisYear) continue;
+      if (PULL_THROUGH.test(String(r.Scope || ''))) continue;
+      if (!hasQuotedOn(r)) continue;
+      if (stage === 'Sold') s5Sold += 1;
+      else s5NotSold += 1;
+    }
+    const s5Total = s5Sold + s5NotSold;
+    if (s5Total > 0) {
+      out[5] = { sold: s5Sold, notSold: s5NotSold, rate: s5Sold / s5Total };
+    }
+    return out;
+  }, [oppsRecords]);
+
   // Live Current Client vs Greenfield stats. Joins BFO Activity rows
   // to the Opps tab's Lead Source / Source via the BFO Opportunity
   // Name → Opps "BFO Link" map, then classifies each BFO opp using
@@ -731,9 +769,25 @@ function PipelineViewInner() {
                         : <NumCell value={st.pipelineActual} kind="money" onCommit={(v) => setStage(i, { pipelineActual: v })} />}
                     </td>
                     <td><NumCell value={st.closeGoal} kind="pct" onCommit={(v) => setStage(i, { closeGoal: v })} /></td>
-                    <td className={compareClass(st.closeActual, st.closeGoal, 'higher-better')}>
-                      <NumCell value={st.closeActual} kind="pct" onCommit={(v) => setStage(i, { closeActual: v })} />
-                    </td>
+                    {(() => {
+                      const live = oppsCloseRateByStage[stageNum];
+                      const liveRate = live ? live.rate : null;
+                      const actualForCmp = liveRate !== null ? liveRate : st.closeActual;
+                      const cls = compareClass(actualForCmp, st.closeGoal, 'higher-better');
+                      if (liveRate !== null) {
+                        const tip = `Auto-fed from Opps tab: ${live.sold} Sold / ${live.notSold} Not Sold this year with a Quoted On date and Scope without "pull through". Re-paste the Opps tab to refresh.`;
+                        return (
+                          <td className={`${cls} ${styles.numCell}`.trim()}>
+                            <span title={tip} className={styles.liveCell}>{`${(liveRate * 100).toFixed(0)}%`}</span>
+                          </td>
+                        );
+                      }
+                      return (
+                        <td className={cls}>
+                          <NumCell value={st.closeActual} kind="pct" onCommit={(v) => setStage(i, { closeActual: v })} />
+                        </td>
+                      );
+                    })()}
                     {(() => {
                       const ag = Number(st.activeGoal) || 0;
                       const dg = Number(st.dealSizeGoal) || 0;
