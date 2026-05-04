@@ -513,21 +513,29 @@ function PipelineViewInner() {
     const m = bfoMetrics[stageNum];
     const liveCount = hasBfo && m?.count !== null && m?.count !== undefined ? m.count : null;
     const liveTotal = hasBfo && m?.total !== null && m?.total !== undefined ? m.total : null;
+    const liveAvg = hasBfo && m?.avg !== null && m?.avg !== undefined ? m.avg : null;
     const liveLife = hasBfo && m?.avgAge !== null && m?.avgAge !== undefined ? m.avgAge : null;
     const lifeGoal = Number(st.lifeGoal);
     const lifeActual = liveLife ?? Number(st.lifeActual);
+    // Target Projection — Goal: Active Opp Goal × Deal Size Goal × Close Rate Goal.
+    // Actual: live BFO actuals (when present) × Close Rate Actual.
+    const projGoal = (Number(st.activeGoal) || 0) * (Number(st.dealSizeGoal) || 0) * (Number(st.closeGoal) || 0);
+    const projActual = ((liveCount ?? Number(st.activeActual)) || 0)
+      * ((liveAvg ?? Number(st.dealSizeActual)) || 0)
+      * (Number(st.closeActual) || 0);
     return {
       activeActual: acc.activeActual + (liveCount ?? (Number(st.activeActual) || 0)),
       activeGoal: acc.activeGoal + (Number(st.activeGoal) || 0),
       pipelineActual: acc.pipelineActual + (liveTotal ?? (Number(st.pipelineActual) || 0)),
       pipelineGoal: acc.pipelineGoal + (Number(st.pipelineGoal) || 0),
-      targetProj: acc.targetProj + (Number(st.targetProj) || 0),
+      targetProjGoal: acc.targetProjGoal + projGoal,
+      targetProjActual: acc.targetProjActual + projActual,
       lifeGoalSum: acc.lifeGoalSum + (Number.isFinite(lifeGoal) ? lifeGoal : 0),
       lifeGoalN: acc.lifeGoalN + (Number.isFinite(lifeGoal) ? 1 : 0),
       lifeActualSum: acc.lifeActualSum + (Number.isFinite(lifeActual) ? lifeActual : 0),
       lifeActualN: acc.lifeActualN + (Number.isFinite(lifeActual) ? 1 : 0),
     };
-  }, { activeActual: 0, activeGoal: 0, pipelineActual: 0, pipelineGoal: 0, targetProj: 0, lifeGoalSum: 0, lifeGoalN: 0, lifeActualSum: 0, lifeActualN: 0 });
+  }, { activeActual: 0, activeGoal: 0, pipelineActual: 0, pipelineGoal: 0, targetProjGoal: 0, targetProjActual: 0, lifeGoalSum: 0, lifeGoalN: 0, lifeActualSum: 0, lifeActualN: 0 });
 
   const dealSizeAvgGoal = stageTotals.pipelineGoal && stageTotals.activeGoal
     ? Math.round(stageTotals.pipelineGoal / stageTotals.activeGoal) : 0;
@@ -577,7 +585,7 @@ function PipelineViewInner() {
                 <th colSpan={2}>Deal Size</th>
                 <th colSpan={2}>Pipeline</th>
                 <th colSpan={2}>Close Rate</th>
-                <th>Target Projection</th>
+                <th colSpan={2}>Target Projection</th>
                 <th colSpan={2}>Avg Opp Life</th>
                 <th rowSpan={2}>Opps Needed w Deal Sizes</th>
                 <th rowSpan={2}>Opps Needed w Close Rates</th>
@@ -587,7 +595,7 @@ function PipelineViewInner() {
                 <th>Goal (above)</th><th>Actual</th>
                 <th>Goal (above)</th><th>Actual</th>
                 <th>Goal (above)</th><th>Actual</th>
-                <th>Actual</th>
+                <th>Goal</th><th>Actual</th>
                 <th>Goal (less than)</th><th>Actual</th>
               </tr>
             </thead>
@@ -627,7 +635,26 @@ function PipelineViewInner() {
                     <td className={compareClass(st.closeActual, st.closeGoal, 'higher-better')}>
                       <NumCell value={st.closeActual} kind="pct" onCommit={(v) => setStage(i, { closeActual: v })} />
                     </td>
-                    <td><NumCell value={st.targetProj} kind="money" onCommit={(v) => setStage(i, { targetProj: v })} /></td>
+                    {(() => {
+                      const ag = Number(st.activeGoal) || 0;
+                      const dg = Number(st.dealSizeGoal) || 0;
+                      const cg = Number(st.closeGoal) || 0;
+                      const projGoal = Math.round(ag * dg * cg);
+                      const aa = Number(activeActual) || 0;
+                      const da = Number(dealSizeActual) || 0;
+                      const ca = Number(st.closeActual) || 0;
+                      const projActual = Math.round(aa * da * ca);
+                      return (
+                        <>
+                          <td className={styles.numCell} title="Active Opp Goal × Deal Size Goal × Close Rate Goal">
+                            {projGoal ? fmtMoney(projGoal) : ''}
+                          </td>
+                          <td className={`${styles.numCell} ${compareClass(projActual, projGoal, 'higher-better')}`.trim()} title="Active Opp Actual × Deal Size Actual × Close Rate Actual">
+                            {projActual ? fmtMoney(projActual) : ''}
+                          </td>
+                        </>
+                      );
+                    })()}
                     <td><NumCell value={st.lifeGoal} onCommit={(v) => setStage(i, { lifeGoal: v })} /></td>
                     <td className={compareClass(lifeActual, st.lifeGoal, 'lower-better')}>
                       {fromBfo(m?.avgAge)
@@ -652,7 +679,8 @@ function PipelineViewInner() {
                 <td className={styles.numCell}>{fmtMoney(stageTotals.pipelineGoal)}</td>
                 <td className={styles.numCell}>{fmtMoney(stageTotals.pipelineActual)}</td>
                 <td colSpan={2} />
-                <td className={styles.numCell}>{fmtMoney(stageTotals.targetProj)}</td>
+                <td className={styles.numCell} title="Sum of stage Target Projection Goals (Active Goal × Deal Size Goal × Close Rate Goal).">{fmtMoney(Math.round(stageTotals.targetProjGoal))}</td>
+                <td className={`${styles.numCell} ${compareClass(stageTotals.targetProjActual, stageTotals.targetProjGoal, 'higher-better')}`.trim()} title="Sum of stage Target Projection Actuals (Active Actual × Deal Size Actual × Close Rate Actual).">{fmtMoney(Math.round(stageTotals.targetProjActual))}</td>
                 <td className={styles.numCell} title="Average of stage goals (less is better).">{lifeGoalAvg ?? ''}</td>
                 <td className={`${styles.numCell} ${compareClass(lifeActualAvg, lifeGoalAvg, 'lower-better')}`.trim()} title="Average of stage actual life. Pulled from BFO Activity when loaded; otherwise from manual stage Actual values.">{lifeActualAvg ?? ''}</td>
                 <td className={styles.numCell}>{totalOppsForDeal}</td>
