@@ -1533,8 +1533,14 @@ export function SitesView({ settings, updateSettings } = {}) {
     // two sheets read the same way.
     const sitesForDetail = rows
       .map(r => {
-        const electricSupplier = r.__electricSupplier__;
-        const gasSupplier = r.__gasSupplier__;
+        const electricUtility = r.__electric__ || '';
+        const gasUtility = r.__gas__ || '';
+        // If a separate competitive supplier wasn't mapped on this
+        // row, fall back to the regulated utility — in regulated
+        // markets the utility IS the supplier, so leaving the cell
+        // blank reads as missing data rather than reality.
+        const electricSupplier = r.__electricSupplier__ || electricUtility || '';
+        const gasSupplier = r.__gasSupplier__ || gasUtility || '';
         const therms = r.__therms__;
         const dth = (typeof therms === 'number' && Number.isFinite(therms)) ? Math.round(therms / 10) : null;
         const tbdIfMissing = (date, supplierPresent) => {
@@ -1546,14 +1552,14 @@ export function SitesView({ settings, updateSettings } = {}) {
           siteName: siteNameColumn ? String(r[siteNameColumn] || '').trim() : '',
           state: r.__state__ || '',
           zip: r.__zipNorm__ || '',
-          electricUtility: r.__electric__ || '',
-          electricSupplier: electricSupplier || '',
+          electricUtility,
+          electricSupplier,
           kwh: typeof r.__kwh__ === 'number' ? Math.round(r.__kwh__) : null,
           electricCost: typeof r.__electricCost__ === 'number' ? Math.round(r.__electricCost__) : null,
           electricStart: tbdIfMissing(r.__electricStart__, !!electricSupplier),
           electricEnd: tbdIfMissing(r.__electricEnd__, !!electricSupplier),
-          gasUtility: r.__gas__ || '',
-          gasSupplier: gasSupplier || '',
+          gasUtility,
+          gasSupplier,
           dth,
           gasCost: typeof r.__gasCost__ === 'number' ? Math.round(r.__gasCost__) : null,
           gasStart: tbdIfMissing(r.__gasStart__, !!gasSupplier),
