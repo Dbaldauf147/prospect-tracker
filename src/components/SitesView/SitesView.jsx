@@ -201,8 +201,22 @@ export function SitesView({ settings, updateSettings } = {}) {
     const { rows, mapping, sheetName } = sitesMappingModal;
     setUploadError('');
     try {
-      await saveListToIDB(SITES_STORAGE_KEY, rows);
-      setSitesData(rows);
+      // Drop columns the user didn't assign a target — otherwise every
+      // pass-through column ends up rendered on the Utility Lookup
+      // table even though the user only wanted four fields.
+      const mappedHeaders = ['siteName', 'zip', 'electric', 'gas']
+        .map(k => mapping[k])
+        .filter(Boolean);
+      const keep = new Set(mappedHeaders);
+      const filteredRows = keep.size === 0
+        ? rows
+        : rows.map(r => {
+            const out = {};
+            for (const h of mappedHeaders) out[h] = r[h];
+            return out;
+          });
+      await saveListToIDB(SITES_STORAGE_KEY, filteredRows);
+      setSitesData(filteredRows);
       setSiteNameOverride(mapping.siteName || null);
       setZipColOverride(mapping.zip || null);
       setElectricColOverride(mapping.electric || '__none__');
