@@ -523,6 +523,11 @@ function PipelineViewInner() {
     const projActual = ((liveCount ?? Number(st.activeActual)) || 0)
       * ((liveAvg ?? Number(st.dealSizeActual)) || 0)
       * (Number(st.closeActual) || 0);
+    // Weighted-average inputs for Avg Opp Life — Goal weighted by
+    // Active Opp Goal, Actual weighted by Active Opp Actual (live BFO
+    // count when loaded). Mirrors =SUMPRODUCT(life, count)/SUM(count).
+    const goalCount = Number(st.activeGoal) || 0;
+    const actualCount = Number(liveCount ?? st.activeActual) || 0;
     return {
       activeActual: acc.activeActual + (liveCount ?? (Number(st.activeActual) || 0)),
       activeGoal: acc.activeGoal + (Number(st.activeGoal) || 0),
@@ -530,12 +535,12 @@ function PipelineViewInner() {
       pipelineGoal: acc.pipelineGoal + (Number(st.pipelineGoal) || 0),
       targetProjGoal: acc.targetProjGoal + projGoal,
       targetProjActual: acc.targetProjActual + projActual,
-      lifeGoalSum: acc.lifeGoalSum + (Number.isFinite(lifeGoal) ? lifeGoal : 0),
-      lifeGoalN: acc.lifeGoalN + (Number.isFinite(lifeGoal) ? 1 : 0),
-      lifeActualSum: acc.lifeActualSum + (Number.isFinite(lifeActual) ? lifeActual : 0),
-      lifeActualN: acc.lifeActualN + (Number.isFinite(lifeActual) ? 1 : 0),
+      lifeGoalProduct: acc.lifeGoalProduct + (Number.isFinite(lifeGoal) ? lifeGoal * goalCount : 0),
+      lifeGoalWeight: acc.lifeGoalWeight + (Number.isFinite(lifeGoal) ? goalCount : 0),
+      lifeActualProduct: acc.lifeActualProduct + (Number.isFinite(lifeActual) ? lifeActual * actualCount : 0),
+      lifeActualWeight: acc.lifeActualWeight + (Number.isFinite(lifeActual) ? actualCount : 0),
     };
-  }, { activeActual: 0, activeGoal: 0, pipelineActual: 0, pipelineGoal: 0, targetProjGoal: 0, targetProjActual: 0, lifeGoalSum: 0, lifeGoalN: 0, lifeActualSum: 0, lifeActualN: 0 });
+  }, { activeActual: 0, activeGoal: 0, pipelineActual: 0, pipelineGoal: 0, targetProjGoal: 0, targetProjActual: 0, lifeGoalProduct: 0, lifeGoalWeight: 0, lifeActualProduct: 0, lifeActualWeight: 0 });
 
   const dealSizeAvgGoal = stageTotals.pipelineGoal && stageTotals.activeGoal
     ? Math.round(stageTotals.pipelineGoal / stageTotals.activeGoal) : 0;
@@ -549,10 +554,13 @@ function PipelineViewInner() {
         : 0);
 
   const closedPctOfQuota = state.target ? state.closedYTD / state.target : 0;
-  const lifeGoalAvg = stageTotals.lifeGoalN > 0
-    ? Math.round(stageTotals.lifeGoalSum / stageTotals.lifeGoalN) : null;
-  const lifeActualAvg = stageTotals.lifeActualN > 0
-    ? Math.round(stageTotals.lifeActualSum / stageTotals.lifeActualN) : null;
+  // Weighted-by-count averages — SUMPRODUCT(life, count) / SUM(count).
+  // Goal weights are activeGoal; Actual weights are the live count
+  // (BFO when loaded, manual activeActual otherwise).
+  const lifeGoalAvg = stageTotals.lifeGoalWeight > 0
+    ? Math.round(stageTotals.lifeGoalProduct / stageTotals.lifeGoalWeight) : null;
+  const lifeActualAvg = stageTotals.lifeActualWeight > 0
+    ? Math.round(stageTotals.lifeActualProduct / stageTotals.lifeActualWeight) : null;
 
   return (
     <div className={styles.wrapper}>
@@ -671,8 +679,8 @@ function PipelineViewInner() {
                 <td className={styles.numCell}>{fmtMoney(stageTotals.pipelineActual)}</td>
                 <td colSpan={2} />
                 <td className={styles.numCell} title="Sum of stage Target Projection Goals (Active Goal × Deal Size Goal × Close Rate Goal).">{fmtMoney(Math.round(stageTotals.targetProjGoal))}</td>
-                <td className={styles.numCell} title="Average of stage goals (less is better).">{lifeGoalAvg ?? ''}</td>
-                <td className={`${styles.numCell} ${compareClass(lifeActualAvg, lifeGoalAvg, 'lower-better')}`.trim()} title="Average of stage actual life. Pulled from BFO Activity when loaded; otherwise from manual stage Actual values.">{lifeActualAvg ?? ''}</td>
+                <td className={styles.numCell} title="Stage goals weighted by Active Opp Goal — SUMPRODUCT(lifeGoal, activeGoal) ÷ SUM(activeGoal). Less is better.">{lifeGoalAvg ?? ''}</td>
+                <td className={`${styles.numCell} ${compareClass(lifeActualAvg, lifeGoalAvg, 'lower-better')}`.trim()} title="Stage actuals weighted by Active Opp Actual (live BFO count when loaded). SUMPRODUCT(lifeActual, activeActual) ÷ SUM(activeActual).">{lifeActualAvg ?? ''}</td>
                 <td className={styles.numCell}>{totalOppsForDeal}</td>
                 <td className={styles.numCell}>{totalOppsForClose}</td>
               </tr>
