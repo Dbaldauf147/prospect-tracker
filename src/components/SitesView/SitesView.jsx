@@ -150,6 +150,28 @@ export function SitesView({ settings, updateSettings } = {}) {
   const [electricEndOverride, setElectricEndOverride] = useState(null);
   const [gasStartOverride, setGasStartOverride] = useState(null);
   const [gasEndOverride, setGasEndOverride] = useState(null);
+  // Per-vendor accept/reject decisions for the fuzzy supplier lookup.
+  // Keyed by lowercased raw vendor string. Stored in localStorage so
+  // a curated mapping survives a refresh and doesn't have to be
+  // re-confirmed every time the page reloads. Map<vendorLower,
+  //   'accepted' | 'rejected'>.
+  const [vendorDecisions, setVendorDecisions] = useState(() => {
+    try {
+      const raw = localStorage.getItem('utility-lookup:vendor-decisions');
+      const parsed = raw ? JSON.parse(raw) : {};
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch { return {}; }
+  });
+  const setVendorDecision = (rawVendor, decision) => {
+    const key = String(rawVendor || '').trim().toLowerCase();
+    if (!key) return;
+    setVendorDecisions(prev => {
+      const next = { ...prev };
+      if (decision == null) delete next[key]; else next[key] = decision;
+      try { localStorage.setItem('utility-lookup:vendor-decisions', JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
   // Column-mapping confirmation popup for the Sites File upload —
   // null when no upload is mid-flight; otherwise carries the parsed
   // rows + headers + auto-detected mapping the user can adjust before
@@ -627,13 +649,23 @@ export function SitesView({ settings, updateSettings } = {}) {
       const gasUtilityMatch = !gasSupplierMatch ? matchVendorToUtility(gasVendorRaw) : null;
       const electricVendorIsUtility = !!electricUtilityMatch;
       const gasVendorIsUtility = !!gasUtilityMatch;
-      // Supplier column gets the canonical brand from the suppliers
-      // list when matched; otherwise falls through to the raw vendor
-      // (only if the vendor wasn't classified as a utility).
-      const electricSupplierResolved = electricSupplierMatch?.canonical
-        || (!electricVendorIsUtility && electricVendorRaw ? electricVendorRaw : null);
-      const gasSupplierResolved = gasSupplierMatch?.canonical
-        || (!gasVendorIsUtility && gasVendorRaw ? gasVendorRaw : null);
+      // Honor the user's accept/reject decision for each fuzzy supplier
+      // match. A rejected vendor keeps its raw text so the curated
+      // canonicalization doesn't override it. Pending and accepted
+      // both use the canonical name; the cell render distinguishes
+      // pending from accepted via the decision lookup.
+      const electricVendorKey = electricVendorRaw.toLowerCase();
+      const gasVendorKey = gasVendorRaw.toLowerCase();
+      const electricSupplierDecision = electricVendorKey ? vendorDecisions[electricVendorKey] : null;
+      const gasSupplierDecision = gasVendorKey ? vendorDecisions[gasVendorKey] : null;
+      const electricSupplierCanonical = electricSupplierMatch?.canonical || null;
+      const gasSupplierCanonical = gasSupplierMatch?.canonical || null;
+      const electricSupplierResolved = electricSupplierCanonical && electricSupplierDecision !== 'rejected'
+        ? electricSupplierCanonical
+        : (!electricVendorIsUtility && electricVendorRaw ? electricVendorRaw : null);
+      const gasSupplierResolved = gasSupplierCanonical && gasSupplierDecision !== 'rejected'
+        ? gasSupplierCanonical
+        : (!gasVendorIsUtility && gasVendorRaw ? gasVendorRaw : null);
       return {
         ...r,
         id: i,
@@ -665,6 +697,10 @@ export function SitesView({ settings, updateSettings } = {}) {
         __totalCost__: (electricCost != null || gasCost != null) ? totalCost : null,
         __electricSupplier__: electricSupplierResolved,
         __gasSupplier__: gasSupplierResolved,
+        __electricSupplierCanonical__: electricSupplierCanonical,
+        __gasSupplierCanonical__: gasSupplierCanonical,
+        __electricSupplierDecision__: electricSupplierDecision || null,
+        __gasSupplierDecision__: gasSupplierDecision || null,
         __electricStart__: electricStartOverride ? r[electricStartOverride] : null,
         __electricEnd__: electricEndOverride ? r[electricEndOverride] : null,
         __gasStart__: gasStartOverride ? r[gasStartOverride] : null,
@@ -672,7 +708,7 @@ export function SitesView({ settings, updateSettings } = {}) {
         __matched__: !!match || electricVendorIsUtility || gasVendorIsUtility,
       };
     });
-  }, [cleanSitesData, zipColumn, utility, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, knownUtilityNames]);
+  }, [cleanSitesData, zipColumn, utility, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, knownUtilityNames, vendorDecisions]);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return rows;
@@ -869,23 +905,80 @@ export function SitesView({ settings, updateSettings } = {}) {
         },
       };
     };
-    // Existing supplier (competitive retailer) — only populated when
-    // the file's vendor column held a name we don't recognize as a
-    // utility from the loaded utility-rates lookup.
+    // Existing supplier (competitive retailer). When a vendor came in
+    // through the fuzzy supplier lookup AND the user hasn't accepted
+    // or rejected the canonicalization yet, the cell renders the
+    // canonical name + the raw vendor + the fuzzy score + accept /
+    // reject buttons inline so the curation can happen one row at a
+    // time. Once a decision is recorded (per raw-vendor key), the
+    // buttons disappear and the chosen value sticks.
     const makeSupplierCol = (commodity, label) => ({
       key: `${commodity}_supplier`,
       label,
-      defaultWidth: 160,
+      defaultWidth: 220,
       render: (row) => {
         const val = commodity === 'electric' ? row.__electricSupplier__ : row.__gasSupplier__;
         if (!val) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
         const vendorRaw = commodity === 'electric' ? row.__electricVendorRaw__ : row.__gasVendorRaw__;
         const matchKind = commodity === 'electric' ? row.__electricVendorMatchKind__ : row.__gasVendorMatchKind__;
         const matchScore = commodity === 'electric' ? row.__electricVendorMatchScore__ : row.__gasVendorMatchScore__;
-        const canonicalized = matchKind === 'supplier' && vendorRaw && String(vendorRaw).toLowerCase() !== String(val).toLowerCase();
-        const tip = canonicalized
-          ? `${label}: ${val} · canonicalized from vendor "${vendorRaw}" via the bundled supplier list (fuzzy score ${matchScore}/100)`
-          : matchKind === 'supplier'
+        const canonical = commodity === 'electric' ? row.__electricSupplierCanonical__ : row.__gasSupplierCanonical__;
+        const decision = commodity === 'electric' ? row.__electricSupplierDecision__ : row.__gasSupplierDecision__;
+        const isFuzzyGuess = matchKind === 'supplier'
+          && canonical
+          && vendorRaw
+          && String(vendorRaw).toLowerCase() !== String(canonical).toLowerCase();
+        // Pending guess — show canonical + score + buttons + raw vendor.
+        if (isFuzzyGuess && !decision) {
+          return (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, maxWidth: '100%' }}>
+              <span
+                title={`Suggested canonical name from the bundled supplier list. Was: "${vendorRaw}". Click ✓ to accept, ✗ to keep the original.`}
+                style={{ background: '#F5F3FF', border: '1px solid #C4B5FD', color: '#5B21B6', padding: '1px 8px', borderRadius: 999, fontSize: '0.7rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 140 }}
+              >{String(canonical)}</span>
+              <span style={{ color: '#94A3B8', fontSize: '0.62rem', fontWeight: 600 }}>{matchScore}%</span>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setVendorDecision(vendorRaw, 'accepted'); }}
+                title={`Accept "${canonical}" as the canonical supplier for "${vendorRaw}"`}
+                style={{ border: '1px solid #16A34A', background: '#fff', color: '#16A34A', borderRadius: 4, fontSize: '0.65rem', cursor: 'pointer', fontFamily: 'inherit', padding: '0 4px', lineHeight: 1.4 }}
+              >✓</button>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setVendorDecision(vendorRaw, 'rejected'); }}
+                title={`Keep the original "${vendorRaw}" instead of "${canonical}"`}
+                style={{ border: '1px solid #DC2626', background: '#fff', color: '#DC2626', borderRadius: 4, fontSize: '0.65rem', cursor: 'pointer', fontFamily: 'inherit', padding: '0 4px', lineHeight: 1.4 }}
+              >✗</button>
+            </span>
+          );
+        }
+        // Decision already recorded — show the resulting value + a
+        // tiny status pill that lets the user undo.
+        if (isFuzzyGuess && decision) {
+          const accepted = decision === 'accepted';
+          return (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, maxWidth: '100%' }}>
+              <span
+                title={accepted
+                  ? `Accepted canonical "${canonical}" (was: "${vendorRaw}", fuzzy score ${matchScore}/100). Click ↺ to undo.`
+                  : `Rejected canonical "${canonical}" — keeping the original "${vendorRaw}". Click ↺ to undo.`}
+                style={{ background: '#F5F3FF', border: '1px solid #C4B5FD', color: '#5B21B6', padding: '1px 8px', borderRadius: 999, fontSize: '0.7rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }}
+              >{String(val)}</span>
+              <span style={{ color: accepted ? '#16A34A' : '#DC2626', fontSize: '0.62rem', fontWeight: 700 }}>
+                {accepted ? `✓${matchScore}%` : '✗'}
+              </span>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setVendorDecision(vendorRaw, null); }}
+                title="Undo decision"
+                style={{ border: '1px solid #CBD5E1', background: '#fff', color: '#64748B', borderRadius: 4, fontSize: '0.65rem', cursor: 'pointer', fontFamily: 'inherit', padding: '0 4px', lineHeight: 1.4 }}
+              >↺</button>
+            </span>
+          );
+        }
+        // Either no fuzzy match or vendor IS the canonical — render
+        // the existing pill-only style.
+        const tip = matchKind === 'supplier'
           ? `${label}: ${val} · matched against the bundled supplier list (fuzzy score ${matchScore}/100)`
           : `${label}: ${val} (not matched to a known utility or supplier — treated as a competitive retailer)`;
         return (
