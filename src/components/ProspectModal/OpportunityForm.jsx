@@ -1776,9 +1776,16 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       else isSE = /@(se\.com|schneider-electric\.com)$/i.test(em);
       if (isSE) se.push(enriched); else cust.push(enriched);
     }
-    // Required first, optional after, alphabetical within each group.
+    // Required first, optional after. Within each group sort by an
+    // explicit _order field when set (so user-driven drag / move
+    // up-down survives a refresh) and fall back to alphabetical.
     const sorter = (a, b) => {
       if (!!a.required !== !!b.required) return a.required ? -1 : 1;
+      const ao = Number.isFinite(a._order) ? a._order : null;
+      const bo = Number.isFinite(b._order) ? b._order : null;
+      if (ao !== null && bo !== null) return ao - bo;
+      if (ao !== null) return -1;
+      if (bo !== null) return 1;
       return displayAttendeeName(a, contactNicknames).localeCompare(displayAttendeeName(b, contactNicknames));
     };
     se.sort(sorter);
@@ -1797,6 +1804,10 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
   const [draftName, setDraftName] = useState('');
   const [draftEmail, setDraftEmail] = useState('');
   const [draftRequired, setDraftRequired] = useState(true);
+  // Drag state for reordering Schneider attendees between Required /
+  // Optional sub-sections (and within a sub-section).
+  const [seDragKey, setSeDragKey] = useState(null);   // unique id of the row being dragged
+  const [seDragOverIdx, setSeDragOverIdx] = useState(null); // current drop target index in the displayed SE list
   // Once the user picks a contact from the dropdown we hide the list until
   // they edit the name again — avoids re-showing the suggestion they just
   // selected.
@@ -1857,6 +1868,58 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     };
     const attendees = (mt.attendees || []).filter(x => !sameAttendee(x));
     const manualAttendees = (mt.manualAttendees || []).filter(x => !sameAttendee(x));
+    set({ meeting: { ...mt, attendees, manualAttendees } });
+  }
+
+  // Locate an attendee in either of the two underlying lists. Used by
+  // the patch / move helpers below so we can mutate the right slot in
+  // meeting.attendees vs meeting.manualAttendees.
+  function findAttendeeIn(mt, target) {
+    const sameAttendee = (x) => {
+      if (target.email && x.email && x.email.toLowerCase() === target.email.toLowerCase()) return true;
+      if (!target.email && !x.email && (x.name || '') === (target.name || '')) return true;
+      return false;
+    };
+    const ics = mt.attendees || [];
+    const icsIdx = ics.findIndex(sameAttendee);
+    if (icsIdx >= 0) return { source: 'attendees', index: icsIdx };
+    const manual = mt.manualAttendees || [];
+    const manualIdx = manual.findIndex(sameAttendee);
+    if (manualIdx >= 0) return { source: 'manualAttendees', index: manualIdx };
+    return null;
+  }
+
+  // Flip the Required flag on a single attendee. The display sort
+  // automatically moves them between the Required and Optional
+  // sub-sections; their _order is preserved.
+  function setAttendeeRequired(a, required) {
+    const mt = formData.meeting || {};
+    const found = findAttendeeIn(mt, a);
+    if (!found) return;
+    const next = [...(mt[found.source] || [])];
+    next[found.index] = { ...next[found.index], required: !!required };
+    set({ meeting: { ...mt, [found.source]: next } });
+  }
+
+  // Reorder a displayed list (the SE-only or Customer-only bucket, in
+  // current display order). Stamps a sequential _order on every entry
+  // so the new position survives a refresh, and writes those _orders
+  // back into both meeting.attendees and meeting.manualAttendees.
+  function reorderAttendees(displayedList, fromIdx, toIdx) {
+    if (fromIdx === toIdx || fromIdx < 0 || toIdx < 0) return;
+    if (fromIdx >= displayedList.length || toIdx >= displayedList.length) return;
+    const reordered = [...displayedList];
+    const [item] = reordered.splice(fromIdx, 1);
+    reordered.splice(toIdx, 0, item);
+    let mt = formData.meeting || {};
+    let attendees = [...(mt.attendees || [])];
+    let manualAttendees = [...(mt.manualAttendees || [])];
+    reordered.forEach((x, i) => {
+      const found = findAttendeeIn({ attendees, manualAttendees }, x);
+      if (!found) return;
+      const arr = found.source === 'attendees' ? attendees : manualAttendees;
+      arr[found.index] = { ...arr[found.index], _order: i * 10 };
+    });
     set({ meeting: { ...mt, attendees, manualAttendees } });
   }
 
@@ -2781,9 +2844,10 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                   <span />
                 </div>
               );
-              // Dedicated renderer for Schneider Electric attendees: just
-              // name + free-text "Dan's Ask" column + remove button.
-              const SE_GRID = 'auto minmax(0, 1fr) minmax(0, 2fr) auto';
+              // Dedicated renderer for Schneider Electric attendees: drag
+              // handle + matched check + name + Required/Optional toggle
+              // + free-text "Dan's Ask" column + remove button.
+              const SE_GRID = 'auto auto minmax(0, 1fr) auto minmax(0, 2fr) auto';
               const seColumnHeader = (
                 <div style={{
                   display: 'grid', gridTemplateColumns: SE_GRID, columnGap: '0.5rem',
@@ -2792,12 +2856,15 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                   color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em',
                 }}>
                   <span style={{ width: 12 }} />
+                  <span style={{ width: 12 }} />
                   <span>Name</span>
+                  <span>R/O</span>
                   <span>Dan&apos;s Ask</span>
                   <span />
                 </div>
               );
-              const renderSeAttendee = (a, i) => {
+              const seKey = (a) => (a.email || '').toLowerCase().trim() || `name:${(a.name || '').toLowerCase().trim()}`;
+              const renderSeAttendee = (a, displayIdx) => {
                 const matched = !!a.match;
                 const linkedinUrl = a.match?.hs_linkedin_url || a.match?.linkedin_url || a.match?.hs_linkedinid || '';
                 const rawSummary = a.rawParams
@@ -2806,19 +2873,54 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                 const tooltip = `${a.email}${a.role ? ' · ROLE=' + a.role : ''}${rawSummary ? ' · ' + rawSummary : ''}`;
                 const ask = dansAsks[dansAskKey(a)] || '';
                 const wrap = { overflowWrap: 'anywhere', wordBreak: 'break-word' };
+                const myKey = seKey(a);
+                const isDragging = seDragKey === myKey;
+                const isDragOver = seDragOverIdx === displayIdx && seDragKey && seDragKey !== myKey;
                 return (
                   <div
-                    key={i}
+                    key={myKey}
                     title={tooltip}
+                    draggable
+                    onDragStart={(e) => {
+                      setSeDragKey(myKey);
+                      try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', myKey); } catch {}
+                    }}
+                    onDragEnd={() => { setSeDragKey(null); setSeDragOverIdx(null); }}
+                    onDragOver={(e) => {
+                      if (!seDragKey || seDragKey === myKey) return;
+                      e.preventDefault();
+                      try { e.dataTransfer.dropEffect = 'move'; } catch {}
+                      if (seDragOverIdx !== displayIdx) setSeDragOverIdx(displayIdx);
+                    }}
+                    onDragLeave={() => { if (seDragOverIdx === displayIdx) setSeDragOverIdx(null); }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      if (!seDragKey || seDragKey === myKey) { setSeDragKey(null); setSeDragOverIdx(null); return; }
+                      const fromIdx = seAttendees.findIndex(x => seKey(x) === seDragKey);
+                      if (fromIdx < 0) { setSeDragKey(null); setSeDragOverIdx(null); return; }
+                      const dragged = seAttendees[fromIdx];
+                      // If the drop target sits in a different required
+                      // bucket than the dragged item, flip the dragged
+                      // attendee's required flag to match before reordering.
+                      if (!!dragged.required !== !!a.required) {
+                        setAttendeeRequired(dragged, !!a.required);
+                      }
+                      reorderAttendees(seAttendees, fromIdx, displayIdx);
+                      setSeDragKey(null);
+                      setSeDragOverIdx(null);
+                    }}
                     style={{
                       display: 'grid', gridTemplateColumns: SE_GRID, columnGap: '0.5rem',
                       alignItems: 'center',
                       padding: '0.4rem 0.5rem',
                       background: matched ? '#F0FDF4' : '#FEF2F2',
-                      border: '1px solid', borderColor: matched ? '#BBF7D0' : '#FECACA',
+                      border: '1px solid', borderColor: isDragOver ? '#2563EB' : (matched ? '#BBF7D0' : '#FECACA'),
                       borderRadius: 4,
+                      opacity: isDragging ? 0.5 : 1,
+                      cursor: 'grab',
                     }}
                   >
+                    <span title="Drag to reorder or move between Required / Optional" style={{ color: '#94A3B8', cursor: 'grab', userSelect: 'none', fontSize: '0.85rem' }}>⋮⋮</span>
                     <span style={{ color: matched ? '#15803D' : '#B91C1C', fontWeight: 700, fontSize: '0.9rem' }}>{matched ? '✓' : '✗'}</span>
                     <div style={{ minWidth: 0 }}>
                       {linkedinUrl ? (
@@ -2838,6 +2940,25 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                         </span>
                       )}
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => setAttendeeRequired(a, !a.required)}
+                      title={a.required ? 'Click to mark as Optional' : 'Click to mark as Required'}
+                      style={{
+                        padding: '2px 8px',
+                        fontSize: '0.6rem',
+                        fontWeight: 700,
+                        letterSpacing: '0.04em',
+                        textTransform: 'uppercase',
+                        border: '1px solid',
+                        borderRadius: 4,
+                        cursor: 'pointer',
+                        fontFamily: 'inherit',
+                        color: a.required ? '#B91C1C' : '#3730A3',
+                        background: a.required ? '#FEE2E2' : '#E0E7FF',
+                        borderColor: a.required ? '#FCA5A5' : '#A5B4FC',
+                      }}
+                    >{a.required ? 'Required' : 'Optional'}</button>
                     <CommitOnBlurInput
                       multiline
                       autoGrow
@@ -2867,30 +2988,70 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                 );
               };
               const renderSeGrouped = (list) => {
+                // Indices need to be global within `list` so drag-drop
+                // reorder maps positions back into the same array we
+                // pass to reorderAttendees.
+                const idxOf = new Map();
+                list.forEach((x, i) => idxOf.set(x, i));
                 const req = list.filter(a => a.required);
                 const opt = list.filter(a => !a.required);
-                const subHeader = (label, count, color, bg) => (
-                  <div style={{
-                    marginTop: '0.35rem', marginBottom: '0.25rem',
-                    fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.04em',
-                    textTransform: 'uppercase',
-                    color, background: bg, padding: '2px 8px', borderRadius: 4,
-                    display: 'inline-block',
-                  }}>{label} · {count}</div>
+                // Drop zone for the Required / Optional sub-headers — lets
+                // the user move an attendee across buckets even when the
+                // target bucket is empty or they want to drop "above all".
+                const subHeader = (label, count, color, bg, targetRequired) => (
+                  <div
+                    onDragOver={(e) => {
+                      if (!seDragKey) return;
+                      e.preventDefault();
+                      try { e.dataTransfer.dropEffect = 'move'; } catch {}
+                    }}
+                    onDrop={(e) => {
+                      if (!seDragKey) return;
+                      e.preventDefault();
+                      const fromIdx = list.findIndex(x => seKey(x) === seDragKey);
+                      if (fromIdx < 0) { setSeDragKey(null); setSeDragOverIdx(null); return; }
+                      const dragged = list[fromIdx];
+                      if (!!dragged.required !== !!targetRequired) {
+                        setAttendeeRequired(dragged, !!targetRequired);
+                      }
+                      // Drop on a section header → put the dragged item
+                      // at the top of that section. Find the first index
+                      // currently in the target bucket; insert there.
+                      let toIdx;
+                      if (targetRequired) {
+                        toIdx = 0;
+                      } else {
+                        const firstOpt = list.findIndex(x => !x.required);
+                        toIdx = firstOpt < 0 ? list.length - 1 : firstOpt;
+                      }
+                      reorderAttendees(list, fromIdx, toIdx);
+                      setSeDragKey(null);
+                      setSeDragOverIdx(null);
+                    }}
+                    style={{
+                      marginTop: '0.35rem', marginBottom: '0.25rem',
+                      fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.04em',
+                      textTransform: 'uppercase',
+                      color, background: bg, padding: '2px 8px', borderRadius: 4,
+                      display: 'inline-block',
+                      border: seDragKey ? '1px dashed #2563EB' : '1px solid transparent',
+                    }}
+                    title={seDragKey ? `Drop here to mark as ${label}` : undefined}
+                  >{label} · {count}</div>
                 );
                 return (
                   <div>
                     {seColumnHeader}
-                    {req.length > 0 && (<>
-                      {subHeader('Required', req.length, '#B91C1C', '#FEE2E2')}
+                    {(req.length > 0 || seDragKey) && (<>
+                      {subHeader('Required', req.length, '#B91C1C', '#FEE2E2', true)}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                        {req.map(renderSeAttendee)}
+                        {req.map(a => renderSeAttendee(a, idxOf.get(a)))}
                       </div>
                     </>)}
-                    {opt.length > 0 && (<>
-                      {subHeader('Optional', opt.length, '#3730A3', '#E0E7FF')}
+                    {(opt.length > 0 || seDragKey) && (<>
+                      {subHeader('Optional', opt.length, '#3730A3', '#E0E7FF', false)}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                        {opt.map(renderSeAttendee)}
+                        {opt.map(a => renderSeAttendee(a, idxOf.get(a)))}
                       </div>
                     </>)}
                   </div>
