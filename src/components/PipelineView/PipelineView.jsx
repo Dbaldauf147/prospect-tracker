@@ -883,10 +883,15 @@ function PipelineViewInner() {
           </MetricsTableBoundary>
         </div>
 
-        {/* Mid row — Client/Greenfield + Coverage + % not Quoted + Quota */}
+        {/* Mid row — sized so each section sits under the matching
+            metrics-table column group: Client/Greenfield under
+            Stage + Active Opps + Deal Size (cols 1-5), Coverage
+            Ratio under Pipeline (cols 6-7), % deals not Quoted
+            under Close Rate (cols 8-9). Pixel widths roughly track
+            the metrics table's minWidth: 1400 ÷ 13 cols ≈ 108px each. */}
         <div className={styles.midRow}>
-          <div className={styles.section}>
-            <table className={styles.grid}>
+          <div className={styles.section} style={{ flex: '0 0 540px' }}>
+            <table className={styles.grid} style={{ width: '100%' }}>
               <thead>
                 <tr><th /><th>Count / $</th><th>Goal - Client</th><th>Actual - Client</th></tr>
               </thead>
