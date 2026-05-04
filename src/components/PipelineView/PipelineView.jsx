@@ -598,22 +598,6 @@ function PipelineViewInner() {
     }
   }, [hydrated, state.stages, renderStages]);
 
-  // Per-row Opps Needed columns + their totals, computed outside the
-  // JSX so any future error here surfaces in dev tools instead of
-  // silently dropping the metrics table.
-  const stageOppsNeeded = renderStages.map(st => {
-    const ds = Number(st.dealSizeActual) || 0;
-    const pg = Number(st.pipelineGoal) || 0;
-    const cr = Number(st.closeActual) || 0;
-    return {
-      key: st.key,
-      forDeal: ds > 0 ? Math.round(pg / ds) : null,
-      forClose: ds > 0 && cr > 0 ? Math.round(pg / (ds * cr)) : null,
-    };
-  });
-  const totalOppsForDeal = stageOppsNeeded.reduce((s, r) => s + (r.forDeal || 0), 0);
-  const totalOppsForClose = stageOppsNeeded.reduce((s, r) => s + (r.forClose || 0), 0);
-
   const stageTotals = renderStages.reduce((acc, st) => {
     const stageNum = Number(String(st.key).replace(/[^0-9]/g, ''));
     const m = bfoMetrics[stageNum];
@@ -704,8 +688,6 @@ function PipelineViewInner() {
                 <th colSpan={2}>Close Rate</th>
                 <th>Target Projection</th>
                 <th colSpan={2}>Avg Opp Life</th>
-                <th rowSpan={2}>Opps Needed w Deal Sizes</th>
-                <th rowSpan={2}>Opps Needed w Close Rates</th>
               </tr>
               <tr>
                 <th>Goal (above)</th><th>Actual</th>
@@ -773,12 +755,6 @@ function PipelineViewInner() {
                         ? <span title={liveTip} className={styles.liveCell}>{lifeActual}</span>
                         : <NumCell value={st.lifeActual} onCommit={(v) => setStage(i, { lifeActual: v })} />}
                     </td>
-                    <td className={styles.numCell} title="Pipeline Goal ÷ Deal Size Actual">
-                      {stageOppsNeeded[i]?.forDeal ?? ''}
-                    </td>
-                    <td className={styles.numCell} title="Pipeline Goal ÷ (Deal Size Actual × Close Rate Actual)">
-                      {stageOppsNeeded[i]?.forClose ?? ''}
-                    </td>
                   </tr>
                 );
               })}
@@ -799,8 +775,6 @@ function PipelineViewInner() {
                 <td className={styles.numCell} title="Sum of stage Target Projection Goals (Active Goal × Deal Size Goal × Close Rate Goal).">{fmtMoney(Math.round(stageTotals.targetProjGoal))}</td>
                 <td className={styles.numCell} title="Stage goals weighted by Active Opp Goal — SUMPRODUCT(lifeGoal, activeGoal) ÷ SUM(activeGoal). Less is better.">{lifeGoalAvg ?? ''}</td>
                 <td className={`${styles.numCell} ${compareClass(lifeActualAvg, lifeGoalAvg, 'lower-better')}`.trim()} title="Stage actuals weighted by Active Opp Actual (live BFO count when loaded). SUMPRODUCT(lifeActual, activeActual) ÷ SUM(activeActual).">{lifeActualAvg ?? ''}</td>
-                <td className={styles.numCell}>{totalOppsForDeal}</td>
-                <td className={styles.numCell}>{totalOppsForClose}</td>
               </tr>
             </tbody>
           </table>
