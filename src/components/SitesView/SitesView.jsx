@@ -1311,8 +1311,12 @@ export function SitesView({ settings, updateSettings } = {}) {
           low: Math.round(g.spend * LOW_PCT),
           high: Math.round(g.spend * HIGH_PCT),
           suppliers: joinDistinct(g.suppliers),
-          earliestStart: fmtDate(earliest),
-          latestEnd: fmtDate(latest),
+          // When the state has a supplier on record but no parseable
+          // contract dates, surface "TBD" so the export tells the user
+          // a date is expected vs leaving the cell blank (which reads
+          // as no contract at all).
+          earliestStart: earliest ? fmtDate(earliest) : (g.suppliers.length > 0 ? 'TBD' : ''),
+          latestEnd: latest ? fmtDate(latest) : (g.suppliers.length > 0 ? 'TBD' : ''),
         };
       });
     }
