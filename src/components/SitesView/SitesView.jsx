@@ -25,6 +25,7 @@ import {
 } from '../../utils/utilityRates';
 import { parseBestSheet } from '../../utils/xlsxParse';
 import { findFuzzyMatch } from '../../utils/utilityNameMatch';
+import { ENERGY_SUPPLIERS } from '../../data/energySuppliers';
 import styles from './SitesView.module.css';
 
 const SITES_STORAGE_KEY = 'sites-list-override';
@@ -550,6 +551,16 @@ export function SitesView({ settings, updateSettings } = {}) {
     const hit = findFuzzyMatch(vendor, knownUtilityNames);
     return hit ? { canonical: hit.name, score: hit.score } : null;
   }
+  // Same fuzzy scorer, but against the bundled top-suppliers list
+  // (src/data/energySuppliers.js). When a vendor matches a known
+  // supplier we keep the canonical brand name so cosmetic variants
+  // ("Reliant", "Reliant Energy LLC", "REL energy") all collapse to
+  // "Reliant Energy" in the Supplier column.
+  function matchVendorToSupplier(vendor) {
+    if (!vendor) return null;
+    const hit = findFuzzyMatch(vendor, ENERGY_SUPPLIERS);
+    return hit ? { canonical: hit.name, score: hit.score } : null;
+  }
 
   const rows = useMemo(() => {
     return cleanSitesData.map((r, i) => {
@@ -576,27 +587,43 @@ export function SitesView({ settings, updateSettings } = {}) {
       const electricCost = actualElectricCost ?? estElectricCost;
       const gasCost = actualGasCost ?? estGasCost;
       const totalCost = (electricCost ?? 0) + (gasCost ?? 0);
-      // Vendor column from the sites file. If it fuzzy-matches a
-      // utility we already know about (from the loaded utility-rates
-      // lookup), the canonical utility name goes into the Utility
-      // column; if it doesn't match, the vendor falls through to the
-      // Supplier column (competitive retailer).
+      // Vendor column from the sites file. Resolution order:
+      //   1. Fuzzy-match against the bundled top-suppliers list →
+      //      Supplier column with the canonical brand name.
+      //   2. Else fuzzy-match against the loaded utility-rates list →
+      //      Utility column with the canonical utility name.
+      //   3. Else the raw vendor string falls through to the Supplier
+      //      column unchanged.
+      // Supplier list wins ties so a brand that exists on both rosters
+      // (e.g. Constellation NewEnergy) lands as a supplier, which is
+      // what shows up on the customer's bill.
       const electricVendorRaw = electricSupplierOverride ? String(r[electricSupplierOverride] || '').trim() : '';
       const gasVendorRaw = gasSupplierOverride ? String(r[gasSupplierOverride] || '').trim() : '';
-      const electricVendorMatch = matchVendorToUtility(electricVendorRaw);
-      const gasVendorMatch = matchVendorToUtility(gasVendorRaw);
-      const electricVendorIsUtility = !!electricVendorMatch;
-      const gasVendorIsUtility = !!gasVendorMatch;
+      const electricSupplierMatch = matchVendorToSupplier(electricVendorRaw);
+      const gasSupplierMatch = matchVendorToSupplier(gasVendorRaw);
+      const electricUtilityMatch = !electricSupplierMatch ? matchVendorToUtility(electricVendorRaw) : null;
+      const gasUtilityMatch = !gasSupplierMatch ? matchVendorToUtility(gasVendorRaw) : null;
+      const electricVendorIsUtility = !!electricUtilityMatch;
+      const gasVendorIsUtility = !!gasUtilityMatch;
+      // Supplier column gets the canonical brand from the suppliers
+      // list when matched; otherwise falls through to the raw vendor
+      // (only if the vendor wasn't classified as a utility).
+      const electricSupplierResolved = electricSupplierMatch?.canonical
+        || (!electricVendorIsUtility && electricVendorRaw ? electricVendorRaw : null);
+      const gasSupplierResolved = gasSupplierMatch?.canonical
+        || (!gasVendorIsUtility && gasVendorRaw ? gasVendorRaw : null);
       return {
         ...r,
         id: i,
         __zipNorm__: zip,
-        __electric__: electricVendorIsUtility ? electricVendorMatch.canonical : match?.electric,
-        __gas__: gasVendorIsUtility ? gasVendorMatch.canonical : match?.gas,
+        __electric__: electricVendorIsUtility ? electricUtilityMatch.canonical : match?.electric,
+        __gas__: gasVendorIsUtility ? gasUtilityMatch.canonical : match?.gas,
         __electricVendorRaw__: electricVendorRaw || null,
-        __electricVendorMatchScore__: electricVendorMatch?.score || null,
+        __electricVendorMatchScore__: (electricSupplierMatch || electricUtilityMatch)?.score || null,
+        __electricVendorMatchKind__: electricSupplierMatch ? 'supplier' : (electricUtilityMatch ? 'utility' : null),
         __gasVendorRaw__: gasVendorRaw || null,
-        __gasVendorMatchScore__: gasVendorMatch?.score || null,
+        __gasVendorMatchScore__: (gasSupplierMatch || gasUtilityMatch)?.score || null,
+        __gasVendorMatchKind__: gasSupplierMatch ? 'supplier' : (gasUtilityMatch ? 'utility' : null),
         __water__: match?.water,
         __city__: match?.city,
         __country__: match?.country,
@@ -614,8 +641,8 @@ export function SitesView({ settings, updateSettings } = {}) {
         __electricCostEstimated__: estElectricCost,
         __gasCostEstimated__: estGasCost,
         __totalCost__: (electricCost != null || gasCost != null) ? totalCost : null,
-        __electricSupplier__: electricVendorIsUtility ? null : (electricVendorRaw || null),
-        __gasSupplier__: gasVendorIsUtility ? null : (gasVendorRaw || null),
+        __electricSupplier__: electricSupplierResolved,
+        __gasSupplier__: gasSupplierResolved,
         __electricStart__: electricStartOverride ? r[electricStartOverride] : null,
         __electricEnd__: electricEndOverride ? r[electricEndOverride] : null,
         __gasStart__: gasStartOverride ? r[gasStartOverride] : null,
@@ -830,9 +857,18 @@ export function SitesView({ settings, updateSettings } = {}) {
       render: (row) => {
         const val = commodity === 'electric' ? row.__electricSupplier__ : row.__gasSupplier__;
         if (!val) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
+        const vendorRaw = commodity === 'electric' ? row.__electricVendorRaw__ : row.__gasVendorRaw__;
+        const matchKind = commodity === 'electric' ? row.__electricVendorMatchKind__ : row.__gasVendorMatchKind__;
+        const matchScore = commodity === 'electric' ? row.__electricVendorMatchScore__ : row.__gasVendorMatchScore__;
+        const canonicalized = matchKind === 'supplier' && vendorRaw && String(vendorRaw).toLowerCase() !== String(val).toLowerCase();
+        const tip = canonicalized
+          ? `${label}: ${val} · canonicalized from vendor "${vendorRaw}" via the bundled supplier list (fuzzy score ${matchScore}/100)`
+          : matchKind === 'supplier'
+          ? `${label}: ${val} · matched against the bundled supplier list (fuzzy score ${matchScore}/100)`
+          : `${label}: ${val} (not matched to a known utility or supplier — treated as a competitive retailer)`;
         return (
           <span
-            title={`${label}: ${val} (not matched to a known utility, so treated as a competitive retailer)`}
+            title={tip}
             style={{ background: '#F5F3FF', border: '1px solid #C4B5FD', color: '#5B21B6', padding: '1px 8px', borderRadius: 999, fontSize: '0.7rem', fontWeight: 600, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block' }}
           >{String(val)}</span>
         );
