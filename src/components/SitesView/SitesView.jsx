@@ -138,6 +138,26 @@ export function SitesView({ settings, updateSettings } = {}) {
     return () => { cancelled = true; };
   }, []);
 
+  // Document-level paste listener — React's onPaste only fires when
+  // focus is inside the wrapper, but Cmd+V from a fresh page load
+  // dispatches on document.body. Mirror BFOActivityView's pattern so
+  // a user can drop into the page and immediately paste from Excel.
+  useEffect(() => {
+    function onPaste(e) {
+      const tag = (e.target?.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || e.target?.isContentEditable) return;
+      // Skip if a modal already has the user's attention.
+      if (sitesMappingModal || mappingModal) return;
+      handlePagePaste(e);
+    }
+    document.addEventListener('paste', onPaste);
+    return () => document.removeEventListener('paste', onPaste);
+    // handlePagePaste closes over setSitesMappingModal/setUploadError, both
+    // stable from useState. Re-running on every render would just attach
+    // and detach — leave deps empty for a single mount-time install.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sitesMappingModal, mappingModal]);
+
   async function loadSitesFromFile(file) {
     if (!file) return;
     setUploadError('');
@@ -209,6 +229,55 @@ export function SitesView({ settings, updateSettings } = {}) {
     const file = e.dataTransfer?.files?.[0];
     if (file) loadSitesFromFile(file);
   }
+
+  // Allow pasting raw tab-separated rows directly from Excel onto the
+  // page. First line is the header; subsequent lines become data
+  // rows. Routes through the same column-mapping modal as a file
+  // drop, so the user gets the side-by-side mapping UI for either
+  // entry point. Skips when focus is in a text input / textarea so
+  // we don't steal paste from an editable field.
+  function handlePagePaste(e) {
+    const tag = (e.target?.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || e.target?.isContentEditable) return;
+    const text = e.clipboardData?.getData('text/plain') || '';
+    if (!text || !text.includes('\t')) return;
+    const lines = text.replace(/\r\n?/g, '\n').split('\n').filter(l => l.length > 0);
+    if (lines.length < 2) return;
+    e.preventDefault();
+    const split = (line) => line.split('\t');
+    const rawHeaders = split(lines[0]).map(h => h.trim());
+    const seen = new Map();
+    const headers = rawHeaders.map((h, i) => {
+      const base = h || `Column ${i + 1}`;
+      const c = seen.get(base) || 0;
+      seen.set(base, c + 1);
+      return c === 0 ? base : `${base} (${c + 1})`;
+    });
+    const rows = lines.slice(1).map(line => {
+      const cells = split(line);
+      const obj = {};
+      headers.forEach((h, i) => { obj[h] = (cells[i] ?? '').trim(); });
+      return obj;
+    });
+    const detectedSiteName = headers.find(h => /\b(site\s*name|site|property|location|facility|building|name)\b/i.test(String(h))) || headers[0] || '';
+    const detectedZip = pickZipColumn(headers);
+    const detectedElectric = detectColumn(headers, [/electric.*kwh|kwh.*electric/i, /annual.*electric/i, /electric/i, /kwh/i]);
+    const detectedGas = detectColumn(headers, [/gas.*therm|therm.*gas/i, /annual.*gas/i, /natural\s*gas/i, /gas/i, /therm/i, /mmbtu/i]);
+    setUploadError('');
+    setSitesMappingModal({
+      rows,
+      headers,
+      sheetName: '',
+      fileName: `(pasted ${rows.length.toLocaleString()} row${rows.length === 1 ? '' : 's'})`,
+      mapping: {
+        siteName: detectedSiteName,
+        zip: detectedZip,
+        electric: detectedElectric || '',
+        gas: detectedGas || '',
+      },
+    });
+  }
+
   function handleDragOver(e) {
     e.preventDefault();
     e.stopPropagation();
@@ -1223,11 +1292,17 @@ export function SitesView({ settings, updateSettings } = {}) {
       onDragOver={handleDragOver}
       onDragEnter={handleDragOver}
       onDragLeave={handleDragLeave}
+      onPaste={handlePagePaste}
       style={dragOver ? { outline: '2px dashed var(--color-accent)', outlineOffset: -4, background: '#F0F9FF' } : undefined}
     >
       <div className={styles.header}>
         <div>
           <h1 className={styles.title}>Utility Lookup</h1>
+          {cleanSitesData.length === 0 && (
+            <div className={styles.subtitle}>
+              Drop an Excel/CSV file or paste tab-separated rows (⌘V / Ctrl+V) anywhere on this page.
+            </div>
+          )}
           <div className={styles.subtitle}>
             {cleanSitesData.length} {cleanSitesData.length === 1 ? 'site' : 'sites'}
             {sitesData.length > cleanSitesData.length && <span style={{ color: 'var(--color-text-muted)' }}> ({sitesData.length - cleanSitesData.length} blank-name row{sitesData.length - cleanSitesData.length === 1 ? '' : 's'} ignored)</span>}
