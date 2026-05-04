@@ -222,7 +222,7 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
         });
         // Update local cache
         try {
-          await updateHubspotCache(draft => { draft.contacts.push(data.contact); });
+          await updateHubspotCache(draft => { draft.contacts.push({ ...data.contact, _source: 'manual' }); });
         } catch {}
       } else {
         setAddResult(data.error || 'Failed to add contact');

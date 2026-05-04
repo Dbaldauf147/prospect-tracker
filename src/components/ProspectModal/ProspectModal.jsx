@@ -775,7 +775,7 @@ const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClo
             if (isLocalOnly && existingId) {
               draft.contacts = draft.contacts.filter(c => String(c.id || c.vid) !== String(existingId));
             }
-            draft.contacts.push({ id: savedContact.id, ...cacheProps });
+            draft.contacts.push({ id: savedContact.id, ...cacheProps, _source: 'manual' });
           } else {
             const idx = draft.contacts.findIndex(c => String(c.id || c.vid) === String(contact.id || contact.vid));
             if (idx !== -1) draft.contacts[idx] = { ...draft.contacts[idx], ...cacheProps };
@@ -1295,6 +1295,81 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const [localContacts, setLocalContacts] = useState(baseContacts);
   useEffect(() => { setLocalContacts(baseContacts); }, [baseContacts]);
   const companyContacts = localContacts;
+
+  // Per-contact sent / received email counts sourced from the
+  // hubspot-activity-cache localStorage entry that the Activity tab
+  // populates. Counts dedupe by message id so a single email
+  // associated to a contact via both ID and address only counts once.
+  const emailCountsByContact = useMemo(() => {
+    const out = new Map(); // contactKey -> { sent, received }
+    if (!companyContacts || companyContacts.length === 0) return out;
+    let raw;
+    try { raw = JSON.parse(localStorage.getItem('hubspot-activity-cache') || 'null'); } catch { raw = null; }
+    const emails = raw?.emails || [];
+    if (emails.length === 0) return out;
+
+    const keyOf = (c) => `${c.id || c.vid || ''}|${(c.email || '').toLowerCase()}`;
+    const byId = new Map();
+    const byEmail = new Map();
+    for (const c of companyContacts) {
+      const k = keyOf(c);
+      const id = String(c.id || c.vid || '');
+      const email = (c.email || '').toLowerCase();
+      if (id) byId.set(id, k);
+      if (email) byEmail.set(email, k);
+    }
+
+    const sent = new Map();   // key -> Set<msgId>
+    const received = new Map();
+    for (const e of emails) {
+      if ((e.hs_email_subject || '').toLowerCase().includes('(sample email)')) continue;
+      const from = (e.hs_email_from_email || '').toLowerCase();
+      const direction = from.includes('@se.com') || from.includes('daniel.baldauf')
+        ? 'Outbound'
+        : from ? 'Inbound' : (e.hs_email_direction || '');
+      if (direction !== 'Outbound' && direction !== 'Inbound') continue;
+      const msgId = e.id || e.hs_object_id || `${e.hs_timestamp || ''}|${e.hs_email_subject || ''}`;
+
+      const matched = new Set();
+      for (const id of e._contactIds || []) {
+        const k = byId.get(String(id));
+        if (k) matched.add(k);
+      }
+      if (direction === 'Outbound') {
+        const recips = (e.hs_email_to_email || '').toLowerCase().split(/[;,]/).map(s => s.trim()).filter(Boolean);
+        for (const r of recips) {
+          const k = byEmail.get(r);
+          if (k) matched.add(k);
+        }
+      } else if (from) {
+        const k = byEmail.get(from);
+        if (k) matched.add(k);
+      }
+
+      const target = direction === 'Outbound' ? sent : received;
+      for (const k of matched) {
+        let s = target.get(k);
+        if (!s) { s = new Set(); target.set(k, s); }
+        s.add(msgId);
+      }
+    }
+    const allKeys = new Set([...sent.keys(), ...received.keys()]);
+    for (const k of allKeys) {
+      out.set(k, { sent: sent.get(k)?.size || 0, received: received.get(k)?.size || 0 });
+    }
+    return out;
+  }, [companyContacts]);
+
+  function getContactEmailCounts(c) {
+    const k = `${c.id || c.vid || ''}|${(c.email || '').toLowerCase()}`;
+    return emailCountsByContact.get(k) || { sent: 0, received: 0 };
+  }
+
+  function getContactSource(c) {
+    // _source is stamped at creation; default to 'hubspot' for any
+    // contact synced before this feature shipped.
+    return c._source || 'hubspot';
+  }
 
   // Build lookups from the uploaded Target Accounts sheets keyed by account name:
   //   repMap  — sales rep / owner
@@ -5568,11 +5643,14 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     <thead>
                       <tr style={{ background: '#F8FAFC', position: 'sticky', top: 0, zIndex: 1 }}>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Name</th>
+                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }} title="Where this contact was created — HubSpot sync, bulk upload, or manual entry.">Source</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Full Name</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Title</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Tags</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Category</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Email</th>
+                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'right', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0', width: '60px' }} title="Outbound emails to this contact, sourced from the Activity tab.">Sent</th>
+                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'right', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0', width: '70px' }} title="Inbound emails from this contact, sourced from the Activity tab.">Received</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Work Phone</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Cell Phone</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>City</th>
@@ -5593,11 +5671,21 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         const name = [c.firstname, c.lastname].filter(Boolean).join(' ');
                         const linkedinUrl = c.hs_linkedin_url || c.linkedin_url || c.hs_linkedinid;
                         const isDM = contactHasTag(c, 'decision maker');
+                        const source = getContactSource(c);
+                        const sourceStyle = source === 'manual'
+                          ? { bg: '#EDE9FE', color: '#5B21B6', label: 'Manual' }
+                          : source === 'bulk'
+                          ? { bg: '#DBEAFE', color: '#1D4ED8', label: 'Bulk' }
+                          : { bg: '#FFEDD5', color: '#9A3412', label: 'HubSpot' };
+                        const counts = getContactEmailCounts(c);
                         return (
                           <tr key={c.id || i} onClick={() => setEditingContact(c)} style={{ borderBottom: '1px solid #F1F5F9', cursor: 'pointer', background: isDM ? '#FEFCE8' : '', borderLeft: isDM ? '3px solid #F59E0B' : '' }} onMouseEnter={e => e.currentTarget.style.background = isDM ? '#FEF9C3' : '#F8FAFC'} onMouseLeave={e => e.currentTarget.style.background = isDM ? '#FEFCE8' : ''}>
                             <td style={{ padding: '0.35rem 0.5rem', fontWeight: 600, color: '#1E293B', whiteSpace: 'nowrap' }}>
                               {name || '—'}
                               {isDM && <span style={{ marginLeft: '0.3rem', fontSize: '0.55rem', fontWeight: 700, color: '#92400E', background: '#FDE68A', padding: '0px 5px', borderRadius: '3px' }}>DM</span>}
+                            </td>
+                            <td style={{ padding: '0.35rem 0.5rem', whiteSpace: 'nowrap' }}>
+                              <span style={{ display: 'inline-block', padding: '1px 7px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 700, background: sourceStyle.bg, color: sourceStyle.color, letterSpacing: '0.02em' }}>{sourceStyle.label}</span>
                             </td>
                             <td style={{ padding: '0.35rem 0.5rem', color: '#1E293B', whiteSpace: 'nowrap' }}>
                               {(() => {
@@ -5629,6 +5717,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                               })()}
                             </td>
                             <td style={{ padding: '0.35rem 0.5rem', color: '#475569', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.email || '—'}</td>
+                            <td style={{ padding: '0.35rem 0.5rem', textAlign: 'right', color: counts.sent > 0 ? '#1E293B' : '#CBD5E1', fontVariantNumeric: 'tabular-nums' }} title={counts.sent > 0 ? `${counts.sent} outbound emails to this contact (Activity tab)` : 'No outbound emails recorded'}>{counts.sent || '—'}</td>
+                            <td style={{ padding: '0.35rem 0.5rem', textAlign: 'right', color: counts.received > 0 ? '#1E293B' : '#CBD5E1', fontVariantNumeric: 'tabular-nums' }} title={counts.received > 0 ? `${counts.received} inbound emails from this contact (Activity tab)` : 'No inbound emails recorded'}>{counts.received || '—'}</td>
                             <td style={{ padding: '0.35rem 0.5rem', color: '#475569', whiteSpace: 'nowrap' }}>{c.phone || '—'}</td>
                             <td style={{ padding: '0.35rem 0.5rem', color: '#475569', whiteSpace: 'nowrap' }}>{c.mobilephone || c.mobile_phone || '—'}</td>
                             <td style={{ padding: '0.35rem 0.5rem', color: '#475569', whiteSpace: 'nowrap', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.city || '—'}</td>

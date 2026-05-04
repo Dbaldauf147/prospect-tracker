@@ -1357,7 +1357,7 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
           for (const c of withoutEmail) {
             const { notes, ...props } = c;
             const localId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-            draft.contacts.push({ id: localId, _localOnly: true, ...props });
+            draft.contacts.push({ id: localId, _localOnly: true, _source: 'bulk', ...props });
             localSaved++;
           }
         });
@@ -1495,6 +1495,17 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
       setEditContact(undefined);
       setPushStatus({ type: 'success', message: resolvedId ? 'Contact updated in HubSpot' : 'Contact created in HubSpot' });
       logAction(user, resolvedId ? 'contact_updated' : 'contact_created', { contactId, properties: contactProps });
+      // Stamp the new/edited contact with the manual source so it
+      // survives the next full-sync (which preserves existing _source).
+      if (contactId && !resolvedId) {
+        try {
+          await updateHubspotCache(draft => {
+            const i = draft.contacts.findIndex(c => String(c.id || c.vid) === String(contactId));
+            if (i === -1) draft.contacts.push({ id: contactId, ...contactProps, _source: 'manual' });
+            else draft.contacts[i] = { ...draft.contacts[i], _source: draft.contacts[i]._source || 'manual' };
+          });
+        } catch {}
+      }
       syncFromHubSpot();
     } catch (err) {
       setPushStatus({ type: 'error', message: err.message });
@@ -1511,8 +1522,22 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
       const json = await res.json();
       if (json.error) throw new Error(json.error);
       // Preserve local-only contacts (created from bulk upload rows without email) across syncs
+      // and preserve per-contact _source markers so a full-sync doesn't
+      // overwrite "manual" / "bulk" labels back to "hubspot".
       try {
         const existing = await getHubspotCache();
+        const sourceById = new Map();
+        for (const c of existing?.contacts || []) {
+          const id = c.id || c.vid;
+          if (id && c._source) sourceById.set(String(id), c._source);
+        }
+        if (Array.isArray(json.contacts)) {
+          json.contacts = json.contacts.map(c => {
+            const id = c.id || c.vid;
+            const prior = id ? sourceById.get(String(id)) : null;
+            return { ...c, _source: prior || 'hubspot' };
+          });
+        }
         const localOnly = (existing?.contacts || []).filter(c => c._localOnly);
         if (localOnly.length > 0 && Array.isArray(json.contacts)) {
           json.contacts = [...json.contacts, ...localOnly];

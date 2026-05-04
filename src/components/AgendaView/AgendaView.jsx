@@ -924,7 +924,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName }) {
           source: 'bulk_contacts',
         });
         try {
-          await updateHubspotCache(draft => { draft.contacts.push(data.contact); });
+          await updateHubspotCache(draft => { draft.contacts.push({ ...data.contact, _source: 'bulk' }); });
         } catch { /* ignore */ }
         return 'added';
       }
