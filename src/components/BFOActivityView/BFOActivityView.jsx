@@ -17,7 +17,16 @@ function parseTSV(text) {
   const lines = text.replace(/\r\n?/g, '\n').split('\n').filter(l => l.length > 0);
   if (lines.length === 0) return { headers: [], rows: [] };
   const split = (line) => line.split('\t');
-  const rawHeaders = split(lines[0]).map(h => h.trim());
+  // BFO copies the active sort indicator into the header text — e.g.
+  // "Age Sorted Descending" or "Account Sorted Ascending" — which
+  // breaks downstream column-name lookups (Daily Success matches
+  // /^account/i, /opportunity name/i, etc.). Strip the suffix so the
+  // canonical column name survives the paste.
+  const cleanHeader = (h) => String(h || '')
+    .replace(/\s*[▲▼↑↓]\s*$/, '')
+    .replace(/\s+sorted\s+(ascending|descending)\s*$/i, '')
+    .trim();
+  const rawHeaders = split(lines[0]).map(cleanHeader);
   // Make headers unique
   const seen = new Map();
   const headers = rawHeaders.map((h, i) => {
@@ -77,7 +86,26 @@ export function BFOActivityView() {
       try {
         const saved = await dbGet(STORE, KEY);
         if (!cancelled && saved && saved.headers && saved.rows) {
-          setData({ headers: saved.headers, rows: saved.rows });
+          // Older saved data may contain "Sorted Ascending/Descending"
+          // baked into header names. Strip that suffix on load and
+          // remap row keys so downstream column lookups work without
+          // requiring a fresh paste.
+          const cleanHeader = (h) => String(h || '')
+            .replace(/\s*[▲▼↑↓]\s*$/, '')
+            .replace(/\s+sorted\s+(ascending|descending)\s*$/i, '')
+            .trim();
+          const cleaned = saved.headers.map(cleanHeader);
+          const needsRemap = cleaned.some((h, i) => h !== saved.headers[i]);
+          if (needsRemap) {
+            const rows = saved.rows.map(r => {
+              const next = {};
+              saved.headers.forEach((h, i) => { next[cleaned[i] || h] = r[h]; });
+              return next;
+            });
+            setData({ headers: cleaned, rows });
+          } else {
+            setData({ headers: saved.headers, rows: saved.rows });
+          }
         }
         // Prefs in a separate key so Clear can wipe data without losing
         // column widths or visibility.
