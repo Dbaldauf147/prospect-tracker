@@ -148,9 +148,15 @@
 }
 
 .midRow {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  display: flex;
+  flex-wrap: wrap;
   gap: 1rem;
+  align-items: flex-start;
+}
+
+.midRow > .section {
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 .bottomRow {

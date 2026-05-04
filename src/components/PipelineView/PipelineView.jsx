@@ -454,15 +454,15 @@ function PipelineViewInner() {
   }, [oppsRecords]);
 
   // Overall Close Rate (Actual) for the Pipeline Metrics Total row.
-  // Per the user's logic:
-  //   Total Sold     — Sold this year that DON'T have "pull through" in Scope.
-  //   Total Not Sold — Not Sold this year that DON'T have "pull through" in Scope.
+  // Rolling 365-day window per the user's spec:
+  //   Total Sold     — Sold within the last 365 days, Scope without "pull through".
+  //   Total Not Sold — Not Sold within the last 365 days, Scope without "pull through".
   // Close Rate = Sold / (Sold + Not Sold). Returns null when the Opps
   // cache has no usable records so the Total cell stays blank rather
   // than reading "0%".
   const oppsCloseRateActual = useMemo(() => {
     if (oppsRecords.length === 0) return null;
-    const thisYear = new Date().getFullYear();
+    const cutoff = Date.now() - 365 * 86400000;
     const PULL_THROUGH = /pull[\s-]?through/i;
     let sold = 0;
     let notSold = 0;
@@ -472,7 +472,7 @@ function PipelineViewInner() {
       const cd = r['Close Date'];
       if (!cd) continue;
       const ts = Date.parse(cd);
-      if (Number.isNaN(ts) || new Date(ts).getFullYear() !== thisYear) continue;
+      if (Number.isNaN(ts) || ts < cutoff) continue;
       if (PULL_THROUGH.test(String(r.Scope || ''))) continue;
       if (stage === 'Sold') sold += 1;
       else notSold += 1;
@@ -482,8 +482,9 @@ function PipelineViewInner() {
     return { sold, notSold, rate: sold / total };
   }, [oppsRecords]);
 
-  // Per-stage Close Rate Actual. Each stage uses a different "did it
-  // actually reach this stage?" signal on the Opps tab:
+  // Per-stage Close Rate Actual on a rolling 365-day window. Each
+  // stage uses a different "did it actually reach this stage?" signal
+  // on the Opps tab:
   //   Stage 5 (Prepare & Bid / Quoted) — non-empty Quoted On date.
   //   Stage 6 (Negotiate to Win)       — non-empty Entity Outside the US
   //                                      Approval value (blank or "-"
@@ -492,7 +493,7 @@ function PipelineViewInner() {
   const oppsCloseRateByStage = useMemo(() => {
     const out = { 3: null, 4: null, 5: null, 6: null };
     if (oppsRecords.length === 0) return out;
-    const thisYear = new Date().getFullYear();
+    const cutoff = Date.now() - 365 * 86400000;
     const PULL_THROUGH = /pull[\s-]?through/i;
     const hasQuotedOn = (r) => {
       const v = r['Quoted On'] || r['Quoted Date'] || '';
@@ -517,7 +518,7 @@ function PipelineViewInner() {
       const cd = r['Close Date'];
       if (!cd) continue;
       const ts = Date.parse(cd);
-      if (Number.isNaN(ts) || new Date(ts).getFullYear() !== thisYear) continue;
+      if (Number.isNaN(ts) || ts < cutoff) continue;
       if (PULL_THROUGH.test(String(r.Scope || ''))) continue;
       for (const stageNum of Object.keys(stagePredicates)) {
         if (!stagePredicates[stageNum](r)) continue;
@@ -736,7 +737,7 @@ function PipelineViewInner() {
                 <th colSpan={2}>Active Opportunities</th>
                 <th colSpan={2}>Deal Size</th>
                 <th colSpan={2}>Pipeline</th>
-                <th colSpan={2}>Close Rate</th>
+                <th colSpan={2}>Close Rate (Rolling 365 days)</th>
                 <th>Target Projection</th>
                 <th colSpan={2}>Avg Opp Life</th>
               </tr>
@@ -793,7 +794,7 @@ function PipelineViewInner() {
                           : stageNum === 6
                           ? 'a non-empty Entity Outside the US Approval value'
                           : 'the stage signal';
-                        const tip = `Auto-fed from Opps tab: ${live.sold} Sold / ${live.notSold} Not Sold this year with ${signal} and Scope without "pull through". Re-paste the Opps tab to refresh.`;
+                        const tip = `Auto-fed from Opps tab: ${live.sold} Sold / ${live.notSold} Not Sold in the past 365 days with ${signal} and Scope without "pull through". Re-paste the Opps tab to refresh.`;
                         return (
                           <td className={`${cls} ${styles.numCell}`.trim()}>
                             <span title={tip} className={styles.liveCell} style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: 1.15 }}>
@@ -843,8 +844,8 @@ function PipelineViewInner() {
                 <td className={styles.numCell}>{fmtMoney(stageTotals.pipelineActual)}</td>
                 <td />
                 <td className={styles.numCell} title={oppsCloseRateActual
-                  ? `Sold ÷ (Sold + Not Sold) for this-year closed Opps with "pull through" excluded — ${oppsCloseRateActual.sold} sold / ${oppsCloseRateActual.notSold} not sold.`
-                  : 'Add Sold / Not Sold opps with a Close Date this year (and a Scope without "pull through") on the Opps tab to populate.'}>
+                  ? `Sold ÷ (Sold + Not Sold) for Opps closed in the past 365 days with "pull through" excluded — ${oppsCloseRateActual.sold} sold / ${oppsCloseRateActual.notSold} not sold.`
+                  : 'Add Sold / Not Sold opps with a Close Date in the past 365 days (and a Scope without "pull through") on the Opps tab to populate.'}>
                   {oppsCloseRateActual ? (
                     <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: 1.15 }}>
                       <span>{`${(oppsCloseRateActual.rate * 100).toFixed(0)}%`}</span>
@@ -925,8 +926,8 @@ function PipelineViewInner() {
             </table>
           </div>
 
-          <div className={styles.section}>
-            <table className={styles.grid}>
+          <div className={styles.section} style={{ flex: '0 0 220px' }}>
+            <table className={styles.grid} style={{ width: '100%' }}>
               <thead>
                 <tr><th colSpan={2}>Coverage Ratio</th></tr>
                 <tr><th>Goal</th><th>Actual</th></tr>
@@ -959,8 +960,8 @@ function PipelineViewInner() {
             </table>
           </div>
 
-          <div className={styles.section}>
-            <table className={styles.grid}>
+          <div className={styles.section} style={{ flex: '0 0 220px' }}>
+            <table className={styles.grid} style={{ width: '100%' }}>
               <thead>
                 <tr><th colSpan={3}>% of deals not Quoted</th></tr>
                 <tr><th>Goal</th><th>Actual Year</th><th>Actual Month</th></tr>
