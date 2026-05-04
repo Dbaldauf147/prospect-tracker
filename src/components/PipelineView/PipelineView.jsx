@@ -453,6 +453,35 @@ function PipelineViewInner() {
     return Math.round(total);
   }, [oppsRecords]);
 
+  // Overall Close Rate (Actual) for the Pipeline Metrics Total row.
+  // Per the user's logic:
+  //   Total Sold     — Sold this year that DON'T have "pull through" in Scope.
+  //   Total Not Sold — Not Sold this year that DON'T have "pull through" in Scope.
+  // Close Rate = Sold / (Sold + Not Sold). Returns null when the Opps
+  // cache has no usable records so the Total cell stays blank rather
+  // than reading "0%".
+  const oppsCloseRateActual = useMemo(() => {
+    if (oppsRecords.length === 0) return null;
+    const thisYear = new Date().getFullYear();
+    const PULL_THROUGH = /pull[\s-]?through/i;
+    let sold = 0;
+    let notSold = 0;
+    for (const r of oppsRecords) {
+      const stage = (r.Stage || '').trim();
+      if (stage !== 'Sold' && stage !== 'Not Sold') continue;
+      const cd = r['Close Date'];
+      if (!cd) continue;
+      const ts = Date.parse(cd);
+      if (Number.isNaN(ts) || new Date(ts).getFullYear() !== thisYear) continue;
+      if (PULL_THROUGH.test(String(r.Scope || ''))) continue;
+      if (stage === 'Sold') sold += 1;
+      else notSold += 1;
+    }
+    const total = sold + notSold;
+    if (total === 0) return null;
+    return { sold, notSold, rate: sold / total };
+  }, [oppsRecords]);
+
   // Live Current Client vs Greenfield stats. Joins BFO Activity rows
   // to the Opps tab's Lead Source / Source via the BFO Opportunity
   // Name → Opps "BFO Link" map, then classifies each BFO opp using
@@ -761,7 +790,12 @@ function PipelineViewInner() {
                 <td className={styles.numCell}>{fmtMoney(dealSizeAvgActual)}</td>
                 <td className={styles.numCell}>{fmtMoney(stageTotals.pipelineGoal)}</td>
                 <td className={styles.numCell}>{fmtMoney(stageTotals.pipelineActual)}</td>
-                <td colSpan={2} />
+                <td />
+                <td className={styles.numCell} title={oppsCloseRateActual
+                  ? `Sold ÷ (Sold + Not Sold) for this-year closed Opps with "pull through" excluded — ${oppsCloseRateActual.sold} sold / ${oppsCloseRateActual.notSold} not sold.`
+                  : 'Add Sold / Not Sold opps with a Close Date this year (and a Scope without "pull through") on the Opps tab to populate.'}>
+                  {oppsCloseRateActual ? `${(oppsCloseRateActual.rate * 100).toFixed(0)}%` : ''}
+                </td>
                 <td className={styles.numCell} title="Sum of stage Target Projection Goals (Active Goal × Deal Size Goal × Close Rate Goal).">{fmtMoney(Math.round(stageTotals.targetProjGoal))}</td>
                 <td className={styles.numCell} title="Stage goals weighted by Active Opp Goal — SUMPRODUCT(lifeGoal, activeGoal) ÷ SUM(activeGoal). Less is better.">{lifeGoalAvg ?? ''}</td>
                 <td className={`${styles.numCell} ${compareClass(lifeActualAvg, lifeGoalAvg, 'lower-better')}`.trim()} title="Stage actuals weighted by Active Opp Actual (live BFO count when loaded). SUMPRODUCT(lifeActual, activeActual) ÷ SUM(activeActual).">{lifeActualAvg ?? ''}</td>
