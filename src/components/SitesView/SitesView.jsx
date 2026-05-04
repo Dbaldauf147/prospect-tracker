@@ -1217,8 +1217,7 @@ export function SitesView({ settings, updateSettings } = {}) {
     if (!rows.length) return;
     const { Workbook } = await import('exceljs');
     const SE_GREEN_DARK = 'FF009530';
-    const SE_NAVY = 'FF1A365D';
-    const SE_NAVY_LIGHT = 'FFEBF1F8';
+    const SE_GREEN_LIGHT = 'FFE6F7EC';
     const SE_TEXT_DARK = 'FF1E293B';
     const SE_BORDER = 'FFD4DDE1';
     const SE_GREEN = 'FF3DCD58';
@@ -1333,38 +1332,40 @@ export function SitesView({ settings, updateSettings } = {}) {
     const widths = [10, 14, 11, 13, 18, 16, 14, 14, 14, 24, 14, 14];
     ws.columns = widths.map(w => ({ width: w }));
 
-    // Title row
+    // Title row — Schneider green band, white text.
     ws.mergeCells(1, 1, 1, SPAN);
     const title = ws.getCell(1, 1);
     title.value = 'Indicative Savings by State';
     title.font = { name: 'Nunito Sans', bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
-    title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_NAVY } };
+    title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
     title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
     ws.getRow(1).height = 28;
 
     let r = 3;
     function writeSection(label, sectionRows, columnDefs) {
-      // Section header band
+      // Section header band — light green wash with dark green text.
       ws.mergeCells(r, 1, r, SPAN);
       const head = ws.getCell(r, 1);
       head.value = label;
-      head.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_NAVY } };
-      head.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_NAVY_LIGHT } };
+      head.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
+      head.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
       head.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
       ws.getRow(r).height = 22;
       r += 1;
-      // Column headers
+      // Column headers — solid green band, white text.
       const headerRow = ws.getRow(r);
       columnDefs.forEach((c, i) => {
         const cell = headerRow.getCell(i + 1);
         cell.value = c.label;
-        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_NAVY } };
+        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
         cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
-        cell.border = { bottom: { style: 'thin', color: { argb: SE_NAVY } } };
+        cell.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
       });
       headerRow.height = 32;
       r += 1;
-      // Data rows
+      // Data rows — every cell left-aligned regardless of type so the
+      // sheet reads as a flat report rather than a finance ledger.
       for (const row of sectionRows) {
         const dataRow = ws.getRow(r);
         columnDefs.forEach((c, i) => {
@@ -1372,14 +1373,14 @@ export function SitesView({ settings, updateSettings } = {}) {
           const v = c.get(row);
           cell.value = (v === '' || v == null) ? null : v;
           cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-          cell.alignment = { vertical: 'middle', horizontal: c.numFmt ? 'right' : 'left', indent: 1 };
+          cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
           if (c.numFmt) cell.numFmt = c.numFmt;
           cell.border = { bottom: { style: 'hair', color: { argb: SE_BORDER } } };
         });
         dataRow.height = 18;
         r += 1;
       }
-      // Total row
+      // Total row — green double rule above and below.
       const totalRow = ws.getRow(r);
       const totals = sectionRows.reduce((acc, row) => {
         for (const c of columnDefs) {
@@ -1394,12 +1395,13 @@ export function SitesView({ settings, updateSettings } = {}) {
         if (i === 0) v = 'Total';
         else if (c.sumKey) v = totals[c.sumKey] || 0;
         cell.value = v === '' ? null : v;
-        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_TEXT_DARK } };
-        cell.alignment = { vertical: 'middle', horizontal: c.numFmt ? 'right' : 'left', indent: 1 };
+        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_GREEN_DARK } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+        cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
         if (c.numFmt) cell.numFmt = c.numFmt;
         cell.border = {
-          top: { style: 'thin', color: { argb: SE_NAVY } },
-          bottom: { style: 'thin', color: { argb: SE_NAVY } },
+          top: { style: 'thin', color: { argb: SE_GREEN_DARK } },
+          bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } },
         };
       });
       totalRow.height = 20;
