@@ -1535,12 +1535,20 @@ export function SitesView({ settings, updateSettings } = {}) {
       .map(r => {
         const electricUtility = r.__electric__ || '';
         const gasUtility = r.__gas__ || '';
-        // If a separate competitive supplier wasn't mapped on this
-        // row, fall back to the regulated utility — in regulated
-        // markets the utility IS the supplier, so leaving the cell
-        // blank reads as missing data rather than reality.
-        const electricSupplier = r.__electricSupplier__ || electricUtility || '';
-        const gasSupplier = r.__gasSupplier__ || gasUtility || '';
+        // Show the resolved competitive supplier when there is one,
+        // but blank the cell when it would just duplicate the utility
+        // value (regulated markets where the file's supplier column
+        // mirrors the utility) — the user doesn't want the same name
+        // sitting in both columns. No fallback to utility when no
+        // supplier was mapped at all.
+        const sameAsUtility = (sup, util) => {
+          if (!sup || !util) return false;
+          return String(sup).trim().toLowerCase() === String(util).trim().toLowerCase();
+        };
+        const electricSupplierRaw = r.__electricSupplier__ || '';
+        const gasSupplierRaw = r.__gasSupplier__ || '';
+        const electricSupplier = sameAsUtility(electricSupplierRaw, electricUtility) ? '' : electricSupplierRaw;
+        const gasSupplier = sameAsUtility(gasSupplierRaw, gasUtility) ? '' : gasSupplierRaw;
         const therms = r.__therms__;
         const dth = (typeof therms === 'number' && Number.isFinite(therms)) ? Math.round(therms / 10) : null;
         const tbdIfMissing = (date, supplierPresent) => {
