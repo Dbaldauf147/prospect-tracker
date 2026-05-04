@@ -648,8 +648,12 @@ function PipelineViewInner() {
                       const dg = Number(st.dealSizeGoal) || 0;
                       const cg = Number(st.closeGoal) || 0;
                       const projGoal = Math.round(ag * dg * cg);
+                      // Tooltip shows the exact numbers feeding the
+                      // formula so a wrong-looking total can be traced
+                      // back to which input is off.
+                      const tip = `${ag} × ${fmtMoney(dg)} × ${(cg * 100).toFixed(2)}% = ${fmtMoney(projGoal)}`;
                       return (
-                        <td className={styles.numCell} title="Active Opp Goal × Deal Size Goal × Close Rate Goal">
+                        <td className={styles.numCell} title={tip}>
                           {projGoal ? fmtMoney(projGoal) : ''}
                         </td>
                       );
