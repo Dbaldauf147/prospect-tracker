@@ -6,8 +6,9 @@
 // localStorage prefix so column widths, filters, sort, and view-mode
 // preferences are kept distinct from the Key Contacts tab.
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { KeyContactsView } from '../KeyContactsView/KeyContactsView';
+import { getHubspotCache } from '../../utils/hubspotContactsCache';
 
 const WINDOW_OPTIONS = [
   { key: 30,  label: 'Last 30 days' },
@@ -45,12 +46,19 @@ function isSchneiderContact(c) {
 // A contact is "active" when at least one HubSpot email-activity
 // timestamp (sent / replied / opened / clicked / last contacted) sits
 // inside the chosen window. Window of 0 → any timestamp present.
-// Schneider Electric contacts are filtered regardless.
-function makeActiveSelector(windowDays) {
+// Schneider Electric contacts are filtered regardless. The selector
+// can be inverted (`mode = 'hidden'`) to surface ONLY hide-tagged
+// active contacts so the user can review what's been suppressed.
+function makeActiveSelector(windowDays, mode = 'visible') {
   const cutoff = windowDays > 0 ? Date.now() - windowDays * 86400000 : null;
   return (c) => {
     const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
-    if (tags.includes('hide')) return false;
+    const hidden = tags.includes('hide');
+    if (mode === 'hidden') {
+      if (!hidden) return false;
+    } else {
+      if (hidden) return false;
+    }
     if (isSchneiderContact(c)) return false;
     const fields = [
       c.hs_email_last_send_date,
@@ -82,6 +90,24 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
   // filter would surface; we render it next to the toggle so the user
   // can see at a glance whether flipping the switch is worth it.
   const [unmappedPast30Count, setUnmappedPast30Count] = useState(0);
+  // "Show hidden" lets the user audit / un-hide contacts that were
+  // suppressed via the Hide button. We swap the selector to filter for
+  // hide-tagged rows only, so the table becomes a review of suppressed
+  // contacts rather than the normal active list.
+  const [showHidden, setShowHidden] = useState(false);
+  // We watch the HubSpot cache directly to compute how many
+  // hide-tagged contacts have email activity in the current window —
+  // that's the badge value next to the toggle.
+  const [hubspotContacts, setHubspotContacts] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    function refresh() {
+      getHubspotCache().then(c => { if (!cancelled) setHubspotContacts(c?.contacts || []); }).catch(() => {});
+    }
+    refresh();
+    window.addEventListener('hubspot-cache-updated', refresh);
+    return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
+  }, []);
   // Surface contacts whose company hasn't been added to the Table View
   // yet — useful for hunting down accounts you've started conversations
   // with but haven't tracked. Toggling this also forces a 30-day window
@@ -93,7 +119,16 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
   });
   useEffect(() => { try { localStorage.setItem('active-contacts:unmapped-only', unmappedOnly ? '1' : '0'); } catch {} }, [unmappedOnly]);
   const effectiveWindow = unmappedOnly ? 30 : windowDays;
-  const selector = useCallback(makeActiveSelector(effectiveWindow), [effectiveWindow]);
+  const selector = useCallback(
+    makeActiveSelector(effectiveWindow, showHidden ? 'hidden' : 'visible'),
+    [effectiveWindow, showHidden]
+  );
+  const hiddenCount = useMemo(() => {
+    const probe = makeActiveSelector(effectiveWindow, 'hidden');
+    let n = 0;
+    for (const c of hubspotContacts) if (probe(c)) n += 1;
+    return n;
+  }, [hubspotContacts, effectiveWindow]);
 
   const subtitle = (
     <>
@@ -132,6 +167,25 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
               textAlign: 'center',
             }}
           >{unmappedPast30Count}</span>
+        </label>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', color: '#475569', cursor: 'pointer' }}>
+          <input type="checkbox" checked={showHidden} onChange={e => setShowHidden(e.target.checked)} />
+          <span>Show hidden contacts</span>
+          <span
+            title="HubSpot contacts you've hidden via the Hide button that still have activity in the current window. Toggle this on to review them and clear the Hide tag from the contact popup if needed."
+            style={{
+              display: 'inline-block',
+              padding: '0 6px',
+              fontSize: '0.62rem',
+              fontWeight: 700,
+              borderRadius: 999,
+              background: hiddenCount > 0 ? '#FEE2E2' : '#F1F5F9',
+              color: hiddenCount > 0 ? '#991B1B' : '#94A3B8',
+              border: '1px solid ' + (hiddenCount > 0 ? '#FCA5A5' : '#E2E8F0'),
+              minWidth: 18,
+              textAlign: 'center',
+            }}
+          >{hiddenCount}</span>
         </label>
       </div>
     </>

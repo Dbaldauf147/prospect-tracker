@@ -471,7 +471,12 @@ export function KeyContactsView({
     const out = [];
     for (const c of (hubspotCache?.contacts || [])) {
       const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
-      if (tags.includes('hide')) continue;
+      // Note: we used to fast-skip hide-tagged contacts here, but
+      // ActiveContactsView's "Show hidden" mode wants them to come
+      // through. The selector is the single source of truth — every
+      // built-in selector (KEY_TARGET_SELECTOR, ClientContactsView,
+      // ActiveContactsView "visible" mode) still filters them out.
+      void tags;
       if (!contactSelector(c)) continue;
       if (activeOppCompanies) {
         const cName = String(c.company || '').trim();
