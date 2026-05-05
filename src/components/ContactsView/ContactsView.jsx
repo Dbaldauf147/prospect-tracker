@@ -4,6 +4,7 @@ import { HubSpotView } from '../HubSpotView/HubSpotView';
 import { AgendaView } from '../AgendaView/AgendaView';
 import { KeyContactsView } from '../KeyContactsView/KeyContactsView';
 import { ActiveContactsView } from '../ActiveContactsView/ActiveContactsView';
+import { ClientContactsView } from '../ClientContactsView/ClientContactsView';
 import { DedupeView } from '../DedupeView/DedupeView';
 
 const SUBTABS = [
@@ -11,6 +12,7 @@ const SUBTABS = [
   { key: 'bulk',     label: 'Bulk Add Contacts' },
   { key: 'key',      label: 'Key Contacts' },
   { key: 'active',   label: 'Active Contacts' },
+  { key: 'clients',  label: 'Client Contacts' },
   { key: 'dedupe',   label: 'Deduplication' },
 ];
 
@@ -75,6 +77,14 @@ export function ContactsView({
         )}
         {subtab === 'active' && (
           <ActiveContactsView
+            prospects={prospects}
+            onSelectProspect={onSelectProspect}
+            settings={settings}
+            updateSettings={updateSettings}
+          />
+        )}
+        {subtab === 'clients' && (
+          <ClientContactsView
             prospects={prospects}
             onSelectProspect={onSelectProspect}
             settings={settings}
