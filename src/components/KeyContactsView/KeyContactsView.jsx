@@ -91,6 +91,11 @@ export function KeyContactsView({
   contactSelector = KEY_TARGET_SELECTOR,
   metInPersonSelector = (c) => (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase().includes('met in person'),
   requireActiveOpp = false,
+  // When true, only keep contacts whose company doesn't match any
+  // prospect on the Table View (matched via companiesMatch + email
+  // domain). Useful for surfacing "we're emailing them but haven't
+  // tracked their company yet" gaps.
+  unmappedOnly = false,
 }) {
   const lsKey = (suffix) => `${storagePrefix}:${suffix}`;
   const { user } = useAuth();
@@ -114,6 +119,79 @@ export function KeyContactsView({
       return next;
     });
   }
+  // Append the "hide" tag to a contact's existing Dan's Tags. The
+  // contactSelector for both Key Contacts and Active Contacts skips
+  // anything tagged "hide", so the row vanishes after the cache event
+  // fires. Existing tags are preserved.
+  async function applyHideTag(contactIds) {
+    if (!contactIds || contactIds.length === 0) return { updated: 0, errors: 0 };
+    const idSet = new Set(contactIds.map(String));
+    const cache = hubspotCache?.contacts || [];
+    let updated = 0;
+    let errors = 0;
+    for (const id of idSet) {
+      const c = cache.find(x => String(x.id) === id) || cache.find(x => String(x.vid) === id);
+      const raw = (c?.dans_tags || c?.dan_s_tags || c?.dans_tag || '');
+      const parts = raw.split(';').map(s => s.trim()).filter(Boolean);
+      const lower = new Set(parts.map(p => p.toLowerCase()));
+      if (lower.has('hide')) { updated += 1; continue; } // already hidden
+      parts.push('Hide');
+      const nextTags = parts.join('; ');
+      try {
+        const res = await fetch('/api/hubspot?action=update-contact', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contactId: id, properties: { dans_tags: nextTags } }),
+        });
+        const json = await res.json();
+        if (json.error) { errors += 1; continue; }
+        updated += 1;
+      } catch { errors += 1; }
+    }
+    try {
+      await updateHubspotCache(draft => {
+        for (const c of draft.contacts) {
+          if (!idSet.has(String(c.id || c.vid))) continue;
+          const existing = (c.dans_tags || c.dan_s_tags || c.dans_tag || '');
+          const parts = existing.split(';').map(s => s.trim()).filter(Boolean);
+          if (parts.some(p => p.toLowerCase() === 'hide')) continue;
+          parts.push('Hide');
+          c.dans_tags = parts.join('; ');
+        }
+      });
+    } catch (err) { console.warn('Hide cache update failed', err); }
+    return { updated, errors };
+  }
+
+  async function handleHideRow(contact) {
+    const id = String(contact?.id || contact?.vid || '');
+    if (!id) return;
+    const name = [contact.firstname, contact.lastname].filter(Boolean).join(' ') || contact.email || 'this contact';
+    if (!window.confirm(`Hide ${name}? This adds the "Hide" tag in HubSpot so the contact won't appear here anymore (you can clear the tag from the HubSpot Contacts tab to bring them back).`)) return;
+    setMassProcessing(true);
+    setMassStatus(null);
+    const { updated, errors } = await applyHideTag([id]);
+    setMassProcessing(false);
+    setMassStatus({
+      type: errors === 0 ? 'success' : 'partial',
+      message: errors === 0 ? `Hid ${name}` : `Hid ${updated}, ${errors} failed`,
+    });
+  }
+
+  async function handleMassHide() {
+    if (massSelected.size === 0) return;
+    if (!window.confirm(`Hide ${massSelected.size} selected contact${massSelected.size === 1 ? '' : 's'}? This adds the "Hide" tag in HubSpot so they stop appearing here.`)) return;
+    setMassProcessing(true);
+    setMassStatus(null);
+    const { updated, errors } = await applyHideTag([...massSelected]);
+    setMassStatus({
+      type: errors === 0 ? 'success' : 'partial',
+      message: `Hid ${updated} contact${updated === 1 ? '' : 's'}${errors > 0 ? `, ${errors} failed` : ''}`,
+    });
+    setMassProcessing(false);
+    setMassSelected(new Set());
+  }
+
   async function handleMassApply() {
     if (massSelected.size === 0 || !massValue.trim()) return;
     setMassProcessing(true);
@@ -206,7 +284,7 @@ export function KeyContactsView({
   }
 
   const DEFAULT_CONTACT_COL_WIDTHS = {
-    name: 180, title: 200, company: 200, email: 240, phone: 140, location: 140, linkedin: 90, met: 80,
+    name: 180, title: 200, company: 200, email: 240, phone: 140, location: 140, country: 120, linkedin: 90, met: 80,
   };
   const [contactColWidths, setContactColWidths] = useState(() => {
     try {
@@ -345,6 +423,23 @@ export function KeyContactsView({
         if (!hit) hit = activeOppCompanies.some(a => companiesMatch(a, cName));
         if (!hit) continue;
       }
+      if (unmappedOnly) {
+        // Treat the contact as "mapped" when any prospect's company
+        // matches by name OR a domain is shared. Anything else (no
+        // company, unknown company, novel domain) counts as unmapped.
+        const cName = String(c.company || '').trim();
+        const email = (c.email || '').toLowerCase().trim();
+        const at = email.lastIndexOf('@');
+        const cDomain = at >= 0 ? email.slice(at + 1).trim() : '';
+        const cDomainOk = cDomain && !FREE_MAIL.has(cDomain);
+        const mapped = (cName && prospects.some(p => companiesMatch(p.company, cName)))
+          || (cDomainOk && prospects.some(p => {
+            const ds = new Set();
+            collectProspectDomains(p, ds);
+            return ds.has(cDomain);
+          }));
+        if (mapped) continue;
+      }
       const company = (c.company || '').trim();
       const email = (c.email || '').toLowerCase().trim();
       const at = email.lastIndexOf('@');
@@ -361,6 +456,7 @@ export function KeyContactsView({
         linkedin: c.hs_linkedin_url || '',
         city: String(c.city || '').trim(),
         state: String(c.state || '').trim(),
+        country: String(c.country || '').trim(),
         metInPerson: metInPersonSelector(c),
         company,
         domain,
@@ -368,7 +464,7 @@ export function KeyContactsView({
       });
     }
     return out;
-  }, [hubspotCache, FREE_MAIL, contactSelector, metInPersonSelector, activeOppCompanies]);
+  }, [hubspotCache, FREE_MAIL, contactSelector, metInPersonSelector, activeOppCompanies, unmappedOnly, prospects]);
 
   // Decision-maker contacts — used for the per-company DM column. Mirrors
   // the equivalent flat-list pattern from the PE Portfolio view.
@@ -575,6 +671,7 @@ export function KeyContactsView({
         case 'location':
           cmp = ((a.state || '') + (a.city || '')).localeCompare((b.state || '') + (b.city || ''));
           break;
+        case 'country': cmp = (a.country || '').localeCompare(b.country || ''); break;
         case 'met':     cmp = Number(!!a.metInPerson) - Number(!!b.metInPerson); break;
         default: cmp = 0;
       }
@@ -592,6 +689,7 @@ export function KeyContactsView({
     email:    c => c.email || '',
     phone:    c => c.phone || '',
     location: c => [c.city, c.state].filter(Boolean).join(', '),
+    country:  c => c.country || '',
     linkedin: c => c.linkedin ? 'open' : '',
     met:      c => c.metInPerson ? 'yes' : 'no',
   };
@@ -737,6 +835,23 @@ export function KeyContactsView({
                 fontFamily: 'inherit',
               }}
             >{massProcessing ? 'Updating…' : 'Apply to Selected'}</button>
+            <button
+              type="button"
+              onClick={handleMassHide}
+              disabled={massProcessing || massSelected.size === 0}
+              title="Add the Hide tag in HubSpot so these contacts stop appearing on this page"
+              style={{
+                padding: '0.3rem 0.75rem',
+                fontSize: '0.72rem',
+                fontWeight: 700,
+                border: '1px solid #B91C1C',
+                borderRadius: 4,
+                background: (massProcessing || massSelected.size === 0) ? '#FEE2E2' : '#FEF2F2',
+                color: '#B91C1C',
+                cursor: (massProcessing || massSelected.size === 0) ? 'default' : 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >Hide Selected</button>
             {massStatus && (
               <span style={{ fontSize: '0.7rem', color: massStatus.type === 'success' ? '#166534' : '#92400E' }}>{massStatus.message}</span>
             )}
@@ -782,12 +897,13 @@ export function KeyContactsView({
               { key: 'email',    label: 'Email' },
               { key: 'phone',    label: 'Phone' },
               { key: 'location', label: 'Location' },
+              { key: 'country',  label: 'Country' },
               { key: 'linkedin', label: 'LinkedIn', sortable: false },
               { key: 'met',      label: 'Met' },
             ];
             const CONTACT_GRID = (massMode ? '32px ' : '')
               + CONTACT_COLS.map(c => `${contactColWidths[c.key] || 120}px`).join(' ')
-              + ' 28px';
+              + ' 60px';
             const allVisibleSelected = massMode
               && filteredContacts.length > 0
               && filteredContacts.every(c => massSelected.has(c.id));
@@ -918,6 +1034,9 @@ export function KeyContactsView({
                     <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: (c.city || c.state) ? '#64748B' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {[c.city, c.state].filter(Boolean).join(', ') || '—'}
                     </div>
+                    <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: c.country ? '#64748B' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.country}>
+                      {c.country || '—'}
+                    </div>
                     <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem' }}>
                       {c.linkedin
                         ? <a href={c.linkedin} target="_blank" rel="noopener noreferrer" style={{ color: '#0A66C2', textDecoration: 'none', fontWeight: 600 }}>Open ↗</a>
@@ -928,7 +1047,25 @@ export function KeyContactsView({
                         ? <span style={{ display: 'inline-block', padding: '1px 6px', fontSize: '0.6rem', fontWeight: 700, background: '#DCFCE7', color: '#166534', border: '1px solid #86EFAC', borderRadius: 999 }}>✓ Yes</span>
                         : <span style={{ color: '#CBD5E1', fontSize: '0.7rem' }}>—</span>}
                     </div>
-                    <div />
+                    <div style={{ padding: '0.2rem 0.2rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <button
+                        type="button"
+                        onClick={() => handleHideRow(c.raw || c)}
+                        disabled={massProcessing}
+                        title="Add the Hide tag so this contact stops appearing here"
+                        style={{
+                          background: 'transparent',
+                          border: '1px solid #FCA5A5',
+                          color: '#B91C1C',
+                          fontSize: '0.6rem',
+                          fontWeight: 700,
+                          padding: '1px 5px',
+                          borderRadius: 4,
+                          cursor: massProcessing ? 'default' : 'pointer',
+                          fontFamily: 'inherit',
+                        }}
+                      >Hide</button>
+                    </div>
                   </div>
                 ))}
               </div>

@@ -78,7 +78,18 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
     return 90;
   });
   useEffect(() => { try { localStorage.setItem('active-contacts:window-days', String(windowDays)); } catch {} }, [windowDays]);
-  const selector = useCallback(makeActiveSelector(windowDays), [windowDays]);
+  // Surface contacts whose company hasn't been added to the Table View
+  // yet — useful for hunting down accounts you've started conversations
+  // with but haven't tracked. Toggling this also forces a 30-day window
+  // because that's the canonical "still in conversation" cutoff and
+  // also relaxes the open-opp gate (an unmapped company has no opps yet
+  // by definition).
+  const [unmappedOnly, setUnmappedOnly] = useState(() => {
+    try { return localStorage.getItem('active-contacts:unmapped-only') === '1'; } catch { return false; }
+  });
+  useEffect(() => { try { localStorage.setItem('active-contacts:unmapped-only', unmappedOnly ? '1' : '0'); } catch {} }, [unmappedOnly]);
+  const effectiveWindow = unmappedOnly ? 30 : windowDays;
+  const selector = useCallback(makeActiveSelector(effectiveWindow), [effectiveWindow]);
 
   const subtitle = (
     <>
@@ -87,14 +98,23 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
       tab — sent, opened, clicked, replied, or otherwise touched in the
       selected window. Toggle <strong>All Contacts</strong> for a flat
       table or <strong>By Company</strong> to roll them up by account.
-      {' '}
-      <select
-        value={windowDays}
-        onChange={e => setWindowDays(Number(e.target.value))}
-        style={{ marginLeft: 4, fontSize: '0.7rem', padding: '1px 4px', border: '1px solid #CBD5E1', borderRadius: 4, fontFamily: 'inherit' }}
-      >
-        {WINDOW_OPTIONS.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
-      </select>
+      <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', color: unmappedOnly ? '#94A3B8' : '#475569' }}>
+          Window:
+          <select
+            value={windowDays}
+            onChange={e => setWindowDays(Number(e.target.value))}
+            disabled={unmappedOnly}
+            style={{ fontSize: '0.7rem', padding: '1px 4px', border: '1px solid #CBD5E1', borderRadius: 4, fontFamily: 'inherit' }}
+          >
+            {WINDOW_OPTIONS.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
+          </select>
+        </label>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', color: '#475569', cursor: 'pointer' }}>
+          <input type="checkbox" checked={unmappedOnly} onChange={e => setUnmappedOnly(e.target.checked)} />
+          <span>Show only contacts (past 30 days) whose company is <strong>not</strong> in the Table View</span>
+        </label>
+      </div>
     </>
   );
 
@@ -107,10 +127,13 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
       storagePrefix="active-contacts"
       pageTitle="Active Contacts"
       pageSubtitle={subtitle}
-      emptyTitle="No active contacts found"
-      emptyDetail={<>Nothing matched in this window. A contact only appears here when (1) HubSpot shows recent email activity and (2) the contact's company has at least one open / active opportunity in the Opps tab. Try widening the range above, or paste fresh HubSpot / Opps data.</>}
+      emptyTitle={unmappedOnly ? 'No unmapped contacts in the past 30 days' : 'No active contacts found'}
+      emptyDetail={unmappedOnly
+        ? <>Every contact you've emailed in the last 30 days already maps to a Table View company. Add a new prospect or check Email Domain entries on the Table View if you expected hits here.</>
+        : <>Nothing matched in this window. A contact only appears here when (1) HubSpot shows recent email activity and (2) the contact's company has at least one open / active opportunity in the Opps tab. Try widening the range above, or paste fresh HubSpot / Opps data.</>}
       contactSelector={selector}
-      requireActiveOpp
+      requireActiveOpp={!unmappedOnly}
+      unmappedOnly={unmappedOnly}
     />
   );
 }
