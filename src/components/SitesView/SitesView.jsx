@@ -26,6 +26,7 @@ import {
 import { parseBestSheet } from '../../utils/xlsxParse';
 import { findFuzzyMatch } from '../../utils/utilityNameMatch';
 import { ENERGY_SUPPLIERS } from '../../data/energySuppliers';
+import { isRegulatedRateOpportunity } from '../../data/regulatedRateOpportunities';
 import styles from './SitesView.module.css';
 
 const SITES_STORAGE_KEY = 'sites-list-override';
@@ -1444,6 +1445,7 @@ export function SitesView({ settings, updateSettings } = {}) {
             state,
             totalSites: 0,
             deregulatedSites: 0,
+            regulatedRateOpportunitySites: 0,
             consumption: 0,
             spend: 0,
             utilities: [],
@@ -1459,6 +1461,11 @@ export function SitesView({ settings, updateSettings } = {}) {
         // deregulated ones) so the Utility column captures PG&E /
         // ComEd / Dominion etc. even on regulated rows.
         if (provider) g.utilities.push(provider);
+        // Electric sites whose utility is on the regulated-rate
+        // opportunity list count toward the new Reg-rate column.
+        if (commodity === 'electric' && isRegulatedRateOpportunity(state, provider)) {
+          g.regulatedRateOpportunitySites += 1;
+        }
         const isDereg = classifyUtility(provider) === 'Deregulated' || !!r[supplierKey];
         if (!isDereg) continue;
         g.deregulatedSites += 1;
@@ -1510,6 +1517,7 @@ export function SitesView({ settings, updateSettings } = {}) {
           status,
           totalSites: g.totalSites,
           deregulatedSites: g.deregulatedSites,
+          regulatedRateOpportunitySites: g.regulatedRateOpportunitySites,
           consumption: Math.round(g.consumption),
           spend: Math.round(g.spend),
           range,
@@ -1538,8 +1546,11 @@ export function SitesView({ settings, updateSettings } = {}) {
       views: [{ showGridLines: false }],
     });
 
-    const SPAN = 13;
-    const widths = [10, 14, 11, 13, 18, 16, 14, 14, 14, 24, 24, 14, 14];
+    // SPAN sized for the longest section (electric, with the
+    // Reg. Rate Savings Sites column). Gas uses one fewer slot but
+    // we set the worksheet to the wider count so headers stay aligned.
+    const SPAN = 14;
+    const widths = [10, 14, 11, 13, 16, 18, 16, 14, 14, 14, 24, 24, 14, 14];
     ws.columns = widths.map(w => ({ width: w }));
 
     // Title row — Schneider green band, white text.
@@ -1623,6 +1634,7 @@ export function SitesView({ settings, updateSettings } = {}) {
       { label: 'Deregulated Status', get: (g) => g.status },
       { label: 'Total Sites', get: (g) => g.totalSites, numFmt: '#,##0', sumKey: 'totalSites' },
       { label: 'Deregulated Sites', get: (g) => g.deregulatedSites, numFmt: '#,##0', sumKey: 'deregulatedSites' },
+      { label: 'Reg. Rate Savings Sites', get: (g) => g.regulatedRateOpportunitySites, numFmt: '#,##0', sumKey: 'regulatedRateOpportunitySites' },
       { label: 'Annual Deregulated Consumption kWh', get: (g) => g.consumption, numFmt: '#,##0', sumKey: 'consumption' },
       { label: 'Annual Deregulated Spend', get: (g) => g.spend, numFmt: '"$"#,##0', sumKey: 'spend' },
       { label: 'Indicative Savings Range', get: (g) => g.range },
@@ -1665,6 +1677,7 @@ export function SitesView({ settings, updateSettings } = {}) {
       { label: 'Zip', get: (s) => s.zip, width: 9 },
       { label: 'Electric Utility', get: (s) => s.electricUtility, width: 22 },
       { label: 'Electric Supplier', get: (s) => s.electricSupplier, width: 22 },
+      { label: 'Reg. Rate Savings Opportunity', get: (s) => s.regRateOpportunity, width: 28 },
       { label: 'Annual Electric (kWh)', get: (s) => s.kwh, numFmt: '#,##0', width: 18 },
       { label: 'Total Electric Cost', get: (s) => s.electricCost, numFmt: '"$"#,##0', width: 16 },
       { label: 'Electric Contract Start', get: (s) => s.electricStart, width: 18 },
@@ -1728,12 +1741,16 @@ export function SitesView({ settings, updateSettings } = {}) {
           if (trimmed) return trimmed;
           return supplierPresent ? 'TBD' : '';
         };
+        const stateCode = r.__state__ || '';
+        const isRegRateOpportunity = !!electricUtility
+          && isRegulatedRateOpportunity(stateCode, electricUtility);
         return {
           siteName: siteNameColumn ? String(r[siteNameColumn] || '').trim() : '',
-          state: r.__state__ || '',
+          state: stateCode,
           zip: r.__zipNorm__ || '',
           electricUtility,
           electricSupplier,
+          regRateOpportunity: isRegRateOpportunity ? 'Yes' : '',
           kwh: typeof r.__kwh__ === 'number' ? Math.round(r.__kwh__) : null,
           electricCost: typeof r.__electricCost__ === 'number' ? Math.round(r.__electricCost__) : null,
           electricStart: tbdIfMissing(r.__electricStart__, !!electricSupplier),
