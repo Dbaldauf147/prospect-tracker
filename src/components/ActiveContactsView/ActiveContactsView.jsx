@@ -7,8 +7,12 @@
 // preferences are kept distinct from the Key Contacts tab.
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { KeyContactsView } from '../KeyContactsView/KeyContactsView';
+import { KeyContactsView, useOppsRecords } from '../KeyContactsView/KeyContactsView';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
+import { useAuth } from '../../contexts/AuthContext';
+
+const CLOSED_STAGES = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
+const INVALID_STAGES = new Set(['#N/A', '#REF!', '#VALUE!', '#ERROR!', 'N/A', 'n/a', '-', '']);
 
 const WINDOW_OPTIONS = [
   { key: 30,  label: 'Last 30 days' },
@@ -155,6 +159,42 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
     window.addEventListener('hubspot-cache-updated', refresh);
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
+  // Active opps with no HubSpot contact at the same company — the
+  // gap report sits above the table so the user can see which
+  // accounts still need a person added.
+  const { user } = useAuth();
+  const oppsRecords = useOppsRecords(user?.uid);
+  const [oppsGapOpen, setOppsGapOpen] = useState(false);
+  const oppsWithoutContacts = useMemo(() => {
+    if (!oppsRecords || oppsRecords.length === 0 || hubspotContacts.length === 0) return [];
+    // Set of normalized HubSpot contact companies (case + trim).
+    const contactCompanies = new Set();
+    for (const c of hubspotContacts) {
+      const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
+      if (tags.includes('hide') || tags.includes('left')) continue;
+      const co = String(c.company || '').trim().toLowerCase();
+      if (co) contactCompanies.add(co);
+    }
+    // Group active opps by Account; track count per company.
+    const byCompany = new Map();
+    for (const r of oppsRecords) {
+      const stage = String(r.Stage || '').trim();
+      if (!stage || INVALID_STAGES.has(stage) || CLOSED_STAGES.has(stage)) continue;
+      const acct = String(r.Account || '').trim();
+      if (!acct) continue;
+      const key = acct.toLowerCase();
+      if (!byCompany.has(key)) byCompany.set(key, { account: acct, opps: [] });
+      byCompany.get(key).opps.push(r);
+    }
+    // Surface only companies with no matching HubSpot contact.
+    const out = [];
+    for (const [key, info] of byCompany.entries()) {
+      if (contactCompanies.has(key)) continue;
+      out.push(info);
+    }
+    out.sort((a, b) => b.opps.length - a.opps.length || a.account.localeCompare(b.account));
+    return out;
+  }, [oppsRecords, hubspotContacts]);
   // Surface contacts whose company hasn't been added to the Table View
   // yet — useful for hunting down accounts you've started conversations
   // with but haven't tracked. Toggling this also forces a 30-day window
@@ -203,6 +243,31 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
 
   const subtitle = (
     <>
+      {oppsWithoutContacts.length > 0 && (
+        <div style={{ margin: '6px 0 8px', padding: '0.5rem 0.7rem', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 6 }}>
+          <button
+            type="button"
+            onClick={() => setOppsGapOpen(o => !o)}
+            style={{ background: 'transparent', border: 'none', padding: 0, fontFamily: 'inherit', fontSize: '0.72rem', color: '#92400E', fontWeight: 700, cursor: 'pointer' }}
+          >
+            {oppsGapOpen ? '▾' : '▸'} {oppsWithoutContacts.length} active opp{oppsWithoutContacts.length === 1 ? '' : 's'} with no HubSpot contact at the company
+          </button>
+          {oppsGapOpen && (
+            <div style={{ marginTop: '0.4rem', maxHeight: 240, overflowY: 'auto', background: '#fff', border: '1px solid #FDE68A', borderRadius: 4 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 70px', padding: '0.25rem 0.6rem', background: '#FFFBEB', borderBottom: '1px solid #FDE68A', fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#92400E' }}>
+                <div>Account</div>
+                <div style={{ textAlign: 'right' }}>Active Opps</div>
+              </div>
+              {oppsWithoutContacts.map(({ account, opps }) => (
+                <div key={account} style={{ display: 'grid', gridTemplateColumns: '1fr 70px', padding: '0.3rem 0.6rem', borderTop: '1px solid #FEF3C7', fontSize: '0.74rem' }} title={`${opps.length} active opp${opps.length === 1 ? '' : 's'} on ${account}`}>
+                  <div style={{ color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{account}</div>
+                  <div style={{ textAlign: 'right', fontWeight: 600, color: '#7C2D12' }}>{opps.length}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       HubSpot contacts you've emailed back-and-forth with whose company
       also has at least one open / active opportunity in the Opps
       tab — sent, opened, clicked, replied, or otherwise touched in the

@@ -214,7 +214,7 @@ function companiesMatch(a, b) {
   return false;
 }
 
-function useOppsRecords(userId) {
+export function useOppsRecords(userId) {
   const [records, setRecords] = useState([]);
   useEffect(() => {
     let cancelled = false;
