@@ -594,10 +594,10 @@ function PipelineViewInner() {
   // Opps tab. Skips rows without a BFO Link so we don't count drafts /
   // unlinked records. Open date = Close Date − Age for closed opps
   // (Sold / Not Sold), or today − Age for active opps.
-  const newOppsPast30Count = useMemo(() => {
+  const newOppsPast30 = useMemo(() => {
     const cutoff = Date.now() - 30 * 86400000;
     const now = Date.now();
-    let count = 0;
+    const items = [];
     for (const r of oppsRecords) {
       const bfoLink = String(r['BFO Link'] ?? '').trim();
       if (!bfoLink || bfoLink === '-' || bfoLink === '#N/A') continue;
@@ -612,10 +612,23 @@ function PipelineViewInner() {
       } else {
         openTs = now - age * 86400000;
       }
-      if (openTs >= cutoff) count += 1;
+      if (openTs >= cutoff) {
+        items.push({
+          account: String(r.Account || '').trim() || '(no company)',
+          opp: String(r['Opportunity Name'] || r.Opportunity || r.Name || '').trim() || '(unnamed opp)',
+          stage,
+          age: Math.round(age),
+        });
+      }
     }
-    return count;
+    items.sort((a, b) => a.account.localeCompare(b.account) || a.opp.localeCompare(b.opp));
+    return { count: items.length, items };
   }, [oppsRecords]);
+  const newOppsPast30Count = newOppsPast30.count;
+  const newOppsPast30Tooltip = newOppsPast30.items.length === 0
+    ? 'Auto-fed from the Opps tab — opps opened in the past 30 days that have a BFO Link. Open date = Close Date − Age for closed opps, today − Age for active. Re-paste the Opps tab to refresh.'
+    : `${newOppsPast30.count} opp${newOppsPast30.count === 1 ? '' : 's'} opened in the last 30 days (BFO-linked):\n` +
+      newOppsPast30.items.map(it => `• ${it.account} — ${it.opp}${it.stage ? ` (${it.stage})` : ''}`).join('\n');
 
   const notQuotedFromOpps = useMemo(() => {
     const NOT_QUOTED_STAGES = new Set(['Lead', 'Not Started', 'Qualifying']);
@@ -1052,7 +1065,7 @@ function PipelineViewInner() {
                 <td className={styles.label}>{state.newOppsGoal} New Opps Past 30 Days</td>
                 <td className={compareClass(newOppsPast30Count, state.newOppsGoal, 'higher-better')}>
                   <span
-                    title="Auto-fed from the Opps tab — opps opened in the past 30 days that have a BFO Link. Open date = Close Date − Age for closed opps, today − Age for active. Re-paste the Opps tab to refresh."
+                    title={newOppsPast30Tooltip}
                     className={styles.liveCell}
                   >{newOppsPast30Count}</span>
                 </td>
