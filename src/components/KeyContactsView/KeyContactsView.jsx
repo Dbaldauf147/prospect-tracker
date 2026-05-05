@@ -659,11 +659,26 @@ function KeyContactsViewInner({
     // default + requireActiveOpp behavior). Without the opp gate the
     // export would include companies the user isn't actively working
     // (LLR Partners etc.).
+    //
+    // Normalize both sides so trailing punctuation (`,`),
+    // parent-disclosure parentheticals (`(a Stonepeak co.)`), and
+    // corporate suffixes (Inc / LLC / Ltd / Corp / Co / GmbH / etc.)
+    // don't sink the match — the Active Contacts page tolerates these
+    // via fuzzy companiesMatch and we want the export to surface the
+    // same rows.
+    const NORM_CORP_RE = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|holdings|group|grp)\b\.?/g;
+    const normalizeCompanyText = (s) => String(s || '')
+      .toLowerCase()
+      .replace(/\s*\([^)]*\)\s*$/g, ' ')
+      .replace(/[,.;:]+/g, ' ')
+      .replace(NORM_CORP_RE, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
     const activeOppCompaniesSet = new Set();
     for (const r of (oppsRecords || [])) {
       const stage = String(r.Stage || '').trim();
       if (!stage || INVALID_STAGES.has(stage) || CLOSED_STAGES.has(stage)) continue;
-      const acct = String(r.Account || '').trim().toLowerCase();
+      const acct = normalizeCompanyText(r.Account);
       if (acct) activeOppCompaniesSet.add(acct);
     }
     const ACTIVE_CUTOFF = Date.now() - 90 * 86400000;
@@ -713,7 +728,10 @@ function KeyContactsViewInner({
       // Active Contacts page suppresses against ALL clients (any CDM),
       // not just the logged-in user's clients, so use the wider sets.
       const isClientForActive = (companyLower && allClientCompanies.has(companyLower)) || (!companyLower && domain && allClientDomains.has(domain));
-      const hasActiveOpp = companyLower && activeOppCompaniesSet.has(companyLower);
+      // Use the normalized form so "Apollo Global Management," matches
+      // an opp's "Apollo Global Management", and "Akumin (a Stonepeak
+      // co.)" matches "Akumin", etc.
+      const hasActiveOpp = !!companyLower && activeOppCompaniesSet.has(normalizeCompanyText(c.company));
       if (isActive(c) && hasActiveOpp && !tags.includes('dan key target') && !isClientForActive) {
         categories.push('Active');
       }
