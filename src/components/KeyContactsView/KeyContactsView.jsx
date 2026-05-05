@@ -588,11 +588,13 @@ function KeyContactsViewInner({
   // 1:1 dump of what's on screen. Used by the Download button on the
   // All Contacts view; in By Company mode we still flatten every
   // contact across the visible rows.
-  // Combined CSV across Key / Active / Client tabs. Each contact only
-  // appears once; the Categories column lists every tab they qualify
-  // for (comma-separated). Honors the same Hide / Left / Schneider
-  // exclusions as the individual page selectors.
-  function downloadCombinedContactsCsv() {
+  // Combined export across Key / Active / Client tabs. Each contact
+  // only appears once; the Categories column lists every tab they
+  // qualify for (comma-separated). Output is a Schneider-green-themed
+  // .xlsx workbook (not raw CSV) so the user can scan / filter inside
+  // Excel and the file looks consistent with the Indicative Savings
+  // export on the Sites page.
+  async function downloadCombinedContactsCsv() {
     const cache = hubspotCache?.contacts || [];
     if (cache.length === 0) {
       alert('No HubSpot contacts loaded — sync HubSpot Contacts first.');
@@ -696,47 +698,94 @@ function KeyContactsViewInner({
       alert('No contacts qualify for any of the three tabs.');
       return;
     }
-    const headers = [
-      'Categories', 'First Name', 'Last Name', 'Full Name', 'Title', 'Company',
-      'Email', 'Phone', 'City', 'State', 'Country',
-      'LinkedIn URL', 'Met In Person', 'Events', 'Tags',
-    ];
-    const escape = (v) => {
-      const s = (v === null || v === undefined) ? '' : String(v);
-      if (/[",\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
-      return s;
-    };
-    const rows = out.map(({ contact: c, categories }) => {
-      const tagsRaw = c.dans_tags || c.dan_s_tags || c.dans_tag || '';
-      const eventsTxt = contactEvents[String(c.id || '')] || '';
-      const fullName = [c.firstname, c.lastname].filter(Boolean).join(' ');
-      const tagsLower = String(tagsRaw).toLowerCase();
-      const metInPerson = tagsLower.includes('met in person');
-      return [
-        categories.join(', '),
-        c.firstname || '',
-        c.lastname || '',
-        fullName,
-        c.jobtitle || '',
-        c.company || '',
-        c.email || '',
-        c.phone || '',
-        c.city || '',
-        c.state || '',
-        c.country || '',
-        c.hs_linkedin_url || c.linkedin_url || '',
-        metInPerson ? 'Yes' : '',
-        eventsTxt,
-        tagsRaw,
-      ].map(escape).join(',');
+    // Schneider-branded XLSX export. Same green palette as the
+    // Indicative Savings workbook on the Sites page so the company
+    // collateral looks consistent. Column widths are capped at 30 —
+    // wide enough to show most emails / titles without wrapping, but
+    // not so wide that the sheet stops fitting on a normal screen.
+    const { Workbook } = await import('exceljs');
+    const SE_GREEN_DARK = 'FF009530';
+    const SE_GREEN_LIGHT = 'FFE6F7EC';
+    const SE_GREEN = 'FF3DCD58';
+    const wb = new Workbook();
+    wb.creator = 'Schneider Electric · Prospect Tracker';
+    wb.created = new Date();
+    const ws = wb.addWorksheet('Contacts (Combined)', {
+      properties: { tabColor: { argb: SE_GREEN } },
+      views: [{ showGridLines: false, state: 'frozen', ySplit: 3 }],
     });
-    const csv = headers.map(escape).join(',') + '\n' + rows.join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const columns = [
+      { label: 'Categories',    width: 22, get: ({ categories }) => categories.join(', ') },
+      { label: 'Full Name',     width: 24, get: ({ contact: c }) => [c.firstname, c.lastname].filter(Boolean).join(' ') },
+      { label: 'Title',         width: 30, get: ({ contact: c }) => c.jobtitle || '' },
+      { label: 'Company',       width: 30, get: ({ contact: c }) => c.company || '' },
+      { label: 'Email',         width: 30, get: ({ contact: c }) => c.email || '' },
+      { label: 'Phone',         width: 18, get: ({ contact: c }) => c.phone || '' },
+      { label: 'City',          width: 18, get: ({ contact: c }) => c.city || '' },
+      { label: 'State',         width: 16, get: ({ contact: c }) => c.state || '' },
+      { label: 'Country',       width: 16, get: ({ contact: c }) => c.country || '' },
+      { label: 'LinkedIn URL',  width: 30, get: ({ contact: c }) => c.hs_linkedin_url || c.linkedin_url || '' },
+      { label: 'Met In Person', width: 14, get: ({ contact: c }) => {
+        const t = String(c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
+        return t.includes('met in person') ? 'Yes' : '';
+      } },
+      { label: 'Events',        width: 30, get: ({ contact: c }) => contactEvents[String(c.id || '')] || '' },
+      { label: 'Tags',          width: 30, get: ({ contact: c }) => c.dans_tags || c.dan_s_tags || c.dans_tag || '' },
+    ];
+    ws.columns = columns.map(c => ({ width: Math.min(c.width, 30) }));
+
+    // Title row — Schneider green band, white text.
+    ws.mergeCells(1, 1, 1, columns.length);
+    const title = ws.getCell(1, 1);
+    title.value = `Contacts (Combined: Key + Active + Client) · ${out.length} contact${out.length === 1 ? '' : 's'}`;
+    title.font = { name: 'Nunito Sans', bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
+    title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+    title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    ws.getRow(1).height = 28;
+
+    // Spacer row 2 left blank for visual breathing room.
+    ws.getRow(2).height = 6;
+
+    // Header row 3 — light-green wash, dark-green bold text.
+    const headerRow = ws.getRow(3);
+    columns.forEach((col, i) => {
+      const cell = headerRow.getCell(i + 1);
+      cell.value = col.label;
+      cell.font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: SE_GREEN_DARK } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+      cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      cell.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
+    });
+    headerRow.height = 22;
+
+    // Data rows.
+    out.forEach((entry, idx) => {
+      const r = 4 + idx;
+      const row = ws.getRow(r);
+      columns.forEach((col, i) => {
+        const cell = row.getCell(i + 1);
+        cell.value = col.get(entry);
+        cell.font = { name: 'Nunito Sans', size: 10 };
+        cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: false };
+        // Subtle alternating-row banding in Schneider light green.
+        if (idx % 2 === 1) {
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF6FCF8' } };
+        }
+      });
+      row.height = 18;
+    });
+
+    // Auto-filter on the header row so the user can sort / filter
+    // straight from Excel.
+    ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: columns.length } };
+
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     const date = new Date().toISOString().slice(0, 10);
-    a.download = `contacts-combined-${date}.csv`;
+    a.download = `contacts-combined-${date}.xlsx`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
