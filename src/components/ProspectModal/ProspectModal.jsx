@@ -8,7 +8,7 @@ import mammoth from 'mammoth/mammoth.browser';
 import { OpportunityForm, DEFAULT_FORM_TEMPLATE } from './OpportunityForm';
 import { loadEffectiveRaClients, raClientName, raClientCm } from '../../utils/raClientsStore';
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES, COUNTRIES, US_STATES } from '../../data/enums';
-import { CITY_OPTIONS, matchCities } from '../../data/cities';
+import { CITY_OPTIONS, matchCities, getStateForCity } from '../../data/cities';
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { saveSourceFile as savePortfolioSourceFileToIDB, loadSourceFile as loadPortfolioSourceFileFromIDB, clearSourceFile as clearPortfolioSourceFileFromIDB } from '../../utils/portfolioSourceFileStore';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
@@ -1096,6 +1096,25 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
                   const city = (cityValue || '').trim();
                   if (!city) return;
                   if ((f.state || '').trim()) return; // don't override user's state
+                  // Fast path: curated list. Cities marked ambiguous
+                  // (Portland, Kansas City, Arlington, etc.) return
+                  // null and we leave State alone — that matches the
+                  // user's "skip if two cities in different states"
+                  // rule. Only fall back to the geocoder if the city
+                  // isn't in our list at all.
+                  const local = getStateForCity(city);
+                  if (local) {
+                    if (local.state || local.country) {
+                      setF(prev => {
+                        const next = { ...prev };
+                        if (local.state && !(prev.state || '').trim()) next.state = local.state;
+                        if (local.country && !(prev.country || '').trim()) next.country = local.country;
+                        return next;
+                      });
+                      setCityLookupStatus('auto');
+                    }
+                    return;
+                  }
                   setCityLookupStatus('loading');
                   const result = await lookupStateForCity(city, f.country);
                   if (!result || !result.state) { setCityLookupStatus('none'); return; }
