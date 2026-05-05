@@ -728,41 +728,25 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     const cid = contact.id || contact.vid;
     if (!cid) return; // new contact — save will include tags on create
     const tagsStr = buildTagsStringFrom(nextSet);
-    // Side effect: when the user marks a contact as "Left" (departed
-    // their company), auto-set their Company to "Changed Jobs" so the
-    // contact stops being grouped under the old employer everywhere.
-    // We only do this when (a) the Left tag was just *added* (not
-    // already present) and (b) the contact's Company text isn't
-    // already "Changed Jobs", so re-checks don't keep firing the
-    // write.
-    const wasLeft = checkedTags.has('Left') || extraTags.some(t => t.toLowerCase() === 'left');
-    const nowLeft = [...nextSet].some(t => t.toLowerCase() === 'left') || extraTags.some(t => t.toLowerCase() === 'left');
-    const shouldAutoChangeCompany = !wasLeft && nowLeft && (f.company || '').trim().toLowerCase() !== 'changed jobs';
     setTagsSaveStatus('Saving tag…');
     try {
-      const props = { dans_tags: tagsStr };
-      if (shouldAutoChangeCompany) props.company = 'Changed Jobs';
       const res = await fetch(`/api/hubspot?action=update-contact`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contactId: cid, properties: props }),
+        body: JSON.stringify({ contactId: cid, properties: { dans_tags: tagsStr } }),
       });
       const json = await res.json();
       if (!res.ok || json.error) throw new Error(json?.message || json?.error || `HubSpot ${res.status}`);
-      if (shouldAutoChangeCompany) set('company', 'Changed Jobs');
       // Update local cache so the main view reflects the change immediately
       try {
         await updateHubspotCache(draft => {
           const idx = draft.contacts.findIndex(c => String(c.id || c.vid) === String(cid));
-          if (idx !== -1) {
-            draft.contacts[idx] = { ...draft.contacts[idx], dans_tags: tagsStr };
-            if (shouldAutoChangeCompany) draft.contacts[idx].company = 'Changed Jobs';
-          }
+          if (idx !== -1) draft.contacts[idx] = { ...draft.contacts[idx], dans_tags: tagsStr };
         });
       } catch {}
-      onSave({ ...contact, dans_tags: tagsStr, ...(shouldAutoChangeCompany ? { company: 'Changed Jobs' } : {}) }, { silent: true });
-      setTagsSaveStatus(shouldAutoChangeCompany ? 'Saved ✓ — Company set to "Changed Jobs"' : 'Saved ✓');
-      setTimeout(() => setTagsSaveStatus(''), 2500);
+      onSave({ ...contact, dans_tags: tagsStr }, { silent: true });
+      setTagsSaveStatus('Saved ✓');
+      setTimeout(() => setTagsSaveStatus(''), 1500);
     } catch (err) {
       console.error('[ContactEditModal] Tag autosave failed:', err);
       setTagsSaveStatus('Save failed: ' + (err?.message || err));
