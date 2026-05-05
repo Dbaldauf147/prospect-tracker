@@ -929,10 +929,12 @@ export function SitesView({ settings, updateSettings } = {}) {
           && canonical
           && vendorRaw
           && String(vendorRaw).toLowerCase() !== String(canonical).toLowerCase();
-        // Pending guess — show canonical + score + buttons + raw vendor.
+        // Pending guess — show canonical + score + buttons + raw
+        // vendor (so the user can see the source string the fuzzy
+        // match resolved before clicking ✓ / ✗).
         if (isFuzzyGuess && !decision) {
           return (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, maxWidth: '100%' }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, maxWidth: '100%', flexWrap: 'wrap' }}>
               <span
                 title={`Suggested canonical name from the bundled supplier list. Was: "${vendorRaw}". Click ✓ to accept, ✗ to keep the original.`}
                 style={{ background: '#F5F3FF', border: '1px solid #C4B5FD', color: '#5B21B6', padding: '1px 8px', borderRadius: 999, fontSize: '0.7rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 140 }}
@@ -950,6 +952,10 @@ export function SitesView({ settings, updateSettings } = {}) {
                 title={`Keep the original "${vendorRaw}" instead of "${canonical}"`}
                 style={{ border: '1px solid #DC2626', background: '#fff', color: '#DC2626', borderRadius: 4, fontSize: '0.65rem', cursor: 'pointer', fontFamily: 'inherit', padding: '0 4px', lineHeight: 1.4 }}
               >✗</button>
+              <span
+                title={`Source vendor string: "${vendorRaw}"`}
+                style={{ color: '#94A3B8', fontSize: '0.62rem', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%', flexBasis: '100%' }}
+              >← {vendorRaw}</span>
             </span>
           );
         }
