@@ -1634,7 +1634,6 @@ export function SitesView({ settings, updateSettings } = {}) {
       { label: 'Deregulated Status', get: (g) => g.status },
       { label: 'Total Sites', get: (g) => g.totalSites, numFmt: '#,##0', sumKey: 'totalSites' },
       { label: 'Deregulated Sites', get: (g) => g.deregulatedSites, numFmt: '#,##0', sumKey: 'deregulatedSites' },
-      { label: 'Reg. Rate Savings Sites', get: (g) => g.regulatedRateOpportunitySites, numFmt: '#,##0', sumKey: 'regulatedRateOpportunitySites' },
       { label: 'Annual Deregulated Consumption kWh', get: (g) => g.consumption, numFmt: '#,##0', sumKey: 'consumption' },
       { label: 'Annual Deregulated Spend', get: (g) => g.spend, numFmt: '"$"#,##0', sumKey: 'spend' },
       { label: 'Indicative Savings Range', get: (g) => g.range },
@@ -1644,6 +1643,11 @@ export function SitesView({ settings, updateSettings } = {}) {
       { label: 'Supplier Name', get: (g) => g.suppliers },
       { label: 'Contract Start', get: (g) => g.earliestStart },
       { label: 'Contract End', get: (g) => g.latestEnd },
+      // Sites with a regulated-rate savings opportunity sit to the
+      // right of the deregulated reporting columns so the by-state
+      // summary reads cleanly: deregulated counts / spend / savings,
+      // then a separate trailing column for the regulated angle.
+      { label: 'Reg. Rate Savings Sites', get: (g) => g.regulatedRateOpportunitySites, numFmt: '#,##0', sumKey: 'regulatedRateOpportunitySites' },
     ];
     const gasCols = [
       { label: 'ST/Prov', get: (g) => g.state },
