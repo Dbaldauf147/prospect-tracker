@@ -642,8 +642,20 @@ export function SitesView({ settings, updateSettings } = {}) {
       // Supplier list wins ties so a brand that exists on both rosters
       // (e.g. Constellation NewEnergy) lands as a supplier, which is
       // what shows up on the customer's bill.
-      const electricVendorRaw = electricSupplierOverride ? String(r[electricSupplierOverride] || '').trim() : '';
-      const gasVendorRaw = gasSupplierOverride ? String(r[gasSupplierOverride] || '').trim() : '';
+      // Treat em-dash, hyphen, "N/A", "TBD", "?" etc. as empty so a
+      // source row whose supplier column is just `—` doesn't render a
+      // pill in the Supplier column. Same rule the export uses.
+      const isSupplierPlaceholder = (s) => {
+        const t = String(s || '').trim();
+        if (!t) return true;
+        if (/^[-—–_]+$/.test(t)) return true;
+        if (/^(n\/a|na|none|null|tbd|unknown|\?|\.)$/i.test(t)) return true;
+        return false;
+      };
+      const rawElectric = electricSupplierOverride ? String(r[electricSupplierOverride] || '').trim() : '';
+      const rawGas = gasSupplierOverride ? String(r[gasSupplierOverride] || '').trim() : '';
+      const electricVendorRaw = isSupplierPlaceholder(rawElectric) ? '' : rawElectric;
+      const gasVendorRaw = isSupplierPlaceholder(rawGas) ? '' : rawGas;
       const electricSupplierMatch = matchVendorToSupplier(electricVendorRaw);
       const gasSupplierMatch = matchVendorToSupplier(gasVendorRaw);
       const electricUtilityMatch = !electricSupplierMatch ? matchVendorToUtility(electricVendorRaw) : null;
