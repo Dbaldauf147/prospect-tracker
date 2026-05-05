@@ -167,15 +167,24 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
   const [oppsGapOpen, setOppsGapOpen] = useState(false);
   const oppsWithoutContacts = useMemo(() => {
     if (!oppsRecords || oppsRecords.length === 0 || hubspotContacts.length === 0) return [];
-    // Normalize so a contact whose company is typed as "Apollo Global
-    // Management," (trailing comma) still matches an opp Account of
-    // "Apollo Global Management". Lowercase + trim + strip leading
-    // and trailing punctuation/whitespace + collapse internal runs of
-    // whitespace.
+    // Normalize both sides before comparing so the gap report doesn't
+    // surface companies where the user already has a contact under a
+    // slightly different spelling. We:
+    //   1. Lowercase + trim.
+    //   2. Strip trailing parentheticals like "(a Stonepeak co.)" so
+    //      "Akumin (a Stonepeak co.)" matches "Akumin".
+    //   3. Drop common trailing/leading punctuation ("Apollo,").
+    //   4. Strip standalone corporate suffixes (Inc / LLC / Ltd / etc.).
+    //   5. Collapse interior whitespace.
+    // Contacts under any tab (Key / Client / Active) all live in the
+    // shared HubSpot cache, so referencing this single set covers all
+    // three sub-pages automatically.
+    const CORP_RE = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|holdings|group|grp)\b\.?/g;
     const normalize = (s) => String(s || '')
       .toLowerCase()
-      .trim()
-      .replace(/^[\s,.;:]+|[\s,.;:]+$/g, '')
+      .replace(/\s*\([^)]*\)\s*$/g, ' ')
+      .replace(/[,.;:]+/g, ' ')
+      .replace(CORP_RE, ' ')
       .replace(/\s+/g, ' ')
       .trim();
     const contactCompanies = new Set();
