@@ -25,14 +25,33 @@ function parseHubspotDate(v) {
   return Number.isFinite(n) ? n : NaN;
 }
 
+// Schneider Electric is the user's own employer — internal coworkers
+// shouldn't show up in the Active Contacts list, so anything matching
+// the company name (or an @se.com / @schneider-electric.com email
+// domain) is excluded regardless of activity.
+const SCHNEIDER_COMPANY_RE = /\bschneider\s*electric\b/i;
+const SCHNEIDER_DOMAIN_RE = /(^|\.)(se\.com|schneider-electric\.com|schneider\.com)$/i;
+function isSchneiderContact(c) {
+  if (SCHNEIDER_COMPANY_RE.test(String(c.company || ''))) return true;
+  const email = String(c.email || '').toLowerCase().trim();
+  const at = email.lastIndexOf('@');
+  if (at >= 0) {
+    const domain = email.slice(at + 1).trim();
+    if (SCHNEIDER_DOMAIN_RE.test(domain)) return true;
+  }
+  return false;
+}
+
 // A contact is "active" when at least one HubSpot email-activity
 // timestamp (sent / replied / opened / clicked / last contacted) sits
 // inside the chosen window. Window of 0 → any timestamp present.
+// Schneider Electric contacts are filtered regardless.
 function makeActiveSelector(windowDays) {
   const cutoff = windowDays > 0 ? Date.now() - windowDays * 86400000 : null;
   return (c) => {
     const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
     if (tags.includes('hide')) return false;
+    if (isSchneiderContact(c)) return false;
     const fields = [
       c.hs_email_last_send_date,
       c.hs_sales_email_last_replied,
