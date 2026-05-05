@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
-import { getHubspotCache } from '../../utils/hubspotContactsCache';
+import { getHubspotCache, updateHubspotCache } from '../../utils/hubspotContactsCache';
 import { dbGet } from '../../utils/db';
 import { formatAum } from '../../utils/formatters';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
@@ -96,6 +96,56 @@ export function KeyContactsView({
   const [showClosed, setShowClosed] = useState(false);
   const [expanded, setExpanded] = useState(() => new Set());
   const [query, setQuery] = useState('');
+  // Mass-edit state. When `massMode` is on the All Contacts table grows
+  // a checkbox column and a toolbar surfaces at the top to apply a
+  // single field value across every checked contact via the HubSpot
+  // update endpoint.
+  const [massMode, setMassMode] = useState(false);
+  const [massSelected, setMassSelected] = useState(() => new Set());
+  const [massField, setMassField] = useState('company');
+  const [massValue, setMassValue] = useState('');
+  const [massStatus, setMassStatus] = useState(null); // { type, message }
+  const [massProcessing, setMassProcessing] = useState(false);
+  function toggleMassSelect(id) {
+    setMassSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+  async function handleMassApply() {
+    if (massSelected.size === 0 || !massValue.trim()) return;
+    setMassProcessing(true);
+    setMassStatus(null);
+    let updated = 0, errors = 0;
+    const value = massValue.trim();
+    for (const id of massSelected) {
+      try {
+        const res = await fetch('/api/hubspot?action=update-contact', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contactId: id, properties: { [massField]: value } }),
+        });
+        const json = await res.json();
+        if (json.error) errors++; else updated++;
+      } catch { errors++; }
+    }
+    try {
+      await updateHubspotCache(draft => {
+        for (const c of draft.contacts) {
+          if (massSelected.has(c.id)) c[massField] = value;
+        }
+      });
+    } catch (err) { console.warn('Mass cache update failed', err); }
+    setMassStatus({
+      type: errors === 0 ? 'success' : 'partial',
+      message: `Updated ${updated} contact${updated === 1 ? '' : 's'}${errors > 0 ? `, ${errors} failed` : ''}`,
+    });
+    setMassProcessing(false);
+    setMassValue('');
+    setMassSelected(new Set());
+  }
+
   // The contact currently being edited in the in-place modal. We open
   // the same `ContactEditModal` the prospect modal uses so edits made
   // here propagate through the shared HubSpot cache + Firestore
@@ -579,8 +629,89 @@ export function KeyContactsView({
               <span>Include closed (Sold / Not Sold / Lost)</span>
             </label>
           )}
+          {viewMode === 'contacts' && (
+            <button
+              type="button"
+              onClick={() => {
+                setMassMode(p => !p);
+                setMassSelected(new Set());
+                setMassValue('');
+                setMassStatus(null);
+              }}
+              style={{
+                padding: '0.35rem 0.75rem',
+                fontSize: '0.72rem',
+                fontWeight: 600,
+                border: '1px solid ' + (massMode ? '#1E293B' : '#CBD5E1'),
+                borderRadius: 6,
+                background: massMode ? '#1E293B' : '#fff',
+                color: massMode ? '#fff' : '#475569',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >{massMode ? 'Exit Mass Edit' : 'Mass Edit'}</button>
+          )}
         </div>
       </div>
+
+      {viewMode === 'contacts' && massMode && (
+        <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', padding: '0.5rem 0.75rem', background: '#F1F5F9', border: '1px solid #CBD5E1', borderRadius: 6 }}>
+            <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1E293B' }}>{massSelected.size} selected</span>
+            <button
+              type="button"
+              onClick={() => setMassSelected(new Set(filteredContacts.map(c => c.id)))}
+              style={{ padding: '0.2rem 0.5rem', fontSize: '0.68rem', border: '1px solid #CBD5E1', borderRadius: 4, background: '#fff', color: '#475569', cursor: 'pointer', fontFamily: 'inherit' }}
+            >Select all visible</button>
+            <button
+              type="button"
+              onClick={() => setMassSelected(new Set())}
+              disabled={massSelected.size === 0}
+              style={{ padding: '0.2rem 0.5rem', fontSize: '0.68rem', border: '1px solid #CBD5E1', borderRadius: 4, background: '#fff', color: massSelected.size === 0 ? '#CBD5E1' : '#475569', cursor: massSelected.size === 0 ? 'default' : 'pointer', fontFamily: 'inherit' }}
+            >Clear</button>
+            <select
+              value={massField}
+              onChange={e => setMassField(e.target.value)}
+              style={{ padding: '0.25rem 0.4rem', fontSize: '0.72rem', border: '1px solid #CBD5E1', borderRadius: 4, fontFamily: 'inherit', background: '#fff' }}
+            >
+              <option value="company">Company</option>
+              <option value="jobtitle">Job Title</option>
+              <option value="phone">Phone</option>
+              <option value="city">City</option>
+              <option value="state">State</option>
+              <option value="country">Country</option>
+              <option value="firstname">First Name</option>
+              <option value="lastname">Last Name</option>
+            </select>
+            <input
+              type="text"
+              value={massValue}
+              onChange={e => setMassValue(e.target.value)}
+              placeholder="New value…"
+              style={{ flex: '1 1 220px', minWidth: 160, padding: '0.25rem 0.5rem', fontSize: '0.72rem', border: '1px solid #CBD5E1', borderRadius: 4, fontFamily: 'inherit' }}
+            />
+            <button
+              type="button"
+              onClick={handleMassApply}
+              disabled={massProcessing || massSelected.size === 0 || !massValue.trim()}
+              style={{
+                padding: '0.3rem 0.75rem',
+                fontSize: '0.72rem',
+                fontWeight: 700,
+                border: 'none',
+                borderRadius: 4,
+                background: (massProcessing || massSelected.size === 0 || !massValue.trim()) ? '#94A3B8' : '#1D4ED8',
+                color: '#fff',
+                cursor: (massProcessing || massSelected.size === 0 || !massValue.trim()) ? 'default' : 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >{massProcessing ? 'Updating…' : 'Apply to Selected'}</button>
+            {massStatus && (
+              <span style={{ fontSize: '0.7rem', color: massStatus.type === 'success' ? '#166534' : '#92400E' }}>{massStatus.message}</span>
+            )}
+          </div>
+        </div>
+      )}
 
       <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0 }}>
         <input
@@ -623,12 +754,37 @@ export function KeyContactsView({
               { key: 'linkedin', label: 'LinkedIn', sortable: false },
               { key: 'met',      label: 'Met' },
             ];
-            const CONTACT_GRID = CONTACT_COLS.map(c => `${contactColWidths[c.key] || 120}px`).join(' ') + ' 28px';
+            const CONTACT_GRID = (massMode ? '32px ' : '')
+              + CONTACT_COLS.map(c => `${contactColWidths[c.key] || 120}px`).join(' ')
+              + ' 28px';
+            const allVisibleSelected = massMode
+              && filteredContacts.length > 0
+              && filteredContacts.every(c => massSelected.has(c.id));
             const CONTACT_GLYPH = (key) => contactSortKey === key ? (contactSortDir === 'desc' ? ' ▼' : ' ▲') : '';
             const RESIZE_HANDLE = { position: 'absolute', top: 0, right: 0, bottom: 0, width: 6, cursor: 'col-resize', userSelect: 'none' };
             return (
               <div style={{ background: '#fff', border: '1px solid #CBD5E1', borderRadius: 8, overflow: 'hidden' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: CONTACT_GRID, background: '#F1F5F9', borderBottom: '1px solid #CBD5E1', position: 'sticky', top: 0, zIndex: 1 }}>
+                  {massMode && (
+                    <div style={{ padding: '0.4rem 0.6rem', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRight: '1px solid #E2E8F0' }}>
+                      <input
+                        type="checkbox"
+                        checked={allVisibleSelected}
+                        onChange={() => {
+                          if (allVisibleSelected) {
+                            const rest = new Set(massSelected);
+                            for (const c of filteredContacts) rest.delete(c.id);
+                            setMassSelected(rest);
+                          } else {
+                            const next = new Set(massSelected);
+                            for (const c of filteredContacts) next.add(c.id);
+                            setMassSelected(next);
+                          }
+                        }}
+                        title={allVisibleSelected ? 'Clear visible' : 'Select visible'}
+                      />
+                    </div>
+                  )}
                   {CONTACT_COLS.map(c => (
                     <div
                       key={c.key}
@@ -660,6 +816,7 @@ export function KeyContactsView({
                   <div />
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: CONTACT_GRID, background: '#F8FAFC', borderBottom: '1px solid #E2E8F0', position: 'sticky', top: 28, zIndex: 1 }}>
+                  {massMode && <div style={{ borderRight: '1px solid #E2E8F0' }} />}
                   {CONTACT_COLS.map(c => (
                     <div key={c.key} style={{ padding: '0.25rem 0.4rem', borderRight: '1px solid #E2E8F0' }}>
                       <input
@@ -681,9 +838,19 @@ export function KeyContactsView({
                       gridTemplateColumns: CONTACT_GRID,
                       alignItems: 'center',
                       borderTop: i === 0 ? 'none' : '1px solid #F1F5F9',
-                      background: i % 2 === 0 ? '#fff' : '#FCFCFD',
+                      background: massMode && massSelected.has(c.id) ? '#EFF6FF' : (i % 2 === 0 ? '#fff' : '#FCFCFD'),
                     }}
                   >
+                    {massMode && (
+                      <div style={{ padding: '0.45rem 0.6rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <input
+                          type="checkbox"
+                          checked={massSelected.has(c.id)}
+                          onChange={() => toggleMassSelect(c.id)}
+                          onClick={e => e.stopPropagation()}
+                        />
+                      </div>
+                    )}
                     <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.8rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`Click to edit ${c.name}`}>
                       <span
                         role="button"
