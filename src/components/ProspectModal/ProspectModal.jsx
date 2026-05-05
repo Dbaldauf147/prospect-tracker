@@ -8,6 +8,7 @@ import mammoth from 'mammoth/mammoth.browser';
 import { OpportunityForm, DEFAULT_FORM_TEMPLATE } from './OpportunityForm';
 import { loadEffectiveRaClients, raClientName, raClientCm } from '../../utils/raClientsStore';
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES, COUNTRIES, US_STATES } from '../../data/enums';
+import { CITY_OPTIONS, matchCities } from '../../data/cities';
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { saveSourceFile as savePortfolioSourceFileToIDB, loadSourceFile as loadPortfolioSourceFileFromIDB, clearSourceFile as clearPortfolioSourceFileFromIDB } from '../../utils/portfolioSourceFileStore';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
@@ -722,6 +723,18 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
       setMergeProcessing(false);
     }
   }
+  // City autocomplete (alias-aware) — typing "NYC" surfaces "New York
+  // City" and selecting writes the canonical name. Free-typed values
+  // are still allowed; the dropdown closes on commit.
+  const [cityOpen, setCityOpen] = useState(false);
+  const [cityHover, setCityHover] = useState(0);
+  const cityBoxRef = useRef(null);
+  useEffect(() => {
+    if (!cityOpen) return;
+    const onDown = (e) => { if (!cityBoxRef.current?.contains(e.target)) setCityOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [cityOpen]);
   const [companyOpen, setCompanyOpen] = useState(false);
   const [companyHover, setCompanyHover] = useState(0);
   const companyBoxRef = useRef(null);
@@ -1075,26 +1088,99 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
               {cityLookupStatus === 'auto' && <span style={{ marginLeft: 6, fontSize: '0.65rem', color: '#059669', fontWeight: 600 }}>state auto-filled</span>}
               {cityLookupStatus === 'none' && <span style={{ marginLeft: 6, fontSize: '0.65rem', color: '#94A3B8', fontWeight: 500 }}>no match</span>}
             </label>
-            <input
-              style={inputStyle}
-              value={f.city}
-              onChange={e => { setCityLookupStatus(''); set('city', e.target.value); }}
-              onBlur={async () => {
-                const city = (f.city || '').trim();
-                if (!city) return;
-                if ((f.state || '').trim()) return; // don't override user's state
-                setCityLookupStatus('loading');
-                const result = await lookupStateForCity(city, f.country);
-                if (!result || !result.state) { setCityLookupStatus('none'); return; }
-                setF(prev => {
-                  const next = { ...prev };
-                  if (result.state && !(prev.state || '').trim()) next.state = result.state;
-                  if (result.country && !(prev.country || '').trim()) next.country = result.country;
-                  return next;
-                });
-                setCityLookupStatus('auto');
-              }}
-            />
+            <div ref={cityBoxRef} style={{ position: 'relative' }}>
+              {(() => {
+                const matches = matchCities(f.city, CITY_OPTIONS).slice(0, 12);
+                const showList = cityOpen && matches.length > 0;
+                const runCityLookup = async (cityValue) => {
+                  const city = (cityValue || '').trim();
+                  if (!city) return;
+                  if ((f.state || '').trim()) return; // don't override user's state
+                  setCityLookupStatus('loading');
+                  const result = await lookupStateForCity(city, f.country);
+                  if (!result || !result.state) { setCityLookupStatus('none'); return; }
+                  setF(prev => {
+                    const next = { ...prev };
+                    if (result.state && !(prev.state || '').trim()) next.state = result.state;
+                    if (result.country && !(prev.country || '').trim()) next.country = result.country;
+                    return next;
+                  });
+                  setCityLookupStatus('auto');
+                };
+                return (
+                  <>
+                    <input
+                      style={inputStyle}
+                      autoComplete="off"
+                      placeholder="Type to search…"
+                      value={f.city}
+                      onFocus={() => { setCityOpen(true); setCityHover(0); }}
+                      onChange={e => { setCityLookupStatus(''); set('city', e.target.value); setCityOpen(true); setCityHover(0); }}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' && showList) {
+                          e.preventDefault();
+                          set('city', matches[cityHover]);
+                          setCityOpen(false);
+                          setCityLookupStatus('');
+                          runCityLookup(matches[cityHover]);
+                        } else if (e.key === 'ArrowDown' && showList) {
+                          e.preventDefault();
+                          setCityHover(h => Math.min(h + 1, matches.length - 1));
+                        } else if (e.key === 'ArrowUp' && showList) {
+                          e.preventDefault();
+                          setCityHover(h => Math.max(h - 1, 0));
+                        } else if (e.key === 'Escape') {
+                          setCityOpen(false);
+                        }
+                      }}
+                      onBlur={() => runCityLookup(f.city)}
+                    />
+                    {showList && (
+                      <div style={{
+                        position: 'absolute',
+                        top: '100%',
+                        left: 0,
+                        right: 0,
+                        marginTop: 2,
+                        zIndex: 30,
+                        maxHeight: 220,
+                        overflowY: 'auto',
+                        background: '#fff',
+                        border: '1px solid #CBD5E1',
+                        borderRadius: 6,
+                        boxShadow: '0 6px 16px rgba(15,23,42,0.12)',
+                      }}>
+                        {matches.map((n, i) => (
+                          <div
+                            key={n}
+                            onMouseDown={e => {
+                              e.preventDefault();
+                              set('city', n);
+                              setCityOpen(false);
+                              setCityLookupStatus('');
+                              runCityLookup(n);
+                            }}
+                            onMouseEnter={() => setCityHover(i)}
+                            style={{
+                              padding: '0.4rem 0.6rem',
+                              fontSize: '0.78rem',
+                              cursor: 'pointer',
+                              background: i === cityHover ? '#EFF6FF' : '#fff',
+                              color: '#1E293B',
+                              borderTop: i === 0 ? 'none' : '1px solid #F1F5F9',
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                            }}
+                            title={n}
+                          >{n}</div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
           </div>
           <div>
             <label style={labelStyle}>State</label>
