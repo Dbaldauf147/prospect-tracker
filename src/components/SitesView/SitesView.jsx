@@ -696,10 +696,13 @@ export function SitesView({ settings, updateSettings } = {}) {
       const gasTokens = gasRawTokens.map(classifyVendorToken);
       // Utility-classified tokens belong in the utility column; the
       // rest (suppliers and unknown vendors) drive the supplier column.
-      const electricUtilityTokens = electricTokens.filter(t => t.kind === 'utility');
-      const gasUtilityTokens = gasTokens.filter(t => t.kind === 'utility');
-      const electricSupplierDisplayTokens = electricTokens.filter(t => t.kind !== 'utility');
-      const gasSupplierDisplayTokens = gasTokens.filter(t => t.kind !== 'utility');
+      const electricUtilityTokens = electricTokens.filter(t => t.kind === 'utility' && t.decision !== 'rejected');
+      const gasUtilityTokens = gasTokens.filter(t => t.kind === 'utility' && t.decision !== 'rejected');
+      // Rejected tokens drop out of view entirely — the user used ✗
+      // to mean "this isn't a real supplier, hide it" so neither the
+      // pill nor the joined string should still surface them.
+      const electricSupplierDisplayTokens = electricTokens.filter(t => t.kind !== 'utility' && t.decision !== 'rejected');
+      const gasSupplierDisplayTokens = gasTokens.filter(t => t.kind !== 'utility' && t.decision !== 'rejected');
       const electricSupplierResolved = electricSupplierDisplayTokens.length
         ? electricSupplierDisplayTokens.map(t => t.resolved).filter(Boolean).join(', ')
         : null;
@@ -981,14 +984,14 @@ export function SitesView({ settings, updateSettings } = {}) {
           </span>
         );
       }
-      // Decision already recorded — show the resolved value + undo.
-      if (kind === 'supplier' && isFuzzy && decision) {
-        const accepted = decision === 'accepted';
-        const value = accepted ? canonical : raw;
+      // Accepted fuzzy match — show canonical + ✓ score + undo.
+      // (Rejected tokens are filtered out of the row's token list
+      // upstream, so the cell hides them entirely.)
+      if (kind === 'supplier' && isFuzzy && decision === 'accepted') {
         return (
           <span key={idx} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-            <span title={accepted ? `Accepted canonical "${canonical}" (was: "${raw}", fuzzy score ${score}/100). Click ↺ to undo.` : `Rejected canonical "${canonical}" — keeping the original "${raw}". Click ↺ to undo.`} style={pillStyle}>{String(value)}</span>
-            <span style={{ color: accepted ? '#16A34A' : '#DC2626', fontSize: '0.62rem', fontWeight: 700 }}>{accepted ? `✓${score}%` : '✗'}</span>
+            <span title={`Accepted canonical "${canonical}" (was: "${raw}", fuzzy score ${score}/100). Click ↺ to undo.`} style={pillStyle}>{String(canonical)}</span>
+            <span style={{ color: '#16A34A', fontSize: '0.62rem', fontWeight: 700 }}>{`✓${score}%`}</span>
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); setVendorDecision(raw, null); }}
