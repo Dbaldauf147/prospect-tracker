@@ -1750,17 +1750,16 @@ export function SitesView({ settings, updateSettings } = {}) {
         const regRateSavings = commodity === 'electric'
           ? Math.round(g.regulatedRateOpportunitySpend * 0.0025)
           : 0;
-        // Annual savings used for the Year 1–5 cumulative columns.
-        // Use the midpoint of the deregulated low / high band when both
-        // are numeric, plus the reg-rate annual savings on top so the
-        // multi-year view captures every motion the user has on the
-        // table. Numbers fall back to 0 when the deregulated range is
-        // blank (regulated-only state).
+        // Annual + Year 1-5 cumulative savings, kept in TWO separate
+        // tracks so the reg-rate motion can sit in its own block on
+        // the export instead of getting blended into the deregulated
+        // numbers. `year*` = deregulated only (mid of low/high).
+        // `regYear*` = reg-rate only.
         const lowNum = typeof low === 'number' ? low : 0;
         const highNum = typeof high === 'number' ? high : 0;
         const annualSavingsMid = Math.round((lowNum + highNum) / 2);
-        const annualSavingsTotal = annualSavingsMid + regRateSavings;
-        const yearN = (n) => annualSavingsTotal > 0 ? annualSavingsTotal * n : '';
+        const yearN = (n) => annualSavingsMid > 0 ? annualSavingsMid * n : '';
+        const regYearN = (n) => regRateSavings > 0 ? regRateSavings * n : '';
         return {
           state: g.state,
           status,
@@ -1779,6 +1778,11 @@ export function SitesView({ settings, updateSettings } = {}) {
           year3: yearN(3),
           year4: yearN(4),
           year5: yearN(5),
+          regYear1: regYearN(1),
+          regYear2: regYearN(2),
+          regYear3: regYearN(3),
+          regYear4: regYearN(4),
+          regYear5: regYearN(5),
           utilities: joinDistinct(g.utilities),
           suppliers: joinDistinct(g.suppliers),
           // When the state has a supplier on record but no parseable
@@ -1802,12 +1806,13 @@ export function SitesView({ settings, updateSettings } = {}) {
       views: [{ showGridLines: false }],
     });
 
-    // SPAN sized for the longest section (electric, with the
-    // Reg. Rate Sites + Reg. Rate Savings + Year 1-5 cumulative
-    // columns). Gas uses fewer slots but we set the worksheet to the
-    // wider count so headers stay aligned.
-    const SPAN = 21;
-    const widths = [10, 14, 11, 13, 16, 18, 16, 14, 14, 14, 24, 24, 14, 14, 14, 14, 14, 14, 14, 14, 14];
+    // SPAN sized for the widest section (electric, which carries the
+    // deregulated Year 1-5 cumulative block + a spacer column + the
+    // regulated-rate block with its own Year 1-5 cumulative). Gas
+    // uses fewer slots; the title / section bands still merge across
+    // SPAN so the headings stay aligned across both sections.
+    const SPAN = 26;
+    const widths = [10, 14, 11, 13, 16, 18, 16, 14, 14, 14, 24, 24, 14, 14, 14, 14, 14, 14, 4, 16, 16, 14, 14, 14, 14, 14];
     ws.columns = widths.map(w => ({ width: w }));
 
     // Title row — Schneider green band, white text.
@@ -1830,10 +1835,13 @@ export function SitesView({ settings, updateSettings } = {}) {
       head.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
       ws.getRow(r).height = 22;
       r += 1;
-      // Column headers — solid green band, white text.
+      // Column headers — solid green band, white text. Spacer columns
+      // (`c.spacer`) skip the band so the dereg block and the reg-rate
+      // block visually detach from each other.
       const headerRow = ws.getRow(r);
       columnDefs.forEach((c, i) => {
         const cell = headerRow.getCell(i + 1);
+        if (c.spacer) return;
         cell.value = c.label;
         cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
@@ -1848,6 +1856,7 @@ export function SitesView({ settings, updateSettings } = {}) {
         const dataRow = ws.getRow(r);
         columnDefs.forEach((c, i) => {
           const cell = dataRow.getCell(i + 1);
+          if (c.spacer) return;
           const v = c.get(row);
           cell.value = (v === '' || v == null) ? null : v;
           cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
@@ -1869,6 +1878,7 @@ export function SitesView({ settings, updateSettings } = {}) {
       }, {});
       columnDefs.forEach((c, i) => {
         const cell = totalRow.getCell(i + 1);
+        if (c.spacer) return;
         let v = '';
         if (i === 0) v = 'Total';
         else if (c.sumKey) v = totals[c.sumKey] || 0;
@@ -1900,19 +1910,26 @@ export function SitesView({ settings, updateSettings } = {}) {
       { label: 'Supplier Name', get: (g) => g.suppliers },
       { label: 'Contract Start', get: (g) => g.earliestStart },
       { label: 'Contract End', get: (g) => g.latestEnd },
-      // Sites with a regulated-rate savings opportunity sit to the
-      // right of the deregulated reporting columns so the by-state
-      // summary reads cleanly: deregulated counts / spend / savings,
-      // then the regulated angle (sites + flat 0.25 % savings) trails.
-      { label: 'Reg. Rate Savings Sites', get: (g) => g.regulatedRateOpportunitySites, numFmt: '#,##0', sumKey: 'regulatedRateOpportunitySites' },
-      { label: 'Reg. Rate Savings (0.25%)', get: (g) => g.regRateSavings || '', numFmt: '"$"#,##0', sumKey: 'regRateSavings' },
-      // Year 1-5 cumulative savings = (deregulated mid-of-range +
-      // reg-rate annual) × N. Blank when there's nothing to project.
+      // Year 1-5 cumulative for the deregulated motion only — reg-rate
+      // savings live in their own block to the right.
       { label: 'Year 1 Savings', get: (g) => g.year1, numFmt: '"$"#,##0', sumKey: 'year1' },
       { label: 'Year 2 Cumulative', get: (g) => g.year2, numFmt: '"$"#,##0', sumKey: 'year2' },
       { label: 'Year 3 Cumulative', get: (g) => g.year3, numFmt: '"$"#,##0', sumKey: 'year3' },
       { label: 'Year 4 Cumulative', get: (g) => g.year4, numFmt: '"$"#,##0', sumKey: 'year4' },
       { label: 'Year 5 Cumulative', get: (g) => g.year5, numFmt: '"$"#,##0', sumKey: 'year5' },
+      // Spacer column — physically separates the deregulated block
+      // from the regulated-rate block so the two motions read as
+      // distinct stories on the sheet.
+      { label: '', get: () => '', spacer: true },
+      // Regulated-rate block: site count + flat 0.25 % savings + its
+      // own Year 1-5 cumulative, isolated from the deregulated totals.
+      { label: 'Reg. Rate Savings Sites', get: (g) => g.regulatedRateOpportunitySites, numFmt: '#,##0', sumKey: 'regulatedRateOpportunitySites' },
+      { label: 'Reg. Rate Savings (0.25%)', get: (g) => g.regRateSavings || '', numFmt: '"$"#,##0', sumKey: 'regRateSavings' },
+      { label: 'Reg. Rate Year 1 Savings', get: (g) => g.regYear1, numFmt: '"$"#,##0', sumKey: 'regYear1' },
+      { label: 'Reg. Rate Year 2 Cumulative', get: (g) => g.regYear2, numFmt: '"$"#,##0', sumKey: 'regYear2' },
+      { label: 'Reg. Rate Year 3 Cumulative', get: (g) => g.regYear3, numFmt: '"$"#,##0', sumKey: 'regYear3' },
+      { label: 'Reg. Rate Year 4 Cumulative', get: (g) => g.regYear4, numFmt: '"$"#,##0', sumKey: 'regYear4' },
+      { label: 'Reg. Rate Year 5 Cumulative', get: (g) => g.regYear5, numFmt: '"$"#,##0', sumKey: 'regYear5' },
     ];
     const gasCols = [
       { label: 'ST/Prov', get: (g) => g.state },
