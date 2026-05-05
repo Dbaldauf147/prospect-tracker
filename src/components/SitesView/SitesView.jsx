@@ -1406,20 +1406,29 @@ export function SitesView({ settings, updateSettings } = {}) {
 
     // Distinct list joined with ", "; trims to a sensible cap so a
     // state with dozens of suppliers doesn't blow up the cell.
-    const joinDistinct = (vals, max = 5) => {
+    // Placeholder strings that show up in the source data when no
+    // real value is set — em-dash, hyphen, "N/A", etc. We treat them
+    // as empty so they don't pollute the comma-joined Supplier /
+    // Utility cells.
+    const isPlaceholder = (s) => {
+      const t = String(s || '').trim();
+      if (!t) return true;
+      if (/^[-—–_]+$/.test(t)) return true; // dashes / em / en / underscore
+      if (/^(n\/a|na|none|null|tbd|unknown|\?|\.)$/i.test(t)) return true;
+      return false;
+    };
+    const joinDistinct = (vals) => {
       const seen = new Set();
       const out = [];
       for (const v of vals) {
         const t = String(v ?? '').trim();
-        if (!t) continue;
+        if (!t || isPlaceholder(t)) continue;
         const k = t.toLowerCase();
         if (seen.has(k)) continue;
         seen.add(k);
         out.push(t);
-        if (out.length >= max) break;
       }
-      const trailing = vals.length - out.length;
-      return trailing > 0 ? `${out.join(', ')} +${trailing} more` : out.join(', ');
+      return out.join(', ');
     };
     const parseDate = (v) => {
       if (!v) return null;
