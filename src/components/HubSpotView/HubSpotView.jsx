@@ -2117,23 +2117,11 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
     let updated = 0, errors = 0;
     for (const c of toCopy) {
       try {
-        const res = await fetch('/api/hubspot?action=update-contact', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ contactId: c.id, properties: { company: c.guessedCompany } }),
-        });
-        const json = await res.json();
-        if (json.error) { errors++; } else { updated++; }
+        await handleInlineUpdate(c.id, { company: c.guessedCompany });
+        updated++;
       } catch { errors++; }
     }
-    setData(prev => {
-      if (!prev) return prev;
-      const guessMap = new Map(toCopy.map(c => [c.id, c.guessedCompany]));
-      const upd = { ...prev, contacts: prev.contacts.map(c => guessMap.has(c.id) ? { ...c, company: guessMap.get(c.id) } : c) };
-      saveCache(upd);
-      return upd;
-    });
-    setPushStatus({ type: 'success', message: `Copied guessed company to ${updated} contacts${errors > 0 ? `, ${errors} failed` : ''}` });
+    setPushStatus({ type: errors === 0 ? 'success' : 'error', message: `Copied guessed company to ${updated} contacts${errors > 0 ? `, ${errors} failed` : ''}` });
     setMassProcessing(false);
   }
 
@@ -2170,28 +2158,17 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
     setMassProcessing(true);
     setPushStatus(null);
     let updated = 0, errors = 0;
+    // Route through handleInlineUpdate so each peer also gets the
+    // Company-association pinned in HubSpot (otherwise the typed value
+    // can revert on next sync) and the cache only updates when HubSpot
+    // actually accepted the write.
     for (const c of peers) {
       try {
-        const res = await fetch('/api/hubspot?action=update-contact', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ contactId: c.id, properties: { company: guess } }),
-        });
-        const json = await res.json();
-        if (json.error) { errors++; } else { updated++; }
+        await handleInlineUpdate(c.id, { company: guess });
+        updated++;
       } catch { errors++; }
     }
-    setData(prev => {
-      if (!prev) return prev;
-      const peerIds = new Set(peers.map(p => p.id));
-      const upd = {
-        ...prev,
-        contacts: prev.contacts.map(c => peerIds.has(c.id) ? { ...c, company: guess } : c),
-      };
-      saveCache(upd);
-      return upd;
-    });
-    setPushStatus({ type: 'success', message: `Applied "${guess}" to ${updated} contacts${errors > 0 ? `, ${errors} failed` : ''}` });
+    setPushStatus({ type: errors === 0 ? 'success' : 'error', message: `Applied "${guess}" to ${updated} contacts${errors > 0 ? `, ${errors} failed` : ''}` });
     logAction(user, 'bulk_apply_same_guess', { count: updated, guess });
     setMassProcessing(false);
   }
@@ -2205,23 +2182,11 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
     let updated = 0, errors = 0;
     for (const c of toCopy) {
       try {
-        const res = await fetch('/api/hubspot?action=update-contact', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ contactId: c.id, properties: { company: c.guessedCompany } }),
-        });
-        const json = await res.json();
-        if (json.error) { errors++; } else { updated++; }
+        await handleInlineUpdate(c.id, { company: c.guessedCompany });
+        updated++;
       } catch { errors++; }
     }
-    setData(prev => {
-      if (!prev) return prev;
-      const guessMap = new Map(toCopy.map(c => [c.id, c.guessedCompany]));
-      const upd = { ...prev, contacts: prev.contacts.map(c => guessMap.has(c.id) ? { ...c, company: guessMap.get(c.id) } : c) };
-      saveCache(upd);
-      return upd;
-    });
-    setPushStatus({ type: 'success', message: `Copied guessed company to ${updated} contacts${errors > 0 ? `, ${errors} failed` : ''}` });
+    setPushStatus({ type: errors === 0 ? 'success' : 'error', message: `Copied guessed company to ${updated} contacts${errors > 0 ? `, ${errors} failed` : ''}` });
     logAction(user, 'bulk_guess_companies', { count: updated });
     setMassProcessing(false);
   }
