@@ -31,10 +31,6 @@ export function ContactsView({
   updateSettings,
 }) {
   const [subtab, setSubtab] = useState(readSavedSubtab);
-  // When the Key Contacts tab asks to edit a contact, we hand the raw
-  // HubSpot contact to HubSpotView and switch the sub-tab there. The
-  // HubSpot view opens its existing edit modal and clears the handoff.
-  const [pendingEditContact, setPendingEditContact] = useState(null);
 
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, subtab); } catch {}
@@ -57,13 +53,7 @@ export function ContactsView({
       </div>
       <div className={styles.content}>
         {subtab === 'hubspot' && (
-          <HubSpotView
-            prospects={prospects}
-            settings={settings}
-            updateSettings={updateSettings}
-            pendingEditContact={pendingEditContact}
-            onClearPendingEditContact={() => setPendingEditContact(null)}
-          />
+          <HubSpotView prospects={prospects} settings={settings} updateSettings={updateSettings} />
         )}
         {subtab === 'bulk' && (
           <AgendaView
@@ -77,11 +67,8 @@ export function ContactsView({
           <KeyContactsView
             prospects={prospects}
             onSelectProspect={onSelectProspect}
-            onEditContact={(contact) => {
-              if (!contact) return;
-              setPendingEditContact(contact);
-              setSubtab('hubspot');
-            }}
+            settings={settings}
+            updateSettings={updateSettings}
           />
         )}
         {subtab === 'dedupe' && <DedupeView />}

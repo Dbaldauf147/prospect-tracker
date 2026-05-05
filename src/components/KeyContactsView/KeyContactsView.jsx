@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState, useRef } from 'react';
+import { useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { dbGet } from '../../utils/db';
 import { formatAum } from '../../utils/formatters';
+import { ContactEditModal } from '../ProspectModal/ProspectModal';
 
 const CLOSED_STAGES = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
 const INVALID_STAGES = new Set(['#N/A', '#REF!', '#VALUE!', '#ERROR!', 'N/A', 'n/a', '-', '']);
@@ -65,11 +66,58 @@ function useOppsRecords(userId) {
   return records;
 }
 
-export function KeyContactsView({ prospects = [], onSelectProspect, onEditContact }) {
+export function KeyContactsView({ prospects = [], onSelectProspect, settings = {}, updateSettings = () => {} }) {
   const { user } = useAuth();
   const [showClosed, setShowClosed] = useState(false);
   const [expanded, setExpanded] = useState(() => new Set());
   const [query, setQuery] = useState('');
+  // The contact currently being edited in the in-place modal. We open
+  // the same `ContactEditModal` the prospect modal uses so edits made
+  // here propagate through the shared HubSpot cache + Firestore
+  // settings — the prospect modal's contact list listens to the same
+  // `hubspot-cache-updated` event we do, so a save here lights up
+  // there automatically (and vice-versa).
+  const [editingContact, setEditingContact] = useState(null);
+  const handleContactSaved = useCallback((updated) => {
+    setEditingContact(null);
+    // updateHubspotCache (called inside the modal) already dispatches
+    // a `hubspot-cache-updated` event that our existing listener picks
+    // up to refresh the table — nothing to do here.
+    void updated;
+  }, []);
+  const handleSaveContactNote = useCallback((cid, note) => {
+    const cur = settings?.contactNotes || {};
+    const next = { ...cur };
+    if (note && note.trim()) next[cid] = note; else delete next[cid];
+    updateSettings({ contactNotes: next });
+  }, [settings?.contactNotes, updateSettings]);
+  const handleSaveContactOldEmails = useCallback((cid, val) => {
+    const cur = settings?.contactOldEmails || {};
+    const next = { ...cur };
+    if (val && val.trim()) next[cid] = val; else delete next[cid];
+    updateSettings({ contactOldEmails: next });
+  }, [settings?.contactOldEmails, updateSettings]);
+  const handleSaveContactNickname = useCallback((cid, val) => {
+    const cur = settings?.contactNicknames || {};
+    const next = { ...cur };
+    if (val && val.trim()) next[cid] = val; else delete next[cid];
+    updateSettings({ contactNicknames: next });
+  }, [settings?.contactNicknames, updateSettings]);
+  const handleSaveContactTeamName = useCallback((cid, val) => {
+    const cur = settings?.contactTeamNames || {};
+    const next = { ...cur };
+    if (val && val.trim()) next[cid] = val.trim(); else delete next[cid];
+    updateSettings({ contactTeamNames: next });
+  }, [settings?.contactTeamNames, updateSettings]);
+  const handleSaveContactReportsTo = useCallback((cid, managerIds) => {
+    const cur = settings?.contactReportsTo || {};
+    const next = { ...cur };
+    const arr = Array.isArray(managerIds)
+      ? managerIds.filter(Boolean).map(String)
+      : (managerIds ? [String(managerIds)] : []);
+    if (arr.length > 0) next[cid] = arr; else delete next[cid];
+    updateSettings({ contactReportsTo: next });
+  }, [settings?.contactReportsTo, updateSettings]);
   const [viewMode, setViewMode] = useState(() => localStorage.getItem('key-contacts:view-mode') || 'contacts');
   useEffect(() => { try { localStorage.setItem('key-contacts:view-mode', viewMode); } catch {} }, [viewMode]);
   const [contactSortKey, setContactSortKey] = useState(() => localStorage.getItem('key-contacts:contact-sort-key') || 'name');
@@ -611,18 +659,14 @@ export function KeyContactsView({ prospects = [], onSelectProspect, onEditContac
                       background: i % 2 === 0 ? '#fff' : '#FCFCFD',
                     }}
                   >
-                    <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.8rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={onEditContact ? `Click to edit ${c.name}` : c.name}>
-                      {onEditContact ? (
-                        <span
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => onEditContact(c.raw || c)}
-                          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onEditContact(c.raw || c); } }}
-                          style={{ color: '#1D4ED8', cursor: 'pointer', textDecoration: 'underline' }}
-                        >{c.name}</span>
-                      ) : (
-                        <span style={{ color: '#1E293B' }}>{c.name}</span>
-                      )}
+                    <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.8rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`Click to edit ${c.name}`}>
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => setEditingContact(c.raw || c)}
+                        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setEditingContact(c.raw || c); } }}
+                        style={{ color: '#1D4ED8', cursor: 'pointer', textDecoration: 'underline' }}
+                      >{c.name}</span>
                     </div>
                     <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.72rem', color: c.jobtitle ? '#475569' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.jobtitle}>{c.jobtitle || '—'}</div>
                     <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.74rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.prospect ? `Click to open ${c.companyName}` : c.companyName}>
@@ -876,18 +920,14 @@ export function KeyContactsView({ prospects = [], onSelectProspect, onEditContac
                                       background: i % 2 === 0 ? '#fff' : '#FCFCFD',
                                     }}
                                   >
-                                    <div style={{ fontSize: '0.78rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={onEditContact ? `Click to edit ${c.name}` : c.name}>
-                                      {onEditContact ? (
-                                        <span
-                                          role="button"
-                                          tabIndex={0}
-                                          onClick={e => { e.stopPropagation(); onEditContact(c.raw || c); }}
-                                          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); onEditContact(c.raw || c); } }}
-                                          style={{ color: '#1D4ED8', cursor: 'pointer', textDecoration: 'underline' }}
-                                        >{c.name}</span>
-                                      ) : (
-                                        <span style={{ color: '#1E293B' }}>{c.name}</span>
-                                      )}
+                                    <div style={{ fontSize: '0.78rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`Click to edit ${c.name}`}>
+                                      <span
+                                        role="button"
+                                        tabIndex={0}
+                                        onClick={e => { e.stopPropagation(); setEditingContact(c.raw || c); }}
+                                        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); setEditingContact(c.raw || c); } }}
+                                        style={{ color: '#1D4ED8', cursor: 'pointer', textDecoration: 'underline' }}
+                                      >{c.name}</span>
                                     </div>
                                     <div style={{ fontSize: '0.7rem', color: c.jobtitle ? '#475569' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.jobtitle}>{c.jobtitle || '—'}</div>
                                     <div style={{ fontSize: '0.7rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.email}>
@@ -966,6 +1006,42 @@ export function KeyContactsView({ prospects = [], onSelectProspect, onEditContac
           );
         })()}
       </div>
+      {editingContact && (() => {
+        // Resolve sibling contacts at the same company so the Reports
+        // To picker can offer managers; merge HubSpot domain hits with
+        // any matching prospect's emailDomain field so corporate
+        // emails group correctly.
+        const editCompany = String(editingContact.company || '').trim().toLowerCase();
+        const allHs = hubspotCache?.contacts || [];
+        const sameCompanyContacts = editCompany
+          ? allHs.filter(c => (c.company || '').trim().toLowerCase() === editCompany)
+          : [];
+        const matched = editCompany
+          ? prospects.find(p => companiesMatch(p.company, editingContact.company))
+          : null;
+        const emailDomains = matched?.emailDomain
+          ? String(matched.emailDomain).split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)
+          : [];
+        return (
+          <ContactEditModal
+            contact={editingContact}
+            onSave={handleContactSaved}
+            onClose={() => setEditingContact(null)}
+            contactNotes={settings?.contactNotes || {}}
+            onSaveNote={handleSaveContactNote}
+            contactOldEmails={settings?.contactOldEmails || {}}
+            onSaveOldEmails={handleSaveContactOldEmails}
+            contactNicknames={settings?.contactNicknames || {}}
+            onSaveNickname={handleSaveContactNickname}
+            contactTeamNames={settings?.contactTeamNames || {}}
+            onSaveTeamName={handleSaveContactTeamName}
+            contactReportsTo={settings?.contactReportsTo || {}}
+            onSaveReportsTo={handleSaveContactReportsTo}
+            companyContacts={sameCompanyContacts}
+            emailDomains={emailDomains}
+          />
+        );
+      })()}
     </div>
   );
 }
