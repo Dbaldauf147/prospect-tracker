@@ -647,6 +647,29 @@ export function KeyContactsView({
   const DEFAULT_CONTACT_COL_WIDTHS = {
     name: 180, title: 200, company: 200, suggestedCompany: 220, email: 240, phone: 140, location: 140, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220,
   };
+  // Column visibility — every contact column except Name (always
+  // shown; it's the primary identifier). Stored per-page so the Key,
+  // Active, and Client tabs each remember their own set.
+  const DEFAULT_VISIBLE_COLS = ['title', 'company', 'email', 'phone', 'location', 'country', 'linkedin', 'salesNav', 'met', 'events'];
+  const [visibleCols, setVisibleCols] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(lsKey('visible-cols')));
+      if (Array.isArray(saved) && saved.length > 0) return saved;
+    } catch {}
+    return DEFAULT_VISIBLE_COLS;
+  });
+  useEffect(() => { try { localStorage.setItem(lsKey('visible-cols'), JSON.stringify(visibleCols)); } catch {} }, [visibleCols, storagePrefix]);
+  const [colsMenuOpen, setColsMenuOpen] = useState(false);
+  const colsMenuRef = useRef(null);
+  useEffect(() => {
+    if (!colsMenuOpen) return;
+    const onDown = (e) => { if (!colsMenuRef.current?.contains(e.target)) setColsMenuOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [colsMenuOpen]);
+  function toggleVisibleCol(key) {
+    setVisibleCols(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
+  }
   const [contactColWidths, setContactColWidths] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(lsKey('contact-col-widths'))) || {};
@@ -1204,6 +1227,73 @@ export function KeyContactsView({
             }}
           >Download CSV</button>
           {viewMode === 'contacts' && (
+            <div ref={colsMenuRef} style={{ position: 'relative' }}>
+              <button
+                type="button"
+                onClick={() => setColsMenuOpen(o => !o)}
+                title="Choose which columns are visible on the All Contacts table. Persists per page."
+                style={{
+                  padding: '0.35rem 0.75rem',
+                  fontSize: '0.72rem',
+                  fontWeight: 600,
+                  border: '1px solid #CBD5E1',
+                  borderRadius: 6,
+                  background: '#fff',
+                  color: '#334155',
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                }}
+              >Columns ▾</button>
+              {colsMenuOpen && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    right: 0,
+                    top: '100%',
+                    marginTop: 4,
+                    zIndex: 30,
+                    background: '#fff',
+                    border: '1px solid #CBD5E1',
+                    borderRadius: 6,
+                    boxShadow: '0 6px 16px rgba(15,23,42,0.12)',
+                    minWidth: 200,
+                    padding: '0.4rem 0',
+                  }}
+                >
+                  {[
+                    { key: 'title', label: 'Title' },
+                    { key: 'company', label: 'Company' },
+                    ...(showSuggestedCompany ? [{ key: 'suggestedCompany', label: 'Suggested Company' }] : []),
+                    { key: 'email', label: 'Email' },
+                    { key: 'phone', label: 'Phone' },
+                    { key: 'location', label: 'Location' },
+                    { key: 'country', label: 'Country' },
+                    { key: 'linkedin', label: 'LinkedIn' },
+                    { key: 'salesNav', label: 'LinkedIn Search' },
+                    { key: 'met', label: 'Met' },
+                    { key: 'events', label: 'Events' },
+                  ].map(opt => (
+                    <label key={opt.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0.35rem 0.75rem', fontSize: '0.74rem', color: '#1E293B', cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={visibleCols.includes(opt.key)}
+                        onChange={() => toggleVisibleCol(opt.key)}
+                      />
+                      {opt.label}
+                    </label>
+                  ))}
+                  <div style={{ padding: '0.35rem 0.75rem', borderTop: '1px solid #F1F5F9', display: 'flex', gap: 8 }}>
+                    <button
+                      type="button"
+                      onClick={() => setVisibleCols(DEFAULT_VISIBLE_COLS)}
+                      style={{ background: 'transparent', border: '1px solid #CBD5E1', borderRadius: 4, padding: '2px 8px', fontSize: '0.68rem', color: '#475569', cursor: 'pointer', fontFamily: 'inherit' }}
+                    >Reset to default</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          {viewMode === 'contacts' && (
             <button
               type="button"
               onClick={() => {
@@ -1404,8 +1494,8 @@ export function KeyContactsView({
               <div style={{ fontSize: '0.78rem' }}>{emptyDetail}</div>
             </div>
           ) : (() => {
-            const CONTACT_COLS = [
-              { key: 'name',     label: 'Name' },
+            const ALL_CONTACT_COLS = [
+              { key: 'name',     label: 'Name', alwaysOn: true },
               { key: 'title',    label: 'Title' },
               { key: 'company',  label: 'Company' },
               ...(showSuggestedCompany ? [{ key: 'suggestedCompany', label: 'Suggested Company' }] : []),
@@ -1418,6 +1508,8 @@ export function KeyContactsView({
               { key: 'met',      label: 'Met' },
               { key: 'events',   label: 'Events' },
             ];
+            const visibleSet = new Set(visibleCols);
+            const CONTACT_COLS = ALL_CONTACT_COLS.filter(c => c.alwaysOn || visibleSet.has(c.key));
             const CONTACT_GRID = (massMode ? '32px ' : '')
               + CONTACT_COLS.map(c => `${contactColWidths[c.key] || 120}px`).join(' ')
               + ' 60px';
@@ -1529,12 +1621,15 @@ export function KeyContactsView({
                         style={{ color: '#1D4ED8', cursor: 'pointer', textDecoration: 'underline' }}
                       >{c.name}</span>
                     </div>
+                    {visibleSet.has('title') && (
                     <InlineCell
                       value={c.jobtitle}
                       onCommit={v => inlineUpdateField(c.raw || c, 'jobtitle', v)}
                       textColor="#475569"
                       title={c.jobtitle ? `Click to edit — ${c.jobtitle}` : 'Click to edit'}
                     />
+                    )}
+                    {visibleSet.has('company') && (
                     <div style={{ display: 'flex', alignItems: 'center', minWidth: 0 }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <InlineCell
@@ -1558,6 +1653,7 @@ export function KeyContactsView({
                         >↗</span>
                       )}
                     </div>
+                    )}
                     {showSuggestedCompany && (
                       <div style={{ padding: '0.3rem 0.5rem', fontSize: '0.72rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 6 }} title={c.suggestedCompany || ''}>
                         {c.suggestedCompany ? (
@@ -1587,16 +1683,21 @@ export function KeyContactsView({
                         )}
                       </div>
                     )}
+                    {visibleSet.has('email') && (
                     <InlineCell
                       value={c.email}
                       onCommit={v => inlineUpdateField(c.raw || c, 'email', v)}
                       type="email"
                     />
+                    )}
+                    {visibleSet.has('phone') && (
                     <InlineCell
                       value={c.phone}
                       onCommit={v => inlineUpdateField(c.raw || c, 'phone', v)}
                       textColor="#64748B"
                     />
+                    )}
+                    {visibleSet.has('location') && (
                     <InlineCell
                       value={[c.city, c.state].filter(Boolean).join(', ')}
                       onCommit={async (v) => {
@@ -1609,18 +1710,23 @@ export function KeyContactsView({
                       title="Click to edit. Type 'City, State'."
                       fontSize="0.7rem"
                     />
+                    )}
+                    {visibleSet.has('country') && (
                     <InlineCell
                       value={c.country}
                       onCommit={v => inlineUpdateField(c.raw || c, 'country', v)}
                       textColor="#64748B"
                       fontSize="0.7rem"
                     />
+                    )}
+                    {visibleSet.has('linkedin') && (
                     <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem' }}>
                       {c.linkedin
                         ? <a href={c.linkedin} target="_blank" rel="noopener noreferrer" style={{ color: '#0A66C2', textDecoration: 'none', fontWeight: 600 }}>Open ↗</a>
                         : <span style={{ color: '#CBD5E1' }}>—</span>}
                     </div>
-                    {(() => {
+                    )}
+                    {visibleSet.has('salesNav') && (() => {
                       const parts = [c.firstname, c.lastname, c.companyName].map(s => String(s || '').trim()).filter(Boolean);
                       if (parts.length === 0) return <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: '#CBD5E1' }}>—</div>;
                       const keywords = encodeURIComponent(parts.join(' '));
@@ -1645,11 +1751,14 @@ export function KeyContactsView({
                         </div>
                       );
                     })()}
+                    {visibleSet.has('met') && (
                     <div style={{ padding: '0.45rem 0.6rem' }}>
                       {c.metInPerson
                         ? <span style={{ display: 'inline-block', padding: '1px 6px', fontSize: '0.6rem', fontWeight: 700, background: '#DCFCE7', color: '#166534', border: '1px solid #86EFAC', borderRadius: 999 }}>✓ Yes</span>
                         : <span style={{ color: '#CBD5E1', fontSize: '0.7rem' }}>—</span>}
                     </div>
+                    )}
+                    {visibleSet.has('events') && (
                     <InlineCell
                       value={contactEvents[String(c.id || '')] || ''}
                       onCommit={v => handleSaveContactEvents(String(c.id || ''), v)}
@@ -1658,6 +1767,7 @@ export function KeyContactsView({
                       fontSize="0.7rem"
                       textColor="#475569"
                     />
+                    )}
                     <div style={{ padding: '0.2rem 0.2rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <button
                         type="button"
