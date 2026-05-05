@@ -5,6 +5,7 @@ import { AgendaView } from '../AgendaView/AgendaView';
 import { KeyContactsView } from '../KeyContactsView/KeyContactsView';
 import { ActiveContactsView } from '../ActiveContactsView/ActiveContactsView';
 import { ClientContactsView } from '../ClientContactsView/ClientContactsView';
+import { ChangedJobsContactsView } from '../ChangedJobsContactsView/ChangedJobsContactsView';
 import { DedupeView } from '../DedupeView/DedupeView';
 
 const SUBTABS = [
@@ -13,6 +14,7 @@ const SUBTABS = [
   { key: 'key',      label: 'Key Contacts' },
   { key: 'active',   label: 'Active Contacts' },
   { key: 'clients',  label: 'Client Contacts' },
+  { key: 'changed',  label: 'Changed Jobs' },
   { key: 'dedupe',   label: 'Deduplication' },
 ];
 
@@ -90,6 +92,14 @@ export function ContactsView({
             settings={settings}
             updateSettings={updateSettings}
             cdmName={cdmName}
+          />
+        )}
+        {subtab === 'changed' && (
+          <ChangedJobsContactsView
+            prospects={prospects}
+            onSelectProspect={onSelectProspect}
+            settings={settings}
+            updateSettings={updateSettings}
           />
         )}
         {subtab === 'dedupe' && <DedupeView />}
