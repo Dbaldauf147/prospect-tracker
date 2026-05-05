@@ -604,11 +604,16 @@ function KeyContactsViewInner({
     // Build the Client / Old Client filter sets the same way the
     // ClientContactsView selector does — CDM-scoped Client list +
     // global Old Client list (so Old Client suppresses regardless of
-    // CDM, mirroring the page).
+    // CDM, mirroring the page). Active Contacts page additionally
+    // suppresses contacts at ANY Client (not just the user's CDM-
+    // scoped clients), so we keep a separate `allClientCompanies` /
+    // `allClientDomains` set just for the Active suppression.
     const clientCompanies = new Set();
     const clientDomains = new Set();
     const oldClientCompanies = new Set();
     const oldClientDomains = new Set();
+    const allClientCompanies = new Set();
+    const allClientDomains = new Set();
     function collectDomains(p, into) {
       if (p?.emailDomain) {
         for (const entry of String(p.emailDomain).split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)) {
@@ -623,9 +628,13 @@ function KeyContactsViewInner({
       }
     }
     for (const p of (prospects || [])) {
-      if (p.status === 'Client' && matchesCdm(p.cdm, cdmName)) {
-        if (p.company) clientCompanies.add(String(p.company).toLowerCase().trim());
-        collectDomains(p, clientDomains);
+      if (p.status === 'Client') {
+        if (p.company) allClientCompanies.add(String(p.company).toLowerCase().trim());
+        collectDomains(p, allClientDomains);
+        if (matchesCdm(p.cdm, cdmName)) {
+          if (p.company) clientCompanies.add(String(p.company).toLowerCase().trim());
+          collectDomains(p, clientDomains);
+        }
       }
       if (p.status === 'Old Client') {
         if (p.company) oldClientCompanies.add(String(p.company).toLowerCase().trim());
@@ -701,7 +710,9 @@ function KeyContactsViewInner({
       // requires the contact's company to have at least one open /
       // active opportunity in the Opps tab so the export tracks what
       // the user actually sees on Active Contacts.
-      const isClientForActive = (companyLower && clientCompanies.has(companyLower)) || (!companyLower && domain && clientDomains.has(domain));
+      // Active Contacts page suppresses against ALL clients (any CDM),
+      // not just the logged-in user's clients, so use the wider sets.
+      const isClientForActive = (companyLower && allClientCompanies.has(companyLower)) || (!companyLower && domain && allClientDomains.has(domain));
       const hasActiveOpp = companyLower && activeOppCompaniesSet.has(companyLower);
       if (isActive(c) && hasActiveOpp && !tags.includes('dan key target') && !isClientForActive) {
         categories.push('Active');
