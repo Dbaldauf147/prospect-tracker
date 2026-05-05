@@ -1669,6 +1669,7 @@ export function SitesView({ settings, updateSettings } = {}) {
             totalSites: 0,
             deregulatedSites: 0,
             regulatedRateOpportunitySites: 0,
+            regulatedRateOpportunitySpend: 0,
             consumption: 0,
             spend: 0,
             utilities: [],
@@ -1685,9 +1686,14 @@ export function SitesView({ settings, updateSettings } = {}) {
         // ComEd / Dominion etc. even on regulated rows.
         if (provider) g.utilities.push(provider);
         // Electric sites whose utility is on the regulated-rate
-        // opportunity list count toward the new Reg-rate column.
+        // opportunity list count toward the new Reg-rate column,
+        // and their full electric spend feeds the 0.25 % savings line.
         if (commodity === 'electric' && isRegulatedRateOpportunity(state, provider)) {
           g.regulatedRateOpportunitySites += 1;
+          const regCost = r[costKey];
+          if (typeof regCost === 'number' && Number.isFinite(regCost)) {
+            g.regulatedRateOpportunitySpend += regCost;
+          }
         }
         const isDereg = classifyUtility(provider) === 'Deregulated' || !!r[supplierKey];
         if (!isDereg) continue;
@@ -1738,17 +1744,41 @@ export function SitesView({ settings, updateSettings } = {}) {
         const high = (highPct != null && g.spend > 0) ? Math.round(g.spend * highPct) : (highPct != null ? 0 : '');
         const earliest = g.starts.length ? new Date(Math.min(...g.starts.map(d => d.getTime()))) : null;
         const latest = g.ends.length ? new Date(Math.max(...g.ends.map(d => d.getTime()))) : null;
+        // Regulated-rate sites get a flat 0.25 % savings off their
+        // total electric spend — gas has no equivalent reg-rate motion
+        // so this stays 0 for the gas bucket.
+        const regRateSavings = commodity === 'electric'
+          ? Math.round(g.regulatedRateOpportunitySpend * 0.0025)
+          : 0;
+        // Annual savings used for the Year 1–5 cumulative columns.
+        // Use the midpoint of the deregulated low / high band when both
+        // are numeric, plus the reg-rate annual savings on top so the
+        // multi-year view captures every motion the user has on the
+        // table. Numbers fall back to 0 when the deregulated range is
+        // blank (regulated-only state).
+        const lowNum = typeof low === 'number' ? low : 0;
+        const highNum = typeof high === 'number' ? high : 0;
+        const annualSavingsMid = Math.round((lowNum + highNum) / 2);
+        const annualSavingsTotal = annualSavingsMid + regRateSavings;
+        const yearN = (n) => annualSavingsTotal > 0 ? annualSavingsTotal * n : '';
         return {
           state: g.state,
           status,
           totalSites: g.totalSites,
           deregulatedSites: g.deregulatedSites,
           regulatedRateOpportunitySites: g.regulatedRateOpportunitySites,
+          regulatedRateOpportunitySpend: Math.round(g.regulatedRateOpportunitySpend),
+          regRateSavings,
           consumption: Math.round(g.consumption),
           spend: Math.round(g.spend),
           range,
           low,
           high,
+          year1: yearN(1),
+          year2: yearN(2),
+          year3: yearN(3),
+          year4: yearN(4),
+          year5: yearN(5),
           utilities: joinDistinct(g.utilities),
           suppliers: joinDistinct(g.suppliers),
           // When the state has a supplier on record but no parseable
@@ -1773,10 +1803,11 @@ export function SitesView({ settings, updateSettings } = {}) {
     });
 
     // SPAN sized for the longest section (electric, with the
-    // Reg. Rate Savings Sites column). Gas uses one fewer slot but
-    // we set the worksheet to the wider count so headers stay aligned.
-    const SPAN = 14;
-    const widths = [10, 14, 11, 13, 16, 18, 16, 14, 14, 14, 24, 24, 14, 14];
+    // Reg. Rate Sites + Reg. Rate Savings + Year 1-5 cumulative
+    // columns). Gas uses fewer slots but we set the worksheet to the
+    // wider count so headers stay aligned.
+    const SPAN = 21;
+    const widths = [10, 14, 11, 13, 16, 18, 16, 14, 14, 14, 24, 24, 14, 14, 14, 14, 14, 14, 14, 14, 14];
     ws.columns = widths.map(w => ({ width: w }));
 
     // Title row — Schneider green band, white text.
@@ -1872,8 +1903,16 @@ export function SitesView({ settings, updateSettings } = {}) {
       // Sites with a regulated-rate savings opportunity sit to the
       // right of the deregulated reporting columns so the by-state
       // summary reads cleanly: deregulated counts / spend / savings,
-      // then a separate trailing column for the regulated angle.
+      // then the regulated angle (sites + flat 0.25 % savings) trails.
       { label: 'Reg. Rate Savings Sites', get: (g) => g.regulatedRateOpportunitySites, numFmt: '#,##0', sumKey: 'regulatedRateOpportunitySites' },
+      { label: 'Reg. Rate Savings (0.25%)', get: (g) => g.regRateSavings || '', numFmt: '"$"#,##0', sumKey: 'regRateSavings' },
+      // Year 1-5 cumulative savings = (deregulated mid-of-range +
+      // reg-rate annual) × N. Blank when there's nothing to project.
+      { label: 'Year 1 Savings', get: (g) => g.year1, numFmt: '"$"#,##0', sumKey: 'year1' },
+      { label: 'Year 2 Cumulative', get: (g) => g.year2, numFmt: '"$"#,##0', sumKey: 'year2' },
+      { label: 'Year 3 Cumulative', get: (g) => g.year3, numFmt: '"$"#,##0', sumKey: 'year3' },
+      { label: 'Year 4 Cumulative', get: (g) => g.year4, numFmt: '"$"#,##0', sumKey: 'year4' },
+      { label: 'Year 5 Cumulative', get: (g) => g.year5, numFmt: '"$"#,##0', sumKey: 'year5' },
     ];
     const gasCols = [
       { label: 'ST/Prov', get: (g) => g.state },
@@ -1889,6 +1928,13 @@ export function SitesView({ settings, updateSettings } = {}) {
       { label: 'Supplier Name', get: (g) => g.suppliers },
       { label: 'Contract Start', get: (g) => g.earliestStart },
       { label: 'Contract End', get: (g) => g.latestEnd },
+      // Year 1-5 cumulative savings on the gas side use just the
+      // deregulated mid-of-range — there's no gas reg-rate motion.
+      { label: 'Year 1 Savings', get: (g) => g.year1, numFmt: '"$"#,##0', sumKey: 'year1' },
+      { label: 'Year 2 Cumulative', get: (g) => g.year2, numFmt: '"$"#,##0', sumKey: 'year2' },
+      { label: 'Year 3 Cumulative', get: (g) => g.year3, numFmt: '"$"#,##0', sumKey: 'year3' },
+      { label: 'Year 4 Cumulative', get: (g) => g.year4, numFmt: '"$"#,##0', sumKey: 'year4' },
+      { label: 'Year 5 Cumulative', get: (g) => g.year5, numFmt: '"$"#,##0', sumKey: 'year5' },
     ];
 
     writeSection('Electric Power', electricRows, electricCols);
