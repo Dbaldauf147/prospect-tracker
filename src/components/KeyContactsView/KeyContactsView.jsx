@@ -469,7 +469,7 @@ export function KeyContactsView({
     const headers = [
       'First Name', 'Last Name', 'Full Name', 'Title', 'Company',
       'Email', 'Phone', 'City', 'State', 'Country',
-      'LinkedIn URL', 'Met In Person', 'Tags',
+      'LinkedIn URL', 'Met In Person', 'Events', 'Tags',
     ];
     const escape = (v) => {
       const s = (v === null || v === undefined) ? '' : String(v);
@@ -492,6 +492,7 @@ export function KeyContactsView({
         c.country || '',
         c.linkedin || raw.hs_linkedin_url || '',
         c.metInPerson ? 'Yes' : '',
+        contactEvents[String(c.id || '')] || '',
         tags,
       ].map(escape).join(',');
     });
@@ -561,6 +562,17 @@ export function KeyContactsView({
     if (note && note.trim()) next[cid] = note; else delete next[cid];
     updateSettings({ contactNotes: next });
   }, [settings?.contactNotes, updateSettings]);
+  // Per-contact Events log (conferences, meetings, etc.) stored in
+  // Firestore settings so it persists cross-device. Edited inline on
+  // the All Contacts table.
+  const contactEvents = settings?.contactEvents || {};
+  const handleSaveContactEvents = useCallback((cid, val) => {
+    const cur = settings?.contactEvents || {};
+    const next = { ...cur };
+    const v = String(val || '').trim();
+    if (v) next[cid] = v; else delete next[cid];
+    updateSettings({ contactEvents: next });
+  }, [settings?.contactEvents, updateSettings]);
   const handleSaveContactOldEmails = useCallback((cid, val) => {
     const cur = settings?.contactOldEmails || {};
     const next = { ...cur };
@@ -600,7 +612,7 @@ export function KeyContactsView({
   }
 
   const DEFAULT_CONTACT_COL_WIDTHS = {
-    name: 180, title: 200, company: 200, suggestedCompany: 220, email: 240, phone: 140, location: 140, country: 120, linkedin: 90, salesNav: 110, met: 80,
+    name: 180, title: 200, company: 200, suggestedCompany: 220, email: 240, phone: 140, location: 140, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220,
   };
   const [contactColWidths, setContactColWidths] = useState(() => {
     try {
@@ -1043,6 +1055,7 @@ export function KeyContactsView({
           cmp = ((a.state || '') + (a.city || '')).localeCompare((b.state || '') + (b.city || ''));
           break;
         case 'country': cmp = (a.country || '').localeCompare(b.country || ''); break;
+        case 'events':  cmp = (contactEvents[String(a.id || '')] || '').localeCompare(contactEvents[String(b.id || '')] || ''); break;
         case 'met':     cmp = Number(!!a.metInPerson) - Number(!!b.metInPerson); break;
         default: cmp = 0;
       }
@@ -1065,6 +1078,7 @@ export function KeyContactsView({
     linkedin: c => c.linkedin ? 'open' : '',
     salesNav: c => '',
     met:      c => c.metInPerson ? 'yes' : 'no',
+    events:   c => contactEvents[String(c.id || '')] || '',
   };
   const activeContactFilters = Object.entries(contactColFilters)
     .map(([k, v]) => [k, String(v || '').trim().toLowerCase()])
@@ -1342,16 +1356,10 @@ export function KeyContactsView({
           </div>
         )}
         {viewMode === 'contacts' ? (
-          filteredContacts.length === 0 ? (
+          flatContacts.length === 0 ? (
             <div style={{ padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
-              <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>
-                {flatContacts.length === 0 ? emptyTitle : `No contacts match "${query}"`}
-              </div>
-              <div style={{ fontSize: '0.78rem' }}>
-                {flatContacts.length === 0
-                  ? emptyDetail
-                  : `${flatContacts.length} total contacts — adjust your search.`}
-              </div>
+              <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>{emptyTitle}</div>
+              <div style={{ fontSize: '0.78rem' }}>{emptyDetail}</div>
             </div>
           ) : (() => {
             const CONTACT_COLS = [
@@ -1366,6 +1374,7 @@ export function KeyContactsView({
               { key: 'linkedin', label: 'LinkedIn', sortable: false },
               { key: 'salesNav', label: 'LinkedIn Search', sortable: false },
               { key: 'met',      label: 'Met' },
+              { key: 'events',   label: 'Events' },
             ];
             const CONTACT_GRID = (massMode ? '32px ' : '')
               + CONTACT_COLS.map(c => `${contactColWidths[c.key] || 120}px`).join(' ')
@@ -1443,6 +1452,11 @@ export function KeyContactsView({
                   ))}
                   <div />
                 </div>
+                {filteredContacts.length === 0 && (
+                  <div style={{ padding: '1rem', textAlign: 'center', color: '#64748B', fontSize: '0.78rem', background: '#FAFAFA', borderTop: '1px solid #F1F5F9' }}>
+                    No contacts match the current filters{query ? ` for "${query}"` : ''} — clear a filter or column search to see results.
+                  </div>
+                )}
                 {filteredContacts.map((c, i) => (
                   <div
                     key={`${c.rowKey}|${c.id}`}
@@ -1594,6 +1608,14 @@ export function KeyContactsView({
                         ? <span style={{ display: 'inline-block', padding: '1px 6px', fontSize: '0.6rem', fontWeight: 700, background: '#DCFCE7', color: '#166534', border: '1px solid #86EFAC', borderRadius: 999 }}>✓ Yes</span>
                         : <span style={{ color: '#CBD5E1', fontSize: '0.7rem' }}>—</span>}
                     </div>
+                    <InlineCell
+                      value={contactEvents[String(c.id || '')] || ''}
+                      onCommit={v => handleSaveContactEvents(String(c.id || ''), v)}
+                      placeholder="—"
+                      title="Click to log events for this contact (conferences, meetings, etc.)"
+                      fontSize="0.7rem"
+                      textColor="#475569"
+                    />
                     <div style={{ padding: '0.2rem 0.2rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <button
                         type="button"
@@ -1618,16 +1640,10 @@ export function KeyContactsView({
               </div>
             );
           })()
-        ) : filteredRows.length === 0 ? (
+        ) : rows.length === 0 ? (
           <div style={{ padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
-            <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>
-              {rows.length === 0 ? emptyTitle : `No companies match "${query}"`}
-            </div>
-            <div style={{ fontSize: '0.78rem' }}>
-              {rows.length === 0
-                ? emptyDetail
-                : `${rows.length} total companies — adjust your search.`}
-            </div>
+            <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>{emptyTitle}</div>
+            <div style={{ fontSize: '0.78rem' }}>{emptyDetail}</div>
           </div>
         ) : (() => {
           const GRID = `${colWidths.company}px ${colWidths.aum}px ${colWidths.type}px ${colWidths.status}px ${colWidths.keyContacts}px ${colWidths.dm}px ${colWidths.met}px ${colWidths.ratio}px 28px`;
@@ -1678,6 +1694,11 @@ export function KeyContactsView({
                 <div style={{ padding: '0.35rem 0.6rem' }}></div>
               </div>
 
+              {filteredRows.length === 0 && (
+                <div style={{ padding: '1rem', textAlign: 'center', color: '#64748B', fontSize: '0.78rem', background: '#FAFAFA', borderTop: '1px solid #F1F5F9' }}>
+                  No companies match the current filters{query ? ` for "${query}"` : ''} — clear a filter or column search to see results.
+                </div>
+              )}
               {filteredRows.map((row, rowIdx) => {
                 const isExpanded = expanded.has(row.key);
                 const dmTotal = row.decisionMakerEntries.length;
