@@ -765,7 +765,7 @@ function PipelineViewInner() {
                 <th rowSpan={2} className={styles.headerLeft}>Stage</th>
                 <th colSpan={2}>Active Opportunities</th>
                 <th colSpan={2}>Deal Size</th>
-                <th colSpan={2} style={{ borderLeft: '2px solid #2563EB', borderRight: '2px solid #2563EB', background: '#DBEAFE', color: '#1E3A8A' }}>Pipeline</th>
+                <th colSpan={2}>Pipeline</th>
                 <th colSpan={2}>Close Rate (Rolling 365 days)</th>
                 <th>Target Projection</th>
                 <th colSpan={2}>Avg Opp Life</th>
@@ -805,8 +805,8 @@ function PipelineViewInner() {
                         ? <span title={liveTip} className={styles.liveCell}>{fmtMoney(Math.round(dealSizeActual))}</span>
                         : <NumCell value={st.dealSizeActual} kind="money" onCommit={(v) => setStage(i, { dealSizeActual: v })} />}
                     </td>
-                    <td style={{ borderLeft: '2px solid #2563EB' }}><NumCell value={st.pipelineGoal} kind="money" onCommit={(v) => setStage(i, { pipelineGoal: v })} /></td>
-                    <td style={{ borderRight: '2px solid #2563EB' }} className={compareClass(pipelineActual, st.pipelineGoal, 'higher-better')}>
+                    <td><NumCell value={st.pipelineGoal} kind="money" onCommit={(v) => setStage(i, { pipelineGoal: v })} /></td>
+                    <td className={compareClass(pipelineActual, st.pipelineGoal, 'higher-better')}>
                       {fromBfo(m?.total)
                         ? <span title={liveTip} className={styles.liveCell}>{fmtMoney(Math.round(pipelineActual))}</span>
                         : <NumCell value={st.pipelineActual} kind="money" onCommit={(v) => setStage(i, { pipelineActual: v })} />}
@@ -869,8 +869,8 @@ function PipelineViewInner() {
                 <td className={styles.numCell}>{stageTotals.activeActual}</td>
                 <td className={styles.numCell}>{fmtMoney(dealSizeAvgGoal)}</td>
                 <td className={styles.numCell}>{fmtMoney(dealSizeAvgActual)}</td>
-                <td className={styles.numCell} style={{ borderLeft: '2px solid #2563EB', borderBottom: '2px solid #2563EB' }}>{fmtMoney(stageTotals.pipelineGoal)}</td>
-                <td className={styles.numCell} style={{ borderRight: '2px solid #2563EB', borderBottom: '2px solid #2563EB' }}>{fmtMoney(stageTotals.pipelineActual)}</td>
+                <td className={styles.numCell}>{fmtMoney(stageTotals.pipelineGoal)}</td>
+                <td className={styles.numCell}>{fmtMoney(stageTotals.pipelineActual)}</td>
                 <td />
                 <td className={styles.numCell} title={oppsCloseRateActual
                   ? `Sold ÷ (Sold + Not Sold) for Opps closed in the past 365 days with "pull through" excluded — ${oppsCloseRateActual.sold} sold / ${oppsCloseRateActual.notSold} not sold.`
@@ -960,10 +960,10 @@ function PipelineViewInner() {
             </table>
           </div>
 
-          <div className={styles.section} style={{ flex: '0 0 210px', border: '2px solid #2563EB', borderRadius: 6, padding: 0 }}>
+          <div className={styles.section} style={{ flex: '0 0 210px' }}>
             <table className={styles.grid} style={{ width: '100%' }}>
               <thead>
-                <tr><th colSpan={2} style={{ background: '#DBEAFE', color: '#1E3A8A' }}>Coverage Ratio</th></tr>
+                <tr><th colSpan={2}>Coverage Ratio</th></tr>
                 <tr><th>Goal</th><th>Actual</th></tr>
               </thead>
               <tbody>
