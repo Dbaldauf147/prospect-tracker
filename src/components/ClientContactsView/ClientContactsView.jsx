@@ -97,6 +97,9 @@ export function ClientContactsView({ prospects = [], onSelectProspect, settings,
   const selector = useCallback((c) => {
     const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
     if (tags.includes('hide')) return false;
+    // Departed contacts live on the Changed Jobs tab — don't surface
+    // them under their old client.
+    if (tags.includes('left')) return false;
     if (isSchneiderContact(c)) return false;
     const company = String(c.company || '').trim();
     const email = (c.email || '').toLowerCase().trim();

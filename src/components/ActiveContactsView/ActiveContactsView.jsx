@@ -82,6 +82,10 @@ function makeActiveSelector(windowDays, mode = 'visible', { clientCompanies = []
       if (!hidden) return false;
     } else {
       if (hidden) return false;
+      // Contacts tagged "Left" belong on the Changed Jobs tab, not
+      // here — even if HubSpot still shows recent activity from
+      // before they departed.
+      if (tags.includes('left')) return false;
       if (tags.includes('dan key target')) return false;
     }
     if (isSchneiderContact(c)) return false;

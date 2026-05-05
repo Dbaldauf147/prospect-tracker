@@ -252,6 +252,10 @@ function useOppsRecords(userId) {
 const KEY_TARGET_SELECTOR = (c) => {
   const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
   if (tags.includes('hide')) return false;
+  // Contacts who have left their company live on the Changed Jobs tab
+  // — keep them out of the Key Contacts list so the page only shows
+  // people still at their target accounts.
+  if (tags.includes('left')) return false;
   return tags.includes('dan key target');
 };
 
