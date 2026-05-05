@@ -626,7 +626,7 @@ async function lookupStateForCity(city, countryHint) {
   }
 }
 
-export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, companyContacts = [], emailDomains = [] }) {
+export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, companyContacts = [], emailDomains = [], companyNames = [] }) {
   const rawTags = contact.dans_tags || contact.dan_s_tags || contact.dans_tag || '';
   // Parse existing tags; track which known tags are checked separately from free-text extras
   const parsedTags = rawTags.split(';').map(t => t.trim()).filter(Boolean);
@@ -682,6 +682,15 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
 
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [companyOpen, setCompanyOpen] = useState(false);
+  const [companyHover, setCompanyHover] = useState(0);
+  const companyBoxRef = useRef(null);
+  useEffect(() => {
+    if (!companyOpen) return;
+    const onDown = (e) => { if (!companyBoxRef.current?.contains(e.target)) setCompanyOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [companyOpen]);
   const [error, setError] = useState(null);
   const [tagsOpen, setTagsOpen] = useState(false);
   const tagsRef = useRef(null);
@@ -908,7 +917,83 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
             })()}
           </div>
           <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>Job Title</label><input style={inputStyle} value={f.jobtitle} onChange={e => set('jobtitle', e.target.value)} /></div>
-          <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>Company</label><input style={inputStyle} value={f.company} onChange={e => set('company', e.target.value)} /></div>
+          <div style={{ gridColumn: 'span 2', position: 'relative' }} ref={companyBoxRef}>
+            <label style={labelStyle}>Company</label>
+            {(() => {
+              const q = (f.company || '').trim().toLowerCase();
+              const seen = new Set();
+              const all = [];
+              for (const n of (companyNames || [])) {
+                const s = String(n || '').trim();
+                if (!s) continue;
+                const k = s.toLowerCase();
+                if (seen.has(k)) continue;
+                seen.add(k);
+                all.push(s);
+              }
+              const matches = q
+                ? all.filter(n => n.toLowerCase().includes(q)).slice(0, 12)
+                : all.slice(0, 12);
+              const showList = companyOpen && matches.length > 0;
+              return (
+                <>
+                  <input
+                    style={inputStyle}
+                    value={f.company}
+                    onFocus={() => { setCompanyOpen(true); setCompanyHover(0); }}
+                    onChange={e => { set('company', e.target.value); setCompanyOpen(true); setCompanyHover(0); }}
+                    onKeyDown={e => {
+                      if (!showList) return;
+                      if (e.key === 'ArrowDown') { e.preventDefault(); setCompanyHover(h => Math.min(h + 1, matches.length - 1)); }
+                      else if (e.key === 'ArrowUp') { e.preventDefault(); setCompanyHover(h => Math.max(h - 1, 0)); }
+                      else if (e.key === 'Enter') { e.preventDefault(); set('company', matches[companyHover]); setCompanyOpen(false); }
+                      else if (e.key === 'Escape') { setCompanyOpen(false); }
+                    }}
+                    placeholder="Type to search Table View companies…"
+                    autoComplete="off"
+                  />
+                  {showList && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        top: '100%',
+                        left: 0,
+                        right: 0,
+                        marginTop: 2,
+                        zIndex: 30,
+                        maxHeight: 240,
+                        overflowY: 'auto',
+                        background: '#fff',
+                        border: '1px solid #CBD5E1',
+                        borderRadius: 6,
+                        boxShadow: '0 6px 16px rgba(15,23,42,0.12)',
+                      }}
+                    >
+                      {matches.map((n, i) => (
+                        <div
+                          key={n}
+                          onMouseDown={e => { e.preventDefault(); set('company', n); setCompanyOpen(false); }}
+                          onMouseEnter={() => setCompanyHover(i)}
+                          style={{
+                            padding: '0.4rem 0.6rem',
+                            fontSize: '0.78rem',
+                            cursor: 'pointer',
+                            background: i === companyHover ? '#EFF6FF' : '#fff',
+                            color: '#1E293B',
+                            borderTop: i === 0 ? 'none' : '1px solid #F1F5F9',
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                          }}
+                          title={n}
+                        >{n}</div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
+          </div>
           <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>LinkedIn URL</label><input style={inputStyle} value={f.hs_linkedin_url} onChange={e => set('hs_linkedin_url', e.target.value)} /></div>
           <div>
             <label style={labelStyle}>
@@ -6213,6 +6298,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           onSaveReportsTo={handleSaveContactReportsTo}
           companyContacts={companyContacts}
           emailDomains={(fields.emailDomain || '').split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)}
+          companyNames={(prospects || []).map(p => p.company).filter(Boolean)}
         />
       )}
       {contactsUploadPreview && createPortal(

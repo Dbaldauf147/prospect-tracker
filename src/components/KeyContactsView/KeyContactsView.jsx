@@ -1064,6 +1064,7 @@ export function KeyContactsView({
             onSaveReportsTo={handleSaveContactReportsTo}
             companyContacts={sameCompanyContacts}
             emailDomains={emailDomains}
+            companyNames={prospects.map(p => p.company).filter(Boolean)}
           />
         );
       })()}
