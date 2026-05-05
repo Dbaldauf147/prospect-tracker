@@ -43,13 +43,37 @@ function isSchneiderContact(c) {
   return false;
 }
 
+// Cheap fuzzy company-name match used to recognize current-client
+// contacts (so they're suppressed from Active Contacts since they
+// already live on the Client Contacts tab). Mirrors the heuristic in
+// ClientContactsView but kept local to avoid a cross-component import.
+function companiesMatch(a, b) {
+  const na = (a || '').toLowerCase().trim();
+  const nb = (b || '').toLowerCase().trim();
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  const longer = na.length >= nb.length ? na : nb;
+  const shorter = na.length >= nb.length ? nb : na;
+  if (shorter.length >= 4 && shorter.length >= longer.length * 0.6 && longer.includes(shorter)) return true;
+  const strip = s => s.replace(/\b(inc|llc|ltd|corp|co|lp)\b\.?/gi, '').replace(/[^a-z0-9 ]/g, '').trim();
+  return strip(na) === strip(nb);
+}
+
+const FREE_MAIL = new Set([
+  'gmail.com', 'outlook.com', 'hotmail.com', 'yahoo.com', 'icloud.com',
+  'aol.com', 'me.com', 'proton.me', 'protonmail.com', 'live.com', 'msn.com',
+]);
+
 // A contact is "active" when at least one HubSpot email-activity
 // timestamp (sent / replied / opened / clicked / last contacted) sits
 // inside the chosen window. Window of 0 → any timestamp present.
-// Schneider Electric contacts are filtered regardless. The selector
-// can be inverted (`mode = 'hidden'`) to surface ONLY hide-tagged
-// active contacts so the user can review what's been suppressed.
-function makeActiveSelector(windowDays, mode = 'visible') {
+// Schneider coworkers, "Dan Key Target"-tagged contacts, and contacts
+// whose company is already a current Client are all filtered so this
+// page shows only people who don't already live on Key Contacts or
+// Client Contacts. The selector can be inverted (`mode = 'hidden'`)
+// to surface ONLY hide-tagged active contacts so the user can review
+// what's been suppressed.
+function makeActiveSelector(windowDays, mode = 'visible', { clientCompanies = [], clientDomains = new Set() } = {}) {
   const cutoff = windowDays > 0 ? Date.now() - windowDays * 86400000 : null;
   return (c) => {
     const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
@@ -58,8 +82,22 @@ function makeActiveSelector(windowDays, mode = 'visible') {
       if (!hidden) return false;
     } else {
       if (hidden) return false;
+      if (tags.includes('dan key target')) return false;
     }
     if (isSchneiderContact(c)) return false;
+    // Drop client-company contacts so they don't double up with the
+    // Client Contacts tab. Match by company name (fuzzy) first, then
+    // by email domain when the prospect carries one.
+    if (clientCompanies.length || clientDomains.size) {
+      const company = String(c.company || '').trim();
+      if (company && clientCompanies.some(name => companiesMatch(name, company))) return false;
+      const email = (c.email || '').toLowerCase().trim();
+      const at = email.lastIndexOf('@');
+      if (at >= 0) {
+        const domain = email.slice(at + 1).trim();
+        if (domain && !FREE_MAIL.has(domain) && clientDomains.has(domain)) return false;
+      }
+    }
     const fields = [
       c.hs_email_last_send_date,
       c.hs_sales_email_last_replied,
@@ -119,23 +157,49 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
   });
   useEffect(() => { try { localStorage.setItem('active-contacts:unmapped-only', unmappedOnly ? '1' : '0'); } catch {} }, [unmappedOnly]);
   const effectiveWindow = unmappedOnly ? 30 : windowDays;
+  // Build the client-company exclusion set so contacts at current
+  // clients drop out of Active Contacts (they live on Client Contacts
+  // already). Includes prospect-registered email domains for fuzzy
+  // matches when the company text differs from the prospect's name.
+  const clientFilter = useMemo(() => {
+    const companies = [];
+    const domains = new Set();
+    for (const p of (prospects || [])) {
+      if (p.status !== 'Client') continue;
+      if (p.company) companies.push(p.company);
+      if (p.emailDomain) {
+        for (const entry of String(p.emailDomain).split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)) {
+          const at = entry.lastIndexOf('@');
+          const d = (at >= 0 ? entry.slice(at + 1) : entry).toLowerCase().trim();
+          if (d) domains.add(d);
+        }
+      }
+      if (p.website) {
+        const d = String(p.website).replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '').toLowerCase().trim();
+        if (d) domains.add(d);
+      }
+    }
+    return { clientCompanies: companies, clientDomains: domains };
+  }, [prospects]);
   const selector = useCallback(
-    makeActiveSelector(effectiveWindow, showHidden ? 'hidden' : 'visible'),
-    [effectiveWindow, showHidden]
+    makeActiveSelector(effectiveWindow, showHidden ? 'hidden' : 'visible', clientFilter),
+    [effectiveWindow, showHidden, clientFilter]
   );
   const hiddenCount = useMemo(() => {
-    const probe = makeActiveSelector(effectiveWindow, 'hidden');
+    const probe = makeActiveSelector(effectiveWindow, 'hidden', clientFilter);
     let n = 0;
     for (const c of hubspotContacts) if (probe(c)) n += 1;
     return n;
-  }, [hubspotContacts, effectiveWindow]);
+  }, [hubspotContacts, effectiveWindow, clientFilter]);
 
   const subtitle = (
     <>
       HubSpot contacts you've emailed back-and-forth with whose company
       also has at least one open / active opportunity in the Opps
       tab — sent, opened, clicked, replied, or otherwise touched in the
-      selected window. Toggle <strong>All Contacts</strong> for a flat
+      selected window. <em>Excludes</em> Dan Key Targets and current
+      Client contacts (those live on the Key Contacts and Client
+      Contacts tabs). Toggle <strong>All Contacts</strong> for a flat
       table or <strong>By Company</strong> to roll them up by account.
       <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', color: unmappedOnly ? '#94A3B8' : '#475569' }}>

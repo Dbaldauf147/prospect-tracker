@@ -68,30 +68,45 @@ export function ClientContactsView({ prospects = [], onSelectProspect, settings,
     () => (prospects || []).filter(p => p.status === 'Client'),
     [prospects]
   );
+  // Old Client wins over Client when both fuzzy-match a contact's
+  // company — that way Brookfield Asset Management (Old Client) doesn't
+  // sneak in via a near-name match to some other Brookfield-* current
+  // Client. Anything explicitly tagged Old Client is excluded.
+  const oldClientProspects = useMemo(
+    () => (prospects || []).filter(p => p.status === 'Old Client'),
+    [prospects]
+  );
   const clientDomains = useMemo(() => {
     const set = new Set();
     for (const p of clientProspects) collectDomains(p, set);
     return set;
   }, [clientProspects]);
+  const oldClientDomains = useMemo(() => {
+    const set = new Set();
+    for (const p of oldClientProspects) collectDomains(p, set);
+    return set;
+  }, [oldClientProspects]);
 
   const selector = useCallback((c) => {
     const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
     if (tags.includes('hide')) return false;
     if (isSchneiderContact(c)) return false;
     const company = String(c.company || '').trim();
+    const email = (c.email || '').toLowerCase().trim();
+    const at = email.lastIndexOf('@');
+    const domain = at >= 0 ? email.slice(at + 1).trim() : '';
+    const domainOk = domain && !FREE_MAIL.has(domain);
+    // Hard-exclude Old Client matches first.
+    if (company && oldClientProspects.some(p => companiesMatch(p.company, company))) return false;
+    if (domainOk && oldClientDomains.has(domain)) return false;
     if (company) {
       for (const p of clientProspects) {
         if (companiesMatch(p.company, company)) return true;
       }
     }
-    const email = (c.email || '').toLowerCase().trim();
-    const at = email.lastIndexOf('@');
-    if (at >= 0) {
-      const domain = email.slice(at + 1).trim();
-      if (domain && !FREE_MAIL.has(domain) && clientDomains.has(domain)) return true;
-    }
+    if (domainOk && clientDomains.has(domain)) return true;
     return false;
-  }, [clientProspects, clientDomains]);
+  }, [clientProspects, clientDomains, oldClientProspects, oldClientDomains]);
 
   return (
     <KeyContactsView
