@@ -9,6 +9,7 @@
 
 import { useMemo, useCallback } from 'react';
 import { KeyContactsView } from '../KeyContactsView/KeyContactsView';
+import { matchesCdm } from '../../utils/cdmMatch';
 
 const FREE_MAIL = new Set([
   'gmail.com', 'outlook.com', 'hotmail.com', 'yahoo.com', 'icloud.com',
@@ -63,15 +64,21 @@ function collectDomains(p, into) {
   }
 }
 
-export function ClientContactsView({ prospects = [], onSelectProspect, settings, updateSettings }) {
+export function ClientContactsView({ prospects = [], onSelectProspect, settings, updateSettings, cdmName = '' }) {
+  // Only the logged-in user's clients. Mirrors how ClientsView scopes
+  // its list — `matchesCdm` handles "Dan Baldauf" / "Baldauf, Dan" /
+  // "D. Baldauf" / "Dan B" variants. Without a configured cdmName we
+  // intentionally show nothing rather than every CDM's clients, since
+  // the page is meant to be a personal worklist.
   const clientProspects = useMemo(
-    () => (prospects || []).filter(p => p.status === 'Client'),
-    [prospects]
+    () => (prospects || []).filter(p => p.status === 'Client' && matchesCdm(p.cdm, cdmName)),
+    [prospects, cdmName]
   );
   // Old Client wins over Client when both fuzzy-match a contact's
   // company — that way Brookfield Asset Management (Old Client) doesn't
   // sneak in via a near-name match to some other Brookfield-* current
-  // Client. Anything explicitly tagged Old Client is excluded.
+  // Client. Old Client exclusion is *not* CDM-scoped because we want
+  // to suppress an old-client name even when it's another CDM's now.
   const oldClientProspects = useMemo(
     () => (prospects || []).filter(p => p.status === 'Old Client'),
     [prospects]
@@ -117,11 +124,11 @@ export function ClientContactsView({ prospects = [], onSelectProspect, settings,
       storagePrefix="client-contacts"
       pageTitle="Client Contacts"
       pageSubtitle={
-        <>HubSpot contacts at companies tagged <code>Client</code> on the Table View. Toggle <strong>All Contacts</strong> for a flat name-by-name table or <strong>By Company</strong> to roll them up by account with opportunities and decision-maker stats.</>
+        <>HubSpot contacts at companies tagged <code>Client</code> on the Table View where the CDM is <strong>{cdmName || '(set your CDM in Settings)'}</strong>. Toggle <strong>All Contacts</strong> for a flat name-by-name table or <strong>By Company</strong> to roll them up by account with opportunities and decision-maker stats.</>
       }
       emptyTitle="No client contacts found"
       emptyDetail={
-        <>Either no Table View prospects are tagged <code>Client</code> yet, or none of those companies have HubSpot contacts. Set a prospect's Status to <code>Client</code> on the Table View, then add HubSpot contacts at that company.</>
+        <>None of your <code>Client</code>-status prospects (CDM = {cdmName || '—'}) have HubSpot contacts yet. Set a prospect's Status to <code>Client</code> and CDM to your name on the Table View, then add HubSpot contacts at that company.</>
       }
       contactSelector={selector}
     />

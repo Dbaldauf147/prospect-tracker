@@ -89,6 +89,7 @@ export function ContactsView({
             onSelectProspect={onSelectProspect}
             settings={settings}
             updateSettings={updateSettings}
+            cdmName={cdmName}
           />
         )}
         {subtab === 'dedupe' && <DedupeView />}
