@@ -244,7 +244,12 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
         contactCompaniesRaw.push(raw);
       }
     }
-    // Group active opps by Account; track count per company.
+    // Group active opps by Account; track count per company. Skip
+    // pseudo-Accounts that aren't real companies — "Conferences" is a
+    // placeholder used for trade-show / event-sourced opps where
+    // there's no company to map a contact to, so it doesn't belong in
+    // a "no contact at the company" gap report.
+    const NON_COMPANY_ACCOUNTS = new Set(['conferences']);
     const byCompany = new Map();
     for (const r of oppsRecords) {
       const stage = String(r.Stage || '').trim();
@@ -252,17 +257,28 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
       const acct = String(r.Account || '').trim();
       if (!acct) continue;
       const key = normalize(acct);
+      if (NON_COMPANY_ACCOUNTS.has(key)) continue;
       if (!byCompany.has(key)) byCompany.set(key, { account: acct, opps: [] });
       byCompany.get(key).opps.push(r);
     }
     // Surface only companies with no matching Key / Client contact.
-    // Exact normalized lookup first, then companiesMatch fuzzy as a
-    // fallback so name variants (CBRE vs "CBRE Inc (CBRE) - …") clear
-    // the gap.
+    // Exact normalized lookup first, then companiesMatch fuzzy, then
+    // a prefix-token fallback so a contact at "Antin" clears an opp
+    // Account "Antin Infrastructure Partners" (companiesMatch's
+    // shorter≥60%-of-longer substring rule misses short prefixes).
+    const matchesByPrefix = (contactRaw, oppAcct) => {
+      const a = normalize(contactRaw);
+      const b = normalize(oppAcct);
+      if (!a || !b) return false;
+      if (a === b) return true;
+      if (a.length >= 4 && b.startsWith(a + ' ')) return true;
+      if (b.length >= 4 && a.startsWith(b + ' ')) return true;
+      return false;
+    };
     const out = [];
     for (const [key, info] of byCompany.entries()) {
       if (contactCompaniesNorm.has(key)) continue;
-      if (contactCompaniesRaw.some(raw => companiesMatch(raw, info.account))) continue;
+      if (contactCompaniesRaw.some(raw => companiesMatch(raw, info.account) || matchesByPrefix(raw, info.account))) continue;
       out.push(info);
     }
     out.sort((a, b) => b.opps.length - a.opps.length || a.account.localeCompare(b.account));
