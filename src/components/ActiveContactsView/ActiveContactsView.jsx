@@ -165,70 +165,13 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
   const { user } = useAuth();
   const oppsRecords = useOppsRecords(user?.uid);
   const [oppsGapOpen, setOppsGapOpen] = useState(false);
-  const oppsWithoutContacts = useMemo(() => {
-    if (!oppsRecords || oppsRecords.length === 0 || hubspotContacts.length === 0) return [];
-    // Normalize both sides before comparing so the gap report doesn't
-    // surface companies where the user already has a contact under a
-    // slightly different spelling. We:
-    //   1. Lowercase + trim.
-    //   2. Strip trailing parentheticals like "(a Stonepeak co.)" so
-    //      "Akumin (a Stonepeak co.)" matches "Akumin".
-    //   3. Drop common trailing/leading punctuation ("Apollo,").
-    //   4. Strip standalone corporate suffixes (Inc / LLC / Ltd / etc.).
-    //   5. Collapse interior whitespace.
-    // Contacts under any tab (Key / Client / Active) all live in the
-    // shared HubSpot cache, so referencing this single set covers all
-    // three sub-pages automatically.
-    const CORP_RE = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|holdings|group|grp)\b\.?/g;
-    const normalize = (s) => String(s || '')
-      .toLowerCase()
-      .replace(/\s*\([^)]*\)\s*$/g, ' ')
-      .replace(/[,.;:]+/g, ' ')
-      .replace(CORP_RE, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    const contactCompanies = new Set();
-    for (const c of hubspotContacts) {
-      const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
-      if (tags.includes('hide') || tags.includes('left')) continue;
-      const co = normalize(c.company);
-      if (co) contactCompanies.add(co);
-    }
-    // Group active opps by Account; track count per company.
-    const byCompany = new Map();
-    for (const r of oppsRecords) {
-      const stage = String(r.Stage || '').trim();
-      if (!stage || INVALID_STAGES.has(stage) || CLOSED_STAGES.has(stage)) continue;
-      const acct = String(r.Account || '').trim();
-      if (!acct) continue;
-      const key = normalize(acct);
-      if (!byCompany.has(key)) byCompany.set(key, { account: acct, opps: [] });
-      byCompany.get(key).opps.push(r);
-    }
-    // Surface only companies with no matching HubSpot contact.
-    const out = [];
-    for (const [key, info] of byCompany.entries()) {
-      if (contactCompanies.has(key)) continue;
-      out.push(info);
-    }
-    out.sort((a, b) => b.opps.length - a.opps.length || a.account.localeCompare(b.account));
-    return out;
-  }, [oppsRecords, hubspotContacts]);
-  // Surface contacts whose company hasn't been added to the Table View
-  // yet — useful for hunting down accounts you've started conversations
-  // with but haven't tracked. Toggling this also forces a 30-day window
-  // because that's the canonical "still in conversation" cutoff and
-  // also relaxes the open-opp gate (an unmapped company has no opps yet
-  // by definition).
-  const [unmappedOnly, setUnmappedOnly] = useState(() => {
-    try { return localStorage.getItem('active-contacts:unmapped-only') === '1'; } catch { return false; }
-  });
-  useEffect(() => { try { localStorage.setItem('active-contacts:unmapped-only', unmappedOnly ? '1' : '0'); } catch {} }, [unmappedOnly]);
-  const effectiveWindow = unmappedOnly ? 30 : windowDays;
   // Build the client-company exclusion set so contacts at current
   // clients drop out of Active Contacts (they live on Client Contacts
   // already). Includes prospect-registered email domains for fuzzy
   // matches when the company text differs from the prospect's name.
+  // Hoisted above the gap memo so the gap can use it to identify
+  // Client contacts (which, alongside Key Targets, are what satisfy
+  // the gap).
   const clientFilter = useMemo(() => {
     const companies = [];
     const domains = new Set();
@@ -249,6 +192,93 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
     }
     return { clientCompanies: companies, clientDomains: domains };
   }, [prospects]);
+  const oppsWithoutContacts = useMemo(() => {
+    if (!oppsRecords || oppsRecords.length === 0 || hubspotContacts.length === 0) return [];
+    // Normalize both sides before comparing so the gap report doesn't
+    // surface companies where the user already has a contact under a
+    // slightly different spelling. We:
+    //   1. Lowercase + trim.
+    //   2. Strip trailing parentheticals like "(a Stonepeak co.)" so
+    //      "Akumin (a Stonepeak co.)" matches "Akumin".
+    //   3. Drop common trailing/leading punctuation ("Apollo,").
+    //   4. Strip standalone corporate suffixes (Inc / LLC / Ltd / etc.).
+    //   5. Collapse interior whitespace.
+    const CORP_RE = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|holdings|group|grp)\b\.?/g;
+    const normalize = (s) => String(s || '')
+      .toLowerCase()
+      .replace(/\s*\([^)]*\)\s*$/g, ' ')
+      .replace(/[,.;:]+/g, ' ')
+      .replace(CORP_RE, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    // Only Key Target + Client contacts count as "we already have a
+    // foothold here" — Active-only contacts (a stray email open) are
+    // too transient to clear the gap. Track raw company strings too so
+    // the opp-side lookup can fall back to companiesMatch fuzz when the
+    // normalized strings don't line up (e.g. "CBRE" contact vs an opp
+    // Account "CBRE Inc (CBRE) - Headquarters Global").
+    const isClientContact = (c) => {
+      const company = String(c.company || '').trim();
+      if (company && clientFilter.clientCompanies.some(name => companiesMatch(name, company))) return true;
+      if (!company) {
+        const email = (c.email || '').toLowerCase().trim();
+        const at = email.lastIndexOf('@');
+        if (at >= 0) {
+          const d = email.slice(at + 1).trim();
+          if (d && !FREE_MAIL.has(d) && clientFilter.clientDomains.has(d)) return true;
+        }
+      }
+      return false;
+    };
+    const contactCompaniesNorm = new Set();
+    const contactCompaniesRaw = [];
+    for (const c of hubspotContacts) {
+      const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
+      if (tags.includes('hide') || tags.includes('left')) continue;
+      const isKey = tags.includes('dan key target');
+      if (!isKey && !isClientContact(c)) continue;
+      const raw = String(c.company || '').trim();
+      const co = normalize(raw);
+      if (co) {
+        contactCompaniesNorm.add(co);
+        contactCompaniesRaw.push(raw);
+      }
+    }
+    // Group active opps by Account; track count per company.
+    const byCompany = new Map();
+    for (const r of oppsRecords) {
+      const stage = String(r.Stage || '').trim();
+      if (!stage || INVALID_STAGES.has(stage) || CLOSED_STAGES.has(stage)) continue;
+      const acct = String(r.Account || '').trim();
+      if (!acct) continue;
+      const key = normalize(acct);
+      if (!byCompany.has(key)) byCompany.set(key, { account: acct, opps: [] });
+      byCompany.get(key).opps.push(r);
+    }
+    // Surface only companies with no matching Key / Client contact.
+    // Exact normalized lookup first, then companiesMatch fuzzy as a
+    // fallback so name variants (CBRE vs "CBRE Inc (CBRE) - …") clear
+    // the gap.
+    const out = [];
+    for (const [key, info] of byCompany.entries()) {
+      if (contactCompaniesNorm.has(key)) continue;
+      if (contactCompaniesRaw.some(raw => companiesMatch(raw, info.account))) continue;
+      out.push(info);
+    }
+    out.sort((a, b) => b.opps.length - a.opps.length || a.account.localeCompare(b.account));
+    return out;
+  }, [oppsRecords, hubspotContacts, clientFilter]);
+  // Surface contacts whose company hasn't been added to the Table View
+  // yet — useful for hunting down accounts you've started conversations
+  // with but haven't tracked. Toggling this also forces a 30-day window
+  // because that's the canonical "still in conversation" cutoff and
+  // also relaxes the open-opp gate (an unmapped company has no opps yet
+  // by definition).
+  const [unmappedOnly, setUnmappedOnly] = useState(() => {
+    try { return localStorage.getItem('active-contacts:unmapped-only') === '1'; } catch { return false; }
+  });
+  useEffect(() => { try { localStorage.setItem('active-contacts:unmapped-only', unmappedOnly ? '1' : '0'); } catch {} }, [unmappedOnly]);
+  const effectiveWindow = unmappedOnly ? 30 : windowDays;
   const selector = useCallback(
     makeActiveSelector(effectiveWindow, showHidden ? 'hidden' : 'visible', clientFilter),
     [effectiveWindow, showHidden, clientFilter]
