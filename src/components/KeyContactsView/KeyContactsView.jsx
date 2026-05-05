@@ -128,7 +128,7 @@ function InlineCell({
           textAlign: align,
         }}
       />
-      {showSuggestionList && (
+      {suggestions && suggestionsOpen && (
         <div style={{
           position: 'absolute',
           top: '100%',
@@ -136,23 +136,23 @@ function InlineCell({
           right: 0,
           marginTop: 2,
           zIndex: 30,
-          maxHeight: 220,
+          maxHeight: 240,
           overflowY: 'auto',
           background: '#fff',
           border: '1px solid #CBD5E1',
           borderRadius: 6,
           boxShadow: '0 6px 16px rgba(15,23,42,0.12)',
         }}>
-          {matches.map((n, i) => (
+          {matches.length > 0 ? matches.map((n, i) => (
             <div
               key={n}
               onMouseDown={e => { e.preventDefault(); commit(n); }}
-              onMouseEnter={() => setHover(i)}
+              onMouseEnter={() => { setHover(i); setNavigated(true); }}
               style={{
                 padding: '0.4rem 0.6rem',
                 fontSize: '0.78rem',
                 cursor: 'pointer',
-                background: i === hover ? '#EFF6FF' : '#fff',
+                background: i === hover && navigated ? '#EFF6FF' : '#fff',
                 color: '#1E293B',
                 borderTop: i === 0 ? 'none' : '1px solid #F1F5F9',
                 whiteSpace: 'nowrap',
@@ -161,7 +161,16 @@ function InlineCell({
               }}
               title={n}
             >{n}</div>
-          ))}
+          )) : (
+            // No prospect company matches — let the user know the
+            // typed value doesn't exist in their Table View yet, and
+            // that pressing Enter will still save it as-is.
+            <div style={{ padding: '0.5rem 0.6rem', fontSize: '0.7rem', color: '#64748B', fontStyle: 'italic' }}>
+              {draft.trim()
+                ? <>No Table View company matches <strong style={{ color: '#1E293B', fontStyle: 'normal' }}>"{draft.trim()}"</strong>. Press <strong style={{ color: '#1E293B', fontStyle: 'normal' }}>Enter</strong> to save your typed value as-is.</>
+                : <>Start typing to filter the {(suggestions || []).length} Table View companies.</>}
+            </div>
+          )}
         </div>
       )}
     </div>
