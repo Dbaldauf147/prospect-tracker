@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef, useCallback } from 'react';
+import { Component, useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -255,7 +255,75 @@ const KEY_TARGET_SELECTOR = (c) => {
   return tags.includes('dan key target');
 };
 
-export function KeyContactsView({
+// Class-based boundary so a render-time crash inside the contacts table
+// (e.g., a malformed prospect row, an inline-edit closure issue, a
+// resize handler dereferencing null) shows an inline error instead of
+// blanking the whole page. The reset button clears the per-page
+// localStorage prefs that most often trigger persistent crashes.
+class ContactsErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) {
+    console.error('KeyContactsView render crashed', error, info);
+  }
+  resetPrefsAndReload() {
+    try {
+      const prefix = this.props.storagePrefix || 'key-contacts';
+      const drop = [
+        'visible-cols', 'contact-col-widths', 'contact-col-filters',
+        'contact-sort-key', 'contact-sort-dir', 'view-mode',
+        'col-widths', 'sort-key', 'sort-dir',
+      ];
+      for (const k of drop) {
+        try { localStorage.removeItem(`${prefix}:${k}`); } catch {}
+      }
+    } catch {}
+    window.location.reload();
+  }
+  render() {
+    if (this.state.error) {
+      const msg = String(this.state.error?.message || this.state.error || 'Unknown error');
+      return (
+        <div style={{ padding: '1.25rem', fontFamily: 'inherit' }}>
+          <h2 style={{ marginTop: 0, fontSize: '1rem' }}>Contacts page failed to render</h2>
+          <p style={{ color: '#475569', fontSize: 13 }}>
+            Something in this page's render or recent interaction threw an error. The reset button below clears your per-page column widths / filter / sort preferences in localStorage and reloads — your HubSpot data and Firestore settings are not affected.
+          </p>
+          <div style={{ display: 'flex', gap: '0.5rem', margin: '0.75rem 0' }}>
+            <button
+              type="button"
+              onClick={() => this.resetPrefsAndReload()}
+              style={{ background: '#dc2626', color: '#fff', border: 'none', borderRadius: 6, padding: '0.45rem 0.9rem', fontSize: 13, fontFamily: 'inherit', cursor: 'pointer', fontWeight: 600 }}
+            >Reset page prefs and reload</button>
+            <button
+              type="button"
+              onClick={() => this.setState({ error: null })}
+              style={{ background: 'transparent', color: '#334155', border: '1px solid #94a3b8', borderRadius: 6, padding: '0.45rem 0.9rem', fontSize: 13, fontFamily: 'inherit', cursor: 'pointer' }}
+            >Try again</button>
+          </div>
+          <details style={{ fontSize: 12, color: '#64748b', marginTop: '0.75rem' }}>
+            <summary style={{ cursor: 'pointer' }}>Error details</summary>
+            <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', marginTop: '0.5rem', background: '#f1f5f9', padding: '0.5rem', borderRadius: 4 }}>{msg}</pre>
+          </details>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export function KeyContactsView(props) {
+  return (
+    <ContactsErrorBoundary storagePrefix={props.storagePrefix || 'key-contacts'}>
+      <KeyContactsViewInner {...props} />
+    </ContactsErrorBoundary>
+  );
+}
+
+function KeyContactsViewInner({
   prospects = [],
   onSelectProspect,
   settings = {},
@@ -712,12 +780,20 @@ export function KeyContactsView({
   function startContactResize(colKey, e) {
     e.preventDefault();
     e.stopPropagation();
-    contactResizingRef.current = { key: colKey, startX: e.clientX, startWidth: contactColWidths[colKey] || 100 };
+    // Capture the key + start metrics in local scope so the setter
+    // callback below doesn't depend on contactResizingRef.current
+    // still being non-null. Without that, a mousemove that lands
+    // *after* mouseup (browser event ordering) can throw a TypeError
+    // reading `.key` on null and blank the entire page.
+    const key = colKey;
+    const startX = e.clientX;
+    const startWidth = contactColWidths[colKey] || 100;
+    contactResizingRef.current = { key, startX, startWidth };
     const onMove = (ev) => {
       if (!contactResizingRef.current) return;
-      const delta = ev.clientX - contactResizingRef.current.startX;
-      const next = Math.max(60, contactResizingRef.current.startWidth + delta);
-      setContactColWidths(prev => ({ ...prev, [contactResizingRef.current.key]: next }));
+      const delta = ev.clientX - startX;
+      const next = Math.max(60, startWidth + delta);
+      setContactColWidths(prev => ({ ...prev, [key]: next }));
     };
     const onUp = () => {
       contactResizingRef.current = null;
@@ -753,12 +829,18 @@ export function KeyContactsView({
   function startResize(colKey, e) {
     e.preventDefault();
     e.stopPropagation();
-    resizingRef.current = { key: colKey, startX: e.clientX, startWidth: colWidths[colKey] || 100 };
+    // Capture in local scope so a stray mousemove after mouseup can't
+    // dereference null (which previously blanked the page when React
+    // ran the setter callback after we cleared the ref).
+    const key = colKey;
+    const startX = e.clientX;
+    const startWidth = colWidths[colKey] || 100;
+    resizingRef.current = { key, startX, startWidth };
     const onMove = (ev) => {
       if (!resizingRef.current) return;
-      const delta = ev.clientX - resizingRef.current.startX;
-      const next = Math.max(60, resizingRef.current.startWidth + delta);
-      setColWidths(prev => ({ ...prev, [resizingRef.current.key]: next }));
+      const delta = ev.clientX - startX;
+      const next = Math.max(60, startWidth + delta);
+      setColWidths(prev => ({ ...prev, [key]: next }));
     };
     const onUp = () => {
       resizingRef.current = null;
