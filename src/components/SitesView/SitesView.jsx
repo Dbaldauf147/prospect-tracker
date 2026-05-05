@@ -137,16 +137,38 @@ function SupplierAutocomplete({ initialValue, onCommit, onCancel }) {
   const [hover, setHover] = useState(0);
   const [navigated, setNavigated] = useState(false);
   const [open, setOpen] = useState(true);
+  // Anchor rect for the portaled dropdown — the cell wrapping this
+  // input has overflow:hidden, so an in-DOM absolute-positioned
+  // dropdown gets clipped. Rendering the list to document.body and
+  // pinning it to the input's getBoundingClientRect avoids that.
+  const [anchor, setAnchor] = useState(null);
   const inputRef = useRef(null);
-  const wrapperRef = useRef(null);
+  const listRef = useRef(null);
+  const updateAnchor = () => {
+    if (!inputRef.current) return;
+    const r = inputRef.current.getBoundingClientRect();
+    setAnchor({ top: r.bottom + 2, left: r.left, width: Math.max(r.width, 220) });
+  };
   useEffect(() => {
     if (inputRef.current) {
       inputRef.current.focus();
-      try { inputRef.current.select(); } catch {}
+      try { inputRef.current.select(); } catch (e) { void e; }
+      updateAnchor();
     }
+    const onScrollOrResize = () => updateAnchor();
+    window.addEventListener('scroll', onScrollOrResize, true);
+    window.addEventListener('resize', onScrollOrResize);
+    return () => {
+      window.removeEventListener('scroll', onScrollOrResize, true);
+      window.removeEventListener('resize', onScrollOrResize);
+    };
   }, []);
   useEffect(() => {
-    const onDown = (e) => { if (!wrapperRef.current?.contains(e.target)) setOpen(false); };
+    const onDown = (e) => {
+      const insideInput = inputRef.current && inputRef.current.contains(e.target);
+      const insideList = listRef.current && listRef.current.contains(e.target);
+      if (!insideInput && !insideList) setOpen(false);
+    };
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
   }, []);
@@ -154,16 +176,21 @@ function SupplierAutocomplete({ initialValue, onCommit, onCancel }) {
   const matches = q
     ? ENERGY_SUPPLIERS.filter(n => String(n).toLowerCase().includes(q)).slice(0, 50)
     : ENERGY_SUPPLIERS.slice(0, 50);
-  const showList = open && matches.length > 0;
+  const showList = open && matches.length > 0 && anchor;
   return (
-    <div ref={wrapperRef} style={{ position: 'relative', minWidth: 180 }}>
+    <div style={{ position: 'relative', minWidth: 180 }}>
       <input
         ref={inputRef}
         type="text"
         value={draft}
         placeholder="Type a supplier…"
         onChange={e => { setDraft(e.target.value); setHover(0); setNavigated(false); setOpen(true); }}
-        onBlur={() => onCommit(draft)}
+        onFocus={updateAnchor}
+        onBlur={(e) => {
+          // Ignore blur caused by clicking inside our own portaled list.
+          if (listRef.current && listRef.current.contains(e.relatedTarget)) return;
+          onCommit(draft);
+        }}
         onKeyDown={e => {
           if (e.key === 'Enter') {
             e.preventDefault();
@@ -179,8 +206,12 @@ function SupplierAutocomplete({ initialValue, onCommit, onCancel }) {
         }}
         style={{ width: '100%', padding: '0.25rem 0.4rem', fontSize: '0.72rem', fontFamily: 'inherit', border: '1px solid #93C5FD', borderRadius: 4 }}
       />
-      {showList && (
-        <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: 2, minWidth: '100%', maxWidth: 320, maxHeight: 220, overflowY: 'auto', background: '#fff', border: '1px solid #CBD5E1', borderRadius: 4, boxShadow: '0 6px 16px rgba(15,23,42,0.12)', zIndex: 20 }}>
+      {showList && createPortal(
+        <div
+          ref={listRef}
+          tabIndex={-1}
+          style={{ position: 'fixed', top: anchor.top, left: anchor.left, width: anchor.width, maxHeight: 240, overflowY: 'auto', background: '#fff', border: '1px solid #CBD5E1', borderRadius: 4, boxShadow: '0 8px 20px rgba(15,23,42,0.18)', zIndex: 1000 }}
+        >
           {matches.map((m, i) => (
             <div
               key={m}
@@ -189,7 +220,8 @@ function SupplierAutocomplete({ initialValue, onCommit, onCancel }) {
               style={{ padding: '0.3rem 0.5rem', fontSize: '0.72rem', background: i === hover ? '#EFF6FF' : '#fff', color: '#1E293B', cursor: 'pointer', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
             >{m}</div>
           ))}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
