@@ -326,19 +326,24 @@ export function KeyContactsView({
   }
 
   async function applyHideTag(contactIds) {
-    if (!contactIds || contactIds.length === 0) return { updated: 0, errors: 0 };
+    if (!contactIds || contactIds.length === 0) return { updated: 0, errors: 0, errorMessage: '' };
     const idSet = new Set(contactIds.map(String));
     const cache = hubspotCache?.contacts || [];
     let updated = 0;
     let errors = 0;
+    let firstErrorMessage = '';
+    const successfulIds = new Set();
     for (const id of idSet) {
       const c = cache.find(x => String(x.id) === id) || cache.find(x => String(x.vid) === id);
       const raw = (c?.dans_tags || c?.dan_s_tags || c?.dans_tag || '');
       const parts = raw.split(';').map(s => s.trim()).filter(Boolean);
       const lower = new Set(parts.map(p => p.toLowerCase()));
-      if (lower.has('hide')) { updated += 1; continue; } // already hidden
+      if (lower.has('hide')) { updated += 1; successfulIds.add(id); continue; }
       parts.push('Hide');
-      const nextTags = parts.join('; ');
+      // Use ';' (no space) to match the separator HubSpotView's tag
+      // picker uses; some HubSpot enum properties reject leading
+      // whitespace on values.
+      const nextTags = parts.join(';');
       try {
         const res = await fetch('/api/hubspot?action=update-contact', {
           method: 'POST',
@@ -346,23 +351,35 @@ export function KeyContactsView({
           body: JSON.stringify({ contactId: id, properties: { dans_tags: nextTags } }),
         });
         const json = await res.json();
-        if (json.error) { errors += 1; continue; }
-        updated += 1;
-      } catch { errors += 1; }
-    }
-    try {
-      await updateHubspotCache(draft => {
-        for (const c of draft.contacts) {
-          if (!idSet.has(String(c.id || c.vid))) continue;
-          const existing = (c.dans_tags || c.dan_s_tags || c.dans_tag || '');
-          const parts = existing.split(';').map(s => s.trim()).filter(Boolean);
-          if (parts.some(p => p.toLowerCase() === 'hide')) continue;
-          parts.push('Hide');
-          c.dans_tags = parts.join('; ');
+        if (json.error || !res.ok) {
+          errors += 1;
+          if (!firstErrorMessage) firstErrorMessage = json.error || `HubSpot ${res.status}`;
+          continue;
         }
-      });
-    } catch (err) { console.warn('Hide cache update failed', err); }
-    return { updated, errors };
+        updated += 1;
+        successfulIds.add(id);
+      } catch (err) {
+        errors += 1;
+        if (!firstErrorMessage) firstErrorMessage = err?.message || 'Network error';
+      }
+    }
+    // Only mirror the successful writes into the local cache so the
+    // row only disappears when HubSpot actually accepted the change.
+    if (successfulIds.size > 0) {
+      try {
+        await updateHubspotCache(draft => {
+          for (const c of draft.contacts) {
+            if (!successfulIds.has(String(c.id || c.vid))) continue;
+            const existing = (c.dans_tags || c.dan_s_tags || c.dans_tag || '');
+            const parts = existing.split(';').map(s => s.trim()).filter(Boolean);
+            if (parts.some(p => p.toLowerCase() === 'hide')) continue;
+            parts.push('Hide');
+            c.dans_tags = parts.join(';');
+          }
+        });
+      } catch (err) { console.warn('Hide cache update failed', err); }
+    }
+    return { updated, errors, errorMessage: firstErrorMessage };
   }
 
   // Push a suggested-company value onto the contact in HubSpot and
@@ -402,10 +419,13 @@ export function KeyContactsView({
     if (!id) return;
     setMassProcessing(true);
     setMassStatus(null);
-    const { updated, errors } = await applyHideTag([id]);
+    const { updated, errors, errorMessage } = await applyHideTag([id]);
     setMassProcessing(false);
     if (errors > 0) {
-      setMassStatus({ type: 'partial', message: `Hide failed (${errors})` });
+      const hint = /allowed options/i.test(errorMessage)
+        ? ' — add "Hide" to the Dan\'s Tags allowed values in HubSpot Settings → Properties.'
+        : '';
+      setMassStatus({ type: 'partial', message: `Hide failed: ${errorMessage}${hint}` });
     } else {
       setMassStatus(null);
       void updated;
@@ -417,10 +437,13 @@ export function KeyContactsView({
     if (!window.confirm(`Hide ${massSelected.size} selected contact${massSelected.size === 1 ? '' : 's'}? This adds the "Hide" tag in HubSpot so they stop appearing here.`)) return;
     setMassProcessing(true);
     setMassStatus(null);
-    const { updated, errors } = await applyHideTag([...massSelected]);
+    const { updated, errors, errorMessage } = await applyHideTag([...massSelected]);
+    const hint = errors > 0 && /allowed options/i.test(errorMessage)
+      ? ' — add "Hide" to the Dan\'s Tags allowed values in HubSpot Settings → Properties.'
+      : '';
     setMassStatus({
       type: errors === 0 ? 'success' : 'partial',
-      message: `Hid ${updated} contact${updated === 1 ? '' : 's'}${errors > 0 ? `, ${errors} failed` : ''}`,
+      message: `Hid ${updated} contact${updated === 1 ? '' : 's'}${errors > 0 ? `, ${errors} failed: ${errorMessage}${hint}` : ''}`,
     });
     setMassProcessing(false);
     setMassSelected(new Set());
