@@ -90,6 +90,7 @@ export function KeyContactsView({
   ),
   contactSelector = KEY_TARGET_SELECTOR,
   metInPersonSelector = (c) => (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase().includes('met in person'),
+  requireActiveOpp = false,
 }) {
   const lsKey = (suffix) => `${storagePrefix}:${suffix}`;
   const { user } = useAuth();
@@ -308,12 +309,42 @@ export function KeyContactsView({
 
   // Every contact tagged "Dan Key Target" (excluding hidden). One entry per contact;
   // we'll bucket them by company below.
+  // Companies (lowercased) that have at least one open / active opp.
+  // Only computed when `requireActiveOpp` is on; used to gate which
+  // contacts even enter the keyContacts list. Active = stage outside
+  // CLOSED_STAGES and INVALID_STAGES.
+  const activeOppCompanies = useMemo(() => {
+    if (!requireActiveOpp) return null;
+    const out = [];
+    const seen = new Set();
+    for (const r of oppsRecords) {
+      const stage = (r['Stage'] || '').trim();
+      if (!stage || INVALID_STAGES.has(stage) || CLOSED_STAGES.has(stage)) continue;
+      const acct = String(r['Account'] || '').trim();
+      const k = acct.toLowerCase();
+      if (!k || seen.has(k)) continue;
+      seen.add(k);
+      out.push(acct);
+    }
+    return out;
+  }, [requireActiveOpp, oppsRecords]);
+
   const keyContacts = useMemo(() => {
     const out = [];
     for (const c of (hubspotCache?.contacts || [])) {
       const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
       if (tags.includes('hide')) continue;
       if (!contactSelector(c)) continue;
+      if (activeOppCompanies) {
+        const cName = String(c.company || '').trim();
+        if (!cName) continue;
+        const lc = cName.toLowerCase();
+        // Fast exact-match path first; fall back to fuzzy match so
+        // "Acme Corp" vs "Acme Corporation" still pairs correctly.
+        let hit = activeOppCompanies.some(a => a.toLowerCase() === lc);
+        if (!hit) hit = activeOppCompanies.some(a => companiesMatch(a, cName));
+        if (!hit) continue;
+      }
       const company = (c.company || '').trim();
       const email = (c.email || '').toLowerCase().trim();
       const at = email.lastIndexOf('@');
@@ -337,7 +368,7 @@ export function KeyContactsView({
       });
     }
     return out;
-  }, [hubspotCache, FREE_MAIL, contactSelector, metInPersonSelector]);
+  }, [hubspotCache, FREE_MAIL, contactSelector, metInPersonSelector, activeOppCompanies]);
 
   // Decision-maker contacts — used for the per-company DM column. Mirrors
   // the equivalent flat-list pattern from the PE Portfolio view.

@@ -82,8 +82,9 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
 
   const subtitle = (
     <>
-      HubSpot contacts you've emailed back-and-forth with —
-      sent, opened, clicked, replied, or otherwise touched in the
+      HubSpot contacts you've emailed back-and-forth with whose company
+      also has at least one open / active opportunity in the Opps
+      tab — sent, opened, clicked, replied, or otherwise touched in the
       selected window. Toggle <strong>All Contacts</strong> for a flat
       table or <strong>By Company</strong> to roll them up by account.
       {' '}
@@ -107,8 +108,9 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
       pageTitle="Active Contacts"
       pageSubtitle={subtitle}
       emptyTitle="No active contacts found"
-      emptyDetail={<>Nothing in HubSpot has email activity in this window. Try widening the range above, or paste new HubSpot data on the HubSpot Contacts tab.</>}
+      emptyDetail={<>Nothing matched in this window. A contact only appears here when (1) HubSpot shows recent email activity and (2) the contact's company has at least one open / active opportunity in the Opps tab. Try widening the range above, or paste fresh HubSpot / Opps data.</>}
       contactSelector={selector}
+      requireActiveOpp
     />
   );
 }
