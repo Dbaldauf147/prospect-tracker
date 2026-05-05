@@ -70,6 +70,16 @@ export function KeyContactsView({ prospects = [], onSelectProspect }) {
   const [showClosed, setShowClosed] = useState(false);
   const [expanded, setExpanded] = useState(() => new Set());
   const [query, setQuery] = useState('');
+  const [viewMode, setViewMode] = useState(() => localStorage.getItem('key-contacts:view-mode') || 'contacts');
+  useEffect(() => { try { localStorage.setItem('key-contacts:view-mode', viewMode); } catch {} }, [viewMode]);
+  const [contactSortKey, setContactSortKey] = useState(() => localStorage.getItem('key-contacts:contact-sort-key') || 'name');
+  const [contactSortDir, setContactSortDir] = useState(() => localStorage.getItem('key-contacts:contact-sort-dir') || 'asc');
+  useEffect(() => { try { localStorage.setItem('key-contacts:contact-sort-key', contactSortKey); } catch {} }, [contactSortKey]);
+  useEffect(() => { try { localStorage.setItem('key-contacts:contact-sort-dir', contactSortDir); } catch {} }, [contactSortDir]);
+  function toggleContactSort(key) {
+    setContactSortDir(prev => (contactSortKey === key ? (prev === 'asc' ? 'desc' : 'asc') : 'asc'));
+    setContactSortKey(key);
+  }
   const [hubspotCache, setHubspotCacheState] = useState(null);
   useEffect(() => {
     let cancelled = false;
@@ -340,6 +350,60 @@ export function KeyContactsView({ prospects = [], onSelectProspect }) {
     ? sortedRows.filter(r => (r.companyName || '').toLowerCase().includes(q))
     : sortedRows;
 
+  // Flat list of every Dan Key Target contact, paired with the matched
+  // prospect (when one) so we can route the open-prospect arrow.
+  const flatContacts = useMemo(() => {
+    const prospectByKey = new Map();
+    for (const row of rows) {
+      if (row.prospect) prospectByKey.set(row.key, row.prospect);
+    }
+    const out = [];
+    for (const row of rows) {
+      for (const c of row.contacts) {
+        out.push({
+          ...c,
+          companyName: row.companyName,
+          prospect: row.prospect || null,
+          rowKey: row.key,
+        });
+      }
+    }
+    return out;
+  }, [rows]);
+
+  const sortedContacts = useMemo(() => {
+    const arr = [...flatContacts];
+    arr.sort((a, b) => {
+      let cmp = 0;
+      switch (contactSortKey) {
+        case 'name':
+          cmp = (a.lastname || a.name || '').localeCompare(b.lastname || b.name || '')
+            || (a.firstname || '').localeCompare(b.firstname || '');
+          break;
+        case 'title':   cmp = (a.jobtitle || '').localeCompare(b.jobtitle || ''); break;
+        case 'company': cmp = (a.companyName || '').localeCompare(b.companyName || ''); break;
+        case 'email':   cmp = (a.email || '').localeCompare(b.email || ''); break;
+        case 'location':
+          cmp = ((a.state || '') + (a.city || '')).localeCompare((b.state || '') + (b.city || ''));
+          break;
+        case 'met':     cmp = Number(!!a.metInPerson) - Number(!!b.metInPerson); break;
+        default: cmp = 0;
+      }
+      if (contactSortDir === 'desc') cmp = -cmp;
+      if (cmp === 0) cmp = (a.name || '').localeCompare(b.name || '');
+      return cmp;
+    });
+    return arr;
+  }, [flatContacts, contactSortKey, contactSortDir]);
+
+  const filteredContacts = q
+    ? sortedContacts.filter(c =>
+        (c.name || '').toLowerCase().includes(q)
+        || (c.companyName || '').toLowerCase().includes(q)
+        || (c.email || '').toLowerCase().includes(q)
+        || (c.jobtitle || '').toLowerCase().includes(q))
+    : sortedContacts;
+
   function toggle(key) {
     setExpanded(prev => {
       const next = new Set(prev);
@@ -355,13 +419,40 @@ export function KeyContactsView({ prospects = [], onSelectProspect }) {
         <div>
           <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#1E293B', margin: 0 }}>Key Contacts</h2>
           <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2, maxWidth: 720 }}>
-            Every company that has at least one HubSpot contact tagged <code>Dan Key Target</code>. Sorted by number of key contacts. Expand a row to see the contacts and any opportunities on that account.
+            Every HubSpot contact tagged <code>Dan Key Target</code>. Toggle <strong>All Contacts</strong> for a flat name-by-name table or <strong>By Company</strong> to roll them up by account with opportunities and decision-maker stats.
           </div>
         </div>
-        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.72rem', color: '#475569', cursor: 'pointer' }}>
-          <input type="checkbox" checked={showClosed} onChange={e => setShowClosed(e.target.checked)} />
-          <span>Include closed (Sold / Not Sold / Lost)</span>
-        </label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <div style={{ display: 'inline-flex', border: '1px solid #CBD5E1', borderRadius: 6, overflow: 'hidden' }}>
+            {[
+              { key: 'contacts', label: 'All Contacts' },
+              { key: 'companies', label: 'By Company' },
+            ].map((opt, i) => (
+              <button
+                key={opt.key}
+                type="button"
+                onClick={() => setViewMode(opt.key)}
+                style={{
+                  padding: '0.35rem 0.75rem',
+                  fontSize: '0.72rem',
+                  fontWeight: 600,
+                  fontFamily: 'inherit',
+                  cursor: 'pointer',
+                  border: 'none',
+                  borderLeft: i === 0 ? 'none' : '1px solid #CBD5E1',
+                  background: viewMode === opt.key ? '#1E293B' : '#fff',
+                  color: viewMode === opt.key ? '#fff' : '#475569',
+                }}
+              >{opt.label}</button>
+            ))}
+          </div>
+          {viewMode === 'companies' && (
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.72rem', color: '#475569', cursor: 'pointer' }}>
+              <input type="checkbox" checked={showClosed} onChange={e => setShowClosed(e.target.checked)} />
+              <span>Include closed (Sold / Not Sold / Lost)</span>
+            </label>
+          )}
+        </div>
       </div>
 
       <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0 }}>
@@ -369,7 +460,9 @@ export function KeyContactsView({ prospects = [], onSelectProspect }) {
           type="text"
           value={query}
           onChange={e => setQuery(e.target.value)}
-          placeholder={`Search ${rows.length} compan${rows.length === 1 ? 'y' : 'ies'}…`}
+          placeholder={viewMode === 'contacts'
+            ? `Search ${flatContacts.length} contact${flatContacts.length === 1 ? '' : 's'}…`
+            : `Search ${rows.length} compan${rows.length === 1 ? 'y' : 'ies'}…`}
           style={{ width: '100%', maxWidth: 400, padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
         />
       </div>
@@ -380,7 +473,106 @@ export function KeyContactsView({ prospects = [], onSelectProspect }) {
             Loading HubSpot contacts… open the <strong>HubSpot Contacts</strong> tab once if this doesn't populate.
           </div>
         )}
-        {filteredRows.length === 0 ? (
+        {viewMode === 'contacts' ? (
+          filteredContacts.length === 0 ? (
+            <div style={{ padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
+              <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>
+                {flatContacts.length === 0 ? 'No "Dan Key Target" contacts found' : `No contacts match "${query}"`}
+              </div>
+              <div style={{ fontSize: '0.78rem' }}>
+                {flatContacts.length === 0
+                  ? <>Tag a HubSpot contact with <code>Dan Key Target</code> in the HubSpot Contacts tab and they'll show up here.</>
+                  : `${flatContacts.length} total contacts — adjust your search.`}
+              </div>
+            </div>
+          ) : (() => {
+            const CONTACT_GRID = '1.4fr 1.6fr 1.6fr 2fr 1.2fr 1.4fr 0.7fr 0.7fr 28px';
+            const CONTACT_COLS = [
+              { key: 'name',     label: 'Name' },
+              { key: 'title',    label: 'Title' },
+              { key: 'company',  label: 'Company' },
+              { key: 'email',    label: 'Email' },
+              { key: 'phone',    label: 'Phone' },
+              { key: 'location', label: 'Location' },
+              { key: 'linkedin', label: 'LinkedIn', sortable: false },
+              { key: 'met',      label: 'Met' },
+            ];
+            const CONTACT_GLYPH = (key) => contactSortKey === key ? (contactSortDir === 'desc' ? ' ▼' : ' ▲') : '';
+            return (
+              <div style={{ background: '#fff', border: '1px solid #CBD5E1', borderRadius: 8, overflow: 'hidden' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: CONTACT_GRID, background: '#F1F5F9', borderBottom: '1px solid #CBD5E1', position: 'sticky', top: 0, zIndex: 1 }}>
+                  {CONTACT_COLS.map(c => (
+                    <div
+                      key={c.key}
+                      onClick={c.sortable === false ? undefined : () => toggleContactSort(c.key)}
+                      style={{
+                        padding: '0.4rem 0.6rem',
+                        fontSize: '0.62rem',
+                        fontWeight: 700,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.04em',
+                        color: contactSortKey === c.key ? '#1E293B' : '#475569',
+                        background: contactSortKey === c.key ? '#E2E8F0' : 'transparent',
+                        cursor: c.sortable === false ? 'default' : 'pointer',
+                        userSelect: 'none',
+                        borderRight: '1px solid #E2E8F0',
+                      }}
+                    >{c.label}{c.sortable === false ? '' : CONTACT_GLYPH(c.key)}</div>
+                  ))}
+                  <div />
+                </div>
+                {filteredContacts.map((c, i) => (
+                  <div
+                    key={`${c.rowKey}|${c.id}`}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: CONTACT_GRID,
+                      alignItems: 'center',
+                      borderTop: i === 0 ? 'none' : '1px solid #F1F5F9',
+                      background: i % 2 === 0 ? '#fff' : '#FCFCFD',
+                    }}
+                  >
+                    <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.8rem', fontWeight: 700, color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.name}>{c.name}</div>
+                    <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.72rem', color: c.jobtitle ? '#475569' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.jobtitle}>{c.jobtitle || '—'}</div>
+                    <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.74rem', color: c.companyName ? '#1E293B' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 4 }} title={c.companyName}>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.companyName || '—'}</span>
+                      {c.prospect && (
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => onSelectProspect?.(c.prospect)}
+                          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelectProspect?.(c.prospect); } }}
+                          title="Open prospect record"
+                          style={{ fontSize: '0.65rem', color: '#3B82F6', cursor: 'pointer', fontWeight: 600 }}
+                        >↗</span>
+                      )}
+                    </div>
+                    <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.72rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.email}>
+                      {c.email
+                        ? <a href={`mailto:${c.email}`} style={{ color: '#3B82F6', textDecoration: 'none' }}>{c.email}</a>
+                        : <span style={{ color: '#CBD5E1' }}>—</span>}
+                    </div>
+                    <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.72rem', color: c.phone ? '#64748B' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.phone}>{c.phone || '—'}</div>
+                    <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: (c.city || c.state) ? '#64748B' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {[c.city, c.state].filter(Boolean).join(', ') || '—'}
+                    </div>
+                    <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem' }}>
+                      {c.linkedin
+                        ? <a href={c.linkedin} target="_blank" rel="noopener noreferrer" style={{ color: '#0A66C2', textDecoration: 'none', fontWeight: 600 }}>Open ↗</a>
+                        : <span style={{ color: '#CBD5E1' }}>—</span>}
+                    </div>
+                    <div style={{ padding: '0.45rem 0.6rem' }}>
+                      {c.metInPerson
+                        ? <span style={{ display: 'inline-block', padding: '1px 6px', fontSize: '0.6rem', fontWeight: 700, background: '#DCFCE7', color: '#166534', border: '1px solid #86EFAC', borderRadius: 999 }}>✓ Yes</span>
+                        : <span style={{ color: '#CBD5E1', fontSize: '0.7rem' }}>—</span>}
+                    </div>
+                    <div />
+                  </div>
+                ))}
+              </div>
+            );
+          })()
+        ) : filteredRows.length === 0 ? (
           <div style={{ padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
             <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>
               {rows.length === 0 ? 'No "Dan Key Target" contacts found' : `No companies match "${query}"`}
