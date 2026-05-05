@@ -1090,6 +1090,20 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
     delete next[`${contactId}_${field}`];
     updateSettings({ dismissedGuesses: next });
   }
+  // Whether the bulk "Copy All Guessed Companies" button should treat
+  // a contact as actionable. Includes the empty-company fill case AND
+  // the upgrade-existing case (a guess that differs from the typed
+  // company text), since the user wants both rolled into the same
+  // bulk action. Identical strings (no-op) and dismissed guesses are
+  // still skipped.
+  function hasActionableGuessedCompany(c) {
+    if (!c.guessedCompany) return false;
+    if (dismissedGuesses[`${c.id}_company`]) return false;
+    const existing = String(c.company || '').trim().toLowerCase();
+    const guess = String(c.guessedCompany).trim().toLowerCase();
+    if (!existing) return true;
+    return existing !== guess;
+  }
 
   // Build tier lookup from prospects (My Accounts data)
   const tierByCompany = useMemo(() => {
@@ -2188,9 +2202,14 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
   }
 
   async function handleCopyAllGuessedCompanies() {
-    const toCopy = enrichedContacts.filter(c => !c.company && c.guessedCompany && !dismissedGuesses[`${c.id}_company`]);
+    const toCopy = enrichedContacts.filter(hasActionableGuessedCompany);
     if (toCopy.length === 0) return;
-    if (!confirm(`Copy ONLY the guessed company name to ${toCopy.length} contacts in HubSpot? (Names will NOT be changed)`)) return;
+    const fillCount = toCopy.filter(c => !c.company).length;
+    const overwriteCount = toCopy.length - fillCount;
+    const overwriteNote = overwriteCount > 0
+      ? ` (${fillCount} empty, ${overwriteCount} will OVERWRITE the current company text)`
+      : '';
+    if (!confirm(`Copy the guessed company name to ${toCopy.length} contacts in HubSpot?${overwriteNote} (Names will NOT be changed)`)) return;
     setMassProcessing(true);
     setPushStatus(null);
     let updated = 0, errors = 0;
@@ -2393,9 +2412,9 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
             )}
             <button className={styles.newContactBtn} onClick={() => setEditContact(null)}>+ New Contact</button>
             <button className={styles.bulkUploadBtn} onClick={() => setShowBulkUpload(true)}>Bulk Upload</button>
-            {enrichedContacts.some(c => !c.company && c.guessedCompany && !dismissedGuesses[`${c.id}_company`]) && (
+            {enrichedContacts.some(hasActionableGuessedCompany) && (
               <button className={styles.copyAllGuessBtn} onClick={handleCopyAllGuessedCompanies} disabled={massProcessing}>
-                {massProcessing ? 'Copying...' : `Copy All Guessed Companies (${enrichedContacts.filter(c => !c.company && c.guessedCompany && !dismissedGuesses[`${c.id}_company`]).length})`}
+                {massProcessing ? 'Copying...' : `Copy All Guessed Companies (${enrichedContacts.filter(hasActionableGuessedCompany).length})`}
               </button>
             )}
             {enrichedContacts.some(c => c.guessedName && (!c.firstname || !c.lastname) && !dismissedGuesses[`${c.id}_name`]) && (
