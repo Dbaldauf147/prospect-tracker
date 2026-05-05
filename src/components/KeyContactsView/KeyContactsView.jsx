@@ -7,6 +7,7 @@ import { dbGet } from '../../utils/db';
 import { formatAum } from '../../utils/formatters';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
 import { buildCompanyGuessIndex, guessCompanyForContact } from '../../utils/companyGuess';
+import { matchesCdm } from '../../utils/cdmMatch';
 
 // Click-to-edit cell used inside the All Contacts table. Idle state
 // renders the value as plain text; on click it switches to an <input>
@@ -330,6 +331,7 @@ export function KeyContactsView(props) {
 function KeyContactsViewInner({
   prospects = [],
   onSelectProspect,
+  cdmName = '',
   settings = {},
   updateSettings = () => {},
   storagePrefix = 'key-contacts',
@@ -586,6 +588,161 @@ function KeyContactsViewInner({
   // 1:1 dump of what's on screen. Used by the Download button on the
   // All Contacts view; in By Company mode we still flatten every
   // contact across the visible rows.
+  // Combined CSV across Key / Active / Client tabs. Each contact only
+  // appears once; the Categories column lists every tab they qualify
+  // for (comma-separated). Honors the same Hide / Left / Schneider
+  // exclusions as the individual page selectors.
+  function downloadCombinedContactsCsv() {
+    const cache = hubspotCache?.contacts || [];
+    if (cache.length === 0) {
+      alert('No HubSpot contacts loaded — sync HubSpot Contacts first.');
+      return;
+    }
+    const local = settings?.contactLocalFields || {};
+    // Build the Client / Old Client filter sets the same way the
+    // ClientContactsView selector does — CDM-scoped Client list +
+    // global Old Client list (so Old Client suppresses regardless of
+    // CDM, mirroring the page).
+    const clientCompanies = new Set();
+    const clientDomains = new Set();
+    const oldClientCompanies = new Set();
+    const oldClientDomains = new Set();
+    function collectDomains(p, into) {
+      if (p?.emailDomain) {
+        for (const entry of String(p.emailDomain).split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)) {
+          const at = entry.lastIndexOf('@');
+          const d = (at >= 0 ? entry.slice(at + 1) : entry).toLowerCase().trim();
+          if (d) into.add(d);
+        }
+      }
+      if (p?.website) {
+        const d = String(p.website).replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '').toLowerCase().trim();
+        if (d) into.add(d);
+      }
+    }
+    for (const p of (prospects || [])) {
+      if (p.status === 'Client' && matchesCdm(p.cdm, cdmName)) {
+        if (p.company) clientCompanies.add(String(p.company).toLowerCase().trim());
+        collectDomains(p, clientDomains);
+      }
+      if (p.status === 'Old Client') {
+        if (p.company) oldClientCompanies.add(String(p.company).toLowerCase().trim());
+        collectDomains(p, oldClientDomains);
+      }
+    }
+    const SCHNEIDER_RE = /\bschneider\s*electric\b/i;
+    const SCHNEIDER_DOMAIN_RE = /(^|\.)(se\.com|schneider-electric\.com|schneider\.com)$/i;
+    function isSchneider(c) {
+      if (SCHNEIDER_RE.test(String(c.company || ''))) return true;
+      const e = String(c.email || '').toLowerCase().trim();
+      const at = e.lastIndexOf('@');
+      if (at >= 0) {
+        const d = e.slice(at + 1).trim();
+        if (SCHNEIDER_DOMAIN_RE.test(d)) return true;
+      }
+      return false;
+    }
+    // Active = at least one HubSpot email-activity timestamp in the
+    // last 90 days (matches ActiveContactsView's default window).
+    const ACTIVE_CUTOFF = Date.now() - 90 * 86400000;
+    const ACTIVITY_FIELDS = ['hs_email_last_send_date', 'hs_sales_email_last_replied', 'hs_email_last_open_date', 'hs_email_last_click_date', 'notes_last_contacted'];
+    function isActive(c) {
+      for (const f of ACTIVITY_FIELDS) {
+        const v = c[f];
+        if (!v) continue;
+        const ts = Date.parse(v);
+        if (!Number.isNaN(ts) && ts >= ACTIVE_CUTOFF) return true;
+      }
+      return false;
+    }
+    function emailDomainOf(c) {
+      const e = String(c.email || '').toLowerCase().trim();
+      const at = e.lastIndexOf('@');
+      if (at < 0) return '';
+      const d = e.slice(at + 1).trim();
+      return d && !FREE_MAIL.has(d) ? d : '';
+    }
+    const out = [];
+    for (const baseC of cache) {
+      const lf = local[String(baseC.id || baseC.vid || '')] || null;
+      const c = lf && typeof lf._companyOverride === 'string' && lf._companyOverride
+        ? { ...baseC, company: lf._companyOverride }
+        : baseC;
+      const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
+      if (tags.includes('hide')) continue;
+      if (tags.includes('left')) continue;
+      if (isSchneider(c)) continue;
+      const companyLower = String(c.company || '').trim().toLowerCase();
+      const domain = emailDomainOf(c);
+      const categories = [];
+      // Key Contacts
+      if (tags.includes('dan key target')) categories.push('Key');
+      // Client Contacts
+      const blockedByOldClient = (companyLower && oldClientCompanies.has(companyLower)) || (domain && oldClientDomains.has(domain));
+      if (!blockedByOldClient) {
+        const isClient = (companyLower && clientCompanies.has(companyLower)) || (!companyLower && domain && clientDomains.has(domain));
+        if (isClient) categories.push('Client');
+      }
+      // Active Contacts (drops Key Targets and Clients to mirror the
+      // page's exclusion rules — they live on the other tabs).
+      const isClientForActive = (companyLower && clientCompanies.has(companyLower)) || (!companyLower && domain && clientDomains.has(domain));
+      if (isActive(c) && !tags.includes('dan key target') && !isClientForActive) {
+        categories.push('Active');
+      }
+      if (categories.length === 0) continue;
+      out.push({ contact: c, categories });
+    }
+    if (out.length === 0) {
+      alert('No contacts qualify for any of the three tabs.');
+      return;
+    }
+    const headers = [
+      'Categories', 'First Name', 'Last Name', 'Full Name', 'Title', 'Company',
+      'Email', 'Phone', 'City', 'State', 'Country',
+      'LinkedIn URL', 'Met In Person', 'Events', 'Tags',
+    ];
+    const escape = (v) => {
+      const s = (v === null || v === undefined) ? '' : String(v);
+      if (/[",\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+      return s;
+    };
+    const rows = out.map(({ contact: c, categories }) => {
+      const tagsRaw = c.dans_tags || c.dan_s_tags || c.dans_tag || '';
+      const eventsTxt = contactEvents[String(c.id || '')] || '';
+      const fullName = [c.firstname, c.lastname].filter(Boolean).join(' ');
+      const tagsLower = String(tagsRaw).toLowerCase();
+      const metInPerson = tagsLower.includes('met in person');
+      return [
+        categories.join(', '),
+        c.firstname || '',
+        c.lastname || '',
+        fullName,
+        c.jobtitle || '',
+        c.company || '',
+        c.email || '',
+        c.phone || '',
+        c.city || '',
+        c.state || '',
+        c.country || '',
+        c.hs_linkedin_url || c.linkedin_url || '',
+        metInPerson ? 'Yes' : '',
+        eventsTxt,
+        tagsRaw,
+      ].map(escape).join(',');
+    });
+    const csv = headers.map(escape).join(',') + '\n' + rows.join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const date = new Date().toISOString().slice(0, 10);
+    a.download = `contacts-combined-${date}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
   function downloadContactsCsv() {
     const list = viewMode === 'contacts'
       ? filteredContacts
@@ -1347,6 +1504,22 @@ function KeyContactsViewInner({
               fontFamily: 'inherit',
             }}
           >Download CSV</button>
+          <button
+            type="button"
+            onClick={downloadCombinedContactsCsv}
+            title="Download a single CSV combining contacts from Key Contacts, Active Contacts, and Client Contacts. Each row has a Categories column listing every tab the contact qualifies for. Filters and search on this page are NOT applied — the export covers the full tag/CDM-derived sets."
+            style={{
+              padding: '0.35rem 0.75rem',
+              fontSize: '0.72rem',
+              fontWeight: 600,
+              border: '1px solid #1D4ED8',
+              borderRadius: 6,
+              background: '#EFF6FF',
+              color: '#1D4ED8',
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+            }}
+          >Download Combined (Key + Active + Client)</button>
           {viewMode === 'contacts' && (
             <div ref={colsMenuRef} style={{ position: 'relative' }}>
               <button

@@ -75,6 +75,7 @@ export function ContactsView({
             onSelectProspect={onSelectProspect}
             settings={settings}
             updateSettings={updateSettings}
+            cdmName={cdmName}
           />
         )}
         {subtab === 'active' && (
@@ -83,6 +84,7 @@ export function ContactsView({
             onSelectProspect={onSelectProspect}
             settings={settings}
             updateSettings={updateSettings}
+            cdmName={cdmName}
           />
         )}
         {subtab === 'clients' && (
@@ -100,6 +102,7 @@ export function ContactsView({
             onSelectProspect={onSelectProspect}
             settings={settings}
             updateSettings={updateSettings}
+            cdmName={cdmName}
           />
         )}
         {subtab === 'dedupe' && <DedupeView />}

@@ -31,7 +31,7 @@ function isChangedJobs(c) {
   return false;
 }
 
-export function ChangedJobsContactsView({ prospects = [], onSelectProspect, settings, updateSettings }) {
+export function ChangedJobsContactsView({ prospects = [], onSelectProspect, settings, updateSettings, cdmName }) {
   const selector = useCallback((c) => isChangedJobs(c), []);
 
   return (
@@ -40,6 +40,7 @@ export function ChangedJobsContactsView({ prospects = [], onSelectProspect, sett
       onSelectProspect={onSelectProspect}
       settings={settings}
       updateSettings={updateSettings}
+      cdmName={cdmName}
       storagePrefix="changed-jobs-contacts"
       pageTitle="Changed Jobs"
       pageSubtitle={

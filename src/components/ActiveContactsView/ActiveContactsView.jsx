@@ -128,7 +128,7 @@ function makeActiveSelector(windowDays, mode = 'visible', { clientCompanies = []
   };
 }
 
-export function ActiveContactsView({ prospects = [], onSelectProspect, settings, updateSettings }) {
+export function ActiveContactsView({ prospects = [], onSelectProspect, settings, updateSettings, cdmName }) {
   const [windowDays, setWindowDays] = useState(() => {
     try {
       const saved = Number(localStorage.getItem('active-contacts:window-days'));
@@ -335,6 +335,7 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
       onSelectProspect={onSelectProspect}
       settings={settings}
       updateSettings={updateSettings}
+      cdmName={cdmName}
       storagePrefix="active-contacts"
       pageTitle="Active Contacts"
       pageSubtitle={subtitle}

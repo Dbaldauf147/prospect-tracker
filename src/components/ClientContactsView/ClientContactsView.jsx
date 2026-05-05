@@ -127,6 +127,7 @@ export function ClientContactsView({ prospects = [], onSelectProspect, settings,
       onSelectProspect={onSelectProspect}
       settings={settings}
       updateSettings={updateSettings}
+      cdmName={cdmName}
       storagePrefix="client-contacts"
       pageTitle="Client Contacts"
       pageSubtitle={
