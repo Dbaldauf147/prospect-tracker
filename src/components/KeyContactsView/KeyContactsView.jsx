@@ -449,6 +449,65 @@ export function KeyContactsView({
     setMassSelected(new Set());
   }
 
+  // Download the currently visible contacts as a CSV. Honors the
+  // active query, per-column filters, and sort order so the file is a
+  // 1:1 dump of what's on screen. Used by the Download button on the
+  // All Contacts view; in By Company mode we still flatten every
+  // contact across the visible rows.
+  function downloadContactsCsv() {
+    const list = viewMode === 'contacts'
+      ? filteredContacts
+      : filteredRows.flatMap(row => row.contacts.map(c => ({
+          ...c,
+          companyName: row.companyName,
+          prospect: row.prospect,
+        })));
+    if (!list || list.length === 0) {
+      alert('No contacts to download — adjust your filters.');
+      return;
+    }
+    const headers = [
+      'First Name', 'Last Name', 'Full Name', 'Title', 'Company',
+      'Email', 'Phone', 'City', 'State', 'Country',
+      'LinkedIn URL', 'Met In Person', 'Tags',
+    ];
+    const escape = (v) => {
+      const s = (v === null || v === undefined) ? '' : String(v);
+      if (/[",\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+      return s;
+    };
+    const rows = list.map(c => {
+      const raw = c.raw || {};
+      const tags = (raw.dans_tags || raw.dan_s_tags || raw.dans_tag || '');
+      return [
+        c.firstname || '',
+        c.lastname || '',
+        c.name || '',
+        c.jobtitle || '',
+        c.companyName || c.company || '',
+        c.email || '',
+        c.phone || '',
+        c.city || '',
+        c.state || '',
+        c.country || '',
+        c.linkedin || raw.hs_linkedin_url || '',
+        c.metInPerson ? 'Yes' : '',
+        tags,
+      ].map(escape).join(',');
+    });
+    const csv = headers.map(escape).join(',') + '\n' + rows.join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const date = new Date().toISOString().slice(0, 10);
+    a.download = `${storagePrefix}-${date}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
   async function handleMassApply() {
     if (massSelected.size === 0 || !massValue.trim()) return;
     setMassProcessing(true);
@@ -1072,6 +1131,22 @@ export function KeyContactsView({
               <span>Include closed (Sold / Not Sold / Lost)</span>
             </label>
           )}
+          <button
+            type="button"
+            onClick={downloadContactsCsv}
+            title="Download a CSV of every contact currently visible on this page (honors active filters, search, and view mode)."
+            style={{
+              padding: '0.35rem 0.75rem',
+              fontSize: '0.72rem',
+              fontWeight: 600,
+              border: '1px solid #CBD5E1',
+              borderRadius: 6,
+              background: '#fff',
+              color: '#334155',
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+            }}
+          >Download CSV</button>
           {viewMode === 'contacts' && (
             <button
               type="button"
