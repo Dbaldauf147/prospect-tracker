@@ -590,6 +590,33 @@ function PipelineViewInner() {
     };
   }, [hasBfo, bfo, oppsRecords]);
 
+  // Count of new opps opened in the past 30 days, derived from the
+  // Opps tab. Skips rows without a BFO Link so we don't count drafts /
+  // unlinked records. Open date = Close Date − Age for closed opps
+  // (Sold / Not Sold), or today − Age for active opps.
+  const newOppsPast30Count = useMemo(() => {
+    const cutoff = Date.now() - 30 * 86400000;
+    const now = Date.now();
+    let count = 0;
+    for (const r of oppsRecords) {
+      const bfoLink = String(r['BFO Link'] ?? '').trim();
+      if (!bfoLink || bfoLink === '-' || bfoLink === '#N/A') continue;
+      const age = Number(String(r.Age ?? '').replace(/[^0-9.\-]/g, ''));
+      if (!Number.isFinite(age) || age < 0) continue;
+      const stage = (r.Stage || '').trim();
+      let openTs;
+      if (stage === 'Sold' || stage === 'Not Sold') {
+        const closeTs = Date.parse(r['Close Date'] || '');
+        if (Number.isNaN(closeTs)) continue;
+        openTs = closeTs - age * 86400000;
+      } else {
+        openTs = now - age * 86400000;
+      }
+      if (openTs >= cutoff) count += 1;
+    }
+    return count;
+  }, [oppsRecords]);
+
   const notQuotedFromOpps = useMemo(() => {
     const NOT_QUOTED_STAGES = new Set(['Lead', 'Not Started', 'Qualifying']);
     return oppsRecords
@@ -1022,15 +1049,12 @@ function PipelineViewInner() {
             <thead><tr><th>Goals</th><th>Opportunities</th></tr></thead>
             <tbody>
               <tr>
-                <td className={styles.label}>{state.newOppsGoal} New Opps This Month</td>
-                <td className={compareClass(state.newOppsThisMonth, state.newOppsGoal, 'higher-better')}>
-                  <NumCell value={state.newOppsThisMonth} onCommit={(v) => setField('newOppsThisMonth', v)} />
-                </td>
-              </tr>
-              <tr>
-                <td className={styles.label}>{state.newOppsGoal} New Opps Last Month</td>
-                <td className={compareClass(state.newOppsLastMonth, state.newOppsGoal, 'higher-better')}>
-                  <NumCell value={state.newOppsLastMonth} onCommit={(v) => setField('newOppsLastMonth', v)} />
+                <td className={styles.label}>{state.newOppsGoal} New Opps Past 30 Days</td>
+                <td className={compareClass(newOppsPast30Count, state.newOppsGoal, 'higher-better')}>
+                  <span
+                    title="Auto-fed from the Opps tab — opps opened in the past 30 days that have a BFO Link. Open date = Close Date − Age for closed opps, today − Age for active. Re-paste the Opps tab to refresh."
+                    className={styles.liveCell}
+                  >{newOppsPast30Count}</span>
                 </td>
               </tr>
               <tr>
