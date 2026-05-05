@@ -1097,8 +1097,8 @@ export function KeyContactsView({
             const CONTACT_GLYPH = (key) => contactSortKey === key ? (contactSortDir === 'desc' ? ' ▼' : ' ▲') : '';
             const RESIZE_HANDLE = { position: 'absolute', top: 0, right: 0, bottom: 0, width: 6, cursor: 'col-resize', userSelect: 'none' };
             return (
-              <div style={{ background: '#fff', border: '1px solid #CBD5E1', borderRadius: 8, overflow: 'hidden' }}>
-                <div style={{ display: 'grid', gridTemplateColumns: CONTACT_GRID, background: '#F1F5F9', borderBottom: '1px solid #CBD5E1', position: 'sticky', top: 0, zIndex: 1 }}>
+              <div style={{ background: '#fff', border: '1px solid #CBD5E1', borderRadius: 8 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: CONTACT_GRID, background: '#F1F5F9', borderBottom: '1px solid #CBD5E1', borderTopLeftRadius: 8, borderTopRightRadius: 8, position: 'sticky', top: 0, zIndex: 2 }}>
                   {massMode && (
                     <div style={{ padding: '0.4rem 0.6rem', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRight: '1px solid #E2E8F0' }}>
                       <input
@@ -1149,7 +1149,7 @@ export function KeyContactsView({
                   ))}
                   <div />
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: CONTACT_GRID, background: '#F8FAFC', borderBottom: '1px solid #E2E8F0', position: 'sticky', top: 28, zIndex: 1 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: CONTACT_GRID, background: '#F8FAFC', borderBottom: '1px solid #E2E8F0', position: 'sticky', top: 30, zIndex: 2 }}>
                   {massMode && <div style={{ borderRight: '1px solid #E2E8F0' }} />}
                   {CONTACT_COLS.map(c => (
                     <div key={c.key} style={{ padding: '0.25rem 0.4rem', borderRight: '1px solid #E2E8F0' }}>
@@ -1329,8 +1329,8 @@ export function KeyContactsView({
           const SORT_GLYPH = (key) => sortKey === key ? (sortDir === 'desc' ? ' ▼' : ' ▲') : '';
           const RESIZE_HANDLE = { position: 'absolute', top: 0, right: 0, bottom: 0, width: 6, cursor: 'col-resize', userSelect: 'none' };
           return (
-            <div style={{ background: '#fff', border: '1px solid #CBD5E1', borderRadius: 8, overflow: 'hidden' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: GRID, background: '#F1F5F9', borderBottom: '1px solid #CBD5E1', position: 'sticky', top: 0, zIndex: 1 }}>
+            <div style={{ background: '#fff', border: '1px solid #CBD5E1', borderRadius: 8 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: GRID, background: '#F1F5F9', borderBottom: '1px solid #CBD5E1', borderTopLeftRadius: 8, borderTopRightRadius: 8, position: 'sticky', top: 0, zIndex: 2 }}>
                 {HEADER_COLUMNS.map(c => (
                   <div
                     key={c.key}
