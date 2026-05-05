@@ -31,6 +31,13 @@ function InlineCell({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [hover, setHover] = useState(0);
+  // Tracks whether the user has actively navigated the suggestion
+  // list (ArrowDown / ArrowUp). Without this signal, pressing Enter
+  // would always commit matches[0] — which means typing a value that
+  // happens to be a fuzzy substring of an existing suggestion would
+  // silently get rewritten. With it, Enter prefers the typed text
+  // unless the user explicitly navigated to a suggestion.
+  const [navigated, setNavigated] = useState(false);
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
   const inputRef = useRef(null);
   const wrapperRef = useRef(null);
@@ -86,7 +93,7 @@ function InlineCell({
   }
   const q = (draft || '').trim().toLowerCase();
   const matches = suggestions && suggestions.length > 0
-    ? (q ? suggestions.filter(n => String(n).toLowerCase().includes(q)).slice(0, 12) : suggestions.slice(0, 12))
+    ? (q ? suggestions.filter(n => String(n).toLowerCase().includes(q)).slice(0, 50) : suggestions.slice(0, 50))
     : [];
   const showSuggestionList = !!suggestions && suggestionsOpen && matches.length > 0;
   return (
@@ -95,20 +102,20 @@ function InlineCell({
         ref={inputRef}
         type={type}
         value={draft}
-        onChange={e => { setDraft(e.target.value); setHover(0); if (suggestions) setSuggestionsOpen(true); }}
+        onChange={e => { setDraft(e.target.value); setHover(0); setNavigated(false); if (suggestions) setSuggestionsOpen(true); }}
         onBlur={() => commit()}
         onKeyDown={e => {
           if (e.key === 'Enter') {
             e.preventDefault();
-            if (showSuggestionList && matches[hover] !== undefined) commit(matches[hover]);
+            if (showSuggestionList && navigated && matches[hover] !== undefined) commit(matches[hover]);
             else commit();
           } else if (e.key === 'Escape') {
             e.preventDefault();
             setEditing(false);
             setSuggestionsOpen(false);
           } else if (showSuggestionList) {
-            if (e.key === 'ArrowDown') { e.preventDefault(); setHover(h => Math.min(h + 1, matches.length - 1)); }
-            else if (e.key === 'ArrowUp') { e.preventDefault(); setHover(h => Math.max(h - 1, 0)); }
+            if (e.key === 'ArrowDown') { e.preventDefault(); setNavigated(true); setHover(h => Math.min(h + 1, matches.length - 1)); }
+            else if (e.key === 'ArrowUp') { e.preventDefault(); setNavigated(true); setHover(h => Math.max(h - 1, 0)); }
           }
         }}
         style={{
@@ -1469,7 +1476,7 @@ export function KeyContactsView({
         </div>
       )}
 
-      <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0 }}>
+      <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <input
           type="text"
           value={query}
@@ -1479,6 +1486,28 @@ export function KeyContactsView({
             : `Search ${rows.length} compan${rows.length === 1 ? 'y' : 'ies'}…`}
           style={{ width: '100%', maxWidth: 400, padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
         />
+        {/* Surface inline-edit save status here so failures are
+            visible whether or not Mass Edit mode is on. */}
+        {!massMode && massStatus && (
+          <div
+            style={{
+              fontSize: '0.72rem',
+              padding: '0.3rem 0.6rem',
+              borderRadius: 6,
+              background: massStatus.type === 'success' ? '#DCFCE7' : '#FEF3C7',
+              color: massStatus.type === 'success' ? '#166534' : '#92400E',
+              border: '1px solid ' + (massStatus.type === 'success' ? '#86EFAC' : '#FDE68A'),
+              maxWidth: 600,
+            }}
+          >
+            <span>{massStatus.message}</span>{' '}
+            <button
+              type="button"
+              onClick={() => setMassStatus(null)}
+              style={{ background: 'transparent', border: 'none', color: 'inherit', cursor: 'pointer', fontSize: '0.7rem', textDecoration: 'underline' }}
+            >dismiss</button>
+          </div>
+        )}
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '0 1.25rem 1.25rem', minHeight: 0 }}>
