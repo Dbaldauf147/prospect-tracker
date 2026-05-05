@@ -65,7 +65,7 @@ function useOppsRecords(userId) {
   return records;
 }
 
-export function KeyContactsView({ prospects = [], onSelectProspect }) {
+export function KeyContactsView({ prospects = [], onSelectProspect, onEditContact }) {
   const { user } = useAuth();
   const [showClosed, setShowClosed] = useState(false);
   const [expanded, setExpanded] = useState(() => new Set());
@@ -210,6 +210,7 @@ export function KeyContactsView({ prospects = [], onSelectProspect }) {
         metInPerson: tags.includes('met in person'),
         company,
         domain,
+        raw: c,
       });
     }
     return out;
@@ -610,19 +611,35 @@ export function KeyContactsView({ prospects = [], onSelectProspect }) {
                       background: i % 2 === 0 ? '#fff' : '#FCFCFD',
                     }}
                   >
-                    <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.8rem', fontWeight: 700, color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.name}>{c.name}</div>
-                    <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.72rem', color: c.jobtitle ? '#475569' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.jobtitle}>{c.jobtitle || '—'}</div>
-                    <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.74rem', color: c.companyName ? '#1E293B' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 4 }} title={c.companyName}>
-                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.companyName || '—'}</span>
-                      {c.prospect && (
+                    <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.8rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={onEditContact ? `Click to edit ${c.name}` : c.name}>
+                      {onEditContact ? (
                         <span
                           role="button"
                           tabIndex={0}
-                          onClick={() => onSelectProspect?.(c.prospect)}
-                          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelectProspect?.(c.prospect); } }}
-                          title="Open prospect record"
-                          style={{ fontSize: '0.65rem', color: '#3B82F6', cursor: 'pointer', fontWeight: 600 }}
-                        >↗</span>
+                          onClick={() => onEditContact(c.raw || c)}
+                          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onEditContact(c.raw || c); } }}
+                          style={{ color: '#1D4ED8', cursor: 'pointer', textDecoration: 'underline' }}
+                        >{c.name}</span>
+                      ) : (
+                        <span style={{ color: '#1E293B' }}>{c.name}</span>
+                      )}
+                    </div>
+                    <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.72rem', color: c.jobtitle ? '#475569' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.jobtitle}>{c.jobtitle || '—'}</div>
+                    <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.74rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.prospect ? `Click to open ${c.companyName}` : c.companyName}>
+                      {c.companyName ? (
+                        c.prospect ? (
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => onSelectProspect?.(c.prospect)}
+                            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelectProspect?.(c.prospect); } }}
+                            style={{ color: '#1D4ED8', cursor: 'pointer', textDecoration: 'underline', fontWeight: 600 }}
+                          >{c.companyName}</span>
+                        ) : (
+                          <span style={{ color: '#1E293B' }}>{c.companyName}</span>
+                        )
+                      ) : (
+                        <span style={{ color: '#CBD5E1' }}>—</span>
                       )}
                     </div>
                     <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.72rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.email}>
@@ -736,22 +753,22 @@ export function KeyContactsView({ prospects = [], onSelectProspect }) {
                       style={{ width: '100%', padding: 0, background: isExpanded ? '#F8FAFC' : '#fff', border: 'none', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', display: 'grid', gridTemplateColumns: GRID, alignItems: 'center' }}
                     >
                       <div
-                        style={{ padding: '0.55rem 0.6rem', fontSize: '0.82rem', fontWeight: 700, color: row.prospect ? '#1E293B' : '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 6 }}
-                        title={isExpanded ? 'Click to collapse' : 'Click to expand contact details'}
+                        style={{ padding: '0.55rem 0.6rem', fontSize: '0.82rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 6 }}
                       >
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.companyName}</span>
-                        {!row.prospect && (
-                          <span style={{ padding: '1px 6px', fontSize: '0.55rem', fontWeight: 700, color: '#92400E', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 999, flexShrink: 0 }}>NO PROSPECT</span>
-                        )}
-                        {row.prospect && (
+                        {row.prospect ? (
                           <span
                             role="button"
                             tabIndex={0}
                             onClick={e => { e.stopPropagation(); onSelectProspect?.(row.prospect); }}
                             onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); onSelectProspect?.(row.prospect); } }}
-                            title="Open prospect record"
-                            style={{ fontSize: '0.65rem', color: '#3B82F6', cursor: 'pointer', flexShrink: 0, fontWeight: 600, padding: '0 4px' }}
-                          >↗</span>
+                            title={`Click to open ${row.companyName}`}
+                            style={{ color: '#1D4ED8', cursor: 'pointer', textDecoration: 'underline', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                          >{row.companyName}</span>
+                        ) : (
+                          <span style={{ color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.companyName}</span>
+                        )}
+                        {!row.prospect && (
+                          <span style={{ padding: '1px 6px', fontSize: '0.55rem', fontWeight: 700, color: '#92400E', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 999, flexShrink: 0 }}>NO PROSPECT</span>
                         )}
                       </div>
 
@@ -859,7 +876,19 @@ export function KeyContactsView({ prospects = [], onSelectProspect }) {
                                       background: i % 2 === 0 ? '#fff' : '#FCFCFD',
                                     }}
                                   >
-                                    <div style={{ fontSize: '0.78rem', fontWeight: 700, color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.name}>{c.name}</div>
+                                    <div style={{ fontSize: '0.78rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={onEditContact ? `Click to edit ${c.name}` : c.name}>
+                                      {onEditContact ? (
+                                        <span
+                                          role="button"
+                                          tabIndex={0}
+                                          onClick={e => { e.stopPropagation(); onEditContact(c.raw || c); }}
+                                          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); onEditContact(c.raw || c); } }}
+                                          style={{ color: '#1D4ED8', cursor: 'pointer', textDecoration: 'underline' }}
+                                        >{c.name}</span>
+                                      ) : (
+                                        <span style={{ color: '#1E293B' }}>{c.name}</span>
+                                      )}
+                                    </div>
                                     <div style={{ fontSize: '0.7rem', color: c.jobtitle ? '#475569' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.jobtitle}>{c.jobtitle || '—'}</div>
                                     <div style={{ fontSize: '0.7rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.email}>
                                       {c.email

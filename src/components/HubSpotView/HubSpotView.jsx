@@ -1033,7 +1033,7 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
   );
 }
 
-export function HubSpotView({ prospects, settings, updateSettings }) {
+export function HubSpotView({ prospects, settings, updateSettings, pendingEditContact, onClearPendingEditContact }) {
   const { user } = useAuth();
   const [data, setData] = useState(null);
   useEffect(() => {
@@ -1046,6 +1046,24 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
   const [tab, setTab] = useState('contacts');
   const [search, setSearch] = useState('');
   const [editContact, setEditContact] = useState(undefined); // undefined=closed, null=new, object=edit
+
+  // External handoff (from Key Contacts → "click to edit"): open the
+  // edit modal for the requested contact once the HubSpot cache is
+  // available. We resolve to the freshest copy in `data.contacts` by
+  // id (preferred) or email, falling back to the raw object so a
+  // missing cache entry still surfaces an editable form.
+  useEffect(() => {
+    if (!pendingEditContact) return;
+    setTab('contacts');
+    const list = data?.contacts || [];
+    const wantId = pendingEditContact.id;
+    const wantEmail = (pendingEditContact.email || '').toLowerCase().trim();
+    const found = (wantId && list.find(c => c.id === wantId))
+      || (wantEmail && list.find(c => (c.email || '').toLowerCase().trim() === wantEmail))
+      || pendingEditContact;
+    setEditContact(found);
+    onClearPendingEditContact?.();
+  }, [pendingEditContact, data, onClearPendingEditContact]);
   const [saving, setSaving] = useState(false);
   const [pushStatus, setPushStatus] = useState(null);
   const [massMode, setMassMode] = useState(false);
