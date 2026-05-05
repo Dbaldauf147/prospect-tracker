@@ -994,7 +994,31 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
               );
             })()}
           </div>
-          <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>LinkedIn URL</label><input style={inputStyle} value={f.hs_linkedin_url} onChange={e => set('hs_linkedin_url', e.target.value)} /></div>
+          <div style={{ gridColumn: 'span 2' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+              <label style={labelStyle}>LinkedIn URL</label>
+              {(() => {
+                // Open Sales Nav People Search pre-filtered to this
+                // contact. The keywords param matches across name +
+                // company, which is the most reliable single field
+                // when the contact has at least a name OR a company.
+                const parts = [f.firstname, f.lastname, f.company].map(s => String(s || '').trim()).filter(Boolean);
+                const keywords = parts.join(' ');
+                if (!keywords) return null;
+                const href = `https://www.linkedin.com/sales/search/people?keywords=${encodeURIComponent(keywords)}`;
+                return (
+                  <a
+                    href={href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="Open Sales Navigator people-search pre-filtered to this name + company. Find the profile, copy the URL from the Sales Nav profile page, and paste it into the field below."
+                    style={{ fontSize: '0.65rem', color: '#0A66C2', textDecoration: 'none', fontWeight: 600 }}
+                  >Find on Sales Nav ↗</a>
+                );
+              })()}
+            </div>
+            <input style={inputStyle} value={f.hs_linkedin_url} onChange={e => set('hs_linkedin_url', e.target.value)} placeholder="https://www.linkedin.com/in/…" />
+          </div>
           <div>
             <label style={labelStyle}>
               City
