@@ -897,11 +897,8 @@ function PipelineViewInner() {
             above (Stage 140 + 4×105 = 560 px to the left edge of
             Pipeline, then 2×105 = 210 px for Pipeline itself) so
             Coverage Ratio sits directly under the Pipeline column
-            and the two blue borders read as a single vertical block.
-            Wrapped in overflow-x:auto matching the metrics table so
-            narrow viewports scroll rather than misalign. */}
-        <div style={{ overflowX: 'auto' }}>
-        <div className={styles.midRow} style={{ minWidth: 1295 }}>
+            and the two blue borders read as a single vertical block. */}
+        <div className={styles.midRow} style={{ flexWrap: 'nowrap' }}>
           <div className={styles.section} style={{ flex: '0 0 544px' }}>
             <table className={styles.grid} style={{ width: '100%' }}>
               <thead>
@@ -1017,7 +1014,6 @@ function PipelineViewInner() {
             </table>
           </div>
 
-        </div>
         </div>
 
         {/* Goals / Activities */}
