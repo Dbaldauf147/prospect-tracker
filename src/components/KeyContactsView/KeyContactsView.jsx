@@ -80,6 +80,40 @@ export function KeyContactsView({ prospects = [], onSelectProspect }) {
     setContactSortDir(prev => (contactSortKey === key ? (prev === 'asc' ? 'desc' : 'asc') : 'asc'));
     setContactSortKey(key);
   }
+
+  const DEFAULT_CONTACT_COL_WIDTHS = {
+    name: 180, title: 200, company: 200, email: 240, phone: 140, location: 140, linkedin: 90, met: 80,
+  };
+  const [contactColWidths, setContactColWidths] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('key-contacts:contact-col-widths')) || {};
+      return { ...DEFAULT_CONTACT_COL_WIDTHS, ...saved };
+    } catch { return DEFAULT_CONTACT_COL_WIDTHS; }
+  });
+  useEffect(() => { try { localStorage.setItem('key-contacts:contact-col-widths', JSON.stringify(contactColWidths)); } catch {} }, [contactColWidths]);
+  const [contactColFilters, setContactColFilters] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('key-contacts:contact-col-filters')) || {}; } catch { return {}; }
+  });
+  useEffect(() => { try { localStorage.setItem('key-contacts:contact-col-filters', JSON.stringify(contactColFilters)); } catch {} }, [contactColFilters]);
+  const contactResizingRef = useRef(null);
+  function startContactResize(colKey, e) {
+    e.preventDefault();
+    e.stopPropagation();
+    contactResizingRef.current = { key: colKey, startX: e.clientX, startWidth: contactColWidths[colKey] || 100 };
+    const onMove = (ev) => {
+      if (!contactResizingRef.current) return;
+      const delta = ev.clientX - contactResizingRef.current.startX;
+      const next = Math.max(60, contactResizingRef.current.startWidth + delta);
+      setContactColWidths(prev => ({ ...prev, [contactResizingRef.current.key]: next }));
+    };
+    const onUp = () => {
+      contactResizingRef.current = null;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
   const [hubspotCache, setHubspotCacheState] = useState(null);
   useEffect(() => {
     let cancelled = false;
@@ -396,13 +430,32 @@ export function KeyContactsView({ prospects = [], onSelectProspect }) {
     return arr;
   }, [flatContacts, contactSortKey, contactSortDir]);
 
-  const filteredContacts = q
-    ? sortedContacts.filter(c =>
-        (c.name || '').toLowerCase().includes(q)
-        || (c.companyName || '').toLowerCase().includes(q)
-        || (c.email || '').toLowerCase().includes(q)
-        || (c.jobtitle || '').toLowerCase().includes(q))
-    : sortedContacts;
+  const contactFieldGetters = {
+    name:     c => c.name || '',
+    title:    c => c.jobtitle || '',
+    company:  c => c.companyName || '',
+    email:    c => c.email || '',
+    phone:    c => c.phone || '',
+    location: c => [c.city, c.state].filter(Boolean).join(', '),
+    linkedin: c => c.linkedin ? 'open' : '',
+    met:      c => c.metInPerson ? 'yes' : 'no',
+  };
+  const activeContactFilters = Object.entries(contactColFilters)
+    .map(([k, v]) => [k, String(v || '').trim().toLowerCase()])
+    .filter(([, v]) => v.length > 0);
+  const filteredContacts = sortedContacts.filter(c => {
+    if (q) {
+      const blob = (c.name || '') + ' ' + (c.companyName || '') + ' '
+        + (c.email || '') + ' ' + (c.jobtitle || '');
+      if (!blob.toLowerCase().includes(q)) return false;
+    }
+    for (const [key, needle] of activeContactFilters) {
+      const getter = contactFieldGetters[key];
+      if (!getter) continue;
+      if (!String(getter(c)).toLowerCase().includes(needle)) return false;
+    }
+    return true;
+  });
 
   function toggle(key) {
     setExpanded(prev => {
@@ -486,7 +539,6 @@ export function KeyContactsView({ prospects = [], onSelectProspect }) {
               </div>
             </div>
           ) : (() => {
-            const CONTACT_GRID = '1.4fr 1.6fr 1.6fr 2fr 1.2fr 1.4fr 0.7fr 0.7fr 28px';
             const CONTACT_COLS = [
               { key: 'name',     label: 'Name' },
               { key: 'title',    label: 'Title' },
@@ -497,7 +549,9 @@ export function KeyContactsView({ prospects = [], onSelectProspect }) {
               { key: 'linkedin', label: 'LinkedIn', sortable: false },
               { key: 'met',      label: 'Met' },
             ];
+            const CONTACT_GRID = CONTACT_COLS.map(c => `${contactColWidths[c.key] || 120}px`).join(' ') + ' 28px';
             const CONTACT_GLYPH = (key) => contactSortKey === key ? (contactSortDir === 'desc' ? ' ▼' : ' ▲') : '';
+            const RESIZE_HANDLE = { position: 'absolute', top: 0, right: 0, bottom: 0, width: 6, cursor: 'col-resize', userSelect: 'none' };
             return (
               <div style={{ background: '#fff', border: '1px solid #CBD5E1', borderRadius: 8, overflow: 'hidden' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: CONTACT_GRID, background: '#F1F5F9', borderBottom: '1px solid #CBD5E1', position: 'sticky', top: 0, zIndex: 1 }}>
@@ -505,7 +559,9 @@ export function KeyContactsView({ prospects = [], onSelectProspect }) {
                     <div
                       key={c.key}
                       onClick={c.sortable === false ? undefined : () => toggleContactSort(c.key)}
+                      title={c.sortable === false ? c.label : `Sort by ${c.label.toLowerCase()}`}
                       style={{
+                        position: 'relative',
                         padding: '0.4rem 0.6rem',
                         fontSize: '0.62rem',
                         fontWeight: 700,
@@ -517,7 +573,29 @@ export function KeyContactsView({ prospects = [], onSelectProspect }) {
                         userSelect: 'none',
                         borderRight: '1px solid #E2E8F0',
                       }}
-                    >{c.label}{c.sortable === false ? '' : CONTACT_GLYPH(c.key)}</div>
+                    >
+                      {c.label}{c.sortable === false ? '' : CONTACT_GLYPH(c.key)}
+                      <span
+                        onMouseDown={e => startContactResize(c.key, e)}
+                        onClick={e => e.stopPropagation()}
+                        style={RESIZE_HANDLE}
+                        title="Drag to resize"
+                      />
+                    </div>
+                  ))}
+                  <div />
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: CONTACT_GRID, background: '#F8FAFC', borderBottom: '1px solid #E2E8F0', position: 'sticky', top: 28, zIndex: 1 }}>
+                  {CONTACT_COLS.map(c => (
+                    <div key={c.key} style={{ padding: '0.25rem 0.4rem', borderRight: '1px solid #E2E8F0' }}>
+                      <input
+                        type="text"
+                        value={contactColFilters[c.key] || ''}
+                        onChange={e => setContactColFilters(prev => ({ ...prev, [c.key]: e.target.value }))}
+                        placeholder="Filter…"
+                        style={{ width: '100%', padding: '0.2rem 0.35rem', fontSize: '0.7rem', border: '1px solid #E2E8F0', borderRadius: 3, fontFamily: 'inherit', background: '#fff' }}
+                      />
+                    </div>
                   ))}
                   <div />
                 </div>
