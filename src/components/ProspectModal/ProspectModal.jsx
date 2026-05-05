@@ -995,25 +995,34 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
             })()}
           </div>
           <div style={{ gridColumn: 'span 2' }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
               <label style={labelStyle}>LinkedIn URL</label>
               {(() => {
-                // Open Sales Nav People Search pre-filtered to this
-                // contact. The keywords param matches across name +
-                // company, which is the most reliable single field
-                // when the contact has at least a name OR a company.
+                // Two deep links: regular LinkedIn (best for grabbing
+                // the canonical linkedin.com/in/ URL) and Sales Nav
+                // (the rich-data view). Both pre-filtered with name +
+                // company. Hidden if the popup has neither.
                 const parts = [f.firstname, f.lastname, f.company].map(s => String(s || '').trim()).filter(Boolean);
                 const keywords = parts.join(' ');
                 if (!keywords) return null;
-                const href = `https://www.linkedin.com/sales/search/people?keywords=${encodeURIComponent(keywords)}`;
+                const encoded = encodeURIComponent(keywords);
                 return (
-                  <a
-                    href={href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    title="Open Sales Navigator people-search pre-filtered to this name + company. Find the profile, copy the URL from the Sales Nav profile page, and paste it into the field below."
-                    style={{ fontSize: '0.65rem', color: '#0A66C2', textDecoration: 'none', fontWeight: 600 }}
-                  >Find on Sales Nav ↗</a>
+                  <span style={{ display: 'inline-flex', gap: 10 }}>
+                    <a
+                      href={`https://www.linkedin.com/search/results/people/?keywords=${encoded}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title="Open regular LinkedIn people search pre-filtered to this name + company. Find the profile, copy the linkedin.com/in/ URL from their public profile, and paste it into the field below."
+                      style={{ fontSize: '0.65rem', color: '#0A66C2', textDecoration: 'none', fontWeight: 600 }}
+                    >Find on LinkedIn ↗</a>
+                    <a
+                      href={`https://www.linkedin.com/sales/search/people?keywords=${encoded}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title="Open Sales Navigator people-search pre-filtered to this name + company."
+                      style={{ fontSize: '0.65rem', color: '#0A66C2', textDecoration: 'none', fontWeight: 600 }}
+                    >Find on Sales Nav ↗</a>
+                  </span>
                 );
               })()}
             </div>
@@ -6012,7 +6021,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>City</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Country</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>LinkedIn</th>
-                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }} title="Open Sales Navigator pre-filtered to this contact's name + company.">Sales Nav</th>
+                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }} title="Open LinkedIn / Sales Navigator pre-filtered to this contact's name + company.">LinkedIn Search</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Notes</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'center', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0', width: '40px' }}></th>
                       </tr>
@@ -6105,16 +6114,28 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                               {(() => {
                                 const parts = [c.firstname, c.lastname, c.company || fields.company].map(s => String(s || '').trim()).filter(Boolean);
                                 if (parts.length === 0) return <span style={{ color: '#CBD5E1' }}>—</span>;
-                                const href = `https://www.linkedin.com/sales/search/people?keywords=${encodeURIComponent(parts.join(' '))}`;
+                                const keywords = encodeURIComponent(parts.join(' '));
+                                const liHref = `https://www.linkedin.com/search/results/people/?keywords=${keywords}`;
+                                const snHref = `https://www.linkedin.com/sales/search/people?keywords=${keywords}`;
                                 return (
-                                  <a
-                                    href={href}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    onClick={e => e.stopPropagation()}
-                                    title={`Open Sales Navigator search pre-filtered to "${parts.join(' ')}".`}
-                                    style={{ color: '#0A66C2', fontSize: '0.7rem', fontWeight: 600, textDecoration: 'none' }}
-                                  >Search</a>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                                    <a
+                                      href={liHref}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      onClick={e => e.stopPropagation()}
+                                      title={`Open regular LinkedIn people search for "${parts.join(' ')}" — best for grabbing the canonical linkedin.com/in/ URL.`}
+                                      style={{ color: '#0A66C2', fontSize: '0.65rem', fontWeight: 600, textDecoration: 'none' }}
+                                    >LinkedIn ↗</a>
+                                    <a
+                                      href={snHref}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      onClick={e => e.stopPropagation()}
+                                      title={`Open Sales Navigator search pre-filtered to "${parts.join(' ')}".`}
+                                      style={{ color: '#0A66C2', fontSize: '0.65rem', fontWeight: 600, textDecoration: 'none' }}
+                                    >Sales Nav ↗</a>
+                                  </div>
                                 );
                               })()}
                             </td>

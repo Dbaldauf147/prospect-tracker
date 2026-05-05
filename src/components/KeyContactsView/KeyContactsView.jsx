@@ -337,7 +337,7 @@ export function KeyContactsView({
   }
 
   const DEFAULT_CONTACT_COL_WIDTHS = {
-    name: 180, title: 200, company: 200, suggestedCompany: 220, email: 240, phone: 140, location: 140, country: 120, linkedin: 90, salesNav: 100, met: 80,
+    name: 180, title: 200, company: 200, suggestedCompany: 220, email: 240, phone: 140, location: 140, country: 120, linkedin: 90, salesNav: 110, met: 80,
   };
   const [contactColWidths, setContactColWidths] = useState(() => {
     try {
@@ -1085,7 +1085,7 @@ export function KeyContactsView({
               { key: 'location', label: 'Location' },
               { key: 'country',  label: 'Country' },
               { key: 'linkedin', label: 'LinkedIn', sortable: false },
-              { key: 'salesNav', label: 'Sales Nav', sortable: false },
+              { key: 'salesNav', label: 'LinkedIn Search', sortable: false },
               { key: 'met',      label: 'Met' },
             ];
             const CONTACT_GRID = (massMode ? '32px ' : '')
@@ -1261,16 +1261,25 @@ export function KeyContactsView({
                     {(() => {
                       const parts = [c.firstname, c.lastname, c.companyName].map(s => String(s || '').trim()).filter(Boolean);
                       if (parts.length === 0) return <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: '#CBD5E1' }}>—</div>;
-                      const href = `https://www.linkedin.com/sales/search/people?keywords=${encodeURIComponent(parts.join(' '))}`;
+                      const keywords = encodeURIComponent(parts.join(' '));
+                      const liHref = `https://www.linkedin.com/search/results/people/?keywords=${keywords}`;
+                      const snHref = `https://www.linkedin.com/sales/search/people?keywords=${keywords}`;
                       return (
-                        <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem' }}>
+                        <div style={{ padding: '0.45rem 0.4rem', fontSize: '0.65rem', display: 'flex', flexDirection: 'column', gap: 2 }}>
                           <a
-                            href={href}
+                            href={liHref}
                             target="_blank"
                             rel="noopener noreferrer"
-                            title={`Open Sales Navigator search pre-filtered to "${parts.join(' ')}". Find the profile, copy the URL, paste into the contact's LinkedIn URL field.`}
+                            title={`Open regular LinkedIn people search for "${parts.join(' ')}" — best for grabbing the canonical linkedin.com/in/ URL.`}
                             style={{ color: '#0A66C2', textDecoration: 'none', fontWeight: 600 }}
-                          >Search ↗</a>
+                          >LinkedIn ↗</a>
+                          <a
+                            href={snHref}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={`Open Sales Navigator search pre-filtered to "${parts.join(' ')}".`}
+                            style={{ color: '#0A66C2', textDecoration: 'none', fontWeight: 600 }}
+                          >Sales Nav ↗</a>
                         </div>
                       );
                     })()}
@@ -1499,7 +1508,7 @@ export function KeyContactsView({
                                   <div>Phone</div>
                                   <div>Location</div>
                                   <div>LinkedIn</div>
-                                  <div>Sales Nav</div>
+                                  <div>LinkedIn Search</div>
                                   <div>Met</div>
                                 </div>
                                 {row.contacts.map((c, i) => (
@@ -1539,18 +1548,28 @@ export function KeyContactsView({
                                     </div>
                                     {(() => {
                                       const parts = [c.firstname, c.lastname, row.companyName].map(s => String(s || '').trim()).filter(Boolean);
-                                      if (parts.length === 0) return <div style={{ fontSize: '0.68rem', color: '#CBD5E1' }}>—</div>;
-                                      const href = `https://www.linkedin.com/sales/search/people?keywords=${encodeURIComponent(parts.join(' '))}`;
+                                      if (parts.length === 0) return <div style={{ fontSize: '0.62rem', color: '#CBD5E1' }}>—</div>;
+                                      const keywords = encodeURIComponent(parts.join(' '));
+                                      const liHref = `https://www.linkedin.com/search/results/people/?keywords=${keywords}`;
+                                      const snHref = `https://www.linkedin.com/sales/search/people?keywords=${keywords}`;
                                       return (
-                                        <div style={{ fontSize: '0.68rem' }}>
+                                        <div style={{ fontSize: '0.62rem', display: 'flex', flexDirection: 'column', gap: 1 }}>
                                           <a
-                                            href={href}
+                                            href={liHref}
                                             target="_blank"
                                             rel="noopener noreferrer"
-                                            title={`Open Sales Navigator search pre-filtered to "${parts.join(' ')}".`}
                                             onClick={e => e.stopPropagation()}
+                                            title={`Open regular LinkedIn people search for "${parts.join(' ')}".`}
                                             style={{ color: '#0A66C2', textDecoration: 'none', fontWeight: 600 }}
-                                          >Search ↗</a>
+                                          >LinkedIn ↗</a>
+                                          <a
+                                            href={snHref}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            onClick={e => e.stopPropagation()}
+                                            title={`Open Sales Navigator search pre-filtered to "${parts.join(' ')}".`}
+                                            style={{ color: '#0A66C2', textDecoration: 'none', fontWeight: 600 }}
+                                          >Sales Nav ↗</a>
                                         </div>
                                       );
                                     })()}
