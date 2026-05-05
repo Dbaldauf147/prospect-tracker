@@ -1057,11 +1057,21 @@ function KeyContactsViewInner({
     const byKey = new Map();
 
     for (const kc of keyContacts) {
-      // Try to find a matching prospect: company-name match first,
-      // then domain match.
+      // Try to find a matching prospect:
+      //   1. Exact case-insensitive name match — wins when the
+      //      user's typed company is the exact prospect name (so
+      //      "Prologis" picks the "Prologis" prospect over a fuzzy
+      //      match like "DCT Industrial Trust Inc. (a Prologis Co.)"
+      //      where "prologis" appears as a token inside).
+      //   2. Fuzzy companiesMatch on the name.
+      //   3. Domain match against the prospect's emailDomain / website.
       let match = null;
       if (kc.company) {
-        match = prospects.find(p => companiesMatch(p.company, kc.company));
+        const needle = String(kc.company).toLowerCase().trim();
+        match = prospects.find(p => String(p.company || '').toLowerCase().trim() === needle);
+        if (!match) {
+          match = prospects.find(p => companiesMatch(p.company, kc.company));
+        }
       }
       if (!match && kc.domain) {
         match = prospects.find(p => {
