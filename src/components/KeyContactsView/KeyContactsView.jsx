@@ -133,16 +133,27 @@ function InlineCell({
           position: 'absolute',
           top: '100%',
           left: 0,
-          right: 0,
+          // Let the dropdown overflow the cell to the right so long
+          // company names aren't visually clipped by the column width.
+          minWidth: '100%',
+          width: 'max-content',
+          maxWidth: 480,
           marginTop: 2,
           zIndex: 30,
-          maxHeight: 240,
+          maxHeight: 280,
           overflowY: 'auto',
           background: '#fff',
           border: '1px solid #CBD5E1',
           borderRadius: 6,
           boxShadow: '0 6px 16px rgba(15,23,42,0.12)',
         }}>
+          <div style={{ position: 'sticky', top: 0, background: '#F8FAFC', borderBottom: '1px solid #E2E8F0', padding: '0.25rem 0.6rem', fontSize: '0.6rem', color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 700 }}>
+            {(suggestions || []).length === 0
+              ? 'No Table View companies loaded'
+              : draft.trim()
+                ? `${matches.length} of ${(suggestions || []).length} match "${draft.trim()}"`
+                : `${(suggestions || []).length} Table View companies`}
+          </div>
           {matches.length > 0 ? matches.map((n, i) => (
             <div
               key={n}
