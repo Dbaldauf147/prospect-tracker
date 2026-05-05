@@ -4,7 +4,7 @@ import * as XLSX from 'xlsx';
 import { DataTable } from '../common/DataTable';
 import { logAction } from '../../utils/auditLog';
 import { useAuth } from '../../contexts/AuthContext';
-import { COUNTRIES } from '../../data/enums';
+import { COUNTRIES, US_STATES } from '../../data/enums';
 import { getHubspotCache, setHubspotCache, updateHubspotCache } from '../../utils/hubspotContactsCache';
 import styles from './HubSpotView.module.css';
 
@@ -821,7 +821,20 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
             </div>
             <div>
               <label className={styles.modalLabel}>State</label>
-              <input className={styles.modalInput} value={fields.state} onChange={e => set('state', e.target.value)} />
+              <input
+                className={styles.modalInput}
+                list="state-list-hs"
+                value={fields.state}
+                onChange={e => {
+                  const val = e.target.value;
+                  set('state', val);
+                  if (US_STATES.includes(val) && !fields.country) set('country', 'United States');
+                }}
+                placeholder="Start typing..."
+              />
+              <datalist id="state-list-hs">
+                {US_STATES.map(s => <option key={s} value={s} />)}
+              </datalist>
             </div>
             <div className={styles.modalSpan2}>
               <label className={styles.modalLabel}>Country</label>
