@@ -125,6 +125,76 @@ function classifyUtility(name) {
   return 'Deregulated';
 }
 
+// Inline autocomplete input used by supplier cells in the Utility
+// Lookup table. Filters the bundled ENERGY_SUPPLIERS list by the
+// typed substring; Enter commits the highlighted match (or the typed
+// text when nothing is highlighted), Escape cancels, blur commits.
+// Free-form text is allowed too — picking from the list is just a
+// shortcut, not a constraint, since the source data sometimes has
+// regional / co-op suppliers that aren't on the bundled list.
+function SupplierAutocomplete({ initialValue, onCommit, onCancel }) {
+  const [draft, setDraft] = useState(initialValue || '');
+  const [hover, setHover] = useState(0);
+  const [navigated, setNavigated] = useState(false);
+  const [open, setOpen] = useState(true);
+  const inputRef = useRef(null);
+  const wrapperRef = useRef(null);
+  useEffect(() => {
+    if (inputRef.current) {
+      inputRef.current.focus();
+      try { inputRef.current.select(); } catch {}
+    }
+  }, []);
+  useEffect(() => {
+    const onDown = (e) => { if (!wrapperRef.current?.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, []);
+  const q = (draft || '').trim().toLowerCase();
+  const matches = q
+    ? ENERGY_SUPPLIERS.filter(n => String(n).toLowerCase().includes(q)).slice(0, 50)
+    : ENERGY_SUPPLIERS.slice(0, 50);
+  const showList = open && matches.length > 0;
+  return (
+    <div ref={wrapperRef} style={{ position: 'relative', minWidth: 180 }}>
+      <input
+        ref={inputRef}
+        type="text"
+        value={draft}
+        placeholder="Type a supplier…"
+        onChange={e => { setDraft(e.target.value); setHover(0); setNavigated(false); setOpen(true); }}
+        onBlur={() => onCommit(draft)}
+        onKeyDown={e => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            if (showList && navigated && matches[hover] !== undefined) onCommit(matches[hover]);
+            else onCommit(draft);
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            onCancel();
+          } else if (showList) {
+            if (e.key === 'ArrowDown') { e.preventDefault(); setNavigated(true); setHover(h => Math.min(h + 1, matches.length - 1)); }
+            else if (e.key === 'ArrowUp') { e.preventDefault(); setNavigated(true); setHover(h => Math.max(h - 1, 0)); }
+          }
+        }}
+        style={{ width: '100%', padding: '0.25rem 0.4rem', fontSize: '0.72rem', fontFamily: 'inherit', border: '1px solid #93C5FD', borderRadius: 4 }}
+      />
+      {showList && (
+        <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: 2, minWidth: '100%', maxWidth: 320, maxHeight: 220, overflowY: 'auto', background: '#fff', border: '1px solid #CBD5E1', borderRadius: 4, boxShadow: '0 6px 16px rgba(15,23,42,0.12)', zIndex: 20 }}>
+          {matches.map((m, i) => (
+            <div
+              key={m}
+              onMouseDown={e => { e.preventDefault(); onCommit(m); }}
+              onMouseEnter={() => { setHover(i); setNavigated(true); }}
+              style={{ padding: '0.3rem 0.5rem', fontSize: '0.72rem', background: i === hover ? '#EFF6FF' : '#fff', color: '#1E293B', cursor: 'pointer', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+            >{m}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function SitesView({ settings, updateSettings } = {}) {
   const [sitesData, setSitesData] = useState([]);
   const [sitesLoaded, setSitesLoaded] = useState(false);
@@ -173,6 +243,32 @@ export function SitesView({ settings, updateSettings } = {}) {
       return next;
     });
   };
+  // Per-row, per-commodity supplier overrides — set when the user
+  // types into a supplier cell and picks a value from the bundled
+  // ENERGY_SUPPLIERS autocomplete (or types something free-form).
+  // Keyed by `${rowId}_${commodity}` and persisted to localStorage so
+  // an edit survives a refresh. When set, the override replaces the
+  // multi-token render entirely; clearing it (× button or empty
+  // commit) falls back to the source-data tokens.
+  const [supplierOverrides, setSupplierOverrides] = useState(() => {
+    try {
+      const raw = localStorage.getItem('utility-lookup:supplier-overrides');
+      const parsed = raw ? JSON.parse(raw) : {};
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch { return {}; }
+  });
+  const setSupplierOverride = (rowId, commodity, value) => {
+    const key = `${rowId}_${commodity}`;
+    setSupplierOverrides(prev => {
+      const next = { ...prev };
+      const v = String(value || '').trim();
+      if (!v) delete next[key]; else next[key] = v;
+      try { localStorage.setItem('utility-lookup:supplier-overrides', JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
+  // Which supplier cell is currently in edit mode. `${rowId}_${commodity}` or null.
+  const [editingSupplier, setEditingSupplier] = useState(null);
   // Column-mapping confirmation popup for the Sites File upload —
   // null when no upload is mid-flight; otherwise carries the parsed
   // rows + headers + auto-detected mapping the user can adjust before
@@ -747,8 +843,8 @@ export function SitesView({ settings, updateSettings } = {}) {
         __electricCostEstimated__: estElectricCost,
         __gasCostEstimated__: estGasCost,
         __totalCost__: (electricCost != null || gasCost != null) ? totalCost : null,
-        __electricSupplier__: electricSupplierResolved,
-        __gasSupplier__: gasSupplierResolved,
+        __electricSupplier__: supplierOverrides[`${i}_electric`] || electricSupplierResolved,
+        __gasSupplier__: supplierOverrides[`${i}_gas`] || gasSupplierResolved,
         __electricStart__: electricStartOverride ? r[electricStartOverride] : null,
         __electricEnd__: electricEndOverride ? r[electricEndOverride] : null,
         __gasStart__: gasStartOverride ? r[gasStartOverride] : null,
@@ -756,7 +852,7 @@ export function SitesView({ settings, updateSettings } = {}) {
         __matched__: !!match || electricUtilityTokens.length > 0 || gasUtilityTokens.length > 0,
       };
     });
-  }, [cleanSitesData, zipColumn, utility, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, knownUtilityNames, vendorDecisions]);
+  }, [cleanSitesData, zipColumn, utility, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return rows;
@@ -1014,15 +1110,68 @@ export function SitesView({ settings, updateSettings } = {}) {
       label,
       defaultWidth: 220,
       render: (row) => {
+        const overrideKey = `${row.id}_${commodity}`;
+        const override = supplierOverrides[overrideKey];
+        const isEditing = editingSupplier === overrideKey;
         const tokens = commodity === 'electric' ? row.__electricSupplierTokens__ : row.__gasSupplierTokens__;
-        if (!tokens || !tokens.length) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
+        const tokenString = tokens && tokens.length
+          ? tokens.map(t => t.kind === 'supplier' && t.decision !== 'rejected' && t.canonical ? t.canonical : t.raw).join(', ')
+          : '';
+        if (isEditing) {
+          return (
+            <SupplierAutocomplete
+              initialValue={override ?? tokenString}
+              onCommit={(v) => { setSupplierOverride(row.id, commodity, v); setEditingSupplier(null); }}
+              onCancel={() => setEditingSupplier(null)}
+            />
+          );
+        }
+        const editButton = (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setEditingSupplier(overrideKey); }}
+            title={`Search the bundled supplier list and pick a ${commodity === 'electric' ? 'electric' : 'gas'} supplier for this site`}
+            style={{ border: '1px dashed #94A3B8', background: '#fff', color: '#475569', borderRadius: 4, fontSize: '0.62rem', cursor: 'pointer', fontFamily: 'inherit', padding: '0 5px', lineHeight: 1.5, flexShrink: 0 }}
+          >✎</button>
+        );
+        if (override) {
+          return (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, maxWidth: '100%' }}>
+              <span
+                onClick={() => setEditingSupplier(overrideKey)}
+                title={`Manually set to "${override}". Click to edit.`}
+                style={{ background: '#DBEAFE', border: '1px solid #93C5FD', color: '#1E3A8A', padding: '1px 8px', borderRadius: 999, fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 180 }}
+              >{override}</span>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setSupplierOverride(row.id, commodity, ''); }}
+                title="Clear manual override (revert to source-data tokens)"
+                style={{ border: '1px solid #CBD5E1', background: '#fff', color: '#64748B', borderRadius: 4, fontSize: '0.65rem', cursor: 'pointer', fontFamily: 'inherit', padding: '0 4px', lineHeight: 1.4 }}
+              >×</button>
+            </span>
+          );
+        }
+        if (!tokens || !tokens.length) {
+          return (
+            <span
+              onClick={() => setEditingSupplier(overrideKey)}
+              title="Click to type / pick a supplier"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--color-text-muted)', fontSize: '0.7rem', cursor: 'pointer' }}
+            >— {editButton}</span>
+          );
+        }
         return (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', maxWidth: '100%' }}>
             {tokens.map((t, i) => renderSupplierToken(t, i))}
+            {editButton}
           </span>
         );
       },
-      exportValue: (row) => (commodity === 'electric' ? row.__electricSupplier__ : row.__gasSupplier__) || '',
+      exportValue: (row) => {
+        const override = supplierOverrides[`${row.id}_${commodity}`];
+        if (override) return override;
+        return (commodity === 'electric' ? row.__electricSupplier__ : row.__gasSupplier__) || '';
+      },
     });
     // Contract dates from the file — pass through as text since the
     // file may already contain a friendly format the user prefers.
@@ -1063,7 +1212,7 @@ export function SitesView({ settings, updateSettings } = {}) {
       makeLocationCol('city', 'Lookup City'),
       makeLocationCol('country', 'Lookup Country'),
     ];
-  }, [sitesData, zipColumn, utility]);
+  }, [sitesData, zipColumn, utility, supplierOverrides, editingSupplier]);
 
   const alwaysVisible = useMemo(() => {
     if (!columns.length) return [];
