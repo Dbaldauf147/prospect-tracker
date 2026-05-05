@@ -4,6 +4,7 @@ import 'react-quill-new/dist/quill.snow.css';
 import { secureSet, secureGet, secureClear } from '../../utils/secureStorage';
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
+import { useDraftCampaignQueue, clearQueuedContacts, setQueuedContactIds } from '../../utils/draftCampaignQueue';
 import styles from './DraftEmailView.module.css';
 
 function TagContactPicker({ allContacts, selectedContacts, onAdd, onRemove, onBulkAdd, onBulkRemove }) {
@@ -122,6 +123,81 @@ function TagContactPicker({ allContacts, selectedContacts, onAdd, onRemove, onBu
             <p style={{ fontSize: '0.72rem', color: '#9CA3AF', textAlign: 'center' }}>No contacts match all selected tags</p>
           )}
         </>
+      )}
+    </div>
+  );
+}
+
+// Renders the "queued for campaign" section inside the Custom Email
+// Campaign card. Reads contact ids the user checked on the Active /
+// Client / Key Contacts pages (via useDraftCampaignQueue), resolves
+// them against the loaded HubSpot cache, and offers Add / Clear.
+function CampaignQueueSection({ allContacts, selectedContacts, setSelectedContacts }) {
+  const queuedIds = useDraftCampaignQueue();
+  const idSet = new Set(queuedIds);
+  const queuedContacts = allContacts.filter(c => idSet.has(String(c.id)));
+  const missingIds = queuedIds.filter(id => !allContacts.some(c => String(c.id) === id));
+  const selectedIds = new Set(selectedContacts.map(c => c.id));
+  const allInDraft = queuedContacts.length > 0 && queuedContacts.every(c => selectedIds.has(c.id));
+  const addAll = () => {
+    setSelectedContacts(prev => {
+      const ids = new Set(prev.map(c => c.id));
+      return [...prev, ...queuedContacts.filter(c => !ids.has(c.id))];
+    });
+  };
+  const removeOne = (id) => {
+    const next = queuedIds.filter(x => x !== String(id));
+    setQueuedContactIds(next);
+  };
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.4rem', gap: 8, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: '0.74rem', color: '#475569' }}>
+          <strong>{queuedContacts.length}</strong> contact{queuedContacts.length === 1 ? '' : 's'} queued from Active / Client / Key Contacts
+          {missingIds.length > 0 && (
+            <span style={{ marginLeft: 6, color: '#92400E' }}>· {missingIds.length} not in HubSpot cache</span>
+          )}
+        </div>
+        <div style={{ display: 'inline-flex', gap: 6 }}>
+          <button
+            type="button"
+            onClick={addAll}
+            disabled={queuedContacts.length === 0 || allInDraft}
+            title={allInDraft ? 'All queued contacts are already in the draft' : 'Add every queued contact to the current draft'}
+            style={{ fontSize: '0.7rem', padding: '0.25rem 0.55rem', border: '1px solid #1D4ED8', background: queuedContacts.length === 0 || allInDraft ? '#F1F5F9' : '#1D4ED8', color: queuedContacts.length === 0 || allInDraft ? '#94A3B8' : '#fff', borderRadius: 4, cursor: queuedContacts.length === 0 || allInDraft ? 'default' : 'pointer', fontFamily: 'inherit', fontWeight: 600 }}
+          >Add all to draft</button>
+          <button
+            type="button"
+            onClick={() => clearQueuedContacts()}
+            disabled={queuedIds.length === 0}
+            title="Empty the campaign queue (does not affect the draft)"
+            style={{ fontSize: '0.7rem', padding: '0.25rem 0.55rem', border: '1px solid #CBD5E1', background: '#fff', color: queuedIds.length === 0 ? '#CBD5E1' : '#475569', borderRadius: 4, cursor: queuedIds.length === 0 ? 'default' : 'pointer', fontFamily: 'inherit' }}
+          >Clear queue</button>
+        </div>
+      </div>
+      {queuedContacts.length > 0 && (
+        <div style={{ maxHeight: 160, overflowY: 'auto', border: '1px solid #E2E8F0', borderRadius: 4, background: '#F8FAFC' }}>
+          {queuedContacts.map(c => {
+            const inDraft = selectedIds.has(c.id);
+            return (
+              <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0.25rem 0.5rem', borderTop: '1px solid #E2E8F0', fontSize: '0.72rem' }}>
+                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`${c.name}${c.company ? ` · ${c.company}` : ''}${c.email ? ` · ${c.email}` : ''}`}>
+                  <span style={{ fontWeight: 600, color: '#1E293B' }}>{c.name}</span>
+                  {c.company && <span style={{ color: '#64748B' }}> · {c.company}</span>}
+                </span>
+                {inDraft ? (
+                  <span style={{ fontSize: '0.62rem', color: '#16A34A', fontWeight: 700 }}>in draft</span>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => removeOne(c.id)}
+                  title="Remove from queue"
+                  style={{ border: '1px solid #CBD5E1', background: '#fff', color: '#64748B', borderRadius: 3, fontSize: '0.65rem', cursor: 'pointer', fontFamily: 'inherit', padding: '0 5px', lineHeight: 1.4 }}
+                >×</button>
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );
@@ -899,20 +975,32 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
 
         {/* Right sidebar: Tag import + Saved drafts */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          {/* Import by Tag */}
+          {/* Custom Email Campaign — pulls contacts in two ways:
+              (1) checkboxes ticked on the Active / Client / Key
+              Contacts pages (see useDraftCampaignQueue), and
+              (2) the existing tag-based importer below. Both sources
+              feed the same draft, deduped by contact id. */}
           <div className={styles.draftsCard}>
-            <h3 className={styles.cardTitle}>Import by Tag</h3>
-            <TagContactPicker
+            <h3 className={styles.cardTitle}>Custom Email Campaign</h3>
+            <CampaignQueueSection
               allContacts={allContacts}
               selectedContacts={selectedContacts}
-              onAdd={addContact}
-              onRemove={removeContact}
-              onBulkAdd={(contacts) => setSelectedContacts(prev => {
-                const ids = new Set(prev.map(c => c.id));
-                return [...prev, ...contacts.filter(c => !ids.has(c.id))];
-              })}
-              onBulkRemove={(ids) => setSelectedContacts(prev => prev.filter(c => !ids.includes(c.id)))}
+              setSelectedContacts={setSelectedContacts}
             />
+            <div style={{ borderTop: '1px solid #E2E8F0', marginTop: '0.75rem', paddingTop: '0.75rem' }}>
+              <h4 style={{ margin: '0 0 0.5rem', fontSize: '0.78rem', fontWeight: 700, color: '#1E293B' }}>Import by Tag</h4>
+              <TagContactPicker
+                allContacts={allContacts}
+                selectedContacts={selectedContacts}
+                onAdd={addContact}
+                onRemove={removeContact}
+                onBulkAdd={(contacts) => setSelectedContacts(prev => {
+                  const ids = new Set(prev.map(c => c.id));
+                  return [...prev, ...contacts.filter(c => !ids.has(c.id))];
+                })}
+                onBulkRemove={(ids) => setSelectedContacts(prev => prev.filter(c => !ids.includes(c.id)))}
+              />
+            </div>
           </div>
 
           {/* Saved drafts */}
