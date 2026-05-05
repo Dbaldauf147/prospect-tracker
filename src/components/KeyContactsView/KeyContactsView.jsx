@@ -8,6 +8,159 @@ import { formatAum } from '../../utils/formatters';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
 import { buildCompanyGuessIndex, guessCompanyForContact } from '../../utils/companyGuess';
 
+// Click-to-edit cell used inside the All Contacts table. Idle state
+// renders the value as plain text; on click it switches to an <input>
+// (or autocomplete-style combobox when `suggestions` is provided),
+// commits on blur / Enter, and discards on Escape. The actual write
+// is delegated to `onCommit(nextValue)` so the parent can call the
+// HubSpot endpoint and update the cache.
+function InlineCell({
+  value,
+  onCommit,
+  placeholder = '—',
+  emptyColor = '#CBD5E1',
+  fontSize = '0.72rem',
+  fontWeight = 400,
+  textColor = '#1E293B',
+  align = 'left',
+  type = 'text',
+  suggestions = null,
+  title,
+  disabled = false,
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [hover, setHover] = useState(0);
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
+  const inputRef = useRef(null);
+  const wrapperRef = useRef(null);
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus();
+      try { inputRef.current.select(); } catch {}
+    }
+  }, [editing]);
+  useEffect(() => {
+    if (!editing) return;
+    const onDown = (e) => {
+      if (!wrapperRef.current?.contains(e.target)) {
+        setSuggestionsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [editing]);
+  function startEdit() {
+    if (disabled) return;
+    setDraft(value || '');
+    setHover(0);
+    setSuggestionsOpen(!!suggestions);
+    setEditing(true);
+  }
+  async function commit(v) {
+    setEditing(false);
+    setSuggestionsOpen(false);
+    const next = (v ?? draft).trim();
+    if (next === (value || '').trim()) return;
+    try { await onCommit(next); } catch (err) { console.warn('Inline commit failed', err); }
+  }
+  if (!editing) {
+    const empty = value === null || value === undefined || value === '';
+    return (
+      <div
+        onClick={startEdit}
+        title={title || (disabled ? value || '' : 'Click to edit')}
+        style={{
+          padding: '0.45rem 0.6rem',
+          fontSize,
+          fontWeight,
+          color: empty ? emptyColor : textColor,
+          textAlign: align,
+          cursor: disabled ? 'default' : 'text',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}
+      >{empty ? placeholder : value}</div>
+    );
+  }
+  const q = (draft || '').trim().toLowerCase();
+  const matches = suggestions && suggestions.length > 0
+    ? (q ? suggestions.filter(n => String(n).toLowerCase().includes(q)).slice(0, 12) : suggestions.slice(0, 12))
+    : [];
+  const showSuggestionList = !!suggestions && suggestionsOpen && matches.length > 0;
+  return (
+    <div ref={wrapperRef} style={{ position: 'relative', padding: '0.2rem 0.3rem' }}>
+      <input
+        ref={inputRef}
+        type={type}
+        value={draft}
+        onChange={e => { setDraft(e.target.value); setHover(0); if (suggestions) setSuggestionsOpen(true); }}
+        onBlur={() => commit()}
+        onKeyDown={e => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            if (showSuggestionList && matches[hover] !== undefined) commit(matches[hover]);
+            else commit();
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            setEditing(false);
+            setSuggestionsOpen(false);
+          } else if (showSuggestionList) {
+            if (e.key === 'ArrowDown') { e.preventDefault(); setHover(h => Math.min(h + 1, matches.length - 1)); }
+            else if (e.key === 'ArrowUp') { e.preventDefault(); setHover(h => Math.max(h - 1, 0)); }
+          }
+        }}
+        style={{
+          width: '100%',
+          padding: '0.25rem 0.4rem',
+          fontSize,
+          fontFamily: 'inherit',
+          border: '1px solid #93C5FD',
+          borderRadius: 4,
+          textAlign: align,
+        }}
+      />
+      {showSuggestionList && (
+        <div style={{
+          position: 'absolute',
+          top: '100%',
+          left: 0,
+          right: 0,
+          marginTop: 2,
+          zIndex: 30,
+          maxHeight: 220,
+          overflowY: 'auto',
+          background: '#fff',
+          border: '1px solid #CBD5E1',
+          borderRadius: 6,
+          boxShadow: '0 6px 16px rgba(15,23,42,0.12)',
+        }}>
+          {matches.map((n, i) => (
+            <div
+              key={n}
+              onMouseDown={e => { e.preventDefault(); commit(n); }}
+              onMouseEnter={() => setHover(i)}
+              style={{
+                padding: '0.4rem 0.6rem',
+                fontSize: '0.78rem',
+                cursor: 'pointer',
+                background: i === hover ? '#EFF6FF' : '#fff',
+                color: '#1E293B',
+                borderTop: i === 0 ? 'none' : '1px solid #F1F5F9',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+              title={n}
+            >{n}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const CLOSED_STAGES = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
 const INVALID_STAGES = new Set(['#N/A', '#REF!', '#VALUE!', '#ERROR!', 'N/A', 'n/a', '-', '']);
 
@@ -144,6 +297,34 @@ export function KeyContactsView({
   // contactSelector for both Key Contacts and Active Contacts skips
   // anything tagged "hide", so the row vanishes after the cache event
   // fires. Existing tags are preserved.
+  // Persist a single-field edit on one contact via the HubSpot
+  // update endpoint and mirror the change into the local cache so
+  // the row reflects it immediately. Used by InlineCell-driven edits
+  // on the All Contacts table.
+  async function inlineUpdateField(contact, field, value) {
+    const id = String(contact?.id || contact?.vid || '');
+    if (!id || !field) return;
+    const next = (value ?? '').trim();
+    try {
+      const res = await fetch('/api/hubspot?action=update-contact', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contactId: id, properties: { [field]: next } }),
+      });
+      const json = await res.json();
+      if (json.error) throw new Error(json.error);
+    } catch (err) {
+      console.warn('Inline update failed', err);
+      return;
+    }
+    try {
+      await updateHubspotCache(draft => {
+        const target = draft.contacts.find(x => String(x.id || x.vid) === id);
+        if (target) target[field] = next;
+      });
+    } catch (err) { console.warn('Inline cache update failed', err); }
+  }
+
   async function applyHideTag(contactIds) {
     if (!contactIds || contactIds.length === 0) return { updated: 0, errors: 0 };
     const idSet = new Set(contactIds.map(String));
@@ -1194,22 +1375,33 @@ export function KeyContactsView({
                         style={{ color: '#1D4ED8', cursor: 'pointer', textDecoration: 'underline' }}
                       >{c.name}</span>
                     </div>
-                    <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.72rem', color: c.jobtitle ? '#475569' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.jobtitle}>{c.jobtitle || '—'}</div>
-                    <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.74rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.prospect ? `Click to open ${c.companyName}` : c.companyName}>
-                      {c.companyName ? (
-                        c.prospect ? (
-                          <span
-                            role="button"
-                            tabIndex={0}
-                            onClick={() => onSelectProspect?.(c.prospect)}
-                            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelectProspect?.(c.prospect); } }}
-                            style={{ color: '#1D4ED8', cursor: 'pointer', textDecoration: 'underline', fontWeight: 600 }}
-                          >{c.companyName}</span>
-                        ) : (
-                          <span style={{ color: '#1E293B' }}>{c.companyName}</span>
-                        )
-                      ) : (
-                        <span style={{ color: '#CBD5E1' }}>—</span>
+                    <InlineCell
+                      value={c.jobtitle}
+                      onCommit={v => inlineUpdateField(c.raw || c, 'jobtitle', v)}
+                      textColor="#475569"
+                      title={c.jobtitle ? `Click to edit — ${c.jobtitle}` : 'Click to edit'}
+                    />
+                    <div style={{ display: 'flex', alignItems: 'center', minWidth: 0 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <InlineCell
+                          value={c.companyName}
+                          onCommit={v => inlineUpdateField(c.raw || c, 'company', v)}
+                          fontSize="0.74rem"
+                          textColor="#1E293B"
+                          fontWeight={600}
+                          suggestions={prospects.map(p => p.company).filter(Boolean)}
+                          title={c.prospect ? `Click to edit. Use the ↗ button to open ${c.companyName}.` : 'Click to edit (autocomplete from Table View companies).'}
+                        />
+                      </div>
+                      {c.prospect && (
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          onClick={e => { e.stopPropagation(); onSelectProspect?.(c.prospect); }}
+                          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); onSelectProspect?.(c.prospect); } }}
+                          title={`Open ${c.companyName} prospect record`}
+                          style={{ flexShrink: 0, marginRight: 4, fontSize: '0.7rem', color: '#1D4ED8', cursor: 'pointer', fontWeight: 700 }}
+                        >↗</span>
                       )}
                     </div>
                     {showSuggestedCompany && (
@@ -1241,18 +1433,34 @@ export function KeyContactsView({
                         )}
                       </div>
                     )}
-                    <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.72rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.email}>
-                      {c.email
-                        ? <a href={`mailto:${c.email}`} style={{ color: '#3B82F6', textDecoration: 'none' }}>{c.email}</a>
-                        : <span style={{ color: '#CBD5E1' }}>—</span>}
-                    </div>
-                    <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.72rem', color: c.phone ? '#64748B' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.phone}>{c.phone || '—'}</div>
-                    <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: (c.city || c.state) ? '#64748B' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {[c.city, c.state].filter(Boolean).join(', ') || '—'}
-                    </div>
-                    <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: c.country ? '#64748B' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.country}>
-                      {c.country || '—'}
-                    </div>
+                    <InlineCell
+                      value={c.email}
+                      onCommit={v => inlineUpdateField(c.raw || c, 'email', v)}
+                      type="email"
+                    />
+                    <InlineCell
+                      value={c.phone}
+                      onCommit={v => inlineUpdateField(c.raw || c, 'phone', v)}
+                      textColor="#64748B"
+                    />
+                    <InlineCell
+                      value={[c.city, c.state].filter(Boolean).join(', ')}
+                      onCommit={async (v) => {
+                        const [city = '', state = ''] = String(v || '').split(',').map(s => s.trim());
+                        await inlineUpdateField(c.raw || c, 'city', city);
+                        if ((c.state || '') !== state) await inlineUpdateField(c.raw || c, 'state', state);
+                      }}
+                      textColor="#64748B"
+                      placeholder="—"
+                      title="Click to edit. Type 'City, State'."
+                      fontSize="0.7rem"
+                    />
+                    <InlineCell
+                      value={c.country}
+                      onCommit={v => inlineUpdateField(c.raw || c, 'country', v)}
+                      textColor="#64748B"
+                      fontSize="0.7rem"
+                    />
                     <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem' }}>
                       {c.linkedin
                         ? <a href={c.linkedin} target="_blank" rel="noopener noreferrer" style={{ color: '#0A66C2', textDecoration: 'none', fontWeight: 600 }}>Open ↗</a>
