@@ -22,9 +22,8 @@ import { OppsView } from './components/OppsView/OppsView';
 import { ClientsView } from './components/ClientsView/ClientsView';
 import { ActivityView } from './components/ActivityView/ActivityView';
 import { loadTargetAccountsFromDB } from './components/TargetAccountsView/TargetAccountsView';
-import { DraftEmailView } from './components/DraftEmailView/DraftEmailView';
+import { DraftEmailsPage } from './components/DraftEmailView/DraftEmailsPage';
 import { VibeProspecting } from './components/VibeProspecting/VibeProspecting';
-import { EmailCampaignView } from './components/EmailCampaignView/EmailCampaignView';
 import { ProgressView } from './components/ProgressView/ProgressView';
 import { ListsView } from './components/ListsView/ListsView';
 import { PEPortfolioView } from './components/PEPortfolioView/PEPortfolioView';
@@ -298,12 +297,10 @@ function App() {
         <div className="content">
           {dataLoading ? (
             <div className="loading">Loading prospects...</div>
-          ) : view === 'drafts' ? (
-            <DraftEmailView prospects={prospects} settings={settings} updateSettings={updateSettings} />
+          ) : view === 'drafts' || view === 'campaigns' ? (
+            <DraftEmailsPage prospects={prospects} settings={settings} updateSettings={updateSettings} initialTab={view === 'campaigns' ? 'campaigns' : 'drafts'} />
           ) : view === 'progress' ? (
             <ProgressView prospects={prospects} settings={settings} cdmName={cdmName} />
-          ) : view === 'campaigns' ? (
-            <EmailCampaignView />
           ) : view === 'vibe' ? (
             <VibeProspecting prospects={prospects} onUpdate={updateProspect} cdmName={cdmName} />
           ) : view === 'pricing' ? (

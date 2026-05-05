@@ -123,13 +123,6 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
           Progress
         </button>
         <button
-          className={view === 'campaigns' ? styles.navItemActive : styles.navItem}
-          onClick={() => setView('campaigns')}
-        >
-          <span className={styles.navIcon}>&#128231;</span>
-          Email Campaigns
-        </button>
-        <button
           className={view === 'pricing' ? styles.navItemActive : styles.navItem}
           onClick={() => setView('pricing')}
         >
