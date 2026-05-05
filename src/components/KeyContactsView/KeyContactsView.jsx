@@ -6,6 +6,7 @@ import { getHubspotCache, updateHubspotCache } from '../../utils/hubspotContacts
 import { dbGet } from '../../utils/db';
 import { formatAum } from '../../utils/formatters';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
+import { buildCompanyGuessIndex, guessCompanyForContact } from '../../utils/companyGuess';
 
 const CLOSED_STAGES = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
 const INVALID_STAGES = new Set(['#N/A', '#REF!', '#VALUE!', '#ERROR!', 'N/A', 'n/a', '-', '']);
@@ -96,6 +97,10 @@ export function KeyContactsView({
   // domain). Useful for surfacing "we're emailing them but haven't
   // tracked their company yet" gaps.
   unmappedOnly = false,
+  // Adds a "Suggested Company" column that guesses a Table View
+  // company for each contact based on their email domain / current
+  // Company text. Most useful when paired with `unmappedOnly`.
+  showSuggestedCompany = false,
 }) {
   const lsKey = (suffix) => `${storagePrefix}:${suffix}`;
   const { user } = useAuth();
@@ -112,6 +117,15 @@ export function KeyContactsView({
   const [massValue, setMassValue] = useState('');
   const [massStatus, setMassStatus] = useState(null); // { type, message }
   const [massProcessing, setMassProcessing] = useState(false);
+  const [massCompanyOpen, setMassCompanyOpen] = useState(false);
+  const [massCompanyHover, setMassCompanyHover] = useState(0);
+  const massCompanyBoxRef = useRef(null);
+  useEffect(() => {
+    if (!massCompanyOpen) return;
+    const onDown = (e) => { if (!massCompanyBoxRef.current?.contains(e.target)) setMassCompanyOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [massCompanyOpen]);
   function toggleMassSelect(id) {
     setMassSelected(prev => {
       const next = new Set(prev);
@@ -163,19 +177,51 @@ export function KeyContactsView({
     return { updated, errors };
   }
 
+  // Push a suggested-company value onto the contact in HubSpot and
+  // update the local cache so the row reflects the new mapping (and
+  // the unmapped-only filter, if active, drops it).
+  async function applySuggestedCompany(contact, suggested) {
+    const id = String(contact?.id || contact?.vid || '');
+    if (!id || !suggested) return;
+    setMassProcessing(true);
+    setMassStatus(null);
+    let ok = false;
+    try {
+      const res = await fetch('/api/hubspot?action=update-contact', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contactId: id, properties: { company: suggested } }),
+      });
+      const json = await res.json();
+      ok = !json.error;
+    } catch { ok = false; }
+    if (ok) {
+      try {
+        await updateHubspotCache(draft => {
+          const target = draft.contacts.find(x => String(x.id || x.vid) === id);
+          if (target) target.company = suggested;
+        });
+      } catch (err) { console.warn('Suggested-company cache update failed', err); }
+      setMassStatus(null);
+    } else {
+      setMassStatus({ type: 'partial', message: 'Apply failed' });
+    }
+    setMassProcessing(false);
+  }
+
   async function handleHideRow(contact) {
     const id = String(contact?.id || contact?.vid || '');
     if (!id) return;
-    const name = [contact.firstname, contact.lastname].filter(Boolean).join(' ') || contact.email || 'this contact';
-    if (!window.confirm(`Hide ${name}? This adds the "Hide" tag in HubSpot so the contact won't appear here anymore (you can clear the tag from the HubSpot Contacts tab to bring them back).`)) return;
     setMassProcessing(true);
     setMassStatus(null);
     const { updated, errors } = await applyHideTag([id]);
     setMassProcessing(false);
-    setMassStatus({
-      type: errors === 0 ? 'success' : 'partial',
-      message: errors === 0 ? `Hid ${name}` : `Hid ${updated}, ${errors} failed`,
-    });
+    if (errors > 0) {
+      setMassStatus({ type: 'partial', message: `Hide failed (${errors})` });
+    } else {
+      setMassStatus(null);
+      void updated;
+    }
   }
 
   async function handleMassHide() {
@@ -284,7 +330,7 @@ export function KeyContactsView({
   }
 
   const DEFAULT_CONTACT_COL_WIDTHS = {
-    name: 180, title: 200, company: 200, email: 240, phone: 140, location: 140, country: 120, linkedin: 90, met: 80,
+    name: 180, title: 200, company: 200, suggestedCompany: 220, email: 240, phone: 140, location: 140, country: 120, linkedin: 90, met: 80,
   };
   const [contactColWidths, setContactColWidths] = useState(() => {
     try {
@@ -407,6 +453,13 @@ export function KeyContactsView({
     return out;
   }, [requireActiveOpp, oppsRecords]);
 
+  // Index of prospect domains / canonical names — fed into
+  // guessCompanyForContact to fill the Suggested Company column.
+  const companyGuessIndex = useMemo(
+    () => showSuggestedCompany ? buildCompanyGuessIndex(prospects, hubspotCache?.contacts || []) : null,
+    [showSuggestedCompany, prospects, hubspotCache]
+  );
+
   const keyContacts = useMemo(() => {
     const out = [];
     for (const c of (hubspotCache?.contacts || [])) {
@@ -460,11 +513,12 @@ export function KeyContactsView({
         metInPerson: metInPersonSelector(c),
         company,
         domain,
+        suggestedCompany: companyGuessIndex ? guessCompanyForContact(c, companyGuessIndex) : '',
         raw: c,
       });
     }
     return out;
-  }, [hubspotCache, FREE_MAIL, contactSelector, metInPersonSelector, activeOppCompanies, unmappedOnly, prospects]);
+  }, [hubspotCache, FREE_MAIL, contactSelector, metInPersonSelector, activeOppCompanies, unmappedOnly, prospects, companyGuessIndex]);
 
   // Decision-maker contacts — used for the per-company DM column. Mirrors
   // the equivalent flat-list pattern from the PE Portfolio view.
@@ -667,6 +721,7 @@ export function KeyContactsView({
           break;
         case 'title':   cmp = (a.jobtitle || '').localeCompare(b.jobtitle || ''); break;
         case 'company': cmp = (a.companyName || '').localeCompare(b.companyName || ''); break;
+        case 'suggestedCompany': cmp = (a.suggestedCompany || '').localeCompare(b.suggestedCompany || ''); break;
         case 'email':   cmp = (a.email || '').localeCompare(b.email || ''); break;
         case 'location':
           cmp = ((a.state || '') + (a.city || '')).localeCompare((b.state || '') + (b.city || ''));
@@ -686,6 +741,7 @@ export function KeyContactsView({
     name:     c => c.name || '',
     title:    c => c.jobtitle || '',
     company:  c => c.companyName || '',
+    suggestedCompany: c => c.suggestedCompany || '',
     email:    c => c.email || '',
     phone:    c => c.phone || '',
     location: c => [c.city, c.state].filter(Boolean).join(', '),
@@ -812,13 +868,88 @@ export function KeyContactsView({
               <option value="firstname">First Name</option>
               <option value="lastname">Last Name</option>
             </select>
-            <input
-              type="text"
-              value={massValue}
-              onChange={e => setMassValue(e.target.value)}
-              placeholder="New value…"
-              style={{ flex: '1 1 220px', minWidth: 160, padding: '0.25rem 0.5rem', fontSize: '0.72rem', border: '1px solid #CBD5E1', borderRadius: 4, fontFamily: 'inherit' }}
-            />
+            {massField === 'company' ? (() => {
+              const q = (massValue || '').trim().toLowerCase();
+              const allNames = (() => {
+                const seen = new Set();
+                const out = [];
+                for (const p of prospects) {
+                  const s = String(p.company || '').trim();
+                  if (!s) continue;
+                  const k = s.toLowerCase();
+                  if (seen.has(k)) continue;
+                  seen.add(k);
+                  out.push(s);
+                }
+                return out;
+              })();
+              const matches = q
+                ? allNames.filter(n => n.toLowerCase().includes(q)).slice(0, 12)
+                : allNames.slice(0, 12);
+              const showList = massCompanyOpen && matches.length > 0;
+              return (
+                <div ref={massCompanyBoxRef} style={{ position: 'relative', flex: '1 1 220px', minWidth: 160 }}>
+                  <input
+                    type="text"
+                    value={massValue}
+                    onFocus={() => { setMassCompanyOpen(true); setMassCompanyHover(0); }}
+                    onChange={e => { setMassValue(e.target.value); setMassCompanyOpen(true); setMassCompanyHover(0); }}
+                    onKeyDown={e => {
+                      if (!showList) return;
+                      if (e.key === 'ArrowDown') { e.preventDefault(); setMassCompanyHover(h => Math.min(h + 1, matches.length - 1)); }
+                      else if (e.key === 'ArrowUp') { e.preventDefault(); setMassCompanyHover(h => Math.max(h - 1, 0)); }
+                      else if (e.key === 'Enter') { e.preventDefault(); setMassValue(matches[massCompanyHover]); setMassCompanyOpen(false); }
+                      else if (e.key === 'Escape') { setMassCompanyOpen(false); }
+                    }}
+                    placeholder="Type to search Table View companies…"
+                    autoComplete="off"
+                    style={{ width: '100%', padding: '0.25rem 0.5rem', fontSize: '0.72rem', border: '1px solid #CBD5E1', borderRadius: 4, fontFamily: 'inherit' }}
+                  />
+                  {showList && (
+                    <div style={{
+                      position: 'absolute',
+                      top: '100%', left: 0, right: 0,
+                      marginTop: 2,
+                      zIndex: 30,
+                      maxHeight: 240,
+                      overflowY: 'auto',
+                      background: '#fff',
+                      border: '1px solid #CBD5E1',
+                      borderRadius: 6,
+                      boxShadow: '0 6px 16px rgba(15,23,42,0.12)',
+                    }}>
+                      {matches.map((n, i) => (
+                        <div
+                          key={n}
+                          onMouseDown={e => { e.preventDefault(); setMassValue(n); setMassCompanyOpen(false); }}
+                          onMouseEnter={() => setMassCompanyHover(i)}
+                          style={{
+                            padding: '0.4rem 0.6rem',
+                            fontSize: '0.78rem',
+                            cursor: 'pointer',
+                            background: i === massCompanyHover ? '#EFF6FF' : '#fff',
+                            color: '#1E293B',
+                            borderTop: i === 0 ? 'none' : '1px solid #F1F5F9',
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                          }}
+                          title={n}
+                        >{n}</div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })() : (
+              <input
+                type="text"
+                value={massValue}
+                onChange={e => setMassValue(e.target.value)}
+                placeholder="New value…"
+                style={{ flex: '1 1 220px', minWidth: 160, padding: '0.25rem 0.5rem', fontSize: '0.72rem', border: '1px solid #CBD5E1', borderRadius: 4, fontFamily: 'inherit' }}
+              />
+            )}
             <button
               type="button"
               onClick={handleMassApply}
@@ -894,6 +1025,7 @@ export function KeyContactsView({
               { key: 'name',     label: 'Name' },
               { key: 'title',    label: 'Title' },
               { key: 'company',  label: 'Company' },
+              ...(showSuggestedCompany ? [{ key: 'suggestedCompany', label: 'Suggested Company' }] : []),
               { key: 'email',    label: 'Email' },
               { key: 'phone',    label: 'Phone' },
               { key: 'location', label: 'Location' },
@@ -1025,6 +1157,35 @@ export function KeyContactsView({
                         <span style={{ color: '#CBD5E1' }}>—</span>
                       )}
                     </div>
+                    {showSuggestedCompany && (
+                      <div style={{ padding: '0.3rem 0.5rem', fontSize: '0.72rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 6 }} title={c.suggestedCompany || ''}>
+                        {c.suggestedCompany ? (
+                          <>
+                            <span style={{ color: '#0F766E', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.suggestedCompany}</span>
+                            <button
+                              type="button"
+                              onClick={e => { e.stopPropagation(); applySuggestedCompany(c.raw || c, c.suggestedCompany); }}
+                              disabled={massProcessing}
+                              title={`Set ${c.name}'s Company to ${c.suggestedCompany}`}
+                              style={{
+                                background: '#ECFDF5',
+                                border: '1px solid #6EE7B7',
+                                color: '#065F46',
+                                fontSize: '0.6rem',
+                                fontWeight: 700,
+                                padding: '1px 5px',
+                                borderRadius: 4,
+                                cursor: massProcessing ? 'default' : 'pointer',
+                                fontFamily: 'inherit',
+                                flexShrink: 0,
+                              }}
+                            >Apply</button>
+                          </>
+                        ) : (
+                          <span style={{ color: '#CBD5E1' }}>—</span>
+                        )}
+                      </div>
+                    )}
                     <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.72rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.email}>
                       {c.email
                         ? <a href={`mailto:${c.email}`} style={{ color: '#3B82F6', textDecoration: 'none' }}>{c.email}</a>

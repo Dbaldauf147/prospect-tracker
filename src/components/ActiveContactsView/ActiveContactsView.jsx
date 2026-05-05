@@ -134,6 +134,7 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
       contactSelector={selector}
       requireActiveOpp={!unmappedOnly}
       unmappedOnly={unmappedOnly}
+      showSuggestedCompany={unmappedOnly}
     />
   );
 }
