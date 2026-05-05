@@ -78,6 +78,10 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
     return 90;
   });
   useEffect(() => { try { localStorage.setItem('active-contacts:window-days', String(windowDays)); } catch {} }, [windowDays]);
+  // KeyContactsView reports how many contacts the unmapped-past-30
+  // filter would surface; we render it next to the toggle so the user
+  // can see at a glance whether flipping the switch is worth it.
+  const [unmappedPast30Count, setUnmappedPast30Count] = useState(0);
   // Surface contacts whose company hasn't been added to the Table View
   // yet — useful for hunting down accounts you've started conversations
   // with but haven't tracked. Toggling this also forces a 30-day window
@@ -113,6 +117,21 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
         <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', color: '#475569', cursor: 'pointer' }}>
           <input type="checkbox" checked={unmappedOnly} onChange={e => setUnmappedOnly(e.target.checked)} />
           <span>Show only contacts (past 30 days) whose company is <strong>not</strong> in the Table View</span>
+          <span
+            title="HubSpot contacts active in the past 30 days whose company isn't tracked on the Table View yet."
+            style={{
+              display: 'inline-block',
+              padding: '0 6px',
+              fontSize: '0.62rem',
+              fontWeight: 700,
+              borderRadius: 999,
+              background: unmappedPast30Count > 0 ? '#FEF3C7' : '#F1F5F9',
+              color: unmappedPast30Count > 0 ? '#92400E' : '#94A3B8',
+              border: '1px solid ' + (unmappedPast30Count > 0 ? '#FDE68A' : '#E2E8F0'),
+              minWidth: 18,
+              textAlign: 'center',
+            }}
+          >{unmappedPast30Count}</span>
         </label>
       </div>
     </>
@@ -135,6 +154,7 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
       requireActiveOpp={!unmappedOnly}
       unmappedOnly={unmappedOnly}
       showSuggestedCompany={unmappedOnly}
+      onUnmappedPast30CountChange={setUnmappedPast30Count}
     />
   );
 }

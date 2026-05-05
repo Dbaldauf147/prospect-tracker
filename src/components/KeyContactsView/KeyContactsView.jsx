@@ -101,6 +101,13 @@ export function KeyContactsView({
   // company for each contact based on their email domain / current
   // Company text. Most useful when paired with `unmappedOnly`.
   showSuggestedCompany = false,
+  // When provided, fires with the count of contacts that would pass
+  // the "active in past 30 days AND not in Table View" filter — used
+  // by ActiveContactsView to label the toggle checkbox. The count is
+  // emitted regardless of whether `unmappedOnly` is currently on so
+  // the user can see how many rows the filter would expose before
+  // flipping it.
+  onUnmappedPast30CountChange,
 }) {
   const lsKey = (suffix) => `${storagePrefix}:${suffix}`;
   const { user } = useAuth();
@@ -519,6 +526,47 @@ export function KeyContactsView({
     }
     return out;
   }, [hubspotCache, FREE_MAIL, contactSelector, metInPersonSelector, activeOppCompanies, unmappedOnly, prospects, companyGuessIndex]);
+
+  // Count of contacts the "unmapped past 30 days" filter WOULD yield,
+  // computed independently from the active filters above so we can
+  // show the badge whether the toggle is on or off. Mirrors the same
+  // 30-day activity check + Table-View-not-mapped logic used when
+  // `unmappedOnly` is on.
+  const unmappedPast30Count = useMemo(() => {
+    if (!onUnmappedPast30CountChange) return 0;
+    const cutoff = Date.now() - 30 * 86400000;
+    const fields = ['hs_email_last_send_date', 'hs_sales_email_last_replied', 'hs_email_last_open_date', 'hs_email_last_click_date', 'notes_last_contacted'];
+    let n = 0;
+    for (const c of (hubspotCache?.contacts || [])) {
+      const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
+      if (tags.includes('hide')) continue;
+      let recent = false;
+      for (const f of fields) {
+        const v = c[f];
+        if (!v) continue;
+        const ts = Date.parse(v);
+        if (Number.isNaN(ts)) continue;
+        if (ts >= cutoff) { recent = true; break; }
+      }
+      if (!recent) continue;
+      const cName = String(c.company || '').trim();
+      const email = (c.email || '').toLowerCase().trim();
+      const at = email.lastIndexOf('@');
+      const cDomain = at >= 0 ? email.slice(at + 1).trim() : '';
+      const cDomainOk = cDomain && !FREE_MAIL.has(cDomain);
+      const mapped = (cName && prospects.some(p => companiesMatch(p.company, cName)))
+        || (cDomainOk && prospects.some(p => {
+          const ds = new Set();
+          collectProspectDomains(p, ds);
+          return ds.has(cDomain);
+        }));
+      if (!mapped) n += 1;
+    }
+    return n;
+  }, [onUnmappedPast30CountChange, hubspotCache, FREE_MAIL, prospects]);
+  useEffect(() => {
+    if (onUnmappedPast30CountChange) onUnmappedPast30CountChange(unmappedPast30Count);
+  }, [unmappedPast30Count, onUnmappedPast30CountChange]);
 
   // Decision-maker contacts — used for the per-company DM column. Mirrors
   // the equivalent flat-list pattern from the PE Portfolio view.
