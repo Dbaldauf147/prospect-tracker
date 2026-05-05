@@ -305,6 +305,7 @@ export function KeyContactsView({
     const id = String(contact?.id || contact?.vid || '');
     if (!id || !field) return;
     const next = (value ?? '').trim();
+    let companyAssignment = null;
     try {
       const res = await fetch('/api/hubspot?action=update-contact', {
         method: 'POST',
@@ -312,9 +313,11 @@ export function KeyContactsView({
         body: JSON.stringify({ contactId: id, properties: { [field]: next } }),
       });
       const json = await res.json();
-      if (json.error) throw new Error(json.error);
+      if (json.error || !res.ok) throw new Error(json.error || `HubSpot ${res.status}`);
+      companyAssignment = json.companyAssignment || null;
     } catch (err) {
       console.warn('Inline update failed', err);
+      setMassStatus({ type: 'partial', message: `Save failed: ${err?.message || 'unknown error'}` });
       return;
     }
     try {
@@ -323,6 +326,36 @@ export function KeyContactsView({
         if (target) target[field] = next;
       });
     } catch (err) { console.warn('Inline cache update failed', err); }
+    // Company-field saves also need the local-override pin so the
+    // typed value sticks when HubSpot's fuzzy Company match resolves
+    // to a record whose name differs (e.g. "Prologis" → "Prologis
+    // Inc"). Mirror HubSpotView.handleInlineUpdate's behavior:
+    //   - association failed entirely → keep override = typed value
+    //   - association succeeded but matched-name differs → keep override
+    //   - association succeeded with matching name → clear override
+    if (field === 'company') {
+      const cur = settings?.contactLocalFields || {};
+      const merged = { ...(cur[id] || {}) };
+      let didChange = false;
+      if (!companyAssignment || companyAssignment.ok === false || companyAssignment.nameDiffers) {
+        if (merged._companyOverride !== next) {
+          merged._companyOverride = next;
+          didChange = true;
+        }
+        if (companyAssignment?.nameDiffers && companyAssignment?.matchedName) {
+          setMassStatus({ type: 'success', message: `Saved "${next}" locally. HubSpot linked this contact to "${companyAssignment.matchedName}" — Prospect Tracker will keep your typed value here.` });
+        }
+      } else if (merged._companyOverride !== undefined) {
+        delete merged._companyOverride;
+        didChange = true;
+      }
+      if (didChange) {
+        const nextLocal = { ...cur };
+        if (Object.keys(merged).length === 0) delete nextLocal[id];
+        else nextLocal[id] = merged;
+        updateSettings({ contactLocalFields: nextLocal });
+      }
+    }
   }
 
   async function applyHideTag(contactIds) {
@@ -744,7 +777,16 @@ export function KeyContactsView({
 
   const keyContacts = useMemo(() => {
     const out = [];
-    for (const c of (hubspotCache?.contacts || [])) {
+    const localFields = settings?.contactLocalFields || {};
+    for (const baseC of (hubspotCache?.contacts || [])) {
+      // Apply per-contact overrides so a typed Company value survives
+      // even when HubSpot's sync would revert it (mirrors what the
+      // HubSpot Contacts page does when its fuzzy Company match
+      // resolves to a record with a different name).
+      const local = localFields[String(baseC.id || baseC.vid || '')] || null;
+      const c = local && typeof local._companyOverride === 'string' && local._companyOverride
+        ? { ...baseC, company: local._companyOverride }
+        : baseC;
       const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
       // Note: we used to fast-skip hide-tagged contacts here, but
       // ActiveContactsView's "Show hidden" mode wants them to come
@@ -805,7 +847,7 @@ export function KeyContactsView({
       });
     }
     return out;
-  }, [hubspotCache, FREE_MAIL, contactSelector, metInPersonSelector, activeOppCompanies, unmappedOnly, prospects, companyGuessIndex]);
+  }, [hubspotCache, FREE_MAIL, contactSelector, metInPersonSelector, activeOppCompanies, unmappedOnly, prospects, companyGuessIndex, settings?.contactLocalFields]);
 
   // Count of contacts the "unmapped past 30 days" filter WOULD yield,
   // computed independently from the active filters above so we can
