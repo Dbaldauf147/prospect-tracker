@@ -2060,7 +2060,20 @@ function KeyContactsViewInner({
                     />
                     )}
                     {visibleSet.has('company') && (
-                    <div style={{ display: 'flex', alignItems: 'center', minWidth: 0 }}>
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        minWidth: 0,
+                        // Soft amber wash + left rule when the contact's
+                        // company doesn't map to a Table View prospect,
+                        // so the user can spot at a glance which rows
+                        // are floating outside the prospect list and
+                        // need a Suggested Company / manual mapping.
+                        ...(c.companyName && !c.prospect ? { background: '#FEF3C7', borderLeft: '3px solid #F59E0B' } : null),
+                      }}
+                      title={c.companyName && !c.prospect ? `"${c.companyName}" is not mapped to any prospect in the Table View — no matching company name and no shared email domain.` : undefined}
+                    >
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <InlineCell
                           value={c.companyName}
@@ -2069,10 +2082,10 @@ function KeyContactsViewInner({
                           textColor="#1E293B"
                           fontWeight={600}
                           suggestions={prospects.map(p => p.company).filter(Boolean)}
-                          title={c.prospect ? `Click to edit. Use the ↗ button to open ${c.companyName}.` : 'Click to edit (autocomplete from Table View companies).'}
+                          title={c.prospect ? `Click to edit. Use the ↗ button to open ${c.companyName}.` : 'Not mapped to any Table View prospect. Click to edit (autocomplete from Table View companies).'}
                         />
                       </div>
-                      {c.prospect && (
+                      {c.prospect ? (
                         <span
                           role="button"
                           tabIndex={0}
@@ -2081,7 +2094,12 @@ function KeyContactsViewInner({
                           title={`Open ${c.companyName} prospect record`}
                           style={{ flexShrink: 0, marginRight: 4, fontSize: '0.7rem', color: '#1D4ED8', cursor: 'pointer', fontWeight: 700 }}
                         >↗</span>
-                      )}
+                      ) : c.companyName ? (
+                        <span
+                          title={`"${c.companyName}" is not in the Table View`}
+                          style={{ flexShrink: 0, marginRight: 4, fontSize: '0.7rem', color: '#B45309', fontWeight: 700 }}
+                        >⚠</span>
+                      ) : null}
                     </div>
                     )}
                     {showSuggestedCompany && (
