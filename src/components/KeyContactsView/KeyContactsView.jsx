@@ -674,12 +674,23 @@ function KeyContactsViewInner({
       .replace(NORM_CORP_RE, ' ')
       .replace(/\s+/g, ' ')
       .trim();
-    const activeOppCompaniesSet = new Set();
+    // Keep both the lowercased original Account string AND a
+    // normalized form. The export now mirrors the Active Contacts
+    // page's matching cascade — exact (lowercased) → companiesMatch
+    // fuzz → normalized-string equality — so short / multi-word
+    // accounts like "URW" vs an opp called "URW Westfield" still pair
+    // up. Using only the normalized set lookup misses those because
+    // "urw westfield" doesn't equal "urw".
+    const activeOppAccounts = [];
+    const activeOppNormSet = new Set();
     for (const r of (oppsRecords || [])) {
       const stage = String(r.Stage || '').trim();
       if (!stage || INVALID_STAGES.has(stage) || CLOSED_STAGES.has(stage)) continue;
-      const acct = normalizeCompanyText(r.Account);
-      if (acct) activeOppCompaniesSet.add(acct);
+      const raw = String(r.Account || '').trim();
+      if (!raw) continue;
+      activeOppAccounts.push(raw);
+      const norm = normalizeCompanyText(raw);
+      if (norm) activeOppNormSet.add(norm);
     }
     const ACTIVE_CUTOFF = Date.now() - 90 * 86400000;
     const ACTIVITY_FIELDS = ['hs_email_last_send_date', 'hs_sales_email_last_replied', 'hs_email_last_open_date', 'hs_email_last_click_date', 'notes_last_contacted'];
@@ -728,10 +739,20 @@ function KeyContactsViewInner({
       // Active Contacts page suppresses against ALL clients (any CDM),
       // not just the logged-in user's clients, so use the wider sets.
       const isClientForActive = (companyLower && allClientCompanies.has(companyLower)) || (!companyLower && domain && allClientDomains.has(domain));
-      // Use the normalized form so "Apollo Global Management," matches
-      // an opp's "Apollo Global Management", and "Akumin (a Stonepeak
-      // co.)" matches "Akumin", etc.
-      const hasActiveOpp = !!companyLower && activeOppCompaniesSet.has(normalizeCompanyText(c.company));
+      // Match the contact's company against the open-opp Account list
+      // using the same exact → fuzzy → normalized cascade the Active
+      // Contacts page applies. Exact (lowercased) catches the common
+      // case; companiesMatch handles short names (e.g. "URW" vs "URW
+      // Westfield") and corporate-suffix drift; the normalized-set
+      // fallback handles trailing "(a Stonepeak co.)" / "Inc." etc.
+      const cName = String(c.company || '').trim();
+      const cNameLower = cName.toLowerCase();
+      let hasActiveOpp = false;
+      if (cName) {
+        hasActiveOpp = activeOppAccounts.some(a => a.toLowerCase() === cNameLower)
+          || activeOppAccounts.some(a => companiesMatch(a, cName))
+          || activeOppNormSet.has(normalizeCompanyText(cName));
+      }
       if (isActive(c) && hasActiveOpp && !tags.includes('dan key target') && !isClientForActive) {
         categories.push('Active');
       }
