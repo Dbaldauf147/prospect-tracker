@@ -15,6 +15,24 @@ const FREE_MAIL = new Set([
   'aol.com', 'me.com', 'proton.me', 'protonmail.com', 'live.com', 'msn.com',
 ]);
 
+// Schneider Electric is the user's own employer — internal coworkers
+// shouldn't show up in this list, so anything matching the company
+// name or an @se.com / @schneider-electric.com email domain is
+// excluded regardless of whether a "Schneider Electric" prospect
+// happens to be tagged as a Client.
+const SCHNEIDER_COMPANY_RE = /\bschneider\s*electric\b/i;
+const SCHNEIDER_DOMAIN_RE = /(^|\.)(se\.com|schneider-electric\.com|schneider\.com)$/i;
+function isSchneiderContact(c) {
+  if (SCHNEIDER_COMPANY_RE.test(String(c.company || ''))) return true;
+  const email = String(c.email || '').toLowerCase().trim();
+  const at = email.lastIndexOf('@');
+  if (at >= 0) {
+    const domain = email.slice(at + 1).trim();
+    if (SCHNEIDER_DOMAIN_RE.test(domain)) return true;
+  }
+  return false;
+}
+
 function companiesMatch(a, b) {
   const na = (a || '').toLowerCase().trim();
   const nb = (b || '').toLowerCase().trim();
@@ -59,6 +77,7 @@ export function ClientContactsView({ prospects = [], onSelectProspect, settings,
   const selector = useCallback((c) => {
     const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
     if (tags.includes('hide')) return false;
+    if (isSchneiderContact(c)) return false;
     const company = String(c.company || '').trim();
     if (company) {
       for (const p of clientProspects) {
