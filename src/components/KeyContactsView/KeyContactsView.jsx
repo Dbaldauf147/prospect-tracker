@@ -337,7 +337,7 @@ export function KeyContactsView({
   }
 
   const DEFAULT_CONTACT_COL_WIDTHS = {
-    name: 180, title: 200, company: 200, suggestedCompany: 220, email: 240, phone: 140, location: 140, country: 120, linkedin: 90, met: 80,
+    name: 180, title: 200, company: 200, suggestedCompany: 220, email: 240, phone: 140, location: 140, country: 120, linkedin: 90, salesNav: 100, met: 80,
   };
   const [contactColWidths, setContactColWidths] = useState(() => {
     try {
@@ -800,6 +800,7 @@ export function KeyContactsView({
     location: c => [c.city, c.state].filter(Boolean).join(', '),
     country:  c => c.country || '',
     linkedin: c => c.linkedin ? 'open' : '',
+    salesNav: c => '',
     met:      c => c.metInPerson ? 'yes' : 'no',
   };
   const activeContactFilters = Object.entries(contactColFilters)
@@ -1084,6 +1085,7 @@ export function KeyContactsView({
               { key: 'location', label: 'Location' },
               { key: 'country',  label: 'Country' },
               { key: 'linkedin', label: 'LinkedIn', sortable: false },
+              { key: 'salesNav', label: 'Sales Nav', sortable: false },
               { key: 'met',      label: 'Met' },
             ];
             const CONTACT_GRID = (massMode ? '32px ' : '')
@@ -1256,6 +1258,22 @@ export function KeyContactsView({
                         ? <a href={c.linkedin} target="_blank" rel="noopener noreferrer" style={{ color: '#0A66C2', textDecoration: 'none', fontWeight: 600 }}>Open ↗</a>
                         : <span style={{ color: '#CBD5E1' }}>—</span>}
                     </div>
+                    {(() => {
+                      const parts = [c.firstname, c.lastname, c.companyName].map(s => String(s || '').trim()).filter(Boolean);
+                      if (parts.length === 0) return <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: '#CBD5E1' }}>—</div>;
+                      const href = `https://www.linkedin.com/sales/search/people?keywords=${encodeURIComponent(parts.join(' '))}`;
+                      return (
+                        <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem' }}>
+                          <a
+                            href={href}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={`Open Sales Navigator search pre-filtered to "${parts.join(' ')}". Find the profile, copy the URL, paste into the contact's LinkedIn URL field.`}
+                            style={{ color: '#0A66C2', textDecoration: 'none', fontWeight: 600 }}
+                          >Search ↗</a>
+                        </div>
+                      );
+                    })()}
                     <div style={{ padding: '0.45rem 0.6rem' }}>
                       {c.metInPerson
                         ? <span style={{ display: 'inline-block', padding: '1px 6px', fontSize: '0.6rem', fontWeight: 700, background: '#DCFCE7', color: '#166534', border: '1px solid #86EFAC', borderRadius: 999 }}>✓ Yes</span>
@@ -1471,7 +1489,7 @@ export function KeyContactsView({
                             Key Target contacts <span style={{ color: '#94A3B8', fontWeight: 500 }}>({row.contacts.length})</span>
                           </div>
                           {(() => {
-                            const CONTACT_GRID = '1.4fr 1.6fr 2fr 1.2fr 1.4fr 0.7fr 0.9fr';
+                            const CONTACT_GRID = '1.4fr 1.6fr 2fr 1.2fr 1.4fr 0.7fr 0.8fr 0.9fr';
                             return (
                               <div style={{ background: '#fff', border: '1px solid #E2E8F0', borderRadius: 4, overflow: 'hidden' }}>
                                 <div style={{ display: 'grid', gridTemplateColumns: CONTACT_GRID, gap: '0.5rem', padding: '0.3rem 0.6rem', background: '#F8FAFC', borderBottom: '1px solid #E2E8F0', fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#64748B' }}>
@@ -1481,6 +1499,7 @@ export function KeyContactsView({
                                   <div>Phone</div>
                                   <div>Location</div>
                                   <div>LinkedIn</div>
+                                  <div>Sales Nav</div>
                                   <div>Met</div>
                                 </div>
                                 {row.contacts.map((c, i) => (
@@ -1518,6 +1537,23 @@ export function KeyContactsView({
                                         ? <a href={c.linkedin} target="_blank" rel="noopener noreferrer" style={{ color: '#0A66C2', textDecoration: 'none', fontWeight: 600 }} onClick={e => e.stopPropagation()}>Open ↗</a>
                                         : <span style={{ color: '#CBD5E1' }}>—</span>}
                                     </div>
+                                    {(() => {
+                                      const parts = [c.firstname, c.lastname, row.companyName].map(s => String(s || '').trim()).filter(Boolean);
+                                      if (parts.length === 0) return <div style={{ fontSize: '0.68rem', color: '#CBD5E1' }}>—</div>;
+                                      const href = `https://www.linkedin.com/sales/search/people?keywords=${encodeURIComponent(parts.join(' '))}`;
+                                      return (
+                                        <div style={{ fontSize: '0.68rem' }}>
+                                          <a
+                                            href={href}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            title={`Open Sales Navigator search pre-filtered to "${parts.join(' ')}".`}
+                                            onClick={e => e.stopPropagation()}
+                                            style={{ color: '#0A66C2', textDecoration: 'none', fontWeight: 600 }}
+                                          >Search ↗</a>
+                                        </div>
+                                      );
+                                    })()}
                                     <div>
                                       {c.metInPerson
                                         ? <span style={{ display: 'inline-block', padding: '1px 6px', fontSize: '0.6rem', fontWeight: 700, background: '#DCFCE7', color: '#166534', border: '1px solid #86EFAC', borderRadius: 999 }}>✓ Yes</span>

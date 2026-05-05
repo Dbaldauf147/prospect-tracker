@@ -6012,6 +6012,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>City</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Country</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>LinkedIn</th>
+                        <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }} title="Open Sales Navigator pre-filtered to this contact's name + company.">Sales Nav</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0' }}>Notes</th>
                         <th style={{ padding: '0.4rem 0.5rem', textAlign: 'center', fontWeight: 600, color: '#64748B', fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.03em', borderBottom: '1px solid #E2E8F0', width: '40px' }}></th>
                       </tr>
@@ -6099,6 +6100,23 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             <td style={{ padding: '0.35rem 0.5rem', color: '#475569', whiteSpace: 'nowrap', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.country || '—'}</td>
                             <td style={{ padding: '0.35rem 0.5rem' }}>
                               {linkedinUrl ? <a href={linkedinUrl.startsWith('http') ? linkedinUrl : `https://linkedin.com/in/${linkedinUrl}`} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ color: '#0A66C2', fontSize: '0.7rem', fontWeight: 600, textDecoration: 'none' }}>View</a> : <span style={{ color: '#CBD5E1' }}>—</span>}
+                            </td>
+                            <td style={{ padding: '0.35rem 0.5rem' }}>
+                              {(() => {
+                                const parts = [c.firstname, c.lastname, c.company || fields.company].map(s => String(s || '').trim()).filter(Boolean);
+                                if (parts.length === 0) return <span style={{ color: '#CBD5E1' }}>—</span>;
+                                const href = `https://www.linkedin.com/sales/search/people?keywords=${encodeURIComponent(parts.join(' '))}`;
+                                return (
+                                  <a
+                                    href={href}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={e => e.stopPropagation()}
+                                    title={`Open Sales Navigator search pre-filtered to "${parts.join(' ')}".`}
+                                    style={{ color: '#0A66C2', fontSize: '0.7rem', fontWeight: 600, textDecoration: 'none' }}
+                                  >Search</a>
+                                );
+                              })()}
                             </td>
                             <td style={{ padding: '0.35rem 0.5rem', color: '#475569', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.68rem' }}>{(settings.contactNotes || {})[c.id || c.vid] || c.notes || c.hs_content_membership_notes || c.message || '—'}</td>
                             <td style={{ padding: '0.35rem 0.3rem', textAlign: 'center' }}>
