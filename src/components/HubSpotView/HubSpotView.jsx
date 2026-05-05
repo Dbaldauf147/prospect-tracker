@@ -2405,11 +2405,11 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
                 type="button"
                 className={styles.massEditBtn}
                 onClick={toggleSelectAll}
-                title={selected.size === filteredContacts.length && filteredContacts.length > 0 ? 'Deselect all rows' : 'Select every row in the current view'}
+                title={selected.size === filteredContacts.length && filteredContacts.length > 0 ? 'Clear selection' : `Select every contact that passes the current search and column filters (${filteredContacts.length})`}
               >
                 {selected.size === filteredContacts.length && filteredContacts.length > 0
                   ? `Deselect All (${selected.size})`
-                  : `Select All (${filteredContacts.length})`}
+                  : `Select All Filtered (${filteredContacts.length})`}
               </button>
             )}
             <button className={styles.newContactBtn} onClick={() => setEditContact(null)}>+ New Contact</button>
@@ -2492,7 +2492,21 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
                   );
                 },
               },
-              ...(massMode ? [{ key: '_select', label: '', defaultWidth: 36, render: (c) => <input type="checkbox" checked={selected.has(c.id)} onChange={() => toggleSelect(c.id)} onClick={e => e.stopPropagation()} style={{ accentColor: 'var(--color-accent)' }} /> }] : []),
+              ...(massMode ? [{
+                key: '_select',
+                label: (
+                  <input
+                    type="checkbox"
+                    checked={filteredContacts.length > 0 && selected.size >= filteredContacts.length}
+                    onChange={toggleSelectAll}
+                    onClick={e => e.stopPropagation()}
+                    title={selected.size === filteredContacts.length && filteredContacts.length > 0 ? 'Clear all selected' : `Select all ${filteredContacts.length} filtered contacts`}
+                    style={{ accentColor: 'var(--color-accent)' }}
+                  />
+                ),
+                defaultWidth: 36,
+                render: (c) => <input type="checkbox" checked={selected.has(c.id)} onChange={() => toggleSelect(c.id)} onClick={e => e.stopPropagation()} style={{ accentColor: 'var(--color-accent)' }} />
+              }] : []),
               { key: 'firstname', label: 'First Name', defaultWidth: 120, render: (c) => <HubSpotInlineCell contact={c} field="firstname" value={c.firstname} onSave={handleInlineUpdate} /> },
               { key: 'lastname', label: 'Last Name', defaultWidth: 120, render: (c) => <HubSpotInlineCell contact={c} field="lastname" value={c.lastname} onSave={handleInlineUpdate} /> },
               { key: 'email', label: 'Email', defaultWidth: 200, render: (c) => <HubSpotInlineCell contact={c} field="email" value={c.email} onSave={handleInlineUpdate} /> },
