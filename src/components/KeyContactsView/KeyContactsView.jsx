@@ -1061,23 +1061,21 @@ function KeyContactsViewInner({
     const byKey = new Map();
 
     for (const kc of keyContacts) {
-      // Try to find a matching prospect:
-      //   1. Exact case-insensitive name match — wins when the
-      //      user's typed company is the exact prospect name (so
-      //      "Prologis" picks the "Prologis" prospect over a fuzzy
-      //      match like "DCT Industrial Trust Inc. (a Prologis Co.)"
-      //      where "prologis" appears as a token inside).
-      //   2. Fuzzy companiesMatch on the name.
-      //   3. Domain match against the prospect's emailDomain / website.
+      // Strict 1:1 name match only — a contact only groups under a
+      // prospect whose Company text equals the contact's company text
+      // (case-insensitive, trimmed). The previous fuzzy fallback used
+      // companiesMatch's single-token rule, which incorrectly grouped
+      // e.g. a "Blackstone" contact under "BRE Hotels & Resorts (a
+      // Blackstone Co.)" because "blackstone" appears as a token in
+      // the latter. If no exact match, fall back to email-domain
+      // match — only useful when the contact's company text is empty
+      // or differs but their email domain is registered on a prospect.
       let match = null;
       if (kc.company) {
         const needle = String(kc.company).toLowerCase().trim();
         match = prospects.find(p => String(p.company || '').toLowerCase().trim() === needle);
-        if (!match) {
-          match = prospects.find(p => companiesMatch(p.company, kc.company));
-        }
       }
-      if (!match && kc.domain) {
+      if (!match && !kc.company && kc.domain) {
         match = prospects.find(p => {
           const ds = new Set();
           collectProspectDomains(p, ds);
