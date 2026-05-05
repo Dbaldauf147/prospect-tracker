@@ -750,7 +750,7 @@ function PipelineViewInner() {
           </div>
           <MetricsTableBoundary>
           <div style={{ overflowX: 'auto' }}>
-          <table className={styles.grid} style={{ minWidth: 1400, tableLayout: 'fixed' }}>
+          <table className={styles.grid} style={{ width: 1295, tableLayout: 'fixed' }}>
             <colgroup>
               <col style={{ width: 140 }} /> {/* Stage label */}
               <col style={{ width: 105 }} /><col style={{ width: 105 }} /> {/* Active Opps */}
@@ -893,14 +893,16 @@ function PipelineViewInner() {
         </div>
 
         {/* Mid row — Client/Greenfield + Coverage Ratio + % deals
-            not Quoted. Section widths roughly track the metrics
-            columns above (~108px per metrics col), but we let things
-            wrap on narrow viewports rather than force a horizontal
-            scroll. Coverage Ratio gets a blue outline that matches
-            the column border traced through the metrics Pipeline
-            cells above so the two read as a vertical block. */}
-        <div className={styles.midRow}>
-          <div className={styles.section} style={{ flex: '1 1 540px', minWidth: 480 }}>
+            not Quoted. Widths are pinned to the metrics colgroup
+            above (Stage 140 + 4×105 = 560 px to the left edge of
+            Pipeline, then 2×105 = 210 px for Pipeline itself) so
+            Coverage Ratio sits directly under the Pipeline column
+            and the two blue borders read as a single vertical block.
+            Wrapped in overflow-x:auto matching the metrics table so
+            narrow viewports scroll rather than misalign. */}
+        <div style={{ overflowX: 'auto' }}>
+        <div className={styles.midRow} style={{ minWidth: 1295 }}>
+          <div className={styles.section} style={{ flex: '0 0 544px' }}>
             <table className={styles.grid} style={{ width: '100%' }}>
               <thead>
                 <tr><th /><th>Count / $</th><th>Goal - Client</th><th>Actual - Client</th></tr>
@@ -995,7 +997,7 @@ function PipelineViewInner() {
             </table>
           </div>
 
-          <div className={styles.section} style={{ flex: '0 0 210px' }}>
+          <div className={styles.section} style={{ flex: '0 0 315px' }}>
             <table className={styles.grid} style={{ width: '100%' }}>
               <thead>
                 <tr><th colSpan={3}>% of deals not Quoted</th></tr>
@@ -1015,6 +1017,7 @@ function PipelineViewInner() {
             </table>
           </div>
 
+        </div>
         </div>
 
         {/* Goals / Activities */}
