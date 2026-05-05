@@ -1168,7 +1168,21 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
               message: `Saved "${hubspotProps.company}" locally. HubSpot couldn't pin the Company association${ca.status ? ` (HTTP ${ca.status})` : ''}${detail} — Prospect Tracker will keep your value through future syncs.`,
             });
           } else if (ca && ca.ok === true) {
-            companyOverrideSetTo = null;
+            // HubSpot accepted the association, but if it pinned to a
+            // Company record whose `name` differs from what the user
+            // typed, the next sync will overwrite the contact.company
+            // text with the matched Company's name. Keep our typed
+            // value via the local override and surface a warning so
+            // the user knows what's happening on the HubSpot side.
+            if (ca.nameDiffers && ca.matchedName) {
+              companyOverrideSetTo = hubspotProps.company;
+              setPushStatus({
+                type: 'success',
+                message: `Saved "${hubspotProps.company}" locally. HubSpot linked this contact to an existing Company record named "${ca.matchedName}" — its sync will display that name unless you rename the Company in HubSpot. Prospect Tracker will keep your typed value here.`,
+              });
+            } else {
+              companyOverrideSetTo = null;
+            }
           }
         }
       }

@@ -126,7 +126,7 @@ async function findCompanyByName(token, rawName) {
     if (res.ok) {
       const data = await res.json();
       const hit = (data.results || [])[0];
-      if (hit?.id) return String(hit.id);
+      if (hit?.id) return { id: String(hit.id), name: hit.properties?.name || name };
     }
   } catch { /* fall through */ }
   // 2. CONTAINS_TOKEN with the leading distinctive token, then
@@ -154,14 +154,14 @@ async function findCompanyByName(token, rawName) {
         // whose normalized form contains the target — that's typically
         // the closest "real" company without extra qualifiers.
         const exact = candidates.find(c => normalizeCompanyName(c.name) === target);
-        if (exact) return exact.id;
+        if (exact) return { id: exact.id, name: exact.name };
         const partial = candidates
           .filter(c => {
             const n = normalizeCompanyName(c.name);
             return n && (n.includes(target) || target.includes(n));
           })
           .sort((a, b) => a.name.length - b.name.length)[0];
-        if (partial) return partial.id;
+        if (partial) return { id: partial.id, name: partial.name };
       }
     }
   } catch { /* fall through */ }
@@ -508,13 +508,16 @@ export default async function handler(req, res) {
       if (typeof cleanProps.company === 'string') {
         const companyName = cleanProps.company.trim();
         if (companyName) {
-          let companyId = await findCompanyByName(token, companyName);
+          let match = await findCompanyByName(token, companyName);
+          let companyId = match?.id || null;
+          let matchedName = match?.name || '';
           let created = false;
           let createError = null;
           if (!companyId) {
             const createRes = await createCompanyByName(token, companyName);
             if (createRes.ok) {
               companyId = createRes.id;
+              matchedName = companyName;
               created = true;
             } else {
               createError = createRes;
@@ -522,12 +525,25 @@ export default async function handler(req, res) {
           }
           if (companyId) {
             const result = await setContactPrimaryCompany(token, contactId, companyId);
-            companyAssignment = { companyId, created, ...result };
+            // Surface the existing Company's actual name back to the
+            // client. When matchedName !== companyName the next sync
+            // will overwrite the contact's `company` text with the
+            // matched name, so the client needs to know to keep its
+            // local override of the user-requested value.
+            companyAssignment = {
+              companyId,
+              created,
+              matchedName,
+              requestedName: companyName,
+              nameDiffers: !!matchedName && matchedName.trim().toLowerCase() !== companyName.trim().toLowerCase(),
+              ...result,
+            };
           } else {
             companyAssignment = {
               ok: false,
               status: createError?.status || 0,
               errorText: createError?.errorText || 'Failed to find or create Company record',
+              requestedName: companyName,
             };
           }
         }
