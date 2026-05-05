@@ -682,6 +682,46 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
 
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  // Merge state. When `mergeOpen` is true, we show an inline picker
+  // letting the user choose a second contact to merge INTO this one.
+  // The current contact is always the primary (kept), the picked one
+  // is the secondary (consumed and removed by HubSpot's merge API).
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const [mergeQuery, setMergeQuery] = useState('');
+  const [mergeProcessing, setMergeProcessing] = useState(false);
+  const [mergeError, setMergeError] = useState('');
+  async function performMerge(secondaryId, secondaryLabel) {
+    const primaryId = contact.id || contact.vid;
+    if (!primaryId || !secondaryId || String(primaryId) === String(secondaryId)) return;
+    if (!window.confirm(`Merge "${secondaryLabel}" into this contact? The other contact will be DELETED in HubSpot — its email history, notes, and engagements move into the kept contact. This cannot be undone.`)) return;
+    setMergeProcessing(true);
+    setMergeError('');
+    try {
+      const res = await fetch('/api/hubspot?action=merge-contacts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ primaryObjectId: primaryId, objectIdToMerge: secondaryId }),
+      });
+      const json = await res.json();
+      if (!res.ok || json.error) throw new Error(json.error || `HubSpot ${res.status}`);
+      // Drop the secondary from the local cache so it disappears
+      // immediately. The primary's properties may shift slightly post
+      // -merge (HubSpot inherits fields from the secondary if blank
+      // on the primary); a periodic full-sync picks those up.
+      try {
+        await updateHubspotCache(draft => {
+          draft.contacts = (draft.contacts || []).filter(c => String(c.id || c.vid) !== String(secondaryId));
+        });
+      } catch (err) { console.warn('Merge cache update failed', err); }
+      setMergeOpen(false);
+      setMergeQuery('');
+      onClose();
+    } catch (err) {
+      setMergeError(err?.message || 'Merge failed');
+    } finally {
+      setMergeProcessing(false);
+    }
+  }
   const [companyOpen, setCompanyOpen] = useState(false);
   const [companyHover, setCompanyHover] = useState(0);
   const companyBoxRef = useRef(null);
@@ -1171,16 +1211,102 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
           </div>
         </div>
         {error && <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', background: '#FEF2F2', borderRadius: '6px', fontSize: '0.75rem', color: '#DC2626' }}>{error}</div>}
-        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1.25rem' }}>
-          <button onClick={onClose} style={{ padding: '0.5rem 1rem', border: '1px solid #E2E8F0', borderRadius: '6px', background: '#fff', fontSize: '0.8rem', fontFamily: 'inherit', cursor: 'pointer', color: '#64748B' }}>Cancel</button>
-          <button
-            onClick={handleSave}
-            disabled={saving || saved || !f.email.trim()}
-            title={!f.email.trim() ? 'Email is required' : ''}
-            style={{ padding: '0.5rem 1rem', border: 'none', borderRadius: '6px', background: saved ? '#059669' : (!f.email.trim() ? '#94A3B8' : '#0078D4'), color: '#fff', fontSize: '0.8rem', fontFamily: 'inherit', cursor: (!f.email.trim() || saving) ? 'not-allowed' : 'pointer', fontWeight: 600, transition: 'background 0.2s', opacity: (!f.email.trim() && !saved) ? 0.6 : 1 }}
-          >
-            {saving ? 'Saving…' : saved ? '✓ Saved!' : !f.email.trim() ? 'Email required' : (!contact.id && !contact.vid) ? 'Create in HubSpot' : 'Save to HubSpot'}
-          </button>
+        {mergeOpen && (() => {
+          const allCandidates = (companyContacts || [])
+            .concat((contact && Array.isArray(contact.__allContacts)) ? contact.__allContacts : [])
+            .filter(c => String(c.id || c.vid) !== String(contact.id || contact.vid));
+          const seen = new Set();
+          const unique = [];
+          for (const c of allCandidates) {
+            const k = String(c.id || c.vid || '');
+            if (!k || seen.has(k)) continue;
+            seen.add(k);
+            unique.push(c);
+          }
+          const q = mergeQuery.trim().toLowerCase();
+          const matches = q
+            ? unique.filter(c => {
+                const blob = [c.firstname, c.lastname, c.email, c.company, c.jobtitle].filter(Boolean).join(' ').toLowerCase();
+                return blob.includes(q);
+              }).slice(0, 30)
+            : unique.slice(0, 30);
+          return (
+            <div style={{ marginTop: '0.75rem', padding: '0.75rem', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 6 }}>
+              <div style={{ fontWeight: 700, fontSize: '0.78rem', color: '#92400E', marginBottom: '0.4rem' }}>
+                Merge another contact INTO this one
+              </div>
+              <div style={{ fontSize: '0.7rem', color: '#92400E', marginBottom: '0.5rem' }}>
+                The kept contact (this popup) inherits email history, notes, and engagements from whatever you pick below. The other contact is deleted in HubSpot.
+              </div>
+              <input
+                type="text"
+                value={mergeQuery}
+                onChange={e => setMergeQuery(e.target.value)}
+                placeholder="Search by name, email, company…"
+                autoFocus
+                style={{ width: '100%', padding: '0.4rem 0.55rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit', marginBottom: '0.4rem' }}
+              />
+              <div style={{ maxHeight: 220, overflowY: 'auto', background: '#fff', border: '1px solid #FDE68A', borderRadius: 4 }}>
+                {matches.length === 0 ? (
+                  <div style={{ padding: '0.6rem', fontSize: '0.72rem', color: '#94A3B8', fontStyle: 'italic', textAlign: 'center' }}>
+                    {unique.length === 0
+                      ? 'No other contacts available to merge with.'
+                      : `No contacts match "${mergeQuery}".`}
+                  </div>
+                ) : matches.map(c => {
+                  const id = c.id || c.vid;
+                  const name = [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email || `Contact ${id}`;
+                  const subtitle = [c.email, c.company, c.jobtitle].filter(Boolean).join(' · ');
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      disabled={mergeProcessing}
+                      onClick={() => performMerge(id, name)}
+                      style={{ display: 'block', width: '100%', textAlign: 'left', padding: '0.5rem 0.6rem', background: 'transparent', border: 'none', borderBottom: '1px solid #FEF3C7', cursor: mergeProcessing ? 'wait' : 'pointer', fontFamily: 'inherit' }}
+                      onMouseEnter={e => e.currentTarget.style.background = '#FEF3C7'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                    >
+                      <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#1E293B' }}>{name}</div>
+                      {subtitle && <div style={{ fontSize: '0.66rem', color: '#64748B', marginTop: 2 }}>{subtitle}</div>}
+                    </button>
+                  );
+                })}
+              </div>
+              {mergeError && (
+                <div style={{ marginTop: '0.5rem', padding: '0.4rem 0.6rem', background: '#FEF2F2', border: '1px solid #FCA5A5', borderRadius: 4, fontSize: '0.72rem', color: '#991B1B' }}>{mergeError}</div>
+              )}
+              <div style={{ marginTop: '0.5rem', display: 'flex', justifyContent: 'flex-end' }}>
+                <button
+                  type="button"
+                  disabled={mergeProcessing}
+                  onClick={() => { setMergeOpen(false); setMergeQuery(''); setMergeError(''); }}
+                  style={{ padding: '0.3rem 0.7rem', border: '1px solid #E2E8F0', borderRadius: 4, background: '#fff', fontSize: '0.72rem', fontFamily: 'inherit', cursor: 'pointer' }}
+                >Close picker</button>
+              </div>
+            </div>
+          );
+        })()}
+        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.25rem' }}>
+          {(contact.id || contact.vid) ? (
+            <button
+              type="button"
+              onClick={() => setMergeOpen(o => !o)}
+              title="Merge another HubSpot contact INTO this one — keeps this contact, deletes the other after consolidating its history."
+              style={{ padding: '0.5rem 1rem', border: '1px solid #FDE68A', borderRadius: 6, background: mergeOpen ? '#FEF3C7' : '#FFFBEB', color: '#92400E', fontSize: '0.78rem', fontFamily: 'inherit', cursor: 'pointer', fontWeight: 600 }}
+            >{mergeOpen ? 'Cancel merge' : 'Merge…'}</button>
+          ) : <span />}
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <button onClick={onClose} style={{ padding: '0.5rem 1rem', border: '1px solid #E2E8F0', borderRadius: '6px', background: '#fff', fontSize: '0.8rem', fontFamily: 'inherit', cursor: 'pointer', color: '#64748B' }}>Cancel</button>
+            <button
+              onClick={handleSave}
+              disabled={saving || saved || !f.email.trim()}
+              title={!f.email.trim() ? 'Email is required' : ''}
+              style={{ padding: '0.5rem 1rem', border: 'none', borderRadius: '6px', background: saved ? '#059669' : (!f.email.trim() ? '#94A3B8' : '#0078D4'), color: '#fff', fontSize: '0.8rem', fontFamily: 'inherit', cursor: (!f.email.trim() || saving) ? 'not-allowed' : 'pointer', fontWeight: 600, transition: 'background 0.2s', opacity: (!f.email.trim() && !saved) ? 0.6 : 1 }}
+            >
+              {saving ? 'Saving…' : saved ? '✓ Saved!' : !f.email.trim() ? 'Email required' : (!contact.id && !contact.vid) ? 'Create in HubSpot' : 'Save to HubSpot'}
+            </button>
+          </div>
         </div>
       </div>
     </div>

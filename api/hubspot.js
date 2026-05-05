@@ -732,6 +732,31 @@ export default async function handler(req, res) {
       return res.json({ success: true, tag });
     }
 
+    if (action === 'merge-contacts' && req.method === 'POST') {
+      // Merge two HubSpot contacts. The `primaryObjectId` keeps its
+      // identity and inherits all properties / engagements from
+      // `objectIdToMerge`; the secondary is removed. We pass both
+      // through to HubSpot's CRM-objects merge endpoint as documented.
+      const { primaryObjectId, objectIdToMerge } = req.body;
+      if (!primaryObjectId || !objectIdToMerge) {
+        return res.status(400).json({ error: 'primaryObjectId and objectIdToMerge are both required' });
+      }
+      if (String(primaryObjectId) === String(objectIdToMerge)) {
+        return res.status(400).json({ error: 'Cannot merge a contact with itself' });
+      }
+      const mergeRes = await fetch(`${BASE}/crm/v3/objects/contacts/merge`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ primaryObjectId: String(primaryObjectId), objectIdToMerge: String(objectIdToMerge) }),
+      });
+      if (!mergeRes.ok) {
+        const text = await mergeRes.text();
+        throw new Error(`Merge failed ${mergeRes.status}: ${text.slice(0, 300)}`);
+      }
+      const json = await mergeRes.json();
+      return res.json({ success: true, primary: json });
+    }
+
     if (action === 'delete-contact' && req.method === 'POST') {
       const { contactId } = req.body;
       if (!contactId) {
