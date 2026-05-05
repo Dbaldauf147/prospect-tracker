@@ -1722,7 +1722,8 @@ export function SitesView({ settings, updateSettings } = {}) {
     detailTitle.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
     detailSheet.getRow(1).height = 28;
 
-    // Header row.
+    // Header row. Borders on bottom + right so the column separators
+    // continue down through the data rows.
     const detailHeader = detailSheet.getRow(2);
     detailCols.forEach((c, i) => {
       const cell = detailHeader.getCell(i + 1);
@@ -1730,7 +1731,10 @@ export function SitesView({ settings, updateSettings } = {}) {
       cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
       cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
-      cell.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
+      cell.border = {
+        bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } },
+        right:  { style: 'hair', color: { argb: 'FFFFFFFF' } },
+      };
     });
     detailHeader.height = 32;
 
@@ -1793,11 +1797,21 @@ export function SitesView({ settings, updateSettings } = {}) {
       detailCols.forEach((c, i) => {
         const cell = dataRow.getCell(i + 1);
         const v = c.get(s);
-        cell.value = (v === '' || v == null) ? null : v;
+        // Excel overflows long text from one cell into the next when
+        // the next cell is empty. Putting a single space in blank
+        // cells stops that visual overflow without showing anything
+        // visible to the user.
+        cell.value = (v === '' || v == null) ? ' ' : v;
         cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
         cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
         if (c.numFmt) cell.numFmt = c.numFmt;
-        cell.border = { bottom: { style: 'hair', color: { argb: SE_BORDER } } };
+        // Hair border on bottom (row separator) AND right (column
+        // separator) so the table reads with light visible gridlines
+        // even though the worksheet has showGridLines:false.
+        cell.border = {
+          bottom: { style: 'hair', color: { argb: SE_BORDER } },
+          right:  { style: 'hair', color: { argb: SE_BORDER } },
+        };
       });
       dataRow.height = 18;
     });
