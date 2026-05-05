@@ -596,39 +596,57 @@ function PipelineViewInner() {
   // (Sold / Not Sold), or today − Age for active opps.
   const newOppsPast30 = useMemo(() => {
     const cutoff = Date.now() - 30 * 86400000;
-    const now = Date.now();
+    // Age fields go stale between paste-imports — an opp paste-imported
+    // months ago with Age=7 would otherwise look 7 days old today. To
+    // protect against that, we prefer:
+    //   1. The opp's `Start Date` column when it parses as a real date.
+    //   2. Otherwise: fetchedAt − Age days (so Age is interpreted at
+    //      the time the data was pasted, not today).
+    //   3. Last resort: today − Age days.
+    const fetchedAt = opps && opps.fetchedAt ? Date.parse(opps.fetchedAt) : NaN;
+    const ageRef = Number.isFinite(fetchedAt) ? fetchedAt : Date.now();
     const items = [];
     for (const r of oppsRecords) {
       const bfoLink = String(r['BFO Link'] ?? '').trim();
       if (!bfoLink || bfoLink === '-' || bfoLink === '#N/A') continue;
-      const age = Number(String(r.Age ?? '').replace(/[^0-9.\-]/g, ''));
-      if (!Number.isFinite(age) || age < 0) continue;
       const stage = (r.Stage || '').trim();
-      let openTs;
-      if (stage === 'Sold' || stage === 'Not Sold') {
-        const closeTs = Date.parse(r['Close Date'] || '');
-        if (Number.isNaN(closeTs)) continue;
-        openTs = closeTs - age * 86400000;
-      } else {
-        openTs = now - age * 86400000;
+      let openTs = NaN;
+      // 1. Prefer Start Date when it's a parseable real date.
+      const startRaw = String(r['Start Date'] || '').trim();
+      if (startRaw) {
+        const ts = Date.parse(startRaw);
+        if (!Number.isNaN(ts)) openTs = ts;
       }
+      // 2. Fall back to Age-based.
+      if (Number.isNaN(openTs)) {
+        const age = Number(String(r.Age ?? '').replace(/[^0-9.\-]/g, ''));
+        if (!Number.isFinite(age) || age < 0) continue;
+        if (stage === 'Sold' || stage === 'Not Sold') {
+          const closeTs = Date.parse(r['Close Date'] || '');
+          if (Number.isNaN(closeTs)) continue;
+          openTs = closeTs - age * 86400000;
+        } else {
+          openTs = ageRef - age * 86400000;
+        }
+      }
+      if (Number.isNaN(openTs)) continue;
       if (openTs >= cutoff) {
         items.push({
           account: String(r.Account || '').trim() || '(no company)',
           opp: String(r['Opportunity Name'] || r.Opportunity || r.Name || '').trim() || '(unnamed opp)',
           stage,
-          age: Math.round(age),
+          openDate: new Date(openTs).toISOString().slice(0, 10),
         });
       }
     }
     items.sort((a, b) => a.account.localeCompare(b.account) || a.opp.localeCompare(b.opp));
     return { count: items.length, items };
-  }, [oppsRecords]);
+  }, [oppsRecords, opps]);
   const newOppsPast30Count = newOppsPast30.count;
   const newOppsPast30Tooltip = newOppsPast30.items.length === 0
-    ? 'Auto-fed from the Opps tab — opps opened in the past 30 days that have a BFO Link. Open date = Close Date − Age for closed opps, today − Age for active. Re-paste the Opps tab to refresh.'
+    ? 'Auto-fed from the Opps tab — opps opened in the past 30 days that have a BFO Link. Prefers Start Date; falls back to fetchedAt − Age. Re-paste the Opps tab to refresh.'
     : `${newOppsPast30.count} opp${newOppsPast30.count === 1 ? '' : 's'} opened in the last 30 days (BFO-linked):\n` +
-      newOppsPast30.items.map(it => `• ${it.account} — ${it.opp}${it.stage ? ` (${it.stage})` : ''}`).join('\n');
+      newOppsPast30.items.map(it => `• ${it.account} — ${it.opp}${it.stage ? ` (${it.stage})` : ''}${it.openDate ? ` · opened ${it.openDate}` : ''}`).join('\n');
 
   const notQuotedFromOpps = useMemo(() => {
     const NOT_QUOTED_STAGES = new Set(['Lead', 'Not Started', 'Qualifying']);
