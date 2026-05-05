@@ -1103,6 +1103,69 @@ export function SitesView({ settings, updateSettings } = {}) {
   };
   // Flat savings range applied to any deregulated natural-gas site.
   const GAS_SAVINGS = { range: '2 - 4%', lowPct: 0.02, highPct: 0.04 };
+  // Per-state natural-gas deregulation status + savings range. States
+  // marked "Large load only" mean retail choice is restricted to
+  // industrial / large-volume customers, so the standard 2-4 %
+  // doesn't apply — the range stays blank and lowPct/highPct are
+  // null. Anything not in this map falls through to status 'no'.
+  const GAS_DEREGULATION = {
+    AK: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    AL: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    CT: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    CO: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    DC: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    DE: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    IL: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    FL: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    GA: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    ID: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    MA: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    IN: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    KS: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    KY: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    LA: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    MD: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    ME: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    NH: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    NJ: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    MS: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    NB: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    ND: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    NE: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    NY: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    OH: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    ON: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    OR: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    PA: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    RI: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    TX: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    QC: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    CA: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    SC: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    SD: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    SK: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    MI: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    UT: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    VA: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    WA: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
+    AB: { status: 'Large load only', range: '', lowPct: null, highPct: null },
+    AR: { status: 'Large load only', range: '', lowPct: null, highPct: null },
+    AZ: { status: 'Large load only', range: '', lowPct: null, highPct: null },
+    BC: { status: 'Large load only', range: '', lowPct: null, highPct: null },
+    IA: { status: 'Large load only', range: '', lowPct: null, highPct: null },
+    MB: { status: 'Large load only', range: '', lowPct: null, highPct: null },
+    MN: { status: 'Large load only', range: '', lowPct: null, highPct: null },
+    MO: { status: 'Large load only', range: '', lowPct: null, highPct: null },
+    MT: { status: 'Large load only', range: '', lowPct: null, highPct: null },
+    NC: { status: 'Large load only', range: '', lowPct: null, highPct: null },
+    NM: { status: 'Large load only', range: '', lowPct: null, highPct: null },
+    NV: { status: 'Large load only', range: '', lowPct: null, highPct: null },
+    OK: { status: 'Large load only', range: '', lowPct: null, highPct: null },
+    TN: { status: 'Large load only', range: '', lowPct: null, highPct: null },
+    WI: { status: 'Large load only', range: '', lowPct: null, highPct: null },
+    WV: { status: 'Large load only', range: '', lowPct: null, highPct: null },
+    WY: { status: 'Large load only', range: '', lowPct: null, highPct: null },
+  };
 
   // Detect a company column on the uploaded sites sheet so we can
   // group the overview by (company, state). Falls back to the sticky
@@ -1336,12 +1399,9 @@ export function SitesView({ settings, updateSettings } = {}) {
     const SE_TEXT_DARK = 'FF1E293B';
     const SE_BORDER = 'FFD4DDE1';
     const SE_GREEN = 'FF3DCD58';
-    // Gas keeps a flat 2 % – 4 % across the board; electric uses a
-    // per-state curated range (see ELECTRIC_DEREGULATION above) so
-    // CA / TX / etc. land at the right percentages.
-    const GAS_LOW = 0.02;
-    const GAS_HIGH = 0.04;
-    const GAS_SAVINGS_RANGE = '2% - 4%';
+    // Both commodities use a per-state curated savings range — see
+    // ELECTRIC_DEREGULATION and GAS_DEREGULATION above for the
+    // canonical status / range / lowPct / highPct lookup.
 
     // Distinct list joined with ", "; trims to a sensible cap so a
     // state with dozens of suppliers doesn't blow up the cell.
@@ -1432,17 +1492,14 @@ export function SitesView({ settings, updateSettings } = {}) {
           lowPct = entry?.lowPct;
           highPct = entry?.highPct;
         } else {
-          if (g.deregulatedSites > 0) {
-            status = g.deregulatedSites === g.totalSites ? 'yes' : 'Limited';
-            range = GAS_SAVINGS_RANGE;
-            lowPct = GAS_LOW;
-            highPct = GAS_HIGH;
-          } else {
-            status = 'no';
-            range = '';
-            lowPct = null;
-            highPct = null;
-          }
+          // Gas mirrors the same per-state map shape as electric — see
+          // GAS_DEREGULATION above. States not in the map land as 'no'
+          // with no savings.
+          const entry = GAS_DEREGULATION[g.state];
+          status = entry?.status || 'no';
+          range = entry?.range ?? '';
+          lowPct = entry?.lowPct;
+          highPct = entry?.highPct;
         }
         const low = (lowPct != null && g.spend > 0) ? Math.round(g.spend * lowPct) : (lowPct != null ? 0 : '');
         const high = (highPct != null && g.spend > 0) ? Math.round(g.spend * highPct) : (highPct != null ? 0 : '');
