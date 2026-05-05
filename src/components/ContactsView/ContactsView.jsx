@@ -3,12 +3,14 @@ import styles from './ContactsView.module.css';
 import { HubSpotView } from '../HubSpotView/HubSpotView';
 import { AgendaView } from '../AgendaView/AgendaView';
 import { KeyContactsView } from '../KeyContactsView/KeyContactsView';
+import { ActiveContactsView } from '../ActiveContactsView/ActiveContactsView';
 import { DedupeView } from '../DedupeView/DedupeView';
 
 const SUBTABS = [
   { key: 'hubspot',  label: 'HubSpot Contacts' },
   { key: 'bulk',     label: 'Bulk Add Contacts' },
   { key: 'key',      label: 'Key Contacts' },
+  { key: 'active',   label: 'Active Contacts' },
   { key: 'dedupe',   label: 'Deduplication' },
 ];
 
@@ -65,6 +67,14 @@ export function ContactsView({
         )}
         {subtab === 'key' && (
           <KeyContactsView
+            prospects={prospects}
+            onSelectProspect={onSelectProspect}
+            settings={settings}
+            updateSettings={updateSettings}
+          />
+        )}
+        {subtab === 'active' && (
+          <ActiveContactsView
             prospects={prospects}
             onSelectProspect={onSelectProspect}
             settings={settings}

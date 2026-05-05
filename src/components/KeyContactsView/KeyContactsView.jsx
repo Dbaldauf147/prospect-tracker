@@ -66,7 +66,32 @@ function useOppsRecords(userId) {
   return records;
 }
 
-export function KeyContactsView({ prospects = [], onSelectProspect, settings = {}, updateSettings = () => {} }) {
+// Defaults for the original "Dan Key Target" page. Other tabs (e.g. the
+// Active Contacts tab) override these to reuse the same UI.
+const KEY_TARGET_SELECTOR = (c) => {
+  const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
+  if (tags.includes('hide')) return false;
+  return tags.includes('dan key target');
+};
+
+export function KeyContactsView({
+  prospects = [],
+  onSelectProspect,
+  settings = {},
+  updateSettings = () => {},
+  storagePrefix = 'key-contacts',
+  pageTitle = 'Key Contacts',
+  pageSubtitle = (
+    <>Every HubSpot contact tagged <code>Dan Key Target</code>. Toggle <strong>All Contacts</strong> for a flat name-by-name table or <strong>By Company</strong> to roll them up by account with opportunities and decision-maker stats.</>
+  ),
+  emptyTitle = 'No "Dan Key Target" contacts found',
+  emptyDetail = (
+    <>Tag a HubSpot contact with <code>Dan Key Target</code> in the HubSpot Contacts tab and they'll show up here.</>
+  ),
+  contactSelector = KEY_TARGET_SELECTOR,
+  metInPersonSelector = (c) => (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase().includes('met in person'),
+}) {
+  const lsKey = (suffix) => `${storagePrefix}:${suffix}`;
   const { user } = useAuth();
   const [showClosed, setShowClosed] = useState(false);
   const [expanded, setExpanded] = useState(() => new Set());
@@ -118,12 +143,12 @@ export function KeyContactsView({ prospects = [], onSelectProspect, settings = {
     if (arr.length > 0) next[cid] = arr; else delete next[cid];
     updateSettings({ contactReportsTo: next });
   }, [settings?.contactReportsTo, updateSettings]);
-  const [viewMode, setViewMode] = useState(() => localStorage.getItem('key-contacts:view-mode') || 'contacts');
-  useEffect(() => { try { localStorage.setItem('key-contacts:view-mode', viewMode); } catch {} }, [viewMode]);
-  const [contactSortKey, setContactSortKey] = useState(() => localStorage.getItem('key-contacts:contact-sort-key') || 'name');
-  const [contactSortDir, setContactSortDir] = useState(() => localStorage.getItem('key-contacts:contact-sort-dir') || 'asc');
-  useEffect(() => { try { localStorage.setItem('key-contacts:contact-sort-key', contactSortKey); } catch {} }, [contactSortKey]);
-  useEffect(() => { try { localStorage.setItem('key-contacts:contact-sort-dir', contactSortDir); } catch {} }, [contactSortDir]);
+  const [viewMode, setViewMode] = useState(() => localStorage.getItem(lsKey('view-mode')) || 'contacts');
+  useEffect(() => { try { localStorage.setItem(lsKey('view-mode'), viewMode); } catch {} }, [viewMode]);
+  const [contactSortKey, setContactSortKey] = useState(() => localStorage.getItem(lsKey('contact-sort-key')) || 'name');
+  const [contactSortDir, setContactSortDir] = useState(() => localStorage.getItem(lsKey('contact-sort-dir')) || 'asc');
+  useEffect(() => { try { localStorage.setItem(lsKey('contact-sort-key'), contactSortKey); } catch {} }, [contactSortKey]);
+  useEffect(() => { try { localStorage.setItem(lsKey('contact-sort-dir'), contactSortDir); } catch {} }, [contactSortDir]);
   function toggleContactSort(key) {
     setContactSortDir(prev => (contactSortKey === key ? (prev === 'asc' ? 'desc' : 'asc') : 'asc'));
     setContactSortKey(key);
@@ -134,15 +159,15 @@ export function KeyContactsView({ prospects = [], onSelectProspect, settings = {
   };
   const [contactColWidths, setContactColWidths] = useState(() => {
     try {
-      const saved = JSON.parse(localStorage.getItem('key-contacts:contact-col-widths')) || {};
+      const saved = JSON.parse(localStorage.getItem(lsKey('contact-col-widths'))) || {};
       return { ...DEFAULT_CONTACT_COL_WIDTHS, ...saved };
     } catch { return DEFAULT_CONTACT_COL_WIDTHS; }
   });
-  useEffect(() => { try { localStorage.setItem('key-contacts:contact-col-widths', JSON.stringify(contactColWidths)); } catch {} }, [contactColWidths]);
+  useEffect(() => { try { localStorage.setItem(lsKey('contact-col-widths'), JSON.stringify(contactColWidths)); } catch {} }, [contactColWidths]);
   const [contactColFilters, setContactColFilters] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('key-contacts:contact-col-filters')) || {}; } catch { return {}; }
+    try { return JSON.parse(localStorage.getItem(lsKey('contact-col-filters'))) || {}; } catch { return {}; }
   });
-  useEffect(() => { try { localStorage.setItem('key-contacts:contact-col-filters', JSON.stringify(contactColFilters)); } catch {} }, [contactColFilters]);
+  useEffect(() => { try { localStorage.setItem(lsKey('contact-col-filters'), JSON.stringify(contactColFilters)); } catch {} }, [contactColFilters]);
   const contactResizingRef = useRef(null);
   function startContactResize(colKey, e) {
     e.preventDefault();
@@ -174,15 +199,15 @@ export function KeyContactsView({ prospects = [], onSelectProspect, settings = {
   const DEFAULT_COL_WIDTHS = { company: 260, aum: 100, type: 120, status: 130, keyContacts: 130, dm: 150, met: 130, ratio: 110 };
   const [colWidths, setColWidths] = useState(() => {
     try {
-      const saved = JSON.parse(localStorage.getItem('key-contacts:col-widths')) || {};
+      const saved = JSON.parse(localStorage.getItem(lsKey('col-widths'))) || {};
       return { ...DEFAULT_COL_WIDTHS, ...saved };
     } catch { return DEFAULT_COL_WIDTHS; }
   });
-  const [sortKey, setSortKey] = useState(() => localStorage.getItem('key-contacts:sort-key') || 'keyContacts');
-  const [sortDir, setSortDir] = useState(() => localStorage.getItem('key-contacts:sort-dir') || 'desc');
-  useEffect(() => { try { localStorage.setItem('key-contacts:col-widths', JSON.stringify(colWidths)); } catch {} }, [colWidths]);
-  useEffect(() => { try { localStorage.setItem('key-contacts:sort-key', sortKey); } catch {} }, [sortKey]);
-  useEffect(() => { try { localStorage.setItem('key-contacts:sort-dir', sortDir); } catch {} }, [sortDir]);
+  const [sortKey, setSortKey] = useState(() => localStorage.getItem(lsKey('sort-key')) || 'keyContacts');
+  const [sortDir, setSortDir] = useState(() => localStorage.getItem(lsKey('sort-dir')) || 'desc');
+  useEffect(() => { try { localStorage.setItem(lsKey('col-widths'), JSON.stringify(colWidths)); } catch {} }, [colWidths]);
+  useEffect(() => { try { localStorage.setItem(lsKey('sort-key'), sortKey); } catch {} }, [sortKey]);
+  useEffect(() => { try { localStorage.setItem(lsKey('sort-dir'), sortDir); } catch {} }, [sortDir]);
 
   const resizingRef = useRef(null);
   function startResize(colKey, e) {
@@ -238,7 +263,7 @@ export function KeyContactsView({ prospects = [], onSelectProspect, settings = {
     for (const c of (hubspotCache?.contacts || [])) {
       const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
       if (tags.includes('hide')) continue;
-      if (!tags.includes('dan key target')) continue;
+      if (!contactSelector(c)) continue;
       const company = (c.company || '').trim();
       const email = (c.email || '').toLowerCase().trim();
       const at = email.lastIndexOf('@');
@@ -255,14 +280,14 @@ export function KeyContactsView({ prospects = [], onSelectProspect, settings = {
         linkedin: c.hs_linkedin_url || '',
         city: String(c.city || '').trim(),
         state: String(c.state || '').trim(),
-        metInPerson: tags.includes('met in person'),
+        metInPerson: metInPersonSelector(c),
         company,
         domain,
         raw: c,
       });
     }
     return out;
-  }, [hubspotCache, FREE_MAIL]);
+  }, [hubspotCache, FREE_MAIL, contactSelector, metInPersonSelector]);
 
   // Decision-maker contacts — used for the per-company DM column. Mirrors
   // the equivalent flat-list pattern from the PE Portfolio view.
@@ -519,9 +544,9 @@ export function KeyContactsView({ prospects = [], onSelectProspect, settings = {
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
       <div style={{ padding: '1rem 1.25rem 0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexShrink: 0 }}>
         <div>
-          <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#1E293B', margin: 0 }}>Key Contacts</h2>
+          <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#1E293B', margin: 0 }}>{pageTitle}</h2>
           <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2, maxWidth: 720 }}>
-            Every HubSpot contact tagged <code>Dan Key Target</code>. Toggle <strong>All Contacts</strong> for a flat name-by-name table or <strong>By Company</strong> to roll them up by account with opportunities and decision-maker stats.
+            {pageSubtitle}
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
@@ -579,11 +604,11 @@ export function KeyContactsView({ prospects = [], onSelectProspect, settings = {
           filteredContacts.length === 0 ? (
             <div style={{ padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
               <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>
-                {flatContacts.length === 0 ? 'No "Dan Key Target" contacts found' : `No contacts match "${query}"`}
+                {flatContacts.length === 0 ? emptyTitle : `No contacts match "${query}"`}
               </div>
               <div style={{ fontSize: '0.78rem' }}>
                 {flatContacts.length === 0
-                  ? <>Tag a HubSpot contact with <code>Dan Key Target</code> in the HubSpot Contacts tab and they'll show up here.</>
+                  ? emptyDetail
                   : `${flatContacts.length} total contacts — adjust your search.`}
               </div>
             </div>
@@ -714,11 +739,11 @@ export function KeyContactsView({ prospects = [], onSelectProspect, settings = {
         ) : filteredRows.length === 0 ? (
           <div style={{ padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
             <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>
-              {rows.length === 0 ? 'No "Dan Key Target" contacts found' : `No companies match "${query}"`}
+              {rows.length === 0 ? emptyTitle : `No companies match "${query}"`}
             </div>
             <div style={{ fontSize: '0.78rem' }}>
               {rows.length === 0
-                ? <>Tag a HubSpot contact with <code>Dan Key Target</code> in the HubSpot Contacts tab and they'll show up here, grouped by company.</>
+                ? emptyDetail
                 : `${rows.length} total companies — adjust your search.`}
             </div>
           </div>
