@@ -645,7 +645,18 @@ function KeyContactsViewInner({
       return false;
     }
     // Active = at least one HubSpot email-activity timestamp in the
-    // last 90 days (matches ActiveContactsView's default window).
+    // last 90 days AND the contact's company has at least one open /
+    // active opportunity in the Opps tab (matches ActiveContactsView's
+    // default + requireActiveOpp behavior). Without the opp gate the
+    // export would include companies the user isn't actively working
+    // (LLR Partners etc.).
+    const activeOppCompaniesSet = new Set();
+    for (const r of (oppsRecords || [])) {
+      const stage = String(r.Stage || '').trim();
+      if (!stage || INVALID_STAGES.has(stage) || CLOSED_STAGES.has(stage)) continue;
+      const acct = String(r.Account || '').trim().toLowerCase();
+      if (acct) activeOppCompaniesSet.add(acct);
+    }
     const ACTIVE_CUTOFF = Date.now() - 90 * 86400000;
     const ACTIVITY_FIELDS = ['hs_email_last_send_date', 'hs_sales_email_last_replied', 'hs_email_last_open_date', 'hs_email_last_click_date', 'notes_last_contacted'];
     function isActive(c) {
@@ -686,9 +697,13 @@ function KeyContactsViewInner({
         if (isClient) categories.push('Client');
       }
       // Active Contacts (drops Key Targets and Clients to mirror the
-      // page's exclusion rules — they live on the other tabs).
+      // page's exclusion rules — they live on the other tabs). Also
+      // requires the contact's company to have at least one open /
+      // active opportunity in the Opps tab so the export tracks what
+      // the user actually sees on Active Contacts.
       const isClientForActive = (companyLower && clientCompanies.has(companyLower)) || (!companyLower && domain && clientDomains.has(domain));
-      if (isActive(c) && !tags.includes('dan key target') && !isClientForActive) {
+      const hasActiveOpp = companyLower && activeOppCompaniesSet.has(companyLower);
+      if (isActive(c) && hasActiveOpp && !tags.includes('dan key target') && !isClientForActive) {
         categories.push('Active');
       }
       if (categories.length === 0) continue;
