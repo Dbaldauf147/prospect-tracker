@@ -1476,8 +1476,11 @@ export function SitesView({ settings, updateSettings } = {}) {
         }
         const cost = r[costKey];
         if (typeof cost === 'number' && Number.isFinite(cost)) g.spend += cost;
+        // Only count an actual supplier here — never fall back to the
+        // utility name. A deregulated site with no supplier on file
+        // contributes nothing to the Supplier Name column rather than
+        // polluting it with utility names like "Port Authority of NY".
         if (r[supplierKey]) g.suppliers.push(r[supplierKey]);
-        else if (provider) g.suppliers.push(provider);
         const ds = parseDate(r[startKey]);
         const de = parseDate(r[endKey]);
         if (ds) g.starts.push(ds);
