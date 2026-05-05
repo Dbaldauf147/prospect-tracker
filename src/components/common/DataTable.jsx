@@ -30,11 +30,33 @@ function saveColVisible(tableId, set) { localStorage.setItem(COL_VISIBLE_PREFIX 
 // free-text search and an autocomplete dropdown of unique column values
 // gathered from the visible row set; pressing Enter adds the typed value
 // as a free-text chip, clicking a suggestion adds it as a chip.
+// Parse a colFilters value into normalized {picks, draft}. Backwards
+// compatible with the older array-only and string forms.
+function readFilterValue(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return {
+      picks: Array.isArray(value.picks) ? value.picks : [],
+      draft: typeof value.draft === 'string' ? value.draft : '',
+    };
+  }
+  if (Array.isArray(value)) return { picks: value, draft: '' };
+  if (typeof value === 'string' && value.trim()) return { picks: [value.trim()], draft: '' };
+  return { picks: [], draft: '' };
+}
+function writeFilterValue(picks, draft) {
+  // Collapse to the simpler array form when there's no draft so the
+  // shape stays clean for callers that haven't been updated.
+  if (!draft) return picks;
+  return { picks, draft };
+}
+
 function ColumnFilterCell({ value, onChange, suggestions }) {
-  const picks = Array.isArray(value)
-    ? value
-    : (typeof value === 'string' && value.trim() ? [value.trim()] : []);
-  const [draft, setDraft] = useState('');
+  const { picks, draft: incomingDraft } = readFilterValue(value);
+  // We mirror the parent-controlled draft so typing feels instant
+  // even when the parent re-render is async (e.g. inside a useMemo
+  // chain). Sync down whenever the parent changes the draft.
+  const [draft, setDraft] = useState(incomingDraft);
+  useEffect(() => { setDraft(incomingDraft); }, [incomingDraft]);
   const [open, setOpen] = useState(false);
   const wrapRef = useRef(null);
   useEffect(() => {
@@ -60,15 +82,23 @@ function ColumnFilterCell({ value, onChange, suggestions }) {
     return out;
   }, [suggestions, draft, picks]);
 
+  function pushDraft(next) {
+    setDraft(next);
+    onChange(writeFilterValue(picks, next));
+  }
   function addPick(s) {
     const t = String(s || '').trim();
     if (!t) return;
-    if (picks.some(p => p.toLowerCase() === t.toLowerCase())) { setDraft(''); return; }
-    onChange([...picks, t]);
+    if (picks.some(p => p.toLowerCase() === t.toLowerCase())) {
+      setDraft('');
+      onChange(writeFilterValue(picks, ''));
+      return;
+    }
     setDraft('');
+    onChange(writeFilterValue([...picks, t], ''));
   }
   function removePick(s) {
-    onChange(picks.filter(p => p !== s));
+    onChange(writeFilterValue(picks.filter(p => p !== s), draft));
   }
   function onKeyDown(e) {
     if (e.key === 'Enter') {
@@ -115,7 +145,7 @@ function ColumnFilterCell({ value, onChange, suggestions }) {
         <input
           type="text"
           value={draft}
-          onChange={e => { setDraft(e.target.value); setOpen(true); }}
+          onChange={e => { pushDraft(e.target.value); setOpen(true); }}
           onFocus={() => setOpen(true)}
           onKeyDown={onKeyDown}
           placeholder={picks.length === 0 ? 'Filter…' : ''}
@@ -356,20 +386,31 @@ export function DataTable({
   const filteredRows = useMemo(() => {
     const active = [];
     for (const [key, raw] of Object.entries(colFilters)) {
-      let picks;
-      if (Array.isArray(raw)) picks = raw.map(s => String(s || '').trim()).filter(Boolean);
-      else if (typeof raw === 'string' && raw.trim()) picks = [raw.trim()];
-      else picks = [];
-      if (picks.length > 0) active.push({ key, picks });
+      let picks = [];
+      let draft = '';
+      if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+        if (Array.isArray(raw.picks)) picks = raw.picks.map(s => String(s || '').trim()).filter(Boolean);
+        if (typeof raw.draft === 'string') draft = raw.draft.trim();
+      } else if (Array.isArray(raw)) {
+        picks = raw.map(s => String(s || '').trim()).filter(Boolean);
+      } else if (typeof raw === 'string' && raw.trim()) {
+        picks = [raw.trim()];
+      }
+      if (picks.length > 0 || draft.length > 0) active.push({ key, picks, draft });
     }
     if (active.length === 0) return rows;
     return rows.filter(row => {
-      for (const { key, picks } of active) {
+      for (const { key, picks, draft } of active) {
         const col = colByKey.get(key);
         const getter = col?.getFilterValue;
         const raw = getter ? getter(row) : row[key];
         const hay = String(raw ?? '').toLowerCase();
-        if (!picks.some(p => hay.includes(p.toLowerCase()))) return false;
+        // Combine committed picks (OR) with the live-typed draft (also OR).
+        // The row passes the column's filter if any pick matches as a
+        // substring OR the draft matches as a substring.
+        const candidates = [...picks];
+        if (draft) candidates.push(draft);
+        if (!candidates.some(p => hay.includes(p.toLowerCase()))) return false;
       }
       return true;
     });

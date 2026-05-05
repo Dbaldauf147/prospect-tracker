@@ -8,9 +8,17 @@ import { COUNTRIES, US_STATES } from '../../data/enums';
 import { getHubspotCache, setHubspotCache, updateHubspotCache } from '../../utils/hubspotContactsCache';
 import styles from './HubSpotView.module.css';
 
-function HubSpotFilterDrop({ label, options, selected, onToggle, onBulkSet }) {
+function HubSpotFilterDrop({ label, options, selected, onToggle, onBulkSet, draft = '', onDraftChange }) {
   const [open, setOpen] = useState(false);
-  const [filterSearch, setFilterSearch] = useState('');
+  // Keep a controlled mirror of the parent's draft so typing feels
+  // instant. The parent uses this draft as a live substring filter on
+  // the column, so changes here also drive the table immediately.
+  const [filterSearch, setFilterSearch] = useState(draft || '');
+  useEffect(() => { setFilterSearch(draft || ''); }, [draft]);
+  function setSearch(next) {
+    setFilterSearch(next);
+    if (onDraftChange) onDraftChange(next);
+  }
   const ref = useRef(null);
   useEffect(() => {
     if (!open) return;
@@ -18,7 +26,7 @@ function HubSpotFilterDrop({ label, options, selected, onToggle, onBulkSet }) {
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, [open]);
-  const count = selected.length;
+  const count = selected.length + (filterSearch.trim() ? 1 : 0);
   const shown = filterSearch.trim() ? options.filter(o => o.toLowerCase().includes(filterSearch.toLowerCase())) : options;
   const allShownSelected = shown.length > 0 && shown.every(o => selected.includes(o));
   return (
@@ -31,9 +39,7 @@ function HubSpotFilterDrop({ label, options, selected, onToggle, onBulkSet }) {
       </button>
       {open && (
         <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, background: '#fff', border: '1px solid var(--color-border)', borderRadius: '8px', boxShadow: '0 4px 16px rgba(0,0,0,0.1)', padding: '0.3rem', minWidth: '160px', maxHeight: '280px', overflowY: 'auto', zIndex: 50 }}>
-          {options.length > 3 && (
-            <input style={{ width: '100%', padding: '0.25rem 0.4rem', border: '1px solid var(--color-border)', borderRadius: '4px', fontSize: '0.72rem', fontFamily: 'inherit', marginBottom: '0.2rem' }} type="text" placeholder="Search..." value={filterSearch} onChange={e => setFilterSearch(e.target.value)} autoFocus />
-          )}
+          <input style={{ width: '100%', padding: '0.25rem 0.4rem', border: '1px solid var(--color-border)', borderRadius: '4px', fontSize: '0.72rem', fontFamily: 'inherit', marginBottom: '0.2rem' }} type="text" placeholder="Search… (filters table live)" value={filterSearch} onChange={e => setSearch(e.target.value)} autoFocus />
           {shown.length > 1 && (
             <div style={{ display: 'flex', gap: '0.3rem', padding: '0.15rem 0.4rem', marginBottom: '0.15rem', borderBottom: '1px solid #F1F5F9' }}>
               <button onClick={() => { if (onBulkSet) { const newSelected = [...new Set([...selected, ...shown])]; onBulkSet(newSelected); } else { shown.forEach(o => { if (!selected.includes(o)) onToggle(o); }); } }} style={{ background: 'none', border: 'none', color: 'var(--color-accent)', fontSize: '0.65rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', padding: '0.1rem 0' }}>
@@ -1070,6 +1076,10 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
   const [bulkUploading, setBulkUploading] = useState(false);
   const [cardFilter, setCardFilter] = useState(null);
   const [colFilters, setColFilters] = useState({});
+  // Per-column live-typing filter — what the user typed into each
+  // dropdown's search box. Acts as a substring filter on the column
+  // value so matches don't need to be a 1:1 enum hit.
+  const [colFilterDrafts, setColFilterDrafts] = useState({});
   const [dansTagOptions, setDansTagOptions] = useState([]);
   const dismissedGuesses = settings?.dismissedGuesses || {};
   function dismissGuess(contactId, field) {
@@ -2006,18 +2016,36 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
       });
     }
 
-    // Apply column filters
+    // Apply column filters. Each column may have:
+    //   - `values` (exact-match enums via checkbox picks), AND/OR
+    //   - `draft`  (live-typed substring from the dropdown's search
+    //     box). The two combine with OR so the row passes if either
+    //     matches; an empty checkbox set + non-empty draft = pure
+    //     substring filter, which is the new typing-first behavior.
     const SEMICOLON_FILTER_KEYS = new Set(['dans_tags', 'dan_s_tags', 'dans_tag']);
-    for (const [key, values] of Object.entries(colFilters)) {
-      if (values.length === 0) continue;
+    const filterKeys = new Set([
+      ...Object.keys(colFilters),
+      ...Object.keys(colFilterDrafts),
+    ]);
+    for (const key of filterKeys) {
+      const values = colFilters[key] || [];
+      const draft = String(colFilterDrafts[key] || '').trim().toLowerCase();
+      if (values.length === 0 && !draft) continue;
       if (SEMICOLON_FILTER_KEYS.has(key)) {
         result = result.filter(c => {
           const raw = String(c[key] ?? '');
           const parts = raw.split(';').map(p => p.trim()).filter(Boolean);
-          return values.some(v => parts.includes(v));
+          if (values.length > 0 && values.some(v => parts.includes(v))) return true;
+          if (draft && raw.toLowerCase().includes(draft)) return true;
+          return false;
         });
       } else {
-        result = result.filter(c => values.includes(String(c[key] ?? '')));
+        result = result.filter(c => {
+          const cell = String(c[key] ?? '');
+          if (values.length > 0 && values.includes(cell)) return true;
+          if (draft && cell.toLowerCase().includes(draft)) return true;
+          return false;
+        });
       }
     }
 
@@ -2031,7 +2059,7 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
     }
 
     return result;
-  }, [enrichedContacts, search, cardFilter, colFilters, prospectCompanyKeys]);
+  }, [enrichedContacts, search, cardFilter, colFilters, colFilterDrafts, prospectCompanyKeys]);
 
   function toggleSelect(id) {
     setSelected(prev => {
@@ -2353,7 +2381,20 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
               onChange={e => setSearch(e.target.value)}
             />
             {Object.entries(hsFilterOptions).map(([key, options]) => (
-              <HubSpotFilterDrop key={key} label={HUBSPOT_FILTER_LABELS[key] || key} options={options} selected={colFilters[key] || []} onToggle={v => toggleColFilter(key, v)} onBulkSet={arr => setColFilters(prev => ({ ...prev, [key]: arr }))} />
+              <HubSpotFilterDrop
+                key={key}
+                label={HUBSPOT_FILTER_LABELS[key] || key}
+                options={options}
+                selected={colFilters[key] || []}
+                onToggle={v => toggleColFilter(key, v)}
+                onBulkSet={arr => setColFilters(prev => ({ ...prev, [key]: arr }))}
+                draft={colFilterDrafts[key] || ''}
+                onDraftChange={text => setColFilterDrafts(prev => {
+                  const next = { ...prev };
+                  if (text) next[key] = text; else delete next[key];
+                  return next;
+                })}
+              />
             ))}
             {activeColFilterCount > 0 && <button style={{ border: 'none', background: 'none', fontSize: '0.7rem', color: 'var(--color-accent)', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }} onClick={() => setColFilters({})}>Clear filters</button>}
             <button className={massMode ? styles.massEditBtnActive : styles.massEditBtn} onClick={() => { setMassMode(p => !p); setSelected(new Set()); }}>
