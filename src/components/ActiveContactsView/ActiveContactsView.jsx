@@ -90,16 +90,21 @@ function makeActiveSelector(windowDays, mode = 'visible', { clientCompanies = []
     }
     if (isSchneiderContact(c)) return false;
     // Drop client-company contacts so they don't double up with the
-    // Client Contacts tab. Match by company name (fuzzy) first, then
-    // by email domain when the prospect carries one.
+    // Client Contacts tab. Match strictly 1:1 on company name (so a
+    // "Marriott International" contact doesn't get suppressed because
+    // a "Marriott" Client prospect exists), with email-domain match
+    // as a fallback when the contact has no company text.
     if (clientCompanies.length || clientDomains.size) {
       const company = String(c.company || '').trim();
-      if (company && clientCompanies.some(name => companiesMatch(name, company))) return false;
-      const email = (c.email || '').toLowerCase().trim();
-      const at = email.lastIndexOf('@');
-      if (at >= 0) {
-        const domain = email.slice(at + 1).trim();
-        if (domain && !FREE_MAIL.has(domain) && clientDomains.has(domain)) return false;
+      const companyLower = company.toLowerCase();
+      if (company && clientCompanies.some(name => String(name || '').toLowerCase().trim() === companyLower)) return false;
+      if (!company) {
+        const email = (c.email || '').toLowerCase().trim();
+        const at = email.lastIndexOf('@');
+        if (at >= 0) {
+          const domain = email.slice(at + 1).trim();
+          if (domain && !FREE_MAIL.has(domain) && clientDomains.has(domain)) return false;
+        }
       }
     }
     const fields = [

@@ -102,19 +102,22 @@ export function ClientContactsView({ prospects = [], onSelectProspect, settings,
     if (tags.includes('left')) return false;
     if (isSchneiderContact(c)) return false;
     const company = String(c.company || '').trim();
+    const companyLower = company.toLowerCase();
     const email = (c.email || '').toLowerCase().trim();
     const at = email.lastIndexOf('@');
     const domain = at >= 0 ? email.slice(at + 1).trim() : '';
     const domainOk = domain && !FREE_MAIL.has(domain);
-    // Hard-exclude Old Client matches first.
-    if (company && oldClientProspects.some(p => companiesMatch(p.company, company))) return false;
+    // Strict 1:1 name match against the relevant prospect lists. The
+    // previous fuzzy companiesMatch was grouping e.g. "Marriott
+    // International" contacts under a "Marriott" Client prospect via
+    // the single-token rule. Now the contact's Company must exactly
+    // equal a Client prospect's Company text (case-insensitive,
+    // trimmed). Email-domain match remains as a backstop when the
+    // contact has no company text on file.
+    if (company && oldClientProspects.some(p => String(p.company || '').toLowerCase().trim() === companyLower)) return false;
     if (domainOk && oldClientDomains.has(domain)) return false;
-    if (company) {
-      for (const p of clientProspects) {
-        if (companiesMatch(p.company, company)) return true;
-      }
-    }
-    if (domainOk && clientDomains.has(domain)) return true;
+    if (company && clientProspects.some(p => String(p.company || '').toLowerCase().trim() === companyLower)) return true;
+    if (!company && domainOk && clientDomains.has(domain)) return true;
     return false;
   }, [clientProspects, clientDomains, oldClientProspects, oldClientDomains]);
 
