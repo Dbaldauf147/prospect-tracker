@@ -167,12 +167,22 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
   const [oppsGapOpen, setOppsGapOpen] = useState(false);
   const oppsWithoutContacts = useMemo(() => {
     if (!oppsRecords || oppsRecords.length === 0 || hubspotContacts.length === 0) return [];
-    // Set of normalized HubSpot contact companies (case + trim).
+    // Normalize so a contact whose company is typed as "Apollo Global
+    // Management," (trailing comma) still matches an opp Account of
+    // "Apollo Global Management". Lowercase + trim + strip leading
+    // and trailing punctuation/whitespace + collapse internal runs of
+    // whitespace.
+    const normalize = (s) => String(s || '')
+      .toLowerCase()
+      .trim()
+      .replace(/^[\s,.;:]+|[\s,.;:]+$/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
     const contactCompanies = new Set();
     for (const c of hubspotContacts) {
       const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
       if (tags.includes('hide') || tags.includes('left')) continue;
-      const co = String(c.company || '').trim().toLowerCase();
+      const co = normalize(c.company);
       if (co) contactCompanies.add(co);
     }
     // Group active opps by Account; track count per company.
@@ -182,7 +192,7 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
       if (!stage || INVALID_STAGES.has(stage) || CLOSED_STAGES.has(stage)) continue;
       const acct = String(r.Account || '').trim();
       if (!acct) continue;
-      const key = acct.toLowerCase();
+      const key = normalize(acct);
       if (!byCompany.has(key)) byCompany.set(key, { account: acct, opps: [] });
       byCompany.get(key).opps.push(r);
     }
