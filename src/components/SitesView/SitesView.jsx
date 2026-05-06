@@ -1331,7 +1331,7 @@ export function SitesView({ settings, updateSettings } = {}) {
     PA: { status: 'yes',     range: '2 - 4%',  lowPct: 0.02, highPct: 0.04 },
     RI: { status: 'yes',     range: '2 - 4%',  lowPct: 0.02, highPct: 0.04 },
     TX: { status: 'yes',     range: '1 - 2%',  lowPct: 0.01, highPct: 0.02 },
-    CA: { status: 'Limited', range: '1 - 4%',  lowPct: 0.01, highPct: 0.04 },
+    CA: { status: 'Limited', range: '0 - 4%',  lowPct: 0,    highPct: 0.04 },
     MI: { status: 'Limited', range: '',        lowPct: null, highPct: null },
     VA: { status: 'Limited', range: '',        lowPct: null, highPct: null },
     WA: { status: 'Limited', range: '',        lowPct: null, highPct: null },
