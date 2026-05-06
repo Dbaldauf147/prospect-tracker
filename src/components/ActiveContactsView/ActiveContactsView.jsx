@@ -252,8 +252,33 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
       if (tags.includes('hide') || tags.includes('left')) return false;
       return tags.includes('dan key target');
     };
+    // Tokens used by the fallback matcher below — we split on space AND
+    // hyphen so "Unibail-Rodamco-Westfield" tokenizes to
+    // ["unibail","rodamco","westfield"]. We keep tokens ≥ 5 chars and
+    // drop a list of generic finance / geography words so two
+    // unrelated firms don't get linked just because they both have
+    // "Capital" or "Partners" in the name.
+    const TOKEN_STOPWORDS = new Set([
+      'capital', 'partners', 'asset', 'assets', 'estate', 'global', 'international',
+      'management', 'advisors', 'advisers', 'ventures', 'equity', 'investments',
+      'investment', 'associates', 'trust', 'services', 'financial', 'private',
+      'american', 'holdings', 'holding', 'company', 'realty', 'properties',
+      'property', 'industries', 'industrial', 'commercial', 'national', 'corporation',
+      'incorporated',
+    ]);
+    const tokenize = (s) => normalize(s)
+      .split(/[\s\-]+/)
+      .filter(t => t.length >= 5 && !TOKEN_STOPWORDS.has(t));
+    // Trailing parenthetical alias on the opp Account — e.g.
+    // "Unibail-Rodamco-Westfield (URW)" → "urw". A contact whose
+    // company text equals or contains the alias clears the gap.
+    const aliasOf = (s) => {
+      const m = String(s || '').match(/\(([^)]+)\)\s*$/);
+      return m ? m[1].toLowerCase().trim() : null;
+    };
     const contactCompaniesNorm = new Set();
     const contactCompaniesRaw = [];
+    const contactTokenSets = [];
     for (const c of hubspotContacts) {
       if (!visibleSelector(c) && !isKeyTargetContact(c)) continue;
       const raw = String(c.company || '').trim();
@@ -261,6 +286,8 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
       if (co) {
         contactCompaniesNorm.add(co);
         contactCompaniesRaw.push(raw);
+        const toks = tokenize(raw);
+        if (toks.length) contactTokenSets.push({ raw, tokens: new Set(toks), normLower: co });
       }
     }
     // Group active opps by Account; track count per company. Skip
@@ -288,7 +315,9 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
     // table. Exact normalized lookup first, then companiesMatch fuzzy,
     // then a prefix-token fallback so a contact at "Antin" clears an
     // opp Account "Antin Infrastructure Partners" (companiesMatch's
-    // shorter≥60%-of-longer substring rule misses short prefixes).
+    // shorter≥60%-of-longer substring rule misses short prefixes),
+    // then a token / alias fallback so "Westfield" or "URW" clear an
+    // opp Account "Unibail-Rodamco-Westfield (URW)".
     const matchesByPrefix = (contactRaw, oppAcct) => {
       const a = normalize(contactRaw);
       const b = normalize(oppAcct);
@@ -302,6 +331,23 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
     for (const [key, info] of byCompany.entries()) {
       if (contactCompaniesNorm.has(key)) continue;
       if (contactCompaniesRaw.some(raw => companiesMatch(raw, info.account) || matchesByPrefix(raw, info.account))) continue;
+      // Token / alias fallback. Tokens are ≥ 5 chars after stripping
+      // corporate suffixes, so a single shared distinctive token
+      // ("westfield", "rodamco") is treated as the same company. The
+      // alias check covers initialisms in trailing parens — "URW" by
+      // itself doesn't tokenize (too short) but should still match
+      // when it equals the contact's company text or appears as one
+      // of the contact's tokens.
+      const oppTokens = new Set(tokenize(info.account));
+      const oppAlias = aliasOf(info.account);
+      const aliasMatch = oppAlias
+        && contactTokenSets.some(s => s.normLower === oppAlias || s.tokens.has(oppAlias));
+      const tokenMatch = oppTokens.size > 0
+        && contactTokenSets.some(s => {
+          for (const t of s.tokens) if (oppTokens.has(t)) return true;
+          return false;
+        });
+      if (aliasMatch || tokenMatch) continue;
       out.push(info);
     }
     out.sort((a, b) => b.opps.length - a.opps.length || a.account.localeCompare(b.account));
