@@ -165,13 +165,22 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
   const { user } = useAuth();
   const oppsRecords = useOppsRecords(user?.uid);
   const [oppsGapOpen, setOppsGapOpen] = useState(false);
+  // Surface contacts whose company hasn't been added to the Table View
+  // yet — useful for hunting down accounts you've started conversations
+  // with but haven't tracked. Toggling this also forces a 30-day window
+  // because that's the canonical "still in conversation" cutoff and
+  // also relaxes the open-opp gate (an unmapped company has no opps yet
+  // by definition). Hoisted above the client/gap memos so the gap can
+  // mirror the page's effective window.
+  const [unmappedOnly, setUnmappedOnly] = useState(() => {
+    try { return localStorage.getItem('active-contacts:unmapped-only') === '1'; } catch { return false; }
+  });
+  useEffect(() => { try { localStorage.setItem('active-contacts:unmapped-only', unmappedOnly ? '1' : '0'); } catch {} }, [unmappedOnly]);
+  const effectiveWindow = unmappedOnly ? 30 : windowDays;
   // Build the client-company exclusion set so contacts at current
   // clients drop out of Active Contacts (they live on Client Contacts
   // already). Includes prospect-registered email domains for fuzzy
   // matches when the company text differs from the prospect's name.
-  // Hoisted above the gap memo so the gap can use it to identify
-  // Client contacts (which, alongside Key Targets, are what satisfy
-  // the gap).
   const clientFilter = useMemo(() => {
     const companies = [];
     const domains = new Set();
@@ -192,6 +201,19 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
     }
     return { clientCompanies: companies, clientDomains: domains };
   }, [prospects]);
+  // Account names belonging to a current/past Client relationship.
+  // Opps on these accounts are covered by the Client Contacts page and
+  // shouldn't be flagged here even if no contact appears on the Active
+  // Contacts table. Old Client is included because those relationships
+  // are still tracked off this page (e.g. Brookfield (NAM Multifamily)).
+  const clientAccountNames = useMemo(() => {
+    const names = [];
+    for (const p of (prospects || [])) {
+      if (p.status !== 'Client' && p.status !== 'Old Client') continue;
+      if (p.company) names.push(p.company);
+    }
+    return names;
+  }, [prospects]);
   const oppsWithoutContacts = useMemo(() => {
     if (!oppsRecords || oppsRecords.length === 0 || hubspotContacts.length === 0) return [];
     // Normalize both sides before comparing so the gap report doesn't
@@ -211,32 +233,19 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
       .replace(CORP_RE, ' ')
       .replace(/\s+/g, ' ')
       .trim();
-    // Only Key Target + Client contacts count as "we already have a
-    // foothold here" — Active-only contacts (a stray email open) are
-    // too transient to clear the gap. Track raw company strings too so
-    // the opp-side lookup can fall back to companiesMatch fuzz when the
-    // normalized strings don't line up (e.g. "CBRE" contact vs an opp
-    // Account "CBRE Inc (CBRE) - Headquarters Global").
-    const isClientContact = (c) => {
-      const company = String(c.company || '').trim();
-      if (company && clientFilter.clientCompanies.some(name => companiesMatch(name, company))) return true;
-      if (!company) {
-        const email = (c.email || '').toLowerCase().trim();
-        const at = email.lastIndexOf('@');
-        if (at >= 0) {
-          const d = email.slice(at + 1).trim();
-          if (d && !FREE_MAIL.has(d) && clientFilter.clientDomains.has(d)) return true;
-        }
-      }
-      return false;
-    };
+    // Anyone who actually shows up on the Active Contacts table counts
+    // as "we have a contact at this company" — the page already filters
+    // out hidden / left / Schneider / Key Target / current-Client rows,
+    // so reusing its selector keeps the gap in lockstep with what the
+    // user sees below. Track raw company strings too so the opp-side
+    // lookup can fall back to companiesMatch fuzz when the normalized
+    // strings don't line up (e.g. "Berkeley Research Group, LLC" contact
+    // vs opp Account "Berkeley Research Group (a Towerbrook co.)").
+    const visibleSelector = makeActiveSelector(effectiveWindow, 'visible', clientFilter);
     const contactCompaniesNorm = new Set();
     const contactCompaniesRaw = [];
     for (const c of hubspotContacts) {
-      const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
-      if (tags.includes('hide') || tags.includes('left')) continue;
-      const isKey = tags.includes('dan key target');
-      if (!isKey && !isClientContact(c)) continue;
+      if (!visibleSelector(c)) continue;
       const raw = String(c.company || '').trim();
       const co = normalize(raw);
       if (co) {
@@ -248,8 +257,11 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
     // pseudo-Accounts that aren't real companies — "Conferences" is a
     // placeholder used for trade-show / event-sourced opps where
     // there's no company to map a contact to, so it doesn't belong in
-    // a "no contact at the company" gap report.
+    // a "no contact at the company" gap report. Also skip accounts
+    // belonging to a Client or Old Client prospect — those live on the
+    // Client Contacts page.
     const NON_COMPANY_ACCOUNTS = new Set(['conferences']);
+    const isClientAccount = (acct) => clientAccountNames.some(name => companiesMatch(name, acct));
     const byCompany = new Map();
     for (const r of oppsRecords) {
       const stage = String(r.Stage || '').trim();
@@ -258,13 +270,14 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
       if (!acct) continue;
       const key = normalize(acct);
       if (NON_COMPANY_ACCOUNTS.has(key)) continue;
+      if (isClientAccount(acct)) continue;
       if (!byCompany.has(key)) byCompany.set(key, { account: acct, opps: [] });
       byCompany.get(key).opps.push(r);
     }
-    // Surface only companies with no matching Key / Client contact.
-    // Exact normalized lookup first, then companiesMatch fuzzy, then
-    // a prefix-token fallback so a contact at "Antin" clears an opp
-    // Account "Antin Infrastructure Partners" (companiesMatch's
+    // Surface only companies with no contact on the Active Contacts
+    // table. Exact normalized lookup first, then companiesMatch fuzzy,
+    // then a prefix-token fallback so a contact at "Antin" clears an
+    // opp Account "Antin Infrastructure Partners" (companiesMatch's
     // shorter≥60%-of-longer substring rule misses short prefixes).
     const matchesByPrefix = (contactRaw, oppAcct) => {
       const a = normalize(contactRaw);
@@ -283,18 +296,7 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
     }
     out.sort((a, b) => b.opps.length - a.opps.length || a.account.localeCompare(b.account));
     return out;
-  }, [oppsRecords, hubspotContacts, clientFilter]);
-  // Surface contacts whose company hasn't been added to the Table View
-  // yet — useful for hunting down accounts you've started conversations
-  // with but haven't tracked. Toggling this also forces a 30-day window
-  // because that's the canonical "still in conversation" cutoff and
-  // also relaxes the open-opp gate (an unmapped company has no opps yet
-  // by definition).
-  const [unmappedOnly, setUnmappedOnly] = useState(() => {
-    try { return localStorage.getItem('active-contacts:unmapped-only') === '1'; } catch { return false; }
-  });
-  useEffect(() => { try { localStorage.setItem('active-contacts:unmapped-only', unmappedOnly ? '1' : '0'); } catch {} }, [unmappedOnly]);
-  const effectiveWindow = unmappedOnly ? 30 : windowDays;
+  }, [oppsRecords, hubspotContacts, clientFilter, clientAccountNames, effectiveWindow]);
   const selector = useCallback(
     makeActiveSelector(effectiveWindow, showHidden ? 'hidden' : 'visible', clientFilter),
     [effectiveWindow, showHidden, clientFilter]
