@@ -279,6 +279,15 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
     const contactCompaniesNorm = new Set();
     const contactCompaniesRaw = [];
     const contactTokenSets = [];
+    // Email domain set (lowercased, free-mail filtered) used by the
+    // last-resort matcher below — covers contacts whose HubSpot
+    // company field is empty but whose @something.com domain still
+    // tells us where they work (e.g. mila@urw.com clearing the
+    // "Unibail-Rodamco-Westfield (URW)" opp Account, or a Toronto
+    // Pearson contact at @torontopearson.com clearing "Toronto
+    // Airport"). The previous matchers only inspect c.company, so
+    // empty-company rows used to slip through.
+    const contactDomains = [];
     for (const c of hubspotContacts) {
       if (!visibleSelector(c) && !isKeyTargetContact(c)) continue;
       const raw = String(c.company || '').trim();
@@ -288,6 +297,12 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
         contactCompaniesRaw.push(raw);
         const toks = tokenize(raw);
         if (toks.length) contactTokenSets.push({ raw, tokens: new Set(toks), normLower: co });
+      }
+      const email = String(c.email || '').toLowerCase().trim();
+      const at = email.lastIndexOf('@');
+      if (at >= 0) {
+        const d = email.slice(at + 1).trim();
+        if (d && !FREE_MAIL.has(d)) contactDomains.push(d);
       }
     }
     // Group active opps by Account; track count per company. Skip
@@ -347,7 +362,21 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
           for (const t of s.tokens) if (oppTokens.has(t)) return true;
           return false;
         });
-      if (aliasMatch || tokenMatch) continue;
+      // Domain-substring fallback: when a visible contact has no
+      // company text on file, fall back to the @domain piece of
+      // their email. If the opp Account's parenthetical alias
+      // ("urw") OR any of its distinctive tokens ("westfield",
+      // "toronto") appears as a substring inside any contact's
+      // domain string, treat the company as covered.
+      const aliasDomainMatch = oppAlias
+        && oppAlias.length >= 3
+        && contactDomains.some(d => d.includes(oppAlias));
+      const tokenDomainMatch = oppTokens.size > 0
+        && contactDomains.some(d => {
+          for (const t of oppTokens) if (t.length >= 5 && d.includes(t)) return true;
+          return false;
+        });
+      if (aliasMatch || tokenMatch || aliasDomainMatch || tokenDomainMatch) continue;
       out.push(info);
     }
     out.sort((a, b) => b.opps.length - a.opps.length || a.account.localeCompare(b.account));
