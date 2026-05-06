@@ -223,6 +223,7 @@ const BULK_COLS = [
   { key: 'jobtitle',         label: 'Job title',           w: 140 },
   { key: 'company',          label: 'Company',             w: 180 },
   { key: 'tier',             label: 'Tier',                w: 90  },
+  { key: 'cdmReps',          label: 'CDM / Other Reps',    w: 220 },
   { key: 'suggestedCompany', label: 'Suggested Company',   w: 170 },
   { key: 'website',          label: 'TV Website',          w: 160 },
   { key: 'zoomCompanyId',    label: 'TV Zoom ID',          w: 130 },
@@ -375,9 +376,14 @@ function ensureProtocol(url) {
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
 }
 
-export function AgendaView({ prospects = [], onUpdateProspect, cdmName }) {
+export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings, targetAccountsData }) {
   const { user } = useAuth();
   const [rows, setRows] = useState(() => loadCache());
+  // Latest-rows ref so callbacks (e.g. toggleSuggestedCompanyDismiss)
+  // can read the current rows without re-creating themselves on every
+  // row change.
+  const rowsRef = useRef(rows);
+  useEffect(() => { rowsRef.current = rows; }, [rows]);
   const [dragActive, setDragActive] = useState(false);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(null); // { done, total }
@@ -532,13 +538,91 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName }) {
       return next;
     });
   }, []);
+  // Dismissing the suggested company also dismisses every TV-field
+  // suggestion that was sourced from that prospect-match — if the
+  // user doesn't trust the company link they shouldn't see Website /
+  // Zoom Name / Zoom ID / Email Domain rolling in from the same
+  // lookup. Un-dismissing flips them all back on. The dismissedSuggestions
+  // setter handles both the per-pill × on the table and the panel
+  // checkboxes, so the cascade is symmetric there too.
+  const TV_FIELD_KEYS = ['website', 'zoomCompanyId', 'zoomCompanyName', 'emailDomain'];
   const toggleSuggestedCompanyDismiss = useCallback((email) => {
     setDismissedSuggestedCompanies(prev => {
       const next = new Set(prev);
-      if (next.has(email)) next.delete(email); else next.add(email);
+      const willBeDismissed = !next.has(email);
+      if (willBeDismissed) next.add(email); else next.delete(email);
+      // Walk the rows snapshot to find the matched prospect for this
+      // email so we can flip its TV-field dismiss keys in the same
+      // setState pass.
+      const row = rowsRef.current?.find(r => r.email === email);
+      const pid = row?._matchedProspectId;
+      if (pid) {
+        setDismissedSuggestions(prev2 => {
+          const next2 = new Set(prev2);
+          for (const f of TV_FIELD_KEYS) {
+            const k = `${pid}::${f}`;
+            if (willBeDismissed) next2.add(k); else next2.delete(k);
+          }
+          return next2;
+        });
+      }
       return next;
     });
   }, []);
+
+  // Reps assigned to Tier 1 / Tier 2 target accounts on someone else's
+  // sheet — pulled out of the same Target Accounts workbook the My
+  // Accounts page reads from. Each entry is `{ company, rep }`. Empty
+  // when the workbook hasn't loaded yet (the user has to visit the
+  // Lists tab once to populate it; targetAccountsData lives on App
+  // state and is re-served to the bulk page from there).
+  const allTargetReps = useMemo(() => {
+    const data = targetAccountsData;
+    if (!data?.sheets) return [];
+    const findCol = (r, keywords) => {
+      for (const key of Object.keys(r)) {
+        const lower = key.toLowerCase();
+        for (const kw of keywords) {
+          if (lower.includes(kw.toLowerCase())) return (r[key] || '').trim();
+        }
+      }
+      return '';
+    };
+    const out = [];
+    for (const sheetName of data.sheetNames || []) {
+      const sheet = data.sheets[sheetName];
+      if (!sheet?.records) continue;
+      for (const r of sheet.records) {
+        const company = findCol(r, ['Account', 'Company', 'Account Name', 'Client', 'Name']);
+        if (!company) continue;
+        const rep = findCol(r, ['CDM', 'Salesperson', 'Sales Rep', 'Account Owner', 'Owner', 'Rep', 'Assigned', 'Team Member']);
+        if (!rep) continue;
+        // Skip the current user's own entries — those are "your"
+        // accounts, not Other Reps.
+        if (matchesCdm(rep, cdmName)) continue;
+        out.push({ company: company.trim(), rep: rep.trim() });
+      }
+    }
+    return out;
+  }, [targetAccountsData, cdmName]);
+
+  // For each matched prospect, the list of Other Reps tied to the
+  // confirmed Target Account name(s) for that prospect. Mirrors the
+  // shape of the My Accounts column so the badge UI is consistent.
+  const otherRepsByProspect = useMemo(() => {
+    const map = new Map();
+    if (!allTargetReps.length) return map;
+    const targetMap = settings?.targetMap || {};
+    for (const p of prospects) {
+      const raw = targetMap[p.id];
+      const targetNames = Array.isArray(raw) ? raw.filter(Boolean) : (raw ? [raw] : []);
+      if (!targetNames.length) continue;
+      const lowered = new Set(targetNames.map(n => String(n).toLowerCase().trim()));
+      const reps = allTargetReps.filter(t => lowered.has(String(t.company || '').toLowerCase().trim()));
+      if (reps.length) map.set(p.id, reps);
+    }
+    return map;
+  }, [allTargetReps, prospects, settings]);
 
   // Reload HubSpot cache whenever results change (so newly-added contacts move to the "exists" state).
   const [hubspotByEmail, setHubspotByEmail] = useState(new Map());
@@ -1686,7 +1770,24 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName }) {
         )}
 
         {activeTab === 'contacts' && rows.length === 0 ? (
-          <div className={styles.empty}>No contacts yet. Drag or paste above to get started.</div>
+          <div
+            className={styles.empty}
+            onDrop={handleDrop}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onPaste={handlePaste}
+            tabIndex={0}
+            style={{
+              cursor: 'copy',
+              minHeight: 140,
+              outline: 'none',
+              transition: 'border-color 0.15s, background 0.15s',
+              ...(dragActive ? { borderColor: 'var(--color-accent)', background: 'var(--color-accent-light)' } : {}),
+            }}
+            title="Drag a sheet here, paste tab-separated rows (⌘V / Ctrl+V), or click and paste"
+          >
+            No contacts yet. Drag a sheet, paste tab-separated rows (⌘V / Ctrl+V), or click and paste here — same column-mapping preview as the box above.
+          </div>
         ) : activeTab === 'contacts' && (
           <>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.6rem', margin: '0.75rem 0 0.25rem', flexWrap: 'wrap' }}>
@@ -2142,6 +2243,62 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName }) {
                           : t === 'Tier 2' ? { bg: '#FEF3C7', color: '#92400E' }
                           : { bg: '#F3F4F6', color: '#6B7280' };
                         return <span style={{ padding: '1px 6px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 600, background: colors.bg, color: colors.color }}>{t}</span>;
+                      })()}</td>}
+                      {bulkColVisible.has('cdmReps') && <td>{(() => {
+                        // Mirror the My Accounts CDM + Other Reps
+                        // columns so the bulk page tells the user up
+                        // front who's tied to this Tier 1 / Tier 2
+                        // account before they push contacts. CDM pill
+                        // is the prospect's own owner; Other Reps
+                        // pills come from the Target Accounts workbook
+                        // entries the user has confirmed for that
+                        // prospect on the Lists page.
+                        if (!prospect) return <span className={styles.metaText}>—</span>;
+                        const cdm = String(prospect.cdm || '').trim();
+                        const reps = otherRepsByProspect.get(prospect.id) || [];
+                        // Dedup reps by name and roll their target
+                        // companies into the tooltip.
+                        const byRep = new Map();
+                        for (const rep of reps) {
+                          const key = rep.rep.toLowerCase();
+                          if (!byRep.has(key)) byRep.set(key, { rep: rep.rep, companies: [] });
+                          if (!byRep.get(key).companies.includes(rep.company)) byRep.get(key).companies.push(rep.company);
+                        }
+                        const dedupedReps = [...byRep.values()];
+                        if (!cdm && dedupedReps.length === 0) return <span className={styles.metaText}>—</span>;
+                        return (
+                          <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 3, alignItems: 'center' }}>
+                            {cdm && (
+                              <span
+                                title={matchesCdm(cdm, cdmName) ? `CDM: ${cdm} (you)` : `CDM: ${cdm}`}
+                                style={{
+                                  padding: '1px 6px',
+                                  borderRadius: 4,
+                                  fontSize: '0.65rem',
+                                  fontWeight: 700,
+                                  background: matchesCdm(cdm, cdmName) ? '#DCFCE7' : '#E0E7FF',
+                                  color: matchesCdm(cdm, cdmName) ? '#166534' : '#3730A3',
+                                  whiteSpace: 'nowrap',
+                                }}
+                              >{cdm}</span>
+                            )}
+                            {dedupedReps.map((r, i) => (
+                              <span
+                                key={i}
+                                title={r.companies.join(', ')}
+                                style={{
+                                  padding: '1px 6px',
+                                  borderRadius: 4,
+                                  fontSize: '0.65rem',
+                                  fontWeight: 600,
+                                  background: '#FEF9C3',
+                                  color: '#92400E',
+                                  whiteSpace: 'nowrap',
+                                }}
+                              >{r.rep}</span>
+                            ))}
+                          </span>
+                        );
                       })()}</td>}
                       {bulkColVisible.has('suggestedCompany') && <td className={styles.suggestCell}>
                         {(() => {

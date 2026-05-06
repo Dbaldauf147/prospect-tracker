@@ -35,6 +35,7 @@ export function ContactsView({
   cdmName,
   settings,
   updateSettings,
+  targetAccountsData,
 }) {
   const [subtab, setSubtab] = useState(readSavedSubtab);
 
@@ -67,6 +68,8 @@ export function ContactsView({
             onSelectProspect={onSelectProspect}
             onUpdateProspect={onUpdateProspect}
             cdmName={cdmName}
+            settings={settings}
+            targetAccountsData={targetAccountsData}
           />
         )}
         {subtab === 'key' && (

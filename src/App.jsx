@@ -323,6 +323,7 @@ function App() {
               cdmName={cdmName}
               settings={settings}
               updateSettings={updateSettings}
+              targetAccountsData={targetAccountsData}
             />
           ) : view === 'lists' ? (
             <ListsView onTargetAccountsLoaded={setTargetAccountsData} prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} />

@@ -1929,10 +1929,10 @@ export function SitesView({ settings, updateSettings } = {}) {
     wb.created = new Date();
     const ws = wb.addWorksheet('Indicative Savings by State', {
       properties: { tabColor: { argb: SE_GREEN } },
-      // Freeze the first two rows so the title band and the scenario
-      // toggle stay visible as the user scrolls down through the
-      // electric / gas / reg-rate blocks.
-      views: [{ showGridLines: false, state: 'frozen', ySplit: 2 }],
+      // Freeze the title + scenario block (rows 1-4) so the toggle
+      // stays visible as the user scrolls down through the electric /
+      // gas / reg-rate blocks.
+      views: [{ showGridLines: false, state: 'frozen', ySplit: 4 }],
     });
 
     // SPAN sized for the widest section (electric, which carries the
@@ -1957,7 +1957,7 @@ export function SitesView({ settings, updateSettings } = {}) {
     // qualified `'Sheet Name'!$B$2` reference so the same formula is
     // valid on the by-state sheet AND on the monthly-breakdown sheet.
     const SCENARIO_SHEET_NAME = 'Indicative Savings by State';
-    const SCENARIO_LOCAL_CELL = 'B2';
+    const SCENARIO_LOCAL_CELL = 'A3';
     const SCENARIO_REF = `'${SCENARIO_SHEET_NAME}'!$${SCENARIO_LOCAL_CELL[0]}$${SCENARIO_LOCAL_CELL.slice(1)}`;
     // Excel formula factory for a scenario-aware cell. Inlines the
     // three numeric possibilities so the workbook stays self-contained
@@ -1980,22 +1980,30 @@ export function SitesView({ settings, updateSettings } = {}) {
     title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
     ws.getRow(1).height = 28;
 
-    // Row 2: scenario toggle. A2 is the label, B2 is the value the
-    // formulas read. Excel data validation pins B2 to a 3-item list.
+    // Rows 2-4: scenario toggle stacked vertically so the long hint
+    // text never gets clipped behind the scenario-aware columns.
+    //   Row 2 — bold "Savings Scenario" label, full width.
+    //   Row 3 — dropdown cell at A3 (merged across a few columns so
+    //           the dropdown arrow has room).
+    //   Row 4 — italic explainer band, full width.
+    ws.mergeCells(2, 1, 2, SPAN);
     const toggleLabel = ws.getCell('A2');
     toggleLabel.value = 'Savings Scenario';
-    toggleLabel.font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: SE_GREEN_DARK } };
+    toggleLabel.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
     toggleLabel.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
-    toggleLabel.alignment = { vertical: 'middle', horizontal: 'right', indent: 1 };
-    toggleLabel.border = { right: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
+    toggleLabel.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    ws.getRow(2).height = 20;
+
+    ws.mergeCells(3, 1, 3, 4);
     const toggleValue = ws.getCell(SCENARIO_LOCAL_CELL);
     toggleValue.value = 'Base';
-    toggleValue.font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: SE_TEXT_DARK } };
+    toggleValue.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_TEXT_DARK } };
     toggleValue.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } };
     toggleValue.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
     toggleValue.border = {
       top:    { style: 'thin', color: { argb: SE_GREEN_DARK } },
       bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } },
+      left:   { style: 'thin', color: { argb: SE_GREEN_DARK } },
       right:  { style: 'thin', color: { argb: SE_GREEN_DARK } },
     };
     toggleValue.dataValidation = {
@@ -2007,18 +2015,17 @@ export function SitesView({ settings, updateSettings } = {}) {
       errorTitle: 'Pick a scenario',
       error: 'Choose Conservative, Base, or Aggressive.',
     };
-    // Hint band right of the toggle so the user knows what flipping
-    // the dropdown does — merged across the rest of the row so it
-    // doesn't bump into the scenario-aware columns below.
-    ws.mergeCells(2, 3, 2, SPAN);
-    const toggleHint = ws.getCell(2, 3);
+    ws.getRow(3).height = 22;
+
+    ws.mergeCells(4, 1, 4, SPAN);
+    const toggleHint = ws.getCell(4, 1);
     toggleHint.value = 'Conservative = low end of the savings range · Base = average · Aggressive = high end. Every savings number on this sheet recalculates from this cell.';
     toggleHint.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_TEXT_DARK } };
     toggleHint.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
     toggleHint.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
-    ws.getRow(2).height = 22;
+    ws.getRow(4).height = 22;
 
-    let r = 4;
+    let r = 6;
     function writeSection(label, sectionRows, columnDefs) {
       // Section header band — light green wash with dark green text.
       ws.mergeCells(r, 1, r, SPAN);
