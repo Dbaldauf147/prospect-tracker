@@ -1808,7 +1808,9 @@ export function SitesView({ settings, updateSettings } = {}) {
           annualLow: Math.round(annualLow),
           annualMid: Math.round(annualMid),
           annualHigh: Math.round(annualHigh),
+          contractStart: ds ? fmtDate(ds) : (supplierName ? 'TBD' : ''),
           contractEnd: de ? fmtDate(de) : (supplierName ? 'TBD' : ''),
+          contractStartDate: ds,
           contractEndDate: de,
           monthsUnderContract,
           monthsOffContract: HORIZON_MONTHS - monthsUnderContract,
@@ -1844,15 +1846,20 @@ export function SitesView({ settings, updateSettings } = {}) {
           for (let i = 0; i < upto; i++) s += arr[i] || 0;
           return s;
         };
-        const yr1Low = sumThrough(g.monthlyLow, 12);
-        const yr1High = sumThrough(g.monthlyHigh, 12);
-        const yr1Mid = sumThrough(g.monthlyMid, 12);
-        const yr2Mid = sumThrough(g.monthlyMid, 24);
-        const yr3Mid = sumThrough(g.monthlyMid, 36);
-        const yr4Mid = sumThrough(g.monthlyMid, 48);
-        const yr5Mid = sumThrough(g.monthlyMid, 60);
-        const low = hasPct ? Math.round(yr1Low) : '';
-        const high = hasPct ? Math.round(yr1High) : '';
+        // Per-year low / mid / high cumulatives — the scenario toggle
+        // at the top of the sheet picks one of these via formula. Mid
+        // is the canonical default ("Base"); low/high feed the
+        // Conservative / Aggressive scenarios.
+        const cumByYear = (months) => ({
+          low:  sumThrough(g.monthlyLow,  months),
+          mid:  sumThrough(g.monthlyMid,  months),
+          high: sumThrough(g.monthlyHigh, months),
+        });
+        const yr1 = cumByYear(12);
+        const yr2 = cumByYear(24);
+        const yr3 = cumByYear(36);
+        const yr4 = cumByYear(48);
+        const yr5 = cumByYear(60);
         const earliest = g.starts.length ? new Date(Math.min(...g.starts.map(d => d.getTime()))) : null;
         const latest = g.ends.length ? new Date(Math.max(...g.ends.map(d => d.getTime()))) : null;
         // Regulated-rate sites get a flat 0.25 % savings off their
@@ -1863,10 +1870,10 @@ export function SitesView({ settings, updateSettings } = {}) {
         const regRateSavings = commodity === 'electric'
           ? Math.round(g.regulatedRateOpportunitySpend * 0.0025)
           : 0;
-        // `year*` carries the contract-aware cumulative; reg-rate
-        // stays a flat annual × N as before since it isn't gated.
-        const yearN = (cumMid) => cumMid > 0 ? Math.round(cumMid) : '';
         const regYearN = (n) => regRateSavings > 0 ? regRateSavings * n : '';
+        const triple = (t) => hasPct
+          ? { low: Math.round(t.low), mid: Math.round(t.mid), high: Math.round(t.high) }
+          : null;
         return {
           state: g.state,
           status,
@@ -1878,13 +1885,17 @@ export function SitesView({ settings, updateSettings } = {}) {
           consumption: Math.round(g.consumption),
           spend: Math.round(g.spend),
           range,
-          low,
-          high,
-          year1: yearN(yr1Mid),
-          year2: yearN(yr2Mid),
-          year3: yearN(yr3Mid),
-          year4: yearN(yr4Mid),
-          year5: yearN(yr5Mid),
+          // Each scenario-aware triple is `{ low, mid, high }` (or null
+          // when the state has no savings band). The writeSection
+          // helper turns these into Excel formulas keyed off the
+          // scenario cell so flipping the toggle re-renders every
+          // savings number on the sheet.
+          annualSavings: triple(yr1),
+          year1: triple(yr1),
+          year2: triple(yr2),
+          year3: triple(yr3),
+          year4: triple(yr4),
+          year5: triple(yr5),
           regYear1: regYearN(1),
           regYear2: regYearN(2),
           regYear3: regYearN(3),
@@ -1911,7 +1922,10 @@ export function SitesView({ settings, updateSettings } = {}) {
     wb.created = new Date();
     const ws = wb.addWorksheet('Indicative Savings by State', {
       properties: { tabColor: { argb: SE_GREEN } },
-      views: [{ showGridLines: false }],
+      // Freeze the first two rows so the title band and the scenario
+      // toggle stay visible as the user scrolls down through the
+      // electric / gas / reg-rate blocks.
+      views: [{ showGridLines: false, state: 'frozen', ySplit: 2 }],
     });
 
     // SPAN sized for the widest section (electric, which carries the
@@ -1919,9 +1933,28 @@ export function SitesView({ settings, updateSettings } = {}) {
     // regulated-rate block with its own Year 1-5 cumulative). Gas
     // uses fewer slots; the title / section bands still merge across
     // SPAN so the headings stay aligned across both sections.
-    const SPAN = 26;
-    const widths = [10, 14, 11, 13, 16, 18, 16, 14, 14, 14, 24, 24, 14, 14, 14, 14, 14, 14, 4, 16, 16, 14, 14, 14, 14, 14];
+    const SPAN = 25;
+    const widths = [
+      10, 14, 11, 13, 16, 18, 16,        // ST/Prov..Range (7)
+      16, 14, 14, 14, 14, 14,            // Annual Savings + Year 1-5 (6)
+      24, 24, 14, 14,                    // Utility/Supplier/Contract Start/End (4)
+      4,                                 // spacer (1)
+      16, 16, 14, 14, 14, 14, 14,        // Reg-rate block (7)
+    ];
     ws.columns = widths.map(w => ({ width: w }));
+
+    // Scenario-toggle reference: every scenario-aware savings cell
+    // points at this single cell so the user can flip the dropdown
+    // and see all of the savings columns recalculate at once.
+    const SCENARIO_CELL = 'B2';
+    // Excel formula factory for a scenario-aware cell. Inlines the
+    // three numeric possibilities so the workbook stays self-contained
+    // (no helper sheet needed) and Excel sees real numbers in the
+    // formula — no "number stored as text" warnings.
+    const scenarioFormula = (low, mid, high) => {
+      const safe = (n) => Number.isFinite(n) ? Math.round(n) : 0;
+      return `IF(${SCENARIO_CELL}="Conservative",${safe(low)},IF(${SCENARIO_CELL}="Aggressive",${safe(high)},${safe(mid)}))`;
+    };
 
     // Title row — Schneider green band, white text.
     ws.mergeCells(1, 1, 1, SPAN);
@@ -1932,7 +1965,45 @@ export function SitesView({ settings, updateSettings } = {}) {
     title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
     ws.getRow(1).height = 28;
 
-    let r = 3;
+    // Row 2: scenario toggle. A2 is the label, B2 is the value the
+    // formulas read. Excel data validation pins B2 to a 3-item list.
+    const toggleLabel = ws.getCell('A2');
+    toggleLabel.value = 'Savings Scenario';
+    toggleLabel.font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: SE_GREEN_DARK } };
+    toggleLabel.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+    toggleLabel.alignment = { vertical: 'middle', horizontal: 'right', indent: 1 };
+    toggleLabel.border = { right: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
+    const toggleValue = ws.getCell(SCENARIO_CELL);
+    toggleValue.value = 'Base';
+    toggleValue.font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: SE_TEXT_DARK } };
+    toggleValue.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } };
+    toggleValue.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    toggleValue.border = {
+      top:    { style: 'thin', color: { argb: SE_GREEN_DARK } },
+      bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } },
+      right:  { style: 'thin', color: { argb: SE_GREEN_DARK } },
+    };
+    toggleValue.dataValidation = {
+      type: 'list',
+      allowBlank: false,
+      formulae: ['"Conservative,Base,Aggressive"'],
+      showErrorMessage: true,
+      errorStyle: 'stop',
+      errorTitle: 'Pick a scenario',
+      error: 'Choose Conservative, Base, or Aggressive.',
+    };
+    // Hint band right of the toggle so the user knows what flipping
+    // the dropdown does — merged across the rest of the row so it
+    // doesn't bump into the scenario-aware columns below.
+    ws.mergeCells(2, 3, 2, SPAN);
+    const toggleHint = ws.getCell(2, 3);
+    toggleHint.value = 'Conservative = low end of the savings range · Base = average · Aggressive = high end. Every savings number on this sheet recalculates from this cell.';
+    toggleHint.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_TEXT_DARK } };
+    toggleHint.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+    toggleHint.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+    ws.getRow(2).height = 22;
+
+    let r = 4;
     function writeSection(label, sectionRows, columnDefs) {
       // Section header band — light green wash with dark green text.
       ws.mergeCells(r, 1, r, SPAN);
@@ -1960,13 +2031,23 @@ export function SitesView({ settings, updateSettings } = {}) {
       r += 1;
       // Data rows — every cell left-aligned regardless of type so the
       // sheet reads as a flat report rather than a finance ledger.
+      // Scenario columns get a formula (low / mid / high inlined) so
+      // the toggle at the top recalculates the whole sheet.
       for (const row of sectionRows) {
         const dataRow = ws.getRow(r);
         columnDefs.forEach((c, i) => {
           const cell = dataRow.getCell(i + 1);
           if (c.spacer) return;
           const v = c.get(row);
-          cell.value = (v === '' || v == null) ? null : v;
+          if (c.scenario) {
+            if (v && typeof v === 'object') {
+              cell.value = { formula: scenarioFormula(v.low, v.mid, v.high), result: Math.round(v.mid || 0) };
+            } else {
+              cell.value = null;
+            }
+          } else {
+            cell.value = (v === '' || v == null) ? null : v;
+          }
           cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
           cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
           if (c.numFmt) cell.numFmt = c.numFmt;
@@ -1975,22 +2056,45 @@ export function SitesView({ settings, updateSettings } = {}) {
         dataRow.height = 18;
         r += 1;
       }
-      // Total row — green double rule above and below.
+      // Total row — green double rule above and below. Scenario
+      // columns sum each scenario branch independently then write
+      // the same toggle-driven formula so the totals follow the
+      // selected scenario.
       const totalRow = ws.getRow(r);
-      const totals = sectionRows.reduce((acc, row) => {
-        for (const c of columnDefs) {
-          if (!c.sumKey) continue;
-          acc[c.sumKey] = (acc[c.sumKey] || 0) + (Number(c.get(row)) || 0);
+      const scalarTotals = {};
+      const scenarioTotals = {};
+      for (const c of columnDefs) {
+        if (!c.sumKey) continue;
+        if (c.scenario) {
+          let low = 0, mid = 0, high = 0;
+          for (const row of sectionRows) {
+            const t = c.get(row);
+            if (t && typeof t === 'object') {
+              low += Number(t.low) || 0;
+              mid += Number(t.mid) || 0;
+              high += Number(t.high) || 0;
+            }
+          }
+          scenarioTotals[c.sumKey] = { low, mid, high };
+        } else {
+          let s = 0;
+          for (const row of sectionRows) s += Number(c.get(row)) || 0;
+          scalarTotals[c.sumKey] = s;
         }
-        return acc;
-      }, {});
+      }
       columnDefs.forEach((c, i) => {
         const cell = totalRow.getCell(i + 1);
         if (c.spacer) return;
-        let v = '';
-        if (i === 0) v = 'Total';
-        else if (c.sumKey) v = totals[c.sumKey] || 0;
-        cell.value = v === '' ? null : v;
+        if (i === 0) {
+          cell.value = 'Total';
+        } else if (c.scenario && c.sumKey) {
+          const t = scenarioTotals[c.sumKey];
+          cell.value = { formula: scenarioFormula(t.low, t.mid, t.high), result: Math.round(t.mid || 0) };
+        } else if (c.sumKey) {
+          cell.value = scalarTotals[c.sumKey] || 0;
+        } else {
+          cell.value = null;
+        }
         cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_GREEN_DARK } };
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
         cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
@@ -2012,19 +2116,19 @@ export function SitesView({ settings, updateSettings } = {}) {
       { label: 'Annual Deregulated Consumption kWh', get: (g) => g.consumption, numFmt: '#,##0', sumKey: 'consumption' },
       { label: 'Annual Deregulated Spend', get: (g) => g.spend, numFmt: '"$"#,##0', sumKey: 'spend' },
       { label: 'Indicative Savings Range', get: (g) => g.range },
-      { label: 'Indicative Savings Low', get: (g) => g.low, numFmt: '"$"#,##0', sumKey: 'low' },
-      { label: 'Indicative Savings High', get: (g) => g.high, numFmt: '"$"#,##0', sumKey: 'high' },
+      // Annual + Year 1-5 cumulative for the deregulated motion only —
+      // each cell is a scenario-aware formula keyed off the toggle.
+      // Reg-rate savings live in their own block to the right.
+      { label: 'Indicative Annual Savings', scenario: true, get: (g) => g.annualSavings, numFmt: '"$"#,##0', sumKey: 'annualSavings' },
+      { label: 'Year 1 Cumulative', scenario: true, get: (g) => g.year1, numFmt: '"$"#,##0', sumKey: 'year1' },
+      { label: 'Year 2 Cumulative', scenario: true, get: (g) => g.year2, numFmt: '"$"#,##0', sumKey: 'year2' },
+      { label: 'Year 3 Cumulative', scenario: true, get: (g) => g.year3, numFmt: '"$"#,##0', sumKey: 'year3' },
+      { label: 'Year 4 Cumulative', scenario: true, get: (g) => g.year4, numFmt: '"$"#,##0', sumKey: 'year4' },
+      { label: 'Year 5 Cumulative', scenario: true, get: (g) => g.year5, numFmt: '"$"#,##0', sumKey: 'year5' },
       { label: 'Utility Vendor', get: (g) => g.utilities },
       { label: 'Supplier Name', get: (g) => g.suppliers },
       { label: 'Contract Start', get: (g) => g.earliestStart },
       { label: 'Contract End', get: (g) => g.latestEnd },
-      // Year 1-5 cumulative for the deregulated motion only — reg-rate
-      // savings live in their own block to the right.
-      { label: 'Year 1 Savings', get: (g) => g.year1, numFmt: '"$"#,##0', sumKey: 'year1' },
-      { label: 'Year 2 Cumulative', get: (g) => g.year2, numFmt: '"$"#,##0', sumKey: 'year2' },
-      { label: 'Year 3 Cumulative', get: (g) => g.year3, numFmt: '"$"#,##0', sumKey: 'year3' },
-      { label: 'Year 4 Cumulative', get: (g) => g.year4, numFmt: '"$"#,##0', sumKey: 'year4' },
-      { label: 'Year 5 Cumulative', get: (g) => g.year5, numFmt: '"$"#,##0', sumKey: 'year5' },
       // Spacer column — physically separates the deregulated block
       // from the regulated-rate block so the two motions read as
       // distinct stories on the sheet.
@@ -2047,19 +2151,18 @@ export function SitesView({ settings, updateSettings } = {}) {
       { label: 'Consumption Dth', get: (g) => g.consumption, numFmt: '#,##0', sumKey: 'consumption' },
       { label: 'Spend', get: (g) => g.spend, numFmt: '"$"#,##0', sumKey: 'spend' },
       { label: 'Indicative Savings Range', get: (g) => g.range },
-      { label: 'Indicative Savings Low', get: (g) => g.low, numFmt: '"$"#,##0', sumKey: 'low' },
-      { label: 'Indicative Savings High', get: (g) => g.high, numFmt: '"$"#,##0', sumKey: 'high' },
+      // Year 1-5 cumulative savings on the gas side use the same
+      // scenario toggle as electric — there's no gas reg-rate motion.
+      { label: 'Indicative Annual Savings', scenario: true, get: (g) => g.annualSavings, numFmt: '"$"#,##0', sumKey: 'annualSavings' },
+      { label: 'Year 1 Cumulative', scenario: true, get: (g) => g.year1, numFmt: '"$"#,##0', sumKey: 'year1' },
+      { label: 'Year 2 Cumulative', scenario: true, get: (g) => g.year2, numFmt: '"$"#,##0', sumKey: 'year2' },
+      { label: 'Year 3 Cumulative', scenario: true, get: (g) => g.year3, numFmt: '"$"#,##0', sumKey: 'year3' },
+      { label: 'Year 4 Cumulative', scenario: true, get: (g) => g.year4, numFmt: '"$"#,##0', sumKey: 'year4' },
+      { label: 'Year 5 Cumulative', scenario: true, get: (g) => g.year5, numFmt: '"$"#,##0', sumKey: 'year5' },
       { label: 'Utility Vendor', get: (g) => g.utilities },
       { label: 'Supplier Name', get: (g) => g.suppliers },
       { label: 'Contract Start', get: (g) => g.earliestStart },
       { label: 'Contract End', get: (g) => g.latestEnd },
-      // Year 1-5 cumulative savings on the gas side use just the
-      // deregulated mid-of-range — there's no gas reg-rate motion.
-      { label: 'Year 1 Savings', get: (g) => g.year1, numFmt: '"$"#,##0', sumKey: 'year1' },
-      { label: 'Year 2 Cumulative', get: (g) => g.year2, numFmt: '"$"#,##0', sumKey: 'year2' },
-      { label: 'Year 3 Cumulative', get: (g) => g.year3, numFmt: '"$"#,##0', sumKey: 'year3' },
-      { label: 'Year 4 Cumulative', get: (g) => g.year4, numFmt: '"$"#,##0', sumKey: 'year4' },
-      { label: 'Year 5 Cumulative', get: (g) => g.year5, numFmt: '"$"#,##0', sumKey: 'year5' },
     ];
 
     writeSection('Electric Power', electricRows, electricCols);
@@ -2180,7 +2283,16 @@ export function SitesView({ settings, updateSettings } = {}) {
         // the next cell is empty. Putting a single space in blank
         // cells stops that visual overflow without showing anything
         // visible to the user.
-        cell.value = (v === '' || v == null) ? ' ' : v;
+        // Empty number-formatted cells get a real null so Excel
+        // doesn't flag them with the "number stored as text" green
+        // triangle. Only text columns keep the single-space trick
+        // (used to stop long site names from overflowing into the
+        // next blank cell).
+        if (v === '' || v == null) {
+          cell.value = c.numFmt ? null : ' ';
+        } else {
+          cell.value = v;
+        }
         cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
         cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
         if (c.numFmt) cell.numFmt = c.numFmt;
@@ -2218,21 +2330,24 @@ export function SitesView({ settings, updateSettings } = {}) {
         || a.commodity.localeCompare(b.commodity));
 
     if (allSiteRows.length > 0) {
-      const monthlySheet = wb.addWorksheet('Monthly Savings Breakdown', {
+      const monthlySheet = wb.addWorksheet('Deregulated Monthly Savings', {
         properties: { tabColor: { argb: SE_GREEN } },
         views: [{ showGridLines: false, state: 'frozen', ySplit: 2, xSplit: 3 }],
       });
-      const fmtPct = (p) => (p == null) ? '' : `${(p * 100).toFixed(1)}%`;
+      // Percentages stored as raw numbers (0.02) with a percent
+      // format so Excel doesn't flag them as "number stored as text"
+      // — same reason the other numeric columns avoid string values.
       const fixedCols = [
         { label: 'Site Name', get: (s) => s.siteName, width: 28 },
         { label: 'ST/Prov', get: (s) => s.state, width: 9 },
-        { label: 'Commodity', get: (s) => s.commodity === 'electric' ? 'Electric' : 'Gas', width: 11 },
+        { label: 'Commodity', get: (s) => s.commodity === 'electric' ? 'Electric' : 'Gas', width: 14 },
         { label: 'Utility', get: (s) => s.utility, width: 22 },
         { label: 'Supplier', get: (s) => s.supplier, width: 22 },
+        { label: 'Contract Start', get: (s) => s.contractStart, width: 14 },
         { label: 'Contract End', get: (s) => s.contractEnd, width: 14 },
         { label: 'Annual Spend', get: (s) => s.annualSpend, numFmt: '"$"#,##0', width: 14 },
-        { label: 'Low %', get: (s) => fmtPct(s.lowPct), width: 8 },
-        { label: 'High %', get: (s) => fmtPct(s.highPct), width: 8 },
+        { label: 'Low %', get: (s) => s.lowPct, numFmt: '0.0%', width: 9 },
+        { label: 'High %', get: (s) => s.highPct, numFmt: '0.0%', width: 9 },
         { label: 'Annual Savings Mid', get: (s) => s.annualMid, numFmt: '"$"#,##0', width: 16 },
         { label: 'Months Under Contract', get: (s) => s.monthsUnderContract, numFmt: '#,##0', width: 12 },
         { label: 'Months Off Contract', get: (s) => s.monthsOffContract, numFmt: '#,##0', width: 12 },
@@ -2252,7 +2367,7 @@ export function SitesView({ settings, updateSettings } = {}) {
       // Title row.
       monthlySheet.mergeCells(1, 1, 1, cols.length);
       const title = monthlySheet.getCell(1, 1);
-      title.value = 'Monthly Savings Breakdown';
+      title.value = 'Deregulated Monthly Savings Breakdown';
       title.font = { name: 'Nunito Sans', bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
       title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
       title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
