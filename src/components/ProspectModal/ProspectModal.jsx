@@ -1698,13 +1698,16 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     };
     return hubspotContacts
       .filter(c => {
-        if (contactIsHidden(c)) return false;
+        // The "Show hidden" toggle on the contacts panel below
+        // flips this gate off so hide-tagged people resurface — the
+        // user can then click into them to clear the tag.
+        if (!showHiddenContacts && contactIsHidden(c)) return false;
         if (companiesMatch(c.company, fields.company)) return true;
         const d = contactDomain(c.email);
         if (d && domains.has(d)) return true;
         return false;
       });
-  }, [fields.company, fields.emailDomain, fields.website, hubspotContacts, isNew]);
+  }, [fields.company, fields.emailDomain, fields.website, hubspotContacts, isNew, showHiddenContacts]);
 
   const [localContacts, setLocalContacts] = useState(baseContacts);
   useEffect(() => { setLocalContacts(baseContacts); }, [baseContacts]);
@@ -1869,6 +1872,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   }, [prospects, fields.cdm]);
 
   const [contactView, setContactView] = useState('table'); // 'table' | 'orgchart'
+  // When true, contacts tagged "hide" are folded back into the
+  // company contacts list so the user can audit / un-hide them.
+  const [showHiddenContacts, setShowHiddenContacts] = useState(false);
   const [editingContact, setEditingContact] = useState(null);
   const [addingContact, setAddingContact] = useState(false);
   const [showSaved, setShowSaved] = useState(false);
@@ -5975,9 +5981,38 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             </div>
           )}
 
-          {!isNew && (
+          {!isNew && (() => {
+            // Count contacts whose only reason for being filtered out
+            // is the hide tag — drives the badge on the toggle button
+            // so the user can see at a glance how many would resurface
+            // if they flip "Show hidden" on.
+            const FREE_HIDDEN = new Set(['gmail.com', 'outlook.com', 'hotmail.com', 'yahoo.com', 'icloud.com', 'aol.com', 'me.com', 'proton.me', 'protonmail.com', 'live.com', 'msn.com']);
+            const hiddenDomain = (email) => {
+              if (!email) return '';
+              const at = email.lastIndexOf('@');
+              if (at < 0) return '';
+              const d = email.slice(at + 1).toLowerCase().trim();
+              return (d && !FREE_HIDDEN.has(d)) ? d : '';
+            };
+            const knownDomains = new Set();
+            for (const entry of String(fields.emailDomain || '').split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)) {
+              const at = entry.lastIndexOf('@');
+              const d = (at >= 0 ? entry.slice(at + 1) : entry).toLowerCase().trim();
+              if (d && !FREE_HIDDEN.has(d)) knownDomains.add(d);
+            }
+            if (fields.website) {
+              const d = String(fields.website).replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '').toLowerCase().trim();
+              if (d) knownDomains.add(d);
+            }
+            const hiddenCount = (hubspotContacts || []).filter(c => {
+              if (!contactIsHidden(c)) return false;
+              if (companiesMatch(c.company, fields.company)) return true;
+              const d = hiddenDomain(c.email);
+              return !!(d && knownDomains.has(d));
+            }).length;
+            return (
             <div style={{ marginTop: '1rem', borderTop: '1px solid var(--color-border-light)', paddingTop: '0.75rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
                 <label className={styles.label} style={{ margin: 0 }}>
                   Contacts {companyContacts.length > 0 ? `(${companyContacts.length})` : ''}
                 </label>
@@ -5991,6 +6026,39 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     style={{ padding: '0.2rem 0.6rem', border: 'none', borderRadius: '4px', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', background: contactView === 'orgchart' ? '#fff' : 'transparent', color: contactView === 'orgchart' ? '#1E293B' : '#94A3B8', boxShadow: contactView === 'orgchart' ? '0 1px 2px rgba(0,0,0,0.08)' : 'none' }}
                   >By Category</button>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setShowHiddenContacts(v => !v)}
+                  title={showHiddenContacts
+                    ? 'Hide contacts tagged "hide" again. Click an uncovered contact to clear the tag from the contact card.'
+                    : `Surface ${hiddenCount} hide-tagged contact${hiddenCount === 1 ? '' : 's'} at this company so you can audit them or clear the tag.`}
+                  style={{
+                    padding: '0.25rem 0.6rem',
+                    border: '1px solid ' + (showHiddenContacts ? '#7C3AED' : 'var(--color-border)'),
+                    borderRadius: '4px',
+                    background: showHiddenContacts ? '#F3E8FF' : '#fff',
+                    color: showHiddenContacts ? '#5B21B6' : 'var(--color-text-secondary)',
+                    fontSize: '0.68rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 4,
+                  }}
+                >
+                  {showHiddenContacts ? 'Hide hidden' : 'Show hidden'}
+                  <span style={{
+                    fontSize: '0.6rem',
+                    fontWeight: 700,
+                    padding: '1px 5px',
+                    borderRadius: 999,
+                    background: showHiddenContacts ? '#5B21B6' : (hiddenCount > 0 ? '#EDE9FE' : '#F1F5F9'),
+                    color: showHiddenContacts ? '#fff' : (hiddenCount > 0 ? '#5B21B6' : '#94A3B8'),
+                    minWidth: 16,
+                    textAlign: 'center',
+                  }}>{hiddenCount}</span>
+                </button>
                 <button
                   onClick={async () => {
                     if (!companyContacts || companyContacts.length === 0) { alert('No contacts to export.'); return; }
@@ -6416,7 +6484,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               })()}
               </div>
             </div>
-          )}
+            );
+          })()}
         </div>
         <div className={styles.footer}>
           {!isNew && (
