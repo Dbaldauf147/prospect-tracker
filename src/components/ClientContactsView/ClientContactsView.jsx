@@ -7,9 +7,10 @@
 // fields so corporate emails on companies without an exact name still
 // surface.
 
-import { useMemo, useCallback } from 'react';
+import { useMemo, useCallback, useState, useEffect } from 'react';
 import { KeyContactsView } from '../KeyContactsView/KeyContactsView';
 import { matchesCdm } from '../../utils/cdmMatch';
+import { getHubspotCache } from '../../utils/hubspotContactsCache';
 
 const FREE_MAIL = new Set([
   'gmail.com', 'outlook.com', 'hotmail.com', 'yahoo.com', 'icloud.com',
@@ -94,6 +95,21 @@ export function ClientContactsView({ prospects = [], onSelectProspect, settings,
     return set;
   }, [oldClientProspects]);
 
+  // HubSpot cache, refreshed on cache-update events. Used to compute
+  // which Client prospects don't yet have a contact rendering on this
+  // page so the user can see which accounts still need someone added.
+  const [hubspotContacts, setHubspotContacts] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    function refresh() {
+      getHubspotCache().then(c => { if (!cancelled) setHubspotContacts(c?.contacts || []); }).catch(() => {});
+    }
+    refresh();
+    window.addEventListener('hubspot-cache-updated', refresh);
+    return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
+  }, []);
+  const [gapOpen, setGapOpen] = useState(false);
+
   const selector = useCallback((c) => {
     const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
     if (tags.includes('hide')) return false;
@@ -121,6 +137,83 @@ export function ClientContactsView({ prospects = [], onSelectProspect, settings,
     return false;
   }, [clientProspects, clientDomains, oldClientProspects, oldClientDomains]);
 
+  // Client prospects (CDM = me) that have *no* HubSpot contact
+  // visible on this page. Mirrors the page's selector rules: a client
+  // is "covered" when at least one passing contact links to it via an
+  // exact company-name match (case-insensitive) or, when the contact
+  // has no company text, via an email-domain match against the
+  // prospect's emailDomain / website. The list is shown above the
+  // table so the user can see which clients still need a contact
+  // added.
+  const clientsWithoutContacts = useMemo(() => {
+    if (!clientProspects.length) return [];
+    const clientByCompany = new Map();
+    for (const p of clientProspects) {
+      const k = String(p.company || '').toLowerCase().trim();
+      if (k && !clientByCompany.has(k)) clientByCompany.set(k, p);
+    }
+    const clientByDomain = new Map();
+    for (const p of clientProspects) {
+      const ds = new Set();
+      collectDomains(p, ds);
+      for (const d of ds) {
+        if (!clientByDomain.has(d)) clientByDomain.set(d, p);
+      }
+    }
+    const covered = new Set();
+    for (const c of hubspotContacts) {
+      if (!selector(c)) continue;
+      const company = String(c.company || '').toLowerCase().trim();
+      if (company) {
+        const p = clientByCompany.get(company);
+        if (p) covered.add(p);
+        continue;
+      }
+      const email = (c.email || '').toLowerCase().trim();
+      const at = email.lastIndexOf('@');
+      const domain = at >= 0 ? email.slice(at + 1).trim() : '';
+      if (domain && !FREE_MAIL.has(domain)) {
+        const p = clientByDomain.get(domain);
+        if (p) covered.add(p);
+      }
+    }
+    return clientProspects
+      .filter(p => !covered.has(p))
+      .sort((a, b) => String(a.company || '').localeCompare(String(b.company || '')));
+  }, [clientProspects, hubspotContacts, selector]);
+
+  const subtitle = (
+    <>
+      {clientsWithoutContacts.length > 0 && (
+        <div style={{ margin: '6px 0 8px', padding: '0.5rem 0.7rem', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 6 }}>
+          <button
+            type="button"
+            onClick={() => setGapOpen(o => !o)}
+            style={{ background: 'transparent', border: 'none', padding: 0, fontFamily: 'inherit', fontSize: '0.72rem', color: '#92400E', fontWeight: 700, cursor: 'pointer' }}
+            title="Click to expand the list of Client prospects (CDM = you) that don't have a HubSpot contact on this page yet."
+          >
+            {gapOpen ? '▾' : '▸'} {clientsWithoutContacts.length} client{clientsWithoutContacts.length === 1 ? '' : 's'} with no HubSpot contact on this page
+          </button>
+          {gapOpen && (
+            <div style={{ marginTop: '0.4rem', maxHeight: 240, overflowY: 'auto', background: '#fff', border: '1px solid #FDE68A', borderRadius: 4 }}>
+              {clientsWithoutContacts.map(p => (
+                <div
+                  key={p.id || p.company}
+                  onClick={() => onSelectProspect && onSelectProspect(p)}
+                  style={{ padding: '0.3rem 0.6rem', borderTop: '1px solid #FEF3C7', fontSize: '0.74rem', color: '#1E293B', cursor: onSelectProspect ? 'pointer' : 'default' }}
+                  title={onSelectProspect ? `Open ${p.company} on the Table View` : p.company}
+                >
+                  {p.company || '(unnamed prospect)'}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      HubSpot contacts at companies tagged <code>Client</code> on the Table View where the CDM is <strong>{cdmName || '(set your CDM in Settings)'}</strong>. Toggle <strong>All Contacts</strong> for a flat name-by-name table or <strong>By Company</strong> to roll them up by account with opportunities and decision-maker stats.
+    </>
+  );
+
   return (
     <KeyContactsView
       prospects={prospects}
@@ -130,9 +223,7 @@ export function ClientContactsView({ prospects = [], onSelectProspect, settings,
       cdmName={cdmName}
       storagePrefix="client-contacts"
       pageTitle="Client Contacts"
-      pageSubtitle={
-        <>HubSpot contacts at companies tagged <code>Client</code> on the Table View where the CDM is <strong>{cdmName || '(set your CDM in Settings)'}</strong>. Toggle <strong>All Contacts</strong> for a flat name-by-name table or <strong>By Company</strong> to roll them up by account with opportunities and decision-maker stats.</>
-      }
+      pageSubtitle={subtitle}
       emptyTitle="No client contacts found"
       emptyDetail={
         <>None of your <code>Client</code>-status prospects (CDM = {cdmName || '—'}) have HubSpot contacts yet. Set a prospect's Status to <code>Client</code> and CDM to your name on the Table View, then add HubSpot contacts at that company.</>
