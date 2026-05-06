@@ -1671,6 +1671,23 @@ export function SitesView({ settings, updateSettings } = {}) {
     };
     const fmtDate = (d) => d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
 
+    // Five-year monthly horizon used for the contract-aware savings
+    // math. Anchored to the first of the current month so each "Year N"
+    // column lines up to the same calendar boundary regardless of when
+    // the export runs. monthStartDates[i] is the first day of horizon
+    // month i (0-indexed); a site is "under contract" for that month
+    // when the supplier contract end date is strictly after that
+    // boundary, which zeroes its savings contribution for the month.
+    const HORIZON_MONTHS = 60;
+    const today = new Date();
+    const horizonStart = new Date(today.getFullYear(), today.getMonth(), 1);
+    const monthStartDates = [];
+    for (let i = 0; i < HORIZON_MONTHS; i++) {
+      monthStartDates.push(new Date(horizonStart.getFullYear(), horizonStart.getMonth() + i, 1));
+    }
+    const monthShortLabels = monthStartDates.map(d =>
+      d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }));
+
     function buildBucket(commodity) {
       const providerKey = `__${commodity}__`;
       const consumptionKey = commodity === 'electric' ? '__kwh__' : '__therms__';
@@ -1678,7 +1695,15 @@ export function SitesView({ settings, updateSettings } = {}) {
       const supplierKey = commodity === 'electric' ? '__electricSupplier__' : '__gasSupplier__';
       const startKey = commodity === 'electric' ? '__electricStart__' : '__gasStart__';
       const endKey = commodity === 'electric' ? '__electricEnd__' : '__gasEnd__';
+      const pctsFor = (state) => {
+        const entry = commodity === 'electric'
+          ? ELECTRIC_DEREGULATION[state]
+          : GAS_DEREGULATION[state];
+        return { lowPct: entry?.lowPct ?? null, highPct: entry?.highPct ?? null };
+      };
       const states = new Map();
+      // Per-site detail kept for the Monthly Savings Breakdown sheet.
+      const siteRows = [];
       for (const r of rows) {
         const state = r.__state__ || '';
         if (!state) continue;
@@ -1696,6 +1721,11 @@ export function SitesView({ settings, updateSettings } = {}) {
             suppliers: [],
             starts: [],
             ends: [],
+            // Per-month savings vectors that already have contract
+            // gating baked in; year totals are slices of these.
+            monthlyLow: new Array(HORIZON_MONTHS).fill(0),
+            monthlyMid: new Array(HORIZON_MONTHS).fill(0),
+            monthlyHigh: new Array(HORIZON_MONTHS).fill(0),
           };
           states.set(state, g);
         }
@@ -1724,61 +1754,118 @@ export function SitesView({ settings, updateSettings } = {}) {
           g.consumption += commodity === 'gas' ? consumption / 10 : consumption;
         }
         const cost = r[costKey];
-        if (typeof cost === 'number' && Number.isFinite(cost)) g.spend += cost;
+        const spend = (typeof cost === 'number' && Number.isFinite(cost)) ? cost : 0;
+        if (spend) g.spend += spend;
         // Only count an actual supplier here — never fall back to the
         // utility name. A deregulated site with no supplier on file
         // contributes nothing to the Supplier Name column rather than
         // polluting it with utility names like "Port Authority of NY".
-        if (r[supplierKey]) g.suppliers.push(r[supplierKey]);
+        const supplierName = r[supplierKey] || '';
+        if (supplierName) g.suppliers.push(supplierName);
         const ds = parseDate(r[startKey]);
         const de = parseDate(r[endKey]);
         if (ds) g.starts.push(ds);
         if (de) g.ends.push(de);
+
+        // Build the per-site monthly savings vector with contract
+        // gating: zero for any month whose first day is still inside
+        // the supplier's contract window. The state vector is a
+        // running sum of these.
+        const { lowPct, highPct } = pctsFor(state);
+        const annualLow = (spend > 0 && lowPct != null) ? spend * lowPct : 0;
+        const annualHigh = (spend > 0 && highPct != null) ? spend * highPct : 0;
+        const annualMid = (annualLow + annualHigh) / 2;
+        const monthlyLowAmt = annualLow / 12;
+        const monthlyMidAmt = annualMid / 12;
+        const monthlyHighAmt = annualHigh / 12;
+        const siteLow = new Array(HORIZON_MONTHS).fill(0);
+        const siteMid = new Array(HORIZON_MONTHS).fill(0);
+        const siteHigh = new Array(HORIZON_MONTHS).fill(0);
+        let monthsUnderContract = 0;
+        for (let i = 0; i < HORIZON_MONTHS; i++) {
+          const monthStart = monthStartDates[i];
+          const isUnderContract = de && de > monthStart;
+          if (isUnderContract) {
+            monthsUnderContract += 1;
+            continue;
+          }
+          siteLow[i] = monthlyLowAmt;
+          siteMid[i] = monthlyMidAmt;
+          siteHigh[i] = monthlyHighAmt;
+          g.monthlyLow[i] += monthlyLowAmt;
+          g.monthlyMid[i] += monthlyMidAmt;
+          g.monthlyHigh[i] += monthlyHighAmt;
+        }
+        siteRows.push({
+          siteName: siteNameColumn ? String(r[siteNameColumn] || '').trim() : '',
+          state,
+          commodity,
+          utility: provider || '',
+          supplier: supplierName,
+          annualSpend: Math.round(spend),
+          lowPct,
+          highPct,
+          annualLow: Math.round(annualLow),
+          annualMid: Math.round(annualMid),
+          annualHigh: Math.round(annualHigh),
+          contractEnd: de ? fmtDate(de) : (supplierName ? 'TBD' : ''),
+          contractEndDate: de,
+          monthsUnderContract,
+          monthsOffContract: HORIZON_MONTHS - monthsUnderContract,
+          fiveYearLow: siteLow.reduce((a, b) => a + b, 0),
+          fiveYearMid: siteMid.reduce((a, b) => a + b, 0),
+          fiveYearHigh: siteHigh.reduce((a, b) => a + b, 0),
+          monthlyLow: siteLow,
+          monthlyMid: siteMid,
+          monthlyHigh: siteHigh,
+        });
       }
       const out = [...states.values()].sort((a, b) => a.state.localeCompare(b.state));
-      return out.map(g => {
+      const stateRows = out.map(g => {
         // Electric: per-state curated status / range / pct from
-        // ELECTRIC_DEREGULATION. Gas: flat 2 % – 4 % whenever any
-        // deregulated activity is on the row.
-        let status;
-        let range;
-        let lowPct;
-        let highPct;
-        if (commodity === 'electric') {
-          const entry = ELECTRIC_DEREGULATION[g.state];
-          status = entry?.status || 'no';
-          range = entry?.range ?? '';
-          lowPct = entry?.lowPct;
-          highPct = entry?.highPct;
-        } else {
-          // Gas mirrors the same per-state map shape as electric — see
-          // GAS_DEREGULATION above. States not in the map land as 'no'
-          // with no savings.
-          const entry = GAS_DEREGULATION[g.state];
-          status = entry?.status || 'no';
-          range = entry?.range ?? '';
-          lowPct = entry?.lowPct;
-          highPct = entry?.highPct;
-        }
-        const low = (lowPct != null && g.spend > 0) ? Math.round(g.spend * lowPct) : (lowPct != null ? 0 : '');
-        const high = (highPct != null && g.spend > 0) ? Math.round(g.spend * highPct) : (highPct != null ? 0 : '');
+        // ELECTRIC_DEREGULATION. Gas: per-state map of the same shape
+        // — see GAS_DEREGULATION above. States not in the map land as
+        // 'no' with no savings.
+        const entry = commodity === 'electric'
+          ? ELECTRIC_DEREGULATION[g.state]
+          : GAS_DEREGULATION[g.state];
+        const status = entry?.status || 'no';
+        const range = entry?.range ?? '';
+        const { lowPct, highPct } = pctsFor(g.state);
+        const hasPct = lowPct != null && highPct != null;
+        // Year-N cumulative = sum of the per-state monthly vector
+        // through month N*12. Each month is already gated by its
+        // sites' contract end dates, so a state where every site is
+        // locked into a 3-year contract starts contributing in month
+        // 37 (year 4) and not before.
+        const sumThrough = (arr, months) => {
+          let s = 0;
+          const upto = Math.min(months, arr.length);
+          for (let i = 0; i < upto; i++) s += arr[i] || 0;
+          return s;
+        };
+        const yr1Low = sumThrough(g.monthlyLow, 12);
+        const yr1High = sumThrough(g.monthlyHigh, 12);
+        const yr1Mid = sumThrough(g.monthlyMid, 12);
+        const yr2Mid = sumThrough(g.monthlyMid, 24);
+        const yr3Mid = sumThrough(g.monthlyMid, 36);
+        const yr4Mid = sumThrough(g.monthlyMid, 48);
+        const yr5Mid = sumThrough(g.monthlyMid, 60);
+        const low = hasPct ? Math.round(yr1Low) : '';
+        const high = hasPct ? Math.round(yr1High) : '';
         const earliest = g.starts.length ? new Date(Math.min(...g.starts.map(d => d.getTime()))) : null;
         const latest = g.ends.length ? new Date(Math.max(...g.ends.map(d => d.getTime()))) : null;
         // Regulated-rate sites get a flat 0.25 % savings off their
         // total electric spend — gas has no equivalent reg-rate motion
-        // so this stays 0 for the gas bucket.
+        // so this stays 0 for the gas bucket. Reg-rate is a utility-
+        // tariff motion (no third-party supplier contract), so it is
+        // intentionally NOT gated by the supplier contract dates.
         const regRateSavings = commodity === 'electric'
           ? Math.round(g.regulatedRateOpportunitySpend * 0.0025)
           : 0;
-        // Annual + Year 1-5 cumulative savings, kept in TWO separate
-        // tracks so the reg-rate motion can sit in its own block on
-        // the export instead of getting blended into the deregulated
-        // numbers. `year*` = deregulated only (mid of low/high).
-        // `regYear*` = reg-rate only.
-        const lowNum = typeof low === 'number' ? low : 0;
-        const highNum = typeof high === 'number' ? high : 0;
-        const annualSavingsMid = Math.round((lowNum + highNum) / 2);
-        const yearN = (n) => annualSavingsMid > 0 ? annualSavingsMid * n : '';
+        // `year*` carries the contract-aware cumulative; reg-rate
+        // stays a flat annual × N as before since it isn't gated.
+        const yearN = (cumMid) => cumMid > 0 ? Math.round(cumMid) : '';
         const regYearN = (n) => regRateSavings > 0 ? regRateSavings * n : '';
         return {
           state: g.state,
@@ -1793,11 +1880,11 @@ export function SitesView({ settings, updateSettings } = {}) {
           range,
           low,
           high,
-          year1: yearN(1),
-          year2: yearN(2),
-          year3: yearN(3),
-          year4: yearN(4),
-          year5: yearN(5),
+          year1: yearN(yr1Mid),
+          year2: yearN(yr2Mid),
+          year3: yearN(yr3Mid),
+          year4: yearN(yr4Mid),
+          year5: yearN(yr5Mid),
           regYear1: regYearN(1),
           regYear2: regYearN(2),
           regYear3: regYearN(3),
@@ -1813,10 +1900,11 @@ export function SitesView({ settings, updateSettings } = {}) {
           latestEnd: latest ? fmtDate(latest) : (g.suppliers.length > 0 ? 'TBD' : ''),
         };
       });
+      return { stateRows, siteRows };
     }
 
-    const electricRows = buildBucket('electric');
-    const gasRows = buildBucket('gas');
+    const { stateRows: electricRows, siteRows: electricSiteRows } = buildBucket('electric');
+    const { stateRows: gasRows, siteRows: gasSiteRows } = buildBucket('gas');
 
     const wb = new Workbook();
     wb.creator = 'Schneider Electric · Prospect Tracker';
@@ -2110,6 +2198,139 @@ export function SitesView({ settings, updateSettings } = {}) {
       detailSheet.autoFilter = {
         from: { row: 2, column: 1 },
         to: { row: 2 + sitesForDetail.length, column: detailCols.length },
+      };
+    }
+
+    // ---- Third sheet: Monthly Savings Breakdown ---------------------
+    // Per-site / per-commodity audit of how the by-state savings are
+    // built. Each row carries the inputs (annual spend, savings band,
+    // contract end), then 60 month columns with the contract-gated
+    // mid savings for that site. Contract months sit at $0; the first
+    // post-contract month flips on at annual_mid / 12. Year 1-5 totals
+    // on the by-state sheet are simply column-sums of these rows
+    // through month 12 / 24 / 36 / 48 / 60, so this sheet is the
+    // ledger that explains those numbers.
+    const allSiteRows = [...electricSiteRows, ...gasSiteRows]
+      .filter(s => s.siteName || s.annualMid > 0 || s.fiveYearMid > 0)
+      .sort((a, b) =>
+        (a.state || '').localeCompare(b.state || '')
+        || a.siteName.localeCompare(b.siteName)
+        || a.commodity.localeCompare(b.commodity));
+
+    if (allSiteRows.length > 0) {
+      const monthlySheet = wb.addWorksheet('Monthly Savings Breakdown', {
+        properties: { tabColor: { argb: SE_GREEN } },
+        views: [{ showGridLines: false, state: 'frozen', ySplit: 2, xSplit: 3 }],
+      });
+      const fmtPct = (p) => (p == null) ? '' : `${(p * 100).toFixed(1)}%`;
+      const fixedCols = [
+        { label: 'Site Name', get: (s) => s.siteName, width: 28 },
+        { label: 'ST/Prov', get: (s) => s.state, width: 9 },
+        { label: 'Commodity', get: (s) => s.commodity === 'electric' ? 'Electric' : 'Gas', width: 11 },
+        { label: 'Utility', get: (s) => s.utility, width: 22 },
+        { label: 'Supplier', get: (s) => s.supplier, width: 22 },
+        { label: 'Contract End', get: (s) => s.contractEnd, width: 14 },
+        { label: 'Annual Spend', get: (s) => s.annualSpend, numFmt: '"$"#,##0', width: 14 },
+        { label: 'Low %', get: (s) => fmtPct(s.lowPct), width: 8 },
+        { label: 'High %', get: (s) => fmtPct(s.highPct), width: 8 },
+        { label: 'Annual Savings Mid', get: (s) => s.annualMid, numFmt: '"$"#,##0', width: 16 },
+        { label: 'Months Under Contract', get: (s) => s.monthsUnderContract, numFmt: '#,##0', width: 12 },
+        { label: 'Months Off Contract', get: (s) => s.monthsOffContract, numFmt: '#,##0', width: 12 },
+        { label: '5-Year Mid Savings', get: (s) => Math.round(s.fiveYearMid), numFmt: '"$"#,##0', width: 16 },
+      ];
+      const monthCols = monthShortLabels.map((label, i) => ({
+        label,
+        get: (s) => s.monthlyMid[i] > 0 ? Math.round(s.monthlyMid[i]) : '',
+        numFmt: '"$"#,##0',
+        width: 11,
+        sumKey: `m${i}`,
+      }));
+      const cols = [...fixedCols, ...monthCols];
+
+      monthlySheet.columns = cols.map(c => ({ width: c.width }));
+
+      // Title row.
+      monthlySheet.mergeCells(1, 1, 1, cols.length);
+      const title = monthlySheet.getCell(1, 1);
+      title.value = 'Monthly Savings Breakdown';
+      title.font = { name: 'Nunito Sans', bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
+      title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+      title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      monthlySheet.getRow(1).height = 28;
+
+      // Header row.
+      const hdr = monthlySheet.getRow(2);
+      cols.forEach((c, i) => {
+        const cell = hdr.getCell(i + 1);
+        cell.value = c.label;
+        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+        cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
+        cell.border = {
+          bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } },
+          right:  { style: 'hair', color: { argb: 'FFFFFFFF' } },
+        };
+      });
+      hdr.height = 32;
+
+      // Per-site rows.
+      allSiteRows.forEach((s, idx) => {
+        const dataRow = monthlySheet.getRow(3 + idx);
+        cols.forEach((c, i) => {
+          const cell = dataRow.getCell(i + 1);
+          const v = c.get(s);
+          cell.value = (v === '' || v == null) ? null : v;
+          cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+          cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          if (c.numFmt) cell.numFmt = c.numFmt;
+          cell.border = {
+            bottom: { style: 'hair', color: { argb: SE_BORDER } },
+            right:  { style: 'hair', color: { argb: SE_BORDER } },
+          };
+        });
+        dataRow.height = 18;
+      });
+
+      // Totals row — one per column, summed across every site, so the
+      // user can sanity-check each month's grand total against the
+      // by-state sheet's Year 1-5 columns (Year 1 = sum of months 1-12,
+      // Year 2 = sum of months 1-24, etc.).
+      const totalRowIdx = 3 + allSiteRows.length;
+      const totalRow = monthlySheet.getRow(totalRowIdx);
+      const colTotals = (commodityKey) => {
+        const t = new Array(HORIZON_MONTHS).fill(0);
+        for (const s of allSiteRows) {
+          if (commodityKey && s.commodity !== commodityKey) continue;
+          for (let i = 0; i < HORIZON_MONTHS; i++) t[i] += s.monthlyMid[i] || 0;
+        }
+        return t;
+      };
+      const grandMonthly = colTotals(null);
+      cols.forEach((c, i) => {
+        const cell = totalRow.getCell(i + 1);
+        let v = '';
+        if (i === 0) v = 'Total (all sites)';
+        else if (c.sumKey) {
+          const m = Number(c.sumKey.replace(/^m/, ''));
+          v = grandMonthly[m] > 0 ? Math.round(grandMonthly[m]) : '';
+        } else if (c.label === 'Annual Spend') v = allSiteRows.reduce((a, s) => a + (s.annualSpend || 0), 0);
+        else if (c.label === 'Annual Savings Mid') v = allSiteRows.reduce((a, s) => a + (s.annualMid || 0), 0);
+        else if (c.label === '5-Year Mid Savings') v = Math.round(allSiteRows.reduce((a, s) => a + (s.fiveYearMid || 0), 0));
+        cell.value = v === '' ? null : v;
+        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_GREEN_DARK } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+        cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        if (c.numFmt) cell.numFmt = c.numFmt;
+        cell.border = {
+          top:    { style: 'thin', color: { argb: SE_GREEN_DARK } },
+          bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } },
+        };
+      });
+      totalRow.height = 22;
+
+      monthlySheet.autoFilter = {
+        from: { row: 2, column: 1 },
+        to: { row: 2 + allSiteRows.length, column: cols.length },
       };
     }
 
