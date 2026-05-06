@@ -1949,10 +1949,10 @@ export function SitesView({ settings, updateSettings } = {}) {
     wb.created = new Date();
     const ws = wb.addWorksheet('Indicative Savings by State', {
       properties: { tabColor: { argb: SE_GREEN } },
-      // Freeze the title + scenario block (rows 1-4) so the toggle
+      // Freeze the title + scenario block (rows 1-3) so the toggle
       // stays visible as the user scrolls down through the electric /
       // gas / reg-rate blocks.
-      views: [{ showGridLines: false, state: 'frozen', ySplit: 4 }],
+      views: [{ showGridLines: false, state: 'frozen', ySplit: 3 }],
     });
 
     // SPAN sized for the widest section (electric, which carries the
@@ -1977,7 +1977,7 @@ export function SitesView({ settings, updateSettings } = {}) {
     // qualified `'Sheet Name'!$B$2` reference so the same formula is
     // valid on the by-state sheet AND on the monthly-breakdown sheet.
     const SCENARIO_SHEET_NAME = 'Indicative Savings by State';
-    const SCENARIO_LOCAL_CELL = 'A3';
+    const SCENARIO_LOCAL_CELL = 'D2';
     const SCENARIO_REF = `'${SCENARIO_SHEET_NAME}'!$${SCENARIO_LOCAL_CELL[0]}$${SCENARIO_LOCAL_CELL.slice(1)}`;
     // Excel formula factory for a scenario-aware cell. Inlines the
     // three numeric possibilities so the workbook stays self-contained
@@ -2000,21 +2000,21 @@ export function SitesView({ settings, updateSettings } = {}) {
     title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
     ws.getRow(1).height = 28;
 
-    // Rows 2-4: scenario toggle stacked vertically so the long hint
-    // text never gets clipped behind the scenario-aware columns.
-    //   Row 2 — bold "Savings Scenario" label, full width.
-    //   Row 3 — dropdown cell at A3 (merged across a few columns so
-    //           the dropdown arrow has room).
-    //   Row 4 — italic explainer band, full width.
-    ws.mergeCells(2, 1, 2, SPAN);
+    // Rows 2-3: scenario toggle on row 2 (label + dropdown
+    // side-by-side) with the long explainer in its own band on row 3
+    // so nothing gets clipped behind the scenario-aware columns.
+    //   Row 2 — bold "Savings Scenario" label merged across A2:C2
+    //           (≈35 char widths), dropdown merged across D2:E2
+    //           (≈29 char widths so "Conservative" fits).
+    //   Row 3 — italic explainer band, full width.
+    ws.mergeCells(2, 1, 2, 3);
     const toggleLabel = ws.getCell('A2');
     toggleLabel.value = 'Savings Scenario';
     toggleLabel.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
     toggleLabel.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
     toggleLabel.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-    ws.getRow(2).height = 20;
 
-    ws.mergeCells(3, 1, 3, 4);
+    ws.mergeCells(2, 4, 2, 5);
     const toggleValue = ws.getCell(SCENARIO_LOCAL_CELL);
     toggleValue.value = 'Base';
     toggleValue.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_TEXT_DARK } };
@@ -2035,17 +2035,17 @@ export function SitesView({ settings, updateSettings } = {}) {
       errorTitle: 'Pick a scenario',
       error: 'Choose Conservative, Base, or Aggressive.',
     };
-    ws.getRow(3).height = 22;
+    ws.getRow(2).height = 22;
 
-    ws.mergeCells(4, 1, 4, SPAN);
-    const toggleHint = ws.getCell(4, 1);
+    ws.mergeCells(3, 1, 3, SPAN);
+    const toggleHint = ws.getCell(3, 1);
     toggleHint.value = 'Conservative = low end of the savings range · Base = average · Aggressive = high end. Every savings number on this sheet recalculates from this cell.';
     toggleHint.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_TEXT_DARK } };
     toggleHint.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
     toggleHint.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
-    ws.getRow(4).height = 22;
+    ws.getRow(3).height = 22;
 
-    let r = 6;
+    let r = 5;
     function writeSection(label, sectionRows, columnDefs) {
       // Section header band — light green wash with dark green text.
       ws.mergeCells(r, 1, r, SPAN);
