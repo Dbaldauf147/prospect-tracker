@@ -837,8 +837,51 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName }) {
 
   function handlePaste(e) {
     const text = e.clipboardData?.getData('text/plain') || '';
-    if (text) {
+    if (!text) return;
+    // If the paste looks like multi-column tabular data (tab-
+    // separated rows with at least one header and one body row),
+    // route it through the same column-mapping modal that file
+    // drops use. Anything that doesn't look tabular falls back to
+    // the email-headers parser so a plain "Name <email>" paste keeps
+    // working the way it always has.
+    const trimmedLines = text
+      .split(/\r?\n/)
+      .map(l => l.replace(/\r$/, ''))
+      .filter(l => l.length > 0);
+    const looksTabular =
+      trimmedLines.length >= 2
+      && trimmedLines[0].includes('\t')
+      && trimmedLines.slice(1).some(l => l.includes('\t'));
+    if (!looksTabular) {
       e.preventDefault();
+      mergeNewRows(parseEmailHeaders(text));
+      return;
+    }
+    e.preventDefault();
+    try {
+      const cells = trimmedLines.map(line => line.split('\t'));
+      // Dedup blank header names with a numeric suffix so the
+      // mapping modal doesn't end up with multiple "" keys.
+      const seen = new Map();
+      const headers = cells[0].map((h, i) => {
+        const base = String(h || '').trim() || `Column ${i + 1}`;
+        const n = (seen.get(base) || 0) + 1;
+        seen.set(base, n);
+        return n === 1 ? base : `${base} ${n}`;
+      });
+      const raw = cells.slice(1).map(row => {
+        const obj = {};
+        headers.forEach((h, i) => { obj[h] = (row[i] ?? '').trim(); });
+        return obj;
+      }).filter(o => Object.values(o).some(v => v !== ''));
+      if (raw.length === 0) {
+        mergeNewRows(parseEmailHeaders(text));
+        return;
+      }
+      const mapping = autoMapHeaders(headers);
+      setPendingUpload({ fileName: '(pasted from clipboard)', headers, rows: raw, mapping });
+    } catch (err) {
+      console.warn('Failed to parse pasted tabular data, falling back to email extraction', err);
       mergeNewRows(parseEmailHeaders(text));
     }
   }
@@ -1431,7 +1474,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName }) {
           <span className={styles.dropIcon}>&#8681;</span>
           <span className={styles.dropTitle}>Drop emails, Excel, CSV, or TSV here</span>
           <span className={styles.dropHint}>
-            Sheet drops show a column-mapping preview. Plain-text drops / pastes extract addresses only.
+            Sheet drops <em>and</em> tab-separated pastes (⌘V / Ctrl+V) show a column-mapping preview. Plain-text drops / pastes fall back to email-address extraction.
           </span>
         </div>
 
