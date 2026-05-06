@@ -1703,8 +1703,33 @@ export function SitesView({ settings, updateSettings } = {}) {
     // triangle that Excel sometimes raises when a column mixes
     // formulas with constants. Every scenario cell goes through this
     // so the workbook opens with no green chevrons on the audit tab.
-    const writeScenarioFormula = (cell, low, mid, high) => {
-      cell.value = { formula: scenarioFormula(low, mid, high), result: Number.isFinite(mid) ? mid : 0 };
+    // Optional yearGate zeroes the cell when the term-length
+    // dropdown sits below the gate.
+    const writeScenarioFormula = (cell, low, mid, high, yearGate) => {
+      const result = Number.isFinite(mid) ? mid : 0;
+      cell.value = { formula: scenarioFormula(low, mid, high, yearGate), result };
+      cell.ignoredErrors = { formula: true, formulaRange: true, numberStoredAsText: true };
+    };
+    // Helper: write a fixed numeric value behind the same year-gate as
+    // the scenario cells, so reg-rate columns also disappear when the
+    // user shrinks the term length.
+    const writeYearGatedConstant = (cell, value, yearGate) => {
+      const num = Number.isFinite(Number(value)) ? Number(value) : 0;
+      cell.value = {
+        formula: `IF(--${YEARS_REF}>=${yearGate},${num},0)`,
+        result: num,
+      };
+      cell.ignoredErrors = { formula: true, formulaRange: true, numberStoredAsText: true };
+    };
+    // Month-level gate for the Monthly Savings Breakdown sheet —
+    // zeroes any month column whose 1-indexed position is past the
+    // term-length × 12 mark.
+    const writeMonthGatedConstant = (cell, value, monthNum) => {
+      const num = Number.isFinite(Number(value)) ? Number(value) : 0;
+      cell.value = {
+        formula: `IF(--${YEARS_REF}*12>=${monthNum},${num},0)`,
+        result: num,
+      };
       cell.ignoredErrors = { formula: true, formulaRange: true, numberStoredAsText: true };
     };
 
@@ -1974,21 +1999,34 @@ export function SitesView({ settings, updateSettings } = {}) {
     // Scenario-toggle reference: every scenario-aware cell points at
     // this single cell so the user can flip the dropdown and see all
     // of the savings columns recalculate at once. Always written as a
-    // qualified `'Sheet Name'!$B$2` reference so the same formula is
+    // qualified `'Sheet Name'!$D$2` reference so the same formula is
     // valid on the by-state sheet AND on the monthly-breakdown sheet.
     const SCENARIO_SHEET_NAME = 'Indicative Savings by State';
     const SCENARIO_LOCAL_CELL = 'D2';
     const SCENARIO_REF = `'${SCENARIO_SHEET_NAME}'!$${SCENARIO_LOCAL_CELL[0]}$${SCENARIO_LOCAL_CELL.slice(1)}`;
+    // Term-length toggle (1-5 years). Drives the same scenario-aware
+    // cells: any savings column tagged with `yearGate: N` is zeroed
+    // when the user picks fewer than N years; the monthly breakdown
+    // sheet zeroes any month whose 1-indexed number exceeds N*12.
+    // The `--` (double unary) idiom in the formula coerces the value
+    // to a number whether Excel stored the dropdown selection as
+    // text or numeric.
+    const YEARS_LOCAL_CELL = 'G2';
+    const YEARS_REF = `'${SCENARIO_SHEET_NAME}'!$${YEARS_LOCAL_CELL[0]}$${YEARS_LOCAL_CELL.slice(1)}`;
     // Excel formula factory for a scenario-aware cell. Inlines the
     // three numeric possibilities so the workbook stays self-contained
     // (no helper sheet needed) and Excel sees real numbers in the
     // formula — no "number stored as text" warnings. Values are NOT
     // rounded here so percentages like 0.02 survive intact; the cell's
     // numFmt handles display (currency cells show whole dollars, '0.0%'
-    // cells show "2.0%", etc.).
-    const scenarioFormula = (low, mid, high) => {
+    // cells show "2.0%", etc.). When a `yearGate` is supplied, the
+    // outer IF zeroes the cell whenever the user's chosen term length
+    // is shorter than that gate value.
+    const scenarioFormula = (low, mid, high, yearGate) => {
       const safe = (n) => Number.isFinite(n) ? n : 0;
-      return `IF(${SCENARIO_REF}="Conservative",${safe(low)},IF(${SCENARIO_REF}="Aggressive",${safe(high)},${safe(mid)}))`;
+      const inner = `IF(${SCENARIO_REF}="Conservative",${safe(low)},IF(${SCENARIO_REF}="Aggressive",${safe(high)},${safe(mid)}))`;
+      if (yearGate == null) return inner;
+      return `IF(--${YEARS_REF}>=${yearGate},${inner},0)`;
     };
 
     // Title row — Schneider green band, white text.
@@ -2000,32 +2038,33 @@ export function SitesView({ settings, updateSettings } = {}) {
     title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
     ws.getRow(1).height = 28;
 
-    // Rows 2-3: scenario toggle on row 2 (label + dropdown
-    // side-by-side) with the long explainer in its own band on row 3
-    // so nothing gets clipped behind the scenario-aware columns.
-    //   Row 2 — bold "Savings Scenario" label merged across A2:C2
-    //           (≈35 char widths), dropdown merged across D2:E2
-    //           (≈29 char widths so "Conservative" fits).
+    // Rows 2-3: scenario toggle + term-length toggle live on row 2
+    // (each label + dropdown side-by-side); the long explainer takes
+    // row 3 so nothing gets clipped behind the data columns.
+    //   Row 2 — A2:C2 "Savings Scenario" label · D2:E2 scenario
+    //           dropdown · F2 "# of Years" label · G2 term dropdown.
     //   Row 3 — italic explainer band, full width.
-    ws.mergeCells(2, 1, 2, 3);
-    const toggleLabel = ws.getCell('A2');
-    toggleLabel.value = 'Savings Scenario';
-    toggleLabel.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
-    toggleLabel.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
-    toggleLabel.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-
-    ws.mergeCells(2, 4, 2, 5);
-    const toggleValue = ws.getCell(SCENARIO_LOCAL_CELL);
-    toggleValue.value = 'Base';
-    toggleValue.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_TEXT_DARK } };
-    toggleValue.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } };
-    toggleValue.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-    toggleValue.border = {
+    const cellStyle = (cell, fill, color, bold = false) => {
+      cell.font = { name: 'Nunito Sans', bold, size: 12, color: { argb: color } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill } };
+      cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    };
+    const dropdownBorder = {
       top:    { style: 'thin', color: { argb: SE_GREEN_DARK } },
       bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } },
       left:   { style: 'thin', color: { argb: SE_GREEN_DARK } },
       right:  { style: 'thin', color: { argb: SE_GREEN_DARK } },
     };
+
+    ws.mergeCells(2, 1, 2, 3);
+    cellStyle(ws.getCell('A2'), SE_GREEN_LIGHT, SE_GREEN_DARK, true);
+    ws.getCell('A2').value = 'Savings Scenario';
+
+    ws.mergeCells(2, 4, 2, 5);
+    const toggleValue = ws.getCell(SCENARIO_LOCAL_CELL);
+    toggleValue.value = 'Base';
+    cellStyle(toggleValue, 'FFFFFFFF', SE_TEXT_DARK, true);
+    toggleValue.border = dropdownBorder;
     toggleValue.dataValidation = {
       type: 'list',
       allowBlank: false,
@@ -2035,15 +2074,32 @@ export function SitesView({ settings, updateSettings } = {}) {
       errorTitle: 'Pick a scenario',
       error: 'Choose Conservative, Base, or Aggressive.',
     };
+
+    cellStyle(ws.getCell('F2'), SE_GREEN_LIGHT, SE_GREEN_DARK, true);
+    ws.getCell('F2').value = '# of Years';
+
+    const yearsValue = ws.getCell(YEARS_LOCAL_CELL);
+    yearsValue.value = 5;
+    cellStyle(yearsValue, 'FFFFFFFF', SE_TEXT_DARK, true);
+    yearsValue.border = dropdownBorder;
+    yearsValue.dataValidation = {
+      type: 'list',
+      allowBlank: false,
+      formulae: ['"1,2,3,4,5"'],
+      showErrorMessage: true,
+      errorStyle: 'stop',
+      errorTitle: 'Pick a term',
+      error: 'Choose 1, 2, 3, 4, or 5.',
+    };
     ws.getRow(2).height = 22;
 
     ws.mergeCells(3, 1, 3, SPAN);
     const toggleHint = ws.getCell(3, 1);
-    toggleHint.value = 'Conservative = low end of the savings range · Base = average · Aggressive = high end. Every savings number on this sheet recalculates from this cell.';
+    toggleHint.value = 'Conservative = low end of the savings range · Base = average · Aggressive = high end. # of Years controls how far the savings extend — Year N columns and any month past N×12 zero out below it. Every savings number on this sheet recalculates from these cells.';
     toggleHint.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_TEXT_DARK } };
     toggleHint.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
     toggleHint.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
-    ws.getRow(3).height = 22;
+    ws.getRow(3).height = 30;
 
     let r = 5;
     function writeSection(label, sectionRows, columnDefs) {
@@ -2090,10 +2146,15 @@ export function SitesView({ settings, updateSettings } = {}) {
             // also stamps ignoredErrors on the cell so the warning
             // triangle is suppressed even if it would otherwise fire.
             if (v && typeof v === 'object') {
-              writeScenarioFormula(cell, v.low, v.mid, v.high);
+              writeScenarioFormula(cell, v.low, v.mid, v.high, c.yearGate);
             } else {
-              writeScenarioFormula(cell, 0, 0, 0);
+              writeScenarioFormula(cell, 0, 0, 0, c.yearGate);
             }
+          } else if (c.yearGate != null) {
+            // Non-scenario column that still needs the term-length
+            // gate (reg-rate Year 1-5 cumulative). Wrap the constant
+            // in IF(years>=N, value, 0) so it follows the dropdown.
+            writeYearGatedConstant(cell, v, c.yearGate);
           } else if (v === '' || v == null) {
             writeBlank(cell, !!c.numFmt);
           } else {
@@ -2140,7 +2201,9 @@ export function SitesView({ settings, updateSettings } = {}) {
           cell.value = 'Total';
         } else if (c.scenario && c.sumKey) {
           const t = scenarioTotals[c.sumKey];
-          writeScenarioFormula(cell, t.low, t.mid, t.high);
+          writeScenarioFormula(cell, t.low, t.mid, t.high, c.yearGate);
+        } else if (c.yearGate != null && c.sumKey) {
+          writeYearGatedConstant(cell, scalarTotals[c.sumKey] || 0, c.yearGate);
         } else if (c.sumKey) {
           cell.value = scalarTotals[c.sumKey] || 0;
         } else {
@@ -2176,11 +2239,11 @@ export function SitesView({ settings, updateSettings } = {}) {
       // each cell is a scenario-aware formula keyed off the toggle.
       // Reg-rate savings live in their own block to the right.
       { label: 'Indicative Annual Savings', scenario: true, get: (g) => g.annualSavings, numFmt: '"$"#,##0', sumKey: 'annualSavings' },
-      { label: 'Year 1 Cumulative', scenario: true, get: (g) => g.year1, numFmt: '"$"#,##0', sumKey: 'year1' },
-      { label: 'Year 2 Cumulative', scenario: true, get: (g) => g.year2, numFmt: '"$"#,##0', sumKey: 'year2' },
-      { label: 'Year 3 Cumulative', scenario: true, get: (g) => g.year3, numFmt: '"$"#,##0', sumKey: 'year3' },
-      { label: 'Year 4 Cumulative', scenario: true, get: (g) => g.year4, numFmt: '"$"#,##0', sumKey: 'year4' },
-      { label: 'Year 5 Cumulative', scenario: true, get: (g) => g.year5, numFmt: '"$"#,##0', sumKey: 'year5' },
+      { label: 'Year 1 Cumulative', scenario: true, yearGate: 1, get: (g) => g.year1, numFmt: '"$"#,##0', sumKey: 'year1' },
+      { label: 'Year 2 Cumulative', scenario: true, yearGate: 2, get: (g) => g.year2, numFmt: '"$"#,##0', sumKey: 'year2' },
+      { label: 'Year 3 Cumulative', scenario: true, yearGate: 3, get: (g) => g.year3, numFmt: '"$"#,##0', sumKey: 'year3' },
+      { label: 'Year 4 Cumulative', scenario: true, yearGate: 4, get: (g) => g.year4, numFmt: '"$"#,##0', sumKey: 'year4' },
+      { label: 'Year 5 Cumulative', scenario: true, yearGate: 5, get: (g) => g.year5, numFmt: '"$"#,##0', sumKey: 'year5' },
       { label: 'Utility Vendor(s)', get: (g) => g.utilities },
       { label: 'Supplier Name(s)', get: (g) => g.suppliers },
       { label: 'Contract Start', get: (g) => g.earliestStart },
@@ -2191,13 +2254,15 @@ export function SitesView({ settings, updateSettings } = {}) {
       { label: '', get: () => '', spacer: true },
       // Regulated-rate block: site count + flat 0.25 % savings + its
       // own Year 1-5 cumulative, isolated from the deregulated totals.
+      // The Year 1-5 columns honor the same term-length dropdown as
+      // the deregulated block so the user sees a consistent horizon.
       { label: 'Reg. Rate Savings Sites', get: (g) => g.regulatedRateOpportunitySites, numFmt: '#,##0', sumKey: 'regulatedRateOpportunitySites' },
       { label: 'Reg. Rate Savings (0.25%)', get: (g) => g.regRateSavings || '', numFmt: '"$"#,##0', sumKey: 'regRateSavings' },
-      { label: 'Reg. Rate Year 1 Savings', get: (g) => g.regYear1, numFmt: '"$"#,##0', sumKey: 'regYear1' },
-      { label: 'Reg. Rate Year 2 Cumulative', get: (g) => g.regYear2, numFmt: '"$"#,##0', sumKey: 'regYear2' },
-      { label: 'Reg. Rate Year 3 Cumulative', get: (g) => g.regYear3, numFmt: '"$"#,##0', sumKey: 'regYear3' },
-      { label: 'Reg. Rate Year 4 Cumulative', get: (g) => g.regYear4, numFmt: '"$"#,##0', sumKey: 'regYear4' },
-      { label: 'Reg. Rate Year 5 Cumulative', get: (g) => g.regYear5, numFmt: '"$"#,##0', sumKey: 'regYear5' },
+      { label: 'Reg. Rate Year 1 Savings', yearGate: 1, get: (g) => g.regYear1 || 0, numFmt: '"$"#,##0', sumKey: 'regYear1' },
+      { label: 'Reg. Rate Year 2 Cumulative', yearGate: 2, get: (g) => g.regYear2 || 0, numFmt: '"$"#,##0', sumKey: 'regYear2' },
+      { label: 'Reg. Rate Year 3 Cumulative', yearGate: 3, get: (g) => g.regYear3 || 0, numFmt: '"$"#,##0', sumKey: 'regYear3' },
+      { label: 'Reg. Rate Year 4 Cumulative', yearGate: 4, get: (g) => g.regYear4 || 0, numFmt: '"$"#,##0', sumKey: 'regYear4' },
+      { label: 'Reg. Rate Year 5 Cumulative', yearGate: 5, get: (g) => g.regYear5 || 0, numFmt: '"$"#,##0', sumKey: 'regYear5' },
     ];
     const gasCols = [
       { label: 'ST/Prov', get: (g) => g.state },
@@ -2213,11 +2278,11 @@ export function SitesView({ settings, updateSettings } = {}) {
       // Year 1-5 cumulative savings on the gas side use the same
       // scenario toggle as electric — there's no gas reg-rate motion.
       { label: 'Indicative Annual Savings', scenario: true, get: (g) => g.annualSavings, numFmt: '"$"#,##0', sumKey: 'annualSavings' },
-      { label: 'Year 1 Cumulative', scenario: true, get: (g) => g.year1, numFmt: '"$"#,##0', sumKey: 'year1' },
-      { label: 'Year 2 Cumulative', scenario: true, get: (g) => g.year2, numFmt: '"$"#,##0', sumKey: 'year2' },
-      { label: 'Year 3 Cumulative', scenario: true, get: (g) => g.year3, numFmt: '"$"#,##0', sumKey: 'year3' },
-      { label: 'Year 4 Cumulative', scenario: true, get: (g) => g.year4, numFmt: '"$"#,##0', sumKey: 'year4' },
-      { label: 'Year 5 Cumulative', scenario: true, get: (g) => g.year5, numFmt: '"$"#,##0', sumKey: 'year5' },
+      { label: 'Year 1 Cumulative', scenario: true, yearGate: 1, get: (g) => g.year1, numFmt: '"$"#,##0', sumKey: 'year1' },
+      { label: 'Year 2 Cumulative', scenario: true, yearGate: 2, get: (g) => g.year2, numFmt: '"$"#,##0', sumKey: 'year2' },
+      { label: 'Year 3 Cumulative', scenario: true, yearGate: 3, get: (g) => g.year3, numFmt: '"$"#,##0', sumKey: 'year3' },
+      { label: 'Year 4 Cumulative', scenario: true, yearGate: 4, get: (g) => g.year4, numFmt: '"$"#,##0', sumKey: 'year4' },
+      { label: 'Year 5 Cumulative', scenario: true, yearGate: 5, get: (g) => g.year5, numFmt: '"$"#,##0', sumKey: 'year5' },
       { label: 'Utility Vendor(s)', get: (g) => g.utilities },
       { label: 'Supplier Name(s)', get: (g) => g.suppliers },
       { label: 'Contract Start', get: (g) => g.earliestStart },
@@ -2417,10 +2482,13 @@ export function SitesView({ settings, updateSettings } = {}) {
       ];
       const monthCols = monthShortLabels.map((label, i) => ({
         label,
-        get: (s) => s.monthlyMid[i] > 0 ? Math.round(s.monthlyMid[i]) : '',
+        // Raw mid savings; the year-gate IF wrapper added at write
+        // time zeroes any month past the user's chosen term × 12.
+        get: (s) => Math.round(s.monthlyMid[i] || 0),
         numFmt: '"$"#,##0',
         width: 11,
         sumKey: `m${i}`,
+        monthGate: i + 1, // 1-indexed for the formula
       }));
       const cols = [...fixedCols, ...monthCols];
 
@@ -2463,10 +2531,14 @@ export function SitesView({ settings, updateSettings } = {}) {
             // "inconsistent formula" / "number stored as text"
             // chevrons even if the row has no savings band.
             if (v && typeof v === 'object') {
-              writeScenarioFormula(cell, v.low, v.mid, v.high);
+              writeScenarioFormula(cell, v.low, v.mid, v.high, c.yearGate);
             } else {
-              writeScenarioFormula(cell, 0, 0, 0);
+              writeScenarioFormula(cell, 0, 0, 0, c.yearGate);
             }
+          } else if (c.monthGate != null) {
+            writeMonthGatedConstant(cell, v, c.monthGate);
+          } else if (c.yearGate != null) {
+            writeYearGatedConstant(cell, v, c.yearGate);
           } else if (v === '' || v == null) {
             writeBlank(cell, !!c.numFmt);
           } else {
@@ -2483,32 +2555,44 @@ export function SitesView({ settings, updateSettings } = {}) {
         dataRow.height = 18;
       });
 
-      // Totals row — one per column, summed across every site, so the
-      // user can sanity-check each month's grand total against the
-      // by-state sheet's Year 1-5 columns (Year 1 = sum of months 1-12,
-      // Year 2 = sum of months 1-24, etc.).
+      // Totals row — month columns use SUM() formulas pointing at
+      // the data range above so flipping the term-length dropdown
+      // (which zeroes individual month cells) automatically
+      // re-totals the column. Non-month totals stay as static
+      // numbers since they're not gated.
       const totalRowIdx = 3 + allSiteRows.length;
       const totalRow = monthlySheet.getRow(totalRowIdx);
-      const colTotals = (commodityKey) => {
-        const t = new Array(HORIZON_MONTHS).fill(0);
-        for (const s of allSiteRows) {
-          if (commodityKey && s.commodity !== commodityKey) continue;
-          for (let i = 0; i < HORIZON_MONTHS; i++) t[i] += s.monthlyMid[i] || 0;
+      const lastDataRow = 2 + allSiteRows.length;
+      const colLetter = (n) => {
+        let s = '';
+        let x = n;
+        while (x > 0) {
+          const r = (x - 1) % 26;
+          s = String.fromCharCode(65 + r) + s;
+          x = Math.floor((x - 1) / 26);
         }
-        return t;
+        return s;
       };
-      const grandMonthly = colTotals(null);
       cols.forEach((c, i) => {
         const cell = totalRow.getCell(i + 1);
-        let v = '';
-        if (i === 0) v = 'Total (all sites)';
-        else if (c.sumKey) {
-          const m = Number(c.sumKey.replace(/^m/, ''));
-          v = grandMonthly[m] > 0 ? Math.round(grandMonthly[m]) : '';
-        } else if (c.label === 'Annual Spend') v = allSiteRows.reduce((a, s) => a + (s.annualSpend || 0), 0);
-        else if (c.label === 'Annual Savings Mid') v = allSiteRows.reduce((a, s) => a + (s.annualMid || 0), 0);
-        else if (c.label === '5-Year Mid Savings') v = Math.round(allSiteRows.reduce((a, s) => a + (s.fiveYearMid || 0), 0));
-        cell.value = v === '' ? null : v;
+        if (i === 0) {
+          cell.value = 'Total (all sites)';
+        } else if (c.monthGate != null && allSiteRows.length > 0) {
+          const letter = colLetter(i + 1);
+          cell.value = {
+            formula: `SUM(${letter}3:${letter}${lastDataRow})`,
+            result: 0,
+          };
+          cell.ignoredErrors = { formula: true, formulaRange: true, numberStoredAsText: true };
+        } else if (c.label === 'Annual Spend') {
+          cell.value = allSiteRows.reduce((a, s) => a + (s.annualSpend || 0), 0);
+        } else if (c.label === 'Annual Savings Mid') {
+          cell.value = allSiteRows.reduce((a, s) => a + (s.annualMid || 0), 0);
+        } else if (c.label === '5-Year Mid Savings') {
+          cell.value = Math.round(allSiteRows.reduce((a, s) => a + (s.fiveYearMid || 0), 0));
+        } else {
+          writeBlank(cell, !!c.numFmt);
+        }
         cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_GREEN_DARK } };
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
         cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
