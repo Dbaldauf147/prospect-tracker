@@ -697,11 +697,11 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
         </span>
       );
     }},
-    // BFO Link — clickable "Open BFO" anchor when the Opps tab's
-    // BFO Link cell holds a URL, plain text otherwise. Sourced from
-    // the matched opp's row so it stays in lock-step with whatever's
-    // pasted onto the Opps tab.
-    { key: '_bfoLink', label: 'BFO Link', defaultWidth: 110, render: (a) => {
+    // BFO Link — opp's BFO Link cell as text. In the user's data
+    // this field holds the BFO Opportunity Name ("SB - SUSUP -
+    // Upsell - …"); when a row coincidentally carries a URL there
+    // we render it as a clickable launcher instead.
+    { key: '_bfoLink', label: 'BFO Link', defaultWidth: 220, render: (a) => {
       const bfo = String(a._activeOpp?.['BFO Link'] || '').trim();
       if (!bfo) return <span className={styles.metaText}>—</span>;
       if (/^https?:\/\//i.test(bfo)) {
@@ -716,21 +716,61 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
           >Open BFO ↗</a>
         );
       }
-      return <span style={{ fontSize: '0.78rem', color: 'var(--color-text)' }} title={bfo}>{bfo}</span>;
-    }},
-    // BFO Address — the same source as BFO Link (opp['BFO Link']),
-    // but rendered as plain ellipsis-truncated text rather than as a
-    // clickable button. Lets the user read or copy the full URL
-    // without hovering the button column. The BFO Link column stays
-    // the launcher; this column stays the address line.
-    { key: '_bfoAddress', label: 'BFO Address', defaultWidth: 280, render: (a) => {
-      const bfo = String(a._activeOpp?.['BFO Link'] || '').trim();
-      if (!bfo) return <span className={styles.metaText}>—</span>;
       return (
         <span
           title={bfo}
-          style={{ fontSize: '0.72rem', color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%', display: 'inline-block', userSelect: 'all' }}
+          style={{ fontSize: '0.78rem', color: 'var(--color-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%', display: 'inline-block' }}
         >{bfo}</span>
+      );
+    }},
+    // BFO Address — the live Salesforce URL for the matched opp.
+    // Tries a chain of plausible column names first, then falls back
+    // to scanning every other column on the opp record for the first
+    // value that looks like an http(s) URL. Renders as a clickable
+    // anchor with the full address visible (and selectable for copy).
+    { key: '_bfoAddress', label: 'BFO Address', defaultWidth: 320, render: (a) => {
+      const opp = a._activeOpp;
+      if (!opp) return <span className={styles.metaText}>—</span>;
+      const isUrl = (s) => /^https?:\/\//i.test(s);
+      const candidates = [
+        opp['BFO Address'],
+        opp['BFO URL'],
+        opp['BFO Web Address'],
+        opp['Opportunity URL'],
+        opp['Opportunity Address'],
+        opp['Salesforce URL'],
+        opp['Salesforce Link'],
+        opp['SF URL'],
+        opp['SF Link'],
+        opp['URL'],
+        opp['Link'],
+        opp['Web Address'],
+      ];
+      let addr = '';
+      for (const c of candidates) {
+        const v = String(c || '').trim();
+        if (isUrl(v)) { addr = v; break; }
+      }
+      // Last resort: walk every key on the opp and pick the first
+      // value that looks like a URL (skip the BFO Link column since
+      // that holds the name, not the address).
+      if (!addr) {
+        for (const k of Object.keys(opp)) {
+          if (k === 'BFO Link') continue;
+          const v = String(opp[k] || '').trim();
+          if (isUrl(v)) { addr = v; break; }
+        }
+      }
+      if (!addr) return <span className={styles.metaText}>—</span>;
+      return (
+        <a
+          href={addr}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={e => e.stopPropagation()}
+          title={addr}
+          style={{ fontSize: '0.72rem', color: 'var(--color-accent)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%', display: 'inline-block', userSelect: 'all' }}
+        >{addr}</a>
       );
     }},
     { key: '_status', label: 'Status', defaultWidth: 110 },
