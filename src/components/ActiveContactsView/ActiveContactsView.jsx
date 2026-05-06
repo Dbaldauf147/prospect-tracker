@@ -237,15 +237,25 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
     // as "we have a contact at this company" — the page already filters
     // out hidden / left / Schneider / Key Target / current-Client rows,
     // so reusing its selector keeps the gap in lockstep with what the
-    // user sees below. Track raw company strings too so the opp-side
-    // lookup can fall back to companiesMatch fuzz when the normalized
-    // strings don't line up (e.g. "Berkeley Research Group, LLC" contact
-    // vs opp Account "Berkeley Research Group (a Towerbrook co.)").
+    // user sees below. We *also* fold in Dan-Key-Target-tagged contacts
+    // (which the visible selector strips, since they live on the Key
+    // Contacts tab) so a company with Key Targets but no Active row
+    // doesn't get flagged here — the user already has those people on
+    // the other tab. Hidden / left rows stay excluded. Track raw
+    // company strings too so the opp-side lookup can fall back to
+    // companiesMatch fuzz when the normalized strings don't line up
+    // (e.g. "Berkeley Research Group, LLC" contact vs opp Account
+    // "Berkeley Research Group (a Towerbrook co.)").
     const visibleSelector = makeActiveSelector(effectiveWindow, 'visible', clientFilter);
+    const isKeyTargetContact = (c) => {
+      const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
+      if (tags.includes('hide') || tags.includes('left')) return false;
+      return tags.includes('dan key target');
+    };
     const contactCompaniesNorm = new Set();
     const contactCompaniesRaw = [];
     for (const c of hubspotContacts) {
-      if (!visibleSelector(c)) continue;
+      if (!visibleSelector(c) && !isKeyTargetContact(c)) continue;
       const raw = String(c.company || '').trim();
       const co = normalize(raw);
       if (co) {
