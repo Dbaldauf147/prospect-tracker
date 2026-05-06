@@ -1953,7 +1953,12 @@ export function SitesView({ settings, updateSettings } = {}) {
             const out = [];
             if (commodity === 'electric') {
               if (g.spend > 0 && g.spend < 1_000_000) out.push('⚠ Spend < $1M — small electric market');
-              if (g.consumption > 10_000_000) out.push('⚠ Risk Management should be considered (>10,000 MWh)');
+              // g.consumption is the sum of every site's __kwh__ in
+              // this state (kilowatt-hours per year). Divide by 1000
+              // to convert to MWh before comparing to the 10,000 MWh
+              // Risk Management threshold.
+              const consumptionMWh = g.consumption / 1000;
+              if (consumptionMWh > 10_000) out.push('⚠ Risk Management should be considered (>10,000 MWh)');
               if (g.hasMexicoSourcing) out.push('★ Potential Mexico sourcing opportunity');
             } else if (commodity === 'gas') {
               if (g.spend > 0 && g.spend < 30_000) out.push('⚠ Natural gas consumption might be too low for sourcing (<$30K)');
