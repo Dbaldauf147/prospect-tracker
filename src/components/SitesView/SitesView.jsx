@@ -2166,7 +2166,13 @@ export function SitesView({ settings, updateSettings } = {}) {
         cell.alignment = { vertical: 'bottom', horizontal: 'left', wrapText: true, indent: 1 };
         cell.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
       });
-      headerRow.height = 30;
+      // Tall column-header band so the longer wrapped labels
+      // ("Deregulated Consumption kWh/yr", "Reg. Rate Year N
+      // Cumulative", etc.) sit cleanly on three lines without
+      // clipping. Fixed at 45 — both the Electric Power column
+      // header (row 6) and the Natural Gas column header further
+      // down the sheet flow through this same writeSection call.
+      headerRow.height = 45;
       r += 1;
       // Data rows — every cell left-aligned regardless of type so the
       // sheet reads as a flat report rather than a finance ledger.
