@@ -1885,6 +1885,13 @@ export function SitesView({ settings, updateSettings } = {}) {
           consumption: Math.round(g.consumption),
           spend: Math.round(g.spend),
           range,
+          // Savings rate as a scenario-aware decimal so the Savings %
+          // column on the by-state sheet picks one of low / mid / high
+          // depending on the toggle. Stored raw (0.02 etc.) — the
+          // cell's '0.0%' format handles display, no string coercion.
+          savingsPct: hasPct
+            ? { low: lowPct, mid: (lowPct + highPct) / 2, high: highPct }
+            : null,
           // Each scenario-aware triple is `{ low, mid, high }` (or null
           // when the state has no savings band). The writeSection
           // helper turns these into Excel formulas keyed off the
@@ -1933,9 +1940,10 @@ export function SitesView({ settings, updateSettings } = {}) {
     // regulated-rate block with its own Year 1-5 cumulative). Gas
     // uses fewer slots; the title / section bands still merge across
     // SPAN so the headings stay aligned across both sections.
-    const SPAN = 25;
+    const SPAN = 26;
     const widths = [
       10, 14, 11, 13, 16, 18, 16,        // ST/Prov..Range (7)
+      11,                                // Savings % (scenario, 1)
       16, 14, 14, 14, 14, 14,            // Annual Savings + Year 1-5 (6)
       24, 24, 14, 14,                    // Utility/Supplier/Contract Start/End (4)
       4,                                 // spacer (1)
@@ -1943,17 +1951,24 @@ export function SitesView({ settings, updateSettings } = {}) {
     ];
     ws.columns = widths.map(w => ({ width: w }));
 
-    // Scenario-toggle reference: every scenario-aware savings cell
-    // points at this single cell so the user can flip the dropdown
-    // and see all of the savings columns recalculate at once.
-    const SCENARIO_CELL = 'B2';
+    // Scenario-toggle reference: every scenario-aware cell points at
+    // this single cell so the user can flip the dropdown and see all
+    // of the savings columns recalculate at once. Always written as a
+    // qualified `'Sheet Name'!$B$2` reference so the same formula is
+    // valid on the by-state sheet AND on the monthly-breakdown sheet.
+    const SCENARIO_SHEET_NAME = 'Indicative Savings by State';
+    const SCENARIO_LOCAL_CELL = 'B2';
+    const SCENARIO_REF = `'${SCENARIO_SHEET_NAME}'!$${SCENARIO_LOCAL_CELL[0]}$${SCENARIO_LOCAL_CELL.slice(1)}`;
     // Excel formula factory for a scenario-aware cell. Inlines the
     // three numeric possibilities so the workbook stays self-contained
     // (no helper sheet needed) and Excel sees real numbers in the
-    // formula — no "number stored as text" warnings.
+    // formula — no "number stored as text" warnings. Values are NOT
+    // rounded here so percentages like 0.02 survive intact; the cell's
+    // numFmt handles display (currency cells show whole dollars, '0.0%'
+    // cells show "2.0%", etc.).
     const scenarioFormula = (low, mid, high) => {
-      const safe = (n) => Number.isFinite(n) ? Math.round(n) : 0;
-      return `IF(${SCENARIO_CELL}="Conservative",${safe(low)},IF(${SCENARIO_CELL}="Aggressive",${safe(high)},${safe(mid)}))`;
+      const safe = (n) => Number.isFinite(n) ? n : 0;
+      return `IF(${SCENARIO_REF}="Conservative",${safe(low)},IF(${SCENARIO_REF}="Aggressive",${safe(high)},${safe(mid)}))`;
     };
 
     // Title row — Schneider green band, white text.
@@ -1973,7 +1988,7 @@ export function SitesView({ settings, updateSettings } = {}) {
     toggleLabel.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
     toggleLabel.alignment = { vertical: 'middle', horizontal: 'right', indent: 1 };
     toggleLabel.border = { right: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
-    const toggleValue = ws.getCell(SCENARIO_CELL);
+    const toggleValue = ws.getCell(SCENARIO_LOCAL_CELL);
     toggleValue.value = 'Base';
     toggleValue.font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: SE_TEXT_DARK } };
     toggleValue.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } };
@@ -2041,7 +2056,7 @@ export function SitesView({ settings, updateSettings } = {}) {
           const v = c.get(row);
           if (c.scenario) {
             if (v && typeof v === 'object') {
-              cell.value = { formula: scenarioFormula(v.low, v.mid, v.high), result: Math.round(v.mid || 0) };
+              cell.value = { formula: scenarioFormula(v.low, v.mid, v.high), result: v.mid || 0 };
             } else {
               cell.value = null;
             }
@@ -2089,7 +2104,7 @@ export function SitesView({ settings, updateSettings } = {}) {
           cell.value = 'Total';
         } else if (c.scenario && c.sumKey) {
           const t = scenarioTotals[c.sumKey];
-          cell.value = { formula: scenarioFormula(t.low, t.mid, t.high), result: Math.round(t.mid || 0) };
+          cell.value = { formula: scenarioFormula(t.low, t.mid, t.high), result: t.mid || 0 };
         } else if (c.sumKey) {
           cell.value = scalarTotals[c.sumKey] || 0;
         } else {
@@ -2116,6 +2131,11 @@ export function SitesView({ settings, updateSettings } = {}) {
       { label: 'Annual Deregulated Consumption kWh', get: (g) => g.consumption, numFmt: '#,##0', sumKey: 'consumption' },
       { label: 'Annual Deregulated Spend', get: (g) => g.spend, numFmt: '"$"#,##0', sumKey: 'spend' },
       { label: 'Indicative Savings Range', get: (g) => g.range },
+      // Savings % follows the toggle: Conservative shows the low end
+      // of the range, Base shows the average, Aggressive shows the
+      // high end. Stored as a raw decimal so '0.0%' format renders
+      // it correctly.
+      { label: 'Savings %', scenario: true, get: (g) => g.savingsPct, numFmt: '0.0%' },
       // Annual + Year 1-5 cumulative for the deregulated motion only —
       // each cell is a scenario-aware formula keyed off the toggle.
       // Reg-rate savings live in their own block to the right.
@@ -2151,6 +2171,9 @@ export function SitesView({ settings, updateSettings } = {}) {
       { label: 'Consumption Dth', get: (g) => g.consumption, numFmt: '#,##0', sumKey: 'consumption' },
       { label: 'Spend', get: (g) => g.spend, numFmt: '"$"#,##0', sumKey: 'spend' },
       { label: 'Indicative Savings Range', get: (g) => g.range },
+      // Savings % mirrors the electric column — toggle picks low /
+      // mid / high from the state's gas deregulation band.
+      { label: 'Savings %', scenario: true, get: (g) => g.savingsPct, numFmt: '0.0%' },
       // Year 1-5 cumulative savings on the gas side use the same
       // scenario toggle as electric — there's no gas reg-rate motion.
       { label: 'Indicative Annual Savings', scenario: true, get: (g) => g.annualSavings, numFmt: '"$"#,##0', sumKey: 'annualSavings' },
@@ -2337,6 +2360,11 @@ export function SitesView({ settings, updateSettings } = {}) {
       // Percentages stored as raw numbers (0.02) with a percent
       // format so Excel doesn't flag them as "number stored as text"
       // — same reason the other numeric columns avoid string values.
+      // The Savings % column is scenario-aware: the by-state sheet's
+      // toggle picks low / mid / high for each site's savings band.
+      const sitePctTriple = (s) => (s.lowPct == null || s.highPct == null)
+        ? null
+        : { low: s.lowPct, mid: (s.lowPct + s.highPct) / 2, high: s.highPct };
       const fixedCols = [
         { label: 'Site Name', get: (s) => s.siteName, width: 28 },
         { label: 'ST/Prov', get: (s) => s.state, width: 9 },
@@ -2348,6 +2376,7 @@ export function SitesView({ settings, updateSettings } = {}) {
         { label: 'Annual Spend', get: (s) => s.annualSpend, numFmt: '"$"#,##0', width: 14 },
         { label: 'Low %', get: (s) => s.lowPct, numFmt: '0.0%', width: 9 },
         { label: 'High %', get: (s) => s.highPct, numFmt: '0.0%', width: 9 },
+        { label: 'Savings %', scenario: true, get: sitePctTriple, numFmt: '0.0%', width: 11 },
         { label: 'Annual Savings Mid', get: (s) => s.annualMid, numFmt: '"$"#,##0', width: 16 },
         { label: 'Months Under Contract', get: (s) => s.monthsUnderContract, numFmt: '#,##0', width: 12 },
         { label: 'Months Off Contract', get: (s) => s.monthsOffContract, numFmt: '#,##0', width: 12 },
@@ -2394,7 +2423,19 @@ export function SitesView({ settings, updateSettings } = {}) {
         cols.forEach((c, i) => {
           const cell = dataRow.getCell(i + 1);
           const v = c.get(s);
-          cell.value = (v === '' || v == null) ? null : v;
+          if (c.scenario) {
+            // Same scenario formula the by-state sheet uses, with a
+            // qualified cross-sheet reference back to the toggle. The
+            // user flips the dropdown on tab 1 and this column on tab
+            // 3 follows along — same source of truth.
+            if (v && typeof v === 'object') {
+              cell.value = { formula: scenarioFormula(v.low, v.mid, v.high), result: v.mid || 0 };
+            } else {
+              cell.value = null;
+            }
+          } else {
+            cell.value = (v === '' || v == null) ? null : v;
+          }
           cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
           cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
           if (c.numFmt) cell.numFmt = c.numFmt;
