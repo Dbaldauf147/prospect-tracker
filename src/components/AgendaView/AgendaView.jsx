@@ -996,6 +996,177 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
     try { localStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
   }
 
+  // Snapshot every row in the grid into a Schneider-styled .xlsx
+  // mirror of what the user sees on screen. Honors the column-
+  // visibility toggle so the export shape matches the table; per-row
+  // derived fields (HubSpot status, Tier, CDM / Other Reps,
+  // Suggested Company, TV backfill values) are recomputed the same
+  // way the on-screen cells do, so what the user reads in Excel
+  // matches the page exactly — including the dismiss-cascade rules.
+  const exportToExcel = useCallback(async () => {
+    if (rows.length === 0) return;
+    const { Workbook } = await import('exceljs');
+    const SE_GREEN_DARK = 'FF009530';
+    const SE_TEXT_DARK = 'FF1E293B';
+    const SE_BORDER = 'FFD4DDE1';
+
+    // Column catalog — mirrors BULK_COLS labels. Each entry knows how
+    // to pull its value from the row + per-row context bag.
+    const COLS = {
+      email:            { label: 'Email',             w: 32, get: (r) => r.email },
+      status:           { label: 'HubSpot Status',    w: 16, get: (r, ctx) => ctx.statusLabel },
+      firstname:        { label: 'First',             w: 14, get: (r) => r.firstname },
+      lastname:         { label: 'Last',              w: 16, get: (r) => r.lastname },
+      jobtitle:         { label: 'Job Title',         w: 24, get: (r) => r.jobtitle },
+      company:          { label: 'Company',           w: 24, get: (r) => r.company },
+      tier:             { label: 'Tier',              w: 10, get: (r, ctx) => ctx.tier },
+      cdmReps:          { label: 'CDM / Other Reps',  w: 30, get: (r, ctx) => ctx.cdmReps },
+      suggestedCompany: { label: 'Suggested Company', w: 24, get: (r, ctx) => ctx.suggestedCompany },
+      website:          { label: 'TV Website',        w: 22, get: (r, ctx) => ctx.tv.website },
+      zoomCompanyId:    { label: 'TV Zoom ID',        w: 16, get: (r, ctx) => ctx.tv.zoomCompanyId },
+      zoomCompanyName:  { label: 'TV Zoom Name',      w: 22, get: (r, ctx) => ctx.tv.zoomCompanyName },
+      emailDomain:      { label: 'TV Email Domain',   w: 24, get: (r, ctx) => ctx.tv.emailDomain },
+      dans_tags:        { label: "Dan's Tags",        w: 18, get: (r) => r.dans_tags || '' },
+      phone:            { label: 'Work Phone',        w: 16, get: (r) => r.phone || '' },
+      mobilePhone:      { label: 'Cell Phone',        w: 16, get: (r) => r.mobilePhone || '' },
+      linkedinUrl:      { label: 'LinkedIn URL',      w: 28, get: (r) => r.linkedinUrl || '' },
+      city:             { label: 'City',              w: 14, get: (r) => r.city || '' },
+      state:            { label: 'State',             w: 10, get: (r) => r.state || '' },
+      country:          { label: 'Country',           w: 14, get: (r) => r.country || '' },
+      notes:            { label: 'Notes',             w: 36, get: (r) => r.notes || '' },
+    };
+    const exportCols = [];
+    for (const c of BULK_COLS) {
+      if (c.key === '_remove' || c.key === '_select') continue;
+      if (!bulkColVisible.has(c.key)) continue;
+      if (COLS[c.key]) exportCols.push(COLS[c.key]);
+    }
+    if (exportCols.length === 0) return;
+
+    const wb = new Workbook();
+    wb.creator = 'Schneider Electric · Prospect Tracker';
+    wb.created = new Date();
+    const ws = wb.addWorksheet('Bulk Add Contacts', {
+      views: [{ state: 'frozen', ySplit: 2 }],
+    });
+    ws.columns = exportCols.map(c => ({ width: c.w }));
+
+    // Title band.
+    ws.mergeCells(1, 1, 1, exportCols.length);
+    const title = ws.getCell(1, 1);
+    title.value = 'Bulk Add Contacts';
+    title.font = { name: 'Nunito Sans', bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
+    title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+    title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    ws.getRow(1).height = 28;
+
+    // Header row.
+    const headerRow = ws.getRow(2);
+    exportCols.forEach((c, i) => {
+      const cell = headerRow.getCell(i + 1);
+      cell.value = c.label;
+      cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+      cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+      cell.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
+    });
+    headerRow.height = 28;
+
+    // Per-row context — keeps the export in lockstep with the on-screen
+    // cells. Suggested Company / Tier / CDM-Other Reps / TV fields
+    // hide when the user dismissed the company suggestion, the same
+    // way the table cells do.
+    const buildCtx = (r) => {
+      const hubspotContact = hubspotByEmail.get(r.email);
+      const exists = !!hubspotContact;
+      const outcome = results[r.email];
+      let statusLabel = 'New';
+      if (exists) statusLabel = 'In HubSpot';
+      if (outcome === 'added') statusLabel = 'Added';
+      else if (outcome === 'updated') statusLabel = 'Updated';
+      else if (typeof outcome === 'string' && outcome.startsWith('error')) {
+        statusLabel = outcome.replace(/^error: /, '');
+      }
+      const live = lookupMatch(r.email);
+      const prospect = r._matchedProspectId
+        ? prospects.find(p => p.id === r._matchedProspectId)
+        : null;
+      const dismissed = dismissedSuggestedCompanies.has(r.email);
+
+      let suggestedCompany = '';
+      if (!dismissed && live.suggestedCompany) {
+        suggestedCompany = (r.company === live.suggestedCompany) ? 'applied' : live.suggestedCompany;
+      }
+
+      let tier = '';
+      if (!dismissed && prospect) {
+        const explicit = (prospect.tier || '').trim();
+        if (explicit === 'Tier 1' || explicit === 'Tier 2') tier = explicit;
+        else if (matchesCdm(prospect.cdm, cdmName)) tier = 'Tier 3';
+      }
+
+      let cdmReps = '';
+      if (!dismissed && prospect) {
+        const cdm = String(prospect.cdm || '').trim();
+        const reps = otherRepsByProspect.get(prospect.id) || [];
+        const seen = new Set();
+        const repNames = [];
+        for (const rep of reps) {
+          const k = rep.rep.toLowerCase();
+          if (seen.has(k)) continue;
+          seen.add(k);
+          repNames.push(rep.rep);
+        }
+        const parts = [];
+        if (cdm) parts.push(`CDM: ${cdm}`);
+        if (repNames.length) parts.push(`Other: ${repNames.join(', ')}`);
+        cdmReps = parts.join(' · ');
+      }
+
+      const tv = (!dismissed && prospect) ? {
+        website: prospect.website || '',
+        zoomCompanyId: prospect.zoomCompanyId || '',
+        zoomCompanyName: prospect.zoomCompanyName || '',
+        emailDomain: prospect.emailDomain || '',
+      } : { website: '', zoomCompanyId: '', zoomCompanyName: '', emailDomain: '' };
+
+      return { statusLabel, suggestedCompany, tier, cdmReps, tv };
+    };
+
+    rows.forEach((r, idx) => {
+      const ctx = buildCtx(r);
+      const dataRow = ws.getRow(3 + idx);
+      exportCols.forEach((c, i) => {
+        const cell = dataRow.getCell(i + 1);
+        const v = c.get(r, ctx);
+        cell.value = (v === '' || v == null) ? null : v;
+        cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+        cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        cell.border = {
+          bottom: { style: 'hair', color: { argb: SE_BORDER } },
+          right:  { style: 'hair', color: { argb: SE_BORDER } },
+        };
+      });
+      dataRow.height = 18;
+    });
+
+    ws.autoFilter = {
+      from: { row: 2, column: 1 },
+      to:   { row: 2 + rows.length, column: exportCols.length },
+    };
+
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Bulk Add Contacts - ${new Date().toISOString().slice(0, 10)}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, [rows, bulkColVisible, hubspotByEmail, results, lookupMatch, prospects, dismissedSuggestedCompanies, otherRepsByProspect, cdmName]);
+
   // Build a properties object of fields the user has supplied that are currently blank
   // on the existing HubSpot contact. Used to "fill in missing values" without overwriting
   // data that HubSpot already has.
@@ -1542,6 +1713,15 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
               </div>
             )}
           </div>
+          {rows.length > 0 && (
+            <button
+              className={styles.secondaryBtn}
+              onClick={exportToExcel}
+              title="Download an .xlsx snapshot of every row in the grid (honors column visibility)"
+            >
+              Export to Excel
+            </button>
+          )}
           {rows.length > 0 && <button className={styles.secondaryBtn} onClick={clearAll}>Clear</button>}
         </div>
       </div>
