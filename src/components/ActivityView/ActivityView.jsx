@@ -542,10 +542,34 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
     return null;
   }, [hubspotContacts, domainToCompany, activeOpps]);
 
+  // Email → HubSpot contact lookup so we can decorate the external
+  // recipients with names. Built once from the cache and reused
+  // by the Today's Outbound row builder + the rendered cell.
+  const contactByEmail = useMemo(() => {
+    const map = new Map();
+    for (const c of (hubspotCache?.contacts || [])) {
+      if (c.email) map.set(c.email.toLowerCase().trim(), c);
+    }
+    return map;
+  }, [hubspotCache]);
+
   const todayOutbound = useMemo(() => {
     const now = new Date();
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
     const todayEnd = todayStart + 24 * 60 * 60 * 1000;
+    // Helper: turn a non-@se.com email + (optional) HubSpot contact
+    // into a { name, email } record. Falls back to the email-derived
+    // name / blank name when HubSpot has no contact on file.
+    const recipientFor = (email, fallbackName) => {
+      const lower = String(email || '').toLowerCase().trim();
+      if (!lower) return null;
+      const ct = contactByEmail.get(lower);
+      const name = ct
+        ? [ct.firstname, ct.lastname].filter(Boolean).join(' ').trim()
+        : '';
+      return { name: name || (fallbackName || ''), email: lower };
+    };
+
     const out = [];
     for (const a of allActivities) {
       if (a._type !== 'email' && a._type !== 'call') continue;
@@ -553,49 +577,64 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
       if (!Number.isFinite(t) || t < todayStart || t >= todayEnd) continue;
       const dir = String(a._direction || '').toLowerCase();
       if (!dir.includes('outbound') && !dir.includes('out')) continue;
-      // Pull every potential external email for the row. For email
-      // activity the recipients live on hs_email_to_email (already
-      // surfaced as a._to, possibly comma/semicolon delimited). For
-      // calls there's no recipient email field, so we walk the
-      // associated HubSpot contact IDs and use those emails instead.
-      let externalEmails = [];
+      // Build the recipient list. Emails: parse hs_email_to_email
+      // (already on a._to) on , / ; , drop @se.com addresses,
+      // decorate each with the name on the HubSpot contact (or the
+      // raw to-name on the email if no contact match). Calls: walk
+      // the associated HubSpot contact IDs since the to-field is a
+      // phone number rather than an email.
+      let recipients = [];
       if (a._type === 'email') {
         const tos = String(a._to || '').split(/[;,]/).map(s => s.trim()).filter(Boolean);
-        externalEmails = tos.filter(t => !t.toLowerCase().endsWith('@se.com'));
-        // The user explicitly wants rows kept when the to-line mixes
-        // se.com and non-se.com — only fully-internal blasts are
-        // dropped.
-        if (externalEmails.length === 0) continue;
+        const externals = tos.filter(t => !t.toLowerCase().endsWith('@se.com'));
+        // Mixed to-line (se.com + non-se.com) stays in; fully
+        // internal blasts drop.
+        if (externals.length === 0) continue;
+        recipients = externals
+          .map(em => recipientFor(em, a._toName))
+          .filter(Boolean);
       } else {
         const cids = a._contactIds || [];
         for (const id of cids) {
           const ct = contactIdMap.get(id);
           const em = String(ct?.email || '').toLowerCase().trim();
-          if (em && !em.endsWith('@se.com')) externalEmails.push(em);
+          if (!em || em.endsWith('@se.com')) continue;
+          const name = [ct?.firstname, ct?.lastname].filter(Boolean).join(' ').trim();
+          recipients.push({ name, email: em });
         }
       }
+      // Dedup by email so the same person doesn't show up twice
+      // when the to-line repeats them.
+      const seen = new Set();
+      recipients = recipients.filter(r => {
+        if (!r?.email || seen.has(r.email)) return false;
+        seen.add(r.email);
+        return true;
+      });
       let activeOpp = null;
       let matchedEmail = null;
-      for (const em of externalEmails) {
-        const opp = findActiveOppForEmail(em);
-        if (opp) { activeOpp = opp; matchedEmail = em; break; }
+      for (const r of recipients) {
+        const opp = findActiveOppForEmail(r.email);
+        if (opp) { activeOpp = opp; matchedEmail = r.email; break; }
       }
       out.push({
         ...a,
-        _externalTo: externalEmails.join(', '),
+        _recipients: recipients,
+        _externalTo: recipients.map(r => r.email).join(', '),
+        _externalToNames: recipients.map(r => r.name).filter(Boolean).join(', '),
         _matchedEmail: matchedEmail,
         _activeOpp: activeOpp,
       });
     }
     out.sort((a, b) => new Date(b._timestamp || 0) - new Date(a._timestamp || 0));
     return out;
-  }, [allActivities, contactIdMap, findActiveOppForEmail]);
+  }, [allActivities, contactIdMap, contactByEmail, findActiveOppForEmail]);
 
   const filteredTodayOutbound = useMemo(() => {
     if (!search.trim()) return todayOutbound;
     const term = search.toLowerCase();
     return todayOutbound.filter(a =>
-      [a._subject, a._to, a._externalTo, a._toName, a._company, a._activeOpp?.Account, a._activeOpp?.Stage]
+      [a._subject, a._to, a._externalTo, a._externalToNames, a._toName, a._company, a._activeOpp?.Account, a._activeOpp?.Stage]
         .filter(Boolean).join(' ').toLowerCase().includes(term)
     );
   }, [todayOutbound, search]);
@@ -609,7 +648,20 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
     { key: '_timestamp', label: 'Time', defaultWidth: 120, render: (a) => <span className={styles.dateText}>{fmtDateTime(a._timestamp)}</span> },
     { key: '_company', label: 'Company', defaultWidth: 160, render: (a) => a._company ? <span style={{ fontWeight: 600 }}>{a._company}</span> : <span className={styles.metaText}>—</span> },
     { key: '_subject', label: 'Subject / Title', defaultWidth: 260, render: (a) => <span className={styles.subject}>{a._subject || '—'}</span> },
-    { key: '_externalTo', label: 'To (external)', defaultWidth: 240, render: (a) => a._externalTo ? <span className={styles.contactText}>{a._externalTo}</span> : <span className={styles.metaText}>—</span> },
+    { key: '_externalTo', label: 'To (external)', defaultWidth: 280, render: (a) => {
+      const recipients = a._recipients || [];
+      if (recipients.length === 0) return <span className={styles.metaText}>—</span>;
+      return (
+        <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 1, lineHeight: 1.25 }}>
+          {recipients.map((r, i) => (
+            <span key={r.email + i} title={r.name ? `${r.name} <${r.email}>` : r.email}>
+              {r.name && <span style={{ fontWeight: 600, marginRight: 4 }}>{r.name}</span>}
+              <span style={{ color: r.name ? '#94A3B8' : 'var(--color-text)' }}>{r.email}</span>
+            </span>
+          ))}
+        </span>
+      );
+    }},
     { key: '_activeOpp', label: 'Active Opp', defaultWidth: 240, render: (a) => {
       const opp = a._activeOpp;
       if (!opp) return <span className={styles.metaText}>—</span>;
