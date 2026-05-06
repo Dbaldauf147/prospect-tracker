@@ -5,9 +5,30 @@ import { DataTable } from '../common/DataTable';
 import { logAction } from '../../utils/auditLog';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotCache, updateHubspotCache } from '../../utils/hubspotContactsCache';
+import { useOppsRecords } from '../KeyContactsView/KeyContactsView';
 import styles from './ActivityView.module.css';
 
 const CACHE_KEY = 'hubspot-activity-cache';
+
+// Stages that mean an opportunity has been closed out (won OR lost) and
+// shouldn't count as "active". Same set the contact-gap pages use.
+const OPP_CLOSED_STAGES = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
+const OPP_INVALID_STAGES = new Set(['#N/A', '#REF!', '#VALUE!', '#ERROR!', 'N/A', 'n/a', '-', '']);
+
+// Fuzzy company-name match for the "active opp" lookup on the Today's
+// Outbound sub-tab — matches on equality, then on substring + length
+// rule, then on a stripped (suffix-removed, alphanumeric-only) form.
+function companiesMatchFuzz(a, b) {
+  const na = String(a || '').toLowerCase().trim();
+  const nb = String(b || '').toLowerCase().trim();
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  const longer = na.length >= nb.length ? na : nb;
+  const shorter = na.length >= nb.length ? nb : na;
+  if (shorter.length >= 4 && shorter.length >= longer.length * 0.6 && longer.includes(shorter)) return true;
+  const strip = (s) => s.replace(/\b(inc|llc|ltd|corp|co|lp)\b\.?/gi, '').replace(/[^a-z0-9 ]/g, '').trim();
+  return strip(na) === strip(nb);
+}
 
 function loadCache() {
   try { return JSON.parse(localStorage.getItem(CACHE_KEY)); } catch { return null; }
@@ -49,6 +70,10 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState(null);
   const [progress, setProgress] = useState(null); // { emails, calls, meetings }
+  // Sub-tab on the Activity page. 'all' is the legacy full-history
+  // grid; 'todayOutbound' is the new today-only outbound-to-external
+  // view that also resolves an active opp per row.
+  const [subtab, setSubtab] = useState('all');
 
   async function fetchAllPages(type) {
     const all = [];
@@ -483,6 +508,123 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
     return result;
   }, [allActivities, typeFilter, search]);
 
+  // Today's Outbound feed: emails + calls only, sent today, where at
+  // least one external (non-@se.com) recipient is on the to-line. The
+  // row is annotated with the first matching active opp (if any) so
+  // the table can show "this email maps to opp X on Account Y".
+  const oppsRecords = useOppsRecords(user?.uid);
+  const activeOpps = useMemo(() => (
+    (oppsRecords || []).filter(r => {
+      const stage = String(r.Stage || '').trim();
+      return stage && !OPP_INVALID_STAGES.has(stage) && !OPP_CLOSED_STAGES.has(stage);
+    })
+  ), [oppsRecords]);
+
+  const findActiveOppForEmail = useCallback((email) => {
+    if (!email) return null;
+    const lower = String(email).toLowerCase().trim();
+    if (!lower || lower.endsWith('@se.com')) return null;
+    let company = '';
+    if (hubspotContacts.has(lower)) company = hubspotContacts.get(lower);
+    if (!company) {
+      const at = lower.lastIndexOf('@');
+      if (at >= 0) {
+        const domain = lower.slice(at + 1);
+        if (domainToCompany.has(domain)) company = domainToCompany.get(domain);
+      }
+    }
+    if (!company) return null;
+    for (const opp of activeOpps) {
+      const acct = String(opp.Account || '').trim();
+      if (!acct) continue;
+      if (companiesMatchFuzz(acct, company)) return opp;
+    }
+    return null;
+  }, [hubspotContacts, domainToCompany, activeOpps]);
+
+  const todayOutbound = useMemo(() => {
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const todayEnd = todayStart + 24 * 60 * 60 * 1000;
+    const out = [];
+    for (const a of allActivities) {
+      if (a._type !== 'email' && a._type !== 'call') continue;
+      const t = new Date(a._timestamp || 0).getTime();
+      if (!Number.isFinite(t) || t < todayStart || t >= todayEnd) continue;
+      const dir = String(a._direction || '').toLowerCase();
+      if (!dir.includes('outbound') && !dir.includes('out')) continue;
+      // Pull every potential external email for the row. For email
+      // activity the recipients live on hs_email_to_email (already
+      // surfaced as a._to, possibly comma/semicolon delimited). For
+      // calls there's no recipient email field, so we walk the
+      // associated HubSpot contact IDs and use those emails instead.
+      let externalEmails = [];
+      if (a._type === 'email') {
+        const tos = String(a._to || '').split(/[;,]/).map(s => s.trim()).filter(Boolean);
+        externalEmails = tos.filter(t => !t.toLowerCase().endsWith('@se.com'));
+        // The user explicitly wants rows kept when the to-line mixes
+        // se.com and non-se.com — only fully-internal blasts are
+        // dropped.
+        if (externalEmails.length === 0) continue;
+      } else {
+        const cids = a._contactIds || [];
+        for (const id of cids) {
+          const ct = contactIdMap.get(id);
+          const em = String(ct?.email || '').toLowerCase().trim();
+          if (em && !em.endsWith('@se.com')) externalEmails.push(em);
+        }
+      }
+      let activeOpp = null;
+      let matchedEmail = null;
+      for (const em of externalEmails) {
+        const opp = findActiveOppForEmail(em);
+        if (opp) { activeOpp = opp; matchedEmail = em; break; }
+      }
+      out.push({
+        ...a,
+        _externalTo: externalEmails.join(', '),
+        _matchedEmail: matchedEmail,
+        _activeOpp: activeOpp,
+      });
+    }
+    out.sort((a, b) => new Date(b._timestamp || 0) - new Date(a._timestamp || 0));
+    return out;
+  }, [allActivities, contactIdMap, findActiveOppForEmail]);
+
+  const filteredTodayOutbound = useMemo(() => {
+    if (!search.trim()) return todayOutbound;
+    const term = search.toLowerCase();
+    return todayOutbound.filter(a =>
+      [a._subject, a._to, a._externalTo, a._toName, a._company, a._activeOpp?.Account, a._activeOpp?.Stage]
+        .filter(Boolean).join(' ').toLowerCase().includes(term)
+    );
+  }, [todayOutbound, search]);
+
+  const todayOutboundColumns = [
+    { key: '_type', label: 'Type', defaultWidth: 80, render: (a) => (
+      <span className={a._type === 'email' ? styles.typeEmail : styles.typeCall}>
+        {a._type === 'email' ? 'Email' : 'Call'}
+      </span>
+    )},
+    { key: '_timestamp', label: 'Time', defaultWidth: 120, render: (a) => <span className={styles.dateText}>{fmtDateTime(a._timestamp)}</span> },
+    { key: '_company', label: 'Company', defaultWidth: 160, render: (a) => a._company ? <span style={{ fontWeight: 600 }}>{a._company}</span> : <span className={styles.metaText}>—</span> },
+    { key: '_subject', label: 'Subject / Title', defaultWidth: 260, render: (a) => <span className={styles.subject}>{a._subject || '—'}</span> },
+    { key: '_externalTo', label: 'To (external)', defaultWidth: 240, render: (a) => a._externalTo ? <span className={styles.contactText}>{a._externalTo}</span> : <span className={styles.metaText}>—</span> },
+    { key: '_activeOpp', label: 'Active Opp', defaultWidth: 240, render: (a) => {
+      const opp = a._activeOpp;
+      if (!opp) return <span className={styles.metaText}>—</span>;
+      const stage = String(opp.Stage || '').trim();
+      return (
+        <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 2, lineHeight: 1.2 }} title={a._matchedEmail ? `Matched via ${a._matchedEmail}` : ''}>
+          <span style={{ fontWeight: 600 }}>{opp.Account || '—'}</span>
+          {stage && <span style={{ fontSize: '0.68rem', color: '#7C3AED', fontWeight: 600 }}>{stage}</span>}
+        </span>
+      );
+    }},
+    { key: '_status', label: 'Status', defaultWidth: 110 },
+    { key: '_duration', label: 'Duration', defaultWidth: 80, render: (a) => <span className={styles.duration}>{fmtDuration(a._duration)}</span> },
+  ];
+
   const columns = [
     { key: '_type', label: 'Type', defaultWidth: 80, render: (a) => (
       <span className={a._type === 'email' ? styles.typeEmail : a._type === 'call' ? styles.typeCall : styles.typeMeeting}>
@@ -654,34 +796,81 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
         </div>
       )}
 
-      <div className={styles.summary}>
-        <button className={`${styles.summaryCard} ${typeFilter === null ? styles.summaryCardActive : ''}`} onClick={() => setTypeFilter(null)}>
-          <div className={styles.summaryLabel}>All Activity</div>
-          <div className={styles.summaryValue}>{allActivities.length}</div>
-        </button>
-        <button className={`${styles.summaryCard} ${typeFilter === 'email' ? styles.summaryCardActive : ''}`} onClick={() => setTypeFilter(typeFilter === 'email' ? null : 'email')} style={{ borderLeftColor: '#3B7DDD' }}>
-          <div className={styles.summaryLabel}>Emails</div>
-          <div className={styles.summaryValue}>{emailCount}</div>
-        </button>
-        <button className={`${styles.summaryCard} ${typeFilter === 'call' ? styles.summaryCardActive : ''}`} onClick={() => setTypeFilter(typeFilter === 'call' ? null : 'call')} style={{ borderLeftColor: '#059669' }}>
-          <div className={styles.summaryLabel}>Calls</div>
-          <div className={styles.summaryValue}>{callCount}</div>
-        </button>
-        <button className={`${styles.summaryCard} ${typeFilter === 'meeting' ? styles.summaryCardActive : ''}`} onClick={() => setTypeFilter(typeFilter === 'meeting' ? null : 'meeting')} style={{ borderLeftColor: '#7C3AED' }}>
-          <div className={styles.summaryLabel}>Meetings</div>
-          <div className={styles.summaryValue}>{meetingCount}</div>
-        </button>
+      {/* Sub-tab bar — same look as the contacts page subtabs. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderBottom: '1px solid var(--color-border)', margin: '0.25rem 0 0.6rem' }}>
+        {[
+          { key: 'all', label: 'All Activity', count: allActivities.length },
+          { key: 'todayOutbound', label: "Today's Outbound", count: todayOutbound.length },
+        ].map(t => {
+          const isActive = subtab === t.key;
+          return (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setSubtab(t.key)}
+              style={{
+                background: 'none',
+                border: 'none',
+                borderBottom: isActive ? '2px solid var(--color-accent)' : '2px solid transparent',
+                color: isActive ? 'var(--color-accent)' : 'var(--color-text-secondary)',
+                fontSize: '0.78rem',
+                fontWeight: 700,
+                padding: '0.5rem 0.75rem',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+              }}
+            >
+              {t.label}
+              <span style={{
+                fontSize: '0.65rem',
+                fontWeight: 700,
+                padding: '1px 6px',
+                borderRadius: 999,
+                background: isActive ? 'var(--color-accent)' : '#E2E8F0',
+                color: isActive ? '#fff' : '#475569',
+              }}>{t.count}</span>
+            </button>
+          );
+        })}
       </div>
+
+      {subtab === 'all' && (
+        <div className={styles.summary}>
+          <button className={`${styles.summaryCard} ${typeFilter === null ? styles.summaryCardActive : ''}`} onClick={() => setTypeFilter(null)}>
+            <div className={styles.summaryLabel}>All Activity</div>
+            <div className={styles.summaryValue}>{allActivities.length}</div>
+          </button>
+          <button className={`${styles.summaryCard} ${typeFilter === 'email' ? styles.summaryCardActive : ''}`} onClick={() => setTypeFilter(typeFilter === 'email' ? null : 'email')} style={{ borderLeftColor: '#3B7DDD' }}>
+            <div className={styles.summaryLabel}>Emails</div>
+            <div className={styles.summaryValue}>{emailCount}</div>
+          </button>
+          <button className={`${styles.summaryCard} ${typeFilter === 'call' ? styles.summaryCardActive : ''}`} onClick={() => setTypeFilter(typeFilter === 'call' ? null : 'call')} style={{ borderLeftColor: '#059669' }}>
+            <div className={styles.summaryLabel}>Calls</div>
+            <div className={styles.summaryValue}>{callCount}</div>
+          </button>
+          <button className={`${styles.summaryCard} ${typeFilter === 'meeting' ? styles.summaryCardActive : ''}`} onClick={() => setTypeFilter(typeFilter === 'meeting' ? null : 'meeting')} style={{ borderLeftColor: '#7C3AED' }}>
+            <div className={styles.summaryLabel}>Meetings</div>
+            <div className={styles.summaryValue}>{meetingCount}</div>
+          </button>
+        </div>
+      )}
 
       <div className={styles.filterRow}>
         <input
           className={styles.searchInput}
           type="text"
-          placeholder="Search activity..."
+          placeholder={subtab === 'todayOutbound' ? "Search today's outbound..." : 'Search activity...'}
           value={search}
           onChange={e => setSearch(e.target.value)}
         />
-        <span className={styles.resultCount}>{filtered.length} of {allActivities.length}</span>
+        <span className={styles.resultCount}>
+          {subtab === 'todayOutbound'
+            ? `${filteredTodayOutbound.length} of ${todayOutbound.length}`
+            : `${filtered.length} of ${allActivities.length}`}
+        </span>
       </div>
 
       {loading && progress && (
@@ -691,6 +880,16 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
       )}
       {loading && !data ? (
         <div className={styles.loading}>Loading activity from HubSpot...</div>
+      ) : subtab === 'todayOutbound' ? (
+        <DataTable
+          tableId="activity-today-outbound"
+          columns={todayOutboundColumns}
+          rows={filteredTodayOutbound}
+          alwaysVisible={[]}
+          emptyMessage={oppsRecords?.length ? 'No outbound emails or calls to external contacts yet today.' : 'No outbound emails or calls to external contacts yet today. (Active opp lookup needs the Opps tab cache — visit it once if the column shows blank.)'}
+          settings={settings}
+          updateSettings={updateSettings}
+        />
       ) : (
         <DataTable
           tableId="activity"
