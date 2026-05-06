@@ -2545,7 +2545,12 @@ export function SitesView({ settings, updateSettings } = {}) {
         { label: 'Low %', get: (s) => s.lowPct, numFmt: '0.0%', width: 9 },
         { label: 'High %', get: (s) => s.highPct, numFmt: '0.0%', width: 9 },
         { label: 'Savings %', scenario: true, get: sitePctTriple, numFmt: '0.0%', width: 11 },
-        { label: 'Annual Savings Mid', get: (s) => s.annualMid, numFmt: '"$"#,##0', width: 16 },
+        // Annual savings rate × spend, but follows the by-state
+        // sheet's Savings Scenario toggle so picking Conservative /
+        // Aggressive updates this cell too. The triple feeds
+        // writeScenarioFormula which renders a cross-sheet IF formula
+        // referencing the toggle on tab 1.
+        { label: 'Current Scenario Savings/yr', scenario: true, get: (s) => ({ low: s.annualLow, mid: s.annualMid, high: s.annualHigh }), numFmt: '"$"#,##0', width: 22 },
         { label: '5-Year Mid Savings', get: (s) => Math.round(s.fiveYearMid), numFmt: '"$"#,##0', width: 16 },
       ];
       const monthCols = monthShortLabels.map((label, i) => ({
@@ -2645,6 +2650,22 @@ export function SitesView({ settings, updateSettings } = {}) {
         const cell = totalRow.getCell(i + 1);
         if (i === 0) {
           cell.value = 'Total (all sites)';
+        } else if (c.scenario) {
+          // Scenario columns sum the low / mid / high triples across
+          // every site, then write the same scenario formula so the
+          // total follows the by-state sheet's toggle. Keeps the
+          // column's formula shape uniform top-to-bottom (no
+          // inconsistent-formula chevrons).
+          let low = 0, mid = 0, high = 0;
+          for (const s of allSiteRows) {
+            const t = c.get(s);
+            if (t && typeof t === 'object') {
+              low += Number(t.low) || 0;
+              mid += Number(t.mid) || 0;
+              high += Number(t.high) || 0;
+            }
+          }
+          writeScenarioFormula(cell, low, mid, high, c.yearGate);
         } else if (c.monthGate != null && allSiteRows.length > 0) {
           const letter = colLetter(i + 1);
           cell.value = {
@@ -2654,8 +2675,6 @@ export function SitesView({ settings, updateSettings } = {}) {
           cell.ignoredErrors = { formula: true, formulaRange: true, numberStoredAsText: true };
         } else if (c.label === 'Annual Spend') {
           cell.value = allSiteRows.reduce((a, s) => a + (s.annualSpend || 0), 0);
-        } else if (c.label === 'Annual Savings Mid') {
-          cell.value = allSiteRows.reduce((a, s) => a + (s.annualMid || 0), 0);
         } else if (c.label === '5-Year Mid Savings') {
           cell.value = Math.round(allSiteRows.reduce((a, s) => a + (s.fiveYearMid || 0), 0));
         } else {
