@@ -2020,13 +2020,12 @@ export function SitesView({ settings, updateSettings } = {}) {
     // regulated-rate block with its own Year 1-5 cumulative). Gas
     // uses fewer slots; the title / section bands still merge across
     // SPAN so the headings stay aligned across both sections.
-    const SPAN = 27;
+    const SPAN = 26;
     const widths = [
       10, 14, 11, 13, 16, 18, 16,        // ST/Prov..Range (7)
       11,                                // Savings % (scenario, 1)
       16, 14, 14, 14, 14, 14,            // Annual Savings + Year 1-5 (6)
       24, 24, 14, 14,                    // Utility/Supplier/Contract Start/End (4)
-      36,                                // Flags (1)
       4,                                 // spacer (1)
       16, 16, 14, 14, 14, 14, 14,        // Reg-rate block (7)
     ];
@@ -2303,13 +2302,11 @@ export function SitesView({ settings, updateSettings } = {}) {
       { label: 'Supplier Name(s)', get: (g) => g.suppliers },
       { label: 'Contract Start', get: (g) => g.earliestStart },
       { label: 'Contract End', get: (g) => g.latestEnd },
-      // Flags column: per-state alerts (small market, risk-management
-      // threshold, Mexico sourcing). Multi-line text wraps inside the
-      // cell so all flags stay readable.
-      { label: 'Flags', get: (g) => g.flags, wrapText: true },
       // Spacer column — physically separates the deregulated block
       // from the regulated-rate block so the two motions read as
-      // distinct stories on the sheet.
+      // distinct stories on the sheet. (Per-state flags now live in
+      // the Findings & Recommendations summary at the top of the
+      // sheet, so the inline column is gone.)
       { label: '', get: () => '', spacer: true },
       // Regulated-rate block: site count + flat 0.25 % savings + its
       // own Year 1-5 cumulative, isolated from the deregulated totals.
@@ -2346,11 +2343,59 @@ export function SitesView({ settings, updateSettings } = {}) {
       { label: 'Supplier Name(s)', get: (g) => g.suppliers },
       { label: 'Contract Start', get: (g) => g.earliestStart },
       { label: 'Contract End', get: (g) => g.latestEnd },
-      // Same Flags column as electric — gas only fires the
-      // too-low-for-sourcing flag, but keeping the column shape
-      // identical lets writeSection / SPAN stay in lock-step.
-      { label: 'Flags', get: (g) => g.flags, wrapText: true },
     ];
+
+    // Findings & Recommendations summary band — pulled from the
+    // per-state flags so the user sees a roll-up at the top of the
+    // sheet instead of having to scan each row's Flags cell. Drops
+    // entire categories that don't have any hits; skips the whole
+    // band when nothing fires. The state-level Flags column is
+    // intentionally removed below — this summary is the single
+    // place flags surface on this sheet.
+    const collectStates = (rows, needle) => rows
+      .filter(r => r.flags && r.flags.includes(needle))
+      .map(r => r.state);
+    const summaryFindings = [];
+    const riskMgmtStates = collectStates(electricRows, 'Risk Management');
+    const smallElectricStates = collectStates(electricRows, 'Spend < $1M');
+    const mexicoStates = collectStates(electricRows, 'Mexico sourcing');
+    const smallGasStates = collectStates(gasRows, 'too low for sourcing');
+    if (riskMgmtStates.length) {
+      summaryFindings.push(`Risk Management should be considered (>10,000 MWh) — ${riskMgmtStates.join(', ')}`);
+    }
+    if (smallElectricStates.length) {
+      summaryFindings.push(`Small electric market — Deregulated spend < $1M — ${smallElectricStates.join(', ')}`);
+    }
+    if (mexicoStates.length) {
+      summaryFindings.push(`Potential Mexico sourcing opportunity — ${mexicoStates.join(', ')}`);
+    }
+    if (smallGasStates.length) {
+      summaryFindings.push(`Natural gas consumption might be too low for sourcing (<$30K) — ${smallGasStates.join(', ')}`);
+    }
+
+    if (summaryFindings.length > 0) {
+      // Section band, same look as the Electric Power / Natural Gas
+      // bands so it reads as a peer section.
+      ws.mergeCells(r, 1, r, SPAN);
+      const head = ws.getCell(r, 1);
+      head.value = 'Findings & Recommendations';
+      head.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
+      head.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+      head.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(r).height = 22;
+      r += 1;
+      for (const text of summaryFindings) {
+        ws.mergeCells(r, 1, r, SPAN);
+        const cell = ws.getCell(r, 1);
+        cell.value = `•  ${text}`;
+        cell.font = { name: 'Nunito Sans', size: 11, color: { argb: SE_TEXT_DARK } };
+        cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 2, wrapText: true };
+        cell.border = { bottom: { style: 'hair', color: { argb: SE_BORDER } } };
+        ws.getRow(r).height = 22;
+        r += 1;
+      }
+      r += 1; // breather row before the Electric Power section
+    }
 
     writeSection('Electric Power', electricRows, electricCols);
     writeSection('Natural Gas', gasRows, gasCols);
