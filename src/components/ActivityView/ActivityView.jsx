@@ -524,6 +524,26 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
     if (!email) return null;
     const lower = String(email).toLowerCase().trim();
     if (!lower || lower.endsWith('@se.com')) return null;
+    // Primary lookup: the opp's Contact field on the Opps tab is the
+    // canonical link. The user manages it row-by-row (e.g.
+    // "ashish.patel@..." on the Toronto Airport opp), so a direct
+    // email match is far more reliable than a fuzzy company match.
+    // Contact field can be a single email, a name + email, or a
+    // comma/semicolon list of either, so we walk every token and
+    // treat any embedded e-mail address as a candidate.
+    for (const opp of activeOpps) {
+      const raw = String(opp.Contact || '').toLowerCase();
+      if (!raw) continue;
+      // Pull out anything that looks like an e-mail; avoids needing
+      // to know which delimiter / format the Contact cell uses.
+      const matches = raw.match(/[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}/g) || [];
+      if (matches.includes(lower)) return opp;
+    }
+    // Fallback: domain → prospect-company → opp.Account fuzzy match,
+    // for opps that haven't had a Contact email filled in yet. Keeps
+    // the matcher useful while the Contact column is still being
+    // populated, but the precise per-row link above wins when it
+    // hits.
     let company = '';
     if (hubspotContacts.has(lower)) company = hubspotContacts.get(lower);
     if (!company) {
@@ -662,14 +682,42 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
         </span>
       );
     }},
-    { key: '_activeOpp', label: 'Active Opp', defaultWidth: 240, render: (a) => {
+    { key: '_activeOpp', label: 'Active Opp', defaultWidth: 280, render: (a) => {
       const opp = a._activeOpp;
       if (!opp) return <span className={styles.metaText}>—</span>;
       const stage = String(opp.Stage || '').trim();
+      // BFO Link is sometimes the BFO Opportunity Name (text) and
+      // sometimes the URL itself. Treat any value starting with http
+      // as the live link/address; otherwise show as plain text. We
+      // surface BOTH the clickable link AND the address text so the
+      // user can read the full BFO URL without hovering.
+      const bfo = String(opp['BFO Link'] || '').trim();
+      const isBfoUrl = /^https?:\/\//i.test(bfo);
+      const tooltip = a._matchedEmail
+        ? `Matched via Opp Contact = ${a._matchedEmail}`
+        : `Matched by company / domain fallback`;
       return (
-        <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 2, lineHeight: 1.2 }} title={a._matchedEmail ? `Matched via ${a._matchedEmail}` : ''}>
+        <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 2, lineHeight: 1.25, maxWidth: '100%' }} title={tooltip}>
           <span style={{ fontWeight: 600 }}>{opp.Account || '—'}</span>
           {stage && <span style={{ fontSize: '0.68rem', color: '#7C3AED', fontWeight: 600 }}>{stage}</span>}
+          {bfo && isBfoUrl && (
+            <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 1 }}>
+              <a
+                href={bfo}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={e => e.stopPropagation()}
+                style={{ color: 'var(--color-accent)', fontSize: '0.66rem', fontWeight: 600 }}
+              >Open BFO ↗</a>
+              <span
+                title={bfo}
+                style={{ fontSize: '0.62rem', color: '#94A3B8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 240 }}
+              >{bfo}</span>
+            </span>
+          )}
+          {bfo && !isBfoUrl && (
+            <span style={{ fontSize: '0.66rem', color: '#64748B' }} title={bfo}>BFO: {bfo}</span>
+          )}
         </span>
       );
     }},
