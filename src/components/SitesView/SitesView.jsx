@@ -1771,6 +1771,10 @@ export function SitesView({ settings, updateSettings } = {}) {
             monthlyLow: new Array(HORIZON_MONTHS).fill(0),
             monthlyMid: new Array(HORIZON_MONTHS).fill(0),
             monthlyHigh: new Array(HORIZON_MONTHS).fill(0),
+            // Flags surfaced on the by-state sheet's Flags column.
+            // Computed in the post-loop map() once we know the state's
+            // total electric / gas spend + consumption.
+            hasMexicoSourcing: false,
           };
           states.set(state, g);
         }
@@ -1789,6 +1793,15 @@ export function SitesView({ settings, updateSettings } = {}) {
           if (typeof regCost === 'number' && Number.isFinite(regCost)) {
             g.regulatedRateOpportunitySpend += regCost;
           }
+        }
+        // Mexico tracking: any electric site in this state with a
+        // Mexico country tag and over 1 MWh of consumption flags the
+        // state as a potential sourcing opportunity. Runs before the
+        // dereg gate so a regulated Mexican site still surfaces.
+        if (commodity === 'electric'
+          && /^mexic/i.test(String(r.__country__ || ''))) {
+          const kwh = (typeof r.__kwh__ === 'number' && Number.isFinite(r.__kwh__)) ? r.__kwh__ : 0;
+          if (kwh > 1000) g.hasMexicoSourcing = true;
         }
         const isDereg = classifyUtility(provider) === 'Deregulated' || !!r[supplierKey];
         if (!isDereg) continue;
@@ -1930,6 +1943,23 @@ export function SitesView({ settings, updateSettings } = {}) {
           consumption: Math.round(g.consumption),
           spend: Math.round(g.spend),
           range,
+          // Per-state flags joined with newlines so the cell wraps
+          // visibly on the by-state sheet. Electric: small market
+          // (< $1M dereg spend), Risk Management consideration
+          // (> 10,000 MWh dereg consumption — kWh > 10M), Mexico
+          // sourcing opportunity (any Mexican site with > 1 MWh).
+          // Gas: too-low-for-sourcing (< $30K dereg spend).
+          flags: (() => {
+            const out = [];
+            if (commodity === 'electric') {
+              if (g.spend > 0 && g.spend < 1_000_000) out.push('⚠ Spend < $1M — small electric market');
+              if (g.consumption > 10_000_000) out.push('⚠ Risk Management should be considered (>10,000 MWh)');
+              if (g.hasMexicoSourcing) out.push('★ Potential Mexico sourcing opportunity');
+            } else if (commodity === 'gas') {
+              if (g.spend > 0 && g.spend < 30_000) out.push('⚠ Natural gas consumption might be too low for sourcing (<$30K)');
+            }
+            return out.join('\n');
+          })(),
           // Savings rate as a scenario-aware decimal so the Savings %
           // column on the by-state sheet picks one of low / mid / high
           // depending on the toggle. Stored raw (0.02 etc.) — the
@@ -1985,12 +2015,13 @@ export function SitesView({ settings, updateSettings } = {}) {
     // regulated-rate block with its own Year 1-5 cumulative). Gas
     // uses fewer slots; the title / section bands still merge across
     // SPAN so the headings stay aligned across both sections.
-    const SPAN = 26;
+    const SPAN = 27;
     const widths = [
       10, 14, 11, 13, 16, 18, 16,        // ST/Prov..Range (7)
       11,                                // Savings % (scenario, 1)
       16, 14, 14, 14, 14, 14,            // Annual Savings + Year 1-5 (6)
       24, 24, 14, 14,                    // Utility/Supplier/Contract Start/End (4)
+      36,                                // Flags (1)
       4,                                 // spacer (1)
       16, 16, 14, 14, 14, 14, 14,        // Reg-rate block (7)
     ];
@@ -2161,11 +2192,14 @@ export function SitesView({ settings, updateSettings } = {}) {
             cell.value = v;
           }
           cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-          cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: !!c.wrapText };
           if (c.numFmt) cell.numFmt = c.numFmt;
           cell.border = { bottom: { style: 'hair', color: { argb: SE_BORDER } } };
         });
-        dataRow.height = 18;
+        // Bump the row height when any of its cells has wrapped text
+        // so the multi-line flag values aren't cut off vertically.
+        const anyWrap = columnDefs.some(c => c.wrapText && !c.spacer && c.get(row));
+        dataRow.height = anyWrap ? 36 : 18;
         r += 1;
       }
       // Total row — green double rule above and below. Scenario
@@ -2248,6 +2282,10 @@ export function SitesView({ settings, updateSettings } = {}) {
       { label: 'Supplier Name(s)', get: (g) => g.suppliers },
       { label: 'Contract Start', get: (g) => g.earliestStart },
       { label: 'Contract End', get: (g) => g.latestEnd },
+      // Flags column: per-state alerts (small market, risk-management
+      // threshold, Mexico sourcing). Multi-line text wraps inside the
+      // cell so all flags stay readable.
+      { label: 'Flags', get: (g) => g.flags, wrapText: true },
       // Spacer column — physically separates the deregulated block
       // from the regulated-rate block so the two motions read as
       // distinct stories on the sheet.
@@ -2287,6 +2325,10 @@ export function SitesView({ settings, updateSettings } = {}) {
       { label: 'Supplier Name(s)', get: (g) => g.suppliers },
       { label: 'Contract Start', get: (g) => g.earliestStart },
       { label: 'Contract End', get: (g) => g.latestEnd },
+      // Same Flags column as electric — gas only fires the
+      // too-low-for-sourcing flag, but keeping the column shape
+      // identical lets writeSection / SPAN stay in lock-step.
+      { label: 'Flags', get: (g) => g.flags, wrapText: true },
     ];
 
     writeSection('Electric Power', electricRows, electricCols);
@@ -2316,6 +2358,10 @@ export function SitesView({ settings, updateSettings } = {}) {
       { label: 'Total Natural Gas Cost', get: (s) => s.gasCost, numFmt: '"$"#,##0', width: 18 },
       { label: 'Gas Contract Start', get: (s) => s.gasStart, width: 18 },
       { label: 'Gas Contract End', get: (s) => s.gasEnd, width: 18 },
+      // Per-site Mexico-sourcing flag (any Mexican site with > 1 MWh
+      // of electric consumption). Other site-level flags can plug in
+      // here later without growing the column.
+      { label: 'Flags', get: (s) => s.flags, width: 36 },
     ];
     detailSheet.columns = detailCols.map(c => ({ width: c.width }));
 
@@ -2376,14 +2422,22 @@ export function SitesView({ settings, updateSettings } = {}) {
         const stateCode = r.__state__ || '';
         const isRegRateOpportunity = !!electricUtility
           && isRegulatedRateOpportunity(stateCode, electricUtility);
+        const country = String(r.__country__ || '').trim();
+        const kwh = typeof r.__kwh__ === 'number' ? Math.round(r.__kwh__) : null;
+        // Mexico sourcing flag: any site in Mexico with > 1 MWh of
+        // electric consumption (1 MWh = 1,000 kWh) is a potential
+        // sourcing target, so it carries a per-site flag here so the
+        // user can pull the list straight off Site Detail.
+        const isMexicoSourcing = /^mexic/i.test(country) && (kwh ?? 0) > 1000;
         return {
           siteName: siteNameColumn ? String(r[siteNameColumn] || '').trim() : '',
           state: stateCode,
           zip: r.__zipNorm__ || '',
+          country,
           electricUtility,
           electricSupplier,
           regRateOpportunity: isRegRateOpportunity ? 'Yes' : '',
-          kwh: typeof r.__kwh__ === 'number' ? Math.round(r.__kwh__) : null,
+          kwh,
           electricCost: typeof r.__electricCost__ === 'number' ? Math.round(r.__electricCost__) : null,
           electricStart: tbdIfMissing(r.__electricStart__, !!electricSupplier),
           electricEnd: tbdIfMissing(r.__electricEnd__, !!electricSupplier),
@@ -2393,6 +2447,7 @@ export function SitesView({ settings, updateSettings } = {}) {
           gasCost: typeof r.__gasCost__ === 'number' ? Math.round(r.__gasCost__) : null,
           gasStart: tbdIfMissing(r.__gasStart__, !!gasSupplier),
           gasEnd: tbdIfMissing(r.__gasEnd__, !!gasSupplier),
+          flags: isMexicoSourcing ? '★ Potential Mexico sourcing opportunity' : '',
         };
       })
       .filter(s => s.siteName)
