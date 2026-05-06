@@ -2541,8 +2541,6 @@ export function SitesView({ settings, updateSettings } = {}) {
         { label: 'High %', get: (s) => s.highPct, numFmt: '0.0%', width: 9 },
         { label: 'Savings %', scenario: true, get: sitePctTriple, numFmt: '0.0%', width: 11 },
         { label: 'Annual Savings Mid', get: (s) => s.annualMid, numFmt: '"$"#,##0', width: 16 },
-        { label: 'Months Under Contract', get: (s) => s.monthsUnderContract, numFmt: '#,##0', width: 12 },
-        { label: 'Months Off Contract', get: (s) => s.monthsOffContract, numFmt: '#,##0', width: 12 },
         { label: '5-Year Mid Savings', get: (s) => Math.round(s.fiveYearMid), numFmt: '"$"#,##0', width: 16 },
       ];
       const monthCols = monthShortLabels.map((label, i) => ({
