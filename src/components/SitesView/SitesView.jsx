@@ -842,10 +842,16 @@ export function SitesView({ settings, updateSettings } = {}) {
       // since that's what could backfill a missing zip-based utility.
       const electricUtilityVendorScore = electricUtilityTokens[0]?.score || null;
       const gasUtilityVendorScore = gasUtilityTokens[0]?.score || null;
+      // Fuzzy supplier matches across both commodities — kept here
+      // (pre-rejection filter) so the page header can report how many
+      // suggestions the user has decided on.
+      const supplierSuggestions = [...electricTokens, ...gasTokens]
+        .filter(t => t.kind === 'supplier' && t.isFuzzy);
       return {
         ...r,
         id: i,
         __zipNorm__: zip,
+        __supplierSuggestions__: supplierSuggestions,
         __electric__: match?.electric || electricUtilityTokens[0]?.canonical || null,
         __gas__: match?.gas || gasUtilityTokens[0]?.canonical || null,
         __electricVendorRaw__: rawElectric || null,
@@ -1268,11 +1274,22 @@ export function SitesView({ settings, updateSettings } = {}) {
     let electricCost = 0;
     let gasCost = 0;
     let costedSites = 0;
+    // Dedup supplier suggestions by raw vendor string — a single
+    // accept/reject decision applies to every row using that vendor,
+    // so counting per-row would overstate the work remaining.
+    const suggestedSeen = new Set();
+    let suggestedDecided = 0;
     for (const r of rows) {
       if (r.__matched__) matched++;
       if (r.__electricCost__ != null) electricCost += r.__electricCost__;
       if (r.__gasCost__ != null) gasCost += r.__gasCost__;
       if (r.__totalCost__ != null) costedSites++;
+      for (const t of (r.__supplierSuggestions__ || [])) {
+        const key = String(t.raw || '').toLowerCase().trim();
+        if (!key || suggestedSeen.has(key)) continue;
+        suggestedSeen.add(key);
+        if (t.decision === 'accepted' || t.decision === 'rejected') suggestedDecided++;
+      }
     }
     return {
       matched,
@@ -1281,6 +1298,9 @@ export function SitesView({ settings, updateSettings } = {}) {
       gasCost,
       totalCost: electricCost + gasCost,
       costedSites,
+      suggestedTotal: suggestedSeen.size,
+      suggestedDecided,
+      suggestedPct: suggestedSeen.size ? Math.round((suggestedDecided / suggestedSeen.size) * 100) : 0,
     };
   }, [rows, utility]);
 
@@ -2408,6 +2428,14 @@ export function SitesView({ settings, updateSettings } = {}) {
             {matchStats && (
               <>
                 {' '}· <strong style={{ color: '#166534' }}>{matchStats.matched}</strong>/{matchStats.total} matched to utility lookup
+                {matchStats.suggestedTotal > 0 && (
+                  <>
+                    {' '}· <strong
+                      style={{ color: matchStats.suggestedPct === 100 ? '#166534' : '#92400E' }}
+                      title={`${matchStats.suggestedDecided} of ${matchStats.suggestedTotal} unique fuzzy supplier suggestions accepted (✓) or rejected (✗). Use the ✓/✗ buttons in the supplier columns to decide the rest.`}
+                    >{matchStats.suggestedDecided}</strong>/{matchStats.suggestedTotal} supplier suggestions mapped ({matchStats.suggestedPct}%)
+                  </>
+                )}
                 {matchStats.costedSites > 0 && (
                   <>
                     {' '}· Est. annual spend <strong style={{ color: '#5B21B6' }}>{formatMoney(matchStats.totalCost)}</strong>
