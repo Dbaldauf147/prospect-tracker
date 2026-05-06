@@ -654,7 +654,7 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
     if (!search.trim()) return todayOutbound;
     const term = search.toLowerCase();
     return todayOutbound.filter(a =>
-      [a._subject, a._to, a._externalTo, a._externalToNames, a._toName, a._company, a._activeOpp?.Account, a._activeOpp?.Stage]
+      [a._subject, a._to, a._externalTo, a._externalToNames, a._toName, a._company, a._activeOpp?.Account, a._activeOpp?.Stage, a._activeOpp?.['BFO Link']]
         .filter(Boolean).join(' ').toLowerCase().includes(term)
     );
   }, [todayOutbound, search]);
@@ -682,17 +682,11 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
         </span>
       );
     }},
-    { key: '_activeOpp', label: 'Active Opp', defaultWidth: 280, render: (a) => {
+
+    { key: '_activeOpp', label: 'Active Opp', defaultWidth: 220, render: (a) => {
       const opp = a._activeOpp;
       if (!opp) return <span className={styles.metaText}>—</span>;
       const stage = String(opp.Stage || '').trim();
-      // BFO Link is sometimes the BFO Opportunity Name (text) and
-      // sometimes the URL itself. Treat any value starting with http
-      // as the live link/address; otherwise show as plain text. We
-      // surface BOTH the clickable link AND the address text so the
-      // user can read the full BFO URL without hovering.
-      const bfo = String(opp['BFO Link'] || '').trim();
-      const isBfoUrl = /^https?:\/\//i.test(bfo);
       const tooltip = a._matchedEmail
         ? `Matched via Opp Contact = ${a._matchedEmail}`
         : `Matched by company / domain fallback`;
@@ -700,25 +694,41 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
         <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 2, lineHeight: 1.25, maxWidth: '100%' }} title={tooltip}>
           <span style={{ fontWeight: 600 }}>{opp.Account || '—'}</span>
           {stage && <span style={{ fontSize: '0.68rem', color: '#7C3AED', fontWeight: 600 }}>{stage}</span>}
-          {bfo && isBfoUrl && (
-            <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 1 }}>
-              <a
-                href={bfo}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={e => e.stopPropagation()}
-                style={{ color: 'var(--color-accent)', fontSize: '0.66rem', fontWeight: 600 }}
-              >Open BFO ↗</a>
-              <span
-                title={bfo}
-                style={{ fontSize: '0.62rem', color: '#94A3B8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 240 }}
-              >{bfo}</span>
-            </span>
-          )}
-          {bfo && !isBfoUrl && (
-            <span style={{ fontSize: '0.66rem', color: '#64748B' }} title={bfo}>BFO: {bfo}</span>
-          )}
         </span>
+      );
+    }},
+    // BFO Link — clickable "Open BFO" anchor when the Opps tab's
+    // BFO Link cell holds a URL, plain text otherwise. Sourced from
+    // the matched opp's row so it stays in lock-step with whatever's
+    // pasted onto the Opps tab.
+    { key: '_bfoLink', label: 'BFO Link', defaultWidth: 110, render: (a) => {
+      const bfo = String(a._activeOpp?.['BFO Link'] || '').trim();
+      if (!bfo) return <span className={styles.metaText}>—</span>;
+      if (/^https?:\/\//i.test(bfo)) {
+        return (
+          <a
+            href={bfo}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={e => e.stopPropagation()}
+            title={bfo}
+            style={{ color: 'var(--color-accent)', fontSize: '0.78rem', fontWeight: 600 }}
+          >Open BFO ↗</a>
+        );
+      }
+      return <span style={{ fontSize: '0.78rem', color: 'var(--color-text)' }} title={bfo}>{bfo}</span>;
+    }},
+    // BFO Address — the raw URL / identifier text from the matched
+    // opp so the user can read or copy the full address without
+    // hovering. Same source as BFO Link, just rendered as plain text.
+    { key: '_bfoAddress', label: 'BFO Address', defaultWidth: 280, render: (a) => {
+      const bfo = String(a._activeOpp?.['BFO Link'] || '').trim();
+      if (!bfo) return <span className={styles.metaText}>—</span>;
+      return (
+        <span
+          title={bfo}
+          style={{ fontSize: '0.72rem', color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%', display: 'inline-block' }}
+        >{bfo}</span>
       );
     }},
     { key: '_status', label: 'Status', defaultWidth: 110 },
