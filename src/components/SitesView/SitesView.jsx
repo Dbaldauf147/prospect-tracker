@@ -2153,10 +2153,15 @@ export function SitesView({ settings, updateSettings } = {}) {
         cell.value = c.label;
         cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
-        cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
+        // Bottom-aligned per the user spec — labels sit on the
+        // bottom edge of the band so the data rows below read like a
+        // continuation of the header. wrapText still on for the
+        // longer labels (Reg. Rate Year N Cumulative, Indicative
+        // Annual Savings, Deregulated Consumption kWh/yr).
+        cell.alignment = { vertical: 'bottom', horizontal: 'left', wrapText: true, indent: 1 };
         cell.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
       });
-      headerRow.height = 32;
+      headerRow.height = 30;
       r += 1;
       // Data rows — every cell left-aligned regardless of type so the
       // sheet reads as a flat report rather than a finance ledger.
@@ -2192,14 +2197,19 @@ export function SitesView({ settings, updateSettings } = {}) {
             cell.value = v;
           }
           cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-          cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: !!c.wrapText };
+          // Bottom-aligned data rows (per user spec) — values sit
+          // tight to the bottom of the cell so the section reads as
+          // one block. Heights stay just tall enough for one line of
+          // text, with a bump only when a flag cell is wrapping.
+          cell.alignment = { vertical: 'bottom', horizontal: 'left', indent: 1, wrapText: !!c.wrapText };
           if (c.numFmt) cell.numFmt = c.numFmt;
           cell.border = { bottom: { style: 'hair', color: { argb: SE_BORDER } } };
         });
-        // Bump the row height when any of its cells has wrapped text
-        // so the multi-line flag values aren't cut off vertically.
+        // Bump the row height only when a wrapped cell actually
+        // carries content (multi-line flag), otherwise stay at 16
+        // — just tall enough to show a single line at 10pt.
         const anyWrap = columnDefs.some(c => c.wrapText && !c.spacer && c.get(row));
-        dataRow.height = anyWrap ? 36 : 18;
+        dataRow.height = anyWrap ? 32 : 16;
         r += 1;
       }
       // Total row — green double rule above and below. Scenario
@@ -2245,14 +2255,14 @@ export function SitesView({ settings, updateSettings } = {}) {
         }
         cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_GREEN_DARK } };
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
-        cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        cell.alignment = { vertical: 'bottom', horizontal: 'left', indent: 1 };
         if (c.numFmt) cell.numFmt = c.numFmt;
         cell.border = {
           top: { style: 'thin', color: { argb: SE_GREEN_DARK } },
           bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } },
         };
       });
-      totalRow.height = 20;
+      totalRow.height = 18;
       r += 2;
     }
 
@@ -2261,8 +2271,8 @@ export function SitesView({ settings, updateSettings } = {}) {
       { label: 'Deregulated Status', get: (g) => g.status },
       { label: 'Total Sites', get: (g) => g.totalSites, numFmt: '#,##0', sumKey: 'totalSites' },
       { label: 'Deregulated Sites', get: (g) => g.deregulatedSites, numFmt: '#,##0', sumKey: 'deregulatedSites' },
-      { label: 'Annual Deregulated Consumption kWh', get: (g) => g.consumption, numFmt: '#,##0', sumKey: 'consumption' },
-      { label: 'Annual Deregulated Spend', get: (g) => g.spend, numFmt: '"$"#,##0', sumKey: 'spend' },
+      { label: 'Deregulated Consumption kWh/yr', get: (g) => g.consumption, numFmt: '#,##0', sumKey: 'consumption' },
+      { label: 'Deregulated Spend/yr', get: (g) => g.spend, numFmt: '"$"#,##0', sumKey: 'spend' },
       { label: 'Indicative Savings Range', get: (g) => g.range },
       // Savings % follows the toggle: Conservative shows the low end
       // of the range, Base shows the average, Aggressive shows the
@@ -2307,8 +2317,8 @@ export function SitesView({ settings, updateSettings } = {}) {
       { label: 'Deregulated Status', get: (g) => g.status },
       { label: 'Sites', get: (g) => g.totalSites, numFmt: '#,##0', sumKey: 'totalSites' },
       { label: 'Deregulated Sites', get: (g) => g.deregulatedSites, numFmt: '#,##0', sumKey: 'deregulatedSites' },
-      { label: 'Consumption Dth', get: (g) => g.consumption, numFmt: '#,##0', sumKey: 'consumption' },
-      { label: 'Spend', get: (g) => g.spend, numFmt: '"$"#,##0', sumKey: 'spend' },
+      { label: 'Deregulated Consumption Dth/yr', get: (g) => g.consumption, numFmt: '#,##0', sumKey: 'consumption' },
+      { label: 'Deregulated Spend/yr', get: (g) => g.spend, numFmt: '"$"#,##0', sumKey: 'spend' },
       { label: 'Indicative Savings Range', get: (g) => g.range },
       // Savings % mirrors the electric column — toggle picks low /
       // mid / high from the state's gas deregulation band.
