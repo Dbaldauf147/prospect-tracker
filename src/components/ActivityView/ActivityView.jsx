@@ -718,28 +718,19 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
       }
       return <span style={{ fontSize: '0.78rem', color: 'var(--color-text)' }} title={bfo}>{bfo}</span>;
     }},
-    // BFO Address — the BFO Opportunity Name (text identifier) from
-    // the matched opp, separate from the BFO Link URL above. Falls
-    // back to common header variants ('Opportunity Name', 'Opportunity',
-    // 'Name') so it lights up regardless of which export shape the
-    // user pasted onto the Opps tab.
-    { key: '_bfoAddress', label: 'BFO Address', defaultWidth: 240, render: (a) => {
-      const opp = a._activeOpp;
-      if (!opp) return <span className={styles.metaText}>—</span>;
-      const addr = String(
-        opp['Opportunity Name']
-        || opp['BFO Opportunity Name']
-        || opp['BFO Name']
-        || opp.Opportunity
-        || opp.Name
-        || ''
-      ).trim();
-      if (!addr) return <span className={styles.metaText}>—</span>;
+    // BFO Address — the same source as BFO Link (opp['BFO Link']),
+    // but rendered as plain ellipsis-truncated text rather than as a
+    // clickable button. Lets the user read or copy the full URL
+    // without hovering the button column. The BFO Link column stays
+    // the launcher; this column stays the address line.
+    { key: '_bfoAddress', label: 'BFO Address', defaultWidth: 280, render: (a) => {
+      const bfo = String(a._activeOpp?.['BFO Link'] || '').trim();
+      if (!bfo) return <span className={styles.metaText}>—</span>;
       return (
         <span
-          title={addr}
-          style={{ fontSize: '0.78rem', color: 'var(--color-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%', display: 'inline-block' }}
-        >{addr}</span>
+          title={bfo}
+          style={{ fontSize: '0.72rem', color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%', display: 'inline-block', userSelect: 'all' }}
+        >{bfo}</span>
       );
     }},
     { key: '_status', label: 'Status', defaultWidth: 110 },
