@@ -718,17 +718,28 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
       }
       return <span style={{ fontSize: '0.78rem', color: 'var(--color-text)' }} title={bfo}>{bfo}</span>;
     }},
-    // BFO Address — the raw URL / identifier text from the matched
-    // opp so the user can read or copy the full address without
-    // hovering. Same source as BFO Link, just rendered as plain text.
-    { key: '_bfoAddress', label: 'BFO Address', defaultWidth: 280, render: (a) => {
-      const bfo = String(a._activeOpp?.['BFO Link'] || '').trim();
-      if (!bfo) return <span className={styles.metaText}>—</span>;
+    // BFO Address — the BFO Opportunity Name (text identifier) from
+    // the matched opp, separate from the BFO Link URL above. Falls
+    // back to common header variants ('Opportunity Name', 'Opportunity',
+    // 'Name') so it lights up regardless of which export shape the
+    // user pasted onto the Opps tab.
+    { key: '_bfoAddress', label: 'BFO Address', defaultWidth: 240, render: (a) => {
+      const opp = a._activeOpp;
+      if (!opp) return <span className={styles.metaText}>—</span>;
+      const addr = String(
+        opp['Opportunity Name']
+        || opp['BFO Opportunity Name']
+        || opp['BFO Name']
+        || opp.Opportunity
+        || opp.Name
+        || ''
+      ).trim();
+      if (!addr) return <span className={styles.metaText}>—</span>;
       return (
         <span
-          title={bfo}
-          style={{ fontSize: '0.72rem', color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%', display: 'inline-block' }}
-        >{bfo}</span>
+          title={addr}
+          style={{ fontSize: '0.78rem', color: 'var(--color-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%', display: 'inline-block' }}
+        >{addr}</span>
       );
     }},
     { key: '_status', label: 'Status', defaultWidth: 110 },
