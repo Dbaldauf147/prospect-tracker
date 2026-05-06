@@ -2035,6 +2035,14 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
       result = result.filter(c => c.guessedName && (!c.firstname || !c.lastname));
     } else if (cardFilter === 'guessedCompany') {
       result = result.filter(c => !c.company && c.guessedCompany);
+    } else if (cardFilter === 'suggestedCompany') {
+      // Broader than `guessedCompany` — every contact where the
+      // Guessed Company column on the right would render a green
+      // pill. Covers (a) blank-company rows that have a guess, AND
+      // (b) rows whose typed Company differs from the guess (the
+      // "upgrade existing" case). Dismissed guesses drop out so the
+      // filter mirrors what the user actually sees on screen.
+      result = result.filter(c => hasActionableGuessedCompany(c));
     } else if (cardFilter === 'companyUnmapped') {
       result = result.filter(c => {
         const company = String(c.company || '').trim();
@@ -2351,6 +2359,14 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
         <button className={`${styles.summaryCard} ${cardFilter === 'guessedCompany' ? styles.summaryCardActive : ''}`} onClick={() => setCardFilter(cardFilter === 'guessedCompany' ? null : 'guessedCompany')}>
           <div className={styles.summaryLabel}>Guessed Companies</div>
           <div className={styles.summaryValue}>{enrichedContacts.filter(c => !c.company && c.guessedCompany).length}</div>
+        </button>
+        <button
+          className={`${styles.summaryCard} ${cardFilter === 'suggestedCompany' ? styles.summaryCardActive : ''}`}
+          onClick={() => setCardFilter(cardFilter === 'suggestedCompany' ? null : 'suggestedCompany')}
+          title="Show every contact whose Guessed Company column would render a suggestion — both blank-company rows with a guess AND rows whose typed Company differs from the canonical Table View name."
+        >
+          <div className={styles.summaryLabel}>Suggested Companies</div>
+          <div className={styles.summaryValue}>{enrichedContacts.filter(c => hasActionableGuessedCompany(c)).length}</div>
         </button>
       </div>
 
