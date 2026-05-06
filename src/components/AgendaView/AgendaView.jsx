@@ -2226,6 +2226,11 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
                         )}
                       </td>}
                       {bulkColVisible.has('tier') && <td>{(() => {
+                        // Dismissing the suggested company means "I don't
+                        // trust this match" — so the Tier badge that
+                        // came from the matched prospect should hide
+                        // alongside the dismissed pill.
+                        if (dismissedSuggestedCompanies.has(r.email)) return <span className={styles.metaText}>—</span>;
                         if (!prospect) return <span className={styles.metaText}>—</span>;
                         const explicit = (prospect.tier || '').trim();
                         let t;
@@ -2252,7 +2257,10 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
                         // is the prospect's own owner; Other Reps
                         // pills come from the Target Accounts workbook
                         // entries the user has confirmed for that
-                        // prospect on the Lists page.
+                        // prospect on the Lists page. If the user
+                        // dismissed the company suggestion, the badge
+                        // hides too — the match is no longer trusted.
+                        if (dismissedSuggestedCompanies.has(r.email)) return <span className={styles.metaText}>—</span>;
                         if (!prospect) return <span className={styles.metaText}>—</span>;
                         const cdm = String(prospect.cdm || '').trim();
                         const reps = otherRepsByProspect.get(prospect.id) || [];

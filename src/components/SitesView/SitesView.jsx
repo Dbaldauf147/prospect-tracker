@@ -1688,6 +1688,26 @@ export function SitesView({ settings, updateSettings } = {}) {
     const monthShortLabels = monthStartDates.map(d =>
       d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }));
 
+    // Helper: write a single space into an "empty" cell so long text
+    // in the cell to the left can't overflow into this cell visually.
+    // Excel will normally flag a space inside a number-formatted cell
+    // with the green "number stored as text" triangle — we suppress
+    // that indicator on those cells via ignoredErrors so the sheet
+    // stays clean.
+    const writeBlank = (cell, hasNumFmt) => {
+      cell.value = ' ';
+      if (hasNumFmt) cell.ignoredErrors = { numberStoredAsText: true };
+    };
+    // Helper: write a scenario-aware Excel formula and pre-emptively
+    // silence the green "inconsistent formula" / "formula" warning
+    // triangle that Excel sometimes raises when a column mixes
+    // formulas with constants. Every scenario cell goes through this
+    // so the workbook opens with no green chevrons on the audit tab.
+    const writeScenarioFormula = (cell, low, mid, high) => {
+      cell.value = { formula: scenarioFormula(low, mid, high), result: Number.isFinite(mid) ? mid : 0 };
+      cell.ignoredErrors = { formula: true, formulaRange: true, numberStoredAsText: true };
+    };
+
     function buildBucket(commodity) {
       const providerKey = `__${commodity}__`;
       const consumptionKey = commodity === 'electric' ? '__kwh__' : '__therms__';
@@ -2062,13 +2082,22 @@ export function SitesView({ settings, updateSettings } = {}) {
           if (c.spacer) return;
           const v = c.get(row);
           if (c.scenario) {
+            // Even when the row has no savings band (regulated state)
+            // we still emit a formula returning 0 — that keeps every
+            // cell in the column shaped the same way so Excel doesn't
+            // raise the "inconsistent formula" warning when it sees a
+            // mix of formulas and constants in one column. The helper
+            // also stamps ignoredErrors on the cell so the warning
+            // triangle is suppressed even if it would otherwise fire.
             if (v && typeof v === 'object') {
-              cell.value = { formula: scenarioFormula(v.low, v.mid, v.high), result: v.mid || 0 };
+              writeScenarioFormula(cell, v.low, v.mid, v.high);
             } else {
-              cell.value = null;
+              writeScenarioFormula(cell, 0, 0, 0);
             }
+          } else if (v === '' || v == null) {
+            writeBlank(cell, !!c.numFmt);
           } else {
-            cell.value = (v === '' || v == null) ? null : v;
+            cell.value = v;
           }
           cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
           cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
@@ -2111,11 +2140,11 @@ export function SitesView({ settings, updateSettings } = {}) {
           cell.value = 'Total';
         } else if (c.scenario && c.sumKey) {
           const t = scenarioTotals[c.sumKey];
-          cell.value = { formula: scenarioFormula(t.low, t.mid, t.high), result: t.mid || 0 };
+          writeScenarioFormula(cell, t.low, t.mid, t.high);
         } else if (c.sumKey) {
           cell.value = scalarTotals[c.sumKey] || 0;
         } else {
-          cell.value = null;
+          writeBlank(cell, !!c.numFmt);
         }
         cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_GREEN_DARK } };
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
@@ -2152,8 +2181,8 @@ export function SitesView({ settings, updateSettings } = {}) {
       { label: 'Year 3 Cumulative', scenario: true, get: (g) => g.year3, numFmt: '"$"#,##0', sumKey: 'year3' },
       { label: 'Year 4 Cumulative', scenario: true, get: (g) => g.year4, numFmt: '"$"#,##0', sumKey: 'year4' },
       { label: 'Year 5 Cumulative', scenario: true, get: (g) => g.year5, numFmt: '"$"#,##0', sumKey: 'year5' },
-      { label: 'Utility Vendor', get: (g) => g.utilities },
-      { label: 'Supplier Name', get: (g) => g.suppliers },
+      { label: 'Utility Vendor(s)', get: (g) => g.utilities },
+      { label: 'Supplier Name(s)', get: (g) => g.suppliers },
       { label: 'Contract Start', get: (g) => g.earliestStart },
       { label: 'Contract End', get: (g) => g.latestEnd },
       // Spacer column — physically separates the deregulated block
@@ -2189,8 +2218,8 @@ export function SitesView({ settings, updateSettings } = {}) {
       { label: 'Year 3 Cumulative', scenario: true, get: (g) => g.year3, numFmt: '"$"#,##0', sumKey: 'year3' },
       { label: 'Year 4 Cumulative', scenario: true, get: (g) => g.year4, numFmt: '"$"#,##0', sumKey: 'year4' },
       { label: 'Year 5 Cumulative', scenario: true, get: (g) => g.year5, numFmt: '"$"#,##0', sumKey: 'year5' },
-      { label: 'Utility Vendor', get: (g) => g.utilities },
-      { label: 'Supplier Name', get: (g) => g.suppliers },
+      { label: 'Utility Vendor(s)', get: (g) => g.utilities },
+      { label: 'Supplier Name(s)', get: (g) => g.suppliers },
       { label: 'Contract Start', get: (g) => g.earliestStart },
       { label: 'Contract End', get: (g) => g.latestEnd },
     ];
@@ -2310,16 +2339,13 @@ export function SitesView({ settings, updateSettings } = {}) {
         const cell = dataRow.getCell(i + 1);
         const v = c.get(s);
         // Excel overflows long text from one cell into the next when
-        // the next cell is empty. Putting a single space in blank
-        // cells stops that visual overflow without showing anything
-        // visible to the user.
-        // Empty number-formatted cells get a real null so Excel
-        // doesn't flag them with the "number stored as text" green
-        // triangle. Only text columns keep the single-space trick
-        // (used to stop long site names from overflowing into the
-        // next blank cell).
+        // the next cell is empty. Every blank cell gets a single
+        // space so long text in the cell to the LEFT can't overflow
+        // into it. writeBlank also sets ignoredErrors on numeric-
+        // formatted cells so Excel doesn't flag the space with the
+        // green "number stored as text" triangle.
         if (v === '' || v == null) {
-          cell.value = c.numFmt ? null : ' ';
+          writeBlank(cell, !!c.numFmt);
         } else {
           cell.value = v;
         }
@@ -2431,17 +2457,20 @@ export function SitesView({ settings, updateSettings } = {}) {
           const cell = dataRow.getCell(i + 1);
           const v = c.get(s);
           if (c.scenario) {
-            // Same scenario formula the by-state sheet uses, with a
-            // qualified cross-sheet reference back to the toggle. The
-            // user flips the dropdown on tab 1 and this column on tab
-            // 3 follows along — same source of truth.
+            // Every cell in this column gets a formula keyed off the
+            // by-state sheet's toggle. The helper stamps the cell
+            // with ignoredErrors so Excel won't show the green
+            // "inconsistent formula" / "number stored as text"
+            // chevrons even if the row has no savings band.
             if (v && typeof v === 'object') {
-              cell.value = { formula: scenarioFormula(v.low, v.mid, v.high), result: v.mid || 0 };
+              writeScenarioFormula(cell, v.low, v.mid, v.high);
             } else {
-              cell.value = null;
+              writeScenarioFormula(cell, 0, 0, 0);
             }
+          } else if (v === '' || v == null) {
+            writeBlank(cell, !!c.numFmt);
           } else {
-            cell.value = (v === '' || v == null) ? null : v;
+            cell.value = v;
           }
           cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
           cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
