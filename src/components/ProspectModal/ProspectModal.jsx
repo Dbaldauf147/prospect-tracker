@@ -1668,6 +1668,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     return { ...EMPTY };
   });
 
+  // "Show hidden" toggle on the contacts panel below — declared
+  // BEFORE baseContacts because that memo references it inside its
+  // filter callback (the callback fires during render, so the state
+  // must be initialized first or we hit a temporal-dead-zone error).
+  const [showHiddenContacts, setShowHiddenContacts] = useState(false);
+
   // Local contact state — updated optimistically after HubSpot saves
   const baseContacts = useMemo(() => {
     if (!fields.company || isNew) return [];
@@ -1872,9 +1878,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   }, [prospects, fields.cdm]);
 
   const [contactView, setContactView] = useState('table'); // 'table' | 'orgchart'
-  // When true, contacts tagged "hide" are folded back into the
-  // company contacts list so the user can audit / un-hide them.
-  const [showHiddenContacts, setShowHiddenContacts] = useState(false);
+  // (showHiddenContacts state is declared earlier — above
+  // baseContacts — so its useMemo can reference it without a TDZ.)
   // Number of hide-tagged contacts at this company / domain — drives
   // the badge on the "Show hidden" toggle. Memoized so the full
   // hubspotContacts walk only runs when the inputs actually change
