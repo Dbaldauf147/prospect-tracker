@@ -466,6 +466,7 @@ function PipelineViewInner() {
     const PULL_THROUGH = /pull[\s-]?through/i;
     let sold = 0;
     let notSold = 0;
+    const included = [];
     for (const r of oppsRecords) {
       const stage = (r.Stage || '').trim();
       if (stage !== 'Sold' && stage !== 'Not Sold') continue;
@@ -476,10 +477,19 @@ function PipelineViewInner() {
       if (PULL_THROUGH.test(String(r.Scope || ''))) continue;
       if (stage === 'Sold') sold += 1;
       else notSold += 1;
+      included.push({
+        account: String(r.Account || '').trim(),
+        scope: String(r.Scope || '').trim(),
+        stage,
+        closeDate: cd,
+        ts,
+        amount: parseMoney(r['Quoted Amount']) || 0,
+      });
     }
     const total = sold + notSold;
     if (total === 0) return null;
-    return { sold, notSold, rate: sold / total };
+    included.sort((a, b) => b.ts - a.ts);
+    return { sold, notSold, rate: sold / total, included };
   }, [oppsRecords]);
 
   // Per-stage Close Rate Actual on a rolling 365-day window. Each
@@ -511,7 +521,10 @@ function PipelineViewInner() {
       5: hasQuotedOn,
       6: hasEntityApproval,
     };
-    const tallies = { 5: { sold: 0, notSold: 0 }, 6: { sold: 0, notSold: 0 } };
+    const tallies = {
+      5: { sold: 0, notSold: 0, included: [] },
+      6: { sold: 0, notSold: 0, included: [] },
+    };
     for (const r of oppsRecords) {
       const stage = (r.Stage || '').trim();
       if (stage !== 'Sold' && stage !== 'Not Sold') continue;
@@ -520,19 +533,55 @@ function PipelineViewInner() {
       const ts = Date.parse(cd);
       if (Number.isNaN(ts) || ts < cutoff) continue;
       if (PULL_THROUGH.test(String(r.Scope || ''))) continue;
+      const entry = {
+        account: String(r.Account || '').trim(),
+        scope: String(r.Scope || '').trim(),
+        stage,
+        closeDate: cd,
+        ts,
+        amount: parseMoney(r['Quoted Amount']) || 0,
+      };
       for (const stageNum of Object.keys(stagePredicates)) {
         if (!stagePredicates[stageNum](r)) continue;
         if (stage === 'Sold') tallies[stageNum].sold += 1;
         else tallies[stageNum].notSold += 1;
+        tallies[stageNum].included.push(entry);
       }
     }
     for (const stageNum of [5, 6]) {
-      const { sold, notSold } = tallies[stageNum];
+      const { sold, notSold, included } = tallies[stageNum];
       const total = sold + notSold;
-      if (total > 0) out[stageNum] = { sold, notSold, rate: sold / total };
+      if (total > 0) {
+        included.sort((a, b) => b.ts - a.ts);
+        out[stageNum] = { sold, notSold, rate: sold / total, included };
+      }
     }
     return out;
   }, [oppsRecords]);
+
+  // Format helper for the close-rate hover tooltips. Lists every opp
+  // that fed the rate, newest close date first; cap the list at 60
+  // rows with a "+N more" tail so very busy years don't blow up the
+  // browser tooltip.
+  function buildCloseRateOppList(included) {
+    if (!Array.isArray(included) || included.length === 0) return '';
+    const fmtCloseDate = (s) => {
+      const t = Date.parse(s);
+      if (Number.isNaN(t)) return s;
+      const d = new Date(t);
+      return d.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: '2-digit' });
+    };
+    const fmtAmt = (n) => Number.isFinite(n) && n > 0 ? fmtMoney(Math.round(n)) : '—';
+    const MAX = 60;
+    const head = included.slice(0, MAX).map(o => {
+      const tag = o.stage === 'Sold' ? 'SOLD    ' : 'NOT SOLD';
+      const acct = o.account || '(no account)';
+      const scope = o.scope ? ` · ${o.scope}` : '';
+      return `${tag}  ${fmtCloseDate(o.closeDate)}  ${fmtAmt(o.amount)}  ${acct}${scope}`;
+    }).join('\n');
+    const tail = included.length > MAX ? `\n…and ${included.length - MAX} more` : '';
+    return `\n\nIncluded opps (most recent close first):\n${head}${tail}`;
+  }
 
   // Live Current Client vs Greenfield stats. Joins BFO Activity rows
   // to the Opps tab's Lead Source / Source via the BFO Opportunity
@@ -881,7 +930,7 @@ function PipelineViewInner() {
                           : stageNum === 6
                           ? 'a non-empty Entity Outside the US Approval value'
                           : 'the stage signal';
-                        const tip = `Auto-fed from Opps tab: ${live.sold} Sold / ${live.notSold} Not Sold in the past 365 days with ${signal} and Scope without "pull through". Re-paste the Opps tab to refresh.`;
+                        const tip = `Auto-fed from Opps tab: ${live.sold} Sold / ${live.notSold} Not Sold in the past 365 days with ${signal} and Scope without "pull through". Re-paste the Opps tab to refresh.${buildCloseRateOppList(live.included)}`;
                         return (
                           <td className={`${cls} ${styles.numCell}`.trim()}>
                             <span title={tip} className={styles.liveCell} style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: 1.15 }}>
@@ -931,7 +980,7 @@ function PipelineViewInner() {
                 <td className={styles.numCell}>{fmtMoney(stageTotals.pipelineActual)}</td>
                 <td />
                 <td className={styles.numCell} title={oppsCloseRateActual
-                  ? `Sold ÷ (Sold + Not Sold) for Opps closed in the past 365 days with "pull through" excluded — ${oppsCloseRateActual.sold} sold / ${oppsCloseRateActual.notSold} not sold.`
+                  ? `Sold ÷ (Sold + Not Sold) for Opps closed in the past 365 days with "pull through" excluded — ${oppsCloseRateActual.sold} sold / ${oppsCloseRateActual.notSold} not sold.${buildCloseRateOppList(oppsCloseRateActual.included)}`
                   : 'Add Sold / Not Sold opps with a Close Date in the past 365 days (and a Scope without "pull through") on the Opps tab to populate.'}>
                   {oppsCloseRateActual ? (
                     <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: 1.15 }}>
