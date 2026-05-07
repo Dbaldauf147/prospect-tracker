@@ -1291,6 +1291,42 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
     setProgress(null);
   }
 
+  // Same shape as addAll, but restricted to rows the user has ticked
+  // in Mass Edit mode. Lets the user cherry-pick which contacts go to
+  // HubSpot without having to remove the rest from the queue first.
+  async function addSelected() {
+    if (bulkSelected.size === 0) return;
+    const picked = rows.filter(r => bulkSelected.has(r.email));
+    const toCreate = picked.filter(r => !hubspotByEmail.has(r.email) && results[r.email] !== 'added');
+    const toUpdate = [];
+    for (const r of picked) {
+      if (results[r.email] === 'added' || results[r.email] === 'updated') continue;
+      const existing = hubspotByEmail.get(r.email);
+      if (!existing) continue;
+      const patch = missingFieldUpdates(r, existing);
+      if (patch) toUpdate.push({ row: r, existing, patch });
+    }
+    const total = toCreate.length + toUpdate.length;
+    if (total === 0) return;
+    setBusy(true);
+    setProgress({ done: 0, total });
+    let done = 0;
+    for (const row of toCreate) {
+      const outcome = await addOne(row);
+      setResults(prev => ({ ...prev, [row.email]: outcome }));
+      done += 1;
+      setProgress({ done, total });
+    }
+    for (const { row, existing, patch } of toUpdate) {
+      const outcome = await updateOne(row, existing, patch);
+      setResults(prev => ({ ...prev, [row.email]: outcome }));
+      done += 1;
+      setProgress({ done, total });
+    }
+    setBusy(false);
+    setProgress(null);
+  }
+
   const newCount = rows.filter(r => !hubspotByEmail.has(r.email)).length;
   const updateCount = rows.filter(r => {
     const existing = hubspotByEmail.get(r.email);
@@ -2021,28 +2057,65 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
                   >{allSelected ? `Deselect All (${bulkSelected.size})` : `Select All (${visibleRows.length})`}</button>
                 );
               })()}
-              {bulkMassMode && bulkSelected.size > 0 && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => { setBulkEditOpen(true); setBulkEditValue(''); }}
-                    style={{ padding: '0.3rem 0.7rem', border: '1px solid var(--color-accent)', borderRadius: 6, background: 'var(--color-accent)', color: '#fff', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
-                  >Bulk Edit {bulkSelected.size}</button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!confirm(`Remove ${bulkSelected.size} selected row${bulkSelected.size === 1 ? '' : 's'} from the queue? (HubSpot is not touched.)`)) return;
-                      setRows(prev => {
-                        const next = prev.filter(r => !bulkSelected.has(r.email));
-                        saveCache(next);
-                        return next;
-                      });
-                      setBulkSelected(new Set());
-                    }}
-                    style={{ padding: '0.3rem 0.7rem', border: '1px solid #FCA5A5', borderRadius: 6, background: '#FEF2F2', color: '#B91C1C', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
-                  >Remove {bulkSelected.size} selected</button>
-                </>
-              )}
+              {bulkMassMode && bulkSelected.size > 0 && (() => {
+                // Restrict the "Send to HubSpot" counts to the rows the
+                // user actually ticked. If everything they picked is
+                // already in HubSpot with no fields to fill, the
+                // button disables — same disabled rule as Send-all.
+                const picked = rows.filter(r => bulkSelected.has(r.email));
+                const newSel = picked.filter(r => !hubspotByEmail.has(r.email) && results[r.email] !== 'added').length;
+                const updateSel = picked.filter(r => {
+                  if (results[r.email] === 'added' || results[r.email] === 'updated') return false;
+                  const existing = hubspotByEmail.get(r.email);
+                  return !!existing && !!missingFieldUpdates(r, existing);
+                }).length;
+                const sendDisabled = busy || (newSel === 0 && updateSel === 0);
+                const sendLabel = newSel > 0 && updateSel > 0
+                  ? `Send selected (${newSel} new · ${updateSel} update${updateSel === 1 ? '' : 's'})`
+                  : updateSel > 0
+                    ? `Update ${updateSel} selected in HubSpot`
+                    : newSel > 0
+                      ? `+ Add ${newSel} selected to HubSpot`
+                      : `Send ${bulkSelected.size} selected (nothing to do)`;
+                return (
+                  <>
+                    <button
+                      type="button"
+                      onClick={addSelected}
+                      disabled={sendDisabled}
+                      title={sendDisabled
+                        ? 'Every selected row is already in HubSpot with no missing fields to fill.'
+                        : `Push only the ${bulkSelected.size} ticked row${bulkSelected.size === 1 ? '' : 's'} — same create / fill-missing rules as the main Send button.`}
+                      style={{
+                        padding: '0.3rem 0.7rem',
+                        border: 'none', borderRadius: 6,
+                        background: sendDisabled ? '#CBD5E1' : '#0EA5E9',
+                        color: '#fff', fontSize: '0.72rem', fontWeight: 700,
+                        cursor: sendDisabled ? 'not-allowed' : 'pointer',
+                        fontFamily: 'inherit', whiteSpace: 'nowrap',
+                      }}
+                    >{busy ? `Sending ${progress?.done}/${progress?.total}…` : sendLabel}</button>
+                    <button
+                      type="button"
+                      onClick={() => { setBulkEditOpen(true); setBulkEditValue(''); }}
+                      style={{ padding: '0.3rem 0.7rem', border: '1px solid var(--color-accent)', borderRadius: 6, background: 'var(--color-accent)', color: '#fff', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+                    >Bulk Edit {bulkSelected.size}</button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!confirm(`Remove ${bulkSelected.size} selected row${bulkSelected.size === 1 ? '' : 's'} from the queue? (HubSpot is not touched.)`)) return;
+                        setRows(prev => {
+                          const next = prev.filter(r => !bulkSelected.has(r.email));
+                          saveCache(next);
+                          return next;
+                        });
+                        setBulkSelected(new Set());
+                      }}
+                      style={{ padding: '0.3rem 0.7rem', border: '1px solid #FCA5A5', borderRadius: 6, background: '#FEF2F2', color: '#B91C1C', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+                    >Remove {bulkSelected.size} selected</button>
+                  </>
+                );
+              })()}
               <div style={{ position: 'relative' }}>
                 <button
                   type="button"
