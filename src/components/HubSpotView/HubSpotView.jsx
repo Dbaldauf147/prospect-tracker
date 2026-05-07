@@ -164,6 +164,87 @@ function HubSpotInlineCell({ contact, field, value, onSave, suggestions }) {
   );
 }
 
+// Multi-line notes cell. Display falls back across the in-app
+// contactNotes store and HubSpot's notes / hs_content_membership_notes
+// / message fields — same lookup pattern used by KeyContactsView,
+// OpportunityForm, ProspectModal, and the Draft Emails note picker, so
+// edits made anywhere surface here. Saves write to
+// settings.contactNotes[contact.id] (local store) so other views pick
+// the change up immediately. A click swaps the read view for an
+// auto-grown <textarea>; Esc cancels, ⌘/Ctrl+Enter saves, blur saves.
+function HubSpotNotesCell({ contact, savedNote, onSave }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+  const taRef = useRef(null);
+  const display = (savedNote
+    || contact?.notes
+    || contact?.hs_content_membership_notes
+    || contact?.message
+    || '').trim();
+
+  function start(e) {
+    e.stopPropagation();
+    setDraft(savedNote ?? display ?? '');
+    setEditing(true);
+  }
+  async function commit(next) {
+    setEditing(false);
+    const nextVal = (next ?? draft);
+    if ((nextVal || '').trim() === (savedNote || '').trim()) return;
+    setSaving(true);
+    try { await onSave(contact.id, nextVal); } finally { setSaving(false); }
+  }
+
+  useEffect(() => {
+    if (!editing) return;
+    const el = taRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(160, el.scrollHeight)}px`;
+  }, [editing, draft]);
+
+  if (editing) {
+    return (
+      <textarea
+        ref={taRef}
+        value={draft}
+        autoFocus
+        onChange={e => setDraft(e.target.value)}
+        onClick={e => e.stopPropagation()}
+        onBlur={() => commit()}
+        onKeyDown={e => {
+          if (e.key === 'Escape') { e.preventDefault(); setEditing(false); }
+          else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); commit(); }
+        }}
+        rows={3}
+        className={styles.inlineInput}
+        style={{
+          width: '100%', minHeight: 56, maxHeight: 160,
+          resize: 'vertical', lineHeight: 1.4,
+          fontFamily: 'inherit', fontSize: '0.78rem',
+          padding: '0.35rem 0.5rem',
+        }}
+      />
+    );
+  }
+  return (
+    <span
+      className={saving ? styles.cellSaving : styles.cellEditable}
+      onClick={start}
+      title={display ? `${display}\n\n(Click to edit. ⌘/Ctrl+Enter saves, Esc cancels.)` : 'Click to add a note. ⌘/Ctrl+Enter saves, Esc cancels.'}
+      style={{
+        display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+        overflow: 'hidden', textOverflow: 'ellipsis',
+        whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+        lineHeight: 1.3, fontSize: '0.74rem',
+      }}
+    >
+      {saving ? 'Saving…' : (display || <span style={{ color: '#CBD5E1', fontStyle: 'italic' }}>—</span>)}
+    </span>
+  );
+}
+
 // Fire-and-forget cache write for cases where we don't care to block on
 // the IDB transaction. Use saveCacheAwait when the caller needs the
 // write to land before unmount / navigation can race it.
@@ -1140,6 +1221,19 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
   // of c.company so the next sync can't revert it.
   const LOCAL_ONLY_PROPS = new Set(['_zoomCompanyName', '_zoomCompanyId', '_linkedinProfile', '_zoomWebsite', '_emailDomain', '_companyOverride']);
   const contactLocalFields = settings?.contactLocalFields || {};
+
+  // Notes go through the same settings.contactNotes store used by
+  // KeyContactsView / OpportunityForm / ProspectModal — that way an
+  // edit on this page surfaces in every other view that reads the
+  // same map (and vice versa). Empty / whitespace-only values delete
+  // the entry instead of saving an empty string.
+  const handleSaveContactNote = useCallback((cid, note) => {
+    const cur = settings?.contactNotes || {};
+    const next = { ...cur };
+    if (note && String(note).trim()) next[cid] = note;
+    else delete next[cid];
+    updateSettings({ contactNotes: next });
+  }, [settings?.contactNotes, updateSettings]);
 
   const handleInlineUpdate = useCallback(async (contactId, properties) => {
     try {
@@ -2669,6 +2763,13 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
                 return <span style={{ fontSize: 'var(--font-size-xs)', fontWeight: isRecent ? 600 : 400, color: isRecent ? 'var(--color-accent)' : 'var(--color-text-secondary)' }} title={fmtDateTime(c.lastmodifieddate)}>{relative}</span>;
               }},
               { key: 'dans_tags', label: "Dan's Tags", defaultWidth: 160, render: (c) => <TagsMultiSelect contact={c} field="dans_tags" value={c.dans_tags || c.dan_s_tags || c.dans_tag} options={dansTagOptions} onSave={handleInlineUpdate} /> },
+              { key: 'notes', label: 'Notes', defaultWidth: 240, render: (c) => (
+                <HubSpotNotesCell
+                  contact={c}
+                  savedNote={(settings?.contactNotes || {})[c.id] || ''}
+                  onSave={handleSaveContactNote}
+                />
+              ) },
               { key: '_zoomCompanyName', label: 'Zoom Company', defaultWidth: 160, render: (c) => <HubSpotInlineCell contact={c} field="_zoomCompanyName" value={c._zoomCompanyName} onSave={handleInlineUpdate} /> },
               { key: '_zoomCompanyId', label: 'Zoom Company ID', defaultWidth: 120, render: (c) => <HubSpotInlineCell contact={c} field="_zoomCompanyId" value={c._zoomCompanyId} onSave={handleInlineUpdate} /> },
               { key: '_linkedinProfile', label: 'LinkedIn Profile', defaultWidth: 160, render: (c) => {
