@@ -904,14 +904,37 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     });
 
     try {
+      // Bigger batches get bucketed into a dedicated subfolder under
+      // Outlook's Drafts so the user's main Drafts pane doesn't get
+      // flooded. Folder name embeds the date + a slug of the subject
+      // so each batch is distinguishable; the API endpoint creates
+      // the folder on first use and reuses it on later batches with
+      // the same name.
+      const useFolder = drafts.length > 3;
+      const folderName = useFolder
+        ? (() => {
+            const date = new Date();
+            const stamp = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+            const slug = (subject || 'untitled')
+              .replace(/<[^>]+>/g, '')
+              .replace(/[\\/:*?"<>|]/g, '')
+              .replace(/\s+/g, ' ')
+              .trim()
+              .slice(0, 60);
+            return `Prospect Tracker · ${stamp} · ${slug || 'untitled'}`;
+          })()
+        : null;
       const res = await fetch('/api/outlook-draft', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accessToken, drafts }),
+        body: JSON.stringify({ accessToken, drafts, folderName }),
       });
       const data = await res.json();
       if (data.success) {
-        setResult({ type: 'success', message: `${data.created} draft${data.created !== 1 ? 's' : ''} created in Outlook!` });
+        const folderNote = data.folder
+          ? ` in folder "${data.folder}"`
+          : (data.folderError ? ` (couldn't create folder — landed in default Drafts: ${data.folderError})` : '');
+        setResult({ type: 'success', message: `${data.created} draft${data.created !== 1 ? 's' : ''} created in Outlook${folderNote}!` });
         saveDraft();
       } else if (data.needsAuth) {
         setResult({ type: 'info', message: 'Connect your Outlook account first' });
