@@ -3437,9 +3437,11 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                     <CommitOnBlurInput
                       multiline
                       autoGrow
+                      smartBullets
                       style={sx.textarea}
                       value={formData.fieldValues[f.key] || ''}
                       onCommit={v => updateField(f.key, v)}
+                      placeholder="General notes. Type — or * at the start of a line for a bullet list."
                     />
                     <div>
                       <div style={{ ...sx.fieldLabel, marginBottom: '0.2rem' }}>Scoping Details Notes</div>

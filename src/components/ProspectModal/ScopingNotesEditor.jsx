@@ -117,6 +117,46 @@ function findActiveMention() {
   return null;
 }
 
+// Walk backward from the caret through text nodes / chip spans / <br>s
+// until the start of the current visual line. Returns the line text
+// up to the caret (chips contribute "@[Name]") and a pointer at where
+// the line starts so callers can mutate the bullet glyph in place.
+//   allInOneNode is true when the entire prefix sits inside the same
+//   text node as the caret — that's the common case for typing "- "
+//   at a fresh line and lets the empty-bullet-exit shortcut do a
+//   simple substring slice instead of walking nodes.
+function getLineBeforeCaret() {
+  const sel = window.getSelection();
+  if (!sel || !sel.isCollapsed || sel.rangeCount === 0) return null;
+  const range = sel.getRangeAt(0);
+  const node = range.startContainer;
+  if (node.nodeType !== Node.TEXT_NODE) return null;
+  const off = range.startOffset;
+  const text = (node.nodeValue || '').slice(0, off);
+  // \n inside this text node already pinpoints the line start.
+  const nlIdx = text.lastIndexOf('\n');
+  if (nlIdx !== -1) {
+    return { text: text.slice(nlIdx + 1), startNode: node, startOffset: nlIdx + 1, allInOneNode: true };
+  }
+  let lineText = text;
+  let cur = node.previousSibling;
+  while (cur) {
+    if (cur.nodeType === Node.ELEMENT_NODE && cur.tagName === 'BR') break;
+    if (cur.nodeType === Node.ELEMENT_NODE && cur.dataset?.scopingMention) {
+      lineText = '@[' + cur.dataset.scopingMention + ']' + lineText;
+    } else if (cur.nodeType === Node.TEXT_NODE) {
+      const t = cur.nodeValue || '';
+      const nl = t.lastIndexOf('\n');
+      if (nl !== -1) {
+        return { text: t.slice(nl + 1) + lineText, startNode: node, startOffset: 0, allInOneNode: false };
+      }
+      lineText = t + lineText;
+    }
+    cur = cur.previousSibling;
+  }
+  return { text: lineText, startNode: node, startOffset: 0, allInOneNode: false };
+}
+
 // Replace the live "@query" run with a chip + trailing space. Mutates
 // the DOM and leaves the caret right after the inserted chip.
 function insertMention(rootEl, mention, anchor) {
@@ -241,6 +281,44 @@ export const ScopingNotesEditor = memo(function ScopingNotesEditor({
 
   const handleInput = useCallback(() => {
     refreshMentionState();
+    // Markdown-style bullet shorthand: "- " or "* " at the start of a
+    // line auto-converts to "• ". Only fires on the simple in-text-node
+    // case so chips and prior content can't accidentally trip it.
+    const sel = window.getSelection();
+    if (!sel || !sel.isCollapsed || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    const node = range.startContainer;
+    if (node.nodeType !== Node.TEXT_NODE) return;
+    const off = range.startOffset;
+    const text = node.nodeValue || '';
+    const last2 = text.slice(Math.max(0, off - 2), off);
+    if (last2 !== '- ' && last2 !== '* ') return;
+    const before = text.slice(0, off - 2);
+    let atLineStart;
+    if (before === '') {
+      atLineStart = true;
+      let cur = node.previousSibling;
+      while (cur) {
+        if (cur.nodeType === Node.ELEMENT_NODE && cur.tagName === 'BR') break;
+        if (cur.nodeType === Node.TEXT_NODE) {
+          const t = cur.nodeValue || '';
+          if (t.endsWith('\n')) break;
+          if (t.length > 0) { atLineStart = false; break; }
+        } else if (cur.nodeType === Node.ELEMENT_NODE && cur.dataset?.scopingMention) {
+          atLineStart = false; break;
+        }
+        cur = cur.previousSibling;
+      }
+    } else {
+      atLineStart = before.endsWith('\n');
+    }
+    if (!atLineStart) return;
+    node.nodeValue = text.slice(0, off - 2) + '• ' + text.slice(off);
+    const newRange = document.createRange();
+    newRange.setStart(node, off);
+    newRange.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(newRange);
   }, [refreshMentionState]);
 
   // Clicking a chip selects the whole pill so the next Backspace /
@@ -278,6 +356,36 @@ export const ScopingNotesEditor = memo(function ScopingNotesEditor({
         e.preventDefault();
         closePopover();
         return;
+      }
+    }
+    // Smart bullet continuation: Enter on a "• "-prefixed line keeps
+    // the list going; Enter on an empty bullet exits the list (drops
+    // the "• " and lands the caret at line start). Shift+Enter is
+    // pass-through for a manual line break, matching the textarea
+    // behaviour.
+    if (e.key === 'Enter' && !e.shiftKey) {
+      const sel = window.getSelection();
+      if (sel && sel.isCollapsed && sel.rangeCount > 0) {
+        const lineInfo = getLineBeforeCaret();
+        if (lineInfo && lineInfo.text.startsWith('• ')) {
+          e.preventDefault();
+          if (lineInfo.text === '• ' && lineInfo.allInOneNode) {
+            const node = lineInfo.startNode;
+            const start = lineInfo.startOffset;
+            const t = node.nodeValue || '';
+            node.nodeValue = t.slice(0, start) + t.slice(start + 2);
+            const newRange = document.createRange();
+            newRange.setStart(node, start);
+            newRange.collapse(true);
+            sel.removeAllRanges();
+            sel.addRange(newRange);
+            return;
+          }
+          // Continue the list — execCommand('insertText') correctly
+          // splits the surrounding inline contents around the caret.
+          document.execCommand('insertText', false, '\n• ');
+          return;
+        }
       }
     }
     // Backspace / Delete remove a service chip cleanly. Three cases the

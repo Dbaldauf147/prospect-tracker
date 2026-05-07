@@ -14,10 +14,18 @@ import { useState, useEffect, useRef, memo } from 'react';
 //   bulletList  — multiline: focusing an empty cell inserts "• " and Enter
 //                 inserts "\n• " at the cursor so the user gets a running
 //                 bullet list without typing the glyph themselves.
+//   smartBullets — multiline opt-in. Doesn't auto-bullet anything; instead
+//                 lets the user start a list by typing "- " or "* " at the
+//                 start of a line (auto-converted to "• "), continues the
+//                 list on Enter, and exits on Enter when the current
+//                 bullet is empty. Free-form text in between stays
+//                 untouched. Different from bulletList — that one forces
+//                 every line to be bulleted, which is too aggressive for
+//                 a free-form Notes field.
 //   type        — input type (default 'text'); ignored when multiline
 //   ...rest     — forwarded to the underlying element (style, placeholder, etc.)
 export const CommitOnBlurInput = memo(function CommitOnBlurInput({
-  value, onCommit, multiline, autoGrow, bulletList, type, onKeyDown, onFocus, style, ...rest
+  value, onCommit, multiline, autoGrow, bulletList, smartBullets, type, onKeyDown, onFocus, style, ...rest
 }) {
   const [local, setLocal] = useState(value ?? '');
   const lastExternal = useRef(value ?? '');
@@ -66,10 +74,70 @@ export const CommitOnBlurInput = memo(function CommitOnBlurInput({
       });
       return;
     }
+    if (smartBullets && multiline && e.key === 'Enter' && !e.shiftKey) {
+      const el = e.currentTarget;
+      const start = el.selectionStart;
+      const end = el.selectionEnd;
+      if (start !== end) { /* selection — let the default replace it */ }
+      else {
+        const lineStart = local.lastIndexOf('\n', start - 1) + 1;
+        const lineToCursor = local.slice(lineStart, start);
+        if (lineToCursor.startsWith('• ')) {
+          e.preventDefault();
+          const lineEnd = local.indexOf('\n', start);
+          const lineEndIdx = lineEnd === -1 ? local.length : lineEnd;
+          const fullLine = local.slice(lineStart, lineEndIdx);
+          // Empty bullet → exit list mode (drop the "• " on this line).
+          if (fullLine === '• ') {
+            const next = local.slice(0, lineStart) + local.slice(lineEndIdx);
+            setLocal(next);
+            requestAnimationFrame(() => {
+              if (el && el.isConnected) {
+                el.selectionStart = el.selectionEnd = lineStart;
+              }
+            });
+            return;
+          }
+          // Non-empty bullet → continue the list.
+          const insertion = '\n• ';
+          const next = local.slice(0, start) + insertion + local.slice(end);
+          setLocal(next);
+          requestAnimationFrame(() => {
+            if (el && el.isConnected) {
+              el.selectionStart = el.selectionEnd = start + insertion.length;
+            }
+          });
+          return;
+        }
+      }
+    }
     if (!multiline && e.key === 'Enter') {
       e.currentTarget.blur();
     }
     if (onKeyDown) onKeyDown(e);
+  };
+
+  // Markdown-style "- " / "* " at the start of a line auto-converts to
+  // "• " so the user doesn't have to hunt down the bullet glyph. Only
+  // active when smartBullets is enabled.
+  const handleChange = (e) => {
+    let next = e.target.value;
+    if (smartBullets && multiline) {
+      const pos = e.target.selectionStart;
+      const lineStart = next.lastIndexOf('\n', pos - 1) + 1;
+      const segment = next.slice(lineStart, pos);
+      if (segment === '- ' || segment === '* ') {
+        next = next.slice(0, lineStart) + '• ' + next.slice(pos);
+        const newPos = lineStart + 2;
+        const el = e.target;
+        requestAnimationFrame(() => {
+          if (el && el.isConnected) {
+            el.selectionStart = el.selectionEnd = newPos;
+          }
+        });
+      }
+    }
+    setLocal(next);
   };
 
   const handleFocus = (e) => {
@@ -95,7 +163,7 @@ export const CommitOnBlurInput = memo(function CommitOnBlurInput({
         {...rest}
         style={effectiveStyle}
         value={local}
-        onChange={e => setLocal(e.target.value)}
+        onChange={handleChange}
         onFocus={handleFocus}
         onBlur={handleBlur}
         onKeyDown={handleKey}
