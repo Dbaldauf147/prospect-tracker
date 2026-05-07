@@ -31,7 +31,16 @@ function makeId() {
 }
 
 function emptyRow() {
-  return { id: makeId(), company: '', zoomId: '', zoomName: '', zoomWebsite: '', cdm: '', tier: '' };
+  return {
+    id: makeId(), company: '', zoomId: '', zoomName: '', zoomWebsite: '',
+    cdm: '', tier: '',
+    // Set when the user clicks an amber suggestion pill — the canonical
+    // Table View name they accepted. Rendered as a green confirmation
+    // pill in the Suggested Company Name column. Cleared on any manual
+    // Company edit that doesn't match it, since the suggestion is then
+    // stale.
+    acceptedSuggestion: '',
+  };
 }
 
 // Tab / comma / semicolon-tolerant split for clipboard paste — handles
@@ -349,7 +358,32 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings }) {
     const updated = persistedRows.map(r => {
       if (r.id !== rowId) return r;
       const next = { ...r, [key]: value };
+      // A manual Company edit invalidates a previously-accepted
+      // suggestion unless the user edited back to the same canonical
+      // name — in that case keep the green confirmation.
+      if (key === 'company' && next.acceptedSuggestion && next.acceptedSuggestion !== value) {
+        next.acceptedSuggestion = '';
+      }
       return key === 'company' ? withAutofill(next) : next;
+    });
+    persist(updated);
+  }
+
+  // One-click promotion from the amber suggestion pill: replace the
+  // row's Company with the canonical name, mark the suggestion as
+  // accepted (so the cell stays lit up green afterwards), and run the
+  // standard autofill so Zoom ID / Name / Website / CDM / Tier light
+  // up from the matched prospect.
+  function acceptSuggestion(rowId, suggestionName) {
+    if (!suggestionName) return;
+    if (String(rowId).startsWith('__pad_')) {
+      const fresh = { ...emptyRow(), company: suggestionName, acceptedSuggestion: suggestionName };
+      persist([...persistedRows, withAutofill(fresh)]);
+      return;
+    }
+    const updated = persistedRows.map(r => {
+      if (r.id !== rowId) return r;
+      return withAutofill({ ...r, company: suggestionName, acceptedSuggestion: suggestionName });
     });
     persist(updated);
   }
@@ -472,7 +506,13 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings }) {
     const lines = [COLUMNS.map(c => c.label).join('\t')];
     for (const r of persistedRows) {
       lines.push(COLUMNS.map(c => {
-        if (c.key === 'suggestedCompany') return suggestCompany(r.company)?.name || '';
+        if (c.key === 'suggestedCompany') {
+          // Accepted suggestion (still matching the company) takes
+          // precedence over a freshly-computed one — that's what the
+          // user sees on screen.
+          if (r.acceptedSuggestion && r.acceptedSuggestion === r.company) return r.acceptedSuggestion;
+          return suggestCompany(r.company)?.name || '';
+        }
         return r[c.key] || '';
       }).join('\t'));
     }
@@ -604,10 +644,29 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings }) {
                         />
                       ) : c.key === 'suggestedCompany' ? (
                         <div style={{ padding: '0.45rem 0.6rem', minHeight: '1.4rem' }}>
-                          {suggestion ? (
+                          {(r.acceptedSuggestion && r.acceptedSuggestion === r.company) ? (
+                            <span
+                              title={`Accepted Table View match: "${r.acceptedSuggestion}". Click × to clear.`}
+                              style={{
+                                display: 'inline-flex', alignItems: 'center', gap: 4,
+                                background: '#DCFCE7', border: '1px solid #86EFAC', color: '#166534',
+                                padding: '2px 8px', borderRadius: 999, fontSize: '0.7rem',
+                                fontWeight: 600, fontFamily: 'inherit',
+                                maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                              }}
+                            >
+                              ✓ {r.acceptedSuggestion}
+                              <button
+                                type="button"
+                                onClick={() => updateCell(r.id, 'acceptedSuggestion', '')}
+                                title="Clear accepted suggestion"
+                                style={{ border: 'none', background: 'transparent', color: '#16A34A', cursor: 'pointer', padding: 0, fontSize: '0.85rem', lineHeight: 1, fontWeight: 700 }}
+                              >×</button>
+                            </span>
+                          ) : suggestion ? (
                             <button
                               type="button"
-                              onClick={() => updateCell(r.id, 'company', suggestion.name)}
+                              onClick={() => acceptSuggestion(r.id, suggestion.name)}
                               title={`Click to replace "${r.company}" with the Table View match "${suggestion.name}" (score ${suggestion.score}/100). The Zoom ID / Name / Website / CDM / Tier columns will auto-fill from that prospect.`}
                               style={{
                                 background: '#FEF3C7', border: '1px solid #FCD34D', color: '#92400E',
