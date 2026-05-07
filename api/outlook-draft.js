@@ -88,27 +88,40 @@ export default async function handler(req, res) {
 
 // Look up or create a subfolder of the named parent (e.g. "drafts")
 // by displayName. Returns the folder id.
+//
+// Implementation note: an earlier version used $filter to short-circuit
+// the lookup, but Graph's quoting rules for single-quotes-inside-the-
+// filter-value are inconsistent across tenants and the URL-encoded
+// form occasionally 400s. Listing all childFolders + matching in
+// JS is plenty fast (Drafts rarely has more than a handful of
+// subfolders) and avoids the encoding minefield. Same reason for
+// using /me/mailFolders/drafts/... (the well-known name as a URL
+// segment) instead of /me/mailFolders('drafts')/... — both are
+// documented but the segment form is what every Graph SDK ships.
 async function ensureSubfolder(accessToken, parentWellKnown, displayName) {
-  // Microsoft Graph $filter quoting: a single quote inside the value
-  // needs to be doubled. Names with double quotes / control chars are
-  // also stripped here so the folder name is always something Outlook
-  // will accept.
   const safeName = displayName.replace(/[\\/:*?"<>|\x00-\x1F]/g, '').slice(0, 240).trim();
   if (!safeName) throw new Error('folderName resolved to empty after sanitisation');
-  const filterValue = safeName.replace(/'/g, "''");
-  const listUrl = `https://graph.microsoft.com/v1.0/me/mailFolders('${parentWellKnown}')/childFolders?$filter=${encodeURIComponent(`displayName eq '${filterValue}'`)}&$select=id,displayName&$top=1`;
-  const listRes = await fetch(listUrl, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  if (listRes.ok) {
-    const list = await listRes.json();
-    if (Array.isArray(list.value) && list.value.length > 0 && list.value[0].id) {
-      return list.value[0].id;
+
+  // List existing children, paging until we either find a match or
+  // exhaust the list. $top=200 fits the vast majority of users in one
+  // page; the @odata.nextLink loop covers the long tail.
+  let nextUrl = `https://graph.microsoft.com/v1.0/me/mailFolders/${encodeURIComponent(parentWellKnown)}/childFolders?$select=id,displayName&$top=200`;
+  while (nextUrl) {
+    const listRes = await fetch(nextUrl, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!listRes.ok) {
+      const err = await listRes.json().catch(() => ({}));
+      throw new Error('Failed to list child folders: ' + (err.error?.message || `HTTP ${listRes.status}`));
     }
+    const list = await listRes.json();
+    const target = (list.value || []).find(f => f && typeof f.displayName === 'string' && f.displayName === safeName);
+    if (target?.id) return target.id;
+    nextUrl = list['@odata.nextLink'] || null;
   }
 
   // Not found → create.
-  const createUrl = `https://graph.microsoft.com/v1.0/me/mailFolders('${parentWellKnown}')/childFolders`;
+  const createUrl = `https://graph.microsoft.com/v1.0/me/mailFolders/${encodeURIComponent(parentWellKnown)}/childFolders`;
   const createRes = await fetch(createUrl, {
     method: 'POST',
     headers: {
