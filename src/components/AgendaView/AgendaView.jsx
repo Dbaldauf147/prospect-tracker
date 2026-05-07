@@ -1168,6 +1168,17 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
     URL.revokeObjectURL(url);
   }, [rows, bulkColVisible, hubspotByEmail, results, lookupMatch, prospects, dismissedSuggestedCompanies, otherRepsByProspect, cdmName]);
 
+  // The best company name we can put on the wire for this row. Priority:
+  //   1. The explicit row.company the user typed in the cell.
+  //   2. The prospect-matched / email-domain-inferred suggestedCompany.
+  // Used so a HubSpot contact whose `company` field is currently blank
+  // gets filled even when the user hasn't manually edited the row.
+  function effectiveRowCompany(row) {
+    const typed = String(row?.company || '').trim();
+    if (typed) return typed;
+    return String(row?.suggestedCompany || '').trim();
+  }
+
   // Build a properties object of fields the user has supplied that are currently blank
   // on the existing HubSpot contact. Used to "fill in missing values" without overwriting
   // data that HubSpot already has.
@@ -1176,7 +1187,13 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
     const firstname = fixAllCapsName(row.firstname);
     const lastname = fixAllCapsName(row.lastname);
     const patch = {};
-    if (row.company && !existing.company) patch.company = row.company;
+    // Company: when HubSpot has nothing, push whatever effective
+    // company we have for this row (typed cell first, then the
+    // suggested / matched value). Fixes the "HubSpot: no company
+    // listed" rows that previously stayed blank because the user
+    // never re-typed the value the suggested-pill already showed.
+    const company = effectiveRowCompany(row);
+    if (company && !existing.company) patch.company = company;
     if (firstname && !existing.firstname) patch.firstname = firstname;
     if (lastname && !existing.lastname) patch.lastname = lastname;
     if (row.phone && !existing.phone) patch.phone = row.phone;
@@ -1259,7 +1276,10 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
         email: row.email,
         firstname,
         lastname,
-        company: row.company,
+        // Same effective-company fallback updateOne uses — the
+        // suggestedCompany pill is treated as an acceptable source
+        // when the user hasn't typed anything in the cell.
+        company: effectiveRowCompany(row),
         phone: row.phone,
         jobtitle: row.jobtitle,
       };
@@ -2600,11 +2620,24 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
                             <div className={styles.hsCompanyHint} title="Currently stored in HubSpot">
                               HubSpot: {currentHsCompany}
                             </div>
-                          ) : (
-                            <div className={styles.hsCompanyMissing} title="HubSpot has no company value for this contact">
-                              HubSpot: no company listed
-                            </div>
-                          )
+                          ) : (() => {
+                            // HubSpot has no company. Show what we'll
+                            // push when the user clicks Send so the
+                            // gap is obvious AND the fix is obvious.
+                            const fill = effectiveRowCompany(r);
+                            if (fill) {
+                              return (
+                                <div className={styles.hsCompanyMissing} title={`HubSpot has no company on file. "${fill}" will be added on the next sync.`}>
+                                  HubSpot: no company listed → will add: <strong>{fill}</strong>
+                                </div>
+                              );
+                            }
+                            return (
+                              <div className={styles.hsCompanyMissing} title="HubSpot has no company value for this contact, and this row has nothing to fill in either. Type a company in the cell above to push it.">
+                                HubSpot: no company listed
+                              </div>
+                            );
+                          })()
                         )}
                       </td>}
                       {bulkColVisible.has('tier') && <td>{(() => {
