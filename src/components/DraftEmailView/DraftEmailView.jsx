@@ -1393,12 +1393,17 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
 
         {/* Right sidebar: Tag import + Saved drafts */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          {/* All three right-column cards (Custom Email Campaign,
+              Saved Drafts, Variable Coverage) share the .coverageCard
+              widener so their visual widths match. The grid track is
+              still 320 px — only the cards extend rightward, so the
+              Compose column on the left doesn't move. */}
           {/* Custom Email Campaign — pulls contacts in two ways:
               (1) checkboxes ticked on the Active / Client / Key
               Contacts pages (see useDraftCampaignQueue), and
               (2) the existing tag-based importer below. Both sources
               feed the same draft, deduped by contact id. */}
-          <div className={styles.draftsCard}>
+          <div className={`${styles.draftsCard} ${styles.coverageCard}`}>
             <h3 className={styles.cardTitle}>Custom Email Campaign</h3>
             <CampaignQueueSection
               allContacts={allContacts}
@@ -1436,7 +1441,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
           </div>
 
           {/* Saved drafts */}
-          <div className={styles.draftsCard}>
+          <div className={`${styles.draftsCard} ${styles.coverageCard}`}>
             <h3 className={styles.cardTitle}>Saved Drafts ({drafts.length})</h3>
             {drafts.length === 0 ? (
               <p className={styles.emptyDrafts}>No saved drafts yet</p>
