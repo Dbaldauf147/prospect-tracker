@@ -8,16 +8,22 @@ import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 // The first four columns are the canonical "Zoom Info" payload — the
 // CSV export grabs them in this order. CDM / Tier come after so they
 // stay visible alongside the company without contaminating the export.
+// Default column widths in pixels. The user can drag the right edge of
+// any header to resize, and the new widths persist via
+// settings.zoomInfoColumnWidths so they survive reloads + sync via the
+// existing settings → Firestore pipeline.
 const COLUMNS = [
-  { key: 'company',         label: 'Company',                 width: '15%' },
-  { key: 'zoomId',          label: 'Zoom Company ID',         width: '13%' },
-  { key: 'zoomName',        label: 'Zoom Company Name',       width: '15%' },
-  { key: 'zoomWebsite',     label: 'Zoom Website',            width: '16%' },
-  { key: 'suggestedCompany', label: 'Suggested Company Name', width: '14%', readonly: true },
-  { key: 'cdm',             label: 'CDM',                     width: '10%' },
-  { key: 'tier',            label: 'Tier',                    width: '8%' },
-  { key: 'type',            label: 'Type',                    width: '9%' },
+  { key: 'company',          label: 'Company',                 defaultWidth: 200 },
+  { key: 'zoomId',           label: 'Zoom Company ID',         defaultWidth: 160 },
+  { key: 'zoomName',         label: 'Zoom Company Name',       defaultWidth: 200 },
+  { key: 'zoomWebsite',      label: 'Zoom Website',            defaultWidth: 220 },
+  { key: 'suggestedCompany', label: 'Suggested Company Name',  defaultWidth: 180, readonly: true },
+  { key: 'cdm',              label: 'CDM',                     defaultWidth: 130 },
+  { key: 'tier',             label: 'Tier',                    defaultWidth: 90 },
+  { key: 'type',             label: 'Type',                    defaultWidth: 110 },
 ];
+
+const MIN_COLUMN_WIDTH = 60;
 
 const EXPORT_COLUMN_KEYS = ['company', 'zoomId', 'zoomName', 'zoomWebsite'];
 
@@ -223,6 +229,70 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings }) {
   }, [settings]);
 
   const [search, setSearch] = useState('');
+
+  // Column widths in pixels — keyed by column.key so a future column
+  // re-order doesn't scramble the user's saved widths. Hydrates from
+  // settings.zoomInfoColumnWidths on every render so a Firestore-driven
+  // settings change shows up live, falling back to the column's
+  // defaultWidth when no override is saved.
+  const columnWidths = useMemo(() => {
+    const saved = settings?.zoomInfoColumnWidths || {};
+    const out = {};
+    for (const c of COLUMNS) {
+      const v = Number(saved[c.key]);
+      out[c.key] = Number.isFinite(v) && v >= MIN_COLUMN_WIDTH ? v : c.defaultWidth;
+    }
+    return out;
+  }, [settings]);
+
+  // Drag-resize state. While the user is dragging a header edge we
+  // keep the in-flight width in a ref so mousemove doesn't trigger a
+  // React re-render on every pixel — the cell that owns the handle
+  // updates the relevant <col> element directly. On mouseup we commit
+  // the final width to settings, which kicks off one re-render.
+  const dragRef = useRef(null); // { key, startX, startWidth, colEl }
+  const colRefs = useRef({}); // key → <col> element
+
+  function startResize(e, colKey) {
+    e.preventDefault();
+    e.stopPropagation();
+    const colEl = colRefs.current[colKey];
+    if (!colEl) return;
+    dragRef.current = {
+      key: colKey,
+      startX: e.clientX,
+      startWidth: columnWidths[colKey] || COLUMNS.find(c => c.key === colKey)?.defaultWidth || 120,
+      colEl,
+    };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    function onMove(ev) {
+      const drag = dragRef.current;
+      if (!drag) return;
+      const next = Math.max(MIN_COLUMN_WIDTH, drag.startWidth + (ev.clientX - drag.startX));
+      drag.colEl.style.width = `${next}px`;
+      drag.lastWidth = next;
+    }
+    function onUp() {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      const drag = dragRef.current;
+      dragRef.current = null;
+      if (drag && drag.lastWidth && drag.lastWidth !== drag.startWidth) {
+        const nextMap = { ...(settings?.zoomInfoColumnWidths || {}), [drag.key]: Math.round(drag.lastWidth) };
+        updateSettings({ zoomInfoColumnWidths: nextMap });
+      }
+    }
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
+  function resetColumnWidths() {
+    updateSettings({ zoomInfoColumnWidths: {} });
+  }
+  const hasCustomWidths = !!Object.keys(settings?.zoomInfoColumnWidths || {}).length;
 
   // Index every Table View prospect by lower-cased company so a row's
   // committed company instantly resolves to its zoom fields. Strips
@@ -597,31 +667,84 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings }) {
           title="Download the first four columns (Company, Zoom Company ID, Zoom Company Name, Zoom Website) as a CSV file."
           style={{ fontSize: '0.75rem', padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: '#fff', color: 'var(--color-text)', borderRadius: 4, cursor: 'pointer', fontWeight: 600 }}
         >Export CSV</button>
+        {hasCustomWidths && (
+          <button
+            type="button"
+            onClick={resetColumnWidths}
+            title="Restore every column to its default width."
+            style={{ fontSize: '0.75rem', padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: '#fff', color: 'var(--color-text-secondary)', borderRadius: 4, cursor: 'pointer', fontWeight: 600 }}
+          >Reset widths</button>
+        )}
       </div>
       <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
         Tip: type in the Company column to search the Table View — pick a match and the Zoom ID / Name / Website auto-fill from that account. Paste a tab-separated block anywhere on this page (outside an input) to bulk-add rows.
       </div>
 
       <div style={{ flex: 1, overflow: 'auto', border: '1px solid var(--color-border)', borderRadius: 4 }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem', tableLayout: 'fixed' }}>
+        <table style={{ borderCollapse: 'collapse', fontSize: '0.8rem', tableLayout: 'fixed', width: 'max-content', minWidth: '100%' }}>
+          <colgroup>
+            {COLUMNS.map(c => (
+              <col
+                key={c.key}
+                ref={el => { colRefs.current[c.key] = el; }}
+                style={{ width: `${columnWidths[c.key]}px` }}
+              />
+            ))}
+            <col style={{ width: 44 }} />
+          </colgroup>
           <thead>
             <tr>
               {COLUMNS.map(c => (
                 <th key={c.key} style={{
-                  width: c.width,
                   textAlign: 'left',
                   padding: '0.45rem 0.6rem',
+                  paddingRight: '0.95rem',
                   background: '#F1F5F9',
                   fontWeight: 700,
                   fontSize: '0.72rem',
                   color: '#475569',
                   borderBottom: '1px solid var(--color-border)',
+                  // sticky doubles as the positioning context for the
+                  // absolutely-positioned resize handle below.
                   position: 'sticky',
                   top: 0,
                   zIndex: 1,
-                }}>{c.label}</th>
+                  overflow: 'hidden',
+                  whiteSpace: 'nowrap',
+                  textOverflow: 'ellipsis',
+                }}>
+                  <span style={{ position: 'relative', display: 'block' }}>
+                    {c.label}
+                  </span>
+                  <span
+                    onMouseDown={e => startResize(e, c.key)}
+                    onDoubleClick={() => {
+                      const def = COLUMNS.find(x => x.key === c.key)?.defaultWidth;
+                      if (!def) return;
+                      const nextMap = { ...(settings?.zoomInfoColumnWidths || {}) };
+                      delete nextMap[c.key];
+                      updateSettings({ zoomInfoColumnWidths: nextMap });
+                    }}
+                    title="Drag to resize. Double-click to reset this column to its default width."
+                    style={{
+                      position: 'absolute',
+                      top: 0,
+                      right: 0,
+                      width: 8,
+                      height: '100%',
+                      cursor: 'col-resize',
+                      userSelect: 'none',
+                      zIndex: 2,
+                      // Subtle indicator: a hairline that lights up on
+                      // hover so the user can find the handle.
+                      borderRight: '1px solid #E2E8F0',
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.borderRight = '2px solid #009530'; }}
+                    onMouseLeave={e => { e.currentTarget.style.borderRight = '1px solid #E2E8F0'; }}
+                  />
+                </th>
               ))}
-              <th style={{ width: 44, background: '#F1F5F9', borderBottom: '1px solid var(--color-border)', position: 'sticky', top: 0, zIndex: 1 }} />
+              <th style={{ background: '#F1F5F9', borderBottom: '1px solid var(--color-border)', position: 'sticky', top: 0, zIndex: 1 }} />
             </tr>
           </thead>
           <tbody>
