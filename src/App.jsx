@@ -354,6 +354,8 @@ function App() {
               onSelect={handleSelect}
               onAdd={addProspect}
               onReplaceAll={replaceAll}
+              settings={settings}
+              updateSettings={updateSettings}
             />
           ) : (
             <KanbanView

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import { Badge } from '../common/Badge';
 import { statusColor, tierColor, formatAum, formatNumber } from '../../utils/formatters';
@@ -103,7 +103,13 @@ function TagsCell({ value, prospect, colDef, onUpdate }) {
   );
 }
 
-function InlineCell({ value, prospect, colDef, onUpdate }) {
+// Sentinel value the enum select uses when the user picks "+ Add new…".
+// It's not a valid Type — we intercept the choice, prompt for a new
+// name, and route through the parent's onAddOption hook so the new
+// value lands in settings.customTypes (and on the row).
+const ADD_NEW_OPTION = '__ADD_NEW__';
+
+function InlineCell({ value, prospect, colDef, onUpdate, onAddOption }) {
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
   const [showSaved, setShowSaved] = useState(false);
@@ -125,9 +131,47 @@ function InlineCell({ value, prospect, colDef, onUpdate }) {
 
   if (colDef.type === 'enum' && editing) {
     return (
-      <select className={styles.inlineSelect} value={editValue} onChange={e => { setEditValue(e.target.value); setTimeout(() => { const newVal = e.target.value; setEditing(false); if (newVal !== (value ?? '')) { onUpdate(prospect.id, { [colDef.key]: newVal }); setShowSaved(true); setTimeout(() => setShowSaved(false), 1500); } }, 0); }} autoFocus>
+      <select
+        className={styles.inlineSelect}
+        value={editValue}
+        onChange={e => {
+          const picked = e.target.value;
+          // "+ Add new…" sentinel: prompt for a name, persist via the
+          // parent (onAddOption), and assign the new name to this row
+          // in one go. Empty / cancelled prompt leaves the cell as it
+          // was before.
+          if (picked === ADD_NEW_OPTION) {
+            const raw = window.prompt(`Add a new ${colDef.label}:`);
+            const name = (raw || '').trim();
+            setEditing(false);
+            if (!name) return;
+            const existing = (colDef.options || []).find(o => o.toLowerCase() === name.toLowerCase());
+            const finalName = existing || name;
+            if (!existing && onAddOption) onAddOption(colDef.key, name);
+            if (finalName !== (value ?? '')) {
+              onUpdate(prospect.id, { [colDef.key]: finalName });
+              setShowSaved(true);
+              setTimeout(() => setShowSaved(false), 1500);
+            }
+            return;
+          }
+          setEditValue(picked);
+          setTimeout(() => {
+            setEditing(false);
+            if (picked !== (value ?? '')) {
+              onUpdate(prospect.id, { [colDef.key]: picked });
+              setShowSaved(true);
+              setTimeout(() => setShowSaved(false), 1500);
+            }
+          }, 0);
+        }}
+        autoFocus
+      >
         <option value="">—</option>
         {colDef.options.map(o => <option key={o} value={o}>{o}</option>)}
+        {colDef.allowAddNew && (
+          <option value={ADD_NEW_OPTION}>+ Add new {colDef.label}…</option>
+        )}
       </select>
     );
   }
@@ -260,7 +304,50 @@ function parseNumber(val) {
   return isNaN(n) ? null : n;
 }
 
-export function TableView({ prospects, allProspects, sortConfig, toggleSort, onUpdate, onDelete, onSelect, onAdd, onReplaceAll }) {
+export function TableView({ prospects, allProspects, sortConfig, toggleSort, onUpdate, onDelete, onSelect, onAdd, onReplaceAll, settings, updateSettings }) {
+  // Type options union: built-in TYPES + values currently in use across
+  // every prospect + custom types the user has added via the dropdown.
+  // De-duped case-insensitively while keeping the first spelling, then
+  // sorted so the dropdown reads naturally.
+  const dynamicTypeOptions = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    const push = (t) => {
+      const v = String(t || '').trim();
+      if (!v) return;
+      const k = v.toLowerCase();
+      if (seen.has(k)) return;
+      seen.add(k);
+      out.push(v);
+    };
+    for (const t of TYPES) push(t);
+    for (const p of (allProspects || prospects || [])) push(p?.type);
+    for (const t of (settings?.customTypes || [])) push(t);
+    return out.sort((a, b) => a.localeCompare(b));
+  }, [allProspects, prospects, settings]);
+
+  // Persist a newly-added Type to settings.customTypes so it sticks
+  // across reloads. Called by the InlineCell when the user picks
+  // "+ Add new Type…" on the dropdown.
+  const handleAddOption = useCallback((colKey, name) => {
+    if (colKey !== 'type' || !name) return;
+    const list = Array.isArray(settings?.customTypes) ? settings.customTypes : [];
+    const exists = list.some(t => String(t).trim().toLowerCase() === name.trim().toLowerCase());
+    const builtIn = TYPES.some(t => t.toLowerCase() === name.trim().toLowerCase());
+    if (exists || builtIn) return;
+    if (updateSettings) updateSettings({ customTypes: [...list, name.trim()] });
+  }, [settings, updateSettings]);
+
+  // Inject the live options + add-new flag into the Type column so the
+  // shared InlineCell renderer picks them up without each cell having
+  // to know about settings / prospects.
+  const RESOLVED_COLUMNS = useMemo(() => {
+    return COLUMNS.map(c => (
+      c.key === 'type'
+        ? { ...c, options: dynamicTypeOptions, allowAddNew: true }
+        : c
+    ));
+  }, [dynamicTypeOptions]);
   const [colWidths, setColWidths] = useState(loadColWidths);
   const [visibleCols, setVisibleCols] = useState(() => {
     const saved = loadColVisible();
@@ -407,7 +494,7 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
 
   const getWidth = (col) => colWidths[col.key] || col.defaultWidth;
 
-  const visibleColumns = COLUMNS.filter(c => visibleCols.has(c.key) && !removedCols.has(c.key));
+  const visibleColumns = RESOLVED_COLUMNS.filter(c => visibleCols.has(c.key) && !removedCols.has(c.key));
 
   function toggleCol(key) {
     if (key === 'company') return; // always visible
@@ -574,7 +661,7 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
                         {p.company}
                       </span>
                     ) : (
-                      <InlineCell value={p[col.key]} prospect={p} colDef={col} onUpdate={onUpdate} />
+                      <InlineCell value={p[col.key]} prospect={p} colDef={col} onUpdate={onUpdate} onAddOption={handleAddOption} />
                     )}
                   </td>
                 ))}

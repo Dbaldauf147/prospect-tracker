@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
+import { TYPES } from '../../data/enums';
 
 // Headers as specified by the user. The user typed "Webiste" in their
 // note — we use the canonical "Website" spelling on the column header
@@ -222,6 +223,42 @@ const CompanyAutocomplete = memo(function CompanyAutocomplete({
   );
 });
 
+// Type cell on the Zoom Info table — same dynamic option set as the
+// Table View's Type column, with a "+ Add new Type…" sentinel that
+// prompts the user and calls onAddNew so the entry persists in
+// settings.customTypes (and the new value is assigned to this row).
+const ADD_NEW_TYPE = '__ADD_NEW_TYPE__';
+const TypeDropdown = memo(function TypeDropdown({ value, options, onChange, onAddNew }) {
+  return (
+    <select
+      value={value || ''}
+      onChange={e => {
+        const v = e.target.value;
+        if (v === ADD_NEW_TYPE) {
+          const raw = window.prompt('Add a new Type:');
+          const name = (raw || '').trim();
+          if (!name) return;
+          const existing = (options || []).find(o => o.toLowerCase() === name.toLowerCase());
+          if (existing) onChange(existing);
+          else if (onAddNew) onAddNew(name);
+          return;
+        }
+        onChange(v);
+      }}
+      style={{
+        width: '100%', border: 'none', padding: '0.45rem 0.6rem',
+        fontFamily: 'inherit', fontSize: '0.8rem',
+        background: 'transparent', boxSizing: 'border-box', outline: 'none',
+        appearance: 'auto',
+      }}
+    >
+      <option value="">—</option>
+      {(options || []).map(o => <option key={o} value={o}>{o}</option>)}
+      <option value={ADD_NEW_TYPE}>+ Add new Type…</option>
+    </select>
+  );
+});
+
 export function ZoomInfoView({ prospects = [], settings, updateSettings }) {
   const persistedRows = useMemo(() => {
     const arr = Array.isArray(settings?.zoomInfo) ? settings.zoomInfo : [];
@@ -342,6 +379,37 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings }) {
     }
     return out.sort((a, b) => a.localeCompare(b));
   }, [prospects]);
+
+  // Same union the Table View uses for the Type dropdown — built-in
+  // TYPES + every distinct value across prospects + user-added customs.
+  // Sorted case-insensitively. Drives the Type cell's <select> on this
+  // page so both views surface the same set of choices.
+  const dynamicTypeOptions = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    const push = (t) => {
+      const v = String(t || '').trim();
+      if (!v) return;
+      const k = v.toLowerCase();
+      if (seen.has(k)) return;
+      seen.add(k);
+      out.push(v);
+    };
+    for (const t of TYPES) push(t);
+    for (const p of prospects) push(p?.type);
+    for (const t of (settings?.customTypes || [])) push(t);
+    return out.sort((a, b) => a.localeCompare(b));
+  }, [prospects, settings]);
+
+  function addCustomType(name) {
+    const v = String(name || '').trim();
+    if (!v) return;
+    const list = Array.isArray(settings?.customTypes) ? settings.customTypes : [];
+    const exists = list.some(t => String(t).trim().toLowerCase() === v.toLowerCase());
+    const builtIn = TYPES.some(t => t.toLowerCase() === v.toLowerCase());
+    if (exists || builtIn) return;
+    updateSettings({ customTypes: [...list, v] });
+  }
 
   function findProspectByCompany(company) {
     if (!company) return null;
@@ -493,63 +561,19 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings }) {
   // pasteModal = { headers: string[], rows: string[][], mapping: {targetKey: header} }
   // null when closed.
 
-  // Excel paste: parse the tab-separated block, treat the first row as
-  // headers, auto-detect the column mapping from header text, and open
-  // the mapping modal so the user can confirm / override before import.
-  // Single-column pastes (no tabs at all) skip the modal entirely and
-  // each line becomes a Company, since there's nothing to map.
+  // Excel paste anywhere on the page: pulls the clipboard text and
+  // hands it off to the shared ingester (which opens the mapping modal
+  // for multi-column blocks or fast-imports a single-column list).
+  // The toolbar's "📋 Paste from Excel" button is the discoverable
+  // entry point; this listener is the convenience version for users
+  // who land on the page already holding ⌘V.
   function handlePaste(e) {
     const tag = (e.target?.tagName || '').toLowerCase();
     if (tag === 'input' || tag === 'textarea') return;
     const text = e.clipboardData?.getData('text/plain') || '';
     if (!text.trim()) return;
-
-    const allLines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
-    if (allLines.length === 0) return;
-    const hasTabs = text.includes('\t');
-
-    // Single column → treat each non-empty line as a Company name and
-    // run the same autofill, no mapping necessary.
-    if (!hasTabs) {
-      e.preventDefault();
-      const incoming = [];
-      for (const line of allLines) {
-        const v = line.trim();
-        if (!v) continue;
-        if (/^company$/i.test(v)) continue; // skip a single "Company" header line
-        incoming.push(withAutofill({ ...emptyRow(), company: v }));
-      }
-      if (incoming.length) persist([...persistedRows, ...incoming]);
-      return;
-    }
-
     e.preventDefault();
-    const parsed = allLines.map(l => splitPasteRow(l).map(c => (c || '').trim()));
-    const headerCells = parsed[0] || [];
-    const dataRows = parsed.slice(1).filter(r => r.some(c => c));
-    if (!dataRows.length) return;
-
-    // De-duplicate header labels in case the source had a "Company"
-    // column repeated — we suffix the second occurrence with " (2)" so
-    // the dropdowns can still address each one individually.
-    const headers = [];
-    const seenH = new Map();
-    for (const raw of headerCells) {
-      let h = raw || '(blank)';
-      if (seenH.has(h)) {
-        const n = seenH.get(h) + 1;
-        seenH.set(h, n);
-        h = `${h} (${n})`;
-      } else {
-        seenH.set(h, 1);
-      }
-      headers.push(h);
-    }
-    setPasteModal({
-      headers,
-      rows: dataRows,
-      mapping: autoDetectMapping(headers),
-    });
+    ingestPastedText(text);
   }
 
   function executePasteImport() {
@@ -592,6 +616,69 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings }) {
       if (targetKey) next[targetKey] = header;
       return { ...m, mapping: next };
     });
+  }
+
+  // Discoverable "Paste from Excel" affordance — reads the system
+  // clipboard via the async API when the browser allows it, then runs
+  // the same parser handlePaste does (so the mapping modal pops up
+  // for multi-column blocks). When clipboard access is denied we
+  // surface a textarea the user can paste into manually.
+  const [pasteHelper, setPasteHelper] = useState(null); // null | string
+  async function pasteFromExcel() {
+    try {
+      const text = await navigator.clipboard?.readText?.();
+      if (text && text.trim()) {
+        ingestPastedText(text);
+        return;
+      }
+    } catch {
+      /* permission denied or insecure context — fall through to manual paste */
+    }
+    setPasteHelper('');
+  }
+
+  function ingestPastedText(text) {
+    if (!text || !text.trim()) return;
+    const allLines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
+    if (!allLines.length) return;
+    const hasTabs = text.includes('\t');
+    if (!hasTabs) {
+      const incoming = [];
+      for (const line of allLines) {
+        const v = line.trim();
+        if (!v || /^company$/i.test(v)) continue;
+        incoming.push(withAutofill({ ...emptyRow(), company: v }));
+      }
+      if (incoming.length) persist([...persistedRows, ...incoming]);
+      return;
+    }
+    const parsed = allLines.map(l => splitPasteRow(l).map(c => (c || '').trim()));
+    const headerCells = parsed[0] || [];
+    const dataRows = parsed.slice(1).filter(r => r.some(c => c));
+    if (!dataRows.length) return;
+    const headers = [];
+    const seenH = new Map();
+    for (const raw of headerCells) {
+      let h = raw || '(blank)';
+      if (seenH.has(h)) {
+        const n = seenH.get(h) + 1;
+        seenH.set(h, n);
+        h = `${h} (${n})`;
+      } else {
+        seenH.set(h, 1);
+      }
+      headers.push(h);
+    }
+    setPasteModal({ headers, rows: dataRows, mapping: autoDetectMapping(headers) });
+  }
+
+  function clearTable() {
+    if (!persistedRows.length) return;
+    const ok = window.confirm(
+      `Delete all ${persistedRows.length} saved row${persistedRows.length === 1 ? '' : 's'} from the Zoom Info table? The 50 default empty rows will reappear ready for fresh data. This cannot be undone.`
+    );
+    if (!ok) return;
+    persist([]);
   }
 
   function copyToClipboard() {
@@ -669,6 +756,12 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings }) {
         />
         <button
           type="button"
+          onClick={pasteFromExcel}
+          title="Paste a tab-separated block copied from Excel. A column-mapping modal will appear so you can confirm which columns fill Company / Zoom ID / Zoom Name / Zoom Website / CDM / Tier / Type."
+          style={{ fontSize: '0.75rem', padding: '0.4rem 0.8rem', border: '1px solid #009530', background: '#fff', color: '#009530', borderRadius: 4, cursor: 'pointer', fontWeight: 700 }}
+        >📋 Paste from Excel</button>
+        <button
+          type="button"
           onClick={addRow}
           style={{ fontSize: '0.75rem', padding: '0.4rem 0.8rem', border: 'none', background: '#009530', color: '#fff', borderRadius: 4, cursor: 'pointer', fontWeight: 600 }}
         >+ Add Row</button>
@@ -692,10 +785,55 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings }) {
             style={{ fontSize: '0.75rem', padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: '#fff', color: 'var(--color-text-secondary)', borderRadius: 4, cursor: 'pointer', fontWeight: 600 }}
           >Reset widths</button>
         )}
+        <button
+          type="button"
+          onClick={clearTable}
+          disabled={!persistedRows.length}
+          title={persistedRows.length
+            ? `Delete every saved row from the Zoom Info table. The 50 default empty rows will reappear.`
+            : 'Nothing to clear yet.'}
+          style={{
+            fontSize: '0.75rem', padding: '0.4rem 0.8rem',
+            border: '1px solid #FCA5A5',
+            background: persistedRows.length ? '#fff' : '#F8FAFC',
+            color: persistedRows.length ? '#B91C1C' : '#CBD5E1',
+            borderRadius: 4,
+            cursor: persistedRows.length ? 'pointer' : 'not-allowed',
+            fontWeight: 600,
+          }}
+        >Clear table</button>
       </div>
       <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
-        Tip: type in the Company column to search the Table View — pick a match and the Zoom ID / Name / Website auto-fill from that account. Paste a tab-separated block anywhere on this page (outside an input) to bulk-add rows.
+        Tip: click <strong>📋 Paste from Excel</strong> to import a copied block — a column-mapping modal pops up so you can confirm which Excel column fills which Zoom Info field. You can also type directly in the Company column to search Table View; pick a match and the Zoom ID / Name / Website / CDM / Tier / Type auto-fill from that account.
       </div>
+
+      {pasteHelper !== null && (
+        <div style={{ border: '1px dashed #009530', borderRadius: 6, padding: '0.6rem', background: '#F0FDF4', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+          <div style={{ fontSize: '0.74rem', fontWeight: 700, color: '#166534' }}>
+            Paste your Excel data here (Ctrl/⌘+V), then click Import:
+          </div>
+          <textarea
+            autoFocus
+            value={pasteHelper}
+            onChange={e => setPasteHelper(e.target.value)}
+            placeholder="Paste a block copied from Excel — first row should be the headers (Company, Zoom Company ID, …)."
+            style={{ width: '100%', minHeight: 90, padding: '0.4rem', border: '1px solid #86EFAC', borderRadius: 4, fontSize: '0.78rem', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', boxSizing: 'border-box', resize: 'vertical' }}
+          />
+          <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'flex-end' }}>
+            <button
+              type="button"
+              onClick={() => setPasteHelper(null)}
+              style={{ fontSize: '0.72rem', padding: '0.3rem 0.7rem', border: '1px solid var(--color-border)', background: '#fff', color: 'var(--color-text-secondary)', borderRadius: 4, cursor: 'pointer', fontWeight: 600 }}
+            >Cancel</button>
+            <button
+              type="button"
+              disabled={!pasteHelper.trim()}
+              onClick={() => { ingestPastedText(pasteHelper); setPasteHelper(null); }}
+              style={{ fontSize: '0.72rem', padding: '0.3rem 0.8rem', border: 'none', background: pasteHelper.trim() ? '#009530' : '#CBD5E1', color: '#fff', borderRadius: 4, cursor: pasteHelper.trim() ? 'pointer' : 'not-allowed', fontWeight: 700 }}
+            >Import</button>
+          </div>
+        </div>
+      )}
 
       <div style={{ flex: 1, overflow: 'auto', border: '1px solid var(--color-border)', borderRadius: 4 }}>
         <table style={{ borderCollapse: 'collapse', fontSize: '0.8rem', tableLayout: 'fixed', width: 'max-content', minWidth: '100%' }}>
@@ -786,6 +924,16 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings }) {
                           suggestions={companyOptions}
                           placeholder={isPad ? 'Type a company…' : '—'}
                           style={cellInputStyle}
+                        />
+                      ) : c.key === 'type' ? (
+                        <TypeDropdown
+                          value={r.type || ''}
+                          options={dynamicTypeOptions}
+                          onChange={v => updateCell(r.id, 'type', v)}
+                          onAddNew={(name) => {
+                            addCustomType(name);
+                            updateCell(r.id, 'type', name);
+                          }}
                         />
                       ) : c.key === 'suggestedCompany' ? (
                         <div style={{ padding: '0.45rem 0.6rem', minHeight: '1.4rem' }}>
