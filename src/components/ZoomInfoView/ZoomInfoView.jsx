@@ -294,6 +294,20 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings }) {
   }
   const hasCustomWidths = !!Object.keys(settings?.zoomInfoColumnWidths || {}).length;
 
+  // Filter out Table View rows whose company column is a placeholder
+  // ("N.A.", "N/A", "TBD", "Unknown", a lone dash, etc.) — they used
+  // to leak into the autocomplete and fuzzy-match index, so a row with
+  // a typed name like "Northrop" could fuzzy-suggest "N.A." over the
+  // real account. Mirrors the placeholder check used elsewhere
+  // (SitesView's isSupplierPlaceholder).
+  const isPlaceholderCompany = (s) => {
+    const t = String(s || '').trim();
+    if (!t) return true;
+    if (/^[-—–_]+$/.test(t)) return true;
+    if (/^(n\.?a\.?|n\/a|none|null|tbd|unknown|\?|\.|test)$/i.test(t)) return true;
+    return false;
+  };
+
   // Index every Table View prospect by lower-cased company so a row's
   // committed company instantly resolves to its zoom fields. Strips
   // common corp suffixes so "Acme Inc" still matches "Acme".
@@ -304,9 +318,11 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings }) {
       .replace(/\s+/g, ' ').trim();
     const map = new Map();
     for (const p of prospects) {
-      const key = String(p?.company || '').toLowerCase().trim();
+      const raw = p?.company;
+      if (isPlaceholderCompany(raw)) continue;
+      const key = String(raw || '').toLowerCase().trim();
       if (key) map.set(key, p);
-      const norm = strip(p?.company);
+      const norm = strip(raw);
       if (norm && !map.has(norm)) map.set(norm, p);
     }
     return { map, strip };
@@ -317,6 +333,7 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings }) {
     const out = [];
     for (const p of prospects) {
       const c = (p?.company || '').trim();
+      if (isPlaceholderCompany(c)) continue;
       if (!c) continue;
       const k = c.toLowerCase();
       if (seen.has(k)) continue;
