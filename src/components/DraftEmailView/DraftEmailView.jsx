@@ -131,6 +131,80 @@ function NoteContactPicker({ contactNotes, selectedContacts, onAdd, onRemove, on
   );
 }
 
+// Result panel shown after Claude reviews the email draft.
+// Score band + verdict line at the top, strengths / fixes lists below,
+// suggested rewrite at the bottom with a one-click "Use rewrite"
+// button that swaps the subject + body in the composer.
+function CritiquePanel({ critique, onClose, onUseRewrite }) {
+  const { score, verdict, strengths, fixes, rewriteSubject, rewriteBody } = critique;
+  const tier = score == null ? 'unknown' : score >= 80 ? 'good' : score >= 55 ? 'mid' : 'bad';
+  const bandStyle = {
+    good: { bg: '#DCFCE7', border: '#86EFAC', color: '#166534' },
+    mid:  { bg: '#FEF3C7', border: '#FCD34D', color: '#92400E' },
+    bad:  { bg: '#FEE2E2', border: '#FCA5A5', color: '#991B1B' },
+    unknown: { bg: '#F1F5F9', border: '#CBD5E1', color: '#334155' },
+  }[tier];
+  return (
+    <div style={{ marginBottom: '0.6rem', border: `1px solid ${bandStyle.border}`, background: bandStyle.bg, borderRadius: 6, padding: '0.6rem 0.7rem', fontSize: '0.78rem', color: bandStyle.color }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'space-between', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontWeight: 800, fontSize: '0.95rem' }}>{score == null ? '—' : `${score}/100`}</span>
+          {verdict && <span style={{ fontWeight: 600 }}>{verdict}</span>}
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          style={{ background: 'none', border: 'none', color: bandStyle.color, fontSize: '1rem', cursor: 'pointer', padding: '0 4px', lineHeight: 1 }}
+          title="Close critique"
+        >×</button>
+      </div>
+      {strengths && strengths.length > 0 && (
+        <div style={{ marginTop: 6 }}>
+          <div style={{ fontSize: '0.66rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 2 }}>Working</div>
+          <ul style={{ margin: 0, paddingLeft: '1.1rem' }}>
+            {strengths.map((s, i) => <li key={i} style={{ marginBottom: 1 }}>{s}</li>)}
+          </ul>
+        </div>
+      )}
+      {fixes && fixes.length > 0 && (
+        <div style={{ marginTop: 6 }}>
+          <div style={{ fontSize: '0.66rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 2 }}>Fixes</div>
+          <ul style={{ margin: 0, paddingLeft: '1.1rem' }}>
+            {fixes.map((f, i) => (
+              <li key={i} style={{ marginBottom: 3 }}>
+                {f.issue && <span style={{ fontWeight: 700 }}>{f.issue}</span>}
+                {f.issue && f.fix && <span> — </span>}
+                {f.fix && <span>{f.fix}</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {(rewriteSubject || rewriteBody) && (
+        <div style={{ marginTop: 8, background: '#fff', border: '1px solid rgba(0,0,0,0.08)', borderRadius: 4, padding: '0.4rem 0.55rem', color: '#1E293B' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+            <div style={{ fontSize: '0.66rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#475569' }}>Suggested rewrite</div>
+            <button
+              type="button"
+              onClick={onUseRewrite}
+              style={{ padding: '0.2rem 0.55rem', border: 'none', background: '#7C3AED', color: '#fff', borderRadius: 4, fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}
+              title="Replace the current subject + body with Claude's rewrite. Variable tokens are preserved."
+            >Use rewrite</button>
+          </div>
+          {rewriteSubject && (
+            <div style={{ marginBottom: 4 }}>
+              <span style={{ fontWeight: 700, fontSize: '0.7rem' }}>Subject:</span> <span style={{ fontSize: '0.78rem' }}>{rewriteSubject}</span>
+            </div>
+          )}
+          {rewriteBody && (
+            <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'inherit', fontSize: '0.78rem', lineHeight: 1.45 }}>{rewriteBody}</pre>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TagContactPicker({ allContacts, selectedContacts, onAdd, onRemove, onBulkAdd, onBulkRemove }) {
   const [selectedTags, setSelectedTags] = useState(new Set());
   const [tagSearch, setTagSearch] = useState('');
@@ -394,6 +468,34 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
   const [draftsSent, setDraftsSent] = useState(0);
   const [outlookConnected, setOutlookConnected] = useState(false);
   const [showInsertMenu, setShowInsertMenu] = useState(false);
+  // Claude email critique — null when no review has run, busy flag
+  // while the request is in flight, otherwise the parsed { score,
+  // verdict, strengths, fixes, rewriteSubject, rewriteBody } payload.
+  const [critique, setCritique] = useState(null);
+  const [critiqueBusy, setCritiqueBusy] = useState(false);
+
+  async function runCritique() {
+    if (critiqueBusy) return;
+    setCritique(null);
+    setCritiqueBusy(true);
+    try {
+      const res = await fetch('/api/critique-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subject, body }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert('Claude couldn\'t review the draft: ' + (data?.error || res.statusText));
+        return;
+      }
+      setCritique(data);
+    } catch (err) {
+      alert('Network error talking to Claude: ' + (err?.message || 'unknown'));
+    } finally {
+      setCritiqueBusy(false);
+    }
+  }
   const [lastFocused, setLastFocused] = useState('body'); // 'subject' or 'body'
   const [attachments, setAttachments] = useState([]);
   const [draftCc, setDraftCc] = useState(() => {
@@ -996,33 +1098,64 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
           </div>
 
           <div className={styles.field}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.3rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.3rem', gap: 8, flexWrap: 'wrap' }}>
               <label className={styles.label} style={{ marginBottom: 0 }}>Body</label>
-              <div style={{ position: 'relative' }} ref={insertRef}>
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                 <button
-                  className={styles.insertBtn}
-                  onClick={() => setShowInsertMenu(p => !p)}
                   type="button"
-                >
-                  + Insert Variable
-                </button>
-                {showInsertMenu && (
-                  <div className={styles.insertDropdown}>
-                    {INSERT_VARIABLES.map(v => (
-                      <button
-                        key={v.token}
-                        className={styles.insertOption}
-                        onClick={() => insertVariable(v.token)}
-                      >
-                        <span className={styles.insertToken}>{v.token}</span>
-                        <span className={styles.insertLabel}>{v.label}</span>
-                        <span className={styles.insertExample}>e.g. {v.example}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
+                  onClick={runCritique}
+                  disabled={critiqueBusy}
+                  title="Send the current subject + body to Claude for a sales-coach critique. Returns a score, what's working, what to cut, and a tighter rewrite."
+                  style={{
+                    padding: '0.3rem 0.7rem',
+                    border: '1px solid #7C3AED',
+                    background: critiqueBusy ? '#EDE9FE' : '#7C3AED',
+                    color: critiqueBusy ? '#5B21B6' : '#fff',
+                    borderRadius: 4,
+                    fontSize: '0.72rem',
+                    fontWeight: 700,
+                    cursor: critiqueBusy ? 'wait' : 'pointer',
+                    fontFamily: 'inherit',
+                    whiteSpace: 'nowrap',
+                  }}
+                >{critiqueBusy ? 'Reviewing…' : '✨ Critique with Claude'}</button>
+                <div style={{ position: 'relative' }} ref={insertRef}>
+                  <button
+                    className={styles.insertBtn}
+                    onClick={() => setShowInsertMenu(p => !p)}
+                    type="button"
+                  >
+                    + Insert Variable
+                  </button>
+                  {showInsertMenu && (
+                    <div className={styles.insertDropdown}>
+                      {INSERT_VARIABLES.map(v => (
+                        <button
+                          key={v.token}
+                          className={styles.insertOption}
+                          onClick={() => insertVariable(v.token)}
+                        >
+                          <span className={styles.insertToken}>{v.token}</span>
+                          <span className={styles.insertLabel}>{v.label}</span>
+                          <span className={styles.insertExample}>e.g. {v.example}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
+            {critique && (
+              <CritiquePanel
+                critique={critique}
+                onClose={() => setCritique(null)}
+                onUseRewrite={() => {
+                  if (critique.rewriteSubject) setSubject(critique.rewriteSubject);
+                  if (critique.rewriteBody) setBody(critique.rewriteBody.replace(/\n/g, '<br>'));
+                  setCritique(null);
+                }}
+              />
+            )}
             <div className={styles.editorWrap} onClick={() => setLastFocused('body')}>
               <ReactQuill
                 ref={bodyRef}
