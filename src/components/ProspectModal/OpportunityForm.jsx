@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo, useRef, memo } from 'react';
 import { loadOppsFromCache, searchOpps } from '../../utils/oppsCache';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
+import { ScopingNotesEditor } from './ScopingNotesEditor';
+import { SERVICE_CATEGORIES } from '../../data/enums';
 import * as MsgReaderModule from '@kenjiuno/msgreader';
 // CJS default-export interop: depending on how Vite resolves the package,
 // the class can land at either MsgReaderModule.default or one extra level
@@ -19,6 +21,21 @@ const MsgReader = (MsgReaderModule?.default?.default || MsgReaderModule?.default
 // a re-render of the entire OpportunityForm tree. Still syncs in when
 // the parent value legitimately changes (opp-link autofill, template
 // self-heal, etc.).
+// Flat list of every service from the Services Explored picker —
+// drives the @-mention dropdown on the Scoping Details Notes field.
+// De-duped while preserving the source order so DATA-tier services
+// stay grouped together when no query is typed.
+const SCOPING_SERVICE_OPTIONS = (() => {
+  const seen = new Set();
+  const out = [];
+  for (const cat of SERVICE_CATEGORIES) {
+    for (const item of cat.items) {
+      if (!seen.has(item)) { seen.add(item); out.push(item); }
+    }
+  }
+  return out;
+})();
+
 // Default form schema. Edit these arrays to change the template.
 // `autofill` is the Opps sheet column whose value should populate the field
 // when an opportunity is linked.
@@ -36,7 +53,10 @@ export const DEFAULT_FORM_TEMPLATE = {
     // (Sold / Renewal / In Progress) on opp-link, but editable any time.
     { key: 'currentScope', label: 'Current Scope', type: 'textarea' },
     { key: 'region', label: 'Region', type: 'select', options: ['EU', 'Global', 'NAM', 'APAC', 'LATAM'] },
-    { key: 'summary', label: 'Meeting Summary / Notes', type: 'textarea' },
+    { key: 'summary', label: 'General Notes', type: 'textarea' },
+    // Free-form scoping notes that support @-mentions of services from
+    // the Services Explored list (see ScopingNotesEditor).
+    { key: 'scopingNotes', label: 'Scoping Details Notes', type: 'scopingNotes' },
   ],
   tables: [
     {
@@ -84,7 +104,7 @@ export const DEFAULT_FORM_TEMPLATE = {
     {
       key: 'meetingNotes',
       label: 'Key Issues',
-      aboveField: 'summary', // rendered inline ABOVE the Meeting Summary / Notes field
+      aboveField: 'summary', // rendered inline ABOVE the General Notes field
       starrable: true, // star-to-promote: one row at a time bubbles to the top
       wrapCells: true, // long-form note taking — textareas that grow with content
       columns: [
@@ -96,7 +116,7 @@ export const DEFAULT_FORM_TEMPLATE = {
     {
       key: 'actionItems',
       label: 'Action Items / Next Steps',
-      underField: 'summary', // nests directly under Meeting Summary / Notes
+      underField: 'summary', // nests directly under General Notes
       columns: [
         { key: 'item', label: 'Action Item' },
         { key: 'owner', label: 'Owner', attendeePicker: true },
@@ -3381,7 +3401,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
           const aboveTables = tablesAboveField[f.key] || [];
           // Any field that has nested tables takes the full grid width so
           // the table actually fits. Textareas already do this.
-          const spanFull = f.type === 'textarea' || nestedTables.length > 0 || aboveTables.length > 0;
+          const spanFull = f.type === 'textarea' || f.type === 'scopingNotes' || nestedTables.length > 0 || aboveTables.length > 0;
           return (
             <div key={f.key} style={spanFull ? { gridColumn: 'span 2' } : undefined}>
               {aboveTables.length > 0 && (
@@ -3413,6 +3433,13 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                   style={sx.textarea}
                   value={formData.fieldValues[f.key] || ''}
                   onCommit={v => updateField(f.key, v)}
+                />
+              ) : f.type === 'scopingNotes' ? (
+                <ScopingNotesEditor
+                  value={formData.fieldValues[f.key] || ''}
+                  onCommit={v => updateField(f.key, v)}
+                  services={SCOPING_SERVICE_OPTIONS}
+                  placeholder="Capture scoping notes. Type @ to tag a service from the Services Explored list — e.g. @strategic → Strategic sourcing."
                 />
               ) : f.type === 'select' ? (
                 <select
