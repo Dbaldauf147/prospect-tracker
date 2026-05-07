@@ -905,7 +905,15 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     const col = template.tables.find(t => t.key === tableKey);
     if (!col) return;
     const empty = Object.fromEntries(col.columns.map(c => [c.key, '']));
-    set({ tables: { ...formData.tables, [tableKey]: [...(formData.tables[tableKey] || []), empty] } });
+    let nextRows = [...(formData.tables[tableKey] || []), empty];
+    // Agenda: when a fresh blank row is added, recompute the
+    // auto-fill so the new row picks up the remaining minutes (or, if
+    // a previous row was already auto-filled, leave that one alone
+    // and let it stay the carrier).
+    if (tableKey === 'agenda' && col.smartAgenda && meetingTotalMinutes) {
+      nextRows = applyAutoBalance(nextRows, meetingTotalMinutes);
+    }
+    set({ tables: { ...formData.tables, [tableKey]: nextRows } });
   };
 
   const removeTableRow = (tableKey, rowIdx) => {
@@ -1181,12 +1189,17 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                       );
                     }
                     if (t.smartAgenda && c.key === 'duration') {
+                      const isAuto = !!row?._autoDuration;
                       return (
                         <td key={c.key} style={sx.td}>
                           <input
                             type="number"
                             min="0"
-                            style={sx.cellInput}
+                            title={isAuto ? 'Auto-filled with the remaining meeting minutes. Type a value to pin it.' : undefined}
+                            style={{
+                              ...sx.cellInput,
+                              ...(isAuto ? { fontStyle: 'italic', color: '#64748B' } : null),
+                            }}
                             value={row[c.key] || ''}
                             onChange={e => updateAgendaDuration(rIdx, e.target.value)}
                             placeholder="min"
@@ -2006,22 +2019,88 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     } catch { return ''; }
   }
 
+  // Auto-balance the agenda so the next blank row always carries the
+  // remaining meeting minutes. The "auto-filled" row is tagged with
+  // _autoDuration so a follow-up edit elsewhere can rebalance it back
+  // to the new remainder. User-typed durations clear the tag and
+  // pin that cell.
+  function applyAutoBalance(rows, totalMinutes) {
+    if (!totalMinutes || !rows?.length) return rows;
+    // Prefer rebalancing a row we already auto-filled (so changing
+    // earlier rows just shrinks/grows that one). Otherwise target the
+    // first blank-duration row after at least one filled row — that's
+    // "the next agenda item" the user is asking about.
+    let target = rows.findIndex(r => r?._autoDuration);
+    if (target === -1) {
+      const firstFilled = rows.findIndex(r => Number(r?.duration) > 0);
+      if (firstFilled === -1) return rows; // nothing filled yet, nothing to balance from
+      for (let i = firstFilled + 1; i < rows.length; i++) {
+        const d = rows[i]?.duration;
+        if (d == null || d === '' || (typeof d === 'string' && d.trim() === '')) {
+          target = i;
+          break;
+        }
+      }
+    }
+    if (target === -1) return rows;
+    let used = 0;
+    for (let i = 0; i < rows.length; i++) {
+      if (i === target) continue;
+      used += Number(rows[i]?.duration) || 0;
+    }
+    const remaining = totalMinutes - used;
+    const current = rows[target]?.duration ?? '';
+    if (remaining > 0) {
+      const nextVal = String(remaining);
+      if (current === nextVal && rows[target]?._autoDuration) return rows;
+      const next = [...rows];
+      next[target] = { ...next[target], duration: nextVal, _autoDuration: true };
+      return next;
+    }
+    // Remainder gone (or negative — overflow). If we had auto-filled
+    // this row before, drop the auto-fill and clear the cell so the
+    // user can see they're at/over the budget. Don't touch rows the
+    // user filled themselves.
+    if (rows[target]?._autoDuration) {
+      const next = [...rows];
+      const { _autoDuration, ...rest } = next[target];
+      next[target] = { ...rest, duration: '' };
+      return next;
+    }
+    return rows;
+  }
+
   function updateAgendaDuration(rowIdx, newMinutes) {
     const rows = [...(formData.tables.agenda || [])];
     if (!rows.length) return;
     const parsed = Math.max(0, Number(newMinutes) || 0);
-    rows[rowIdx] = { ...rows[rowIdx], duration: parsed === 0 ? '' : String(parsed) };
-    // Just update the single row. The section-title counter shows
-    // "{sum} / {total} min · over" in red when agendaSum exceeds the
-    // meeting duration, which is enough of a signal without silently
-    // redistributing other rows' minutes.
-    set({ tables: { ...formData.tables, agenda: rows } });
+    // User typing into the cell clears any auto-fill marker on that
+    // row — their value is now pinned.
+    const { _autoDuration: _drop, ...rest } = rows[rowIdx] || {};
+    rows[rowIdx] = { ...rest, duration: parsed === 0 ? '' : String(parsed) };
+    const balanced = applyAutoBalance(rows, meetingTotalMinutes);
+    set({ tables: { ...formData.tables, agenda: balanced } });
   }
 
   const agendaSum = useMemo(() => {
     const rows = formData.tables.agenda || [];
     return rows.reduce((s, r) => s + (Number(r?.duration) || 0), 0);
   }, [formData.tables.agenda]);
+
+  // When the meeting duration becomes known (or changes — different
+  // calendar invite dropped in) re-run the auto-balance so any
+  // existing blank row picks up the new remainder. Doesn't depend on
+  // the agenda rows themselves so an in-progress edit doesn't loop.
+  useEffect(() => {
+    if (!meetingTotalMinutes) return;
+    const rows = formData.tables.agenda || [];
+    if (!rows.length) return;
+    const balanced = applyAutoBalance(rows, meetingTotalMinutes);
+    if (balanced !== rows) {
+      set({ tables: { ...formData.tables, agenda: balanced } });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [meetingTotalMinutes]);
 
   const [creatingEmail, setCreatingEmail] = useState(null); // email currently being created
 
