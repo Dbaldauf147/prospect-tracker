@@ -376,7 +376,7 @@ function ensureProtocol(url) {
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
 }
 
-export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings, targetAccountsData }) {
+export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings, updateSettings, targetAccountsData }) {
   const { user } = useAuth();
   const [rows, setRows] = useState(() => loadCache());
   // Latest-rows ref so callbacks (e.g. toggleSuggestedCompanyDismiss)
@@ -1213,6 +1213,13 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
 
   // Engagement note attached to a contact. Returns 'ok' on success or
   // a 'error: …' string the caller can roll into its own outcome.
+  // On success we also mirror the note text into settings.contactNotes
+  // so the HubSpot Contacts page (and every other in-app view that
+  // reads the same store) surfaces it immediately — HubSpot's note
+  // engagements live on the activity timeline rather than as a
+  // contact property, so without this mirror the on-screen Notes
+  // column would stay blank even though the note successfully
+  // landed on the HubSpot record.
   async function pushContactNote(contactId, body) {
     const text = String(body || '').trim();
     if (!contactId || !text) return null;
@@ -1223,7 +1230,20 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
         body: JSON.stringify({ contactId, body: text }),
       });
       const data = await res.json();
-      if (data?.success || data?.note || data?.engagement) return 'ok';
+      if (data?.success || data?.note || data?.engagement) {
+        if (updateSettings) {
+          const cur = settings?.contactNotes || {};
+          // Append to any existing local note rather than overwrite,
+          // so a fresh push doesn't clobber prior context the user
+          // has built up over several uploads / edits.
+          const prior = String(cur[contactId] || '').trim();
+          const merged = prior && !prior.includes(text)
+            ? `${prior}\n${text}`
+            : (prior || text);
+          updateSettings({ contactNotes: { ...cur, [contactId]: merged } });
+        }
+        return 'ok';
+      }
       return 'error: ' + (data?.error || 'note write failed');
     } catch (err) {
       return 'error: ' + (err.message || 'network');

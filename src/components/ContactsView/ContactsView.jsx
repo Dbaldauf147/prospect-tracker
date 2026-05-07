@@ -72,6 +72,7 @@ export function ContactsView({
             onUpdateProspect={onUpdateProspect}
             cdmName={cdmName}
             settings={settings}
+            updateSettings={updateSettings}
             targetAccountsData={targetAccountsData}
           />
         )}
