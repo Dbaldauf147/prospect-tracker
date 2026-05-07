@@ -6,7 +6,7 @@ import 'react-quill-new/dist/quill.snow.css';
 import { asBlob as htmlToDocxBlob } from 'html-docx-js-typescript';
 import mammoth from 'mammoth/mammoth.browser';
 import { OpportunityForm, DEFAULT_FORM_TEMPLATE } from './OpportunityForm';
-import { ScopingNotesEditor } from './ScopingNotesEditor';
+import { ScopingNotesEditor, harvestCompetitors } from './ScopingNotesEditor';
 import { loadEffectiveRaClients, raClientName, raClientCm } from '../../utils/raClientsStore';
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES, COUNTRIES, US_STATES } from '../../data/enums';
 import { CITY_OPTIONS, matchCities, getStateForCity } from '../../data/cities';
@@ -1878,6 +1878,13 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     return [...set].filter(Boolean).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
   }, [prospects, fields.cdm]);
 
+  // Competitor name suggestions for the @-mention dropdown in the
+  // notes editors. Harvested across every prospect's competitorsNotes
+  // / serviceNotes / legacy competitors map (see harvestCompetitors)
+  // so a name typed once on any record is suggested everywhere
+  // afterwards.
+  const competitorOptions = useMemo(() => harvestCompetitors(prospects), [prospects]);
+
   const [contactView, setContactView] = useState('table'); // 'table' | 'orgchart'
   // (showHiddenContacts state is declared earlier — above
   // baseContacts — so its useMemo can reference it without a TDZ.)
@@ -3693,6 +3700,25 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                           contactNicknames={settings.contactNicknames || {}}
                           prospects={prospects}
                           cdmName={cdmName}
+                          competitorOptions={competitorOptions}
+                          onMentionCompetitor={(name, recentService) => {
+                            // Append the just-mentioned competitor to
+                            // the Competitors box (fields.competitorsNotes)
+                            // so it shows up at the top of the popup.
+                            // Pair it with the most recent in-line
+                            // service mention when one was nearby.
+                            const tokenComp = `@![${name}]`;
+                            const tokenSvc = recentService ? ` @[${recentService}]` : '';
+                            const cur = String(fields.competitorsNotes || '').trim();
+                            // Skip when the same pair already exists
+                            // verbatim — keeps repeated typing of the
+                            // same name in different notes from
+                            // duplicating the entry.
+                            const candidate = `${tokenComp}${tokenSvc}`;
+                            if (cur.includes(candidate)) return;
+                            const next = cur ? `${cur}\n${candidate}` : candidate;
+                            set('competitorsNotes', next);
+                          }}
                           onCreateContact={async ({ email, firstname, lastname }) => {
                             try {
                               const properties = { email };
@@ -4312,17 +4338,38 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                                 </div>
                                 {isNoteOpen && (
                                   <div style={{ padding: '0.15rem 0.35rem 0.25rem 1.2rem' }}>
-                                    <textarea
-                                      autoFocus
+                                    <ScopingNotesEditor
                                       value={noteVal}
-                                      onChange={e => {
-                                        const next = { ...(fields.serviceNotes || {}), [noteKey]: e.target.value };
-                                        if (!e.target.value) delete next[noteKey];
+                                      onCommit={v => {
+                                        const next = { ...(fields.serviceNotes || {}) };
+                                        if (v && v.trim()) next[noteKey] = v;
+                                        else delete next[noteKey];
                                         set('serviceNotes', next);
                                       }}
-                                      placeholder="Add a note..."
-                                      rows={2}
-                                      style={{ width: '100%', fontSize: '0.65rem', padding: '0.2rem 0.3rem', border: '1px solid var(--color-border)', borderRadius: '4px', fontFamily: 'inherit', resize: 'vertical', lineHeight: 1.3, color: 'var(--color-text)', background: 'var(--color-bg)' }}
+                                      services={SERVICE_CATEGORIES.flatMap(c => c.items)}
+                                      competitors={competitorOptions}
+                                      onMentionCompetitor={(name, recentService) => {
+                                        // Service notes already have a
+                                        // service context (the row's
+                                        // service); use it as the
+                                        // recentService when the
+                                        // editor's own scan didn't
+                                        // turn one up. noteKey shape
+                                        // is "<Service>" or
+                                        // "<Service>::<Sub>", so the
+                                        // first segment is the
+                                        // service name.
+                                        const svc = recentService || String(noteKey).split('::')[0];
+                                        const tokenComp = `@![${name}]`;
+                                        const tokenSvc = svc ? ` @[${svc}]` : '';
+                                        const cur = String(fields.competitorsNotes || '').trim();
+                                        const candidate = `${tokenComp}${tokenSvc}`;
+                                        if (cur.includes(candidate)) return;
+                                        const nxt = cur ? `${cur}\n${candidate}` : candidate;
+                                        set('competitorsNotes', nxt);
+                                      }}
+                                      placeholder="Add a note. @ for services or competitors."
+                                      style={{ minHeight: '40px', fontSize: '0.7rem', padding: '0.2rem 0.3rem' }}
                                     />
                                   </div>
                                 )}

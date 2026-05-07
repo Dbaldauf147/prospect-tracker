@@ -591,7 +591,7 @@ const SERVICE_THEIR_QUESTIONS = {
   ],
 };
 
-export function OpportunityForm({ value, onChange, onLinkOpp, companyName, companyContacts = [], allHubspotContacts = [], contactNotes = {}, contactReportsTo = {}, contactNicknames = {}, prospects = [], onCreateContact, importableNotes = [], cdmName }) {
+export function OpportunityForm({ value, onChange, onLinkOpp, companyName, companyContacts = [], allHubspotContacts = [], contactNotes = {}, contactReportsTo = {}, contactNicknames = {}, prospects = [], onCreateContact, importableNotes = [], cdmName, competitorOptions = [], onMentionCompetitor }) {
   const template = DEFAULT_FORM_TEMPLATE;
 
   // Local mirror of the persisted value. All edits update localValue
@@ -3539,14 +3539,14 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
               {f.type === 'textarea' ? (
                 f.key === 'summary' ? (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
-                    <CommitOnBlurInput
-                      multiline
-                      autoGrow
-                      smartBullets
-                      style={sx.textarea}
+                    <ScopingNotesEditor
                       value={formData.fieldValues[f.key] || ''}
                       onCommit={v => updateField(f.key, v)}
-                      placeholder="General notes. Type — or * at the start of a line for a bullet list."
+                      services={SCOPING_SERVICE_OPTIONS}
+                      competitors={competitorOptions}
+                      onMentionCompetitor={onMentionCompetitor}
+                      placeholder="General notes. Type @ for services or competitors (Services / Competitors are grouped in the dropdown). Bullet list: type - or * at the start of a line."
+                      style={{ minHeight: '120px' }}
                     />
                     <div>
                       <div style={{ ...sx.fieldLabel, marginBottom: '0.2rem' }}>Scoping Details Notes</div>
@@ -3554,7 +3554,9 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                         value={formData.fieldValues.scopingNotes || ''}
                         onCommit={v => updateField('scopingNotes', v)}
                         services={SCOPING_SERVICE_OPTIONS}
-                        placeholder="Capture scoping notes. Type @ to tag a service from the Services Explored list — e.g. @strategic → Strategic sourcing."
+                        competitors={competitorOptions}
+                        onMentionCompetitor={onMentionCompetitor}
+                        placeholder="Capture scoping notes. Type @ to tag a service or competitor — e.g. @strategic, @engie."
                       />
                     </div>
                   </div>
