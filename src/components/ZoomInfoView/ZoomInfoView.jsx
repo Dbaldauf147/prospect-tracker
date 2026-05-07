@@ -9,13 +9,14 @@ import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 // CSV export grabs them in this order. CDM / Tier come after so they
 // stay visible alongside the company without contaminating the export.
 const COLUMNS = [
-  { key: 'company',         label: 'Company',                 width: '17%' },
-  { key: 'zoomId',          label: 'Zoom Company ID',         width: '14%' },
-  { key: 'zoomName',        label: 'Zoom Company Name',       width: '17%' },
-  { key: 'zoomWebsite',     label: 'Zoom Website',            width: '18%' },
-  { key: 'suggestedCompany', label: 'Suggested Company Name', width: '16%', readonly: true },
+  { key: 'company',         label: 'Company',                 width: '15%' },
+  { key: 'zoomId',          label: 'Zoom Company ID',         width: '13%' },
+  { key: 'zoomName',        label: 'Zoom Company Name',       width: '15%' },
+  { key: 'zoomWebsite',     label: 'Zoom Website',            width: '16%' },
+  { key: 'suggestedCompany', label: 'Suggested Company Name', width: '14%', readonly: true },
   { key: 'cdm',             label: 'CDM',                     width: '10%' },
   { key: 'tier',            label: 'Tier',                    width: '8%' },
+  { key: 'type',            label: 'Type',                    width: '9%' },
 ];
 
 const EXPORT_COLUMN_KEYS = ['company', 'zoomId', 'zoomName', 'zoomWebsite'];
@@ -33,7 +34,7 @@ function makeId() {
 function emptyRow() {
   return {
     id: makeId(), company: '', zoomId: '', zoomName: '', zoomWebsite: '',
-    cdm: '', tier: '',
+    cdm: '', tier: '', type: '',
     // Set when the user clicks an amber suggestion pill — the canonical
     // Table View name they accepted. Rendered as a green confirmation
     // pill in the Suggested Company Name column. Cleared on any manual
@@ -68,6 +69,8 @@ const PASTE_TARGETS = [
     aliases: ['cdm', 'rep', 'cdmrep', 'owner', 'accountowner', 'salesrep'] },
   { key: 'tier',        label: 'Tier',              required: false,
     aliases: ['tier', 'accounttier', 'priority'] },
+  { key: 'type',        label: 'Type',              required: false,
+    aliases: ['type', 'accounttype', 'companytype', 'industry', 'segment', 'category'] },
 ];
 
 function normaliseHeader(s) {
@@ -311,7 +314,8 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings }) {
   const visibleRows = useMemo(() => {
     const padding = Math.max(0, MIN_VISIBLE_ROWS - persistedRows.length);
     const padRows = Array.from({ length: padding }, (_, i) => ({
-      id: `__pad_${i}`, company: '', zoomId: '', zoomName: '', zoomWebsite: '', cdm: '', tier: '',
+      id: `__pad_${i}`, company: '', zoomId: '', zoomName: '', zoomWebsite: '',
+      cdm: '', tier: '', type: '',
     }));
     return [...persistedRows, ...padRows];
   }, [persistedRows]);
@@ -342,6 +346,7 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings }) {
       zoomWebsite: row.zoomWebsite || match.website || '',
       cdm:         row.cdm || match.cdm || '',
       tier:        row.tier || match.tier || '',
+      type:        row.type || match.type || '',
     };
   }
 
