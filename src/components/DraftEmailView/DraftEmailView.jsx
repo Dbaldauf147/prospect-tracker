@@ -7,6 +7,130 @@ import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { useDraftCampaignQueue, clearQueuedContacts, setQueuedContactIds } from '../../utils/draftCampaignQueue';
 import styles from './DraftEmailView.module.css';
 
+// Pulls contacts whose notes (HubSpot's `notes` / `hs_content_membership_notes`
+// / `message` fields, plus the local-only override stored at
+// settings.contactNotes[contactId]) contain the typed text. Same UX
+// shape as TagContactPicker — typed query → list of matches with
+// per-row checkboxes + bulk Select / Deselect — so the user can pick
+// people by note keyword exactly the way they pick by tag.
+function NoteContactPicker({ contactNotes, selectedContacts, onAdd, onRemove, onBulkAdd, onBulkRemove }) {
+  const [query, setQuery] = useState('');
+  const [rawContacts, setRawContacts] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      getHubspotContacts().then(c => { if (!cancelled) setRawContacts(c); }).catch(() => {});
+    };
+    refresh();
+    window.addEventListener('hubspot-cache-updated', refresh);
+    return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
+  }, []);
+
+  const trimmed = query.trim();
+  const matches = useMemo(() => {
+    if (trimmed.length < 2) return [];
+    const needle = trimmed.toLowerCase();
+    const out = [];
+    for (const c of rawContacts) {
+      if (!c?.email) continue;
+      const local = (c.id && contactNotes?.[c.id]) || '';
+      const haystack = [
+        local,
+        c.notes,
+        c.hs_content_membership_notes,
+        c.message,
+      ].filter(Boolean).join(' ').toLowerCase();
+      if (!haystack) continue;
+      if (haystack.includes(needle)) {
+        // Capture a small snippet around the first hit so the user can
+        // see what matched without having to open the contact.
+        const idx = haystack.indexOf(needle);
+        const start = Math.max(0, idx - 30);
+        const end = Math.min(haystack.length, idx + needle.length + 30);
+        const snippet = (start > 0 ? '…' : '') + haystack.slice(start, end) + (end < haystack.length ? '…' : '');
+        out.push({
+          id: c.id,
+          name: [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email,
+          firstName: c.firstname || '',
+          lastName: c.lastname || '',
+          email: c.email,
+          company: c.company || '',
+          title: c.jobtitle || '',
+          phone: c.phone || '',
+          city: c.city || '',
+          state: c.state || '',
+          _noteSnippet: snippet,
+        });
+      }
+    }
+    return out;
+  }, [trimmed, rawContacts, contactNotes]);
+
+  const selectedIds = new Set(selectedContacts.map(c => c.id));
+  const allSelected = matches.length > 0 && matches.every(c => selectedIds.has(c.id));
+
+  return (
+    <div>
+      <input
+        type="text"
+        value={query}
+        onChange={e => setQuery(e.target.value)}
+        placeholder="Search notes (e.g. NACE, ESG, prior conversation…)"
+        style={{ width: '100%', padding: '0.4rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '0.78rem', fontFamily: 'inherit', marginBottom: '0.5rem' }}
+      />
+      {trimmed.length === 0 && (
+        <p style={{ fontSize: '0.7rem', color: '#9CA3AF', margin: 0 }}>
+          Type at least 2 characters. Searches HubSpot's notes columns and any in-app contact notes you've saved.
+        </p>
+      )}
+      {trimmed.length > 0 && trimmed.length < 2 && (
+        <p style={{ fontSize: '0.7rem', color: '#9CA3AF', margin: 0 }}>Keep typing — at least 2 characters.</p>
+      )}
+      {trimmed.length >= 2 && (
+        <>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
+            <span style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text-secondary)' }}>
+              "{trimmed}" ({matches.length})
+            </span>
+            {matches.length > 0 && (
+              <button
+                onClick={() => {
+                  if (allSelected) onBulkRemove(matches.map(c => c.id));
+                  else onBulkAdd(matches);
+                }}
+                style={{ background: 'none', border: 'none', color: '#0078D4', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+              >
+                {allSelected ? 'Deselect All' : 'Select All'}
+              </button>
+            )}
+          </div>
+          {matches.length > 0 ? (
+            <div style={{ maxHeight: '300px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+              {matches.map(c => {
+                const isSelected = selectedIds.has(c.id);
+                return (
+                  <label key={c.id} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.4rem', padding: '0.3rem 0.4rem', borderRadius: '4px', cursor: 'pointer', fontSize: '0.75rem', background: isSelected ? '#EFF6FF' : 'transparent' }}>
+                    <input type="checkbox" checked={isSelected} onChange={() => isSelected ? onRemove(c.id) : onAdd(c)} style={{ accentColor: '#0078D4', marginTop: 3 }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 500, color: 'var(--color-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</div>
+                      <div style={{ fontSize: '0.65rem', color: '#9CA3AF', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.email}{c.company ? ` · ${c.company}` : ''}</div>
+                      <div style={{ fontSize: '0.65rem', color: '#64748B', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c._noteSnippet}>
+                        {c._noteSnippet}
+                      </div>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+          ) : (
+            <p style={{ fontSize: '0.72rem', color: '#9CA3AF', textAlign: 'center' }}>No contacts have that text in their notes</p>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function TagContactPicker({ allContacts, selectedContacts, onAdd, onRemove, onBulkAdd, onBulkRemove }) {
   const [selectedTags, setSelectedTags] = useState(new Set());
   const [tagSearch, setTagSearch] = useState('');
@@ -400,11 +524,43 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     { token: '{fullName}', label: 'Full Name', example: 'John Smith' },
     { token: '{email}', label: 'Email', example: 'john@company.com' },
     { token: '{company}', label: 'Company', example: 'Acme Corp' },
+    { token: '{companyType}', label: 'Company Type', example: 'Private Equity' },
     { token: '{title}', label: 'Job Title', example: 'VP of Sales' },
     { token: '{phone}', label: 'Phone', example: '555-0100' },
     { token: '{city}', label: 'City', example: 'Denver' },
     { token: '{state}', label: 'State', example: 'CO' },
   ];
+
+  // Lookup map: lower-cased company name → matched prospect's `type`
+  // (e.g. "Private Equity"). Built from the Table View prospects list
+  // so {companyType} substitution can land the right value per
+  // recipient. We index by both the raw company string and a
+  // suffix-stripped form ("acme inc" → "acme") so contacts with
+  // slightly different company names still resolve.
+  const companyTypeIndex = useMemo(() => {
+    const strip = (s) => String(s || '').toLowerCase()
+      .replace(/[.,]/g, '')
+      .replace(/\b(inc|llc|ltd|corp|co|lp|gmbh|plc|sa|ag)\b/g, '')
+      .replace(/\s+/g, ' ').trim();
+    const map = new Map();
+    for (const p of (prospects || [])) {
+      const t = (p?.type || '').trim();
+      if (!t) continue;
+      const k1 = String(p.company || '').toLowerCase().trim();
+      if (k1 && !map.has(k1)) map.set(k1, t);
+      const k2 = strip(p.company);
+      if (k2 && !map.has(k2)) map.set(k2, t);
+    }
+    return { map, strip };
+  }, [prospects]);
+
+  function companyTypeFor(company) {
+    if (!company) return '';
+    const direct = companyTypeIndex.map.get(String(company).toLowerCase().trim());
+    if (direct) return direct;
+    const norm = companyTypeIndex.strip(company);
+    return norm ? (companyTypeIndex.map.get(norm) || '') : '';
+  }
 
   function insertVariable(token) {
     if (lastFocused === 'subject') {
@@ -571,6 +727,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
       .replace(/\{fullName\}/gi, hasToAlso ? 'Team' : (c.name || ''))
       .replace(/\{email\}/gi, c.email || '')
       .replace(/\{company\}/gi, c.company || '')
+      .replace(/\{companyType\}/gi, companyTypeFor(c.company))
       .replace(/\{title\}/gi, c.title || '')
       .replace(/\{phone\}/gi, c.phone || '')
       .replace(/\{city\}/gi, c.city || '')
@@ -991,6 +1148,20 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
               <h4 style={{ margin: '0 0 0.5rem', fontSize: '0.78rem', fontWeight: 700, color: '#1E293B' }}>Import by Tag</h4>
               <TagContactPicker
                 allContacts={allContacts}
+                selectedContacts={selectedContacts}
+                onAdd={addContact}
+                onRemove={removeContact}
+                onBulkAdd={(contacts) => setSelectedContacts(prev => {
+                  const ids = new Set(prev.map(c => c.id));
+                  return [...prev, ...contacts.filter(c => !ids.has(c.id))];
+                })}
+                onBulkRemove={(ids) => setSelectedContacts(prev => prev.filter(c => !ids.includes(c.id)))}
+              />
+            </div>
+            <div style={{ borderTop: '1px solid #E2E8F0', marginTop: '0.75rem', paddingTop: '0.75rem' }}>
+              <h4 style={{ margin: '0 0 0.5rem', fontSize: '0.78rem', fontWeight: 700, color: '#1E293B' }}>Import by Notes</h4>
+              <NoteContactPicker
+                contactNotes={settings?.contactNotes || {}}
                 selectedContacts={selectedContacts}
                 onAdd={addContact}
                 onRemove={removeContact}
