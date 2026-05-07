@@ -125,6 +125,30 @@ function classifyUtility(name) {
   return 'Deregulated';
 }
 
+// Ontario Global Adjustment (GA) opportunity flag. Every Ontario
+// commercial customer pays GA, but only Class A — peak demand ≥ 1 MW
+// (or ≥ 500 kW for select industries under the expanded ICI) — can
+// reduce it by curtailing during the IESO's top-5 system-peak hours.
+// We only have annual kWh, so use it as a coarse proxy:
+//   ≥ 4.38 GWh  → ~500 kW peak at 100 % LF / ~1 MW at 50 % LF —
+//                 strong Class A candidate.
+//   ≥ 1.0  GWh  → load big enough that peak demand could clear the
+//                 500 kW Class A bar; flag for verification.
+//   smaller     → almost certainly Class B; still pays GA but no ICI
+//                 lever.
+const GAC_CLASS_A_KWH = 4_380_000;
+const GAC_REVIEW_KWH = 1_000_000;
+function gacOpportunity(state, kwh) {
+  if (String(state || '').toUpperCase() !== 'ON') return null;
+  if (kwh != null && kwh >= GAC_CLASS_A_KWH) {
+    return { tier: 'high', label: 'Yes — Class A potential' };
+  }
+  if (kwh != null && kwh >= GAC_REVIEW_KWH) {
+    return { tier: 'mid', label: 'Maybe — verify peak demand' };
+  }
+  return { tier: 'low', label: 'Class B (small load)' };
+}
+
 // Inline autocomplete input used by supplier cells in the Utility
 // Lookup table. Filters the bundled ENERGY_SUPPLIERS list by the
 // typed substring; Enter commits the highlighted match (or the typed
@@ -989,6 +1013,29 @@ export function SitesView({ settings, updateSettings } = {}) {
       },
       exportValue: (row) => classifyUtility(row[`__${utilityKey}__`]) || '',
     });
+    const makeGacOpportunityCol = () => ({
+      key: 'gac_opportunity',
+      label: 'GAC Opportunity (Ontario)',
+      defaultWidth: 200,
+      render: (row) => {
+        const flag = gacOpportunity(row.__state__, row.__kwh__);
+        if (!flag) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
+        const colorByTier = {
+          high: { bg: '#DCFCE7', border: '#86EFAC', text: '#166534' },
+          mid:  { bg: '#FEF3C7', border: '#FCD34D', text: '#92400E' },
+          low:  { bg: '#E2E8F0', border: '#CBD5E1', text: '#334155' },
+        };
+        const c = colorByTier[flag.tier];
+        const tip = 'Ontario customers pay the Global Adjustment (GA). Class A (peak demand ≥ 1 MW, or ≥ 500 kW for select industries) can reduce GA by curtailing during the IESO\'s top-5 system-peak hours (ICI). Class B pays a flat per-kWh GA rate. Annual kWh is a coarse proxy for the peak-demand threshold — confirm with metered demand.';
+        return (
+          <span
+            title={tip}
+            style={{ background: c.bg, border: `1px solid ${c.border}`, color: c.text, padding: '1px 8px', borderRadius: 999, fontSize: '0.7rem', fontWeight: 700, whiteSpace: 'nowrap' }}
+          >{flag.label}</span>
+        );
+      },
+      exportValue: (row) => gacOpportunity(row.__state__, row.__kwh__)?.label || '',
+    });
     const makeStateCol = () => ({
       key: 'lookup_state',
       label: 'State',
@@ -1237,6 +1284,7 @@ export function SitesView({ settings, updateSettings } = {}) {
       makeCostCol('electricCost', 'Total Electric Cost', { bg: '#FEF3C7', border: '#FCD34D', text: '#92400E' }),
       makeDateCol('electricStart', 'Electric Contract Start', '#92400E'),
       makeDateCol('electricEnd', 'Electric Contract End', '#92400E'),
+      makeGacOpportunityCol(),
       makeUtilityCol('gas', 'Gas Utility', { bg: '#DBEAFE', border: '#93C5FD', text: '#1E3A8A' }),
       makeSupplierCol('gas', 'Gas Supplier'),
       makeMarketCol('gas', 'Gas Market'),
@@ -3276,6 +3324,7 @@ export function SitesView({ settings, updateSettings } = {}) {
             { name: 'Electric Market', from: 'regulated vs. deregulated rule' },
             { name: 'Electric Rate', from: 'state commercial average' },
             { name: 'Total Electric Cost', from: 'actual cost when mapped, else kWh × rate' },
+            { name: 'GAC Opportunity (Ontario)', from: 'Ontario sites only — tiered by annual kWh as a Class A proxy' },
             { name: 'Gas Utility', from: 'rates file × Zip (or Supplier when known)' },
             { name: 'Gas Market', from: 'regulated vs. deregulated rule' },
             { name: 'Gas Rate', from: 'state commercial average' },
