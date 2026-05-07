@@ -1191,6 +1191,45 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
     return Object.keys(patch).length ? patch : null;
   }
 
+  // True when the row has a note that the existing HubSpot contact's
+  // notes-flavoured fields don't already include verbatim. Naive
+  // dedup (substring match) — good enough to stop the obvious double
+  // import when the user re-uploads the same sheet, but doesn't try
+  // to fight HubSpot's engagement timeline if the user edits the
+  // note text. Notes are timestamped engagement objects, so adding
+  // a slightly-different one isn't a destructive operation.
+  function hasPendingNote(row, existing) {
+    const text = String(row?.notes || '').trim();
+    if (!text) return false;
+    if (!existing) return true;
+    const existingNotes = String(
+      existing.notes
+      || existing.hs_content_membership_notes
+      || existing.message
+      || ''
+    );
+    return !existingNotes.includes(text);
+  }
+
+  // Engagement note attached to a contact. Returns 'ok' on success or
+  // a 'error: …' string the caller can roll into its own outcome.
+  async function pushContactNote(contactId, body) {
+    const text = String(body || '').trim();
+    if (!contactId || !text) return null;
+    try {
+      const res = await fetch('/api/hubspot?action=create-contact-note', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contactId, body: text }),
+      });
+      const data = await res.json();
+      if (data?.success || data?.note || data?.engagement) return 'ok';
+      return 'error: ' + (data?.error || 'note write failed');
+    } catch (err) {
+      return 'error: ' + (err.message || 'network');
+    }
+  }
+
   async function addOne(row) {
     const firstname = fixAllCapsName(row.firstname);
     const lastname = fixAllCapsName(row.lastname);
@@ -1224,6 +1263,18 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
         try {
           await updateHubspotCache(draft => { draft.contacts.push({ ...data.contact, _source: 'bulk' }); });
         } catch { /* ignore */ }
+        // After the contact lands, attach any note the user typed for
+        // this row as a HubSpot engagement on that contact. Failures
+        // here don't roll back the contact create — surface them as
+        // a softer 'added (note failed)' outcome so the row's status
+        // copy still flags that something went wrong.
+        const noteText = String(row.notes || '').trim();
+        if (noteText && data.contact?.id) {
+          const noteOutcome = await pushContactNote(data.contact.id, noteText);
+          if (noteOutcome && noteOutcome.startsWith('error')) {
+            return 'error: contact added, note failed (' + noteOutcome.replace(/^error: /, '') + ')';
+          }
+        }
         return 'added';
       }
       return 'error: ' + (data.error || 'unknown');
@@ -1234,13 +1285,20 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
 
   async function updateOne(row, existing, patch) {
     try {
-      const res = await fetch('/api/hubspot?action=update-contact', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contactId: existing.id, properties: patch }),
-      });
-      const data = await res.json();
-      if (data.success || data.contact) {
+      // Property patch (may be empty when this is a note-only sync —
+      // e.g. existing contact already has every other field but the
+      // user has typed a fresh note for them).
+      const hasPatch = patch && Object.keys(patch).length > 0;
+      if (hasPatch) {
+        const res = await fetch('/api/hubspot?action=update-contact', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contactId: existing.id, properties: patch }),
+        });
+        const data = await res.json();
+        if (!(data.success || data.contact)) {
+          return 'error: ' + (data.error || 'unknown');
+        }
         logAction(user, 'contact_updated', {
           contactId: existing.id,
           properties: patch,
@@ -1251,9 +1309,18 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
             draft.contacts = draft.contacts.map(c => c.id === existing.id ? { ...c, ...patch } : c);
           });
         } catch { /* ignore */ }
-        return 'updated';
       }
-      return 'error: ' + (data.error || 'unknown');
+      // Note engagement — fires whenever the row carries note text
+      // that doesn't already match what's on the existing contact.
+      if (hasPendingNote(row, existing)) {
+        const noteOutcome = await pushContactNote(existing.id, row.notes);
+        if (noteOutcome && noteOutcome.startsWith('error')) {
+          return hasPatch
+            ? 'error: contact updated, note failed (' + noteOutcome.replace(/^error: /, '') + ')'
+            : 'error: ' + noteOutcome.replace(/^error: /, '');
+        }
+      }
+      return 'updated';
     } catch (err) {
       return 'error: ' + (err.message || 'network');
     }
@@ -1268,7 +1335,9 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
       const existing = hubspotByEmail.get(r.email);
       if (!existing) continue;
       const patch = missingFieldUpdates(r, existing);
-      if (patch) toUpdate.push({ row: r, existing, patch });
+      // Eligibility: missing fields to fill OR a note that's not
+      // already attached. updateOne handles both branches.
+      if (patch || hasPendingNote(r, existing)) toUpdate.push({ row: r, existing, patch });
     }
     const total = toCreate.length + toUpdate.length;
     if (total === 0) return;
@@ -1304,7 +1373,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
       const existing = hubspotByEmail.get(r.email);
       if (!existing) continue;
       const patch = missingFieldUpdates(r, existing);
-      if (patch) toUpdate.push({ row: r, existing, patch });
+      if (patch || hasPendingNote(r, existing)) toUpdate.push({ row: r, existing, patch });
     }
     const total = toCreate.length + toUpdate.length;
     if (total === 0) return;
@@ -1330,7 +1399,8 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
   const newCount = rows.filter(r => !hubspotByEmail.has(r.email)).length;
   const updateCount = rows.filter(r => {
     const existing = hubspotByEmail.get(r.email);
-    return !!existing && !!missingFieldUpdates(r, existing);
+    if (!existing) return false;
+    return !!missingFieldUpdates(r, existing) || hasPendingNote(r, existing);
   }).length;
   const dupCount = rows.length - newCount;
   const addedCount = Object.values(results).filter(v => v === 'added').length;
@@ -2067,7 +2137,8 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
                 const updateSel = picked.filter(r => {
                   if (results[r.email] === 'added' || results[r.email] === 'updated') return false;
                   const existing = hubspotByEmail.get(r.email);
-                  return !!existing && !!missingFieldUpdates(r, existing);
+                  if (!existing) return false;
+                  return !!missingFieldUpdates(r, existing) || hasPendingNote(r, existing);
                 }).length;
                 const sendDisabled = busy || (newSel === 0 && updateSel === 0);
                 const sendLabel = newSel > 0 && updateSel > 0
@@ -2277,7 +2348,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
                   else if (outcome === 'updated') { statusLabel = 'Updated ✓'; statusClass = styles.statusAdded; }
                   else if (typeof outcome === 'string' && outcome.startsWith('error')) { statusLabel = outcome.replace(/^error: /, ''); statusClass = styles.statusErr; }
                   // If this existing contact has pending field fill-ins, flag as updatable.
-                  if (exists && outcome !== 'updated' && missingFieldUpdates(r, hubspotContact)) {
+                  if (exists && outcome !== 'updated' && (missingFieldUpdates(r, hubspotContact) || hasPendingNote(r, hubspotContact))) {
                     statusLabel = 'Update pending';
                     statusClass = styles.statusUpdatePending;
                   }
