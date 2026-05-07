@@ -7,6 +7,7 @@ import { ActiveContactsView } from '../ActiveContactsView/ActiveContactsView';
 import { ClientContactsView } from '../ClientContactsView/ClientContactsView';
 import { ChangedJobsContactsView } from '../ChangedJobsContactsView/ChangedJobsContactsView';
 import { DedupeView } from '../DedupeView/DedupeView';
+import { ZoomInfoView } from '../ZoomInfoView/ZoomInfoView';
 
 const SUBTABS = [
   { key: 'hubspot',  label: 'HubSpot Contacts' },
@@ -15,6 +16,7 @@ const SUBTABS = [
   { key: 'active',   label: 'Active Contacts' },
   { key: 'clients',  label: 'Client Contacts' },
   { key: 'changed',  label: 'Changed Jobs' },
+  { key: 'zoominfo', label: 'Zoom Info' },
   { key: 'dedupe',   label: 'Deduplication' },
 ];
 
@@ -107,6 +109,9 @@ export function ContactsView({
             updateSettings={updateSettings}
             cdmName={cdmName}
           />
+        )}
+        {subtab === 'zoominfo' && (
+          <ZoomInfoView settings={settings} updateSettings={updateSettings} />
         )}
         {subtab === 'dedupe' && <DedupeView />}
       </div>
