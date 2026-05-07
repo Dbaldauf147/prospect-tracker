@@ -205,6 +205,123 @@ function CritiquePanel({ critique, onClose, onUseRewrite }) {
   );
 }
 
+// Variable coverage table — one row per selected contact, one column
+// per variable token that's actually used in the current subject /
+// body. Helps spot gaps in the data BEFORE sending: missing values
+// render as a red dash so the user can either fill them in upstream or
+// remove the contact from the campaign. The set of columns is the
+// intersection of "tokens INSERT_VARIABLES knows about" and "tokens
+// that appear in the draft", so unused variables don't pollute the
+// table.
+function VariableCoverageTable({ subject, body, contacts, insertVariables, resolve }) {
+  const usedTokens = useMemo(() => {
+    const haystack = `${subject || ''}\n${body || ''}`;
+    const out = [];
+    for (const v of insertVariables) {
+      // Same tolerance as personalizeForContact's case-insensitive replace.
+      const pat = new RegExp(v.token.replace(/[{}]/g, m => '\\' + m), 'i');
+      if (pat.test(haystack)) out.push(v);
+    }
+    return out;
+  }, [subject, body, insertVariables]);
+
+  // Per-token coverage stats: how many contacts have a non-empty
+  // value for that variable. Surfaces "12/18 have a Title" at a
+  // glance — drives the red column-header callout when coverage is
+  // less than 100 %.
+  const coverage = useMemo(() => {
+    const out = {};
+    for (const v of usedTokens) {
+      let filled = 0;
+      for (const c of contacts) {
+        const val = String(resolve(c, v.token) || '').trim();
+        if (val) filled++;
+      }
+      out[v.token] = { filled, total: contacts.length };
+    }
+    return out;
+  }, [usedTokens, contacts, resolve]);
+
+  if (contacts.length === 0) {
+    return (
+      <>
+        <h3 className={styles.cardTitle}>Variable Coverage</h3>
+        <p className={styles.emptyDrafts}>Add contacts above to see how each variable resolves per recipient.</p>
+      </>
+    );
+  }
+
+  if (usedTokens.length === 0) {
+    return (
+      <>
+        <h3 className={styles.cardTitle}>Variable Coverage</h3>
+        <p className={styles.emptyDrafts}>
+          No variable tokens detected in the subject or body — nothing to check.
+        </p>
+      </>
+    );
+  }
+
+  const cellStyle = { padding: '0.3rem 0.5rem', borderBottom: '1px solid #F1F5F9', fontSize: '0.74rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 180 };
+  const headStyle = { ...cellStyle, position: 'sticky', top: 0, background: '#F8FAFC', fontWeight: 700, color: '#475569', borderBottom: '1px solid var(--color-border)', textAlign: 'left', zIndex: 1 };
+
+  return (
+    <>
+      <h3 className={styles.cardTitle}>Variable Coverage ({contacts.length})</h3>
+      <p style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', margin: '-0.25rem 0 0.5rem 0' }}>
+        Each row is a recipient; each column is a variable used in the draft. Red <strong>—</strong> = the source data has no value to substitute, so that personalization will land blank.
+      </p>
+      <div style={{ maxHeight: 280, overflow: 'auto', border: '1px solid var(--color-border)', borderRadius: 4 }}>
+        <table style={{ borderCollapse: 'collapse', fontSize: '0.74rem', tableLayout: 'auto', width: '100%' }}>
+          <thead>
+            <tr>
+              <th style={headStyle}>Recipient</th>
+              {usedTokens.map(v => {
+                const cov = coverage[v.token] || { filled: 0, total: contacts.length };
+                const partial = cov.filled < cov.total;
+                return (
+                  <th key={v.token} style={headStyle} title={`${v.label} · ${cov.filled}/${cov.total} populated`}>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1 }}>
+                      <span>{v.label}</span>
+                      <span style={{ fontSize: '0.62rem', fontWeight: 600, color: partial ? '#B91C1C' : '#16A34A' }}>
+                        {cov.filled}/{cov.total}
+                      </span>
+                    </div>
+                  </th>
+                );
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {contacts.map(c => (
+              <tr key={c.id || c.email}>
+                <td style={{ ...cellStyle, fontWeight: 600, color: '#1E293B' }} title={`${c.name || ''}${c.email ? ` · ${c.email}` : ''}${c.company ? ` · ${c.company}` : ''}`}>
+                  {c.name || c.email || '(unnamed)'}
+                </td>
+                {usedTokens.map(v => {
+                  const val = String(resolve(c, v.token) || '').trim();
+                  if (val) {
+                    return (
+                      <td key={v.token} style={{ ...cellStyle, color: '#1E293B' }} title={val}>
+                        {val}
+                      </td>
+                    );
+                  }
+                  return (
+                    <td key={v.token} style={{ ...cellStyle, color: '#B91C1C', fontStyle: 'italic', fontWeight: 700 }} title={`Missing — ${v.label} will render blank for this recipient`}>
+                      —
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
 function TagContactPicker({ allContacts, selectedContacts, onAdd, onRemove, onBulkAdd, onBulkRemove }) {
   const [selectedTags, setSelectedTags] = useState(new Set());
   const [tagSearch, setTagSearch] = useState('');
@@ -1327,6 +1444,38 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
                 ))}
               </div>
             )}
+          </div>
+
+          {/* Variable Coverage — table view of every selected contact
+              and the resolved value for every variable token used in
+              the current subject + body. Empty cells render in red so
+              gaps in the personalization data are obvious before the
+              user fires off the campaign. */}
+          <div className={styles.draftsCard}>
+            <VariableCoverageTable
+              subject={subject}
+              body={body}
+              contacts={selectedContacts}
+              insertVariables={INSERT_VARIABLES}
+              resolve={(c, token) => {
+                // Return what personalizeForContact would substitute
+                // for `token` on this contact, but unwrapped per-token
+                // so we can colour empties.
+                switch (token) {
+                  case '{firstName}': return c.firstName || (c.name || '').split(' ')[0] || '';
+                  case '{lastName}':  return c.lastName || '';
+                  case '{fullName}':  return c.name || '';
+                  case '{email}':     return c.email || '';
+                  case '{company}':   return c.company || '';
+                  case '{companyType}': return companyTypeFor(c.company);
+                  case '{title}':     return c.title || '';
+                  case '{phone}':     return c.phone || '';
+                  case '{city}':      return c.city || '';
+                  case '{state}':     return c.state || '';
+                  default:            return '';
+                }
+              }}
+            />
           </div>
         </div>
       </div>
