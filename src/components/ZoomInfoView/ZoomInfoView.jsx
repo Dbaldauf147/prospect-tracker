@@ -4,12 +4,19 @@ import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 // Headers as specified by the user. The user typed "Webiste" in their
 // note — we use the canonical "Website" spelling on the column header
 // since both the export and any downstream parsing expect that.
+// The first four columns are the canonical "Zoom Info" payload — the
+// CSV export grabs them in this order. CDM / Tier come after so they
+// stay visible alongside the company without contaminating the export.
 const COLUMNS = [
-  { key: 'company',      label: 'Company',           width: '24%' },
-  { key: 'zoomId',       label: 'Zoom Company ID',   width: '20%' },
-  { key: 'zoomName',     label: 'Zoom Company Name', width: '24%' },
-  { key: 'zoomWebsite',  label: 'Zoom Website',      width: '28%' },
+  { key: 'company',      label: 'Company',           width: '20%' },
+  { key: 'zoomId',       label: 'Zoom Company ID',   width: '16%' },
+  { key: 'zoomName',     label: 'Zoom Company Name', width: '20%' },
+  { key: 'zoomWebsite',  label: 'Zoom Website',      width: '22%' },
+  { key: 'cdm',          label: 'CDM',               width: '12%' },
+  { key: 'tier',         label: 'Tier',              width: '10%' },
 ];
+
+const EXPORT_COLUMN_KEYS = ['company', 'zoomId', 'zoomName', 'zoomWebsite'];
 
 // Minimum number of rows visible in the table. Empty padding rows fill
 // in when the persisted list is shorter so the user always has scratch
@@ -22,7 +29,7 @@ function makeId() {
 }
 
 function emptyRow() {
-  return { id: makeId(), company: '', zoomId: '', zoomName: '', zoomWebsite: '' };
+  return { id: makeId(), company: '', zoomId: '', zoomName: '', zoomWebsite: '', cdm: '', tier: '' };
 }
 
 // Tab / comma / semicolon-tolerant split for clipboard paste — handles
@@ -206,7 +213,7 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings }) {
   const visibleRows = useMemo(() => {
     const padding = Math.max(0, MIN_VISIBLE_ROWS - persistedRows.length);
     const padRows = Array.from({ length: padding }, (_, i) => ({
-      id: `__pad_${i}`, company: '', zoomId: '', zoomName: '', zoomWebsite: '',
+      id: `__pad_${i}`, company: '', zoomId: '', zoomName: '', zoomWebsite: '', cdm: '', tier: '',
     }));
     return [...persistedRows, ...padRows];
   }, [persistedRows]);
@@ -235,6 +242,8 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings }) {
       zoomId:      row.zoomId || match.zoomCompanyId || '',
       zoomName:    row.zoomName || match.zoomCompanyName || '',
       zoomWebsite: row.zoomWebsite || match.website || '',
+      cdm:         row.cdm || match.cdm || '',
+      tier:        row.tier || match.tier || '',
     };
   }
 
@@ -298,6 +307,36 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings }) {
     navigator.clipboard?.writeText(lines.join('\n')).catch(() => {});
   }
 
+  // RFC-4180-ish CSV escape: wrap any field containing a comma, quote,
+  // or newline in double quotes and double-up any embedded quotes.
+  function csvEscape(value) {
+    const s = String(value ?? '');
+    if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+    return s;
+  }
+
+  function exportCsv() {
+    const exportCols = EXPORT_COLUMN_KEYS.map(k => COLUMNS.find(c => c.key === k));
+    const lines = [exportCols.map(c => csvEscape(c.label)).join(',')];
+    for (const r of persistedRows) {
+      // Skip entirely-empty saved rows so the CSV doesn't carry blank lines.
+      if (EXPORT_COLUMN_KEYS.every(k => !String(r[k] || '').trim())) continue;
+      lines.push(EXPORT_COLUMN_KEYS.map(k => csvEscape(r[k] || '')).join(','));
+    }
+    // Prepend a UTF-8 BOM so Excel auto-detects the encoding when the
+    // user double-clicks the file on Windows.
+    const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `Zoom Info - ${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    requestAnimationFrame(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(a.href);
+    });
+  }
+
   const cellInputStyle = {
     width: '100%',
     border: 'none',
@@ -332,9 +371,15 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings }) {
         <button
           type="button"
           onClick={copyToClipboard}
-          title="Copy the entire table as tab-separated values (paste into Excel)."
+          title="Copy the entire table (all columns) as tab-separated values, ready to paste into Excel."
           style={{ fontSize: '0.75rem', padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: '#fff', color: 'var(--color-text)', borderRadius: 4, cursor: 'pointer', fontWeight: 600 }}
         >Copy as TSV</button>
+        <button
+          type="button"
+          onClick={exportCsv}
+          title="Download the first four columns (Company, Zoom Company ID, Zoom Company Name, Zoom Website) as a CSV file."
+          style={{ fontSize: '0.75rem', padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: '#fff', color: 'var(--color-text)', borderRadius: 4, cursor: 'pointer', fontWeight: 600 }}
+        >Export CSV</button>
       </div>
       <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
         Tip: type in the Company column to search the Table View — pick a match and the Zoom ID / Name / Website auto-fill from that account. Paste a tab-separated block anywhere on this page (outside an input) to bulk-add rows.
