@@ -2,6 +2,25 @@ import { useEffect, useMemo, useRef, useState, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { TYPES } from '../../data/enums';
+import { loadEffectiveRaClients, raClientName, raClientCm } from '../../utils/raClientsStore';
+
+// Same fuzzy company match the Portfolio Companies analysis uses for
+// its CM lookup, so the CM column on Zoom Info agrees with what shows
+// up in PEPortfolioView / the Prospect modal's Client Manager chip.
+function companiesMatch(a, b) {
+  const na = String(a || '').toLowerCase().trim();
+  const nb = String(b || '').toLowerCase().trim();
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  const longer = na.length >= nb.length ? na : nb;
+  const shorter = na.length >= nb.length ? nb : na;
+  if (shorter.length >= 4 && shorter.length >= longer.length * 0.6 && longer.includes(shorter)) return true;
+  const strip = s => s.replace(/\b(inc|llc|ltd|corp|co|lp)\b\.?/gi, '').replace(/[^a-z0-9 ]/g, '').trim();
+  const sa = strip(na);
+  const sb = strip(nb);
+  if (sa && sb && (sa === sb || sa.includes(sb) || sb.includes(sa))) return true;
+  return false;
+}
 
 // Headers as specified by the user. The user typed "Webiste" in their
 // note — we use the canonical "Website" spelling on the column header
@@ -20,6 +39,7 @@ const COLUMNS = [
   { key: 'zoomWebsite',      label: 'Zoom Website',            defaultWidth: 220 },
   { key: 'suggestedCompany', label: 'Suggested Company Name',  defaultWidth: 180, readonly: true },
   { key: 'cdm',              label: 'CDM',                     defaultWidth: 130 },
+  { key: 'cm',               label: 'CM',                      defaultWidth: 130, readonly: true },
   { key: 'tier',             label: 'Tier',                    defaultWidth: 90 },
   { key: 'type',             label: 'Type',                    defaultWidth: 110 },
   { key: 'tvStatus',         label: 'Table View',              defaultWidth: 160, readonly: true },
@@ -267,6 +287,70 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings, onAddPr
   }, [settings]);
 
   const [search, setSearch] = useState('');
+
+  // RA Clients lookup table. raClientsStore caches the user-uploaded
+  // override (or falls back to the bundled default) so this load is
+  // synchronous + cheap; we re-read on focus / settings change so a
+  // re-upload of the RA Clients sheet on the Lists tab surfaces here
+  // without a manual refresh.
+  const [raClients, setRaClients] = useState(() => {
+    try { return loadEffectiveRaClients()?.data || []; } catch { return []; }
+  });
+  useEffect(() => {
+    function refresh() {
+      try { setRaClients(loadEffectiveRaClients()?.data || []); } catch { /* ignore */ }
+    }
+    window.addEventListener('focus', refresh);
+    window.addEventListener('storage', refresh);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      window.removeEventListener('storage', refresh);
+    };
+  }, []);
+
+  // Resolves a row's company against the RA Clients sheet and returns
+  // the CM string, or '' when unmatched. Same fuzzy matcher the
+  // Portfolio Companies analysis uses, so the CM here agrees with the
+  // CM displayed on those views.
+  function lookupCm(company) {
+    const c = String(company || '').trim();
+    if (!c || !raClients.length) return '';
+    const match = raClients.find(r => companiesMatch(raClientName(r), c));
+    return match ? raClientCm(match) : '';
+  }
+
+  // Column visibility — toggleable via a "Columns" dropdown on the
+  // toolbar, persisted via settings.zoomInfoVisibleCols. Falls back to
+  // every column visible when nothing has been saved.
+  const visibleCols = useMemo(() => {
+    const saved = settings?.zoomInfoVisibleCols;
+    if (Array.isArray(saved) && saved.length) return new Set(saved);
+    return new Set(COLUMNS.map(c => c.key));
+  }, [settings]);
+
+  function setColVisible(key, on) {
+    const next = new Set(visibleCols);
+    if (on) next.add(key); else next.delete(key);
+    // Always keep at least the company column visible — without it
+    // the table can't address rows.
+    if (next.size === 0) next.add('company');
+    updateSettings({ zoomInfoVisibleCols: [...next] });
+  }
+  const visibleColumnList = useMemo(
+    () => COLUMNS.filter(c => visibleCols.has(c.key)),
+    [visibleCols]
+  );
+
+  const [colsPickerOpen, setColsPickerOpen] = useState(false);
+  const colsPickerRef = useRef(null);
+  useEffect(() => {
+    if (!colsPickerOpen) return;
+    function onDocDown(e) {
+      if (!colsPickerRef.current?.contains(e.target)) setColsPickerOpen(false);
+    }
+    document.addEventListener('mousedown', onDocDown);
+    return () => document.removeEventListener('mousedown', onDocDown);
+  }, [colsPickerOpen]);
 
   // Column widths in pixels — keyed by column.key so a future column
   // re-order doesn't scramble the user's saved widths. Hydrates from
@@ -750,6 +834,7 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings, onAddPr
           if (r.acceptedSuggestion && r.acceptedSuggestion === r.company) return r.acceptedSuggestion;
           return suggestCompany(r.company)?.name || '';
         }
+        if (c.key === 'cm') return lookupCm(r.company);
         return r[c.key] || '';
       }).join('\t'));
     }
@@ -843,6 +928,59 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings, onAddPr
             style={{ fontSize: '0.75rem', padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: '#fff', color: 'var(--color-text-secondary)', borderRadius: 4, cursor: 'pointer', fontWeight: 600 }}
           >Reset widths</button>
         )}
+        <div ref={colsPickerRef} style={{ position: 'relative' }}>
+          <button
+            type="button"
+            onClick={() => setColsPickerOpen(o => !o)}
+            title="Show or hide individual columns. The Company column is always visible."
+            style={{ fontSize: '0.75rem', padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: '#fff', color: 'var(--color-text-secondary)', borderRadius: 4, cursor: 'pointer', fontWeight: 600 }}
+          >Columns ({visibleColumnList.length}/{COLUMNS.length})</button>
+          {colsPickerOpen && (
+            <div style={{
+              position: 'absolute', top: '100%', right: 0, marginTop: 4, zIndex: 20,
+              background: '#fff', border: '1px solid var(--color-border)', borderRadius: 6,
+              boxShadow: '0 8px 20px rgba(15, 23, 42, 0.12)',
+              minWidth: 240, padding: '0.4rem 0', fontSize: '0.78rem',
+            }}>
+              {COLUMNS.map(c => {
+                const on = visibleCols.has(c.key);
+                const lockCompany = c.key === 'company';
+                return (
+                  <label
+                    key={c.key}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 8,
+                      padding: '0.3rem 0.7rem', cursor: lockCompany ? 'not-allowed' : 'pointer',
+                      color: lockCompany ? '#94A3B8' : 'var(--color-text)',
+                    }}
+                    title={lockCompany ? 'Company is always visible.' : `Show / hide the ${c.label} column.`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={on}
+                      disabled={lockCompany}
+                      onChange={e => setColVisible(c.key, e.target.checked)}
+                      style={{ accentColor: '#0078D4' }}
+                    />
+                    <span style={{ flex: 1 }}>{c.label}</span>
+                  </label>
+                );
+              })}
+              <div style={{ borderTop: '1px solid #E2E8F0', marginTop: 4, padding: '0.3rem 0.7rem', display: 'flex', gap: 6 }}>
+                <button
+                  type="button"
+                  onClick={() => updateSettings({ zoomInfoVisibleCols: COLUMNS.map(c => c.key) })}
+                  style={{ fontSize: '0.7rem', padding: '0.25rem 0.5rem', border: '1px solid var(--color-border)', background: '#fff', borderRadius: 4, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text-secondary)' }}
+                >Show all</button>
+                <button
+                  type="button"
+                  onClick={() => updateSettings({ zoomInfoVisibleCols: ['company'] })}
+                  style={{ fontSize: '0.7rem', padding: '0.25rem 0.5rem', border: '1px solid var(--color-border)', background: '#fff', borderRadius: 4, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text-secondary)' }}
+                >Hide all</button>
+              </div>
+            </div>
+          )}
+        </div>
         <button
           type="button"
           onClick={bulkAddToTableView}
@@ -915,7 +1053,7 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings, onAddPr
       <div style={{ flex: 1, overflow: 'auto', border: '1px solid var(--color-border)', borderRadius: 4 }}>
         <table style={{ borderCollapse: 'collapse', fontSize: '0.8rem', tableLayout: 'fixed', width: 'max-content', minWidth: '100%' }}>
           <colgroup>
-            {COLUMNS.map(c => (
+            {visibleColumnList.map(c => (
               <col
                 key={c.key}
                 ref={el => { colRefs.current[c.key] = el; }}
@@ -926,7 +1064,7 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings, onAddPr
           </colgroup>
           <thead>
             <tr>
-              {COLUMNS.map(c => (
+              {visibleColumnList.map(c => (
                 <th key={c.key} style={{
                   textAlign: 'left',
                   padding: '0.45rem 0.6rem',
@@ -982,7 +1120,7 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings, onAddPr
           <tbody>
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={COLUMNS.length + 1} style={{ padding: '1.2rem', textAlign: 'center', color: 'var(--color-text-muted)', fontStyle: 'italic', fontSize: '0.78rem' }}>
+                <td colSpan={visibleColumnList.length + 1} style={{ padding: '1.2rem', textAlign: 'center', color: 'var(--color-text-muted)', fontStyle: 'italic', fontSize: '0.78rem' }}>
                   No matches for the current search.
                 </td>
               </tr>
@@ -992,7 +1130,7 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings, onAddPr
               const suggestion = suggestCompany(r.company);
               return (
                 <tr key={r.id} style={{ borderBottom: '1px solid var(--color-border-light)' }}>
-                  {COLUMNS.map(c => (
+                  {visibleColumnList.map(c => (
                     <td key={c.key} style={{ padding: 0, verticalAlign: 'top' }}>
                       {c.key === 'company' ? (
                         <CompanyAutocomplete
@@ -1035,6 +1173,22 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings, onAddPr
                             );
                           })()}
                         </div>
+                      ) : c.key === 'cm' ? (
+                        (() => {
+                          const cm = lookupCm(r.company);
+                          return (
+                            <div style={{ padding: '0.45rem 0.6rem', minHeight: '1.4rem' }}>
+                              {cm ? (
+                                <span
+                                  title={`From RA Clients sheet · matched against "${r.company}"`}
+                                  style={{ fontSize: '0.74rem', color: '#166534', fontWeight: 600 }}
+                                >{cm}</span>
+                              ) : (
+                                <span style={{ color: '#CBD5E1', fontSize: '0.74rem', fontStyle: 'italic' }}>—</span>
+                              )}
+                            </div>
+                          );
+                        })()
                       ) : c.key === 'type' ? (
                         <TypeDropdown
                           value={r.type || ''}
