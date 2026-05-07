@@ -2152,6 +2152,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         raClientMatch: ['raclientmatch', 'raclient'],
         clientManager: ['clientmanager', 'manager'],
         targetAccount: ['targetaccount', 'target'],
+        revenue: ['revenue', 'annualrevenue', 'companyrevenue', 'totalrevenue', 'sales', 'annualsales', 'topline'],
       };
       const mapping = {};
       const used = new Set();
@@ -4576,8 +4577,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   const maxS = rows.reduce((m, r) => Math.max(m, Number(r.siteCount) || 0), 0);
                   const years = rows.map(r => Number(r.acquisitionYear)).filter(y => y > 0);
                   const yearRange = years.length > 0 ? { min: Math.min(...years), max: Math.max(...years) } : null;
-                  const headers = ['Opportunity Score', 'Company Name', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Electricity', 'Est. Natural Gas', 'Site Count', 'Sector', 'Subsector', 'Strategy', 'Acquisition Year', 'PC Description', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM', 'External Reporting'];
-                  const colWidths = [13, 32, 15, 15, 16, 16, 15, 28, 22, 18, 14, 48, 36, 26, 22, 26, 10, 22, 22];
+                  const headers = ['Opportunity Score', 'Company Name', 'HQ Country', 'Company Revenue', 'Est. Energy (GWh/yr)', 'Est. Electricity', 'Est. Natural Gas', 'Site Count', 'Sector', 'Subsector', 'Strategy', 'Acquisition Year', 'PC Description', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account', 'Tier', 'Other CDM', 'External Reporting'];
+                  const colWidths = [13, 32, 15, 18, 15, 16, 16, 15, 28, 22, 18, 14, 48, 36, 26, 22, 26, 10, 22, 22];
                   // Parse a site-count cell that may carry a (P)/(E) marker — e.g. "12 (E)" → { num: 12, isEstimate: true }.
                   // The number is what we write; the marker drives italic formatting in the export.
                   function parseSiteCount(raw) {
@@ -4614,10 +4615,26 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     const acqYearNum = Number(r.acquisitionYear);
                     const acqYear = acqYearNum > 0 ? acqYearNum : (r.acquisitionYear || '');
                     const clientMgr = (r.clientManager || '').trim() || cmForRaClient(r.raClientMatch);
+                    // Company Revenue — sourced from r.revenue when the
+                    // user's uploaded workbook included it (see the
+                    // upload patterns map for the keywords that route
+                    // to this field). Numeric when parseable so Excel
+                    // can sort + currency-format; empty string when no
+                    // value exists.
+                    const revenueRaw = (r.revenue == null || r.revenue === '') ? '' : r.revenue;
+                    const revenueNum = (() => {
+                      if (revenueRaw === '' || revenueRaw == null) return null;
+                      if (typeof revenueRaw === 'number') return Number.isFinite(revenueRaw) ? revenueRaw : null;
+                      const cleaned = String(revenueRaw).replace(/[^0-9.\-]/g, '');
+                      if (!cleaned) return null;
+                      const n = Number(cleaned);
+                      return Number.isFinite(n) ? n : null;
+                    })();
                     return [
                       score == null ? 'N/A' : score,
                       r.companyName || '',
                       r.hqCountry || '',
+                      revenueNum != null ? revenueNum : revenueRaw,
                       energy,
                       estElec,
                       estGas,
@@ -4756,14 +4773,15 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         }
                         // Number formats. Column order here is:
                         //   0 Opportunity Score · 1 Company Name · 2 HQ Country ·
-                        //   3 Energy · 4 Est. Electricity · 5 Est. Natural Gas ·
-                        //   6 Site Count · 7 Sector · 8 Subsector · 9 Strategy ·
-                        //   10 Acquisition Year · ...
-                        if (i === 0 || i === 10) cell.numFmt = '0';
-                        if (i === 3 || i === 4 || i === 5 || i === 6) cell.numFmt = '#,##0';
-                        // Acquisition Year (col 10): color-code by recency so older years
+                        //   3 Company Revenue · 4 Energy · 5 Est. Electricity ·
+                        //   6 Est. Natural Gas · 7 Site Count · 8 Sector ·
+                        //   9 Subsector · 10 Strategy · 11 Acquisition Year · ...
+                        if (i === 0 || i === 11) cell.numFmt = '0';
+                        if (i === 3) cell.numFmt = '$#,##0'; // Company Revenue
+                        if (i === 4 || i === 5 || i === 6 || i === 7) cell.numFmt = '#,##0';
+                        // Acquisition Year (col 11): color-code by recency so older years
                         // visibly show they're pulling the opportunity score down.
-                        if (i === 10 && v != null) {
+                        if (i === 11 && v != null) {
                           const yPct = yearRecencyPcts[idx];
                           if (yPct != null) {
                             if (yPct >= 0.7) {
@@ -4784,7 +4802,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         // Estimated site counts (originally tagged with "(E)" in the source):
                         // italic font + a custom number format that appends " est." while keeping
                         // the cell numeric and sortable.
-                        if (i === 6 && siteEstimateFlags[idx]) {
+                        if (i === 7 && siteEstimateFlags[idx]) {
                           cell.font = { ...cell.font, italic: true };
                           cell.numFmt = '#,##0" est."';
                         }
@@ -4829,7 +4847,18 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         .map((h, i) => ({ h, i }))
                         .filter(({ h }) => !shouldDrop(h));
                       if (keepIdx.length === 0) return;
-                      const headers = keepIdx.map(({ h }) => h);
+                      // Header rewrites — rename "Infra Risk" (or
+                      // "Infrastructure Risk") to "Climate Risk" so
+                      // the aux sheets land on the canonical naming
+                      // we use everywhere else in the app. Case- and
+                      // punctuation-insensitive, leaves every other
+                      // header untouched.
+                      const renameHeader = (h) => {
+                        const norm = String(h || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+                        if (norm === 'infrarisk' || norm === 'infrastructurerisk') return 'Climate Risk';
+                        return h;
+                      };
+                      const headers = keepIdx.map(({ h }) => renameHeader(h));
                       // Optionally slice off a trailing free-text "Notes" block —
                       // a blank row, a row whose leading text is "Notes", or a
                       // bullet row all count as the boundary.
