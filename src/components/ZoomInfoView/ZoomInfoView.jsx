@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, memo } from 'react';
+import { createPortal } from 'react-dom';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 
 // Headers as specified by the user. The user typed "Webiste" in their
@@ -8,12 +9,13 @@ import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 // CSV export grabs them in this order. CDM / Tier come after so they
 // stay visible alongside the company without contaminating the export.
 const COLUMNS = [
-  { key: 'company',      label: 'Company',           width: '20%' },
-  { key: 'zoomId',       label: 'Zoom Company ID',   width: '16%' },
-  { key: 'zoomName',     label: 'Zoom Company Name', width: '20%' },
-  { key: 'zoomWebsite',  label: 'Zoom Website',      width: '22%' },
-  { key: 'cdm',          label: 'CDM',               width: '12%' },
-  { key: 'tier',         label: 'Tier',              width: '10%' },
+  { key: 'company',         label: 'Company',                 width: '17%' },
+  { key: 'zoomId',          label: 'Zoom Company ID',         width: '14%' },
+  { key: 'zoomName',        label: 'Zoom Company Name',       width: '17%' },
+  { key: 'zoomWebsite',     label: 'Zoom Website',            width: '18%' },
+  { key: 'suggestedCompany', label: 'Suggested Company Name', width: '16%', readonly: true },
+  { key: 'cdm',             label: 'CDM',                     width: '10%' },
+  { key: 'tier',            label: 'Tier',                    width: '8%' },
 ];
 
 const EXPORT_COLUMN_KEYS = ['company', 'zoomId', 'zoomName', 'zoomWebsite'];
@@ -38,6 +40,49 @@ function emptyRow() {
 function splitPasteRow(line) {
   if (line.includes('\t')) return line.split('\t');
   return line.split(/,(?![^"]*"\s*(?:,|$))|;/).map(s => s.replace(/^"|"$/g, ''));
+}
+
+// Target fields the paste-mapping modal can fill. Company is required.
+// Aliases match common Excel header conventions case-insensitively
+// after stripping non-alphanumerics — "Zoom_Company_ID", "ZoomInfo
+// Company ID", "ZI ID" all hit zoomId.
+const PASTE_TARGETS = [
+  { key: 'company',     label: 'Company',           required: true,
+    aliases: ['company', 'companyname', 'account', 'accountname', 'name', 'organization'] },
+  { key: 'zoomId',      label: 'Zoom Company ID',   required: false,
+    aliases: ['zoomcompanyid', 'zoominfocompanyid', 'zoominfoid', 'zoomid', 'zicompanyid', 'ziid', 'companyid'] },
+  { key: 'zoomName',    label: 'Zoom Company Name', required: false,
+    aliases: ['zoomcompanyname', 'zoominfocompanyname', 'zoominfoname', 'zoomname', 'zicompanyname'] },
+  { key: 'zoomWebsite', label: 'Zoom Website',      required: false,
+    aliases: ['zoomwebsite', 'zoominfowebsite', 'website', 'url', 'domain', 'webaddress'] },
+  { key: 'cdm',         label: 'CDM',               required: false,
+    aliases: ['cdm', 'rep', 'cdmrep', 'owner', 'accountowner', 'salesrep'] },
+  { key: 'tier',        label: 'Tier',              required: false,
+    aliases: ['tier', 'accounttier', 'priority'] },
+];
+
+function normaliseHeader(s) {
+  return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+// Build a default header → target-key mapping. Each header is matched
+// case- and punctuation-insensitively against every target's aliases;
+// the first hit wins so headers can't accidentally double-map.
+function autoDetectMapping(headers) {
+  const mapping = {}; // targetKey → header
+  const used = new Set();
+  for (const t of PASTE_TARGETS) {
+    for (const h of headers) {
+      if (used.has(h)) continue;
+      const norm = normaliseHeader(h);
+      if (t.aliases.includes(norm)) {
+        mapping[t.key] = h;
+        used.add(h);
+        break;
+      }
+    }
+  }
+  return mapping;
 }
 
 // Inline autocomplete used for the Company cell. Filters the supplied
@@ -207,6 +252,50 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings }) {
     return norm ? prospectIndex.map.get(norm) || null : null;
   }
 
+  // Fuzzy suggestion for the "Suggested Company Name" column. When the
+  // typed company has no exact / strip-normalized hit on Table View,
+  // pick the closest prospect by token-overlap score so the user gets a
+  // one-click promotion to the canonical name. Skips rows that already
+  // resolve cleanly (no need to suggest what we already matched).
+  function suggestCompany(typed) {
+    const raw = String(typed || '').trim();
+    if (!raw || raw.length < 2) return null;
+    if (findProspectByCompany(raw)) return null; // already an exact match
+    const target = prospectIndex.strip(raw);
+    if (!target) return null;
+    const targetTokens = new Set(target.split(' ').filter(Boolean));
+    if (!targetTokens.size) return null;
+    let best = null;
+    let bestScore = 0;
+    for (const opt of companyOptions) {
+      const norm = prospectIndex.strip(opt);
+      if (!norm) continue;
+      // Cheap containment win — "acme" inside "acme corporation" is a strong hit.
+      let score = 0;
+      if (norm === target) score = 100;
+      else if (norm.startsWith(target) || target.startsWith(norm)) score = 80;
+      else if (norm.includes(target) || target.includes(norm)) score = 70;
+      else {
+        // Jaccard-like token overlap, rewarded by length match so short
+        // tokens don't carry "the" / "of" type words too far.
+        const optTokens = new Set(norm.split(' ').filter(Boolean));
+        let intersect = 0;
+        for (const t of targetTokens) if (optTokens.has(t)) intersect++;
+        if (!intersect) continue;
+        const union = targetTokens.size + optTokens.size - intersect;
+        score = Math.round((intersect / union) * 60); // cap below containment
+      }
+      if (score > bestScore) {
+        best = opt;
+        bestScore = score;
+      }
+    }
+    // Threshold so we don't surface random low-confidence guesses. 50
+    // roughly corresponds to "more than half the typed tokens hit" or
+    // any containment match.
+    return bestScore >= 50 ? { name: best, score: bestScore } : null;
+  }
+
   // Visible list = persisted rows + synthetic "padding" rows up to 50.
   // Padding rows have ids prefixed with "__pad_" so updateCell can
   // detect a first-touch promotion to the persisted set.
@@ -274,36 +363,119 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings }) {
     persist(persistedRows.filter(r => r.id !== id));
   }
 
-  // Excel paste: turn a tab-separated block into rows. Maps the first
-  // four columns onto Company / Zoom ID / Zoom Name / Zoom Website in
-  // that order. Skips entirely empty lines, trims whitespace per cell.
+  const [pasteModal, setPasteModal] = useState(null);
+  // pasteModal = { headers: string[], rows: string[][], mapping: {targetKey: header} }
+  // null when closed.
+
+  // Excel paste: parse the tab-separated block, treat the first row as
+  // headers, auto-detect the column mapping from header text, and open
+  // the mapping modal so the user can confirm / override before import.
+  // Single-column pastes (no tabs at all) skip the modal entirely and
+  // each line becomes a Company, since there's nothing to map.
   function handlePaste(e) {
     const tag = (e.target?.tagName || '').toLowerCase();
     if (tag === 'input' || tag === 'textarea') return;
     const text = e.clipboardData?.getData('text/plain') || '';
-    if (!text.trim() || !text.includes('\t')) return;
-    e.preventDefault();
-    const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
-    const incoming = [];
-    for (const line of lines) {
-      const cols = splitPasteRow(line).map(c => (c || '').trim());
-      if (cols.every(c => !c)) continue;
-      if (/^company$/i.test(cols[0]) && /zoom/i.test(cols[1] || '')) continue;
-      incoming.push(withAutofill({
-        id: makeId(),
-        company: cols[0] || '',
-        zoomId: cols[1] || '',
-        zoomName: cols[2] || '',
-        zoomWebsite: cols[3] || '',
-      }));
+    if (!text.trim()) return;
+
+    const allLines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
+    if (allLines.length === 0) return;
+    const hasTabs = text.includes('\t');
+
+    // Single column → treat each non-empty line as a Company name and
+    // run the same autofill, no mapping necessary.
+    if (!hasTabs) {
+      e.preventDefault();
+      const incoming = [];
+      for (const line of allLines) {
+        const v = line.trim();
+        if (!v) continue;
+        if (/^company$/i.test(v)) continue; // skip a single "Company" header line
+        incoming.push(withAutofill({ ...emptyRow(), company: v }));
+      }
+      if (incoming.length) persist([...persistedRows, ...incoming]);
+      return;
     }
-    if (!incoming.length) return;
-    persist([...persistedRows, ...incoming]);
+
+    e.preventDefault();
+    const parsed = allLines.map(l => splitPasteRow(l).map(c => (c || '').trim()));
+    const headerCells = parsed[0] || [];
+    const dataRows = parsed.slice(1).filter(r => r.some(c => c));
+    if (!dataRows.length) return;
+
+    // De-duplicate header labels in case the source had a "Company"
+    // column repeated — we suffix the second occurrence with " (2)" so
+    // the dropdowns can still address each one individually.
+    const headers = [];
+    const seenH = new Map();
+    for (const raw of headerCells) {
+      let h = raw || '(blank)';
+      if (seenH.has(h)) {
+        const n = seenH.get(h) + 1;
+        seenH.set(h, n);
+        h = `${h} (${n})`;
+      } else {
+        seenH.set(h, 1);
+      }
+      headers.push(h);
+    }
+    setPasteModal({
+      headers,
+      rows: dataRows,
+      mapping: autoDetectMapping(headers),
+    });
+  }
+
+  function executePasteImport() {
+    if (!pasteModal) return;
+    const { headers, rows, mapping } = pasteModal;
+    // Header → column index lookup, used by the mapping below.
+    const idxOf = {};
+    headers.forEach((h, i) => { idxOf[h] = i; });
+    const incoming = [];
+    for (const cells of rows) {
+      const fresh = emptyRow();
+      let any = false;
+      for (const t of PASTE_TARGETS) {
+        const h = mapping[t.key];
+        if (!h) continue;
+        const i = idxOf[h];
+        if (i == null) continue;
+        const v = (cells[i] || '').trim();
+        if (v) any = true;
+        fresh[t.key] = v;
+      }
+      if (!any) continue;
+      incoming.push(withAutofill(fresh));
+    }
+    if (incoming.length) persist([...persistedRows, ...incoming]);
+    setPasteModal(null);
+  }
+
+  // Right-side dropdown changes "this header → that target". When the
+  // user picks "— Ignore —" (empty target), drop whatever target this
+  // header was filling. When the user picks a target, claim it for this
+  // header and evict any other header that was using either side of
+  // the relationship (1:1 mapping).
+  function setHeaderTarget(header, targetKey) {
+    setPasteModal(m => {
+      if (!m) return m;
+      const next = { ...m.mapping };
+      // Clear any target currently mapped from this header.
+      for (const k of Object.keys(next)) if (next[k] === header) delete next[k];
+      if (targetKey) next[targetKey] = header;
+      return { ...m, mapping: next };
+    });
   }
 
   function copyToClipboard() {
     const lines = [COLUMNS.map(c => c.label).join('\t')];
-    for (const r of persistedRows) lines.push(COLUMNS.map(c => r[c.key] || '').join('\t'));
+    for (const r of persistedRows) {
+      lines.push(COLUMNS.map(c => {
+        if (c.key === 'suggestedCompany') return suggestCompany(r.company)?.name || '';
+        return r[c.key] || '';
+      }).join('\t'));
+    }
     navigator.clipboard?.writeText(lines.join('\n')).catch(() => {});
   }
 
@@ -417,6 +589,7 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings }) {
             )}
             {filtered.map(r => {
               const isPad = String(r.id).startsWith('__pad_');
+              const suggestion = suggestCompany(r.company);
               return (
                 <tr key={r.id} style={{ borderBottom: '1px solid var(--color-border-light)' }}>
                   {COLUMNS.map(c => (
@@ -429,6 +602,24 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings }) {
                           placeholder={isPad ? 'Type a company…' : '—'}
                           style={cellInputStyle}
                         />
+                      ) : c.key === 'suggestedCompany' ? (
+                        <div style={{ padding: '0.45rem 0.6rem', minHeight: '1.4rem' }}>
+                          {suggestion ? (
+                            <button
+                              type="button"
+                              onClick={() => updateCell(r.id, 'company', suggestion.name)}
+                              title={`Click to replace "${r.company}" with the Table View match "${suggestion.name}" (score ${suggestion.score}/100). The Zoom ID / Name / Website / CDM / Tier columns will auto-fill from that prospect.`}
+                              style={{
+                                background: '#FEF3C7', border: '1px solid #FCD34D', color: '#92400E',
+                                padding: '2px 8px', borderRadius: 999, fontSize: '0.7rem',
+                                fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+                                maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                              }}
+                            >→ {suggestion.name}</button>
+                          ) : (
+                            <span style={{ color: '#CBD5E1', fontSize: '0.74rem', fontStyle: 'italic' }}>—</span>
+                          )}
+                        </div>
                       ) : (
                         <CommitOnBlurInput
                           value={r[c.key] || ''}
@@ -456,6 +647,180 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings }) {
             })}
           </tbody>
         </table>
+      </div>
+
+      {pasteModal && createPortal(
+        <PasteMappingModal
+          modal={pasteModal}
+          onCancel={() => setPasteModal(null)}
+          onConfirm={executePasteImport}
+          onChangeMapping={setHeaderTarget}
+        />,
+        document.body
+      )}
+    </div>
+  );
+}
+
+function PasteMappingModal({ modal, onCancel, onConfirm, onChangeMapping }) {
+  const { headers, rows, mapping } = modal;
+  const targetForHeader = useMemo(() => {
+    const out = {};
+    for (const t of PASTE_TARGETS) {
+      const h = mapping[t.key];
+      if (h) out[h] = t.key;
+    }
+    return out;
+  }, [mapping]);
+
+  const missingRequired = PASTE_TARGETS
+    .filter(t => t.required && !mapping[t.key])
+    .map(t => t.label);
+
+  // Preview: pull the first 3 data rows and project them through the
+  // current mapping so the user can sanity-check before importing.
+  const previewRows = rows.slice(0, 3);
+  const idxOf = useMemo(() => {
+    const o = {};
+    headers.forEach((h, i) => { o[h] = i; });
+    return o;
+  }, [headers]);
+
+  const colHeader = { fontSize: '0.7rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em', padding: '0.5rem 0.75rem', background: '#F8FAFC', borderBottom: '1px solid #E2E8F0' };
+  const cellBase = { padding: '0.4rem 0.75rem', borderBottom: '1px solid #F1F5F9', fontSize: '0.78rem' };
+
+  return (
+    <div
+      onClick={onCancel}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000 }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{ background: '#fff', borderRadius: 12, padding: '1.5rem', width: 1000, maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+          <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: 'var(--color-text)' }}>Paste from Excel — Column Mapping</h3>
+          <button
+            onClick={onCancel}
+            style={{ background: 'none', border: 'none', fontSize: '1.2rem', color: '#94A3B8', cursor: 'pointer', lineHeight: 1 }}
+          >×</button>
+        </div>
+        <p style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)', margin: '0 0 1rem 0', lineHeight: 1.4 }}>
+          Detected <strong>{rows.length.toLocaleString()}</strong> row{rows.length === 1 ? '' : 's'} and <strong>{headers.length}</strong> column{headers.length === 1 ? '' : 's'} from your clipboard. The first row was treated as headers — pick which file column should fill each Zoom Info field. Headers that already match common names ("Zoom Company ID", "Website", etc.) are mapped automatically.
+        </p>
+        {missingRequired.length > 0 && (
+          <div style={{ margin: '0 0 0.75rem', padding: '0.4rem 0.6rem', background: '#FEE2E2', border: '1px solid #FCA5A5', borderRadius: 6, fontSize: '0.75rem', color: '#991B1B', fontWeight: 600 }}>
+            Still need to map: {missingRequired.join(', ')}
+          </div>
+        )}
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+          {/* LEFT — target fields */}
+          <div style={{ border: '1px solid #E2E8F0', borderRadius: 6, overflow: 'auto' }}>
+            <div style={colHeader}>Zoom Info field</div>
+            {PASTE_TARGETS.map(t => {
+              const header = mapping[t.key];
+              return (
+                <div key={t.key} style={{ ...cellBase, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {t.label}
+                    {t.required && <span style={{ color: '#DC2626', marginLeft: 2 }}>*</span>}
+                  </span>
+                  {header ? (
+                    <span
+                      title={`Mapped from "${header}"`}
+                      style={{ background: '#DCFCE7', border: '1px solid #86EFAC', color: '#166534', padding: '1px 8px', borderRadius: 999, fontSize: '0.68rem', fontWeight: 600, maxWidth: '55%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                    >← {header}</span>
+                  ) : (
+                    <span style={{ color: t.required ? '#DC2626' : '#94A3B8', fontSize: '0.68rem', fontWeight: 600 }}>
+                      {t.required ? '— not mapped —' : '— optional —'}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          {/* RIGHT — source columns */}
+          <div style={{ border: '1px solid #E2E8F0', borderRadius: 6, overflow: 'auto' }}>
+            <div style={colHeader}>Columns in your paste ({headers.length})</div>
+            {headers.map(h => {
+              const target = targetForHeader[h] || '';
+              return (
+                <div key={h} style={{ ...cellBase, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <span
+                    title={h}
+                    style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                  >{h}</span>
+                  <span style={{ color: '#94A3B8', fontSize: '0.7rem' }}>→</span>
+                  <select
+                    value={target}
+                    onChange={e => onChangeMapping(h, e.target.value)}
+                    style={{
+                      minWidth: 170, maxWidth: 220, padding: '0.25rem 0.4rem',
+                      border: '1px solid var(--color-border)', borderRadius: 4,
+                      fontFamily: 'inherit', fontSize: '0.75rem',
+                      background: target ? '#DCFCE7' : '#fff',
+                      color: target ? '#166534' : 'var(--color-text)',
+                    }}
+                  >
+                    <option value="">— Ignore —</option>
+                    {PASTE_TARGETS.map(t => (
+                      <option key={t.key} value={t.key}>
+                        {t.label}{t.required ? ' *' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Preview */}
+        <div style={{ marginTop: '1rem', border: '1px solid #E2E8F0', borderRadius: 6, overflow: 'auto' }}>
+          <div style={colHeader}>Preview (first {previewRows.length} of {rows.length.toLocaleString()})</div>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.74rem' }}>
+            <thead>
+              <tr>
+                {PASTE_TARGETS.map(t => (
+                  <th key={t.key} style={{ ...cellBase, fontWeight: 700, color: '#475569', background: '#FAFBFC', textAlign: 'left' }}>{t.label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {previewRows.map((cells, ri) => (
+                <tr key={ri}>
+                  {PASTE_TARGETS.map(t => {
+                    const h = mapping[t.key];
+                    const v = h && idxOf[h] != null ? cells[idxOf[h]] || '' : '';
+                    return (
+                      <td key={t.key} style={{ ...cellBase, color: v ? '#1E293B' : '#CBD5E1', fontStyle: v ? 'normal' : 'italic' }}>
+                        {v || '—'}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1.25rem' }}>
+          <button
+            onClick={onCancel}
+            style={{ padding: '0.5rem 1rem', border: '1px solid var(--color-border)', borderRadius: 6, background: '#fff', fontSize: '0.8rem', fontFamily: 'inherit', cursor: 'pointer', color: 'var(--color-text-secondary)' }}
+          >Cancel</button>
+          <button
+            onClick={onConfirm}
+            disabled={missingRequired.length > 0}
+            style={{
+              padding: '0.5rem 1rem', border: 'none', borderRadius: 6,
+              background: missingRequired.length ? '#CBD5E1' : '#009530',
+              color: '#fff', fontSize: '0.8rem', fontFamily: 'inherit',
+              cursor: missingRequired.length ? 'not-allowed' : 'pointer', fontWeight: 600,
+            }}
+          >Import {rows.length.toLocaleString()} row{rows.length === 1 ? '' : 's'}</button>
+        </div>
       </div>
     </div>
   );
