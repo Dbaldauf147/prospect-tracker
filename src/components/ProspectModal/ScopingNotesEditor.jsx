@@ -243,6 +243,20 @@ export const ScopingNotesEditor = memo(function ScopingNotesEditor({
     refreshMentionState();
   }, [refreshMentionState]);
 
+  // Clicking a chip selects the whole pill so the next Backspace /
+  // Delete deletes it as a unit. Without this, contentEditable=false
+  // spans don't get a real text-selection on click in every browser.
+  const handleClick = useCallback((e) => {
+    const target = e.target;
+    if (target && target.nodeType === Node.ELEMENT_NODE && target.dataset?.scopingMention) {
+      const range = document.createRange();
+      range.selectNode(target);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+  }, []);
+
   const handleKeyDown = useCallback((e) => {
     if (popover && filteredServices.length > 0) {
       if (e.key === 'ArrowDown') {
@@ -266,18 +280,73 @@ export const ScopingNotesEditor = memo(function ScopingNotesEditor({
         return;
       }
     }
-    // Backspace right after a chip removes the chip cleanly instead of
-    // leaving a stray text fragment.
-    if (e.key === 'Backspace') {
+    // Backspace / Delete remove a service chip cleanly. Three cases the
+    // browser doesn't handle on its own for non-editable inline blocks:
+    //   1. Caret sits just after a chip — Backspace deletes that chip.
+    //   2. Caret sits just before a chip — Delete deletes that chip.
+    //   3. The chip itself is the selection (single click, userSelect:
+    //      'all' grabs the whole pill) — either key deletes it.
+    if (e.key === 'Backspace' || e.key === 'Delete') {
       const sel = window.getSelection();
-      if (sel && sel.isCollapsed && sel.rangeCount > 0) {
-        const range = sel.getRangeAt(0);
-        if (range.startOffset === 0 && range.startContainer.nodeType === Node.TEXT_NODE) {
-          const prev = range.startContainer.previousSibling;
-          if (prev && prev.nodeType === Node.ELEMENT_NODE && prev.dataset?.scopingMention) {
-            e.preventDefault();
-            prev.parentNode.removeChild(prev);
-            refreshMentionState();
+      if (!sel || sel.rangeCount === 0) return;
+      const range = sel.getRangeAt(0);
+      const isMentionEl = (n) => n && n.nodeType === Node.ELEMENT_NODE && n.dataset?.scopingMention;
+      // Case 3 — a chip (or a range that wraps one) is selected.
+      if (!sel.isCollapsed) {
+        const start = range.startContainer;
+        const end = range.endContainer;
+        const startEl = start.nodeType === Node.ELEMENT_NODE ? start : start.parentNode;
+        const endEl = end.nodeType === Node.ELEMENT_NODE ? end : end.parentNode;
+        if (startEl && startEl === endEl && isMentionEl(startEl)) {
+          e.preventDefault();
+          startEl.parentNode.removeChild(startEl);
+          refreshMentionState();
+          return;
+        }
+      }
+      if (sel.isCollapsed) {
+        const node = range.startContainer;
+        const off = range.startOffset;
+        if (e.key === 'Backspace') {
+          // Caret at start of a text node — chip might be the previous sibling.
+          if (node.nodeType === Node.TEXT_NODE && off === 0) {
+            const prev = node.previousSibling;
+            if (isMentionEl(prev)) {
+              e.preventDefault();
+              prev.parentNode.removeChild(prev);
+              refreshMentionState();
+              return;
+            }
+          }
+          // Caret at offset N of an element node — child[N-1] might be the chip.
+          if (node.nodeType === Node.ELEMENT_NODE && off > 0) {
+            const prev = node.childNodes[off - 1];
+            if (isMentionEl(prev)) {
+              e.preventDefault();
+              prev.parentNode.removeChild(prev);
+              refreshMentionState();
+              return;
+            }
+          }
+        } else {
+          // Delete (forward) — chip might be the next sibling.
+          if (node.nodeType === Node.TEXT_NODE && off === (node.nodeValue || '').length) {
+            const next = node.nextSibling;
+            if (isMentionEl(next)) {
+              e.preventDefault();
+              next.parentNode.removeChild(next);
+              refreshMentionState();
+              return;
+            }
+          }
+          if (node.nodeType === Node.ELEMENT_NODE && off < node.childNodes.length) {
+            const next = node.childNodes[off];
+            if (isMentionEl(next)) {
+              e.preventDefault();
+              next.parentNode.removeChild(next);
+              refreshMentionState();
+              return;
+            }
           }
         }
       }
@@ -317,6 +386,7 @@ export const ScopingNotesEditor = memo(function ScopingNotesEditor({
         suppressContentEditableWarning
         onInput={handleInput}
         onKeyDown={handleKeyDown}
+        onClick={handleClick}
         onBlur={handleBlur}
         onPaste={handlePaste}
         data-placeholder={placeholder || 'Type @ to mention a service from the Services Explored list…'}

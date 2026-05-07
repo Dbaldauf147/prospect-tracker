@@ -3394,6 +3394,11 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
         {template.fields.map(f => {
           // Conditional fields (e.g. Current Client Scope only shows for Clients)
           if (f.showWhenStatus && formData.fieldValues.status !== f.showWhenStatus) return null;
+          // scopingNotes is rendered as a sub-section inside the General
+          // Notes (summary) block — see below — so skip it in the main
+          // field loop. The fieldValues entry is still initialized via
+          // emptyFormData since the field stays in template.fields.
+          if (f.key === 'scopingNotes') return null;
           const isStatus = f.key === 'status';
           const statusValue = formData.fieldValues.status || '';
           const notCurrentClient = isStatus && statusValue && statusValue !== 'Client';
@@ -3427,14 +3432,38 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                 )}
               </div>
               {f.type === 'textarea' ? (
-                <CommitOnBlurInput
-                  multiline
-                  autoGrow
-                  style={sx.textarea}
-                  value={formData.fieldValues[f.key] || ''}
-                  onCommit={v => updateField(f.key, v)}
-                />
+                f.key === 'summary' ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                    <CommitOnBlurInput
+                      multiline
+                      autoGrow
+                      style={sx.textarea}
+                      value={formData.fieldValues[f.key] || ''}
+                      onCommit={v => updateField(f.key, v)}
+                    />
+                    <div>
+                      <div style={{ ...sx.fieldLabel, marginBottom: '0.2rem' }}>Scoping Details Notes</div>
+                      <ScopingNotesEditor
+                        value={formData.fieldValues.scopingNotes || ''}
+                        onCommit={v => updateField('scopingNotes', v)}
+                        services={SCOPING_SERVICE_OPTIONS}
+                        placeholder="Capture scoping notes. Type @ to tag a service from the Services Explored list — e.g. @strategic → Strategic sourcing."
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <CommitOnBlurInput
+                    multiline
+                    autoGrow
+                    style={sx.textarea}
+                    value={formData.fieldValues[f.key] || ''}
+                    onCommit={v => updateField(f.key, v)}
+                  />
+                )
               ) : f.type === 'scopingNotes' ? (
+                // Renders inside the summary block above; this branch is
+                // a no-op fallback in case the type ever lands as its own
+                // row again.
                 <ScopingNotesEditor
                   value={formData.fieldValues[f.key] || ''}
                   onCommit={v => updateField(f.key, v)}
