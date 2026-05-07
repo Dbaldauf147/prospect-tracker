@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { useOppsRecords } from '../KeyContactsView/KeyContactsView';
@@ -115,6 +115,29 @@ function CategoryPills({ categories }) {
     </span>
   );
 }
+
+// Column registry. `alwaysOn` columns can't be hidden via the
+// Columns dropdown — Name is the row identifier and Category is the
+// reason this view exists, so both stay locked-on.
+const COLUMNS = [
+  { key: 'name',     label: 'Name',         defaultWidth: 200, alwaysOn: true,
+    text: r => r.name },
+  { key: 'email',    label: 'Email',        defaultWidth: 220,
+    text: r => r.email },
+  { key: 'company',  label: 'Company',      defaultWidth: 200,
+    text: r => r.company },
+  { key: 'jobtitle', label: 'Title',        defaultWidth: 180,
+    text: r => r.jobtitle },
+  { key: 'location', label: 'City / State', defaultWidth: 140,
+    text: r => [r.city, r.state].filter(Boolean).join(', ') },
+  { key: 'phone',    label: 'Phone',        defaultWidth: 140,
+    text: r => r.phone },
+  { key: 'category', label: 'Category',     defaultWidth: 160, alwaysOn: true,
+    text: r => r.categories.join(' ') },
+];
+
+const DEFAULT_VISIBLE = ['name', 'email', 'company', 'jobtitle', 'location', 'category'];
+const VISIBLE_KEY = 'all-contacts-view:visible-cols';
 
 export function AllContactsView({ prospects = [], onSelectProspect, settings }) {
   const { user } = useAuth();
@@ -235,17 +258,78 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings }) 
     return out.sort((a, b) => a.name.localeCompare(b.name));
   }, [hubspotCache, settings, clientLookup, activeOppAccountSet]);
 
-  // Filter UI: free-text search + per-category toggle pills.
+  // Filter UI: free-text search + per-category toggle pills + per-
+  // column substring filters (one input under each header). All AND
+  // together so a "company contains acme" + "category contains key"
+  // pair returns only rows that satisfy both.
   const [search, setSearch] = useState('');
   const [activeCats, setActiveCats] = useState(() => new Set(['Key', 'Active', 'Client']));
+  const [colFilters, setColFilters] = useState({});
+
+  // Visible-column set, persisted across reloads. Always contains the
+  // alwaysOn columns regardless of what the user saved earlier.
+  const [visibleCols, setVisibleCols] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(VISIBLE_KEY));
+      if (Array.isArray(saved) && saved.length > 0) {
+        const set = new Set(saved);
+        for (const c of COLUMNS) if (c.alwaysOn) set.add(c.key);
+        return set;
+      }
+    } catch { /* ignore */ }
+    return new Set(DEFAULT_VISIBLE);
+  });
+  useEffect(() => {
+    try { localStorage.setItem(VISIBLE_KEY, JSON.stringify([...visibleCols])); } catch { /* ignore */ }
+  }, [visibleCols]);
+
+  function toggleColVisible(key) {
+    setVisibleCols(prev => {
+      const col = COLUMNS.find(c => c.key === key);
+      if (col?.alwaysOn) return prev; // can't hide name / category
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
+
+  const visibleColumnList = useMemo(
+    () => COLUMNS.filter(c => visibleCols.has(c.key)),
+    [visibleCols]
+  );
+
+  // Columns dropdown open/close state
+  const [colsMenuOpen, setColsMenuOpen] = useState(false);
+  const colsMenuRef = useRef(null);
+  useEffect(() => {
+    if (!colsMenuOpen) return;
+    const onDown = (e) => { if (!colsMenuRef.current?.contains(e.target)) setColsMenuOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [colsMenuOpen]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
+    // Prepare per-column filter predicates so we don't re-compute the
+    // text getter on every row × column.
+    const activeFilters = [];
+    for (const col of visibleColumnList) {
+      const raw = String(colFilters[col.key] || '').trim().toLowerCase();
+      if (raw) activeFilters.push({ col, raw });
+    }
     return rows.filter(r => {
       if (!r.categories.some(c => activeCats.has(c))) return false;
-      if (!q) return true;
-      return [r.name, r.email, r.company, r.jobtitle].some(v => String(v || '').toLowerCase().includes(q));
+      if (q) {
+        const haystack = [r.name, r.email, r.company, r.jobtitle].some(v => String(v || '').toLowerCase().includes(q));
+        if (!haystack) return false;
+      }
+      for (const f of activeFilters) {
+        const v = String(f.col.text(r) || '').toLowerCase();
+        if (!v.includes(f.raw)) return false;
+      }
+      return true;
     });
-  }, [rows, search, activeCats]);
+  }, [rows, search, activeCats, colFilters, visibleColumnList]);
 
   function toggleCat(cat) {
     setActiveCats(prev => {
@@ -274,6 +358,16 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings }) 
 
   const cellStyle = { padding: '0.4rem 0.6rem', borderBottom: '1px solid var(--color-border-light)', fontSize: '0.78rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 240 };
   const headStyle = { ...cellStyle, position: 'sticky', top: 0, background: '#F1F5F9', fontWeight: 700, color: '#475569', fontSize: '0.7rem', borderBottom: '1px solid var(--color-border)', zIndex: 1, textAlign: 'left' };
+
+  function renderCell(col, r) {
+    if (col.key === 'name') return <span style={{ fontWeight: 600, color: '#1E293B' }}>{r.name}</span>;
+    if (col.key === 'category') return <CategoryPills categories={r.categories} />;
+    if (col.key === 'location') return [r.city, r.state].filter(Boolean).join(', ') || <span style={{ color: '#CBD5E1' }}>—</span>;
+    const v = col.text(r);
+    return v || <span style={{ color: '#CBD5E1' }}>—</span>;
+  }
+
+  const filterCount = Object.values(colFilters).filter(v => String(v || '').trim()).length;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%' }}>
@@ -318,31 +412,96 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings }) 
             );
           })}
         </div>
+        <div ref={colsMenuRef} style={{ position: 'relative' }}>
+          <button
+            type="button"
+            onClick={() => setColsMenuOpen(o => !o)}
+            title="Show or hide individual columns. Name and Category are always visible."
+            style={{ fontSize: '0.75rem', padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: '#fff', color: 'var(--color-text-secondary)', borderRadius: 4, cursor: 'pointer', fontWeight: 600 }}
+          >Columns ({visibleColumnList.length}/{COLUMNS.length})</button>
+          {colsMenuOpen && (
+            <div style={{
+              position: 'absolute', top: '100%', right: 0, marginTop: 4, zIndex: 20,
+              background: '#fff', border: '1px solid var(--color-border)', borderRadius: 6,
+              boxShadow: '0 8px 20px rgba(15, 23, 42, 0.12)',
+              minWidth: 220, padding: '0.4rem 0', fontSize: '0.78rem',
+            }}>
+              {COLUMNS.map(c => {
+                const on = visibleCols.has(c.key);
+                return (
+                  <label
+                    key={c.key}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 8,
+                      padding: '0.3rem 0.7rem', cursor: c.alwaysOn ? 'not-allowed' : 'pointer',
+                      color: c.alwaysOn ? '#94A3B8' : 'var(--color-text)',
+                    }}
+                    title={c.alwaysOn ? `${c.label} is always visible.` : `Show / hide the ${c.label} column.`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={on}
+                      disabled={c.alwaysOn}
+                      onChange={() => toggleColVisible(c.key)}
+                      style={{ accentColor: '#0078D4' }}
+                    />
+                    <span style={{ flex: 1 }}>{c.label}</span>
+                  </label>
+                );
+              })}
+              <div style={{ borderTop: '1px solid #E2E8F0', marginTop: 4, padding: '0.3rem 0.7rem', display: 'flex', gap: 6 }}>
+                <button
+                  type="button"
+                  onClick={() => setVisibleCols(new Set(COLUMNS.map(c => c.key)))}
+                  style={{ fontSize: '0.7rem', padding: '0.25rem 0.5rem', border: '1px solid var(--color-border)', background: '#fff', borderRadius: 4, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text-secondary)' }}
+                >Show all</button>
+                <button
+                  type="button"
+                  onClick={() => setVisibleCols(new Set(COLUMNS.filter(c => c.alwaysOn).map(c => c.key)))}
+                  style={{ fontSize: '0.7rem', padding: '0.25rem 0.5rem', border: '1px solid var(--color-border)', background: '#fff', borderRadius: 4, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text-secondary)' }}
+                >Hide all</button>
+              </div>
+            </div>
+          )}
+        </div>
+        {filterCount > 0 && (
+          <button
+            type="button"
+            onClick={() => setColFilters({})}
+            title="Clear every per-column filter"
+            style={{ fontSize: '0.7rem', padding: '0.3rem 0.6rem', border: '1px solid #FCA5A5', background: '#FEF2F2', color: '#B91C1C', borderRadius: 4, cursor: 'pointer', fontWeight: 600 }}
+          >Clear filters ({filterCount})</button>
+        )}
       </div>
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', margin: '0 1rem 1rem', border: '1px solid var(--color-border)', borderRadius: 4 }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem', tableLayout: 'fixed' }}>
           <colgroup>
-            <col style={{ width: 200 }} />
-            <col style={{ width: 220 }} />
-            <col style={{ width: 200 }} />
-            <col style={{ width: 180 }} />
-            <col style={{ width: 130 }} />
-            <col style={{ width: 160 }} />
+            {visibleColumnList.map(c => <col key={c.key} style={{ width: c.defaultWidth }} />)}
           </colgroup>
           <thead>
             <tr>
-              <th style={headStyle}>Name</th>
-              <th style={headStyle}>Email</th>
-              <th style={headStyle}>Company</th>
-              <th style={headStyle}>Title</th>
-              <th style={headStyle}>City / State</th>
-              <th style={headStyle}>Category</th>
+              {visibleColumnList.map(c => (
+                <th key={c.key} style={headStyle}>{c.label}</th>
+              ))}
+            </tr>
+            <tr>
+              {visibleColumnList.map(c => (
+                <th key={c.key} style={{ ...headStyle, top: 26, padding: '0.25rem 0.4rem', background: '#F8FAFC' }}>
+                  <input
+                    type="text"
+                    value={colFilters[c.key] || ''}
+                    onChange={e => setColFilters(prev => ({ ...prev, [c.key]: e.target.value }))}
+                    placeholder="Filter…"
+                    style={{ width: '100%', padding: '2px 6px', border: '1px solid var(--color-border)', borderRadius: 3, fontSize: '0.68rem', fontFamily: 'inherit', boxSizing: 'border-box' }}
+                  />
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={6} style={{ ...cellStyle, padding: '1.5rem', textAlign: 'center', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
+                <td colSpan={visibleColumnList.length} style={{ ...cellStyle, padding: '1.5rem', textAlign: 'center', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
                   {rows.length === 0
                     ? 'No contacts categorised as Key, Active, or Client yet — load the HubSpot cache and the Opps tab on the Lists page.'
                     : 'No matches for the current filter.'}
@@ -356,16 +515,15 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings }) 
                 style={{ cursor: r.company ? 'pointer' : 'default' }}
                 title={r.company ? `Open ${r.company} in the prospect popup` : ''}
               >
-                <td style={{ ...cellStyle, fontWeight: 600, color: '#1E293B' }} title={r.name}>{r.name}</td>
-                <td style={cellStyle} title={r.email}>{r.email || <span style={{ color: '#CBD5E1' }}>—</span>}</td>
-                <td style={cellStyle} title={r.company}>{r.company || <span style={{ color: '#CBD5E1' }}>—</span>}</td>
-                <td style={cellStyle} title={r.jobtitle}>{r.jobtitle || <span style={{ color: '#CBD5E1' }}>—</span>}</td>
-                <td style={cellStyle} title={[r.city, r.state].filter(Boolean).join(', ')}>
-                  {[r.city, r.state].filter(Boolean).join(', ') || <span style={{ color: '#CBD5E1' }}>—</span>}
-                </td>
-                <td style={{ ...cellStyle, overflow: 'visible' }}>
-                  <CategoryPills categories={r.categories} />
-                </td>
+                {visibleColumnList.map(c => (
+                  <td
+                    key={c.key}
+                    style={c.key === 'category' ? { ...cellStyle, overflow: 'visible' } : cellStyle}
+                    title={String(c.text(r) || '')}
+                  >
+                    {renderCell(c, r)}
+                  </td>
+                ))}
               </tr>
             ))}
           </tbody>
