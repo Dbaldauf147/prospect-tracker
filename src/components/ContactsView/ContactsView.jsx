@@ -34,6 +34,7 @@ export function ContactsView({
   prospects,
   onSelectProspect,
   onUpdateProspect,
+  onAddProspect,
   cdmName,
   settings,
   updateSettings,
@@ -111,7 +112,7 @@ export function ContactsView({
           />
         )}
         {subtab === 'zoominfo' && (
-          <ZoomInfoView prospects={prospects} settings={settings} updateSettings={updateSettings} />
+          <ZoomInfoView prospects={prospects} settings={settings} updateSettings={updateSettings} onAddProspect={onAddProspect} />
         )}
         {subtab === 'dedupe' && <DedupeView />}
       </div>

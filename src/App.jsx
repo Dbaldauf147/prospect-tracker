@@ -320,6 +320,7 @@ function App() {
               prospects={prospects}
               onSelectProspect={handleSelect}
               onUpdateProspect={updateProspect}
+              onAddProspect={addProspect}
               cdmName={cdmName}
               settings={settings}
               updateSettings={updateSettings}

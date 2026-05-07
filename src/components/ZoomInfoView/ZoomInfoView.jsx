@@ -22,6 +22,7 @@ const COLUMNS = [
   { key: 'cdm',              label: 'CDM',                     defaultWidth: 130 },
   { key: 'tier',             label: 'Tier',                    defaultWidth: 90 },
   { key: 'type',             label: 'Type',                    defaultWidth: 110 },
+  { key: 'tvStatus',         label: 'Table View',              defaultWidth: 160, readonly: true },
 ];
 
 const MIN_COLUMN_WIDTH = 60;
@@ -259,7 +260,7 @@ const TypeDropdown = memo(function TypeDropdown({ value, options, onChange, onAd
   );
 });
 
-export function ZoomInfoView({ prospects = [], settings, updateSettings }) {
+export function ZoomInfoView({ prospects = [], settings, updateSettings, onAddProspect }) {
   const persistedRows = useMemo(() => {
     const arr = Array.isArray(settings?.zoomInfo) ? settings.zoomInfo : [];
     return arr.map(r => ({ ...emptyRow(), ...r, id: r.id || makeId() }));
@@ -672,6 +673,63 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings }) {
     setPasteModal({ headers, rows: dataRows, mapping: autoDetectMapping(headers) });
   }
 
+  // Project a Zoom Info row into a Table View prospect record. Only
+  // the fields the Table View knows about are passed through — the
+  // suggestedCompany / acceptedSuggestion fields are local to this
+  // page and don't belong on the prospect.
+  function rowToProspect(r) {
+    return {
+      company:         (r.company || '').trim(),
+      cdm:             (r.cdm || '').trim(),
+      tier:            (r.tier || '').trim(),
+      type:            (r.type || '').trim(),
+      zoomCompanyId:   (r.zoomId || '').trim(),
+      zoomCompanyName: (r.zoomName || '').trim(),
+      website:         (r.zoomWebsite || '').trim(),
+    };
+  }
+
+  // List of every persisted row that has a non-empty Company AND isn't
+  // already represented on Table View — those are the candidates the
+  // bulk button can add. Recomputes whenever prospects or rows change
+  // so the count + button-enabled state stay live.
+  const unmatchedRows = useMemo(() => {
+    return persistedRows.filter(r => {
+      const c = (r.company || '').trim();
+      if (!c) return false;
+      return !findProspectByCompany(c);
+    });
+  }, [persistedRows, prospects]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function addRowToTableView(row) {
+    if (!onAddProspect) return;
+    const prospect = rowToProspect(row);
+    if (!prospect.company) return;
+    if (findProspectByCompany(prospect.company)) return; // already there
+    try { await onAddProspect(prospect); } catch (err) { console.error('Add to Table View failed', err); }
+  }
+
+  async function bulkAddToTableView() {
+    if (!onAddProspect || !unmatchedRows.length) return;
+    const ok = window.confirm(
+      `Add ${unmatchedRows.length} compan${unmatchedRows.length === 1 ? 'y' : 'ies'} to Table View? Companies already on Table View are skipped automatically.`
+    );
+    if (!ok) return;
+    // Track names we've added in this loop so two Zoom Info rows with
+    // the same Company don't double-write. Firestore writes are
+    // sequential to keep _lastWriteAt sane and to avoid hammering the
+    // backend; the Table View list updates automatically as each add
+    // completes.
+    const seen = new Set();
+    for (const r of unmatchedRows) {
+      const key = String(r.company || '').toLowerCase().trim();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      const prospect = rowToProspect(r);
+      try { await onAddProspect(prospect); } catch (err) { console.error('Bulk add row failed', r.company, err); }
+    }
+  }
+
   function clearTable() {
     if (!persistedRows.length) return;
     const ok = window.confirm(
@@ -785,6 +843,25 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings }) {
             style={{ fontSize: '0.75rem', padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: '#fff', color: 'var(--color-text-secondary)', borderRadius: 4, cursor: 'pointer', fontWeight: 600 }}
           >Reset widths</button>
         )}
+        <button
+          type="button"
+          onClick={bulkAddToTableView}
+          disabled={!onAddProspect || !unmatchedRows.length}
+          title={onAddProspect
+            ? (unmatchedRows.length
+                ? `Add ${unmatchedRows.length} compan${unmatchedRows.length === 1 ? 'y' : 'ies'} that aren't on Table View yet. CDM, Tier, Type, Zoom ID / Name / Website carry over.`
+                : 'Every company on this page is already on Table View.')
+            : 'Add-to-Table-View is unavailable in this context.'}
+          style={{
+            fontSize: '0.75rem', padding: '0.4rem 0.8rem',
+            border: 'none',
+            background: unmatchedRows.length ? '#0EA5E9' : '#CBD5E1',
+            color: '#fff',
+            borderRadius: 4,
+            cursor: unmatchedRows.length ? 'pointer' : 'not-allowed',
+            fontWeight: 700,
+          }}
+        >+ Add {unmatchedRows.length || ''} to Table View</button>
         <button
           type="button"
           onClick={clearTable}
@@ -925,6 +1002,39 @@ export function ZoomInfoView({ prospects = [], settings, updateSettings }) {
                           placeholder={isPad ? 'Type a company…' : '—'}
                           style={cellInputStyle}
                         />
+                      ) : c.key === 'tvStatus' ? (
+                        <div style={{ padding: '0.45rem 0.6rem', minHeight: '1.4rem' }}>
+                          {(() => {
+                            const company = (r.company || '').trim();
+                            if (!company) {
+                              return <span style={{ color: '#CBD5E1', fontSize: '0.74rem', fontStyle: 'italic' }}>—</span>;
+                            }
+                            const onTV = !!findProspectByCompany(company);
+                            if (onTV) {
+                              return (
+                                <span
+                                  title={`"${company}" is already on Table View.`}
+                                  style={{ background: '#DCFCE7', border: '1px solid #86EFAC', color: '#166534', padding: '2px 8px', borderRadius: 999, fontSize: '0.7rem', fontWeight: 700, whiteSpace: 'nowrap' }}
+                                >✓ On Table View</span>
+                              );
+                            }
+                            if (!onAddProspect || isPad) {
+                              return <span style={{ color: '#CBD5E1', fontSize: '0.74rem', fontStyle: 'italic' }}>—</span>;
+                            }
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => addRowToTableView(r)}
+                                title={`Create a new Table View account for "${company}". CDM / Tier / Type / Zoom ID / Name / Website on this row carry over.`}
+                                style={{
+                                  background: '#fff', border: '1px solid #0EA5E9', color: '#0369A1',
+                                  padding: '2px 8px', borderRadius: 999, fontSize: '0.7rem',
+                                  fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
+                                }}
+                              >+ Add to Table View</button>
+                            );
+                          })()}
+                        </div>
                       ) : c.key === 'type' ? (
                         <TypeDropdown
                           value={r.type || ''}
