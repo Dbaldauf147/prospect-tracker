@@ -8,10 +8,12 @@ import { ClientContactsView } from '../ClientContactsView/ClientContactsView';
 import { ChangedJobsContactsView } from '../ChangedJobsContactsView/ChangedJobsContactsView';
 import { DedupeView } from '../DedupeView/DedupeView';
 import { ZoomInfoView } from '../ZoomInfoView/ZoomInfoView';
+import { AllContactsView } from '../AllContactsView/AllContactsView';
 
 const SUBTABS = [
   { key: 'hubspot',  label: 'HubSpot Contacts' },
   { key: 'bulk',     label: 'Bulk Add Contacts' },
+  { key: 'all',      label: 'All Contacts' },
   { key: 'key',      label: 'Key Contacts' },
   { key: 'active',   label: 'Active Contacts' },
   { key: 'clients',  label: 'Client Contacts' },
@@ -74,6 +76,15 @@ export function ContactsView({
             settings={settings}
             updateSettings={updateSettings}
             targetAccountsData={targetAccountsData}
+          />
+        )}
+        {subtab === 'all' && (
+          <AllContactsView
+            prospects={prospects}
+            onSelectProspect={onSelectProspect}
+            settings={settings}
+            updateSettings={updateSettings}
+            cdmName={cdmName}
           />
         )}
         {subtab === 'key' && (
