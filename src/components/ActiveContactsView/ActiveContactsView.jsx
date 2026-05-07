@@ -77,7 +77,7 @@ const FREE_MAIL = new Set([
 // Client Contacts. The selector can be inverted (`mode = 'hidden'`)
 // to surface ONLY hide-tagged active contacts so the user can review
 // what's been suppressed.
-function makeActiveSelector(windowDays, mode = 'visible', { clientCompanies = [], clientDomains = new Set() } = {}) {
+export function makeActiveSelector(windowDays, mode = 'visible', { clientCompanies = [], clientDomains = new Set() } = {}) {
   const cutoff = windowDays > 0 ? Date.now() - windowDays * 86400000 : null;
   return (c) => {
     const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();

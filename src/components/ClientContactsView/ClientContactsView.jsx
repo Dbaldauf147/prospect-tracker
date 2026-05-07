@@ -50,7 +50,8 @@ function companiesMatch(a, b) {
   return false;
 }
 
-function collectDomains(p, into) {
+export function collectClientDomains(p, into) { return collectDomainsImpl(p, into); }
+function collectDomainsImpl(p, into) {
   if (!p) return;
   if (p.emailDomain) {
     for (const entry of String(p.emailDomain).split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)) {
@@ -86,12 +87,12 @@ export function ClientContactsView({ prospects = [], onSelectProspect, settings,
   );
   const clientDomains = useMemo(() => {
     const set = new Set();
-    for (const p of clientProspects) collectDomains(p, set);
+    for (const p of clientProspects) collectDomainsImpl(p, set);
     return set;
   }, [clientProspects]);
   const oldClientDomains = useMemo(() => {
     const set = new Set();
-    for (const p of oldClientProspects) collectDomains(p, set);
+    for (const p of oldClientProspects) collectDomainsImpl(p, set);
     return set;
   }, [oldClientProspects]);
 
@@ -155,7 +156,7 @@ export function ClientContactsView({ prospects = [], onSelectProspect, settings,
     const clientByDomain = new Map();
     for (const p of clientProspects) {
       const ds = new Set();
-      collectDomains(p, ds);
+      collectDomainsImpl(p, ds);
       for (const d of ds) {
         if (!clientByDomain.has(d)) clientByDomain.set(d, p);
       }

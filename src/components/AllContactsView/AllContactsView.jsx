@@ -1,33 +1,28 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
-import { useOppsRecords } from '../KeyContactsView/KeyContactsView';
-import { loadEffectiveRaClients, raClientName } from '../../utils/raClientsStore';
+import { matchesCdm } from '../../utils/cdmMatch';
+import { makeActiveSelector } from '../ActiveContactsView/ActiveContactsView';
+import { collectClientDomains } from '../ClientContactsView/ClientContactsView';
 
-// One unified table that collects contacts from the Key / Active /
-// Client rosters into a single list, with a coloured Category cell
-// per row so the user can see at a glance where each contact lives.
+// One stop shop: rolls up exactly the same contacts the dedicated
+// Key / Active / Client tabs surface, into a single sortable table
+// with a Category column showing which roster(s) the row belongs to.
 //
-// Mirrors the per-roster rules the dedicated tabs apply:
-//   • Key     — HubSpot tag includes "Dan Key Target" (any CDM).
-//   • Client  — contact's company matches an RA Clients entry.
-//   • Active  — contact has email activity in the last 90 days AND
-//               their company has at least one open opportunity on
-//               the Opps tab. (Same rule as ActiveContactsView's
-//               default + requireActiveOpp.)
-// A contact can belong to more than one — Key + Client overlaps are
-// shown as two pills in the same row.
+// Categorisation runs the SAME selector functions the dedicated tabs
+// use — makeActiveSelector for Active, the Client tab's company /
+// domain match for Client, the Dan-Key-Target tag for Key — so a
+// contact appears here if and only if it appears on at least one of
+// the three dedicated tabs.
 
-const FREE_MAIL = new Set(['gmail.com', 'yahoo.com', 'outlook.com', 'hotmail.com', 'icloud.com', 'aol.com', 'me.com', 'msn.com']);
 const SCHNEIDER_RE = /\bschneider\s*electric\b/i;
 const SCHNEIDER_DOMAIN_RE = /(^|\.)(se\.com|schneider-electric\.com|schneider\.com)$/i;
-const CLOSED_STAGES = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
-const INVALID_STAGES = new Set(['#N/A', '#REF!', '#VALUE!', '#ERROR!', 'N/A', 'n/a', '-', '']);
-const ACTIVITY_FIELDS = ['hs_email_last_send_date', 'hs_sales_email_last_replied', 'hs_email_last_open_date', 'hs_email_last_click_date', 'notes_last_contacted'];
 
 // Same fuzzy-match rule the rest of the app uses (PEPortfolioView /
-// ProspectModal / ZoomInfoView). Catches "URW" / "URW Westfield",
-// "Acme Inc" / "Acme", etc.
+// ProspectModal / ZoomInfoView). Used by the row-click handler to
+// open a prospect's company popup when the contact's company resolves
+// — has nothing to do with category selection (the dedicated-tab
+// selectors handle that).
 function companiesMatch(a, b) {
   const na = String(a || '').toLowerCase().trim();
   const nb = String(b || '').toLowerCase().trim();
@@ -43,17 +38,6 @@ function companiesMatch(a, b) {
   return false;
 }
 
-const CORP_RE = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|holdings|group|grp)\b\.?/g;
-function normalizeCompany(s) {
-  return String(s || '')
-    .toLowerCase()
-    .replace(/\s*\([^)]*\)\s*$/g, ' ')
-    .replace(/[,.;:]+/g, ' ')
-    .replace(CORP_RE, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
 function isSchneider(c) {
   if (SCHNEIDER_RE.test(String(c?.company || ''))) return true;
   const e = String(c?.email || '').toLowerCase().trim();
@@ -61,25 +45,6 @@ function isSchneider(c) {
   if (at >= 0) {
     const d = e.slice(at + 1).trim();
     if (SCHNEIDER_DOMAIN_RE.test(d)) return true;
-  }
-  return false;
-}
-
-function emailDomainOf(c) {
-  const e = String(c?.email || '').toLowerCase().trim();
-  const at = e.lastIndexOf('@');
-  if (at < 0) return '';
-  const d = e.slice(at + 1).trim();
-  return d && !FREE_MAIL.has(d) ? d : '';
-}
-
-function hasRecentActivity(c) {
-  const cutoff = Date.now() - 90 * 86400000;
-  for (const f of ACTIVITY_FIELDS) {
-    const v = c?.[f];
-    if (!v) continue;
-    const ts = Date.parse(v);
-    if (!Number.isNaN(ts) && ts >= cutoff) return true;
   }
   return false;
 }
@@ -140,8 +105,7 @@ const DEFAULT_VISIBLE = ['name', 'email', 'company', 'jobtitle', 'location', 'ca
 const VISIBLE_KEY = 'all-contacts-view:visible-cols';
 
 export function AllContactsView({ prospects = [], onSelectProspect, settings }) {
-  const { user } = useAuth();
-  const oppsRecords = useOppsRecords(user?.uid);
+  const { user } = useAuth(); void user;
   const [hubspotCache, setHubspotCache] = useState(null);
   useEffect(() => {
     let cancelled = false;
@@ -153,52 +117,83 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings }) 
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
 
-  // RA Clients data drives the Client category. Refresh on focus /
-  // storage in case the user re-uploads on the Lists tab.
-  const [raClients, setRaClients] = useState(() => {
-    try { return loadEffectiveRaClients()?.data || []; } catch { return []; }
-  });
-  useEffect(() => {
-    function refresh() { try { setRaClients(loadEffectiveRaClients()?.data || []); } catch { /* ignore */ } }
-    window.addEventListener('focus', refresh);
-    window.addEventListener('storage', refresh);
-    return () => {
-      window.removeEventListener('focus', refresh);
-      window.removeEventListener('storage', refresh);
+  // Same selectors the dedicated Active and Client tabs run, so a
+  // contact only lands here if it would land on at least one of them.
+  // We rebuild them inline using the contact's company / email
+  // domain because the dedicated tabs source from `prospects` +
+  // matchesCdm in exactly this shape.
+
+  // Active selector: same factory the Active Contacts tab uses, with
+  // the same default 90-day window and the same Client exclusion
+  // built from the prospects list.
+  const activeClientFilter = useMemo(() => {
+    const companies = [];
+    const domains = new Set();
+    for (const p of (prospects || [])) {
+      if (p.status !== 'Client') continue;
+      if (p.company) companies.push(p.company);
+      if (p.emailDomain) {
+        for (const entry of String(p.emailDomain).split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)) {
+          const at = entry.lastIndexOf('@');
+          const d = (at >= 0 ? entry.slice(at + 1) : entry).toLowerCase().trim();
+          if (d) domains.add(d);
+        }
+      }
+      if (p.website) {
+        const d = String(p.website).replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '').toLowerCase().trim();
+        if (d) domains.add(d);
+      }
+    }
+    return { clientCompanies: companies, clientDomains: domains };
+  }, [prospects]);
+  const isActive = useMemo(
+    () => makeActiveSelector(90, 'visible', activeClientFilter),
+    [activeClientFilter]
+  );
+
+  // Client selector: strict 1:1 match against this CDM's Client
+  // prospects (or email domain when the contact has no company),
+  // suppressing Old Client matches first. Mirrors the predicate
+  // ClientContactsView builds inline.
+  const clientSelectors = useMemo(() => {
+    const clientProspects = (prospects || []).filter(p => p.status === 'Client' && matchesCdm(p.cdm, cdmName));
+    const oldClientProspects = (prospects || []).filter(p => p.status === 'Old Client');
+    const clientDomains = new Set();
+    for (const p of clientProspects) collectClientDomains(p, clientDomains);
+    const oldClientDomains = new Set();
+    for (const p of oldClientProspects) collectClientDomains(p, oldClientDomains);
+    return { clientProspects, oldClientProspects, clientDomains, oldClientDomains };
+  }, [prospects, cdmName]);
+  const isClient = useMemo(() => {
+    const { clientProspects, oldClientProspects, clientDomains, oldClientDomains } = clientSelectors;
+    const FREE = new Set(['gmail.com', 'yahoo.com', 'outlook.com', 'hotmail.com', 'icloud.com', 'aol.com', 'me.com', 'msn.com']);
+    return (c) => {
+      const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
+      if (tags.includes('hide')) return false;
+      if (tags.includes('left')) return false;
+      if (isSchneider(c)) return false;
+      const company = String(c.company || '').trim();
+      const companyLower = company.toLowerCase();
+      const email = (c.email || '').toLowerCase().trim();
+      const at = email.lastIndexOf('@');
+      const domain = at >= 0 ? email.slice(at + 1).trim() : '';
+      const domainOk = domain && !FREE.has(domain);
+      if (company && oldClientProspects.some(p => String(p.company || '').toLowerCase().trim() === companyLower)) return false;
+      if (domainOk && oldClientDomains.has(domain)) return false;
+      if (company && clientProspects.some(p => String(p.company || '').toLowerCase().trim() === companyLower)) return true;
+      if (!company && domainOk && clientDomains.has(domain)) return true;
+      return false;
     };
-  }, []);
+  }, [clientSelectors]);
 
-  // Pre-compute the open-opp account list so the Active rule is O(1)
-  // per contact instead of O(opps).
-  const activeOppAccountSet = useMemo(() => {
-    const exact = new Set();
-    const norm = new Set();
-    for (const r of (oppsRecords || [])) {
-      const stage = String(r?.Stage || '').trim();
-      if (!stage || INVALID_STAGES.has(stage) || CLOSED_STAGES.has(stage)) continue;
-      const raw = String(r?.Account || '').trim();
-      if (!raw) continue;
-      exact.add(raw.toLowerCase());
-      const n = normalizeCompany(raw);
-      if (n) norm.add(n);
-    }
-    return { exact, norm, raw: [...exact] };
-  }, [oppsRecords]);
-
-  // RA Clients: lower-cased company names + their email domains, with
-  // a normalized fallback for fuzzy matching.
-  const clientLookup = useMemo(() => {
-    const exact = new Set();
-    const norm = new Set();
-    for (const row of raClients || []) {
-      const name = raClientName(row);
-      if (!name) continue;
-      exact.add(name.toLowerCase().trim());
-      const n = normalizeCompany(name);
-      if (n) norm.add(n);
-    }
-    return { exact, norm };
-  }, [raClients]);
+  // Key selector: same as the no-override default in KeyContactsView.
+  const isKey = (c) => {
+    const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
+    if (tags.includes('hide')) return false;
+    if (tags.includes('left')) return false;
+    if (isSchneider(c)) return false;
+    return tags.includes('dan key target');
+  };
 
   const rows = useMemo(() => {
     const cache = hubspotCache?.contacts || [];
@@ -209,35 +204,10 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings }) 
       const c = lf && typeof lf._companyOverride === 'string' && lf._companyOverride
         ? { ...baseC, company: lf._companyOverride }
         : baseC;
-      const tags = String(c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
-      if (tags.includes('hide')) continue;
-      if (tags.includes('left')) continue;
-      if (isSchneider(c)) continue;
-
-      const companyLower = String(c.company || '').toLowerCase().trim();
-      const domain = emailDomainOf(c);
       const categories = [];
-
-      // Key
-      if (tags.includes('dan key target')) categories.push('Key');
-
-      // Client
-      const isClient = (companyLower && (clientLookup.exact.has(companyLower) || clientLookup.norm.has(normalizeCompany(companyLower))))
-        || (!companyLower && domain && [...clientLookup.exact].some(n => n.includes(domain.split('.')[0])));
-      if (isClient) categories.push('Client');
-
-      // Active (drops Key Targets and Clients to mirror the
-      // dedicated Active page's exclusion rules — same logic as the
-      // existing CSV export in KeyContactsView).
-      if (!tags.includes('dan key target') && !isClient) {
-        if (hasRecentActivity(c) && companyLower) {
-          const cName = String(c.company || '').trim();
-          const hit = activeOppAccountSet.exact.has(companyLower)
-            || activeOppAccountSet.raw.some(a => companiesMatch(a, cName))
-            || activeOppAccountSet.norm.has(normalizeCompany(cName));
-          if (hit) categories.push('Active');
-        }
-      }
+      if (isKey(c)) categories.push('Key');
+      if (isClient(c)) categories.push('Client');
+      if (isActive(c)) categories.push('Active');
 
       if (categories.length === 0) continue;
       out.push({
@@ -256,7 +226,8 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings }) 
       });
     }
     return out.sort((a, b) => a.name.localeCompare(b.name));
-  }, [hubspotCache, settings, clientLookup, activeOppAccountSet]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hubspotCache, settings, isKey, isClient, isActive]);
 
   // Filter UI: free-text search + per-category toggle pills + per-
   // column substring filters (one input under each header). All AND
