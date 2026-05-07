@@ -271,7 +271,18 @@ function VariableCoverageTable({ subject, body, contacts, insertVariables, resol
       <p style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', margin: '-0.25rem 0 0.5rem 0' }}>
         Each row is a recipient; each column is a variable used in the draft. Red <strong>—</strong> = the source data has no value to substitute, so that personalization will land blank.
       </p>
-      <div style={{ maxHeight: 280, overflow: 'auto', border: '1px solid var(--color-border)', borderRadius: 4 }}>
+      <div style={{
+        // Grow with the viewport — leaves enough room for the page
+        // chrome / header / Saved Drafts above, but uses the rest of
+        // the screen so a 50-row campaign doesn't need a tiny inner
+        // scroll. Sticky header keeps the column labels visible as
+        // the user scrolls within the card.
+        maxHeight: 'calc(100vh - 220px)',
+        minHeight: 320,
+        overflow: 'auto',
+        border: '1px solid var(--color-border)',
+        borderRadius: 4,
+      }}>
         <table style={{ borderCollapse: 'collapse', fontSize: '0.74rem', tableLayout: 'auto', width: '100%' }}>
           <thead>
             <tr>
