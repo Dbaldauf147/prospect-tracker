@@ -1551,16 +1551,32 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     }
     out.location = data.location || '';
 
-    // Sender becomes organizer.
-    if (data.senderEmail || data.senderName) {
-      out.organizer = { name: data.senderName || '', email: data.senderEmail || '' };
+    // MsgReader exposes two address fields per recipient: `email`
+    // (PR_EMAIL_ADDRESS — for cached-mode Exchange contacts this is an
+    // X.500 EX address like `/o=ExchangeLabs/.../sesa495000`, not an
+    // SMTP one) and `smtpAddress` (PR_SMTP_ADDRESS — always SMTP). We
+    // prefer SMTP so downstream identity / Schneider-domain checks
+    // see `daniel.baldauf@se.com` and not the Exchange DN that those
+    // checks can't classify. Fall back to `email` only when the SMTP
+    // form is missing — the EX-pattern hint in the SE bucketer can
+    // still rescue it.
+    const pickAddress = (smtp, ex) => {
+      const s = (smtp || '').trim();
+      if (s) return s.toLowerCase();
+      return (ex || '').trim().toLowerCase();
+    };
+
+    // Sender becomes organizer. Same SMTP-over-EX preference.
+    const senderEmail = pickAddress(data.senderSmtpAddress || data.senderEmailSmtp, data.senderEmail);
+    if (senderEmail || data.senderName) {
+      out.organizer = { name: data.senderName || '', email: senderEmail || '' };
     }
 
     // Recipients → attendees. .msg recipType: 1 = To (required),
     // 2 = Cc (optional), 3 = Bcc.
     const seen = new Set();
     for (const r of (data.recipients || [])) {
-      const email = (r.email || r.smtpAddress || '').trim().toLowerCase();
+      const email = pickAddress(r.smtpAddress, r.email);
       const name = (r.name || '').trim() || email;
       if (!email && !name) continue;
       const key = email || `name:${name.toLowerCase()}`;
@@ -1570,7 +1586,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
         name, email,
         required: r.recipType !== 2,
         role: r.recipType === 2 ? 'OPT-PARTICIPANT' : 'REQ-PARTICIPANT',
-        rawParams: { source: 'msg', recipType: r.recipType },
+        rawParams: { source: 'msg', recipType: r.recipType, exAddress: r.email || null },
       });
     }
 
@@ -1790,10 +1806,20 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       const enriched = { ...a, match, matchedCompany, matchedOtherCompany };
       // Explicit bucket on manual attendees wins; otherwise fall back to
       // email-domain detection for @se.com / @schneider-electric.com.
+      // When the address came in as an Exchange X.500 DN (cached-mode
+      // .msg drag from Outlook desktop), the SMTP form is missing, but
+      // those DNs reliably contain Schneider's `sesa<digits>` SAM
+      // suffix on the cn= leg and / or the literal "schneider" substring
+      // higher up the path — either is a strong SE signal.
       let isSE;
       if (a.bucket === 'se') isSE = true;
       else if (a.bucket === 'customer') isSE = false;
-      else isSE = /@(se\.com|schneider-electric\.com)$/i.test(em);
+      else {
+        const exHint = String(a.rawParams?.exAddress || '').toLowerCase();
+        isSE = /@(se\.com|schneider-electric\.com)$/i.test(em)
+          || /sesa\d+/.test(em) || /sesa\d+/.test(exHint)
+          || /schneider/.test(em) || /schneider/.test(exHint);
+      }
       if (isSE) se.push(enriched); else cust.push(enriched);
     }
     // Required first, optional after. Within each group sort by an
