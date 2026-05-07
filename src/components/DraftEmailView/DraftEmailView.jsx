@@ -1450,8 +1450,11 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
               and the resolved value for every variable token used in
               the current subject + body. Empty cells render in red so
               gaps in the personalization data are obvious before the
-              user fires off the campaign. */}
-          <div className={styles.draftsCard}>
+              user fires off the campaign. The .coverageCard class
+              widens this single card past the 320 px right column so
+              the table has room for many variable columns; nothing
+              else on the page moves. */}
+          <div className={`${styles.draftsCard} ${styles.coverageCard}`}>
             <VariableCoverageTable
               subject={subject}
               body={body}

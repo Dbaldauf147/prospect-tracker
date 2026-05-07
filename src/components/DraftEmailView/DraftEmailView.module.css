@@ -8,6 +8,24 @@
 
 .composeCard, .draftsCard { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 10px; padding: 1.25rem; min-width: 0; }
 .composeCard { overflow: visible; }
+
+/* Variable Coverage card — escapes the 320 px right column visually
+   so the per-recipient table has room for many variable columns
+   without forcing the rest of the page to reflow. The grid track
+   stays 320 px (driven by .layout's grid-template-columns), so
+   Saved Drafts above this card and the Compose column to its left
+   don't move. The card simply renders wider than its track and
+   overflows to the right. On screens narrower than the resulting
+   total width the body's normal horizontal scroll kicks in. */
+.coverageCard {
+  width: 720px;
+  max-width: calc(100vw - 2rem);
+  position: relative;
+  z-index: 2;
+}
+@media (max-width: 900px) {
+  .coverageCard { width: auto; max-width: 100%; }
+}
 .cardTitle { font-size: 0.78rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-text-muted); margin: 0 0 1rem; }
 
 .field { margin-bottom: 1rem; }
