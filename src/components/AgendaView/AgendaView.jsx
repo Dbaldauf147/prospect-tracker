@@ -4,6 +4,7 @@ import { logAction } from '../../utils/auditLog';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotContacts, updateHubspotCache } from '../../utils/hubspotContactsCache';
 import { matchesCdm } from '../../utils/cdmMatch';
+import { getQueuedContactIds, setQueuedContactIds } from '../../utils/draftCampaignQueue';
 import styles from './AgendaView.module.css';
 
 const STORAGE_KEY = 'bulk-contacts-cache';
@@ -2168,6 +2169,11 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
                     : newSel > 0
                       ? `+ Add ${newSel} selected to HubSpot`
                       : `Send ${bulkSelected.size} selected (nothing to do)`;
+                // How many of the picked rows have a HubSpot contact
+                // we can actually queue for the Custom Email Campaign
+                // — only existing contacts have an id we can pin to.
+                const queueable = picked.filter(r => !!hubspotByEmail.get(r.email)?.id);
+                const queueDisabled = queueable.length === 0;
                 return (
                   <>
                     <button
@@ -2186,6 +2192,38 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
                         fontFamily: 'inherit', whiteSpace: 'nowrap',
                       }}
                     >{busy ? `Sending ${progress?.done}/${progress?.total}…` : sendLabel}</button>
+                    <button
+                      type="button"
+                      disabled={queueDisabled}
+                      onClick={() => {
+                        if (queueDisabled) return;
+                        const cur = getQueuedContactIds();
+                        const seen = new Set(cur);
+                        const ids = [...cur];
+                        let added = 0;
+                        for (const r of queueable) {
+                          const id = String(hubspotByEmail.get(r.email).id);
+                          if (!seen.has(id)) { seen.add(id); ids.push(id); added++; }
+                        }
+                        setQueuedContactIds(ids);
+                        const skipped = picked.length - queueable.length;
+                        const msg = added > 0
+                          ? `Added ${added} contact${added === 1 ? '' : 's'} to the Custom Email Campaign queue${skipped > 0 ? ` (skipped ${skipped} not yet in HubSpot — push them first, then queue)` : ''}.`
+                          : `All ${queueable.length} picked contact${queueable.length === 1 ? ' was' : 's were'} already queued.`;
+                        alert(msg);
+                      }}
+                      title={queueDisabled
+                        ? 'No selected rows are in HubSpot yet — push them with "Send selected to HubSpot" first, then queue them here.'
+                        : `Queue ${queueable.length} HubSpot-matched contact${queueable.length === 1 ? '' : 's'} for the Draft Emails → Custom Email Campaign card. ${picked.length - queueable.length > 0 ? `${picked.length - queueable.length} not-yet-imported row${picked.length - queueable.length === 1 ? '' : 's'} will be skipped.` : ''}`}
+                      style={{
+                        padding: '0.3rem 0.7rem',
+                        border: 'none', borderRadius: 6,
+                        background: queueDisabled ? '#CBD5E1' : '#7C3AED',
+                        color: '#fff', fontSize: '0.72rem', fontWeight: 700,
+                        cursor: queueDisabled ? 'not-allowed' : 'pointer',
+                        fontFamily: 'inherit', whiteSpace: 'nowrap',
+                      }}
+                    >→ Queue {queueable.length || ''} for Email Campaign</button>
                     <button
                       type="button"
                       onClick={() => { setBulkEditOpen(true); setBulkEditValue(''); }}
