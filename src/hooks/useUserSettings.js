@@ -2,32 +2,52 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { subscribeToUserSettings, saveUserSettings, savePathUpdates, initUserSettings } from '../utils/userSettingsSync';
 import { pushBackup } from '../utils/settingsBackup';
 
-// Cheap deep-ish equality for the conflict diff. Settings values are
-// plain JSON (no functions / dates / classes) so JSON.stringify is a
-// fine fingerprint and orders of magnitude faster than dragging in
-// lodash for one call site. Object key ordering can produce false
-// positives (different stringification of the same data); the
-// follow-up doesn't care about false positives — they just mean we
-// pessimistically prompt or silently force-write a noop, both
-// acceptable.
-function jsonEq(a, b) {
-  if (a === b) return true;
-  try { return JSON.stringify(a) === JSON.stringify(b); } catch { return false; }
-}
-
-// Compare our last-known local state with the remote document and
-// return the set of top-level keys whose values actually differ —
-// that's "what the other device changed". `_lastWriteAt` is excluded
-// because it's just the bookkeeping stamp and always differs after a
-// remote write.
-function changedTopLevelKeys(prev, remote) {
-  const out = new Set();
-  const all = new Set([...Object.keys(prev || {}), ...Object.keys(remote || {})]);
-  all.delete('_lastWriteAt');
-  for (const k of all) {
-    if (!jsonEq(prev?.[k], remote?.[k])) out.add(k);
+// Best-effort merge for a single setting key when two devices both
+// touched it. The goal is to never lose data without being asked, so
+// we use structural rules rather than always letting one side win:
+//
+//   * arrays of objects with stable ids (rows in zoomInfo, opps, etc.)
+//     → union by id, ours wins on same id (last-edit-on-this-device).
+//   * arrays of primitives (customTypes, hiddenServices)
+//     → dedup union, preserving our order then appending remote-only.
+//   * plain objects (dismissedGuesses, contactLocalFields, …)
+//     → recursive shallow merge: ours wins on overlapping leaf keys.
+//   * anything else (strings, numbers, bool, mixed arrays)
+//     → ours wins, since we just made the edit on this device.
+function autoMergeValue(ours, remote) {
+  if (remote === undefined) return ours;
+  if (ours === undefined) return remote;
+  if (Array.isArray(ours) && Array.isArray(remote)) {
+    const idOf = (x) => (x && typeof x === 'object' ? (x.id ?? x._id ?? null) : null);
+    const oursAllIded = ours.length === 0 || ours.every(x => idOf(x) != null);
+    const remoteAllIded = remote.length === 0 || remote.every(x => idOf(x) != null);
+    if (oursAllIded && remoteAllIded) {
+      const ourIds = new Set(ours.map(idOf));
+      const result = [...ours];
+      for (const r of remote) if (!ourIds.has(idOf(r))) result.push(r);
+      return result;
+    }
+    const allPrim = ours.every(x => x === null || typeof x !== 'object')
+      && remote.every(x => x === null || typeof x !== 'object');
+    if (allPrim) {
+      const norm = (v) => (typeof v === 'string' ? v.toLowerCase() : v);
+      const seen = new Set(ours.map(norm));
+      const result = [...ours];
+      for (const v of remote) {
+        const k = norm(v);
+        if (!seen.has(k)) { seen.add(k); result.push(v); }
+      }
+      return result;
+    }
+    return ours;
   }
-  return out;
+  if (ours && remote && typeof ours === 'object' && typeof remote === 'object'
+      && !Array.isArray(ours) && !Array.isArray(remote)) {
+    const out = { ...remote };
+    for (const k of Object.keys(ours)) out[k] = autoMergeValue(ours[k], remote[k]);
+    return out;
+  }
+  return ours;
 }
 
 export function useUserSettings(user) {
@@ -74,58 +94,29 @@ export function useUserSettings(user) {
     setSettings(optimistic);
     writingRef.current = true;
 
-    // Column prefs (table widths/visibility/renames) are per-device UX
-    // state — not user data — and they fire on every drag, toggle, and
-    // rename. The cross-device merge prompt is too noisy for this
-    // traffic, so silently force-write when an update is purely
-    // tablePrefs. Pre-save backup above still snapshots the prior state
-    // for recovery.
     const updateKeys = Object.keys(updates);
-    const isLowImpact = updateKeys.length === 1 && updateKeys[0] === 'tablePrefs';
 
     try {
       const result = await saveUserSettings(userIdRef.current, updates, { expectedAt });
 
       if (result.stale) {
-        // Field-aware merge: only prompt when our edit actually
-        // collides with what the other device changed at the top-level
-        // key. Firestore's setDoc(..., merge: true) already preserves
-        // every field we don't pass, so an edit to "zoomInfo" on this
-        // tab and an edit to "customTypes" on another tab can both win
-        // — there's no real conflict, the popup was just noise.
+        // Silent auto-merge — never prompt. For any key both devices
+        // touched, fold the two values together with autoMergeValue
+        // (id-keyed array union, primitive-array dedup, recursive
+        // object merge). For keys only we touched, ours flows through.
+        // Firestore's setDoc(merge:true) keeps the other device's
+        // changes to keys we didn't touch. Pre-save backup above means
+        // the prior state is recoverable if the heuristic ever picks
+        // the wrong side on a primitive overlap.
         const remote = result.remoteData || {};
-        const remoteChanged = changedTopLevelKeys(prev, remote);
-        const ourKeys = new Set(updateKeys);
-        let conflict = false;
-        for (const k of ourKeys) if (remoteChanged.has(k)) { conflict = true; break; }
-
-        let overwrite;
-        if (isLowImpact || !conflict) {
-          // No same-key collision → silently force-write. Other device's
-          // changes to other keys are preserved by Firestore's merge.
-          overwrite = true;
-        } else {
-          // Genuine same-key conflict — ask before overwriting.
-          overwrite = window.confirm(
-            'Your settings have been changed on another device since this page loaded.\n\n' +
-            'OK = Overwrite the other device\'s changes with yours.\n' +
-            'Cancel = Keep the other device\'s changes and discard yours.\n\n' +
-            'Tip: Either way, your pre-save state has been backed up locally. You can restore it from the Backups panel.'
-          );
+        const mergedUpdates = { ...updates };
+        for (const k of updateKeys) {
+          if (k in remote) mergedUpdates[k] = autoMergeValue(updates[k], remote[k]);
         }
-        if (overwrite) {
-          const forced = await saveUserSettings(userIdRef.current, updates, { force: true });
-          // Optimistic state already has our key writes layered on
-          // top; pull in the other-device changes for keys we didn't
-          // touch so this tab reflects the merged truth.
-          const merged = { ...remote, ...optimistic, _lastWriteAt: forced.writtenAt };
-          settingsRef.current = merged;
-          setSettings(merged);
-        } else {
-          // User chose to keep the other device's state — drop ours.
-          settingsRef.current = remote;
-          setSettings(remote);
-        }
+        const forced = await saveUserSettings(userIdRef.current, mergedUpdates, { force: true });
+        const merged = { ...remote, ...mergedUpdates, _lastWriteAt: forced.writtenAt };
+        settingsRef.current = merged;
+        setSettings(merged);
       } else {
         const next = { ...optimistic, _lastWriteAt: result.writtenAt };
         settingsRef.current = next;
@@ -171,46 +162,50 @@ export function useUserSettings(user) {
     setSettings(optimistic);
     writingRef.current = true;
 
-    // Same low-impact carve-out as updateSettings: if every path being
-    // written is under tablePrefs.*, silently force-write on stale.
-    const isLowImpact = Object.keys(pathUpdates).every(p => p === 'tablePrefs' || p.startsWith('tablePrefs.'));
-
     try {
       const result = await savePathUpdates(userIdRef.current, pathUpdates, { expectedAt });
       if (result.stale) {
-        // Same field-aware merge as updateSettings, just keyed by the
-        // top-level component of each dotted path we're writing. If
-        // we're writing "companyOpportunities.acme-inc" and the other
-        // device touched "zoomInfo", they don't collide.
+        // Silent auto-merge for path-based saves. Path writes target
+        // specific dotted keys (e.g. "companyOpportunities.acme-inc"),
+        // so the merge surface is just that path's value: if the
+        // remote has a value at the same path that's already been
+        // edited by the other device, autoMergeValue folds it in
+        // (id-keyed list union, recursive object merge, etc.). Keys
+        // the other device changed and we didn't touch are preserved
+        // by force-writing only our paths via savePathUpdates.
         const remote = result.remoteData || {};
-        const remoteChanged = changedTopLevelKeys(prev, remote);
-        const ourTopKeys = new Set(Object.keys(pathUpdates).map(p => p.split('.')[0]));
-        let conflict = false;
-        for (const k of ourTopKeys) if (remoteChanged.has(k)) { conflict = true; break; }
-
-        let overwrite;
-        if (isLowImpact || !conflict) {
-          overwrite = true;
-        } else {
-          overwrite = window.confirm(
-            'Your settings have been changed on another device since this page loaded.\n\n' +
-            'OK = Overwrite the other device\'s changes with yours.\n' +
-            'Cancel = Keep the other device\'s changes and discard yours.\n\n' +
-            'Either way, your pre-save state has been backed up locally.'
-          );
+        const mergedPathUpdates = {};
+        for (const [path, value] of Object.entries(pathUpdates)) {
+          if (value == null) {
+            mergedPathUpdates[path] = value; // delete-paths flow through unchanged
+            continue;
+          }
+          // Walk the dotted path through `remote` to find what's there now.
+          const parts = path.split('.');
+          let cur = remote;
+          for (const part of parts) {
+            if (cur && typeof cur === 'object' && part in cur) cur = cur[part];
+            else { cur = undefined; break; }
+          }
+          mergedPathUpdates[path] = cur === undefined ? value : autoMergeValue(value, cur);
         }
-        if (overwrite) {
-          const forced = await savePathUpdates(userIdRef.current, pathUpdates, { force: true });
-          // Layer optimistic (which already has our path writes) on
-          // top of the freshest remote so this tab reflects every
-          // device's most recent edits.
-          const merged = { ...remote, ...optimistic, _lastWriteAt: forced.writtenAt };
-          settingsRef.current = merged;
-          setSettings(merged);
-        } else {
-          settingsRef.current = remote;
-          setSettings(remote);
+        const forced = await savePathUpdates(userIdRef.current, mergedPathUpdates, { force: true });
+        // Rebuild local state: take the freshest remote, then apply
+        // our merged path writes on top.
+        const next = structuredClone(remote);
+        for (const [path, value] of Object.entries(mergedPathUpdates)) {
+          const parts = path.split('.');
+          let cur = next;
+          for (let i = 0; i < parts.length - 1; i++) {
+            if (typeof cur[parts[i]] !== 'object' || cur[parts[i]] == null) cur[parts[i]] = {};
+            cur = cur[parts[i]];
+          }
+          const last = parts[parts.length - 1];
+          if (value == null) delete cur[last]; else cur[last] = value;
         }
+        next._lastWriteAt = forced.writtenAt;
+        settingsRef.current = next;
+        setSettings(next);
       } else {
         const next = { ...optimistic, _lastWriteAt: result.writtenAt };
         settingsRef.current = next;
