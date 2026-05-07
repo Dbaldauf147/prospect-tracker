@@ -3286,26 +3286,6 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           </div>
         </div>
         <div className={styles.body}>
-          {/* Top-of-modal Competitors box. Replaces the legacy
-              "Competitors" sub-section that lived further down — same
-              storage shape as the Scoping Details Notes field on the
-              Notes page (free text with @[Service Name] tokens), so the
-              user can drop a quick "Engie won @Strategic sourcing"
-              kind of line and the service half lights up as a green
-              pill. Backed by a new fields.competitorsNotes string.
-              The legacy structured fields.competitors is kept on the
-              record (not rendered) so older data still round-trips. */}
-          {!isNew && (
-            <div style={{ marginBottom: '0.75rem' }}>
-              <label className={styles.label} style={{ marginBottom: '0.3rem', display: 'block' }}>Competitors</label>
-              <ScopingNotesEditor
-                value={fields.competitorsNotes || ''}
-                onCommit={v => set('competitorsNotes', v)}
-                services={SERVICE_CATEGORIES.flatMap(c => c.items)}
-                placeholder="Who's competing here? Type @ to tag a service from the Services Explored list — e.g. @strategic sourcing → Strategic sourcing."
-              />
-            </div>
-          )}
           <div className={styles.grid}>
             <div style={{ gridColumn: 'span 2' }}>
               <label className={styles.label}>Company</label>
@@ -3511,6 +3491,24 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               <label className={styles.label}>Asset Types</label>
               <MultiSelectDropdown options={ASSET_TYPES} selected={fields.assetTypes || []} onToggle={(val) => toggleArrayField('assetTypes', val)} />
             </div>
+
+            {/* Competitors — same width as Asset Types (span 2), one
+                short single-line-ish editor. Free text with @[Service]
+                tokens via the shared ScopingNotesEditor; the legacy
+                structured fields.competitors map is kept on the record
+                untouched so historical data still round-trips. */}
+            {!isNew && (
+              <div style={{ gridColumn: 'span 2' }}>
+                <label className={styles.label}>Competitors</label>
+                <ScopingNotesEditor
+                  value={fields.competitorsNotes || ''}
+                  onCommit={v => set('competitorsNotes', v)}
+                  services={SERVICE_CATEGORIES.flatMap(c => c.items)}
+                  placeholder="Who's competing here? Type @ to tag a service — e.g. @strategic sourcing."
+                  style={{ minHeight: '34px', padding: '0.3rem 0.5rem', fontSize: '0.78rem' }}
+                />
+              </div>
+            )}
 
             <div style={{ gridColumn: 'span 2' }}>
               <label className={styles.label}>Frameworks</label>

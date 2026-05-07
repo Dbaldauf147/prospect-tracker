@@ -499,7 +499,6 @@ export const ScopingNotesEditor = memo(function ScopingNotesEditor({
         onPaste={handlePaste}
         data-placeholder={placeholder || 'Type @ to mention a service from the Services Explored list…'}
         style={{
-          ...style,
           minHeight: '100px',
           padding: '0.4rem 0.55rem',
           border: '1px solid var(--color-border)',
@@ -510,6 +509,9 @@ export const ScopingNotesEditor = memo(function ScopingNotesEditor({
           outline: 'none',
           whiteSpace: 'pre-wrap',
           wordBreak: 'break-word',
+          // Caller-supplied overrides win — e.g. a slimmer minHeight
+          // when the editor is dropped into a tight grid cell.
+          ...style,
         }}
       />
       <style>{`
