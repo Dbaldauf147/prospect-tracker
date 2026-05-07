@@ -1068,7 +1068,11 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     const ccMap = settings?.ccMap || {};
     const toAlsoMap = settings?.toAlsoMap || {};
 
-    selectedContacts.forEach((c, i) => {
+    // Build every recipient's .eml in memory first. When more than 3
+    // are about to be produced, we bundle them into a single ZIP so
+    // the user gets one download instead of being machine-gunned by
+    // N separate save dialogs / Downloads-folder noise.
+    const built = selectedContacts.map((c) => {
       const pBodyHtml = personalizeForContact(body, c);
       const pSubject = personalizeForContact(subject, c);
       const contactCc = ccMap[c.email] || [];
@@ -1140,17 +1144,72 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
         ].filter(line => line !== null).join('\r\n');
       }
 
-      const blob = new Blob([eml], { type: 'message/rfc822' });
+      const safeName = (c.name || c.email).replace(/[^a-zA-Z0-9]/g, '_');
+      return { fileName: `draft_${safeName}.eml`, eml };
+    });
+
+    // ≤ 3 drafts → keep the original "one download per contact"
+    // behaviour. > 3 → roll all of them up into a single .zip so
+    // the user gets one save dialog instead of N. Folder name inside
+    // the archive includes the date + a subject slug so the user can
+    // tell batches apart in their Downloads folder.
+    if (built.length > 3) {
+      (async () => {
+        try {
+          const JSZip = (await import('jszip')).default;
+          const zip = new JSZip();
+          const date = new Date();
+          const stamp = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}-${String(date.getMinutes()).padStart(2, '0')}`;
+          const slug = (subject || 'untitled')
+            .replace(/<[^>]+>/g, '')
+            .replace(/[\\/:*?"<>|]/g, '')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 60) || 'untitled';
+          const folderInZip = `Prospect Tracker - ${stamp} - ${slug}`;
+          // Dedup file names — two contacts whose name normalises to
+          // the same safeName would otherwise overwrite each other
+          // inside the archive.
+          const seen = new Map();
+          for (const b of built) {
+            let name = b.fileName;
+            const count = (seen.get(name) || 0) + 1;
+            seen.set(name, count);
+            if (count > 1) {
+              const dot = name.lastIndexOf('.');
+              name = dot >= 0 ? `${name.slice(0, dot)}_${count}${name.slice(dot)}` : `${name}_${count}`;
+            }
+            zip.file(`${folderInZip}/${name}`, b.eml);
+          }
+          const blob = await zip.generateAsync({ type: 'blob' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `${folderInZip}.zip`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          setResult({ type: 'success', message: `${built.length} draft.eml files bundled into "${folderInZip}.zip" — unzip and double-click each to open in Outlook.` });
+          saveDraft();
+        } catch (err) {
+          setResult({ type: 'error', message: 'Failed to bundle .eml files: ' + (err?.message || 'unknown error') });
+        }
+      })();
+      return;
+    }
+
+    built.forEach((b, i) => {
+      const blob = new Blob([b.eml], { type: 'message/rfc822' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      const safeName = (c.name || c.email).replace(/[^a-zA-Z0-9]/g, '_');
-      a.download = `draft_${safeName}.eml`;
+      a.download = b.fileName;
       document.body.appendChild(a);
       setTimeout(() => { a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); }, i * 300);
     });
 
-    setResult({ type: 'success', message: `${selectedContacts.length} .eml file${selectedContacts.length !== 1 ? 's' : ''} downloading — double-click each to open in Outlook.` });
+    setResult({ type: 'success', message: `${built.length} .eml file${built.length !== 1 ? 's' : ''} downloading — double-click each to open in Outlook.` });
     saveDraft();
   }
 
