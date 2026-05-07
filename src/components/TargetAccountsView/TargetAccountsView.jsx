@@ -265,6 +265,48 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings }) {
     });
   }
 
+  // Permanently remove an account from the Target Accounts sheet so it
+  // stops surfacing in any fuzzy-match suggestion across the app. Drops
+  // the row from `records` (re-numbering _id so downstream renders stay
+  // stable), unblocks the name as well so the blocked-list doesn't
+  // accumulate stale entries, and persists the new state through both
+  // local cache + Firestore + the global targetAccountsData prop chain.
+  function handleDeleteRow(record) {
+    if (!record || !nameKey) return;
+    const name = String(record[nameKey] || '').trim();
+    const confirmText = name
+      ? `Delete "${name}" from the Target Accounts list? This removes it everywhere — including the suggested-name fuzzy match. The original Excel file is unchanged.`
+      : 'Delete this row from the Target Accounts list?';
+    if (!window.confirm(confirmText)) return;
+    setData(prev => {
+      if (!prev?.sheets || !activeSheet) return prev;
+      const sheet = prev.sheets[activeSheet];
+      const filteredRecords = sheet.records
+        .filter(r => r._id !== record._id)
+        .map((r, i) => ({ ...r, _id: i + 1 }));
+      const updated = {
+        ...prev,
+        sheets: { ...prev.sheets, [activeSheet]: { ...sheet, records: filteredRecords } },
+      };
+      saveCache(updated);
+      if (user?.uid) saveToFirestore(user.uid, updated);
+      if (onDataLoaded) onDataLoaded(updated);
+      return updated;
+    });
+    // Drop the deleted name from the blocked-list too — keeping it
+    // around would just be dead weight since the row is gone.
+    if (name) {
+      const key = name.toLowerCase();
+      setBlockedAccountNamesState(prev => {
+        if (!prev.has(key)) return prev;
+        const next = new Set(prev);
+        next.delete(key);
+        persistBlockedAccountNames(next);
+        return next;
+      });
+    }
+  }
+
   function handleDrop(e) {
     e.preventDefault();
     setDragOver(false);
@@ -322,8 +364,34 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings }) {
         );
       },
     };
-    return [blockCol, ...dataCols];
-  }, [headers, blockedAccountNames, nameKey]);
+    const deleteCol = {
+      key: '__delete__',
+      label: '',
+      defaultWidth: 44,
+      render: (row) => {
+        const accountName = nameKey ? String(row[nameKey] || '').trim() : '';
+        return (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); handleDeleteRow(row); }}
+            disabled={!accountName}
+            title={accountName
+              ? `Delete "${accountName}" from the Target Accounts list — removes it from every fuzzy-match suggestion across the app.`
+              : 'Delete row'}
+            style={{
+              border: 'none', background: 'transparent',
+              color: accountName ? '#94A3B8' : '#E2E8F0',
+              fontSize: '1rem', cursor: accountName ? 'pointer' : 'not-allowed',
+              padding: '0 6px', lineHeight: 1, fontFamily: 'inherit',
+            }}
+            onMouseEnter={e => { if (accountName) e.currentTarget.style.color = '#DC2626'; }}
+            onMouseLeave={e => { if (accountName) e.currentTarget.style.color = '#94A3B8'; }}
+          >×</button>
+        );
+      },
+    };
+    return [blockCol, deleteCol, ...dataCols];
+  }, [headers, blockedAccountNames, nameKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Detect filterable columns (those with <=50 unique non-empty values)
   const filterableColumns = useMemo(() => {
