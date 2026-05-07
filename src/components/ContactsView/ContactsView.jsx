@@ -111,7 +111,7 @@ export function ContactsView({
           />
         )}
         {subtab === 'zoominfo' && (
-          <ZoomInfoView settings={settings} updateSettings={updateSettings} />
+          <ZoomInfoView prospects={prospects} settings={settings} updateSettings={updateSettings} />
         )}
         {subtab === 'dedupe' && <DedupeView />}
       </div>
