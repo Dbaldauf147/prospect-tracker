@@ -135,6 +135,7 @@ export function KeyProspectsView({ prospects = [], onSelectProspect, settings, u
         <>None of your Tier 1 / Tier 2 accounts have decision-maker contacts without opps. Either every Tier 1 / 2 account already has at least one opp on the Opps tab, or no contacts at those accounts are tagged <code>Decision Maker</code> in HubSpot. Tag a few decision makers and they'll show up here.</>
       }
       contactSelector={selector}
+      defaultViewMode="companies"
     />
   );
 }

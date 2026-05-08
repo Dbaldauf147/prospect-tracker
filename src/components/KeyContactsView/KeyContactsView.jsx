@@ -507,6 +507,11 @@ function KeyContactsViewInner({
   // each label the function returns. Used by All Contacts to mark
   // each row as Key / Active / Client (or any combination thereof).
   categorizeContact = null,
+  // Default view mode when no per-page localStorage entry exists yet.
+  // 'contacts' (the default) lands the user on the flat name-by-name
+  // table; 'companies' lands them on the By Company rollup. Used by
+  // Key Prospects which is meant to be an account-level worklist.
+  defaultViewMode = 'contacts',
   // When provided, fires with the count of contacts that would pass
   // the "active in past 30 days AND not in Table View" filter — used
   // by ActiveContactsView to label the toggle checkbox. The count is
@@ -1163,7 +1168,7 @@ function KeyContactsViewInner({
     if (arr.length > 0) next[cid] = arr; else delete next[cid];
     updateSettings({ contactReportsTo: next });
   }, [settings?.contactReportsTo, updateSettings]);
-  const [viewMode, setViewMode] = useState(() => localStorage.getItem(lsKey('view-mode')) || 'contacts');
+  const [viewMode, setViewMode] = useState(() => localStorage.getItem(lsKey('view-mode')) || defaultViewMode);
   useEffect(() => { try { localStorage.setItem(lsKey('view-mode'), viewMode); } catch {} }, [viewMode]);
   const [contactSortKey, setContactSortKey] = useState(() => localStorage.getItem(lsKey('contact-sort-key')) || 'name');
   const [contactSortDir, setContactSortDir] = useState(() => localStorage.getItem(lsKey('contact-sort-dir')) || 'asc');
