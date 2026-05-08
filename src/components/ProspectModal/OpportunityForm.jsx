@@ -3517,10 +3517,11 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
               {aboveTables.length > 0 && (
                 <div style={{ marginBottom: '0.5rem' }}>
                   {f.key === 'summary' && (
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem', marginBottom: '0.5rem' }}>
                       {[
                         { key: 'timingAnswer', label: 'When do they want to do it by? What is driving that deadline?' },
                         { key: 'budgetAnswer', label: 'Have they budgeted for this?' },
+                        { key: 'leadershipAnswer', label: 'What kicked off this scoping exercise? Was it a problem that surfaced or a mandate from leadership?' },
                       ].map(q => {
                         const v = formData.fieldValues[q.key] || '';
                         const empty = !v.trim();
