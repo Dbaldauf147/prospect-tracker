@@ -339,7 +339,7 @@ const EMPTY = {
   company: '', cdm: '', status: 'Inside Sales', type: '', geography: '', publicPrivate: '',
   assetTypes: [], peAum: null, reAum: null, numberOfSites: null, rank: '', tier: 'Tier 2',
   hqRegion: '', frameworks: [], notes: '', website: '', emailDomain: '', servicesExplored: {}, serviceNotes: {}, competitors: {}, portfolioCompanies: [],
-  peOwner: '',
+  peOwner: '', sustainabilityTarget: '',
 };
 
 // Company-name normalizer shared with the list tabs so fuzzy matching
@@ -3712,6 +3712,19 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             <div style={{ gridColumn: 'span 2' }}>
               <label className={styles.label}>Frameworks</label>
               <MultiSelectDropdown options={FRAMEWORKS} selected={fields.frameworks || []} onToggle={(val) => toggleArrayField('frameworks', val)} />
+            </div>
+
+            <div style={{ gridColumn: 'span 2' }}>
+              <label className={styles.label}>Sustainability Target</label>
+              <CommitOnBlurInput
+                multiline
+                autoGrow
+                className={styles.textarea}
+                value={fields.sustainabilityTarget || ''}
+                onCommit={v => set('sustainabilityTarget', v)}
+                rows={2}
+                placeholder="e.g. Net zero by 2040 (Scope 1 & 2), SBTi 1.5°C committed, 50% emissions reduction by 2030 vs 2019 baseline"
+              />
             </div>
 
             <div className={styles.fieldFull}>
