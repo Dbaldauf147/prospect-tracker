@@ -1105,11 +1105,13 @@ function KeyContactsViewInner({
   // `hubspot-cache-updated` event we do, so a save here lights up
   // there automatically (and vice-versa).
   const [editingContact, setEditingContact] = useState(null);
-  const handleContactSaved = useCallback((updated) => {
-    setEditingContact(null);
-    // updateHubspotCache (called inside the modal) already dispatches
-    // a `hubspot-cache-updated` event that our existing listener picks
-    // up to refresh the table — nothing to do here.
+  // ContactEditModal calls onSave with { silent: true } from its
+  // tag-autosave path so each tag toggle persists without dropping
+  // the user out of the popup. We have to honour that flag — the
+  // previous version always called setEditingContact(null), which
+  // closed the modal on every tick.
+  const handleContactSaved = useCallback((updated, opts) => {
+    if (!opts?.silent) setEditingContact(null);
     void updated;
   }, []);
   const handleSaveContactNote = useCallback((cid, note) => {
