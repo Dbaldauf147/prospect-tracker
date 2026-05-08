@@ -1125,14 +1125,18 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
         .replace(/&nbsp;&nbsp;/g, '\x00DOUBLE\x00')
         .replace(/&nbsp;/g, ' ')
         .replace(/\x00DOUBLE\x00/g, '&nbsp;&nbsp;')
-        // Force zero margins on EVERY <p>. Outlook's default Normal
-        // style applies "auto" before/after spacing to every <p>,
-        // which the user does NOT want — they want visible spacing
-        // to come exclusively from <p><br></p> blocks they typed
-        // (double Enter in Quill). With <p> margins at 0pt, a
-        // single Enter produces a tight line break and a double
-        // Enter inserts a one-line gap (the <br> inside the empty
-        // paragraph still consumes a line of height).
+        // Convert empty paragraphs (Quill's <p><br></p> double-Enter
+        // markers) into a stand-alone <br>. Outlook's Word renderer
+        // collapses <p><br></p> to zero height once we've zeroed the
+        // <p> margins, which was killing the user's typed blank
+        // lines. A bare <br> always consumes a line of height, so
+        // double Enter reliably shows a visible blank line again.
+        .replace(/<p[^>]*>\s*(?:<br\s*\/?>\s*)*<\/p>/gi, '<br>')
+        // Force zero margins on EVERY remaining <p>. With <p> margins
+        // at 0pt, a single Enter produces a tight line break (line2
+        // sits directly under line1, no auto Normal-style gap), and
+        // the standalone <br>s synthesised above are the only source
+        // of visible blank lines.
         .replace(/<p(\s[^>]*)?>/gi, (_, a = '') => `<p${zeroBlockSpacing(a)}>`)
         // Lists themselves so they sit flush.
         .replace(/<ul(\s[^>]*)?>/gi, (_, a = '') => `<ul${zeroListSpacing(a)}>`)
