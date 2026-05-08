@@ -19,6 +19,7 @@ import { SyncPanel } from './components/SyncPanel';
 import { MyAccountsView } from './components/MyAccountsView/MyAccountsView';
 import { ContactsView } from './components/ContactsView/ContactsView';
 import { OppsView } from './components/OppsView/OppsView';
+import { OppsView2 } from './components/OppsView2/OppsView2';
 import { ClientsView } from './components/ClientsView/ClientsView';
 import { ActivityView } from './components/ActivityView/ActivityView';
 import { loadTargetAccountsFromDB } from './components/TargetAccountsView/TargetAccountsView';
@@ -332,6 +333,8 @@ function App() {
             <ClientsView prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} />
           ) : view === 'opps' ? (
             <OppsView settings={settings} updateSettings={updateSettings} />
+          ) : view === 'opps2' ? (
+            <OppsView2 settings={settings} updateSettings={updateSettings} />
           ) : view === 'accounts' ? (
             <MyAccountsView
               prospects={prospects}
