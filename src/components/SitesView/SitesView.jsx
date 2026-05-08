@@ -2052,6 +2052,89 @@ export function SitesView({ settings, updateSettings } = {}) {
     const { stateRows: electricRows, siteRows: electricSiteRows } = buildBucket('electric');
     const { stateRows: gasRows, siteRows: gasSiteRows } = buildBucket('gas');
 
+    // Sourcing-targets bucket: sites in a deregulated market that
+    // don't yet have a competitive supplier on file. These are the
+    // rows the user is most likely pitching against — retail-choice
+    // access exists in the state but the site is still on the
+    // utility's default service. Treat "supplier same as utility"
+    // as no supplier (some uploads mirror the utility name into the
+    // supplier column on regulated rows). Gas excludes 'Large load
+    // only' states because retail choice there is gated to
+    // industrial customers — not a general sourcing motion.
+    function buildNoSupplierBucket(commodity) {
+      const providerKey = `__${commodity}__`;
+      const supplierKey = commodity === 'electric' ? '__electricSupplier__' : '__gasSupplier__';
+      const consumptionKey = commodity === 'electric' ? '__kwh__' : '__therms__';
+      const costKey = `__${commodity}Cost__`;
+      const dereg = commodity === 'electric' ? ELECTRIC_DEREGULATION : GAS_DEREGULATION;
+      const states = new Map();
+      const sites = [];
+      for (const r of rows) {
+        const state = r.__state__ || '';
+        if (!state) continue;
+        const entry = dereg[state];
+        if (!entry) continue;
+        if (commodity === 'gas' && entry.status !== 'yes') continue;
+        const utility = String(r[providerKey] || '').trim();
+        const rawSupplier = String(r[supplierKey] || '').trim();
+        const sameAsUtility = rawSupplier
+          && utility
+          && rawSupplier.toLowerCase() === utility.toLowerCase();
+        const supplier = sameAsUtility ? '' : rawSupplier;
+        if (supplier) continue;
+        const consumptionRaw = r[consumptionKey];
+        const consumption = (typeof consumptionRaw === 'number' && Number.isFinite(consumptionRaw))
+          ? (commodity === 'gas' ? consumptionRaw / 10 : consumptionRaw)
+          : null;
+        const cost = r[costKey];
+        const spend = (typeof cost === 'number' && Number.isFinite(cost)) ? cost : 0;
+        let g = states.get(state);
+        if (!g) {
+          g = {
+            state,
+            sites: 0,
+            consumption: 0,
+            spend: 0,
+            range: entry.range || '',
+            lowPct: entry.lowPct ?? null,
+            highPct: entry.highPct ?? null,
+          };
+          states.set(state, g);
+        }
+        g.sites += 1;
+        if (consumption != null) g.consumption += consumption;
+        g.spend += spend;
+        sites.push({
+          siteName: siteNameColumn ? String(r[siteNameColumn] || '').trim() : '',
+          state,
+          utility,
+          consumption: consumption != null ? Math.round(consumption) : null,
+          spend: spend ? Math.round(spend) : null,
+          range: entry.range || '',
+          lowPct: entry.lowPct ?? null,
+          highPct: entry.highPct ?? null,
+        });
+      }
+      const stateRows = [...states.values()]
+        .map(g => {
+          const lowSavings = (g.spend > 0 && g.lowPct != null) ? Math.round(g.spend * g.lowPct) : 0;
+          const highSavings = (g.spend > 0 && g.highPct != null) ? Math.round(g.spend * g.highPct) : 0;
+          const midSavings = Math.round((lowSavings + highSavings) / 2);
+          return {
+            ...g,
+            consumption: Math.round(g.consumption),
+            spend: Math.round(g.spend),
+            lowSavings,
+            midSavings,
+            highSavings,
+          };
+        })
+        .sort((a, b) => a.state.localeCompare(b.state));
+      return { stateRows, siteRows: sites };
+    }
+    const electricNoSupplier = buildNoSupplierBucket('electric');
+    const gasNoSupplier = buildNoSupplierBucket('gas');
+
     const wb = new Workbook();
     wb.creator = 'Schneider Electric · Prospect Tracker';
     wb.created = new Date();
@@ -2419,6 +2502,26 @@ export function SitesView({ settings, updateSettings } = {}) {
     }
     if (smallGasStates.length) {
       summaryFindings.push(`Natural gas consumption might be too low for sourcing (<$30K) — ${smallGasStates.join(', ')}`);
+    }
+    // Sourcing-target headline: count + spend of sites in a
+    // deregulated market that don't have a competitive supplier yet.
+    // Per commodity so each line reads as its own pitch.
+    const fmtUSD = (n) => `$${Math.round(n).toLocaleString('en-US')}`;
+    const eNoSup = electricNoSupplier.stateRows;
+    const gNoSup = gasNoSupplier.stateRows;
+    const eNoSupSiteCount = eNoSup.reduce((s, g) => s + g.sites, 0);
+    const eNoSupSpend = eNoSup.reduce((s, g) => s + g.spend, 0);
+    const gNoSupSiteCount = gNoSup.reduce((s, g) => s + g.sites, 0);
+    const gNoSupSpend = gNoSup.reduce((s, g) => s + g.spend, 0);
+    if (eNoSupSiteCount > 0) {
+      const states = eNoSup.map(g => g.state).join(', ');
+      const spendStr = eNoSupSpend > 0 ? ` · ${fmtUSD(eNoSupSpend)} annual spend` : '';
+      summaryFindings.push(`Electric sourcing targets — ${eNoSupSiteCount} site${eNoSupSiteCount === 1 ? '' : 's'} in deregulated markets without a supplier${spendStr} — ${states}`);
+    }
+    if (gNoSupSiteCount > 0) {
+      const states = gNoSup.map(g => g.state).join(', ');
+      const spendStr = gNoSupSpend > 0 ? ` · ${fmtUSD(gNoSupSpend)} annual spend` : '';
+      summaryFindings.push(`Natural gas sourcing targets — ${gNoSupSiteCount} site${gNoSupSiteCount === 1 ? '' : 's'} in deregulated markets without a supplier${spendStr} — ${states}`);
     }
 
     if (summaryFindings.length > 0) {
@@ -2794,6 +2897,178 @@ export function SitesView({ settings, updateSettings } = {}) {
         from: { row: 2, column: 1 },
         to: { row: 2 + allSiteRows.length, column: cols.length },
       };
+    }
+
+    // ---- Fourth sheet: Sites Without a Supplier --------------------
+    // Sourcing-target list: every site that sits in a deregulated
+    // market for the given commodity but doesn't have a competitive
+    // supplier on file. Per-state subtotal rows roll up site count,
+    // consumption, spend, and indicative annual savings (mid of the
+    // state's savings band × spend) so the user can see at a glance
+    // which states are worth pitching first. Below the subtotals,
+    // the per-site rows list the underlying targets sorted by state
+    // then site name.
+    if (eNoSupSiteCount + gNoSupSiteCount > 0) {
+      const noSupSheet = wb.addWorksheet('Sites Without a Supplier', {
+        properties: { tabColor: { argb: SE_GREEN } },
+        views: [{ showGridLines: false, state: 'frozen', ySplit: 2 }],
+      });
+      const widths = [10, 30, 22, 16, 16, 18, 18, 18, 18];
+      noSupSheet.columns = widths.map(w => ({ width: w }));
+      const COLS = widths.length;
+
+      noSupSheet.mergeCells(1, 1, 1, COLS);
+      const noSupTitle = noSupSheet.getCell(1, 1);
+      noSupTitle.value = 'Sites Without a Supplier · Deregulated Markets';
+      noSupTitle.font = { name: 'Nunito Sans', bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
+      noSupTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+      noSupTitle.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      noSupSheet.getRow(1).height = 28;
+
+      noSupSheet.mergeCells(2, 1, 2, COLS);
+      const noSupSub = noSupSheet.getCell(2, 1);
+      noSupSub.value = 'Sites in retail-choice markets that are still on default utility service — primary sourcing targets. Indicative Annual Savings uses the midpoint of the state’s savings band × annual spend.';
+      noSupSub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_TEXT_DARK } };
+      noSupSub.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+      noSupSub.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+      noSupSheet.getRow(2).height = 28;
+
+      let nr = 4;
+      function writeNoSupSection(label, bucket, consumptionLabel) {
+        const stateRows = bucket.stateRows;
+        const siteRows = bucket.siteRows;
+        if (stateRows.length === 0) return;
+
+        // Section band.
+        noSupSheet.mergeCells(nr, 1, nr, COLS);
+        const head = noSupSheet.getCell(nr, 1);
+        head.value = label;
+        head.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
+        head.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+        head.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        noSupSheet.getRow(nr).height = 22;
+        nr += 1;
+
+        // State-summary header.
+        const stateHeaderLabels = ['ST/Prov', 'Sites', '', consumptionLabel, 'Annual Spend', 'Savings Range', 'Indicative Annual Savings', '', ''];
+        const stateHeaderRow = noSupSheet.getRow(nr);
+        stateHeaderLabels.forEach((lbl, i) => {
+          const cell = stateHeaderRow.getCell(i + 1);
+          if (!lbl) return;
+          cell.value = lbl;
+          cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+          cell.alignment = { vertical: 'bottom', horizontal: 'left', wrapText: true, indent: 1 };
+          cell.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
+        });
+        stateHeaderRow.height = 32;
+        nr += 1;
+
+        // State-summary data rows.
+        let totalSites = 0, totalConsumption = 0, totalSpend = 0, totalMidSavings = 0;
+        for (const g of stateRows) {
+          const dataRow = noSupSheet.getRow(nr);
+          const vals = [g.state, g.sites, '', g.consumption, g.spend, g.range, g.midSavings, '', ''];
+          const fmts = [null, '#,##0', null, '#,##0', '"$"#,##0', null, '"$"#,##0', null, null];
+          vals.forEach((v, i) => {
+            const cell = dataRow.getCell(i + 1);
+            const numFmt = fmts[i];
+            if (v === '' || v == null) {
+              writeBlank(cell, !!numFmt);
+            } else if (i === 6 && (!v || v === 0)) {
+              // No savings band on this state — show a blank cell
+              // rather than $0 so the reader doesn't read it as "no
+              // opportunity". Common for AB/NY/ON (0%).
+              writeBlank(cell, true);
+            } else {
+              cell.value = v;
+            }
+            cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+            cell.alignment = { vertical: 'bottom', horizontal: 'left', indent: 1 };
+            if (numFmt) cell.numFmt = numFmt;
+            cell.border = { bottom: { style: 'hair', color: { argb: SE_BORDER } } };
+          });
+          dataRow.height = 16;
+          totalSites += g.sites;
+          totalConsumption += g.consumption;
+          totalSpend += g.spend;
+          totalMidSavings += g.midSavings;
+          nr += 1;
+        }
+        // State-summary total row.
+        const stateTotalRow = noSupSheet.getRow(nr);
+        const totalVals = ['Total', totalSites, '', totalConsumption, totalSpend, '', totalMidSavings, '', ''];
+        const totalFmts = [null, '#,##0', null, '#,##0', '"$"#,##0', null, '"$"#,##0', null, null];
+        totalVals.forEach((v, i) => {
+          const cell = stateTotalRow.getCell(i + 1);
+          const numFmt = totalFmts[i];
+          if (v === '' || v == null) {
+            writeBlank(cell, !!numFmt);
+          } else {
+            cell.value = v;
+          }
+          cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_GREEN_DARK } };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+          cell.alignment = { vertical: 'bottom', horizontal: 'left', indent: 1 };
+          if (numFmt) cell.numFmt = numFmt;
+          cell.border = {
+            top: { style: 'thin', color: { argb: SE_GREEN_DARK } },
+            bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } },
+          };
+        });
+        stateTotalRow.height = 18;
+        nr += 2;
+
+        // Per-site detail header.
+        const siteHeaderLabels = ['ST/Prov', 'Site Name', 'Utility', consumptionLabel, 'Annual Spend', 'Savings Range', 'Indicative Annual Savings', '', ''];
+        const siteHeaderRow = noSupSheet.getRow(nr);
+        siteHeaderLabels.forEach((lbl, i) => {
+          const cell = siteHeaderRow.getCell(i + 1);
+          if (!lbl) return;
+          cell.value = lbl;
+          cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+          cell.alignment = { vertical: 'bottom', horizontal: 'left', wrapText: true, indent: 1 };
+          cell.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
+        });
+        siteHeaderRow.height = 32;
+        nr += 1;
+
+        // Per-site data rows, sorted by state then site name.
+        const sortedSites = [...siteRows].sort((a, b) =>
+          a.state.localeCompare(b.state)
+          || (a.siteName || '').localeCompare(b.siteName || '')
+        );
+        for (const s of sortedSites) {
+          const lowSavings = (s.spend != null && s.lowPct != null) ? Math.round(s.spend * s.lowPct) : null;
+          const highSavings = (s.spend != null && s.highPct != null) ? Math.round(s.spend * s.highPct) : null;
+          const midSavings = (lowSavings != null && highSavings != null)
+            ? Math.round((lowSavings + highSavings) / 2)
+            : null;
+          const dataRow = noSupSheet.getRow(nr);
+          const vals = [s.state, s.siteName || '', s.utility || '', s.consumption, s.spend, s.range, midSavings, '', ''];
+          const fmts = [null, null, null, '#,##0', '"$"#,##0', null, '"$"#,##0', null, null];
+          vals.forEach((v, i) => {
+            const cell = dataRow.getCell(i + 1);
+            const numFmt = fmts[i];
+            if (v === '' || v == null) {
+              writeBlank(cell, !!numFmt);
+            } else {
+              cell.value = v;
+            }
+            cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+            cell.alignment = { vertical: 'bottom', horizontal: 'left', indent: 1 };
+            if (numFmt) cell.numFmt = numFmt;
+            cell.border = { bottom: { style: 'hair', color: { argb: SE_BORDER } } };
+          });
+          dataRow.height = 16;
+          nr += 1;
+        }
+        nr += 1;
+      }
+
+      writeNoSupSection('Electric Power', electricNoSupplier, 'Annual Consumption kWh');
+      writeNoSupSection('Natural Gas', gasNoSupplier, 'Annual Consumption Dth');
     }
 
     const buf = await wb.xlsx.writeBuffer();
