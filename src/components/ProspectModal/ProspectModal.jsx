@@ -628,7 +628,7 @@ async function lookupStateForCity(city, countryHint) {
   }
 }
 
-export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, companyContacts = [], emailDomains = [], companyNames = [] }) {
+export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, onSaveCompanyOverride, companyContacts = [], emailDomains = [], companyNames = [] }) {
   const rawTags = contact.dans_tags || contact.dan_s_tags || contact.dans_tag || '';
   // Parse existing tags; track which known tags are checked separately from free-text extras
   const parsedTags = rawTags.split(';').map(t => t.trim()).filter(Boolean);
@@ -995,6 +995,23 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
         if (toAlsoEmails.length > 0) next[primaryEmail] = toAlsoEmails;
         else delete next[primaryEmail];
         onSaveToAlsoMap(next);
+      }
+      // Company override sync. The row this modal opens from renders
+      // `_companyOverride` on top of the cached HubSpot company name —
+      // so if a stale override pinned the row to a previous value, the
+      // typed value here would silently revert on close. Mirror the
+      // inline-edit path: when the user changed the company field,
+      // pin or clear `_companyOverride` based on what HubSpot did with
+      // the association so the row reflects exactly what was saved.
+      const typedCompany = String(f.company || '').trim();
+      const priorCompany = String(contact.company || '').trim();
+      if (savedCid && onSaveCompanyOverride && typedCompany !== priorCompany) {
+        const ca = json?.companyAssignment;
+        if (typedCompany && (!ca || ca.ok === false || ca.nameDiffers)) {
+          onSaveCompanyOverride(savedCid, typedCompany);
+        } else {
+          onSaveCompanyOverride(savedCid, null);
+        }
       }
       onSave(savedContact);
       setSaved(true);
@@ -6848,6 +6865,22 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           onSaveCcMap={m => updateSettings({ ccMap: m })}
           toAlsoMap={settings.toAlsoMap || {}}
           onSaveToAlsoMap={m => updateSettings({ toAlsoMap: m })}
+          onSaveCompanyOverride={(cid, value) => {
+            if (!cid) return;
+            const cur = settings.contactLocalFields || {};
+            const merged = { ...(cur[cid] || {}) };
+            if (value === null || value === undefined || value === '') {
+              if (!('_companyOverride' in merged)) return;
+              delete merged._companyOverride;
+            } else {
+              if (merged._companyOverride === value) return;
+              merged._companyOverride = value;
+            }
+            const next = { ...cur };
+            if (Object.keys(merged).length === 0) delete next[cid];
+            else next[cid] = merged;
+            updateSettings({ contactLocalFields: next });
+          }}
           companyContacts={companyContacts}
           emailDomains={(fields.emailDomain || '').split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)}
           companyNames={(prospects || []).map(p => p.company).filter(Boolean)}

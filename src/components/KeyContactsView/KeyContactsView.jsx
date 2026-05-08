@@ -1159,6 +1159,30 @@ function KeyContactsViewInner({
     if (val && val.trim()) next[cid] = val.trim(); else delete next[cid];
     updateSettings({ contactTeamNames: next });
   }, [settings?.contactTeamNames, updateSettings]);
+  // Pin or clear `_companyOverride` for a contact. ContactEditModal
+  // calls this after a Save when the user changed the Company field —
+  // mirrors what `inlineUpdateField('company', …)` does for inline
+  // edits so the typed value survives even when HubSpot's fuzzy match
+  // resolves to a Company record with a different name. Without this
+  // hook the modal would write the typed value into the cache but a
+  // stale `_companyOverride` from a prior inline edit would re-mask
+  // the row on close and the typed value would appear to revert.
+  const handleSaveCompanyOverride = useCallback((cid, value) => {
+    if (!cid) return;
+    const cur = settings?.contactLocalFields || {};
+    const merged = { ...(cur[cid] || {}) };
+    if (value === null || value === undefined || value === '') {
+      if (!('_companyOverride' in merged)) return;
+      delete merged._companyOverride;
+    } else {
+      if (merged._companyOverride === value) return;
+      merged._companyOverride = value;
+    }
+    const next = { ...cur };
+    if (Object.keys(merged).length === 0) delete next[cid];
+    else next[cid] = merged;
+    updateSettings({ contactLocalFields: next });
+  }, [settings?.contactLocalFields, updateSettings]);
   const handleSaveContactReportsTo = useCallback((cid, managerIds) => {
     const cur = settings?.contactReportsTo || {};
     const next = { ...cur };
@@ -2932,6 +2956,7 @@ function KeyContactsViewInner({
             onSaveCcMap={m => updateSettings({ ccMap: m })}
             toAlsoMap={settings?.toAlsoMap || {}}
             onSaveToAlsoMap={m => updateSettings({ toAlsoMap: m })}
+            onSaveCompanyOverride={handleSaveCompanyOverride}
             companyContacts={sameCompanyContacts}
             emailDomains={emailDomains}
             companyNames={prospects.map(p => p.company).filter(Boolean)}
