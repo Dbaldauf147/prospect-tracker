@@ -26,13 +26,61 @@ const KEY_COLS = [
 ];
 
 function makeBlankOpp(id, headers) {
-  const row = { _id: id };
+  const row = { _id: id, id }; // id mirrored so DataTable's row key stays stable across edits
   const cols = (Array.isArray(headers) && headers.length) ? headers : DEFAULT_HEADERS;
   for (const h of cols) row[h] = '';
   row['Account'] = 'New Opp';
   row['Open Year'] = String(new Date().getFullYear());
   row['Stage'] = 'Lead';
   return row;
+}
+
+// Click-to-edit cell. Plain text by default; on click flips into an
+// input that commits on Enter or blur and reverts on Escape. Used for
+// every Opps 2 column so the user can fill in any field on a freshly
+// created opp without leaving the table.
+function EditableCell({ value, onChange }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value ?? '');
+  useEffect(() => { if (!editing) setDraft(value ?? ''); }, [value, editing]);
+
+  if (!editing) {
+    const isEmpty = value === '' || value == null;
+    return (
+      <span
+        onClick={(e) => { e.stopPropagation(); setEditing(true); }}
+        style={{
+          display: 'block', cursor: 'text', minHeight: '1em',
+          padding: '1px 2px',
+          color: isEmpty ? 'var(--color-text-muted)' : 'inherit',
+        }}
+        title="Click to edit"
+      >
+        {isEmpty ? '—' : String(value)}
+      </span>
+    );
+  }
+  return (
+    <input
+      autoFocus
+      type="text"
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => { setEditing(false); if ((draft ?? '') !== (value ?? '')) onChange(draft); }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+        else if (e.key === 'Escape') { setDraft(value ?? ''); setEditing(false); }
+      }}
+      onClick={(e) => e.stopPropagation()}
+      style={{
+        width: '100%', boxSizing: 'border-box',
+        border: '1px solid var(--color-accent)', borderRadius: 3,
+        padding: '1px 4px',
+        fontSize: 'inherit', fontFamily: 'inherit', color: 'var(--color-text)',
+        background: '#fff',
+      }}
+    />
+  );
 }
 
 export function OppsView2({ settings, updateSettings } = {}) {
@@ -97,6 +145,16 @@ export function OppsView2({ settings, updateSettings } = {}) {
     });
   }, []);
 
+  const updateOppField = useCallback((id, field, value) => {
+    setData(prev => {
+      const records = prev?.records || [];
+      return {
+        ...prev,
+        records: records.map(r => r._id === id ? { ...r, [field]: value } : r),
+      };
+    });
+  }, []);
+
   const toggleHideService = useCallback((scope) => {
     setHiddenServices(prev => {
       const next = new Set(prev);
@@ -127,13 +185,19 @@ export function OppsView2({ settings, updateSettings } = {}) {
         label: h === 'BFO Link' ? 'BFO Opportunity Name' : h,
         defaultWidth: h === 'Notes' ? 250 : h === 'Account' ? 200 : h === 'BFO Link' ? 220 : h.length > 20 ? 160 : 120,
         sticky: h === 'Account',
-        render: h === 'BFO Link' ? (row) => {
-          const url = row[h];
-          if (!url || url === '-' || url === '#N/A') return '—';
-          return <a href={url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--color-accent)', fontSize: 'var(--font-size-xs)' }}>Open</a>;
-        } : undefined,
+        // Every cell is click-to-edit so a freshly created opp can be
+        // filled in directly. getFilterValue exposes the raw text to
+        // the per-column filter so search keeps working on the value
+        // the user sees, not the rendered <input>.
+        getFilterValue: (row) => row[h] ?? '',
+        render: (row) => (
+          <EditableCell
+            value={row[h]}
+            onChange={(v) => updateOppField(row._id, h, v)}
+          />
+        ),
       }));
-  }, [headers]);
+  }, [headers, updateOppField]);
 
   const stageOrder = ['Lead', 'Not Started', 'Qualifying', 'Quoting', 'Quoted', 'Verbal', 'Sold', 'Not Sold'];
   const CLOSED_STAGES = useMemo(() => new Set(['Sold', 'Not Sold']), []);

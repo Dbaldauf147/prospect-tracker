@@ -104,7 +104,7 @@ const COLUMNS = [
 const DEFAULT_VISIBLE = ['name', 'email', 'company', 'jobtitle', 'location', 'category'];
 const VISIBLE_KEY = 'all-contacts-view:visible-cols';
 
-export function AllContactsView({ prospects = [], onSelectProspect, settings }) {
+export function AllContactsView({ prospects = [], onSelectProspect, settings, cdmName }) {
   const { user } = useAuth(); void user;
   const [hubspotCache, setHubspotCache] = useState(null);
   useEffect(() => {

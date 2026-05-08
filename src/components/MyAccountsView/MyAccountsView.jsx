@@ -824,6 +824,97 @@ function TierMismatchWarning({ row, onApply, onDismiss }) {  const [open, setOpe
   );
 }
 
+// Hover popup attached to the Opps cell on the My Accounts table.
+// Shows the actual opp records (Stage / Scope / Status / Quoted Amount /
+// Start Date / Source) that fed the active/total counter, fuzzy-matches
+// included. Open on mouseenter, close on mouseleave with a short delay
+// so the user can move the cursor onto the popup itself without it
+// vanishing mid-read.
+function OppsHoverPopup({ row }) {
+  const active = row.oppsCount || 0;
+  const total = row.totalOpps || 0;
+  const opps = row.feedingOpps || [];
+  const wrapRef = useRef(null);
+  const closeTimerRef = useRef(null);
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+
+  useEffect(() => () => { if (closeTimerRef.current) clearTimeout(closeTimerRef.current); }, []);
+
+  function show() {
+    if (closeTimerRef.current) { clearTimeout(closeTimerRef.current); closeTimerRef.current = null; }
+    if (wrapRef.current) {
+      const r = wrapRef.current.getBoundingClientRect();
+      const popupW = 560;
+      const left = Math.min(window.innerWidth - popupW - 8, Math.max(8, r.right - popupW + 40));
+      setPos({ top: r.bottom + 4, left });
+    }
+    setOpen(true);
+  }
+  function scheduleHide() {
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = setTimeout(() => setOpen(false), 200);
+  }
+
+  if (total === 0) return <span style={{ color: 'var(--color-text-muted)' }}>0/0</span>;
+
+  return (
+    <span
+      ref={wrapRef}
+      onMouseEnter={show}
+      onMouseLeave={scheduleHide}
+      style={{ fontWeight: 700, color: active > 0 ? '#7C3AED' : 'var(--color-text-secondary)', cursor: opps.length ? 'help' : 'default' }}
+    >
+      {active}/{total}
+      {open && opps.length > 0 && createPortal(
+        <div
+          onMouseEnter={show}
+          onMouseLeave={scheduleHide}
+          style={{
+            position: 'fixed', top: pos.top, left: pos.left, zIndex: 10001,
+            background: '#fff', border: '1px solid #E2E8F0', borderRadius: 8,
+            boxShadow: '0 8px 24px rgba(15,23,42,0.18)', padding: '0.55rem 0.7rem',
+            minWidth: 480, maxWidth: 620, maxHeight: 360, overflowY: 'auto',
+            color: 'var(--color-text)', fontSize: '0.7rem',
+          }}
+        >
+          <div style={{ fontWeight: 700, marginBottom: 6, color: '#475569', fontSize: '0.7rem' }}>
+            {opps.length} opp{opps.length === 1 ? '' : 's'} feeding {active}/{total}
+            <span style={{ fontWeight: 500, color: '#94A3B8', marginLeft: 6 }}>(active / total)</span>
+          </div>
+          <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.66rem' }}>
+            <thead>
+              <tr style={{ color: '#64748B', fontWeight: 700 }}>
+                <th style={{ textAlign: 'left', padding: '3px 6px', borderBottom: '1px solid #E2E8F0', whiteSpace: 'nowrap' }}>Account</th>
+                <th style={{ textAlign: 'left', padding: '3px 6px', borderBottom: '1px solid #E2E8F0', whiteSpace: 'nowrap' }}>Stage</th>
+                <th style={{ textAlign: 'left', padding: '3px 6px', borderBottom: '1px solid #E2E8F0', whiteSpace: 'nowrap' }}>Scope</th>
+                <th style={{ textAlign: 'left', padding: '3px 6px', borderBottom: '1px solid #E2E8F0', whiteSpace: 'nowrap' }}>Status</th>
+                <th style={{ textAlign: 'right', padding: '3px 6px', borderBottom: '1px solid #E2E8F0', whiteSpace: 'nowrap' }}>Quoted</th>
+                <th style={{ textAlign: 'left', padding: '3px 6px', borderBottom: '1px solid #E2E8F0', whiteSpace: 'nowrap' }}>Start</th>
+                <th style={{ textAlign: 'left', padding: '3px 6px', borderBottom: '1px solid #E2E8F0', whiteSpace: 'nowrap' }}>Source</th>
+              </tr>
+            </thead>
+            <tbody>
+              {opps.map((o, i) => (
+                <tr key={o._id ?? i}>
+                  <td style={{ padding: '3px 6px', borderBottom: '1px solid #F1F5F9', whiteSpace: 'nowrap', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis' }} title={o['Account']}>{o['Account'] || '—'}</td>
+                  <td style={{ padding: '3px 6px', borderBottom: '1px solid #F1F5F9', whiteSpace: 'nowrap' }}>{o['Stage'] || '—'}</td>
+                  <td style={{ padding: '3px 6px', borderBottom: '1px solid #F1F5F9', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={o['Scope']}>{o['Scope'] || '—'}</td>
+                  <td style={{ padding: '3px 6px', borderBottom: '1px solid #F1F5F9', whiteSpace: 'nowrap' }}>{o['Status'] || '—'}</td>
+                  <td style={{ padding: '3px 6px', borderBottom: '1px solid #F1F5F9', textAlign: 'right', whiteSpace: 'nowrap' }}>{o['Quoted Amount'] || '—'}</td>
+                  <td style={{ padding: '3px 6px', borderBottom: '1px solid #F1F5F9', whiteSpace: 'nowrap' }}>{o['Start Date'] || '—'}</td>
+                  <td style={{ padding: '3px 6px', borderBottom: '1px solid #F1F5F9', whiteSpace: 'nowrap' }}>{o['Source'] || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>,
+        document.body
+      )}
+    </span>
+  );
+}
+
 function parseXlsx(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -1272,14 +1363,15 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     return () => { cancelled = true; };
   }, [user]);
 
-  const { activeOppsByAccount, totalOppsByAccount, openOppsByAccount, suggestedStatusByAccount, displayNameByAccount, pePartnerAccountSet } = useMemo(() => {
+  const { activeOppsByAccount, totalOppsByAccount, openOppsByAccount, suggestedStatusByAccount, displayNameByAccount, pePartnerAccountSet, oppsRecordsByAccount } = useMemo(() => {
     const active = {};
     const total = {};
     const open = {}; // non-closed, non-invalid opps (for Tier 3 inclusion)
     const stagesByAccount = {};
     const displayName = {}; // lowercase key -> original-case name (first seen)
     const peSet = new Set(); // lowercase account names with any opp tagged Source = PE Partner
-    if (oppsRecords.length === 0) return { activeOppsByAccount: active, totalOppsByAccount: total, openOppsByAccount: open, suggestedStatusByAccount: {}, displayNameByAccount: displayName, pePartnerAccountSet: peSet };
+    const recordsByAccount = {}; // lowercase account -> array of opp records (used for the hover popup on the My Accounts Opps cell)
+    if (oppsRecords.length === 0) return { activeOppsByAccount: active, totalOppsByAccount: total, openOppsByAccount: open, suggestedStatusByAccount: {}, displayNameByAccount: displayName, pePartnerAccountSet: peSet, oppsRecordsByAccount: recordsByAccount };
     const closedStages = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
     for (const r of oppsRecords) {
       const rawAccount = (r['Account'] || '').trim();
@@ -1308,6 +1400,8 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       // Count all opps (including closed) in total, only open in active
       if (!invalidStages.has(stage)) {
         total[account] = (total[account] || 0) + 1;
+        if (!recordsByAccount[account]) recordsByAccount[account] = [];
+        recordsByAccount[account].push(r);
       }
       if (!closedStages.has(stage) && !invalidStages.has(stage)) {
         open[account] = (open[account] || 0) + 1;
@@ -1348,7 +1442,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       console.log('All Sold/Won opps:', soldOpps.map(r => `"${r['Account']}" Stage="${r['Stage']}"`));
     }
 
-    return { activeOppsByAccount: active, totalOppsByAccount: total, openOppsByAccount: open, suggestedStatusByAccount: suggested, displayNameByAccount: displayName, pePartnerAccountSet: peSet };
+    return { activeOppsByAccount: active, totalOppsByAccount: total, openOppsByAccount: open, suggestedStatusByAccount: suggested, displayNameByAccount: displayName, pePartnerAccountSet: peSet, oppsRecordsByAccount: recordsByAccount };
   }, [oppsRecords]);
 
   // Dismissed companies — companies the user manually deleted that should not be auto-recreated
@@ -1609,17 +1703,34 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       }
       let oppsCount = 0;
       let totalOpps = 0;
+      // Collect the actual opp records that are feeding the count so the
+      // Opps cell can show a hover popup of the underlying opps. Same
+      // exact-then-fuzzy pattern as the count math above; dedup via _id
+      // since one opp could match more than one of allCompanyNames.
+      const feedingOpps = [];
+      const feedingSeen = new Set();
+      const pushOpp = (r) => {
+        const id = r?._id;
+        if (id == null || feedingSeen.has(id)) return;
+        feedingSeen.add(id);
+        feedingOpps.push(r);
+      };
       for (const name of allCompanyNames) {
         // Exact match
         oppsCount += openOppsByAccount[name] || 0;
         totalOpps += totalOppsByAccount[name] || 0;
+        for (const r of (oppsRecordsByAccount[name] || [])) pushOpp(r);
         // Fuzzy match for opps — first non-exact hit wins (matches the
         // original `break`-after-first-match semantics).
         for (const oppsCompany of findMatchesInIndex(openOppsIndex, name)) {
           if (oppsCompany !== name) { oppsCount += openOppsByAccount[oppsCompany] || 0; break; }
         }
         for (const oppsCompany of findMatchesInIndex(oppsIndex, name)) {
-          if (oppsCompany !== name) { totalOpps += totalOppsByAccount[oppsCompany] || 0; break; }
+          if (oppsCompany !== name) {
+            totalOpps += totalOppsByAccount[oppsCompany] || 0;
+            for (const r of (oppsRecordsByAccount[oppsCompany] || [])) pushOpp(r);
+            break;
+          }
         }
       }
       const sources = [];
@@ -1770,7 +1881,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       // someone else's CDM with no open opps shouldn't show on Dan's list.
       const isStrategicTier = tier === 'Tier 1' || tier === 'Tier 2';
       if (!(isStrategicTier && isBaldauf) && (!oppsCount || oppsCount === 0)) continue;
-      const entry = { ...p, myTier: tier, activityCount, oppsCount, totalOpps, sources: sources.join(', '), dmFound: !!dmNames, dmNames: dmNames ? dmNames.join(', ') : '', cdmMismatch: !isBaldauf, targetNames, targetName: (targetNames || []).join(', '), targetTier, tierMismatch, otherReps, contactCount, bucketCount, _contactDebug, suggestedStatus, statusMismatch, suggestedType, typeMismatch };
+      const entry = { ...p, myTier: tier, activityCount, oppsCount, totalOpps, feedingOpps, sources: sources.join(', '), dmFound: !!dmNames, dmNames: dmNames ? dmNames.join(', ') : '', cdmMismatch: !isBaldauf, targetNames, targetName: (targetNames || []).join(', '), targetTier, tierMismatch, otherReps, contactCount, bucketCount, _contactDebug, suggestedStatus, statusMismatch, suggestedType, typeMismatch };
       if (tier === 'Tier 1') t1.push(entry);
       else t2.push(entry); // Tier 2 and Tier 3 both go in t2 array
       const s = p.status || 'Unknown';
@@ -1875,6 +1986,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         activityCount: 0,
         oppsCount,
         totalOpps: count,
+        feedingOpps: oppsRecordsByAccount[accountLower] || [],
         sources: 'Opps Sheet',
         dmFound: false,
         dmNames: '',
@@ -2245,6 +2357,9 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
             </span>
           );
         }};
+      }
+      if (col.key === 'oppsCount') {
+        return { ...col, render: (row) => <OppsHoverPopup row={row} /> };
       }
       if (col.key === 'targetName') {
         return { ...col, render: (row) => <TargetNamePicker values={row.targetNames || []} companyId={row.id} companyName={row.company} targetOptions={allTargetNames} onToggle={toggleTargetMapping} duplicates={duplicateTargetNames} /> };
