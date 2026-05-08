@@ -4,6 +4,13 @@ import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { matchesCdm } from '../../utils/cdmMatch';
 import { makeActiveSelector } from '../ActiveContactsView/ActiveContactsView';
 import { collectClientDomains } from '../ClientContactsView/ClientContactsView';
+import { useOppsRecords } from '../KeyContactsView/KeyContactsView';
+
+// Same Stage buckets the dedicated Active Contacts page filters out
+// when computing the open-opp gate. Anything in here = the opp doesn't
+// count toward "this company has an active opp".
+const CLOSED_STAGES = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
+const INVALID_STAGES = new Set(['#N/A', '#REF!', '#VALUE!', '#ERROR!', 'N/A', 'n/a', '-', '']);
 
 // One stop shop: rolls up exactly the same contacts the dedicated
 // Key / Active / Client tabs surface, into a single sortable table
@@ -85,27 +92,38 @@ function CategoryPills({ categories }) {
 // Columns dropdown — Name is the row identifier and Category is the
 // reason this view exists, so both stay locked-on.
 const COLUMNS = [
-  { key: 'name',     label: 'Name',         defaultWidth: 200, alwaysOn: true,
+  { key: 'name',     label: 'Name',            defaultWidth: 200, alwaysOn: true,
     text: r => r.name },
-  { key: 'email',    label: 'Email',        defaultWidth: 220,
+  { key: 'email',    label: 'Email',           defaultWidth: 220,
     text: r => r.email },
-  { key: 'company',  label: 'Company',      defaultWidth: 200,
+  { key: 'company',  label: 'Company',         defaultWidth: 200,
     text: r => r.company },
-  { key: 'jobtitle', label: 'Title',        defaultWidth: 180,
+  { key: 'jobtitle', label: 'Title',           defaultWidth: 180,
     text: r => r.jobtitle },
-  { key: 'location', label: 'City / State', defaultWidth: 140,
+  { key: 'location', label: 'City / State',    defaultWidth: 140,
     text: r => [r.city, r.state].filter(Boolean).join(', ') },
-  { key: 'phone',    label: 'Phone',        defaultWidth: 140,
+  { key: 'phone',    label: 'Phone',           defaultWidth: 140,
     text: r => r.phone },
-  { key: 'category', label: 'Category',     defaultWidth: 160, alwaysOn: true,
+  { key: 'linkedin', label: 'LinkedIn',        defaultWidth: 90,
+    text: r => r.linkedin || '' },
+  { key: 'salesNav', label: 'LinkedIn Search', defaultWidth: 130,
+    text: r => [r.firstname, r.lastname, r.company].filter(Boolean).join(' ') },
+  { key: 'events',   label: 'Events',          defaultWidth: 200,
+    text: r => r.events || '' },
+  { key: 'category', label: 'Category',        defaultWidth: 160, alwaysOn: true,
     text: r => r.categories.join(' ') },
 ];
 
-const DEFAULT_VISIBLE = ['name', 'email', 'company', 'jobtitle', 'location', 'category'];
-const VISIBLE_KEY = 'all-contacts-view:visible-cols';
+const DEFAULT_VISIBLE = ['name', 'email', 'company', 'jobtitle', 'location', 'linkedin', 'salesNav', 'events', 'category'];
+// Bumped to v2 when LinkedIn / LinkedIn Search / Events were added so
+// the saved visibility set resets and the new columns surface for
+// users who already had v1 prefs in localStorage.
+const VISIBLE_KEY = 'all-contacts-view:visible-cols-v2';
 
 export function AllContactsView({ prospects = [], onSelectProspect, settings, cdmName }) {
-  const { user } = useAuth(); void user;
+  const { user } = useAuth();
+  const oppsRecords = useOppsRecords(user?.uid);
+  const contactEvents = settings?.contactEvents || {};
   const [hubspotCache, setHubspotCache] = useState(null);
   useEffect(() => {
     let cancelled = false;
@@ -146,10 +164,39 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, cd
     }
     return { clientCompanies: companies, clientDomains: domains };
   }, [prospects]);
-  const isActive = useMemo(
-    () => makeActiveSelector(90, 'visible', activeClientFilter),
-    [activeClientFilter]
-  );
+  // Mirror the dedicated Active Contacts page exactly. That page wraps
+  // makeActiveSelector with a "must have an open opp on the same
+  // company" gate (KeyContactsView's requireActiveOpp = true), so we
+  // rebuild the same activeOppCompanies list and apply it here too —
+  // otherwise All Contacts overcounts Active by including people whose
+  // companies have no open opps.
+  const activeOppCompanies = useMemo(() => {
+    if (!oppsRecords || oppsRecords.length === 0) return [];
+    const out = [];
+    const seen = new Set();
+    for (const r of oppsRecords) {
+      const stage = String(r['Stage'] || '').trim();
+      if (!stage || INVALID_STAGES.has(stage) || CLOSED_STAGES.has(stage)) continue;
+      const acct = String(r['Account'] || '').trim();
+      const k = acct.toLowerCase();
+      if (!k || seen.has(k)) continue;
+      seen.add(k);
+      out.push(acct);
+    }
+    return out;
+  }, [oppsRecords]);
+  const isActive = useMemo(() => {
+    const baseSelector = makeActiveSelector(90, 'visible', activeClientFilter);
+    return (c) => {
+      if (!baseSelector(c)) return false;
+      const cName = String(c.company || '').trim();
+      if (!cName) return false;
+      const lc = cName.toLowerCase();
+      if (activeOppCompanies.some(a => a.toLowerCase() === lc)) return true;
+      if (activeOppCompanies.some(a => companiesMatch(a, cName))) return true;
+      return false;
+    };
+  }, [activeClientFilter, activeOppCompanies]);
 
   // Client selector: strict 1:1 match against this CDM's Client
   // prospects (or email domain when the contact has no company),
@@ -210,9 +257,10 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, cd
       if (isActive(c)) categories.push('Active');
 
       if (categories.length === 0) continue;
+      const cid = String(c.id || c.vid || '');
       out.push({
         id: c.id || c.vid || c.email,
-        contactId: c.id || c.vid,
+        contactId: cid,
         firstname: c.firstname || '',
         lastname: c.lastname || '',
         name: [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email || '(unnamed)',
@@ -222,12 +270,14 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, cd
         phone: c.phone || c.mobilephone || '',
         city: c.city || '',
         state: c.state || '',
+        linkedin: c.hs_linkedin_url || c.linkedin_url || c.linkedin || '',
+        events: contactEvents[cid] || '',
         categories,
       });
     }
     return out.sort((a, b) => a.name.localeCompare(b.name));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hubspotCache, settings, isKey, isClient, isActive]);
+  }, [hubspotCache, settings, contactEvents, isKey, isClient, isActive]);
 
   // Filter UI: free-text search + per-category toggle pills + per-
   // column substring filters (one input under each header). All AND
@@ -334,6 +384,36 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, cd
     if (col.key === 'name') return <span style={{ fontWeight: 600, color: '#1E293B' }}>{r.name}</span>;
     if (col.key === 'category') return <CategoryPills categories={r.categories} />;
     if (col.key === 'location') return [r.city, r.state].filter(Boolean).join(', ') || <span style={{ color: '#CBD5E1' }}>—</span>;
+    if (col.key === 'linkedin') {
+      if (!r.linkedin) return <span style={{ color: '#CBD5E1' }}>—</span>;
+      return (
+        <a
+          href={r.linkedin}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={e => e.stopPropagation()}
+          style={{ color: '#0A66C2', fontWeight: 600, textDecoration: 'none' }}
+        >Open ↗</a>
+      );
+    }
+    if (col.key === 'salesNav') {
+      const parts = [r.firstname, r.lastname, r.company].map(s => String(s || '').trim()).filter(Boolean);
+      if (parts.length === 0) return <span style={{ color: '#CBD5E1' }}>—</span>;
+      const keywords = encodeURIComponent(parts.join(' '));
+      const liHref = `https://www.linkedin.com/search/results/people/?keywords=${keywords}`;
+      const snHref = `https://www.linkedin.com/sales/search/people?keywords=${keywords}`;
+      return (
+        <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 1, lineHeight: 1.15 }} onClick={e => e.stopPropagation()}>
+          <a href={liHref} target="_blank" rel="noopener noreferrer" title={`LinkedIn people search for "${parts.join(' ')}"`} style={{ color: '#0A66C2', textDecoration: 'none', fontWeight: 600, fontSize: '0.68rem' }}>LinkedIn ↗</a>
+          <a href={snHref} target="_blank" rel="noopener noreferrer" title={`Sales Navigator search for "${parts.join(' ')}"`} style={{ color: '#0A66C2', textDecoration: 'none', fontWeight: 600, fontSize: '0.68rem' }}>Sales Nav ↗</a>
+        </span>
+      );
+    }
+    if (col.key === 'events') {
+      return r.events
+        ? <span style={{ color: '#475569', whiteSpace: 'normal' }} title={r.events}>{r.events}</span>
+        : <span style={{ color: '#CBD5E1' }}>—</span>;
+    }
     const v = col.text(r);
     return v || <span style={{ color: '#CBD5E1' }}>—</span>;
   }
@@ -486,15 +566,24 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, cd
                 style={{ cursor: r.company ? 'pointer' : 'default' }}
                 title={r.company ? `Open ${r.company} in the prospect popup` : ''}
               >
-                {visibleColumnList.map(c => (
-                  <td
-                    key={c.key}
-                    style={c.key === 'category' ? { ...cellStyle, overflow: 'visible' } : cellStyle}
-                    title={String(c.text(r) || '')}
-                  >
-                    {renderCell(c, r)}
-                  </td>
-                ))}
+                {visibleColumnList.map(c => {
+                  // salesNav (LinkedIn / Sales Nav) stacks two anchors
+                  // vertically and events can carry multi-word text;
+                  // both want wrap + auto height instead of the
+                  // default ellipsis-truncating cellStyle.
+                  let style = cellStyle;
+                  if (c.key === 'category') style = { ...cellStyle, overflow: 'visible' };
+                  else if (c.key === 'salesNav' || c.key === 'events') style = { ...cellStyle, whiteSpace: 'normal', overflow: 'visible' };
+                  return (
+                    <td
+                      key={c.key}
+                      style={style}
+                      title={String(c.text(r) || '')}
+                    >
+                      {renderCell(c, r)}
+                    </td>
+                  );
+                })}
               </tr>
             ))}
           </tbody>
