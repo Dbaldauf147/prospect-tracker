@@ -10,7 +10,7 @@ const FRAMEWORKS_ALL = FRAMEWORKS;
 
 const COLUMNS = [
   { key: 'company', label: 'Company', sticky: true, defaultWidth: 200 },
-  { key: 'cdm', label: 'CDM', defaultWidth: 120 },
+  { key: 'cdm', label: 'CDM', type: 'enum', defaultWidth: 120 },
   { key: 'status', label: 'Status', type: 'enum', options: STATUSES, defaultWidth: 130 },
   { key: 'type', label: 'Type', type: 'enum', options: TYPES, defaultWidth: 160 },
   { key: 'geography', label: 'Geography', type: 'enum', options: GEOGRAPHIES, defaultWidth: 100 },
@@ -108,8 +108,12 @@ function TagsCell({ value, prospect, colDef, onUpdate }) {
 // name, and route through the parent's onAddOption hook so the new
 // value lands in settings.customTypes (and on the row).
 const ADD_NEW_OPTION = '__ADD_NEW__';
+// Sentinel for "Edit options…" — opens a small editor modal that lets
+// the user rename / remove options. Only shown when allowEditOptions
+// is set on the column definition.
+const EDIT_OPTIONS = '__EDIT_OPTIONS__';
 
-function InlineCell({ value, prospect, colDef, onUpdate, onAddOption }) {
+function InlineCell({ value, prospect, colDef, onUpdate, onAddOption, onEditOptions }) {
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
   const [showSaved, setShowSaved] = useState(false);
@@ -155,6 +159,11 @@ function InlineCell({ value, prospect, colDef, onUpdate, onAddOption }) {
             }
             return;
           }
+          if (picked === EDIT_OPTIONS) {
+            setEditing(false);
+            if (onEditOptions) onEditOptions(colDef.key);
+            return;
+          }
           setEditValue(picked);
           setTimeout(() => {
             setEditing(false);
@@ -171,6 +180,9 @@ function InlineCell({ value, prospect, colDef, onUpdate, onAddOption }) {
         {colDef.options.map(o => <option key={o} value={o}>{o}</option>)}
         {colDef.allowAddNew && (
           <option value={ADD_NEW_OPTION}>+ Add new {colDef.label}…</option>
+        )}
+        {colDef.allowEditOptions && (colDef.options || []).length > 0 && (
+          <option value={EDIT_OPTIONS}>✎ Edit {colDef.label}s…</option>
         )}
       </select>
     );
@@ -304,6 +316,127 @@ function parseNumber(val) {
   return isNaN(n) ? null : n;
 }
 
+// "Edit CDMs…" modal — lets the user rename or remove CDM options.
+// Renaming bulk-updates every prospect that currently has the old
+// value, and rewrites the customCdms settings list. Removing prompts
+// to clear the field on those prospects too (since the dropdown is
+// data-driven, the option only disappears once no prospect uses it).
+function EditOptionsModal({ colKey, options, allProspects, onUpdate, settings, updateSettings, onClose }) {
+  const counts = useMemo(() => {
+    const m = new Map();
+    for (const p of (allProspects || [])) {
+      const v = String(p?.[colKey] || '').trim();
+      if (!v) continue;
+      m.set(v, (m.get(v) || 0) + 1);
+    }
+    return m;
+  }, [allProspects, colKey]);
+
+  const customListKey = colKey === 'cdm' ? 'customCdms' : null;
+  const [busy, setBusy] = useState(false);
+
+  async function rename(oldName) {
+    const raw = window.prompt(`Rename "${oldName}" to:`, oldName);
+    const next = (raw || '').trim();
+    if (!next || next === oldName) return;
+    if (next.toLowerCase() !== oldName.toLowerCase() &&
+        options.some(o => o.toLowerCase() === next.toLowerCase())) {
+      const ok = window.confirm(`"${next}" already exists. Merge "${oldName}" into "${next}"? Every prospect tagged "${oldName}" will be retagged "${next}".`);
+      if (!ok) return;
+    }
+    setBusy(true);
+    try {
+      const targets = (allProspects || []).filter(p => String(p?.[colKey] || '').trim() === oldName);
+      for (const p of targets) {
+        await onUpdate(p.id, { [colKey]: next });
+      }
+      if (customListKey && updateSettings) {
+        const list = Array.isArray(settings?.[customListKey]) ? settings[customListKey] : [];
+        const filtered = list.filter(t => String(t).trim().toLowerCase() !== oldName.toLowerCase());
+        const alreadyHasNew = filtered.some(t => String(t).trim().toLowerCase() === next.toLowerCase());
+        const nextList = alreadyHasNew ? filtered : [...filtered, next];
+        if (nextList.length !== list.length || !alreadyHasNew) {
+          updateSettings({ [customListKey]: nextList });
+        }
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove(name) {
+    const used = counts.get(name) || 0;
+    const msg = used > 0
+      ? `Remove "${name}"? It's currently set on ${used} prospect${used === 1 ? '' : 's'} — those will be cleared.`
+      : `Remove "${name}" from the list?`;
+    if (!window.confirm(msg)) return;
+    setBusy(true);
+    try {
+      const targets = (allProspects || []).filter(p => String(p?.[colKey] || '').trim() === name);
+      for (const p of targets) {
+        await onUpdate(p.id, { [colKey]: '' });
+      }
+      if (customListKey && updateSettings) {
+        const list = Array.isArray(settings?.[customListKey]) ? settings[customListKey] : [];
+        const nextList = list.filter(t => String(t).trim().toLowerCase() !== name.toLowerCase());
+        if (nextList.length !== list.length) updateSettings({ [customListKey]: nextList });
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const label = colKey === 'cdm' ? 'CDM' : colKey;
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onClose}>
+      <div style={{ background: '#fff', borderRadius: 12, padding: '1.25rem', maxWidth: 460, width: '90%', maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+          <h3 style={{ margin: 0, fontSize: '1rem', color: '#1E2A36' }}>Edit {label}s</h3>
+          <button style={{ border: 'none', background: 'none', fontSize: '1.2rem', cursor: 'pointer', color: '#6B7280' }} onClick={onClose}>&times;</button>
+        </div>
+        <p style={{ fontSize: '0.75rem', color: '#5A6B7E', margin: '0 0 0.75rem' }}>
+          Rename or remove options. Renames update every prospect using the old value; removes clear the field on those prospects.
+        </p>
+        {options.length === 0 ? (
+          <div style={{ fontSize: '0.78rem', color: '#94A3B8', fontStyle: 'italic', padding: '0.5rem 0' }}>No options yet.</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {options.map(opt => {
+              const used = counts.get(opt) || 0;
+              return (
+                <div key={opt} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0.4rem 0.6rem', background: '#F8FAFC', borderRadius: 6 }}>
+                  <span style={{ flex: 1, fontSize: '0.82rem', color: '#1E293B', fontWeight: 600 }}>{opt}</span>
+                  <span style={{ fontSize: '0.65rem', color: '#94A3B8' }}>{used} {used === 1 ? 'row' : 'rows'}</span>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => rename(opt)}
+                    style={{ padding: '2px 8px', border: '1px solid #CBD5E1', borderRadius: 4, background: '#fff', fontSize: '0.7rem', fontWeight: 600, color: '#334155', cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit' }}
+                  >Rename</button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => remove(opt)}
+                    style={{ padding: '2px 8px', border: '1px solid #FCA5A5', borderRadius: 4, background: '#fff', fontSize: '0.7rem', fontWeight: 600, color: '#B91C1C', cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit' }}
+                  >Remove</button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{ padding: '0.4rem 1rem', border: '1px solid var(--color-border)', borderRadius: 6, background: '#fff', fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit', color: '#5A6B7E' }}
+          >Done</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function TableView({ prospects, allProspects, sortConfig, toggleSort, onUpdate, onDelete, onSelect, onAdd, onReplaceAll, settings, updateSettings }) {
   // Type options union: built-in TYPES + values currently in use across
   // every prospect + custom types the user has added via the dropdown.
@@ -326,28 +459,69 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
     return out.sort((a, b) => a.localeCompare(b));
   }, [allProspects, prospects, settings]);
 
-  // Persist a newly-added Type to settings.customTypes so it sticks
-  // across reloads. Called by the InlineCell when the user picks
-  // "+ Add new Type…" on the dropdown.
-  const handleAddOption = useCallback((colKey, name) => {
-    if (colKey !== 'type' || !name) return;
-    const list = Array.isArray(settings?.customTypes) ? settings.customTypes : [];
-    const exists = list.some(t => String(t).trim().toLowerCase() === name.trim().toLowerCase());
-    const builtIn = TYPES.some(t => t.toLowerCase() === name.trim().toLowerCase());
-    if (exists || builtIn) return;
-    if (updateSettings) updateSettings({ customTypes: [...list, name.trim()] });
-  }, [settings, updateSettings]);
+  // CDM options union: every CDM currently set on a prospect + custom
+  // CDMs the user has added via "+ Add new CDM…". CDMs are pure
+  // user-defined names (no built-in list), so the dropdown is fully
+  // driven by data + settings.customCdms. De-duped case-insensitively.
+  const dynamicCdmOptions = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    const push = (t) => {
+      const v = String(t || '').trim();
+      if (!v) return;
+      const k = v.toLowerCase();
+      if (seen.has(k)) return;
+      seen.add(k);
+      out.push(v);
+    };
+    for (const p of (allProspects || prospects || [])) push(p?.cdm);
+    for (const t of (settings?.customCdms || [])) push(t);
+    return out.sort((a, b) => a.localeCompare(b));
+  }, [allProspects, prospects, settings]);
 
-  // Inject the live options + add-new flag into the Type column so the
-  // shared InlineCell renderer picks them up without each cell having
-  // to know about settings / prospects.
+  // Persist a newly-added Type / CDM to its custom-list setting so it
+  // sticks across reloads. Called by the InlineCell when the user picks
+  // "+ Add new …" on the dropdown.
+  const handleAddOption = useCallback((colKey, name) => {
+    if (!name) return;
+    const trimmed = name.trim();
+    if (colKey === 'type') {
+      const list = Array.isArray(settings?.customTypes) ? settings.customTypes : [];
+      const exists = list.some(t => String(t).trim().toLowerCase() === trimmed.toLowerCase());
+      const builtIn = TYPES.some(t => t.toLowerCase() === trimmed.toLowerCase());
+      if (exists || builtIn) return;
+      if (updateSettings) updateSettings({ customTypes: [...list, trimmed] });
+      return;
+    }
+    if (colKey === 'cdm') {
+      const list = Array.isArray(settings?.customCdms) ? settings.customCdms : [];
+      const exists = list.some(t => String(t).trim().toLowerCase() === trimmed.toLowerCase());
+      // CDM has no built-in list, but skip if already present in the
+      // dynamic options (i.e. some prospect already uses it).
+      const inUse = dynamicCdmOptions.some(t => t.toLowerCase() === trimmed.toLowerCase());
+      if (exists || inUse) return;
+      if (updateSettings) updateSettings({ customCdms: [...list, trimmed] });
+    }
+  }, [settings, updateSettings, dynamicCdmOptions]);
+
+  // "Edit CDMs…" opens this modal — column key is stored so the editor
+  // knows which list it's working on (currently only CDM uses it).
+  const [editOptionsCol, setEditOptionsCol] = useState(null);
+  const handleEditOptions = useCallback((colKey) => {
+    if (colKey !== 'cdm') return;
+    setEditOptionsCol(colKey);
+  }, []);
+
+  // Inject the live options + add-new flag into the Type and CDM
+  // columns so the shared InlineCell renderer picks them up without
+  // each cell having to know about settings / prospects.
   const RESOLVED_COLUMNS = useMemo(() => {
-    return COLUMNS.map(c => (
-      c.key === 'type'
-        ? { ...c, options: dynamicTypeOptions, allowAddNew: true }
-        : c
-    ));
-  }, [dynamicTypeOptions]);
+    return COLUMNS.map(c => {
+      if (c.key === 'type') return { ...c, options: dynamicTypeOptions, allowAddNew: true };
+      if (c.key === 'cdm')  return { ...c, options: dynamicCdmOptions,  allowAddNew: true, allowEditOptions: true };
+      return c;
+    });
+  }, [dynamicTypeOptions, dynamicCdmOptions]);
   const [colWidths, setColWidths] = useState(loadColWidths);
   const [visibleCols, setVisibleCols] = useState(() => {
     const saved = loadColVisible();
@@ -574,6 +748,17 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
           </span>
         )}
       </div>
+      {editOptionsCol && (
+        <EditOptionsModal
+          colKey={editOptionsCol}
+          options={editOptionsCol === 'cdm' ? dynamicCdmOptions : []}
+          allProspects={allProspects || prospects || []}
+          onUpdate={onUpdate}
+          settings={settings}
+          updateSettings={updateSettings}
+          onClose={() => setEditOptionsCol(null)}
+        />
+      )}
       {uploadPreview && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setUploadPreview(null)}>
           <div style={{ background: '#fff', borderRadius: '12px', padding: '1.5rem', maxWidth: '600px', width: '90%', maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }} onClick={e => e.stopPropagation()}>
@@ -661,7 +846,7 @@ export function TableView({ prospects, allProspects, sortConfig, toggleSort, onU
                         {p.company}
                       </span>
                     ) : (
-                      <InlineCell value={p[col.key]} prospect={p} colDef={col} onUpdate={onUpdate} onAddOption={handleAddOption} />
+                      <InlineCell value={p[col.key]} prospect={p} colDef={col} onUpdate={onUpdate} onAddOption={handleAddOption} onEditOptions={handleEditOptions} />
                     )}
                   </td>
                 ))}
