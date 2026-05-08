@@ -7,6 +7,15 @@ import styles from './OppsView2.module.css';
 // empty so the original Opps tab and this one stay fully isolated while
 // the UI is being explored.
 
+// Default column set, seeded so the table has columns to show / sort /
+// filter / hide / resize even before any data exists.
+const DEFAULT_HEADERS = [
+  'Account', 'Open Year', 'Contact', 'Stage', 'Scope', 'Source', 'Type',
+  'Start Date', 'Status', 'Quoted Amount', 'Sites', 'Age',
+  'Last Client Heard From Us', 'Follow Up', 'Notes',
+  'Competition', 'Waiting On', 'Close Date', 'BFO Link',
+];
+
 // Key columns to show by default (the rest are available via Columns toggle)
 const KEY_COLS = [
   'Account', 'Contact', 'Stage', 'Scope', 'Source', 'Type',
@@ -15,9 +24,18 @@ const KEY_COLS = [
   'Competition', 'Waiting On', 'Close Date',
 ];
 
+function makeBlankOpp(id) {
+  const row = { _id: id };
+  for (const h of DEFAULT_HEADERS) row[h] = '';
+  row['Account'] = 'New Opp';
+  row['Open Year'] = String(new Date().getFullYear());
+  row['Stage'] = 'Lead';
+  return row;
+}
+
 export function OppsView2({ settings, updateSettings } = {}) {
   // Local-only state. No fetch, no cache, no sync.
-  const [data] = useState(null);
+  const [data, setData] = useState({ headers: DEFAULT_HEADERS, records: [] });
   const [loading] = useState(false);
   const [error] = useState(null);
   const [search, setSearch] = useState('');
@@ -35,6 +53,15 @@ export function OppsView2({ settings, updateSettings } = {}) {
   }, [activeTab]);
   const [hiddenServices, setHiddenServices] = useState(() => new Set());
   const [showHidden, setShowHidden] = useState(false);
+
+  const addNewOpp = useCallback(() => {
+    setData(prev => {
+      const records = prev?.records || [];
+      const headers = prev?.headers?.length ? prev.headers : DEFAULT_HEADERS;
+      const nextId = records.reduce((m, r) => Math.max(m, r._id || 0), 0) + 1;
+      return { ...prev, headers, records: [makeBlankOpp(nextId), ...records] };
+    });
+  }, []);
 
   const toggleHideService = useCallback((scope) => {
     setHiddenServices(prev => {
@@ -226,6 +253,7 @@ export function OppsView2({ settings, updateSettings } = {}) {
           <h2 className={styles.title}>Opps 2</h2>
           <span className={styles.lastSync}>Sandbox copy — not connected to any data source</span>
         </div>
+        <button className={styles.syncBtn} onClick={addNewOpp}>+ New Opp</button>
       </div>
 
       {error && <div className={styles.error}>{error}</div>}
@@ -326,7 +354,8 @@ export function OppsView2({ settings, updateSettings } = {}) {
               columns={columns}
               rows={filtered}
               alwaysVisible={['Account']}
-              emptyMessage="No data — this tab is not connected to any source yet."
+              enableColumnFilters
+              emptyMessage="No opps yet — click + New Opp to create one."
               settings={settings}
               updateSettings={updateSettings}
             />
