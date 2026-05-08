@@ -2131,12 +2131,13 @@ function KeyContactsViewInner({
             ];
             const visibleSet = new Set(visibleCols);
             const CONTACT_COLS = ALL_CONTACT_COLS.filter(c => c.alwaysOn || visibleSet.has(c.key));
-            // Always render a 32px "✉" column at the front for the
-            // Custom Email Campaign queue checkbox. The massMode column
-            // is conditional and sits between the queue column and the
-            // first content column when bulk-edit is active.
+            // Single 32px checkbox column at the front. When Mass Edit
+            // is off it carries the Custom Email Campaign queue toggle;
+            // when Mass Edit is on the same column flips to mass-select
+            // checkboxes so the user only ever sees one column of
+            // checkboxes — picking rows for the bulk update doesn't
+            // also queue them for a campaign.
             const CONTACT_GRID = '32px '
-              + (massMode ? '32px ' : '')
               + CONTACT_COLS.map(c => `${contactColWidths[c.key] || 120}px`).join(' ')
               + ' 60px';
             const allVisibleQueued = filteredContacts.length > 0
@@ -2158,17 +2159,7 @@ function KeyContactsViewInner({
             return (
               <div style={{ background: '#fff', border: '1px solid #CBD5E1', borderRadius: 8 }}>
                 <div style={{ display: 'grid', gridTemplateColumns: CONTACT_GRID, background: '#F1F5F9', borderBottom: '1px solid #CBD5E1', borderTopLeftRadius: 8, borderTopRightRadius: 8, position: 'sticky', top: 0, zIndex: 2 }}>
-                  <div style={{ padding: '0.4rem 0.6rem', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRight: '1px solid #E2E8F0' }}
-                    title={allVisibleQueued ? 'Remove all visible contacts from the Custom Email Campaign queue' : 'Add all visible contacts to the Custom Email Campaign queue (Draft Emails page)'}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={allVisibleQueued}
-                      onChange={toggleQueueAllVisible}
-                      title={allVisibleQueued ? 'Clear visible from queue' : 'Queue visible for campaign'}
-                    />
-                  </div>
-                  {massMode && (
+                  {massMode ? (
                     <div style={{ padding: '0.4rem 0.6rem', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRight: '1px solid #E2E8F0' }}>
                       <input
                         type="checkbox"
@@ -2185,6 +2176,17 @@ function KeyContactsViewInner({
                           }
                         }}
                         title={allVisibleSelected ? 'Clear visible' : 'Select visible'}
+                      />
+                    </div>
+                  ) : (
+                    <div style={{ padding: '0.4rem 0.6rem', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRight: '1px solid #E2E8F0' }}
+                      title={allVisibleQueued ? 'Remove all visible contacts from the Custom Email Campaign queue' : 'Add all visible contacts to the Custom Email Campaign queue (Draft Emails page)'}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={allVisibleQueued}
+                        onChange={toggleQueueAllVisible}
+                        title={allVisibleQueued ? 'Clear visible from queue' : 'Queue visible for campaign'}
                       />
                     </div>
                   )}
@@ -2219,7 +2221,7 @@ function KeyContactsViewInner({
                   <div />
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: CONTACT_GRID, background: '#F8FAFC', borderBottom: '1px solid #E2E8F0', position: 'sticky', top: 30, zIndex: 2 }}>
-                  {massMode && <div style={{ borderRight: '1px solid #E2E8F0' }} />}
+                  <div style={{ borderRight: '1px solid #E2E8F0' }} />
                   {CONTACT_COLS.map(c => (
                     <div key={c.key} style={{ padding: '0.25rem 0.4rem', borderRight: '1px solid #E2E8F0' }}>
                       <input
@@ -2249,23 +2251,24 @@ function KeyContactsViewInner({
                       background: massMode && massSelected.has(c.id) ? '#EFF6FF' : (i % 2 === 0 ? '#fff' : '#FCFCFD'),
                     }}
                   >
-                    <div
-                      style={{ padding: '0.45rem 0.6rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                      title={queuedSet.has(String(c.id)) ? 'Remove from Custom Email Campaign queue' : 'Add to Custom Email Campaign queue (pulls into Draft Emails)'}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={queuedSet.has(String(c.id))}
-                        onChange={() => toggleQueuedContact(c.id)}
-                        onClick={e => e.stopPropagation()}
-                      />
-                    </div>
-                    {massMode && (
+                    {massMode ? (
                       <div style={{ padding: '0.45rem 0.6rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                         <input
                           type="checkbox"
                           checked={massSelected.has(c.id)}
                           onChange={() => toggleMassSelect(c.id)}
+                          onClick={e => e.stopPropagation()}
+                        />
+                      </div>
+                    ) : (
+                      <div
+                        style={{ padding: '0.45rem 0.6rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                        title={queuedSet.has(String(c.id)) ? 'Remove from Custom Email Campaign queue' : 'Add to Custom Email Campaign queue (pulls into Draft Emails)'}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={queuedSet.has(String(c.id))}
+                          onChange={() => toggleQueuedContact(c.id)}
                           onClick={e => e.stopPropagation()}
                         />
                       </div>
