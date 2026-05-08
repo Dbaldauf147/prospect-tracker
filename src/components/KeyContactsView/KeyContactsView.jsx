@@ -2932,6 +2932,16 @@ function KeyContactsViewInner({
             onSaveCcMap={m => updateSettings({ ccMap: m })}
             toAlsoMap={settings?.toAlsoMap || {}}
             onSaveToAlsoMap={m => updateSettings({ toAlsoMap: m })}
+            onSaveCompanyOverride={(cid, value) => {
+              const cur = settings?.contactLocalFields || {};
+              const merged = { ...(cur[cid] || {}) };
+              if (value && value.length > 0) merged._companyOverride = value;
+              else delete merged._companyOverride;
+              const nextLocal = { ...cur };
+              if (Object.keys(merged).length === 0) delete nextLocal[cid];
+              else nextLocal[cid] = merged;
+              updateSettings({ contactLocalFields: nextLocal });
+            }}
             companyContacts={sameCompanyContacts}
             emailDomains={emailDomains}
             companyNames={prospects.map(p => p.company).filter(Boolean)}

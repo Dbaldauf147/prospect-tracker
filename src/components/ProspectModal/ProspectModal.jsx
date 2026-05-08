@@ -628,7 +628,7 @@ async function lookupStateForCity(city, countryHint) {
   }
 }
 
-export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, companyContacts = [], emailDomains = [], companyNames = [] }) {
+export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, onSaveCompanyOverride, companyContacts = [], emailDomains = [], companyNames = [] }) {
   const rawTags = contact.dans_tags || contact.dan_s_tags || contact.dans_tag || '';
   // Parse existing tags; track which known tags are checked separately from free-text extras
   const parsedTags = rawTags.split(';').map(t => t.trim()).filter(Boolean);
@@ -946,6 +946,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
         }
       }
       if (!res.ok || json.error) throw new Error(json?.message || json?.error || `HubSpot ${res.status}`);
+      const companyAssignment = json.companyAssignment || null;
       // Include notes in the saved contact (stored locally)
       const savedContact = isNew ? { id: json.id, ...allProps } : { ...contact, ...allProps };
       // Update HubSpot cache (exclude notes/oldEmails — those live in Firestore settings)
@@ -995,6 +996,22 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
         if (toAlsoEmails.length > 0) next[primaryEmail] = toAlsoEmails;
         else delete next[primaryEmail];
         onSaveToAlsoMap(next);
+      }
+      // Company-field saves need a local-override pin so the typed
+      // value sticks against any stale override from a previous edit
+      // and against HubSpot's fuzzy Company match resolving to a
+      // record with a different name. Mirrors the inline-update path
+      // in HubSpotView / KeyContactsView.
+      if (savedCid && onSaveCompanyOverride) {
+        const typedCompany = (hsProps.company || '').trim();
+        const previousCompany = (contact.company || '').trim();
+        if (typedCompany !== previousCompany) {
+          if (!companyAssignment || companyAssignment.ok === false || companyAssignment.nameDiffers) {
+            onSaveCompanyOverride(savedCid, typedCompany);
+          } else {
+            onSaveCompanyOverride(savedCid, null);
+          }
+        }
       }
       onSave(savedContact);
       setSaved(true);
@@ -6848,6 +6865,16 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           onSaveCcMap={m => updateSettings({ ccMap: m })}
           toAlsoMap={settings.toAlsoMap || {}}
           onSaveToAlsoMap={m => updateSettings({ toAlsoMap: m })}
+          onSaveCompanyOverride={(cid, value) => {
+            const cur = settings?.contactLocalFields || {};
+            const merged = { ...(cur[cid] || {}) };
+            if (value && value.length > 0) merged._companyOverride = value;
+            else delete merged._companyOverride;
+            const nextLocal = { ...cur };
+            if (Object.keys(merged).length === 0) delete nextLocal[cid];
+            else nextLocal[cid] = merged;
+            updateSettings({ contactLocalFields: nextLocal });
+          }}
           companyContacts={companyContacts}
           emailDomains={(fields.emailDomain || '').split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)}
           companyNames={(prospects || []).map(p => p.company).filter(Boolean)}
