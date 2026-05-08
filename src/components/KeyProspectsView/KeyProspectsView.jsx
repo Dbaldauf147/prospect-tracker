@@ -3,11 +3,17 @@
 // opps on the Opps tab yet. Same layout / interactions as the other
 // roster tabs since this is a thin wrapper around KeyContactsView
 // with a custom selector.
+//
+// A gap-report banner above the table also surfaces the inverse list:
+// Tier 1 / Tier 2 accounts (CDM = me) that have ZERO opps AND ZERO
+// decision-maker contacts on this tab — the truly-untouched accounts
+// where the next step is to find / tag a decision maker.
 
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { matchesCdm } from '../../utils/cdmMatch';
 import { KeyContactsView, useOppsRecords } from '../KeyContactsView/KeyContactsView';
+import { getHubspotCache } from '../../utils/hubspotContactsCache';
 
 const SCHNEIDER_COMPANY_RE = /\bschneider\s*electric\b/i;
 const SCHNEIDER_DOMAIN_RE = /(^|\.)(se\.com|schneider-electric\.com|schneider\.com)$/i;
@@ -43,6 +49,20 @@ function companiesMatch(a, b) {
 export function KeyProspectsView({ prospects = [], onSelectProspect, settings, updateSettings, cdmName = '' }) {
   const { user } = useAuth();
   const oppsRecords = useOppsRecords(user?.uid);
+
+  // HubSpot cache, refreshed on cache-update events. Used by the gap
+  // report below to figure out which Tier 1 / Tier 2 accounts have no
+  // decision-maker contacts on this page.
+  const [hubspotContacts, setHubspotContacts] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    function refresh() {
+      getHubspotCache().then(c => { if (!cancelled) setHubspotContacts(c?.contacts || []); }).catch(() => {});
+    }
+    refresh();
+    window.addEventListener('hubspot-cache-updated', refresh);
+    return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
+  }, []);
 
   // Tier 1 / Tier 2 prospects on this CDM's Table View — the universe
   // a contact's company has to live in to qualify.
@@ -116,8 +136,90 @@ export function KeyProspectsView({ prospects = [], onSelectProspect, settings, u
     return false;
   }, [tierAccountStatus, myTierAccounts]);
 
+  // Tier 1 / Tier 2 accounts (CDM = me) with NO opps AND no contact on
+  // this tab — i.e. no decision-maker contact whose Company resolves
+  // (exact or fuzzy) to this prospect. Same selector logic as above
+  // applied per prospect rather than per contact, so the gap list
+  // tracks exactly what's missing from the visible roster.
+  const localFields = settings?.contactLocalFields || {};
+  const untouchedAccounts = useMemo(() => {
+    if (myTierAccounts.length === 0) return [];
+    // Only consider the contacts that pass the page selector — that's
+    // the same definition of "contact on here" the user sees.
+    const passingContacts = [];
+    for (const baseC of hubspotContacts) {
+      const lf = localFields[String(baseC.id || baseC.vid || '')] || null;
+      const c = lf && typeof lf._companyOverride === 'string' && lf._companyOverride
+        ? { ...baseC, company: lf._companyOverride }
+        : baseC;
+      const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
+      if (tags.includes('hide') || tags.includes('left')) continue;
+      if (isSchneiderContact(c)) continue;
+      if (!tags.includes('decision maker')) continue;
+      const company = String(c.company || '').trim();
+      if (!company) continue;
+      passingContacts.push({ company, lc: company.toLowerCase() });
+    }
+    const out = [];
+    for (const p of myTierAccounts) {
+      const pLc = String(p.company || '').toLowerCase().trim();
+      if (!pLc) continue;
+      const status = tierAccountStatus.get(pLc);
+      if (status?.hasOpp) continue; // has opps → not untouched
+      // Does any passing contact resolve to this prospect?
+      let hasContact = false;
+      for (const c of passingContacts) {
+        if (c.lc === pLc) { hasContact = true; break; }
+        if (companiesMatch(p.company, c.company)) { hasContact = true; break; }
+      }
+      if (!hasContact) out.push(p);
+    }
+    out.sort((a, b) => {
+      const tierA = (a.tier || '').toLowerCase();
+      const tierB = (b.tier || '').toLowerCase();
+      if (tierA !== tierB) return tierA.localeCompare(tierB); // Tier 1 first
+      return String(a.company || '').localeCompare(String(b.company || ''));
+    });
+    return out;
+  }, [myTierAccounts, tierAccountStatus, hubspotContacts, localFields]);
+
+  const [gapOpen, setGapOpen] = useState(false);
+
   const subtitle = (
-    <>HubSpot contacts tagged <strong>Decision Maker</strong> at <strong>Tier 1</strong> / <strong>Tier 2</strong> accounts on your Table View (CDM = <strong>{cdmName || '(set your CDM in Settings)'}</strong>) whose company has <strong>no opps yet</strong> on the Opps tab — your warm-but-untouched list. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>By Company</strong> to see decision makers grouped by account.</>
+    <>
+      {untouchedAccounts.length > 0 && (
+        <div style={{ margin: '6px 0 8px', padding: '0.5rem 0.7rem', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 6 }}>
+          <button
+            type="button"
+            onClick={() => setGapOpen(o => !o)}
+            style={{ background: 'transparent', border: 'none', padding: 0, fontFamily: 'inherit', fontSize: '0.72rem', color: '#92400E', fontWeight: 700, cursor: 'pointer' }}
+            title="Tier 1 / Tier 2 accounts with no opps and no decision-maker contact on this tab. These are the truly-untouched accounts."
+          >
+            {gapOpen ? '▾' : '▸'} {untouchedAccounts.length} Tier 1 / 2 account{untouchedAccounts.length === 1 ? '' : 's'} with no opps and no decision-maker contact
+          </button>
+          {gapOpen && (
+            <div style={{ marginTop: '0.4rem', maxHeight: 280, overflowY: 'auto', background: '#fff', border: '1px solid #FDE68A', borderRadius: 4 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px', padding: '0.25rem 0.6rem', background: '#FFFBEB', borderBottom: '1px solid #FDE68A', fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#92400E', position: 'sticky', top: 0 }}>
+                <div>Account</div>
+                <div style={{ textAlign: 'right' }}>Tier</div>
+              </div>
+              {untouchedAccounts.map(p => (
+                <div
+                  key={p.id || p.company}
+                  onClick={() => onSelectProspect && onSelectProspect(p)}
+                  style={{ display: 'grid', gridTemplateColumns: '1fr 80px', padding: '0.3rem 0.6rem', borderTop: '1px solid #FEF3C7', fontSize: '0.74rem', cursor: onSelectProspect ? 'pointer' : 'default' }}
+                  title={onSelectProspect ? `Open ${p.company} on the Table View` : p.company}
+                >
+                  <div style={{ color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.company || '(unnamed prospect)'}</div>
+                  <div style={{ textAlign: 'right', fontWeight: 600, color: '#7C2D12' }}>{p.tier || '—'}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      HubSpot contacts tagged <strong>Decision Maker</strong> at <strong>Tier 1</strong> / <strong>Tier 2</strong> accounts on your Table View (CDM = <strong>{cdmName || '(set your CDM in Settings)'}</strong>) whose company has <strong>no opps yet</strong> on the Opps tab — your warm-but-untouched list. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>By Company</strong> to see decision makers grouped by account.
+    </>
   );
 
   return (
