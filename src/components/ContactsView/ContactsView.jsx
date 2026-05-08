@@ -9,17 +9,19 @@ import { ChangedJobsContactsView } from '../ChangedJobsContactsView/ChangedJobsC
 import { DedupeView } from '../DedupeView/DedupeView';
 import { ZoomInfoView } from '../ZoomInfoView/ZoomInfoView';
 import { AllContactsView } from '../AllContactsView/AllContactsView';
+import { KeyProspectsView } from '../KeyProspectsView/KeyProspectsView';
 
 const SUBTABS = [
-  { key: 'hubspot',  label: 'HubSpot Contacts' },
-  { key: 'bulk',     label: 'Bulk Add Contacts' },
-  { key: 'all',      label: 'All Contacts' },
-  { key: 'key',      label: 'Key Contacts' },
-  { key: 'active',   label: 'Active Contacts' },
-  { key: 'clients',  label: 'Client Contacts' },
-  { key: 'changed',  label: 'Changed Jobs' },
-  { key: 'zoominfo', label: 'Zoom Info' },
-  { key: 'dedupe',   label: 'Deduplication' },
+  { key: 'hubspot',    label: 'HubSpot Contacts' },
+  { key: 'bulk',       label: 'Bulk Add Contacts' },
+  { key: 'all',        label: 'All Contacts' },
+  { key: 'key',        label: 'Key Contacts' },
+  { key: 'keyprospects', label: 'Key Prospects' },
+  { key: 'active',     label: 'Active Contacts' },
+  { key: 'clients',    label: 'Client Contacts' },
+  { key: 'changed',    label: 'Changed Jobs' },
+  { key: 'zoominfo',   label: 'Zoom Info' },
+  { key: 'dedupe',     label: 'Deduplication' },
 ];
 
 const STORAGE_KEY = 'contacts-view:active-subtab';
@@ -89,6 +91,15 @@ export function ContactsView({
         )}
         {subtab === 'key' && (
           <KeyContactsView
+            prospects={prospects}
+            onSelectProspect={onSelectProspect}
+            settings={settings}
+            updateSettings={updateSettings}
+            cdmName={cdmName}
+          />
+        )}
+        {subtab === 'keyprospects' && (
+          <KeyProspectsView
             prospects={prospects}
             onSelectProspect={onSelectProspect}
             settings={settings}
