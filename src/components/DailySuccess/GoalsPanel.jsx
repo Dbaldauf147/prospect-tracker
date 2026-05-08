@@ -92,10 +92,21 @@ export function GoalsPanel({ user }) {
   const [keptTaskIdx, setKeptTaskIdx] = useState(new Set());
   const [coachingRules, setCoachingRules] = useState(DEFAULT_COACHING_RULES);
 
+  const [loadError, setLoadError] = useState('');
   useEffect(() => {
     let cancelled = false;
     loadGoals().then(list => {
       if (!cancelled) { setGoals(list); setLoading(false); }
+    }).catch(err => {
+      if (cancelled) return;
+      // Most common cause: the IndexedDB version-bump that creates
+      // the new daily-success-goals store is blocked by another tab
+      // holding the prospect-tracker-db open at the previous version.
+      // Surface the error so the user can act on it instead of
+      // staring at "Loading goals…" forever.
+      setLoadError(err?.message || String(err));
+      setGoals([]);
+      setLoading(false);
     });
     return () => { cancelled = true; };
   }, []);
@@ -235,6 +246,17 @@ export function GoalsPanel({ user }) {
   const archivedCount = goals.length - activeCount;
 
   if (loading) return <div className={styles.smallNote}>Loading goals…</div>;
+  if (loadError) {
+    return (
+      <div style={{ padding: '0.6rem 0.8rem', background: '#FEF2F2', border: '1px solid #FCA5A5', borderRadius: 6, color: '#991B1B', fontSize: '0.78rem' }}>
+        <div style={{ fontWeight: 700, marginBottom: 4 }}>Couldn't open the goals store</div>
+        <div style={{ marginBottom: 6 }}>{loadError}</div>
+        <div style={{ fontSize: '0.7rem', color: '#7F1D1D' }}>
+          Most often this means another tab on the same browser is holding the database open at the old version. Close the other Prospect Tracker tabs, then reload this page.
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>

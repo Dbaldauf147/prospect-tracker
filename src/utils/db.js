@@ -86,6 +86,13 @@ export function openDB() {
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
+      // Another tab on the same origin is holding the DB open at the
+      // previous version, so the upgrade can't run. Reject loudly
+      // instead of hanging forever — callers can surface a "close
+      // your other tabs" hint.
+      req.onblocked = () => reject(new Error(
+        `IndexedDB upgrade to v${nextVersion} blocked — another tab has the database open at v${probeDb.version}. Close the other tabs and reload.`
+      ));
     });
   })();
   dbPromise.catch(() => { dbPromise = null; });
