@@ -2071,6 +2071,40 @@ function KeyContactsViewInner({
                 fontFamily: 'inherit',
               }}
             >Hide Selected</button>
+            <button
+              type="button"
+              onClick={() => {
+                if (massSelected.size === 0) return;
+                const current = new Set(queuedIds);
+                let added = 0, already = 0;
+                for (const id of massSelected) {
+                  const k = String(id);
+                  if (current.has(k)) already++;
+                  else { current.add(k); added++; }
+                }
+                setQueuedContactIds(Array.from(current));
+                setMassStatus({
+                  type: 'success',
+                  message: added === 0
+                    ? `All ${already} already queued`
+                    : `Queued ${added}${already > 0 ? ` · ${already} already queued` : ''} for Custom Email Campaign`,
+                });
+                setTimeout(() => setMassStatus(null), 3500);
+              }}
+              disabled={massProcessing || massSelected.size === 0}
+              title="Push the selected contacts into the Custom Email Campaign queue (Draft Emails page)"
+              style={{
+                padding: '0.3rem 0.75rem',
+                fontSize: '0.72rem',
+                fontWeight: 700,
+                border: '1px solid #2563EB',
+                borderRadius: 4,
+                background: (massProcessing || massSelected.size === 0) ? '#DBEAFE' : '#EFF6FF',
+                color: '#1D4ED8',
+                cursor: (massProcessing || massSelected.size === 0) ? 'default' : 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >Queue for Campaign</button>
             {massStatus && (
               <span style={{ fontSize: '0.7rem', color: massStatus.type === 'success' ? '#166534' : '#92400E' }}>{massStatus.message}</span>
             )}
