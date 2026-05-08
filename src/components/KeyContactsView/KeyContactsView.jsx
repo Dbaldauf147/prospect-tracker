@@ -1168,12 +1168,15 @@ function KeyContactsViewInner({
   }
 
   const DEFAULT_CONTACT_COL_WIDTHS = {
-    name: 180, title: 200, company: 200, suggestedCompany: 220, email: 240, phone: 140, location: 140, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, tags: 200,
+    name: 180, title: 200, company: 200, suggestedCompany: 220, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, tags: 200,
   };
   // Column visibility — every contact column except Name (always
   // shown; it's the primary identifier). Stored per-page so the Key,
-  // Active, and Client tabs each remember their own set.
-  const DEFAULT_VISIBLE_COLS = ['title', 'company', 'email', 'phone', 'location', 'country', 'linkedin', 'salesNav', 'met', 'events', 'tags'];
+  // Active, Client, and All tabs each remember their own set. City /
+  // State sit alongside Location so a user who wants the combined
+  // "City, State" string keeps it, while the separate columns are
+  // available for filtering / sorting on either field independently.
+  const DEFAULT_VISIBLE_COLS = ['title', 'company', 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', 'events', 'tags'];
   const [visibleCols, setVisibleCols] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(lsKey('visible-cols')));
@@ -1690,6 +1693,8 @@ function KeyContactsViewInner({
         case 'location':
           cmp = ((a.state || '') + (a.city || '')).localeCompare((b.state || '') + (b.city || ''));
           break;
+        case 'city':    cmp = (a.city || '').localeCompare(b.city || ''); break;
+        case 'state':   cmp = (a.state || '').localeCompare(b.state || ''); break;
         case 'country': cmp = (a.country || '').localeCompare(b.country || ''); break;
         case 'events':  cmp = (contactEvents[String(a.id || '')] || '').localeCompare(contactEvents[String(b.id || '')] || ''); break;
         case 'met':     cmp = Number(!!a.metInPerson) - Number(!!b.metInPerson); break;
@@ -1710,6 +1715,8 @@ function KeyContactsViewInner({
     email:    c => c.email || '',
     phone:    c => c.phone || '',
     location: c => [c.city, c.state].filter(Boolean).join(', '),
+    city:     c => c.city || '',
+    state:    c => c.state || '',
     country:  c => c.country || '',
     linkedin: c => c.linkedin ? 'open' : '',
     salesNav: c => '',
@@ -1854,6 +1861,8 @@ function KeyContactsViewInner({
                     { key: 'email', label: 'Email' },
                     { key: 'phone', label: 'Phone' },
                     { key: 'location', label: 'Location' },
+                    { key: 'city', label: 'City' },
+                    { key: 'state', label: 'State' },
                     { key: 'country', label: 'Country' },
                     { key: 'linkedin', label: 'LinkedIn' },
                     { key: 'salesNav', label: 'LinkedIn Search' },
@@ -2111,6 +2120,8 @@ function KeyContactsViewInner({
               { key: 'email',    label: 'Email' },
               { key: 'phone',    label: 'Phone' },
               { key: 'location', label: 'Location' },
+              { key: 'city',     label: 'City' },
+              { key: 'state',    label: 'State' },
               { key: 'country',  label: 'Country' },
               { key: 'linkedin', label: 'LinkedIn', sortable: false },
               { key: 'salesNav', label: 'LinkedIn Search', sortable: false },
@@ -2373,6 +2384,24 @@ function KeyContactsViewInner({
                       textColor="#64748B"
                       placeholder="—"
                       title="Click to edit. Type 'City, State'."
+                      fontSize="0.7rem"
+                    />
+                    )}
+                    {visibleSet.has('city') && (
+                    <InlineCell
+                      value={c.city}
+                      onCommit={v => inlineUpdateField(c.raw || c, 'city', v)}
+                      textColor="#64748B"
+                      placeholder="—"
+                      fontSize="0.7rem"
+                    />
+                    )}
+                    {visibleSet.has('state') && (
+                    <InlineCell
+                      value={c.state}
+                      onCommit={v => inlineUpdateField(c.raw || c, 'state', v)}
+                      textColor="#64748B"
+                      placeholder="—"
                       fontSize="0.7rem"
                     />
                     )}
