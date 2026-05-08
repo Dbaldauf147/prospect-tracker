@@ -1107,29 +1107,43 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
         .replace(/(?:\s*<p[^>]*>\s*(?:<br\s*\/?>\s*)?<\/p>\s*)+$/i, '')
         // Zero margin-bottom on any <p> immediately followed by a
         // <ul>/<ol> so bullets/numbered lists sit flush against the
-        // line above them instead of getting Outlook's default 1em
-        // paragraph gap.
+        // line above them. Outlook honours mso-margin-bottom-alt over
+        // plain margin-bottom, so we kill both — leaving either at the
+        // default "auto" forces Word's stock 1em gap to come back.
         .replace(/<p(\s[^>]*)?>([\s\S]*?)<\/p>(\s*)<(ul|ol)([^>]*)>/gi,
           (_, attrs, content, ws, listTag, listAttrs) => {
-            const tightened = setStyle(attrs || '', 'margin-bottom', '0');
-            return `<p${tightened}>${content}</p>${ws}<${listTag}${listAttrs}>`;
+            let a = setStyle(attrs || '', 'margin-bottom', '0');
+            a = setStyle(a, 'mso-margin-bottom-alt', '0');
+            return `<p${a}>${content}</p>${ws}<${listTag}${listAttrs}>`;
           })
-        .replace(/<ul>/gi, (m) => m.includes('style') ? m : '<ul style="margin:0;padding-left:1.5em;">')
-        .replace(/<ol>/gi, (m) => m.includes('style') ? m : '<ol style="margin:0;padding-left:1.5em;">');
+        // Lists themselves get the same treatment so the FIRST <li>
+        // doesn't inherit Word's "auto" top spacing.
+        .replace(/<ul>/gi, (m) => m.includes('style') ? m : '<ul style="margin:0;padding-left:1.5em;mso-margin-top-alt:0;mso-margin-bottom-alt:0;">')
+        .replace(/<ol>/gi, (m) => m.includes('style') ? m : '<ol style="margin:0;padding-left:1.5em;mso-margin-top-alt:0;mso-margin-bottom-alt:0;">')
+        // Each <li> too — its own mso-margin-*-alt would otherwise
+        // re-introduce a gap above the first item.
+        .replace(/<li(\s[^>]*)?>/gi, (_, a = '') => {
+          let next = setStyle(a, 'margin-top', '0');
+          next = setStyle(next, 'margin-bottom', '0');
+          next = setStyle(next, 'mso-margin-top-alt', '0');
+          next = setStyle(next, 'mso-margin-bottom-alt', '0');
+          return `<li${next}>`;
+        });
       // Same trick for the very last <p> — zero its bottom margin so
       // the email signature attaches directly under the closing line
       // with no orphan gap.
       htmlContent = htmlContent.replace(/<p(\s[^>]*)?>([\s\S]*?)<\/p>(\s*)$/i,
         (_, attrs, content, ws) => {
-          const tightened = setStyle(attrs || '', 'margin-bottom', '0');
-          return `<p${tightened}>${content}</p>${ws}`;
+          let a = setStyle(attrs || '', 'margin-bottom', '0');
+          a = setStyle(a, 'mso-margin-bottom-alt', '0');
+          return `<p${a}>${content}</p>${ws}`;
         });
       // Insert line breaks after closing tags — Outlook's MIME parser can misrender very long single-line HTML
       htmlContent = htmlContent.replace(/<\/p>/gi, '</p>\n').replace(/<\/li>/gi, '</li>\n').replace(/<\/ul>/gi, '</ul>\n').replace(/<\/ol>/gi, '</ol>\n');
       // Signature attaches directly — no leading <br>, since the
       // last <p> above already has margin-bottom:0.
       const sigBlock = signature ? `\n<div>\n${signature}\n</div>` : '';
-      htmlContent = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">\n<head>\n<!--[if gte mso 9]><xml><w:WordDocument><w:DontHyphenate/><w:DoNotHyphenateCaps/></w:WordDocument></xml><![endif]-->\n<style>\nul,ol{margin:0;padding-left:1.5em;}\n</style>\n</head>\n<body style="margin:0;padding:0;">\n<div style="font-family:Aptos,Calibri,Arial,sans-serif;font-size:12pt;">\n${htmlContent}\n</div>${sigBlock}\n</body>\n</html>`;
+      htmlContent = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">\n<head>\n<!--[if gte mso 9]><xml><w:WordDocument><w:DontHyphenate/><w:DoNotHyphenateCaps/></w:WordDocument></xml><![endif]-->\n<style>\nul,ol{margin:0;padding-left:1.5em;mso-margin-top-alt:0;mso-margin-bottom-alt:0;}\nli{margin:0;mso-margin-top-alt:0;mso-margin-bottom-alt:0;}\n</style>\n</head>\n<body style="margin:0;padding:0;">\n<div style="font-family:Aptos,Calibri,Arial,sans-serif;font-size:12pt;">\n${htmlContent}\n</div>${sigBlock}\n</body>\n</html>`;
 
       let eml;
       if (attachments.length > 0) {
