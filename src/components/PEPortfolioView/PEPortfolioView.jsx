@@ -97,7 +97,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
   // Persisted column widths + sort so the layout survives reloads.
-  const DEFAULT_COL_WIDTHS = { company: 240, peAum: 110, dm: 170, met: 170, mapping: 110, opps: 100, ratio: 120, clients: 110, keyContacts: 120 };
+  const DEFAULT_COL_WIDTHS = { company: 240, peAum: 110, geography: 110, dm: 170, met: 170, mapping: 110, opps: 100, ratio: 120, clients: 110, keyContacts: 120 };
   const [colWidths, setColWidths] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('pe-portfolio:col-widths')) || {};
@@ -359,6 +359,9 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
         case 'peAum':
           cmp = (a.peAum || 0) - (b.peAum || 0);
           break;
+        case 'geography':
+          cmp = (a.geography || '').localeCompare(b.geography || '');
+          break;
         case 'dm':
           cmp = ((sa.decisionMakerNames || []).length) - ((sb.decisionMakerNames || []).length);
           break;
@@ -449,10 +452,11 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
             </div>
           </div>
         ) : (() => {
-          const GRID = `${colWidths.company}px ${colWidths.peAum || DEFAULT_COL_WIDTHS.peAum}px ${colWidths.dm}px ${colWidths.met}px ${colWidths.mapping}px ${colWidths.opps}px ${colWidths.ratio}px ${colWidths.clients}px ${colWidths.keyContacts || DEFAULT_COL_WIDTHS.keyContacts}px 28px`;
+          const GRID = `${colWidths.company}px ${colWidths.peAum || DEFAULT_COL_WIDTHS.peAum}px ${colWidths.geography || DEFAULT_COL_WIDTHS.geography}px ${colWidths.dm}px ${colWidths.met}px ${colWidths.mapping}px ${colWidths.opps}px ${colWidths.ratio}px ${colWidths.clients}px ${colWidths.keyContacts || DEFAULT_COL_WIDTHS.keyContacts}px 28px`;
           const HEADER_COLUMNS = [
             { key: 'company', label: 'PE firm', align: 'left',   tip: 'Sort by company name' },
             { key: 'peAum',   label: 'PE AUM', align: 'right', tip: 'AUM (in billions) pulled from each PE firm\'s Table View record. Sort by AUM.' },
+            { key: 'geography', label: 'Geography', align: 'left', tip: 'Geography from the PE firm\'s prospect record (Global / NAM / State-Regional)' },
             { key: 'dm',      label: 'Decision Maker Found?', align: 'left', tip: 'Sort by number of decision makers found on HubSpot' },
             { key: 'met',     label: 'Met in Person', align: 'left', tip: 'Met-in-person count / total decision makers, plus how many of them list New York / NYC as their city' },
             { key: 'mapping', label: 'PC Mapping', align: 'center', tip: 'Yes when the PE firm has entries in its Portfolio Companies tab; No otherwise' },
@@ -535,6 +539,13 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
                         title={pe.peAum ? `PE AUM from Table View: $${pe.peAum}B` : 'No PE AUM set on this prospect record'}
                       >
                         {formatAum(pe.peAum)}
+                      </div>
+
+                      <div
+                        style={{ padding: '0.55rem 0.6rem', fontSize: '0.72rem', fontWeight: 600, color: pe.geography ? '#1E293B' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                        title={pe.geography || 'No geography set on this prospect record'}
+                      >
+                        {pe.geography || '—'}
                       </div>
 
                       <div style={{ padding: '0.55rem 0.6rem' }}>
