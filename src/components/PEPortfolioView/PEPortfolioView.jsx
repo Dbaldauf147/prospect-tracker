@@ -98,6 +98,8 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
   }, []);
   // Persisted column widths + sort so the layout survives reloads.
   const DEFAULT_COL_WIDTHS = { company: 240, peAum: 110, geography: 110, dm: 170, met: 170, mapping: 110, opps: 100, ratio: 120, clients: 110, keyContacts: 120 };
+  // company is sticky and always shown — every other column is opt-in.
+  const ALL_COL_KEYS = ['company', 'peAum', 'geography', 'dm', 'met', 'mapping', 'opps', 'ratio', 'clients', 'keyContacts'];
   const [colWidths, setColWidths] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('pe-portfolio:col-widths')) || {};
@@ -106,6 +108,31 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
   });
   const [sortKey, setSortKey] = useState(() => localStorage.getItem('pe-portfolio:sort-key') || 'ratio');
   const [sortDir, setSortDir] = useState(() => localStorage.getItem('pe-portfolio:sort-dir') || 'desc');
+  const [visibleCols, setVisibleCols] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('pe-portfolio:visible-cols'));
+      if (Array.isArray(saved)) return new Set([...saved, 'company']);
+    } catch {}
+    return new Set(ALL_COL_KEYS);
+  });
+  const [colMenuOpen, setColMenuOpen] = useState(false);
+  const colMenuRef = useRef(null);
+  useEffect(() => {
+    if (!colMenuOpen) return;
+    function handleClick(e) {
+      if (colMenuRef.current && !colMenuRef.current.contains(e.target)) setColMenuOpen(false);
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [colMenuOpen]);
+  function toggleCol(key) {
+    if (key === 'company') return;
+    setVisibleCols(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
   useEffect(() => {
     try { localStorage.setItem('pe-portfolio:col-widths', JSON.stringify(colWidths)); } catch {}
   }, [colWidths]);
@@ -115,6 +142,9 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
   useEffect(() => {
     try { localStorage.setItem('pe-portfolio:sort-dir', sortDir); } catch {}
   }, [sortDir]);
+  useEffect(() => {
+    try { localStorage.setItem('pe-portfolio:visible-cols', JSON.stringify([...visibleCols])); } catch {}
+  }, [visibleCols]);
   const resizingRef = useRef(null);
   function startResize(colKey, e) {
     e.preventDefault();
@@ -424,14 +454,55 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
         </label>
       </div>
 
-      <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0 }}>
+      <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
         <input
           type="text"
           value={query}
           onChange={e => setQuery(e.target.value)}
           placeholder={`Search ${peFirms.length} PE firm${peFirms.length === 1 ? '' : 's'}…`}
-          style={{ width: '100%', maxWidth: 400, padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
+          style={{ flex: 1, maxWidth: 400, padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
         />
+        <div ref={colMenuRef} style={{ position: 'relative' }}>
+          <button
+            type="button"
+            onClick={() => setColMenuOpen(o => !o)}
+            style={{ padding: '0.4rem 0.7rem', border: '1px solid #E2E8F0', borderRadius: 6, background: '#fff', fontSize: '0.72rem', fontWeight: 600, color: '#334155', cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+          >Columns ({visibleCols.size}/{ALL_COL_KEYS.length})</button>
+          {colMenuOpen && (() => {
+            const COL_LABELS = {
+              company: 'PE firm', peAum: 'PE AUM', geography: 'Geography', dm: 'Decision Maker Found?',
+              met: 'Met in Person', mapping: 'PC Mapping', opps: 'PC Opps', ratio: 'PC Opps 2/4',
+              clients: 'PC Clients', keyContacts: 'Key Contacts',
+            };
+            return (
+              <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, background: '#fff', border: '1px solid #E2E8F0', borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.12)', zIndex: 100, minWidth: 200, padding: '0.3rem 0' }}>
+                {ALL_COL_KEYS.map(key => (
+                  <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.3rem 0.6rem', fontSize: '0.75rem', color: key === 'company' ? '#94A3B8' : '#334155', cursor: key === 'company' ? 'not-allowed' : 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={visibleCols.has(key)}
+                      disabled={key === 'company'}
+                      onChange={() => toggleCol(key)}
+                    />
+                    <span style={{ flex: 1 }}>{COL_LABELS[key] || key}</span>
+                  </label>
+                ))}
+                <div style={{ borderTop: '1px solid #F1F5F9', marginTop: '0.3rem', padding: '0.3rem 0.6rem', display: 'flex', gap: '0.4rem' }}>
+                  <button
+                    type="button"
+                    onClick={() => setVisibleCols(new Set(ALL_COL_KEYS))}
+                    style={{ flex: 1, padding: '0.25rem 0.4rem', border: '1px solid #E2E8F0', borderRadius: 4, background: '#fff', fontSize: '0.68rem', fontWeight: 600, color: '#334155', cursor: 'pointer', fontFamily: 'inherit' }}
+                  >Show all</button>
+                  <button
+                    type="button"
+                    onClick={() => setVisibleCols(new Set(['company']))}
+                    style={{ flex: 1, padding: '0.25rem 0.4rem', border: '1px solid #E2E8F0', borderRadius: 4, background: '#fff', fontSize: '0.68rem', fontWeight: 600, color: '#334155', cursor: 'pointer', fontFamily: 'inherit' }}
+                  >Hide all</button>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '0 1.25rem 1.25rem', minHeight: 0 }}>
@@ -452,8 +523,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
             </div>
           </div>
         ) : (() => {
-          const GRID = `${colWidths.company}px ${colWidths.peAum || DEFAULT_COL_WIDTHS.peAum}px ${colWidths.geography || DEFAULT_COL_WIDTHS.geography}px ${colWidths.dm}px ${colWidths.met}px ${colWidths.mapping}px ${colWidths.opps}px ${colWidths.ratio}px ${colWidths.clients}px ${colWidths.keyContacts || DEFAULT_COL_WIDTHS.keyContacts}px 28px`;
-          const HEADER_COLUMNS = [
+          const ALL_HEADER_COLUMNS = [
             { key: 'company', label: 'PE firm', align: 'left',   tip: 'Sort by company name' },
             { key: 'peAum',   label: 'PE AUM', align: 'right', tip: 'AUM (in billions) pulled from each PE firm\'s Table View record. Sort by AUM.' },
             { key: 'geography', label: 'Geography', align: 'left', tip: 'Geography from the PE firm\'s prospect record (Global / NAM / State-Regional)' },
@@ -465,6 +535,8 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
             { key: 'clients', label: 'PC Clients', align: 'center',  tip: 'Portfolio companies currently set to status = Client' },
             { key: 'keyContacts', label: 'Key Contacts', align: 'center', tip: 'Count of HubSpot contacts tagged "Dan Key Target" across the PE firm plus its portfolio companies' },
           ];
+          const HEADER_COLUMNS = ALL_HEADER_COLUMNS.filter(c => visibleCols.has(c.key));
+          const GRID = `${HEADER_COLUMNS.map(c => `${colWidths[c.key] || DEFAULT_COL_WIDTHS[c.key] || 110}px`).join(' ')} 28px`;
           const SORT_GLYPH = (key) => sortKey === key ? (sortDir === 'desc' ? ' ▼' : ' ▲') : '';
           const RESIZE_HANDLE = { position: 'absolute', top: 0, right: 0, bottom: 0, width: 6, cursor: 'col-resize', userSelect: 'none' };
           return (
@@ -534,20 +606,25 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
                         onClick={e => { e.stopPropagation(); onSelectProspect?.(pe); }}
                       >{pe.company}</div>
 
+                      {visibleCols.has('peAum') && (
                       <div
                         style={{ padding: '0.55rem 0.6rem', textAlign: 'right', fontSize: '0.78rem', fontWeight: 600, color: pe.peAum ? '#1E293B' : '#CBD5E1' }}
                         title={pe.peAum ? `PE AUM from Table View: $${pe.peAum}B` : 'No PE AUM set on this prospect record'}
                       >
                         {formatAum(pe.peAum)}
                       </div>
+                      )}
 
+                      {visibleCols.has('geography') && (
                       <div
                         style={{ padding: '0.55rem 0.6rem', fontSize: '0.72rem', fontWeight: 600, color: pe.geography ? '#1E293B' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                         title={pe.geography || 'No geography set on this prospect record'}
                       >
                         {pe.geography || '—'}
                       </div>
+                      )}
 
+                      {visibleCols.has('dm') && (
                       <div style={{ padding: '0.55rem 0.6rem' }}>
                         <span
                           title={dmFound ? (stats.decisionMakerNames || []).join(', ') : 'No HubSpot contact tagged "decision maker" for this firm or its portfolio companies'}
@@ -559,8 +636,9 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
                           }}
                         >{dmFound ? `✓ ${(stats.decisionMakerNames || []).length} found` : '✗ Not found'}</span>
                       </div>
+                      )}
 
-                      {(() => {
+                      {visibleCols.has('met') && (() => {
                         const dmTotal = (stats.decisionMakerNames || []).length;
                         const met = stats.metInPersonCount || 0;
                         const nyc = stats.nycCount || 0;
@@ -631,6 +709,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
                         );
                       })()}
 
+                      {visibleCols.has('mapping') && (
                       <div style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.72rem', fontWeight: 700 }}>
                         {stats.pcMapped ? (
                           <span style={{ padding: '1px 8px', borderRadius: 999, background: '#DCFCE7', border: '1px solid #86EFAC', color: '#166534' }}>Yes</span>
@@ -638,25 +717,34 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
                           <span style={{ padding: '1px 8px', borderRadius: 999, background: '#F1F5F9', border: '1px solid #CBD5E1', color: '#64748B' }}>No</span>
                         )}
                       </div>
+                      )}
 
+                      {visibleCols.has('opps') && (
                       <div style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.78rem', fontWeight: 700, color: (stats.pcOppsCount || 0) > 0 ? '#7C3AED' : '#CBD5E1' }}>
                         {stats.pcOppsCount || 0}
                       </div>
+                      )}
 
+                      {visibleCols.has('ratio') && (
                       <div style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.78rem', fontWeight: 700, color: (stats.activeOpps || 0) > 0 ? '#7C3AED' : (stats.totalOpps || 0) > 0 ? '#64748B' : '#CBD5E1' }} title="active / total opportunities across this firm and its portfolio companies">
                         {(stats.activeOpps || 0)}/{(stats.totalOpps || 0)}
                       </div>
+                      )}
 
+                      {visibleCols.has('clients') && (
                       <div style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.78rem', fontWeight: 700, color: (stats.pcClientCount || 0) > 0 ? '#10B981' : '#CBD5E1' }}>
                         {stats.pcClientCount || 0}
                       </div>
+                      )}
 
+                      {visibleCols.has('keyContacts') && (
                       <div
                         title={(stats.keyContactNames || []).join('\n') || undefined}
                         style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.78rem', fontWeight: 700, color: (stats.keyContactCount || 0) > 0 ? '#0891B2' : '#CBD5E1' }}
                       >
                         {stats.keyContactCount || 0}
                       </div>
+                      )}
 
                       <div style={{ padding: '0.55rem 0.2rem', textAlign: 'center', color: '#94A3B8', fontSize: '0.8rem' }}>
                         {isExpanded ? '▾' : '▸'}
