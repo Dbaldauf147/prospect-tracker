@@ -339,7 +339,7 @@ const EMPTY = {
   company: '', cdm: '', status: 'Inside Sales', type: '', geography: '', publicPrivate: '',
   assetTypes: [], peAum: null, reAum: null, numberOfSites: null, rank: '', tier: 'Tier 2',
   hqRegion: '', frameworks: [], notes: '', website: '', emailDomain: '', servicesExplored: {}, serviceNotes: {}, competitors: {}, portfolioCompanies: [],
-  peOwner: '',
+  peOwner: '', sustainabilityTargets: '',
 };
 
 // Company-name normalizer shared with the list tabs so fuzzy matching
@@ -3399,6 +3399,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         <div class="info-item"><div class="info-label">Email Domain</div><div class="info-val">${f.emailDomain || '—'}</div></div>
       </div>
       ${f.notes ? `<div style="margin:12px 0;padding:8px 12px;background:#F8FAFC;border-radius:6px;font-size:0.85rem"><strong style="font-size:0.72rem;color:#64748B;text-transform:uppercase">Notes</strong><div style="margin-top:4px">${f.notes}</div></div>` : ''}
+      ${f.sustainabilityTargets ? `<div style="margin:12px 0;padding:8px 12px;background:#F0FDF4;border-radius:6px;font-size:0.85rem"><strong style="font-size:0.72rem;color:#15803D;text-transform:uppercase">Sustainability Targets</strong><div style="margin-top:4px;white-space:pre-line">${f.sustainabilityTargets}</div></div>` : ''}
       <h2 style="font-size:1.1rem;margin-top:20px;margin-bottom:4px">Contacts (${companyContacts.length})</h2>
       ${companyContacts.length > 0 ? `<table><thead><tr><th>Name</th><th>Title</th><th>Email</th><th>Phone</th><th>Role</th><th>LinkedIn</th></tr></thead><tbody>${contactRows}</tbody></table>` : '<div style="color:#9CA3AF;font-style:italic;margin-top:8px">No HubSpot contacts found</div>'}
       <div style="margin-top:24px;font-size:0.7rem;color:#9CA3AF">Prospect Tracker — ${new Date().toLocaleString()}</div>
@@ -3700,6 +3701,19 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             <div className={styles.fieldFull}>
               <label className={styles.label}>Company Notes</label>
               <CommitOnBlurInput multiline autoGrow className={styles.textarea} value={fields.notes} onCommit={v => set('notes', v)} rows={2} />
+            </div>
+
+            <div className={styles.fieldFull}>
+              <label className={styles.label}>Sustainability Targets</label>
+              <CommitOnBlurInput
+                multiline
+                autoGrow
+                className={styles.textarea}
+                value={fields.sustainabilityTargets || ''}
+                onCommit={v => set('sustainabilityTargets', v)}
+                rows={2}
+                placeholder={'One per line, e.g.\nNet zero by 2050\n50% emissions reduction by 2030 vs 2019 baseline\n100% renewable electricity by 2025'}
+              />
             </div>
           </div>
 
