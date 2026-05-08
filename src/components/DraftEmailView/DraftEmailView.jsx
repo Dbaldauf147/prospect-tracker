@@ -1099,13 +1099,23 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
         return `${attrs} style="${key}:${value}"`;
       };
 
-      // Zero margin/mso-alt props on a <li> tag's existing attrs.
-      const zeroLiSpacing = (attrs) => {
-        let a = setStyle(attrs || '', 'margin', '0');
-        a = setStyle(a, 'margin-top', '0');
-        a = setStyle(a, 'margin-bottom', '0');
-        a = setStyle(a, 'mso-margin-top-alt', '0');
-        a = setStyle(a, 'mso-margin-bottom-alt', '0');
+      // Zero out every margin-related property Outlook honours on
+      // the given attrs string. Used on <div>s we synthesise above
+      // lists / before the signature, and on every <li> so the
+      // first/last items don't pick up Word's stock auto spacing.
+      const zeroBlockSpacing = (attrs) => {
+        let a = setStyle(attrs || '', 'margin', '0pt');
+        a = setStyle(a, 'margin-top', '0pt');
+        a = setStyle(a, 'margin-bottom', '0pt');
+        a = setStyle(a, 'mso-margin-top-alt', '0pt');
+        a = setStyle(a, 'mso-margin-bottom-alt', '0pt');
+        return a;
+      };
+      const zeroListSpacing = (attrs) => {
+        let a = setStyle(attrs || '', 'margin', '0pt');
+        a = setStyle(a, 'padding-left', '1.5em');
+        a = setStyle(a, 'mso-margin-top-alt', '0pt');
+        a = setStyle(a, 'mso-margin-bottom-alt', '0pt');
         return a;
       };
 
@@ -1119,31 +1129,33 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
         // right under the last sentence (Quill leaves <p><br></p>
         // behind when the user hits Enter past the end of the draft).
         .replace(/(?:\s*<p[^>]*>\s*(?:<br\s*\/?>\s*)?<\/p>\s*)+$/i, '')
-        // <p> immediately followed by a <ul>/<ol>: swap to <div>.
-        // <div> has no paragraph spacing, so the bullets land flush
-        // against the line above. Plain <p> tags elsewhere keep
-        // their default Outlook spacing — that's what makes a single
-        // Enter render as a real paragraph break.
+        // <p> immediately followed by a <ul>/<ol>: swap to <div>
+        // with explicit zero margins (margin + mso-margin-*-alt). A
+        // bare <div> would still inherit Word's Normal style auto
+        // spacing in Outlook, so the inline override is required.
+        // Plain <p> tags elsewhere keep their default Outlook
+        // spacing — that's what makes a single Enter render as a
+        // real paragraph break.
         .replace(/<p(\s[^>]*)?>([\s\S]*?)<\/p>(\s*)<(ul|ol)((?:\s[^>]*)?)>/gi,
           (_, attrs, content, ws, listTag, listAttrs) =>
-            `<div${attrs || ''}>${content}</div>${ws}<${listTag}${listAttrs}>`)
+            `<div${zeroBlockSpacing(attrs || '')}>${content}</div>${ws}<${listTag}${listAttrs}>`)
         // Lists themselves so they sit flush.
-        .replace(/<ul(\s[^>]*)?>/gi, (m, a) => /style\s*=/i.test(a || '') ? m : `<ul${a || ''} style="margin:0;padding-left:1.5em;mso-margin-top-alt:0;mso-margin-bottom-alt:0;">`)
-        .replace(/<ol(\s[^>]*)?>/gi, (m, a) => /style\s*=/i.test(a || '') ? m : `<ol${a || ''} style="margin:0;padding-left:1.5em;mso-margin-top-alt:0;mso-margin-bottom-alt:0;">`)
+        .replace(/<ul(\s[^>]*)?>/gi, (_, a = '') => `<ul${zeroListSpacing(a)}>`)
+        .replace(/<ol(\s[^>]*)?>/gi, (_, a = '') => `<ol${zeroListSpacing(a)}>`)
         // And every <li> — Word's stock auto top spacing would
         // otherwise re-introduce a gap on the first item.
-        .replace(/<li(\s[^>]*)?>/gi, (_, a = '') => `<li${zeroLiSpacing(a)}>`);
+        .replace(/<li(\s[^>]*)?>/gi, (_, a = '') => `<li${zeroBlockSpacing(a)}>`);
       // Same trick for the very last <p> of the body — swap it to
-      // <div> so the signature attaches directly under the closing
-      // line with no orphan gap.
+      // a zero-margin <div> so the signature attaches directly
+      // under the closing line with no orphan gap.
       htmlContent = htmlContent.replace(/<p(\s[^>]*)?>([\s\S]*?)<\/p>(\s*)$/i,
-        (_, attrs, content, ws) => `<div${attrs || ''}>${content}</div>${ws}`);
+        (_, attrs, content, ws) => `<div${zeroBlockSpacing(attrs || '')}>${content}</div>${ws}`);
       // Insert line breaks after closing tags — Outlook's MIME parser can misrender very long single-line HTML
       htmlContent = htmlContent.replace(/<\/p>/gi, '</p>\n').replace(/<\/li>/gi, '</li>\n').replace(/<\/ul>/gi, '</ul>\n').replace(/<\/ol>/gi, '</ol>\n');
       // Signature attaches directly — no leading <br>, since the
-      // body's trailing block is now a <div> (no para spacing).
+      // body's trailing block is now a zero-margin <div>.
       const sigBlock = signature ? `\n<div>\n${signature}\n</div>` : '';
-      htmlContent = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">\n<head>\n<!--[if gte mso 9]><xml><w:WordDocument><w:DontHyphenate/><w:DoNotHyphenateCaps/></w:WordDocument></xml><![endif]-->\n<style>\nul,ol{margin:0;padding-left:1.5em;mso-margin-top-alt:0;mso-margin-bottom-alt:0;}\nli{margin:0;mso-margin-top-alt:0;mso-margin-bottom-alt:0;}\n</style>\n</head>\n<body style="margin:0;padding:0;">\n<div style="font-family:Aptos,Calibri,Arial,sans-serif;font-size:12pt;">\n${htmlContent}\n</div>${sigBlock}\n</body>\n</html>`;
+      htmlContent = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">\n<head>\n<!--[if gte mso 9]><xml><w:WordDocument><w:DontHyphenate/><w:DoNotHyphenateCaps/></w:WordDocument></xml><![endif]-->\n<style>\nul,ol{margin:0pt;padding-left:1.5em;mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;}\nli{margin:0pt;mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;}\ndiv{mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;}\n</style>\n</head>\n<body style="margin:0;padding:0;">\n<div style="font-family:Aptos,Calibri,Arial,sans-serif;font-size:12pt;">\n${htmlContent}\n</div>${sigBlock}\n</body>\n</html>`;
 
       let eml;
       if (attachments.length > 0) {

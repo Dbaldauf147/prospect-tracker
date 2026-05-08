@@ -4096,8 +4096,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             </div>
           )}
 
-          {/* Opportunities — simple flat list of deals/opportunities for this company */}
-          {!isNew && fields.company?.trim() && (
+          {/* Opportunities — simple flat list of deals/opportunities for this company.
+              Hidden per user request — flip the false below to bring it back. */}
+          {false && !isNew && fields.company?.trim() && (
             <div style={{ marginTop: '1rem', borderTop: '1px solid var(--color-border-light)', paddingTop: '0.75rem' }}>
               <div
                 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', userSelect: 'none' }}
