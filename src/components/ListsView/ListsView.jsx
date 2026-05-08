@@ -12,6 +12,7 @@ import styles from './ListsView.module.css';
 const SUBTABS = [
   { key: 'raclients', label: 'RA Clients' },
   { key: 'targets', label: 'Target Accounts' },
+  { key: 'strategic', label: 'Strategic Accounts', storageKey: 'strategic-accounts-override' },
   { key: 'sites', label: 'Utility Lookup' },
   { key: 'recaclients', label: 'RECA Clients', storageKey: 'reca-clients-override' },
   { key: 'ecoactclients', label: 'EcoAct Clients', storageKey: 'ecoact-clients-override' },
@@ -332,6 +333,21 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
         {subtab === 'targets' && <TargetAccountsView onDataLoaded={onTargetAccountsLoaded} settings={settings} updateSettings={updateSettings} />}
         {subtab === 'recaclients' && <RECAClientsView prospects={prospects} onSelectProspect={onSelectProspect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} />}
         {subtab === 'ecoactclients' && <EcoActClientsView prospects={prospects} onSelectProspect={onSelectProspect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} />}
+        {subtab === 'strategic' && (
+          <UploadedListView
+            storageKey="strategic-accounts-override"
+            tableIdPrefix="strategic-accounts"
+            title="Strategic Accounts"
+            singular="account"
+            plural="accounts"
+            prospects={prospects}
+            onSelectProspect={onSelectProspect}
+            cdmName={cdmName}
+            settings={settings}
+            updateSettings={updateSettings}
+            updateSettingsPath={updateSettingsPath}
+          />
+        )}
         {subtab === 'sites' && <SitesView settings={settings} updateSettings={updateSettings} />}
         {subtab === 'csrd' && (
           <UploadedListView
