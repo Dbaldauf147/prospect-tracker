@@ -189,6 +189,17 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
     [isKey, isActive, isClient]
   );
 
+  // Categorisation function for the Category column. Returns the
+  // array of labels (Key / Active / Client) the contact qualifies
+  // for so KeyContactsView can render a colored pill per label.
+  const categorizeContact = useCallback((c) => {
+    const out = [];
+    if (isKey(c)) out.push('Key');
+    if (isActive(c)) out.push('Active');
+    if (isClient(c)) out.push('Client');
+    return out;
+  }, [isKey, isActive, isClient]);
+
   // Count of hide-tagged contacts that WOULD qualify if not hidden,
   // so the toggle pill shows the user how many they'd uncover. We
   // re-run the selectors with showHidden inverted via a probe that
@@ -291,6 +302,7 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
         <>Nothing matched. A contact appears on this page when it would also appear on Key, Active, or Client Contacts. Try the dedicated tabs to see why a specific contact is being filtered out.</>
       }
       contactSelector={combinedSelector}
+      categorizeContact={categorizeContact}
     />
   );
 }

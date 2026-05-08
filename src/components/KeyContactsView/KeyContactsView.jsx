@@ -502,6 +502,11 @@ function KeyContactsViewInner({
   // company for each contact based on their email domain / current
   // Company text. Most useful when paired with `unmappedOnly`.
   showSuggestedCompany = false,
+  // Optional categorisation function. When provided, KeyContactsView
+  // renders an extra "Category" column showing coloured pills for
+  // each label the function returns. Used by All Contacts to mark
+  // each row as Key / Active / Client (or any combination thereof).
+  categorizeContact = null,
   // When provided, fires with the count of contacts that would pass
   // the "active in past 30 days AND not in Table View" filter — used
   // by ActiveContactsView to label the toggle checkbox. The count is
@@ -1170,7 +1175,7 @@ function KeyContactsViewInner({
   }
 
   const DEFAULT_CONTACT_COL_WIDTHS = {
-    name: 180, title: 200, company: 200, suggestedCompany: 220, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, tags: 200,
+    name: 180, category: 160, title: 200, company: 200, suggestedCompany: 220, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, tags: 200,
   };
   // Column visibility — every contact column except Name (always
   // shown; it's the primary identifier). Stored per-page so the Key,
@@ -1178,7 +1183,7 @@ function KeyContactsViewInner({
   // State sit alongside Location so a user who wants the combined
   // "City, State" string keeps it, while the separate columns are
   // available for filtering / sorting on either field independently.
-  const DEFAULT_VISIBLE_COLS = ['title', 'company', 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', 'events', 'tags'];
+  const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', 'events', 'tags'];
   const [visibleCols, setVisibleCols] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(lsKey('visible-cols')));
@@ -1857,6 +1862,7 @@ function KeyContactsViewInner({
                   }}
                 >
                   {[
+                    ...(categorizeContact ? [{ key: 'category', label: 'Category' }] : []),
                     { key: 'title', label: 'Title' },
                     { key: 'company', label: 'Company' },
                     ...(showSuggestedCompany ? [{ key: 'suggestedCompany', label: 'Suggested Company' }] : []),
@@ -2116,6 +2122,7 @@ function KeyContactsViewInner({
           ) : (() => {
             const ALL_CONTACT_COLS = [
               { key: 'name',     label: 'Name', alwaysOn: true },
+              ...(categorizeContact ? [{ key: 'category', label: 'Category', sortable: false }] : []),
               { key: 'title',    label: 'Title' },
               { key: 'company',  label: 'Company' },
               ...(showSuggestedCompany ? [{ key: 'suggestedCompany', label: 'Suggested Company' }] : []),
@@ -2284,6 +2291,37 @@ function KeyContactsViewInner({
                         style={{ color: '#1D4ED8', cursor: 'pointer', textDecoration: 'underline' }}
                       >{c.name}</span>
                     </div>
+                    {categorizeContact && visibleSet.has('category') && (
+                      <div style={{ padding: '0.45rem 0.6rem', display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+                        {(() => {
+                          const cats = categorizeContact(c.raw || c) || [];
+                          if (cats.length === 0) return <span style={{ color: '#CBD5E1', fontSize: '0.7rem' }}>—</span>;
+                          const COLORS = {
+                            Key:    { bg: '#FEF3C7', border: '#FCD34D', color: '#92400E' },
+                            Active: { bg: '#DCFCE7', border: '#86EFAC', color: '#166534' },
+                            Client: { bg: '#DBEAFE', border: '#93C5FD', color: '#1E3A8A' },
+                          };
+                          return cats.map(cat => {
+                            const k = COLORS[cat] || { bg: '#F1F5F9', border: '#CBD5E1', color: '#334155' };
+                            return (
+                              <span
+                                key={cat}
+                                style={{
+                                  background: k.bg,
+                                  border: `1px solid ${k.border}`,
+                                  color: k.color,
+                                  padding: '1px 8px',
+                                  borderRadius: 999,
+                                  fontSize: '0.62rem',
+                                  fontWeight: 700,
+                                  whiteSpace: 'nowrap',
+                                }}
+                              >{cat}</span>
+                            );
+                          });
+                        })()}
+                      </div>
+                    )}
                     {visibleSet.has('title') && (
                     <InlineCell
                       value={c.jobtitle}
