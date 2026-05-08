@@ -1125,10 +1125,13 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
         .replace(/&nbsp;&nbsp;/g, '\x00DOUBLE\x00')
         .replace(/&nbsp;/g, ' ')
         .replace(/\x00DOUBLE\x00/g, '&nbsp;&nbsp;')
-        // Strip any trailing empty paragraphs so the signature lands
-        // right under the last sentence (Quill leaves <p><br></p>
-        // behind when the user hits Enter past the end of the draft).
-        .replace(/(?:\s*<p[^>]*>\s*(?:<br\s*\/?>\s*)?<\/p>\s*)+$/i, '')
+        // Strip any empty <p><br></p> blocks that sit IMMEDIATELY
+        // before a <ul>/<ol>. Quill often leaves one of these behind
+        // between the text and the list, and they were sneaking past
+        // the next regex (which converted the empty paragraph
+        // instead of the actual text paragraph) so the real <p>
+        // above kept its bottom margin.
+        .replace(/(?:<p[^>]*>\s*(?:<br\s*\/?>\s*)+<\/p>\s*)+(<(?:ul|ol))/gi, '$1')
         // <p> immediately followed by a <ul>/<ol>: swap to <div>
         // with explicit zero margins (margin + mso-margin-*-alt). A
         // bare <div> would still inherit Word's Normal style auto
@@ -1145,11 +1148,19 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
         // And every <li> — Word's stock auto top spacing would
         // otherwise re-introduce a gap on the first item.
         .replace(/<li(\s[^>]*)?>/gi, (_, a = '') => `<li${zeroBlockSpacing(a)}>`);
-      // Same trick for the very last <p> of the body — swap it to
-      // a zero-margin <div> so the signature attaches directly
-      // under the closing line with no orphan gap.
-      htmlContent = htmlContent.replace(/<p(\s[^>]*)?>([\s\S]*?)<\/p>(\s*)$/i,
-        (_, attrs, content, ws) => `<div${zeroBlockSpacing(attrs || '')}>${content}</div>${ws}`);
+      // Convert the last NON-EMPTY <p> of the body to a zero-margin
+      // <div> so the signature can attach directly. Trailing empty
+      // <p><br></p> blocks (the user's intentional Enter-driven
+      // blank lines) are left untouched, so the spaces they put
+      // before the signature are preserved.
+      {
+        const trailingEmpty = htmlContent.match(/(?:\s*<p[^>]*>\s*(?:<br\s*\/?>\s*)?<\/p>\s*)+$/i);
+        const tail = trailingEmpty ? trailingEmpty[0] : '';
+        const head = tail ? htmlContent.slice(0, htmlContent.length - tail.length) : htmlContent;
+        const headConverted = head.replace(/<p(\s[^>]*)?>([\s\S]*?)<\/p>(\s*)$/i,
+          (_, attrs, content, ws) => `<div${zeroBlockSpacing(attrs || '')}>${content}</div>${ws}`);
+        htmlContent = headConverted + tail;
+      }
       // Insert line breaks after closing tags — Outlook's MIME parser can misrender very long single-line HTML
       htmlContent = htmlContent.replace(/<\/p>/gi, '</p>\n').replace(/<\/li>/gi, '</li>\n').replace(/<\/ul>/gi, '</ul>\n').replace(/<\/ol>/gi, '</ol>\n');
       // Signature attaches directly — no leading <br>, since the
