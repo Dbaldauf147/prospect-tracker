@@ -36,19 +36,46 @@ function makeBlankOpp(id, headers) {
 }
 
 // Click-to-edit cell. Plain text by default; on click flips into an
-// input that commits on Enter or blur and reverts on Escape. Used for
-// every Opps 2 column so the user can fill in any field on a freshly
-// created opp without leaving the table.
-function EditableCell({ value, onChange }) {
+// input that commits on Enter or blur and reverts on Escape. When
+// `suggestions` is provided, the input also shows a prefix-then-
+// substring autocomplete dropdown so the user can pick an existing
+// company name (used for the Account column on Opps 2).
+function EditableCell({ value, onChange, suggestions }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value ?? '');
+  const [open, setOpen] = useState(false);
+  const [hoverIdx, setHoverIdx] = useState(0);
+  const wrapRef = useRef(null);
   useEffect(() => { if (!editing) setDraft(value ?? ''); }, [value, editing]);
+
+  const matches = useMemo(() => {
+    if (!suggestions?.length) return [];
+    const q = String(draft || '').trim().toLowerCase();
+    if (!q) return [];
+    const prefix = [];
+    const sub = [];
+    for (const s of suggestions) {
+      const lower = String(s).toLowerCase();
+      if (lower === q) continue;
+      if (lower.startsWith(q)) prefix.push(s);
+      else if (lower.includes(q)) sub.push(s);
+      if (prefix.length + sub.length >= 25) break;
+    }
+    return [...prefix, ...sub].slice(0, 8);
+  }, [draft, suggestions]);
+
+  function commit(next) {
+    const v = next == null ? draft : next;
+    setEditing(false);
+    setOpen(false);
+    if ((v ?? '') !== (value ?? '')) onChange(v);
+  }
 
   if (!editing) {
     const isEmpty = value === '' || value == null;
     return (
       <span
-        onClick={(e) => { e.stopPropagation(); setEditing(true); }}
+        onClick={(e) => { e.stopPropagation(); setEditing(true); setOpen(!!suggestions?.length); }}
         style={{
           display: 'block', cursor: 'text', minHeight: '1em',
           padding: '1px 2px',
@@ -61,29 +88,70 @@ function EditableCell({ value, onChange }) {
     );
   }
   return (
-    <input
-      autoFocus
-      type="text"
-      value={draft}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={() => { setEditing(false); if ((draft ?? '') !== (value ?? '')) onChange(draft); }}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
-        else if (e.key === 'Escape') { setDraft(value ?? ''); setEditing(false); }
-      }}
-      onClick={(e) => e.stopPropagation()}
-      style={{
-        width: '100%', boxSizing: 'border-box',
-        border: '1px solid var(--color-accent)', borderRadius: 3,
-        padding: '1px 4px',
-        fontSize: 'inherit', fontFamily: 'inherit', color: 'var(--color-text)',
-        background: '#fff',
-      }}
-    />
+    <div ref={wrapRef} style={{ position: 'relative' }} onClick={(e) => e.stopPropagation()}>
+      <input
+        autoFocus
+        type="text"
+        value={draft}
+        onChange={(e) => { setDraft(e.target.value); setOpen(true); setHoverIdx(0); }}
+        onFocus={() => { if (suggestions?.length) setOpen(true); }}
+        onBlur={() => {
+          // Defer so a click on a suggestion lands first.
+          requestAnimationFrame(() => {
+            if (!wrapRef.current?.contains(document.activeElement)) commit();
+          });
+        }}
+        onKeyDown={(e) => {
+          if (open && matches.length > 0) {
+            if (e.key === 'ArrowDown') { e.preventDefault(); setHoverIdx(i => (i + 1) % matches.length); return; }
+            if (e.key === 'ArrowUp')   { e.preventDefault(); setHoverIdx(i => (i - 1 + matches.length) % matches.length); return; }
+            if (e.key === 'Tab')       { e.preventDefault(); const pick = matches[hoverIdx] || matches[0]; setDraft(pick); commit(pick); return; }
+            if (e.key === 'Enter')     { e.preventDefault(); const pick = matches[hoverIdx] || matches[0]; setDraft(pick); commit(pick); return; }
+            if (e.key === 'Escape')    { e.preventDefault(); setDraft(value ?? ''); setEditing(false); setOpen(false); return; }
+          } else {
+            if (e.key === 'Enter')  { e.preventDefault(); e.currentTarget.blur(); }
+            if (e.key === 'Escape') { setDraft(value ?? ''); setEditing(false); }
+          }
+        }}
+        style={{
+          width: '100%', boxSizing: 'border-box',
+          border: '1px solid var(--color-accent)', borderRadius: 3,
+          padding: '1px 4px',
+          fontSize: 'inherit', fontFamily: 'inherit', color: 'var(--color-text)',
+          background: '#fff',
+        }}
+      />
+      {open && matches.length > 0 && (
+        <div
+          onMouseDown={(e) => e.preventDefault()}
+          style={{
+            position: 'absolute', top: '100%', left: 0, minWidth: '100%',
+            zIndex: 50, background: '#fff', border: '1px solid var(--color-border)',
+            borderRadius: 4, boxShadow: '0 8px 20px rgba(15, 23, 42, 0.12)',
+            maxHeight: 220, overflowY: 'auto', fontSize: '0.78rem',
+          }}
+        >
+          {matches.map((m, i) => (
+            <div
+              key={m + i}
+              onClick={() => { setDraft(m); commit(m); }}
+              onMouseEnter={() => setHoverIdx(i)}
+              style={{
+                padding: '0.3rem 0.55rem', cursor: 'pointer',
+                background: i === hoverIdx ? '#DCFCE7' : 'transparent',
+                color: i === hoverIdx ? '#166534' : '#1E293B',
+                fontWeight: i === hoverIdx ? 700 : 500,
+                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+              }}
+            >{m}</div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
-export function OppsView2({ settings, updateSettings } = {}) {
+export function OppsView2({ settings, updateSettings, prospects = [] } = {}) {
   // Local-only state. No fetch, no cache, no sync.
   const [data, setData] = useState({ headers: DEFAULT_HEADERS, records: [] });
   const [loading] = useState(false);
@@ -172,6 +240,24 @@ export function OppsView2({ settings, updateSettings } = {}) {
     });
   }, [data]);
 
+  // Sorted, deduped list of Table View company names — fed into the
+  // Account column's autocomplete so typing a partial name surfaces
+  // matching prospects from the live Table View.
+  const companySuggestions = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    for (const p of (prospects || [])) {
+      const c = String(p?.company || '').trim();
+      if (!c) continue;
+      const k = c.toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(c);
+    }
+    out.sort((a, b) => a.localeCompare(b));
+    return out;
+  }, [prospects]);
+
   const columns = useMemo(() => {
     const seen = new Set();
     return headers
@@ -194,10 +280,11 @@ export function OppsView2({ settings, updateSettings } = {}) {
           <EditableCell
             value={row[h]}
             onChange={(v) => updateOppField(row._id, h, v)}
+            suggestions={h === 'Account' ? companySuggestions : undefined}
           />
         ),
       }));
-  }, [headers, updateOppField]);
+  }, [headers, updateOppField, companySuggestions]);
 
   const stageOrder = ['Lead', 'Not Started', 'Qualifying', 'Quoting', 'Quoted', 'Verbal', 'Sold', 'Not Sold'];
   const CLOSED_STAGES = useMemo(() => new Set(['Sold', 'Not Sold']), []);

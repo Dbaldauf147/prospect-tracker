@@ -334,7 +334,7 @@ function App() {
           ) : view === 'opps' ? (
             <OppsView settings={settings} updateSettings={updateSettings} />
           ) : view === 'opps2' ? (
-            <OppsView2 settings={settings} updateSettings={updateSettings} />
+            <OppsView2 settings={settings} updateSettings={updateSettings} prospects={prospects} />
           ) : view === 'accounts' ? (
             <MyAccountsView
               prospects={prospects}
