@@ -3519,7 +3519,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                   {f.key === 'summary' && (
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '0.5rem' }}>
                       {[
-                        { key: 'timingAnswer', label: 'When do they want to do it by?' },
+                        { key: 'timingAnswer', label: 'When do they want to do it by? What is driving that deadline?' },
                         { key: 'budgetAnswer', label: 'Have they budgeted for this?' },
                       ].map(q => {
                         const v = formData.fieldValues[q.key] || '';
