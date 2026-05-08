@@ -262,13 +262,12 @@ export function GoalsPanel({ user }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
         <textarea
-          className={styles.morningArea}
           rows={2}
           value={draft}
           onChange={e => setDraft(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleAdd(); } }}
           placeholder="Add a goal — long-running ambition you want Claude to help break down (⌘/Ctrl + Enter to save)"
-          style={{ flex: 1, minHeight: 60 }}
+          style={{ flex: 1, minHeight: 48, fontFamily: 'inherit', fontSize: '0.85rem', padding: '0.4rem 0.5rem', border: '1px solid #CBD5E1', borderRadius: 6, resize: 'vertical' }}
         />
         <button type="button" className={styles.btnPrimary} onClick={handleAdd} disabled={!draft.trim()}>Add Goal</button>
       </div>
@@ -341,8 +340,8 @@ export function GoalsPanel({ user }) {
               <div
                 key={g.id}
                 style={{
-                  display: 'flex', alignItems: 'flex-start', gap: 8,
-                  padding: '0.5rem 0.6rem',
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  padding: '0.35rem 0.55rem',
                   background: archived ? '#F8FAFC' : '#fff',
                   border: '1px solid ' + (archived ? '#E2E8F0' : '#CBD5E1'),
                   borderRadius: 6,
@@ -352,10 +351,10 @@ export function GoalsPanel({ user }) {
                 <span
                   title={typeof g.priority === 'number' ? `Priority ${g.priority}` : 'Not yet prioritized'}
                   style={{
-                    minWidth: 28, height: 28, borderRadius: 999,
+                    minWidth: 22, height: 22, borderRadius: 999,
                     background: typeof g.priority === 'number' ? '#1D4ED8' : '#E2E8F0',
                     color: typeof g.priority === 'number' ? '#fff' : '#94A3B8',
-                    fontWeight: 700, fontSize: '0.78rem',
+                    fontWeight: 700, fontSize: '0.7rem',
                     display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                     flexShrink: 0,
                   }}
@@ -364,7 +363,6 @@ export function GoalsPanel({ user }) {
                   {isEditing ? (
                     <textarea
                       autoFocus
-                      className={styles.morningArea}
                       rows={2}
                       value={editingText}
                       onChange={e => setEditingText(e.target.value)}
@@ -373,37 +371,37 @@ export function GoalsPanel({ user }) {
                         else if (e.key === 'Escape') { setEditingId(null); setEditingText(''); }
                       }}
                       onBlur={() => handleSaveEdit(g.id)}
-                      style={{ width: '100%', minHeight: 50 }}
+                      style={{ width: '100%', minHeight: 36, fontFamily: 'inherit', fontSize: '0.8rem', padding: '0.3rem 0.45rem', border: '1px solid #2563EB', borderRadius: 4, resize: 'vertical' }}
                     />
                   ) : (
                     <div
                       onClick={() => { if (!archived) { setEditingId(g.id); setEditingText(g.text); } }}
-                      style={{ fontSize: '0.85rem', fontWeight: 600, color: '#1E293B', cursor: archived ? 'default' : 'text', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+                      style={{ fontSize: '0.82rem', fontWeight: 600, color: '#1E293B', cursor: archived ? 'default' : 'text', whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.3 }}
                       title={archived ? '' : 'Click to edit'}
                     >{g.text}</div>
                   )}
                   {g.rationale && (
-                    <div style={{ fontSize: '0.7rem', color: '#475569', marginTop: 4, fontStyle: 'italic' }}>
+                    <div style={{ fontSize: '0.68rem', color: '#475569', marginTop: 2, fontStyle: 'italic', lineHeight: 1.3 }}>
                       {g.rationale}
                     </div>
                   )}
                   {g.lastPrioritizedAt && (
-                    <div style={{ fontSize: '0.62rem', color: '#94A3B8', marginTop: 2 }}>
+                    <div style={{ fontSize: '0.6rem', color: '#94A3B8', marginTop: 1 }}>
                       Last prioritized {new Date(g.lastPrioritizedAt).toLocaleString()}
                     </div>
                   )}
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flexShrink: 0 }}>
+                <div style={{ display: 'flex', flexDirection: 'row', gap: 2, flexShrink: 0, alignItems: 'center' }}>
                   {!archived && i > 0 && (
-                    <button type="button" className={styles.btnGhost} onClick={() => reorderManually(i, i - 1)} title="Move up">↑</button>
+                    <button type="button" className={styles.btnGhost} onClick={() => reorderManually(i, i - 1)} title="Move up" style={{ padding: '0.15rem 0.35rem', fontSize: '0.75rem' }}>↑</button>
                   )}
                   {!archived && i < visible.length - 1 && (
-                    <button type="button" className={styles.btnGhost} onClick={() => reorderManually(i, i + 1)} title="Move down">↓</button>
+                    <button type="button" className={styles.btnGhost} onClick={() => reorderManually(i, i + 1)} title="Move down" style={{ padding: '0.15rem 0.35rem', fontSize: '0.75rem' }}>↓</button>
                   )}
-                  <button type="button" className={styles.btnGhost} onClick={() => handleArchive(g.id, archived)} title={archived ? 'Unarchive' : 'Archive'}>
+                  <button type="button" className={styles.btnGhost} onClick={() => handleArchive(g.id, archived)} title={archived ? 'Unarchive' : 'Archive'} style={{ padding: '0.15rem 0.35rem', fontSize: '0.75rem' }}>
                     {archived ? '↻' : '📦'}
                   </button>
-                  <button type="button" className={styles.delBtn} onClick={() => handleDelete(g.id)} title="Delete">×</button>
+                  <button type="button" className={styles.delBtn} onClick={() => handleDelete(g.id)} title="Delete" style={{ padding: '0.15rem 0.4rem' }}>×</button>
                 </div>
               </div>
             );
