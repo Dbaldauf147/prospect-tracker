@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { DataTable } from '../common/DataTable';
+import { dbGet } from '../../utils/db';
 import styles from './OppsView2.module.css';
 
 // Second Opps tab — sandbox copy of OppsView. Intentionally NOT wired up
@@ -24,9 +25,10 @@ const KEY_COLS = [
   'Competition', 'Waiting On', 'Close Date',
 ];
 
-function makeBlankOpp(id) {
+function makeBlankOpp(id, headers) {
   const row = { _id: id };
-  for (const h of DEFAULT_HEADERS) row[h] = '';
+  const cols = (Array.isArray(headers) && headers.length) ? headers : DEFAULT_HEADERS;
+  for (const h of cols) row[h] = '';
   row['Account'] = 'New Opp';
   row['Open Year'] = String(new Date().getFullYear());
   row['Stage'] = 'Lead';
@@ -54,12 +56,44 @@ export function OppsView2({ settings, updateSettings } = {}) {
   const [hiddenServices, setHiddenServices] = useState(() => new Set());
   const [showHidden, setShowHidden] = useState(false);
 
+  // One-time read of the original Opps tab's IndexedDB cache so the
+  // column order here mirrors the live Opps tab exactly. Read-only,
+  // no writes, no subscriptions — Opps 2 stays isolated otherwise.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const cached = await dbGet('opps-cache', 'data');
+        if (cancelled) return;
+        const cachedHeaders = cached?.headers;
+        if (Array.isArray(cachedHeaders) && cachedHeaders.length > 0) {
+          setData(prev => {
+            // Only overwrite the seed headers; never replace user-created
+            // records or wipe a header set the user already extended.
+            const recordsAreSeed = !prev?.records || prev.records.length === 0;
+            if (!recordsAreSeed) return prev;
+            const seen = new Set();
+            const dedup = [];
+            for (const h of cachedHeaders) {
+              const t = String(h || '').trim();
+              if (!t || seen.has(t)) continue;
+              seen.add(t);
+              dedup.push(t);
+            }
+            return { ...prev, headers: dedup };
+          });
+        }
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const addNewOpp = useCallback(() => {
     setData(prev => {
       const records = prev?.records || [];
       const headers = prev?.headers?.length ? prev.headers : DEFAULT_HEADERS;
       const nextId = records.reduce((m, r) => Math.max(m, r._id || 0), 0) + 1;
-      return { ...prev, headers, records: [makeBlankOpp(nextId), ...records] };
+      return { ...prev, headers, records: [makeBlankOpp(nextId, headers), ...records] };
     });
   }, []);
 

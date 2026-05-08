@@ -3075,6 +3075,31 @@ export function SitesView({ settings, updateSettings } = {}) {
       renderSheet(extra.name, `${extra.name}  ·  ${new Date().toLocaleDateString()}`, headers, vals);
     }
 
+    // Site List tab — clean, re-uploadable raw input. Plain styling
+    // (no merged title rows) with headers in row 1 so parseBestSheet's
+    // header detector reads them straight, and named "Site List" so
+    // the upload's preferSheetName regex auto-picks this tab when the
+    // workbook is dropped back onto the Utility Lookup page.
+    if (cleanSitesData.length > 0) {
+      const inputHeaders = Object.keys(cleanSitesData[0]);
+      const inputWs = wb.addWorksheet('Site List', {
+        properties: { tabColor: { argb: SE_GREEN } },
+        views: [{ state: 'frozen', ySplit: 1 }],
+      });
+      inputWs.columns = inputHeaders.map(h => ({
+        header: h,
+        key: h,
+        width: Math.max(String(h).length + 2, 14),
+      }));
+      for (const row of cleanSitesData) inputWs.addRow(row);
+      const hdr = inputWs.getRow(1);
+      hdr.font = { name: 'Nunito Sans', bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
+      hdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+      hdr.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      hdr.height = 22;
+      inputWs.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: inputHeaders.length } };
+    }
+
     const buf = await wb.xlsx.writeBuffer();
     const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const url = URL.createObjectURL(blob);
