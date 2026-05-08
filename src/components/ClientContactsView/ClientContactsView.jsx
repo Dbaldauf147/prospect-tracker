@@ -161,8 +161,21 @@ export function ClientContactsView({ prospects = [], onSelectProspect, settings,
         if (!clientByDomain.has(d)) clientByDomain.set(d, p);
       }
     }
+    // Mirror what KeyContactsView does when it renders the table —
+    // a user-typed _companyOverride wins over the raw HubSpot Company
+    // value, so a contact whose HubSpot record has no Company text
+    // (or a stale value) but whose override reads "American Campus
+    // Communities Inc." still counts as covering the matching client
+    // prospect. Without this, the gap report kept flagging clients
+    // that already had visible contacts on the page just because the
+    // underlying HubSpot field was empty.
+    const localFields = settings?.contactLocalFields || {};
     const covered = new Set();
-    for (const c of hubspotContacts) {
+    for (const baseC of hubspotContacts) {
+      const lf = localFields[String(baseC.id || baseC.vid || '')] || null;
+      const c = lf && typeof lf._companyOverride === 'string' && lf._companyOverride
+        ? { ...baseC, company: lf._companyOverride }
+        : baseC;
       if (!selector(c)) continue;
       const company = String(c.company || '').toLowerCase().trim();
       if (company) {
@@ -181,7 +194,7 @@ export function ClientContactsView({ prospects = [], onSelectProspect, settings,
     return clientProspects
       .filter(p => !covered.has(p))
       .sort((a, b) => String(a.company || '').localeCompare(String(b.company || '')));
-  }, [clientProspects, hubspotContacts, selector]);
+  }, [clientProspects, hubspotContacts, selector, settings?.contactLocalFields]);
 
   const subtitle = (
     <>
