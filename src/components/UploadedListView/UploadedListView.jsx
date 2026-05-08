@@ -487,6 +487,10 @@ export function UploadedListView({
   // to every currently selected row in the given scope.
   const [bulkPicker, setBulkPicker] = useState(null); // { scope, query }
   const [selectedKeys, setSelectedKeys] = useState(() => new Set());
+  // Keys of rows actually showing in the table after every filter is
+  // applied (parent-level toggles + DataTable's per-column inputs).
+  // Falls back to the parent `filtered` set until DataTable reports.
+  const [visibleKeys, setVisibleKeys] = useState(() => null);
   const fileInputRef = useRef(null);
   const { data, source } = store;
 
@@ -1614,14 +1618,18 @@ export function UploadedListView({
           );
         })()}
         {(() => {
-          // Selects every row currently visible after filters/search,
-          // so the bulk-edit toolbar can act on the entire filtered set
-          // (not just rows showing yellow suggestion pills).
-          if (filtered.length === 0) return null;
-          const filteredKeys = filtered.map(r => r.__matchKey__);
-          const filteredSet = new Set(filteredKeys);
+          // Selects every row actually showing in the table — respects
+          // the parent-level search/toggle filters AND the per-column
+          // filter inputs the DataTable renders. Falls back to the
+          // parent `filtered` set on the first render before the table
+          // has reported its visible row set.
+          const keys = visibleKeys != null
+            ? visibleKeys
+            : filtered.map(r => r.__matchKey__);
+          if (keys.length === 0) return null;
+          const filteredSet = new Set(keys);
           // Replace-not-union: clicking sets the selection to exactly
-          // the filtered keys, dropping any earlier selection from a
+          // the visible keys, dropping any earlier selection from a
           // different filter so bulk actions can't accidentally hit
           // rows that aren't currently visible.
           const isActive = selectedKeys.size === filteredSet.size
@@ -1636,7 +1644,7 @@ export function UploadedListView({
               onClick={toggle}
               title={isActive
                 ? 'Deselect — clears the entire selection'
-                : 'Replace the current selection with every row currently visible after filters and search — bulk actions will only touch these rows'}
+                : 'Replace the current selection with every row currently showing in the table — respects search, toggle filters, and per-column filters. Bulk actions will only touch these rows.'}
               style={{
                 padding: '0.35rem 0.7rem',
                 border: `1px solid ${isActive ? '#3B82F6' : 'var(--color-border)'}`,
@@ -1650,9 +1658,9 @@ export function UploadedListView({
                 whiteSpace: 'nowrap',
               }}
             >
-              {isActive ? 'Deselect filtered' : 'Select all filtered'}
+              {isActive ? 'Deselect showing' : 'Select all showing'}
               <span style={{ marginLeft: 6, fontSize: '0.68rem', color: isActive ? '#1E3A8A' : '#94A3B8' }}>
-                {filteredKeys.length}
+                {keys.length}
               </span>
             </button>
           );
@@ -1722,14 +1730,17 @@ export function UploadedListView({
               // Count selected rows that the current filters/search are
               // hiding. Bulk actions still hit those rows, so surface
               // them clearly with a one-click "drop hidden" escape hatch.
-              const visibleKeys = new Set(filtered.map(r => r.__matchKey__));
+              // Uses the showing-rows set the table reports back so
+              // per-column filters are respected too.
+              const showingArr = visibleKeys != null ? visibleKeys : filtered.map(r => r.__matchKey__);
+              const showingSet = new Set(showingArr);
               let hidden = 0;
-              for (const k of selectedKeys) if (!visibleKeys.has(k)) hidden++;
+              for (const k of selectedKeys) if (!showingSet.has(k)) hidden++;
               if (hidden === 0) return null;
               const dropHidden = () => {
                 setSelectedKeys(prev => {
                   const next = new Set();
-                  for (const k of prev) if (visibleKeys.has(k)) next.add(k);
+                  for (const k of prev) if (showingSet.has(k)) next.add(k);
                   return next;
                 });
               };
@@ -1812,6 +1823,7 @@ export function UploadedListView({
           emptyMessage={`No matching ${plural} found`}
           settings={settings}
           updateSettings={updateSettings}
+          onVisibleRowsChange={(rs) => setVisibleKeys(rs.map(r => r.__matchKey__))}
         />
       )}
       {picker && createPortal(

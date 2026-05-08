@@ -305,6 +305,11 @@ export function DataTable({
   // in addition to localStorage so they survive a clear-site-data.
   settings,
   updateSettings,
+  // Fires whenever the column-filter result set changes. Lets a parent
+  // toolbar drive bulk selection by what's actually showing in the
+  // table (not just by the upstream `rows` prop, which doesn't see
+  // the per-column filter inputs the table renders itself).
+  onVisibleRowsChange,
 }) {
   const remotePrefs = settings?.tablePrefs?.[tableId];
   // settings._lastWriteAt is the canonical "Firestore subscription has
@@ -415,6 +420,13 @@ export function DataTable({
       return true;
     });
   }, [rows, colFilters, colByKey]);
+
+  // Notify the parent whenever the column-filter result set changes so
+  // bulk-selection toolbars can act on exactly what the user sees.
+  useEffect(() => {
+    if (typeof onVisibleRowsChange === 'function') onVisibleRowsChange(filteredRows);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filteredRows]);
 
   // Distinct values per column from the current row pool, used to feed
   // the column-filter autocomplete suggestions. Computed lazily and
