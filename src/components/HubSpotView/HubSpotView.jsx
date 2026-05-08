@@ -1628,6 +1628,42 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
       if (!res.ok || json.error) throw new Error(json?.message || json?.error || `HubSpot ${res.status}`);
       // If there are notes, create a HubSpot note (engagement) attached to the contact
       const contactId = resolvedId || json.id;
+      // Mirror handleInlineUpdate's company-override fallback: when the
+      // user changed the Company text via the modal, HubSpot may either
+      // refuse the Company-association pin or pin to an existing Company
+      // record whose name differs from what was typed. Either case
+      // means the next syncFromHubSpot() below would revert the cached
+      // value — write the typed value into contactLocalFields so the
+      // render-time merge keeps surfacing it.
+      let companyOverrideSetTo = undefined;
+      if (typeof contactProps.company === 'string' && contactId) {
+        const ca = json.companyAssignment;
+        if (ca && ca.ok === false) {
+          companyOverrideSetTo = contactProps.company;
+          const detail = ca.errorText ? ` · ${ca.errorText}` : '';
+          setPushStatus({
+            type: 'success',
+            message: `Saved "${contactProps.company}" locally. HubSpot couldn't pin the Company association${ca.status ? ` (HTTP ${ca.status})` : ''}${detail} — Prospect Tracker will keep your value through future syncs.`,
+          });
+        } else if (ca && ca.ok === true && ca.nameDiffers && ca.matchedName) {
+          companyOverrideSetTo = contactProps.company;
+          setPushStatus({
+            type: 'success',
+            message: `Saved "${contactProps.company}" locally. HubSpot linked this contact to an existing Company record named "${ca.matchedName}" — its sync will display that name unless you rename the Company in HubSpot. Prospect Tracker will keep your typed value here.`,
+          });
+        } else if (ca && ca.ok === true) {
+          companyOverrideSetTo = null;
+        }
+      }
+      if (contactId && companyOverrideSetTo !== undefined) {
+        const next = { ...contactLocalFields };
+        const merged = { ...(next[contactId] || {}) };
+        if (companyOverrideSetTo === null) delete merged._companyOverride;
+        else merged._companyOverride = companyOverrideSetTo;
+        if (Object.keys(merged).length === 0) delete next[contactId];
+        else next[contactId] = merged;
+        updateSettings({ contactLocalFields: next });
+      }
       if (notes?.trim() && contactId) {
         try {
           await fetch(`/api/hubspot?action=create-note`, {
@@ -1638,7 +1674,12 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
         } catch {}
       }
       setEditContact(undefined);
-      setPushStatus({ type: 'success', message: resolvedId ? 'Contact updated in HubSpot' : 'Contact created in HubSpot' });
+      // Don't clobber the override-specific status message above with a
+      // generic "Contact updated" — only set it when we didn't surface
+      // the more useful local-fallback note.
+      if (companyOverrideSetTo === undefined || companyOverrideSetTo === null) {
+        setPushStatus({ type: 'success', message: resolvedId ? 'Contact updated in HubSpot' : 'Contact created in HubSpot' });
+      }
       logAction(user, resolvedId ? 'contact_updated' : 'contact_created', { contactId, properties: contactProps });
       // Stamp the new/edited contact with the manual source so it
       // survives the next full-sync (which preserves existing _source).
