@@ -3516,6 +3516,39 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
             <div key={f.key} style={spanFull ? { gridColumn: 'span 2' } : undefined}>
               {aboveTables.length > 0 && (
                 <div style={{ marginBottom: '0.5rem' }}>
+                  {f.key === 'summary' && (
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                      {[
+                        { key: 'timingAnswer', label: 'When do they want to do it by?' },
+                        { key: 'budgetAnswer', label: 'Have they budgeted for this?' },
+                      ].map(q => {
+                        const v = formData.fieldValues[q.key] || '';
+                        const empty = !v.trim();
+                        return (
+                          <div
+                            key={q.key}
+                            style={{
+                              padding: '0.5rem 0.6rem',
+                              border: `1px solid ${empty ? '#FCA5A5' : 'var(--color-border)'}`,
+                              borderRadius: 6,
+                              background: empty ? '#FEE2E2' : '#fff',
+                              transition: 'background 0.2s, border-color 0.2s',
+                            }}
+                          >
+                            <div style={{ ...sx.fieldLabel, color: empty ? '#991B1B' : '#64748B', marginBottom: '0.25rem' }}>
+                              {q.label}
+                            </div>
+                            <CommitOnBlurInput
+                              style={{ ...sx.input, background: '#fff' }}
+                              value={v}
+                              onCommit={val => updateField(q.key, val)}
+                              placeholder="Answer…"
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                   {renderTables(aboveTables)}
                 </div>
               )}
