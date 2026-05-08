@@ -8,12 +8,13 @@
 // widths / sort / visibility prefs persist independently under the
 // "all-contacts" storage prefix.
 
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { matchesCdm } from '../../utils/cdmMatch';
 import { KeyContactsView, useOppsRecords } from '../KeyContactsView/KeyContactsView';
 import { makeActiveSelector } from '../ActiveContactsView/ActiveContactsView';
 import { collectClientDomains } from '../ClientContactsView/ClientContactsView';
+import { getHubspotCache } from '../../utils/hubspotContactsCache';
 
 const CLOSED_STAGES = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
 const INVALID_STAGES = new Set(['#N/A', '#REF!', '#VALUE!', '#ERROR!', 'N/A', 'n/a', '-', '']);
@@ -104,9 +105,22 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
     return out;
   }, [oppsRecords]);
 
+  // "Show hidden contacts" toggle. Same review-mode behaviour the
+  // dedicated Active page exposes — when on, the page becomes a list
+  // of every Hide-tagged contact that would otherwise have qualified
+  // for Key / Active / Client, so the user can audit and un-hide via
+  // the contact popup. Persisted in localStorage so the toggle
+  // survives a refresh.
+  const [showHidden, setShowHidden] = useState(() => {
+    try { return localStorage.getItem('all-contacts:show-hidden') === '1'; } catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('all-contacts:show-hidden', showHidden ? '1' : '0'); } catch {}
+  }, [showHidden]);
+
   const baseActiveSelector = useMemo(
-    () => makeActiveSelector(90, 'visible', activeClientFilter),
-    [activeClientFilter]
+    () => makeActiveSelector(90, showHidden ? 'hidden' : 'visible', activeClientFilter),
+    [activeClientFilter, showHidden]
   );
   const isActive = useCallback((c) => {
     if (!baseActiveSelector(c)) return false;
@@ -139,7 +153,10 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
   }, [oldClientProspects]);
   const isClient = useCallback((c) => {
     const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
-    if (tags.includes('hide')) return false;
+    const hidden = tags.includes('hide');
+    // Show Hidden flips the Hide gate so the page becomes a review of
+    // suppressed contacts that would otherwise have qualified.
+    if (showHidden ? !hidden : hidden) return false;
     if (tags.includes('left')) return false;
     if (isSchneiderContact(c)) return false;
     const company = String(c.company || '').trim();
@@ -153,16 +170,17 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
     if (company && clientProspects.some(p => String(p.company || '').toLowerCase().trim() === companyLower)) return true;
     if (!company && domainOk && clientDomains.has(domain)) return true;
     return false;
-  }, [clientProspects, oldClientProspects, clientDomains, oldClientDomains]);
+  }, [clientProspects, oldClientProspects, clientDomains, oldClientDomains, showHidden]);
 
   // ---- Key gate (no-override default from KeyContactsView) ----------
   const isKey = useCallback((c) => {
     const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
-    if (tags.includes('hide')) return false;
+    const hidden = tags.includes('hide');
+    if (showHidden ? !hidden : hidden) return false;
     if (tags.includes('left')) return false;
     if (isSchneiderContact(c)) return false;
     return tags.includes('dan key target');
-  }, []);
+  }, [showHidden]);
 
   // Combined selector — a contact passes when it would land on at
   // least one of the dedicated rosters.
@@ -171,8 +189,91 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
     [isKey, isActive, isClient]
   );
 
+  // Count of hide-tagged contacts that WOULD qualify if not hidden,
+  // so the toggle pill shows the user how many they'd uncover. We
+  // re-run the selectors with showHidden inverted via a probe that
+  // mirrors the visible-mode gates and flips the Hide check.
+  const [hubspotContacts, setHubspotContacts] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    function refresh() {
+      getHubspotCache().then(c => { if (!cancelled) setHubspotContacts(c?.contacts || []); }).catch(() => {});
+    }
+    refresh();
+    window.addEventListener('hubspot-cache-updated', refresh);
+    return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
+  }, []);
+  const hiddenCount = useMemo(() => {
+    if (!hubspotContacts.length) return 0;
+    // Build a "hidden mode" probe — same combined logic but with the
+    // Hide gate flipped, so we count contacts that would surface if
+    // the user toggled Show Hidden on.
+    const baseHiddenActive = makeActiveSelector(90, 'hidden', activeClientFilter);
+    const isActiveHidden = (c) => {
+      if (!baseHiddenActive(c)) return false;
+      const cName = String(c.company || '').trim();
+      if (!cName) return false;
+      const lc = cName.toLowerCase();
+      if (activeOppCompanies.some(a => a.toLowerCase() === lc)) return true;
+      if (activeOppCompanies.some(a => companiesMatch(a, cName))) return true;
+      return false;
+    };
+    const isKeyHidden = (c) => {
+      const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
+      if (!tags.includes('hide')) return false;
+      if (tags.includes('left')) return false;
+      if (isSchneiderContact(c)) return false;
+      return tags.includes('dan key target');
+    };
+    const isClientHidden = (c) => {
+      const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
+      if (!tags.includes('hide')) return false;
+      if (tags.includes('left')) return false;
+      if (isSchneiderContact(c)) return false;
+      const company = String(c.company || '').trim();
+      const companyLower = company.toLowerCase();
+      const email = (c.email || '').toLowerCase().trim();
+      const at = email.lastIndexOf('@');
+      const domain = at >= 0 ? email.slice(at + 1).trim() : '';
+      const domainOk = domain && !FREE_MAIL.has(domain);
+      if (company && oldClientProspects.some(p => String(p.company || '').toLowerCase().trim() === companyLower)) return false;
+      if (domainOk && oldClientDomains.has(domain)) return false;
+      if (company && clientProspects.some(p => String(p.company || '').toLowerCase().trim() === companyLower)) return true;
+      if (!company && domainOk && clientDomains.has(domain)) return true;
+      return false;
+    };
+    let n = 0;
+    for (const c of hubspotContacts) {
+      if (isKeyHidden(c) || isActiveHidden(c) || isClientHidden(c)) n += 1;
+    }
+    return n;
+  }, [hubspotContacts, activeClientFilter, activeOppCompanies, clientProspects, oldClientProspects, clientDomains, oldClientDomains]);
+
   const subtitle = (
-    <>Every HubSpot contact that lands on at least one of the dedicated <strong>Key</strong>, <strong>Active</strong>, or <strong>Client</strong> rosters — same selectors and filters those tabs run, rolled up into a single list. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>All Contacts</strong> for a flat name-by-name table or <strong>By Company</strong> to roll them up by account with opportunities and decision-maker stats.</>
+    <>
+      Every HubSpot contact that lands on at least one of the dedicated <strong>Key</strong>, <strong>Active</strong>, or <strong>Client</strong> rosters — same selectors and filters those tabs run, rolled up into a single list. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>All Contacts</strong> for a flat name-by-name table or <strong>By Company</strong> to roll them up by account with opportunities and decision-maker stats. Use the per-row <strong>Hide</strong> button to suppress contacts you don't want in the rosters.
+      <div style={{ marginTop: 4 }}>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', color: '#475569', cursor: 'pointer' }}>
+          <input type="checkbox" checked={showHidden} onChange={e => setShowHidden(e.target.checked)} />
+          <span>Show hidden contacts</span>
+          <span
+            title="HubSpot contacts you've hidden via the Hide button that would otherwise qualify for Key / Active / Client. Toggle on to review and un-hide via the contact popup."
+            style={{
+              display: 'inline-block',
+              padding: '0 6px',
+              fontSize: '0.62rem',
+              fontWeight: 700,
+              borderRadius: 999,
+              background: hiddenCount > 0 ? '#FEE2E2' : '#F1F5F9',
+              color: hiddenCount > 0 ? '#991B1B' : '#94A3B8',
+              border: '1px solid ' + (hiddenCount > 0 ? '#FCA5A5' : '#E2E8F0'),
+              minWidth: 18,
+              textAlign: 'center',
+            }}
+          >{hiddenCount}</span>
+        </label>
+      </div>
+    </>
   );
 
   return (
