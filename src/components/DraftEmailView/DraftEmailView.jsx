@@ -1083,20 +1083,55 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
       const toHeader = allTo.map((addr, j) => j === 0 ? `${c.name} <${addr}>` : `<${addr}>`).join(', ');
       const ccHeader = allCc.length > 0 ? `Cc: ${allCc.join(', ')}\r\n` : '';
 
+      // Merge a `key:value` declaration into a tag's existing style="…"
+      // attrs, replacing any prior value for that key. Used below to
+      // zero a <p>'s margin-bottom only in the spots where the user's
+      // text touches a list or the signature.
+      const setStyle = (attrs, key, value) => {
+        const m = /style\s*=\s*"([^"]*)"/i.exec(attrs);
+        if (m) {
+          const re = new RegExp(`${key}\\s*:[^;]*;?`, 'i');
+          const cleaned = m[1].replace(re, '').replace(/;\s*;/g, ';').replace(/^\s*;|\s*;\s*$/g, '').trim();
+          const next = (cleaned ? cleaned + ';' : '') + `${key}:${value}`;
+          return attrs.replace(/style\s*=\s*"[^"]*"/i, `style="${next}"`);
+        }
+        return `${attrs} style="${key}:${value}"`;
+      };
+
       let htmlContent = pBodyHtml
         // Replace non-breaking spaces with regular spaces — pasted text often has &nbsp; for every space which prevents wrapping
         // First, mark double spaces (e.g. after periods) to preserve them
         .replace(/&nbsp;&nbsp;/g, '\x00DOUBLE\x00')
         .replace(/&nbsp;/g, ' ')
         .replace(/\x00DOUBLE\x00/g, '&nbsp;&nbsp;')
-        .replace(/<p><br><\/p>\s*$/, '')
-        .replace(/<\/p>\s*<ul>/gi, '</p><ul style="margin:0;padding-left:1.5em;">')
-        .replace(/<\/p>\s*<ol>/gi, '</p><ol style="margin:0;padding-left:1.5em;">')
+        // Strip any trailing empty paragraphs so the signature lands
+        // right under the last sentence (Quill leaves <p><br></p>
+        // behind when the user hits Enter past the end of the draft).
+        .replace(/(?:\s*<p[^>]*>\s*(?:<br\s*\/?>\s*)?<\/p>\s*)+$/i, '')
+        // Zero margin-bottom on any <p> immediately followed by a
+        // <ul>/<ol> so bullets/numbered lists sit flush against the
+        // line above them instead of getting Outlook's default 1em
+        // paragraph gap.
+        .replace(/<p(\s[^>]*)?>([\s\S]*?)<\/p>(\s*)<(ul|ol)([^>]*)>/gi,
+          (_, attrs, content, ws, listTag, listAttrs) => {
+            const tightened = setStyle(attrs || '', 'margin-bottom', '0');
+            return `<p${tightened}>${content}</p>${ws}<${listTag}${listAttrs}>`;
+          })
         .replace(/<ul>/gi, (m) => m.includes('style') ? m : '<ul style="margin:0;padding-left:1.5em;">')
         .replace(/<ol>/gi, (m) => m.includes('style') ? m : '<ol style="margin:0;padding-left:1.5em;">');
+      // Same trick for the very last <p> — zero its bottom margin so
+      // the email signature attaches directly under the closing line
+      // with no orphan gap.
+      htmlContent = htmlContent.replace(/<p(\s[^>]*)?>([\s\S]*?)<\/p>(\s*)$/i,
+        (_, attrs, content, ws) => {
+          const tightened = setStyle(attrs || '', 'margin-bottom', '0');
+          return `<p${tightened}>${content}</p>${ws}`;
+        });
       // Insert line breaks after closing tags — Outlook's MIME parser can misrender very long single-line HTML
       htmlContent = htmlContent.replace(/<\/p>/gi, '</p>\n').replace(/<\/li>/gi, '</li>\n').replace(/<\/ul>/gi, '</ul>\n').replace(/<\/ol>/gi, '</ol>\n');
-      const sigBlock = signature ? `\n<br>\n<div>\n${signature}\n</div>` : '';
+      // Signature attaches directly — no leading <br>, since the
+      // last <p> above already has margin-bottom:0.
+      const sigBlock = signature ? `\n<div>\n${signature}\n</div>` : '';
       htmlContent = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">\n<head>\n<!--[if gte mso 9]><xml><w:WordDocument><w:DontHyphenate/><w:DoNotHyphenateCaps/></w:WordDocument></xml><![endif]-->\n<style>\nul,ol{margin:0;padding-left:1.5em;}\n</style>\n</head>\n<body style="margin:0;padding:0;">\n<div style="font-family:Aptos,Calibri,Arial,sans-serif;font-size:12pt;">\n${htmlContent}\n</div>${sigBlock}\n</body>\n</html>`;
 
       let eml;
