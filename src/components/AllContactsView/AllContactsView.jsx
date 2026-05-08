@@ -260,9 +260,80 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
     return n;
   }, [hubspotContacts, activeClientFilter, activeOppCompanies, clientProspects, oldClientProspects, clientDomains, oldClientDomains]);
 
+  // Per-category totals across the loaded HubSpot cache. Uses the
+  // visible-mode selectors (showHidden = false) so the numbers reflect
+  // what each dedicated tab would surface today, not the inverted
+  // "review hidden" view. Each category counted independently and the
+  // total is the de-duped union across all three.
+  const categoryCounts = useMemo(() => {
+    const visibleActiveBase = makeActiveSelector(90, 'visible', activeClientFilter);
+    const visIsActive = (c) => {
+      if (!visibleActiveBase(c)) return false;
+      const cName = String(c.company || '').trim();
+      if (!cName) return false;
+      const lc = cName.toLowerCase();
+      if (activeOppCompanies.some(a => a.toLowerCase() === lc)) return true;
+      if (activeOppCompanies.some(a => companiesMatch(a, cName))) return true;
+      return false;
+    };
+    const visIsKey = (c) => {
+      const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
+      if (tags.includes('hide') || tags.includes('left')) return false;
+      if (isSchneiderContact(c)) return false;
+      return tags.includes('dan key target');
+    };
+    const visIsClient = (c) => {
+      const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
+      if (tags.includes('hide') || tags.includes('left')) return false;
+      if (isSchneiderContact(c)) return false;
+      const company = String(c.company || '').trim();
+      const companyLower = company.toLowerCase();
+      const email = (c.email || '').toLowerCase().trim();
+      const at = email.lastIndexOf('@');
+      const domain = at >= 0 ? email.slice(at + 1).trim() : '';
+      const domainOk = domain && !FREE_MAIL.has(domain);
+      if (company && oldClientProspects.some(p => String(p.company || '').toLowerCase().trim() === companyLower)) return false;
+      if (domainOk && oldClientDomains.has(domain)) return false;
+      if (company && clientProspects.some(p => String(p.company || '').toLowerCase().trim() === companyLower)) return true;
+      if (!company && domainOk && clientDomains.has(domain)) return true;
+      return false;
+    };
+    let key = 0, active = 0, client = 0, total = 0;
+    const localFields = settings?.contactLocalFields || {};
+    for (const baseC of hubspotContacts) {
+      const lf = localFields[String(baseC.id || baseC.vid || '')] || null;
+      const c = lf && typeof lf._companyOverride === 'string' && lf._companyOverride
+        ? { ...baseC, company: lf._companyOverride }
+        : baseC;
+      const k = visIsKey(c);
+      const a = visIsActive(c);
+      const cl = visIsClient(c);
+      if (k) key++;
+      if (a) active++;
+      if (cl) client++;
+      if (k || a || cl) total++;
+    }
+    return { key, active, client, total };
+  }, [hubspotContacts, activeClientFilter, activeOppCompanies, clientProspects, oldClientProspects, clientDomains, oldClientDomains, settings?.contactLocalFields]);
+
   const subtitle = (
     <>
       Every HubSpot contact that lands on at least one of the dedicated <strong>Key</strong>, <strong>Active</strong>, or <strong>Client</strong> rosters — same selectors and filters those tabs run, rolled up into a single list. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>All Contacts</strong> for a flat name-by-name table or <strong>By Company</strong> to roll them up by account with opportunities and decision-maker stats. Use the per-row <strong>Hide</strong> button to suppress contacts you don't want in the rosters.
+      <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '0.7rem', color: '#475569', fontWeight: 700 }}>Totals:</span>
+        <span title="Total unique contacts on this page (de-duped across categories)" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 8px', borderRadius: 999, background: '#F1F5F9', border: '1px solid #CBD5E1', color: '#334155', fontSize: '0.68rem', fontWeight: 700 }}>
+          All <span style={{ fontWeight: 800 }}>{categoryCounts.total}</span>
+        </span>
+        <span title="Contacts tagged Dan Key Target (excluding hide / left / Schneider)" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 8px', borderRadius: 999, background: '#FEF3C7', border: '1px solid #FCD34D', color: '#92400E', fontSize: '0.68rem', fontWeight: 700 }}>
+          Key <span style={{ fontWeight: 800 }}>{categoryCounts.key}</span>
+        </span>
+        <span title="Contacts in the active window with at least one open opp on the company (mirrors the Active Contacts page)" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 8px', borderRadius: 999, background: '#DCFCE7', border: '1px solid #86EFAC', color: '#166534', fontSize: '0.68rem', fontWeight: 700 }}>
+          Active <span style={{ fontWeight: 800 }}>{categoryCounts.active}</span>
+        </span>
+        <span title="Contacts whose company is a current Client on your CDM (mirrors the Client Contacts page)" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 8px', borderRadius: 999, background: '#DBEAFE', border: '1px solid #93C5FD', color: '#1E3A8A', fontSize: '0.68rem', fontWeight: 700 }}>
+          Client <span style={{ fontWeight: 800 }}>{categoryCounts.client}</span>
+        </span>
+      </div>
       <div style={{ marginTop: 4 }}>
         <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', color: '#475569', cursor: 'pointer' }}>
           <input type="checkbox" checked={showHidden} onChange={e => setShowHidden(e.target.checked)} />
