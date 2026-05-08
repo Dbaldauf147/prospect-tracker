@@ -136,17 +136,13 @@ export function KeyProspectsView({ prospects = [], onSelectProspect, settings, u
     return false;
   }, [tierAccountStatus, myTierAccounts]);
 
-  // Tier 1 / Tier 2 accounts (CDM = me) with NO opps AND no contact on
-  // this tab — i.e. no decision-maker contact whose Company resolves
-  // (exact or fuzzy) to this prospect. Same selector logic as above
-  // applied per prospect rather than per contact, so the gap list
-  // tracks exactly what's missing from the visible roster.
+  // Set of lowercase company strings (taken from passing-the-selector
+  // HubSpot contacts) representing Tier 1 / Tier 2 accounts that DO
+  // have a decision-maker contact tagged in HubSpot. Used by both the
+  // missing-DM banner and the untouched-account banner below.
   const localFields = settings?.contactLocalFields || {};
-  const untouchedAccounts = useMemo(() => {
-    if (myTierAccounts.length === 0) return [];
-    // Only consider the contacts that pass the page selector — that's
-    // the same definition of "contact on here" the user sees.
-    const passingContacts = [];
+  const passingDmContacts = useMemo(() => {
+    const out = [];
     for (const baseC of hubspotContacts) {
       const lf = localFields[String(baseC.id || baseC.vid || '')] || null;
       const c = lf && typeof lf._companyOverride === 'string' && lf._companyOverride
@@ -158,35 +154,108 @@ export function KeyProspectsView({ prospects = [], onSelectProspect, settings, u
       if (!tags.includes('decision maker')) continue;
       const company = String(c.company || '').trim();
       if (!company) continue;
-      passingContacts.push({ company, lc: company.toLowerCase() });
+      out.push({ company, lc: company.toLowerCase() });
     }
+    return out;
+  }, [hubspotContacts, localFields]);
+
+  function accountHasDm(p) {
+    const pLc = String(p.company || '').toLowerCase().trim();
+    if (!pLc) return false;
+    for (const c of passingDmContacts) {
+      if (c.lc === pLc) return true;
+      if (companiesMatch(p.company, c.company)) return true;
+    }
+    return false;
+  }
+
+  // Tier 1 / Tier 2 accounts (CDM = me) with no decision-maker contact
+  // tagged in HubSpot — regardless of whether the account has opps.
+  // Broader than untouchedAccounts below; surfaces accounts where the
+  // user is missing a Decision Maker tag even on actively-worked
+  // companies, so they can go fix the tagging.
+  const accountsMissingDm = useMemo(() => {
+    if (myTierAccounts.length === 0) return [];
+    const out = [];
+    for (const p of myTierAccounts) {
+      if (accountHasDm(p)) continue;
+      const pLc = String(p.company || '').toLowerCase().trim();
+      const status = tierAccountStatus.get(pLc);
+      out.push({ ...p, _hasOpp: !!status?.hasOpp });
+    }
+    out.sort((a, b) => {
+      const tierA = (a.tier || '').toLowerCase();
+      const tierB = (b.tier || '').toLowerCase();
+      if (tierA !== tierB) return tierA.localeCompare(tierB);
+      return String(a.company || '').localeCompare(String(b.company || ''));
+    });
+    return out;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myTierAccounts, tierAccountStatus, passingDmContacts]);
+
+  // Tier 1 / Tier 2 accounts (CDM = me) with NO opps AND no contact on
+  // this tab — i.e. no decision-maker contact whose Company resolves
+  // (exact or fuzzy) to this prospect. Strict subset of the missing-DM
+  // list — the truly-untouched accounts.
+  const untouchedAccounts = useMemo(() => {
+    if (myTierAccounts.length === 0) return [];
     const out = [];
     for (const p of myTierAccounts) {
       const pLc = String(p.company || '').toLowerCase().trim();
       if (!pLc) continue;
       const status = tierAccountStatus.get(pLc);
-      if (status?.hasOpp) continue; // has opps → not untouched
-      // Does any passing contact resolve to this prospect?
-      let hasContact = false;
-      for (const c of passingContacts) {
-        if (c.lc === pLc) { hasContact = true; break; }
-        if (companiesMatch(p.company, c.company)) { hasContact = true; break; }
-      }
-      if (!hasContact) out.push(p);
+      if (status?.hasOpp) continue;
+      if (accountHasDm(p)) continue;
+      out.push(p);
     }
     out.sort((a, b) => {
       const tierA = (a.tier || '').toLowerCase();
       const tierB = (b.tier || '').toLowerCase();
-      if (tierA !== tierB) return tierA.localeCompare(tierB); // Tier 1 first
+      if (tierA !== tierB) return tierA.localeCompare(tierB);
       return String(a.company || '').localeCompare(String(b.company || ''));
     });
     return out;
-  }, [myTierAccounts, tierAccountStatus, hubspotContacts, localFields]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myTierAccounts, tierAccountStatus, passingDmContacts]);
 
   const [gapOpen, setGapOpen] = useState(false);
+  const [missingDmOpen, setMissingDmOpen] = useState(false);
 
   const subtitle = (
     <>
+      {accountsMissingDm.length > 0 && (
+        <div style={{ margin: '6px 0 8px', padding: '0.5rem 0.7rem', background: '#FEE2E2', border: '1px solid #FCA5A5', borderRadius: 6 }}>
+          <button
+            type="button"
+            onClick={() => setMissingDmOpen(o => !o)}
+            style={{ background: 'transparent', border: 'none', padding: 0, fontFamily: 'inherit', fontSize: '0.72rem', color: '#991B1B', fontWeight: 700, cursor: 'pointer' }}
+            title="Tier 1 / Tier 2 accounts on your Table View where no contact at the company is tagged Decision Maker. Tag a decision maker in HubSpot to clear the row."
+          >
+            {missingDmOpen ? '▾' : '▸'} {accountsMissingDm.length} Tier 1 / 2 account{accountsMissingDm.length === 1 ? '' : 's'} with no Decision Maker tagged
+          </button>
+          {missingDmOpen && (
+            <div style={{ marginTop: '0.4rem', maxHeight: 280, overflowY: 'auto', background: '#fff', border: '1px solid #FCA5A5', borderRadius: 4 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px 90px', padding: '0.25rem 0.6rem', background: '#FEF2F2', borderBottom: '1px solid #FCA5A5', fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#991B1B', position: 'sticky', top: 0 }}>
+                <div>Account</div>
+                <div style={{ textAlign: 'right' }}>Tier</div>
+                <div style={{ textAlign: 'right' }}>Has Opps?</div>
+              </div>
+              {accountsMissingDm.map(p => (
+                <div
+                  key={p.id || p.company}
+                  onClick={() => onSelectProspect && onSelectProspect(p)}
+                  style={{ display: 'grid', gridTemplateColumns: '1fr 80px 90px', padding: '0.3rem 0.6rem', borderTop: '1px solid #FEE2E2', fontSize: '0.74rem', cursor: onSelectProspect ? 'pointer' : 'default' }}
+                  title={onSelectProspect ? `Open ${p.company} on the Table View` : p.company}
+                >
+                  <div style={{ color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.company || '(unnamed prospect)'}</div>
+                  <div style={{ textAlign: 'right', fontWeight: 600, color: '#7C2D12' }}>{p.tier || '—'}</div>
+                  <div style={{ textAlign: 'right', fontWeight: 700, fontSize: '0.66rem', color: p._hasOpp ? '#166534' : '#94A3B8' }}>{p._hasOpp ? 'Yes' : 'No'}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       {untouchedAccounts.length > 0 && (
         <div style={{ margin: '6px 0 8px', padding: '0.5rem 0.7rem', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 6 }}>
           <button
