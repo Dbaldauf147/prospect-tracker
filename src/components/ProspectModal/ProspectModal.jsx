@@ -14,7 +14,7 @@ import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { saveSourceFile as savePortfolioSourceFileToIDB, loadSourceFile as loadPortfolioSourceFileFromIDB, clearSourceFile as clearPortfolioSourceFileFromIDB } from '../../utils/portfolioSourceFileStore';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
-import { updateHubspotCache, notifyCacheUpdated } from '../../utils/hubspotContactsCache';
+import { getHubspotCache, updateHubspotCache, notifyCacheUpdated } from '../../utils/hubspotContactsCache';
 import { dbGet } from '../../utils/db';
 import styles from './ProspectModal.module.css';
 
@@ -628,7 +628,7 @@ async function lookupStateForCity(city, countryHint) {
   }
 }
 
-export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, companyContacts = [], emailDomains = [], companyNames = [] }) {
+export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, companyContacts = [], emailDomains = [], companyNames = [] }) {
   const rawTags = contact.dans_tags || contact.dan_s_tags || contact.dans_tag || '';
   // Parse existing tags; track which known tags are checked separately from free-text extras
   const parsedTags = rawTags.split(';').map(t => t.trim()).filter(Boolean);
@@ -748,6 +748,88 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   const [error, setError] = useState(null);
   const [tagsOpen, setTagsOpen] = useState(false);
   const tagsRef = useRef(null);
+
+  // CC / To-Also state. The maps are keyed by the contact's PRIMARY
+  // email — when this contact's email gets sent a draft, anyone in
+  // ccEmails is auto-CC'd and anyone in toAlsoEmails is added to the
+  // To line alongside the primary. Mirrors the HubSpot Contacts page's
+  // ContactModal so editors on either page produce identical results.
+  const [ccEmails, setCcEmails] = useState(() => {
+    const e = (contact?.email || '').trim();
+    if (!e) return [];
+    return Array.isArray(ccMap?.[e]) ? ccMap[e] : [];
+  });
+  const [ccInput, setCcInput] = useState('');
+  const [showCcSuggestions, setShowCcSuggestions] = useState(false);
+  const ccBoxRef = useRef(null);
+  const [toAlsoEmails, setToAlsoEmails] = useState(() => {
+    const e = (contact?.email || '').trim();
+    if (!e) return [];
+    return Array.isArray(toAlsoMap?.[e]) ? toAlsoMap[e] : [];
+  });
+  const [toAlsoInput, setToAlsoInput] = useState('');
+  const [showToAlsoSuggestions, setShowToAlsoSuggestions] = useState(false);
+  const toAlsoBoxRef = useRef(null);
+  // Pool of every HubSpot contact with an email — used as the
+  // suggestion source for the CC / To Also pickers. Loaded once on
+  // mount, refreshed on hubspot-cache-updated so a contact added
+  // while the popup is open shows up in the dropdown.
+  const [allEmails, setAllEmails] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    function refresh() {
+      getHubspotCache().then(cache => {
+        if (cancelled) return;
+        const list = (cache?.contacts || []).filter(c => c.email).map(c => ({
+          email: c.email,
+          name: [c.firstname, c.lastname].filter(Boolean).join(' ') || c.email,
+        }));
+        setAllEmails(list);
+      }).catch(() => {});
+    }
+    refresh();
+    window.addEventListener('hubspot-cache-updated', refresh);
+    return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
+  }, []);
+  useEffect(() => {
+    if (!showCcSuggestions) return;
+    const h = e => { if (ccBoxRef.current && !ccBoxRef.current.contains(e.target)) setShowCcSuggestions(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [showCcSuggestions]);
+  useEffect(() => {
+    if (!showToAlsoSuggestions) return;
+    const h = e => { if (toAlsoBoxRef.current && !toAlsoBoxRef.current.contains(e.target)) setShowToAlsoSuggestions(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [showToAlsoSuggestions]);
+
+  function addCc(email) {
+    const t = String(email || '').trim();
+    if (!t || ccEmails.includes(t)) return;
+    setCcEmails([...ccEmails, t]);
+    setCcInput('');
+    setShowCcSuggestions(false);
+  }
+  function removeCc(email) {
+    setCcEmails(ccEmails.filter(e => e !== email));
+  }
+  function addToAlso(email) {
+    const t = String(email || '').trim();
+    if (!t || toAlsoEmails.includes(t)) return;
+    setToAlsoEmails([...toAlsoEmails, t]);
+    setToAlsoInput('');
+    setShowToAlsoSuggestions(false);
+  }
+  function removeToAlso(email) {
+    setToAlsoEmails(toAlsoEmails.filter(e => e !== email));
+  }
+  const ccSuggestions = ccInput.trim()
+    ? allEmails.filter(c => !ccEmails.includes(c.email) && c.email !== (contact?.email || '') && (c.email.toLowerCase().includes(ccInput.toLowerCase()) || c.name.toLowerCase().includes(ccInput.toLowerCase()))).slice(0, 6)
+    : [];
+  const toAlsoSuggestions = toAlsoInput.trim()
+    ? allEmails.filter(c => !toAlsoEmails.includes(c.email) && c.email !== (contact?.email || '') && (c.email.toLowerCase().includes(toAlsoInput.toLowerCase()) || c.name.toLowerCase().includes(toAlsoInput.toLowerCase()))).slice(0, 6)
+    : [];
 
   useEffect(() => {
     if (!tagsOpen) return;
@@ -897,6 +979,22 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
       }
       if (savedCid && onSaveTeamName) {
         onSaveTeamName(savedCid, teamNameValue);
+      }
+      // Persist CC / To Also maps keyed by the contact's primary
+      // email — Draft Emails reads these on every campaign preview to
+      // auto-add the linked recipients.
+      const primaryEmail = (savedContact.email || '').trim();
+      if (primaryEmail && onSaveCcMap) {
+        const next = { ...(ccMap || {}) };
+        if (ccEmails.length > 0) next[primaryEmail] = ccEmails;
+        else delete next[primaryEmail];
+        onSaveCcMap(next);
+      }
+      if (primaryEmail && onSaveToAlsoMap) {
+        const next = { ...(toAlsoMap || {}) };
+        if (toAlsoEmails.length > 0) next[primaryEmail] = toAlsoEmails;
+        else delete next[primaryEmail];
+        onSaveToAlsoMap(next);
       }
       onSave(savedContact);
       setSaved(true);
@@ -1226,6 +1324,82 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
           </div>
           <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>Old Emails <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(comma-separated, inactive)</span></label><input style={inputStyle} value={f.oldEmails} onChange={e => set('oldEmails', e.target.value)} placeholder="old.email@company.com" /></div>
           <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>Notes</label><textarea style={{ ...inputStyle, resize: 'vertical', minHeight: '50px', lineHeight: 1.4 }} value={f.notes} onChange={e => set('notes', e.target.value)} rows={2} placeholder="Add notes about this contact..." /></div>
+          <div style={{ gridColumn: 'span 2' }}>
+            <label style={labelStyle}>CC Emails <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(auto-CC when drafting an email to this contact)</span></label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem', padding: '0.35rem', border: '1px solid #CBD5E1', borderRadius: 6, minHeight: 36, alignItems: 'center', background: '#fff' }}>
+              {ccEmails.map(email => (
+                <span key={email} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem', padding: '0.15rem 0.45rem', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 999, fontSize: '0.7rem', color: '#1E40AF' }}>
+                  {email}
+                  <button type="button" onClick={() => removeCc(email)} style={{ background: 'none', border: 'none', color: '#93C5FD', fontSize: '0.85rem', cursor: 'pointer', padding: '0 2px', lineHeight: 1, fontFamily: 'inherit' }}>&times;</button>
+                </span>
+              ))}
+              <div style={{ position: 'relative', flex: 1, minWidth: 120 }} ref={ccBoxRef}>
+                <input
+                  value={ccInput}
+                  onChange={e => { setCcInput(e.target.value); setShowCcSuggestions(true); }}
+                  onFocus={() => setShowCcSuggestions(true)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && ccInput.includes('@')) { e.preventDefault(); addCc(ccInput); }
+                    if (e.key === 'Backspace' && !ccInput && ccEmails.length > 0) removeCc(ccEmails[ccEmails.length - 1]);
+                  }}
+                  placeholder={ccEmails.length === 0 ? 'Search contacts or type email…' : 'Add more…'}
+                  style={{ border: 'none', outline: 'none', fontSize: '0.78rem', fontFamily: 'inherit', color: 'var(--color-text)', padding: '0.15rem 0', width: '100%', background: 'none' }}
+                />
+                {showCcSuggestions && ccSuggestions.length > 0 && (
+                  <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#fff', border: '1px solid #CBD5E1', borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.1)', zIndex: 50, maxHeight: 160, overflowY: 'auto', marginTop: 2 }}>
+                    {ccSuggestions.map(c => (
+                      <button key={c.email} type="button" onClick={() => addCc(c.email)}
+                        style={{ display: 'flex', flexDirection: 'column', width: '100%', padding: '0.35rem 0.6rem', border: 'none', background: 'none', textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit', borderBottom: '1px solid #F5F5F5' }}
+                        onMouseEnter={e => e.currentTarget.style.background = '#F8FAFC'}
+                        onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                      >
+                        <span style={{ fontSize: '0.78rem', fontWeight: 500, color: 'var(--color-text)' }}>{c.name}</span>
+                        <span style={{ fontSize: '0.65rem', color: '#9CA3AF' }}>{c.email}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+          <div style={{ gridColumn: 'span 2' }}>
+            <label style={labelStyle}>To Also <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(auto-add to the To line alongside this contact)</span></label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem', padding: '0.35rem', border: '1px solid #CBD5E1', borderRadius: 6, minHeight: 36, alignItems: 'center', background: '#fff' }}>
+              {toAlsoEmails.map(email => (
+                <span key={email} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem', padding: '0.15rem 0.45rem', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 999, fontSize: '0.7rem', color: '#92400E' }}>
+                  {email}
+                  <button type="button" onClick={() => removeToAlso(email)} style={{ background: 'none', border: 'none', color: '#FCD34D', fontSize: '0.85rem', cursor: 'pointer', padding: '0 2px', lineHeight: 1, fontFamily: 'inherit' }}>&times;</button>
+                </span>
+              ))}
+              <div style={{ position: 'relative', flex: 1, minWidth: 120 }} ref={toAlsoBoxRef}>
+                <input
+                  value={toAlsoInput}
+                  onChange={e => { setToAlsoInput(e.target.value); setShowToAlsoSuggestions(true); }}
+                  onFocus={() => setShowToAlsoSuggestions(true)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && toAlsoInput.includes('@')) { e.preventDefault(); addToAlso(toAlsoInput); }
+                    if (e.key === 'Backspace' && !toAlsoInput && toAlsoEmails.length > 0) removeToAlso(toAlsoEmails[toAlsoEmails.length - 1]);
+                  }}
+                  placeholder={toAlsoEmails.length === 0 ? 'Search contacts or type email…' : 'Add more…'}
+                  style={{ border: 'none', outline: 'none', fontSize: '0.78rem', fontFamily: 'inherit', color: 'var(--color-text)', padding: '0.15rem 0', width: '100%', background: 'none' }}
+                />
+                {showToAlsoSuggestions && toAlsoSuggestions.length > 0 && (
+                  <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#fff', border: '1px solid #CBD5E1', borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.1)', zIndex: 50, maxHeight: 160, overflowY: 'auto', marginTop: 2 }}>
+                    {toAlsoSuggestions.map(c => (
+                      <button key={c.email} type="button" onClick={() => addToAlso(c.email)}
+                        style={{ display: 'flex', flexDirection: 'column', width: '100%', padding: '0.35rem 0.6rem', border: 'none', background: 'none', textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit', borderBottom: '1px solid #F5F5F5' }}
+                        onMouseEnter={e => e.currentTarget.style.background = '#F8FAFC'}
+                        onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                      >
+                        <span style={{ fontSize: '0.78rem', fontWeight: 500, color: 'var(--color-text)' }}>{c.name}</span>
+                        <span style={{ fontSize: '0.65rem', color: '#9CA3AF' }}>{c.email}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
           <div style={{ gridColumn: 'span 2' }}>
             <label style={labelStyle}>Reports To <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(positions this contact below their manager in the By Category view)</span></label>
             {(() => {
@@ -6670,6 +6844,10 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           onSaveTeamName={handleSaveContactTeamName}
           contactReportsTo={settings.contactReportsTo || {}}
           onSaveReportsTo={handleSaveContactReportsTo}
+          ccMap={settings.ccMap || {}}
+          onSaveCcMap={m => updateSettings({ ccMap: m })}
+          toAlsoMap={settings.toAlsoMap || {}}
+          onSaveToAlsoMap={m => updateSettings({ toAlsoMap: m })}
           companyContacts={companyContacts}
           emailDomains={(fields.emailDomain || '').split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)}
           companyNames={(prospects || []).map(p => p.company).filter(Boolean)}

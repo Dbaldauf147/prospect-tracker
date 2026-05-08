@@ -2928,6 +2928,10 @@ function KeyContactsViewInner({
             onSaveTeamName={handleSaveContactTeamName}
             contactReportsTo={settings?.contactReportsTo || {}}
             onSaveReportsTo={handleSaveContactReportsTo}
+            ccMap={settings?.ccMap || {}}
+            onSaveCcMap={m => updateSettings({ ccMap: m })}
+            toAlsoMap={settings?.toAlsoMap || {}}
+            onSaveToAlsoMap={m => updateSettings({ toAlsoMap: m })}
             companyContacts={sameCompanyContacts}
             emailDomains={emailDomains}
             companyNames={prospects.map(p => p.company).filter(Boolean)}
