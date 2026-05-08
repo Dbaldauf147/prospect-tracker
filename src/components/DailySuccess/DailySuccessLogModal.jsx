@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import styles from './DailySuccess.module.css';
 import { getAllEntries, upsertEntry, deleteEntry, completionStats, newBullet } from './dailySuccessStore';
+import { GoalsPanel } from './GoalsPanel';
 
-export function DailySuccessLogModal({ open, onClose }) {
+export function DailySuccessLogModal({ open, onClose, user }) {
   const [entries, setEntries] = useState([]);
   const [expanded, setExpanded] = useState(null); // date string
+  const [tab, setTab] = useState('log'); // 'log' | 'goals'
 
   useEffect(() => {
     if (!open) return;
@@ -38,45 +40,87 @@ export function DailySuccessLogModal({ open, onClose }) {
       <div className={styles.logModal}>
         <div className={styles.head}>
           <div className={styles.title}>Daily Success Log</div>
-          <div className={styles.sub}>Click a date to view or edit. Numbers show what was checked off at 1 PM and 5 PM.</div>
+          <div className={styles.sub}>
+            {tab === 'log'
+              ? 'Click a date to view or edit. Numbers show what was checked off at 1 PM and 5 PM.'
+              : 'Long-running goals — Claude prioritizes them against your live pipeline and drafts daily tasks.'}
+          </div>
+          <div style={{ display: 'flex', gap: 4, marginTop: 6 }}>
+            <button
+              type="button"
+              onClick={() => setTab('log')}
+              style={{
+                padding: '0.3rem 0.7rem',
+                fontSize: '0.72rem',
+                fontWeight: 600,
+                border: '1px solid ' + (tab === 'log' ? '#1E293B' : '#CBD5E1'),
+                borderRadius: 4,
+                background: tab === 'log' ? '#1E293B' : '#fff',
+                color: tab === 'log' ? '#fff' : '#475569',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >Daily Log</button>
+            <button
+              type="button"
+              onClick={() => setTab('goals')}
+              style={{
+                padding: '0.3rem 0.7rem',
+                fontSize: '0.72rem',
+                fontWeight: 600,
+                border: '1px solid ' + (tab === 'goals' ? '#1E293B' : '#CBD5E1'),
+                borderRadius: 4,
+                background: tab === 'goals' ? '#1E293B' : '#fff',
+                color: tab === 'goals' ? '#fff' : '#475569',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >Goals</button>
+          </div>
         </div>
         <div className={styles.body}>
-          {entries.length === 0 && (
-            <p className={styles.smallNote}>No entries yet — write your first plan in the morning prompt.</p>
-          )}
-          {entries.length > 0 && (
-            <table className={styles.logTable}>
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>Bullets</th>
-                  <th>1 PM</th>
-                  <th>5 PM</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {entries.map(e => {
-                  const s = completionStats(e);
-                  const pctMid = s.total ? Math.round((s.doneMid / s.total) * 100) : 0;
-                  const pctEnd = s.total ? Math.round((s.doneEnd / s.total) * 100) : 0;
-                  const isOpen = expanded === e.date;
-                  return (
-                    <ExpandableRow
-                      key={e.date}
-                      entry={e}
-                      stats={s}
-                      pctMid={pctMid}
-                      pctEnd={pctEnd}
-                      open={isOpen}
-                      onToggle={() => setExpanded(isOpen ? null : e.date)}
-                      onPatch={(patchObj) => patch(e.date, patchObj)}
-                      onDelete={() => remove(e.date)}
-                    />
-                  );
-                })}
-              </tbody>
-            </table>
+          {tab === 'goals' ? (
+            <GoalsPanel user={user} />
+          ) : (
+            <>
+              {entries.length === 0 && (
+                <p className={styles.smallNote}>No entries yet — write your first plan in the morning prompt.</p>
+              )}
+              {entries.length > 0 && (
+                <table className={styles.logTable}>
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Bullets</th>
+                      <th>1 PM</th>
+                      <th>5 PM</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {entries.map(e => {
+                      const s = completionStats(e);
+                      const pctMid = s.total ? Math.round((s.doneMid / s.total) * 100) : 0;
+                      const pctEnd = s.total ? Math.round((s.doneEnd / s.total) * 100) : 0;
+                      const isOpen = expanded === e.date;
+                      return (
+                        <ExpandableRow
+                          key={e.date}
+                          entry={e}
+                          stats={s}
+                          pctMid={pctMid}
+                          pctEnd={pctEnd}
+                          open={isOpen}
+                          onToggle={() => setExpanded(isOpen ? null : e.date)}
+                          onPatch={(patchObj) => patch(e.date, patchObj)}
+                          onDelete={() => remove(e.date)}
+                        />
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </>
           )}
         </div>
         <div className={styles.foot}>

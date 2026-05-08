@@ -411,6 +411,7 @@ function App() {
       <DailySuccessLogModal
         open={showDailyLog}
         onClose={() => setShowDailyLog(false)}
+        user={user}
       />
       <DailySuccessManager user={user} />
       {/* One-time migration button */}
