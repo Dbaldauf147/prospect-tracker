@@ -288,7 +288,20 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
     // Airport"). The previous matchers only inspect c.company, so
     // empty-company rows used to slip through.
     const contactDomains = [];
-    for (const c of hubspotContacts) {
+    // Mirror what KeyContactsView does when it renders the table — a
+    // user-typed _companyOverride wins over the raw HubSpot Company
+    // value, so a contact whose HubSpot record has no Company text
+    // (or a stale value) but whose override reads "Toronto Airport"
+    // still counts as covering the matching opp Account. Without this,
+    // the gap report kept flagging accounts that already had visible
+    // contacts on the page just because the underlying HubSpot field
+    // was empty.
+    const localFields = settings?.contactLocalFields || {};
+    for (const baseC of hubspotContacts) {
+      const lf = localFields[String(baseC.id || baseC.vid || '')] || null;
+      const c = lf && typeof lf._companyOverride === 'string' && lf._companyOverride
+        ? { ...baseC, company: lf._companyOverride }
+        : baseC;
       if (!visibleSelector(c) && !isKeyTargetContact(c)) continue;
       const raw = String(c.company || '').trim();
       const co = normalize(raw);
@@ -381,7 +394,7 @@ export function ActiveContactsView({ prospects = [], onSelectProspect, settings,
     }
     out.sort((a, b) => b.opps.length - a.opps.length || a.account.localeCompare(b.account));
     return out;
-  }, [oppsRecords, hubspotContacts, clientFilter, clientAccountNames, effectiveWindow]);
+  }, [oppsRecords, hubspotContacts, clientFilter, clientAccountNames, effectiveWindow, settings?.contactLocalFields]);
   const selector = useCallback(
     makeActiveSelector(effectiveWindow, showHidden ? 'hidden' : 'visible', clientFilter),
     [effectiveWindow, showHidden, clientFilter]
