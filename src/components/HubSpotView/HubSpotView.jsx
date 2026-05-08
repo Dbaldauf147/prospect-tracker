@@ -1260,37 +1260,34 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
         });
         const json = await res.json();
         if (json.error) throw new Error(json.error);
-        // When the user changed the `company` field, the API also tries
-        // to pin the contact's primary Company association so the next
-        // sync doesn't revert the text. If that step fails, fall back
-        // to a local Prospect Tracker override so the typed value
-        // sticks regardless of HubSpot's sync behavior. When it
-        // succeeds, clear any prior override that's no longer needed.
+        // When the user changed the `company` field, ALWAYS pin a
+        // local override to the typed value. The previous behaviour
+        // — clear the override on `ca.ok === true && !nameDiffers`
+        // and trust the next sync — kept getting bitten because
+        // HubSpot's contact.company text periodically resyncs from
+        // the primary Company association and can push a different
+        // canonical spelling back over the user's typed value, with
+        // no override left to defend it. Pinning unconditionally
+        // means the typed text is the source of truth on this client
+        // until the user explicitly clicks the "drop override"
+        // button next to the cell. The status message still varies
+        // by what HubSpot did so the user knows whether the API
+        // associated to an existing Company, created a new one, or
+        // failed outright.
         const ca = json.companyAssignment;
-        if (typeof hubspotProps.company === 'string') {
+        if (typeof hubspotProps.company === 'string' && hubspotProps.company.trim()) {
+          companyOverrideSetTo = hubspotProps.company;
           if (ca && ca.ok === false) {
-            companyOverrideSetTo = hubspotProps.company;
             const detail = ca.errorText ? ` · ${ca.errorText}` : '';
             setPushStatus({
               type: 'success',
               message: `Saved "${hubspotProps.company}" locally. HubSpot couldn't pin the Company association${ca.status ? ` (HTTP ${ca.status})` : ''}${detail} — Prospect Tracker will keep your value through future syncs.`,
             });
-          } else if (ca && ca.ok === true) {
-            // HubSpot accepted the association, but if it pinned to a
-            // Company record whose `name` differs from what the user
-            // typed, the next sync will overwrite the contact.company
-            // text with the matched Company's name. Keep our typed
-            // value via the local override and surface a warning so
-            // the user knows what's happening on the HubSpot side.
-            if (ca.nameDiffers && ca.matchedName) {
-              companyOverrideSetTo = hubspotProps.company;
-              setPushStatus({
-                type: 'success',
-                message: `Saved "${hubspotProps.company}" locally. HubSpot linked this contact to an existing Company record named "${ca.matchedName}" — its sync will display that name unless you rename the Company in HubSpot. Prospect Tracker will keep your typed value here.`,
-              });
-            } else {
-              companyOverrideSetTo = null;
-            }
+          } else if (ca && ca.ok === true && ca.nameDiffers && ca.matchedName) {
+            setPushStatus({
+              type: 'success',
+              message: `Saved "${hubspotProps.company}" locally. HubSpot linked this contact to an existing Company record named "${ca.matchedName}" — its sync will display that name unless you rename the Company in HubSpot. Prospect Tracker will keep your typed value here.`,
+            });
           }
         }
       }
@@ -1335,7 +1332,13 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
       console.error('Inline update failed:', err);
       setPushStatus({ type: 'error', message: `Update failed: ${err.message}` });
     }
-  }, [user]);
+    // Include every closure value the callback writes back through —
+    // the previous [user] dep array meant `contactLocalFields` was
+    // captured at first render and never refreshed, so a later
+    // company-override write would seed `next` from a stale snapshot
+    // and silently overwrite any contact-local-field changes the
+    // user (or another tab) had made in the meantime.
+  }, [user, contactLocalFields, updateSettings, dansTagOptions]);
 
   // Re-fire the Company-association reassignment for one contact without
   // changing the text. Useful when the original inline edit's reassign

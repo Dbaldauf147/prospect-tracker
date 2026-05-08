@@ -590,34 +590,25 @@ function KeyContactsViewInner({
         if (target) target[field] = next;
       });
     } catch (err) { console.warn('Inline cache update failed', err); }
-    // Company-field saves also need the local-override pin so the
-    // typed value sticks when HubSpot's fuzzy Company match resolves
-    // to a record whose name differs (e.g. "Prologis" → "Prologis
-    // Inc"). Mirror HubSpotView.handleInlineUpdate's behavior:
-    //   - association failed entirely → keep override = typed value
-    //   - association succeeded but matched-name differs → keep override
-    //   - association succeeded with matching name → clear override
-    if (field === 'company') {
+    // Company-field saves ALWAYS pin the typed value as a local
+    // override. The previous "clear override on ok && !nameDiffers"
+    // branch kept getting bitten because HubSpot's contact.company
+    // text periodically resyncs from the primary Company association
+    // and can push a different canonical spelling back over the
+    // user's typed value, with no override left to defend it. The
+    // user can drop the override explicitly via the dedicated
+    // "drop override" button on the HubSpot Contacts page.
+    if (field === 'company' && next && next.trim()) {
       const cur = settings?.contactLocalFields || {};
       const merged = { ...(cur[id] || {}) };
-      let didChange = false;
-      if (!companyAssignment || companyAssignment.ok === false || companyAssignment.nameDiffers) {
-        if (merged._companyOverride !== next) {
-          merged._companyOverride = next;
-          didChange = true;
-        }
-        if (companyAssignment?.nameDiffers && companyAssignment?.matchedName) {
-          setMassStatus({ type: 'success', message: `Saved "${next}" locally. HubSpot linked this contact to "${companyAssignment.matchedName}" — Prospect Tracker will keep your typed value here.` });
-        }
-      } else if (merged._companyOverride !== undefined) {
-        delete merged._companyOverride;
-        didChange = true;
-      }
-      if (didChange) {
+      if (merged._companyOverride !== next) {
+        merged._companyOverride = next;
         const nextLocal = { ...cur };
-        if (Object.keys(merged).length === 0) delete nextLocal[id];
-        else nextLocal[id] = merged;
+        nextLocal[id] = merged;
         updateSettings({ contactLocalFields: nextLocal });
+      }
+      if (companyAssignment?.nameDiffers && companyAssignment?.matchedName) {
+        setMassStatus({ type: 'success', message: `Saved "${next}" locally. HubSpot linked this contact to "${companyAssignment.matchedName}" — Prospect Tracker will keep your typed value here.` });
       }
     }
   }

@@ -997,20 +997,22 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
         else delete next[primaryEmail];
         onSaveToAlsoMap(next);
       }
-      // Company-field saves need a local-override pin so the typed
-      // value sticks against any stale override from a previous edit
-      // and against HubSpot's fuzzy Company match resolving to a
-      // record with a different name. Mirrors the inline-update path
-      // in HubSpotView / KeyContactsView.
+      // Company-field saves ALWAYS pin the typed value as a local
+      // override so HubSpot's periodic resync of contact.company
+      // text from the primary Company association can't push a
+      // different canonical spelling back over the user's value.
+      // Same rule the HubSpotView / KeyContactsView inline-edit
+      // paths now apply. The user drops the override via the
+      // dedicated button on the HubSpot Contacts page when they
+      // want HubSpot's value to win again. Suppress this entirely
+      // when the contact's HubSpot id isn't a real one yet (a
+      // brand-new contact created from this same save call) since
+      // the override is keyed by id.
       if (savedCid && onSaveCompanyOverride) {
         const typedCompany = (hsProps.company || '').trim();
         const previousCompany = (contact.company || '').trim();
-        if (typedCompany !== previousCompany) {
-          if (!companyAssignment || companyAssignment.ok === false || companyAssignment.nameDiffers) {
-            onSaveCompanyOverride(savedCid, typedCompany);
-          } else {
-            onSaveCompanyOverride(savedCid, null);
-          }
+        if (typedCompany && typedCompany !== previousCompany) {
+          onSaveCompanyOverride(savedCid, typedCompany);
         }
       }
       onSave(savedContact);
