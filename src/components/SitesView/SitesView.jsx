@@ -69,9 +69,13 @@ function detectSitesMapping(headers) {
     electricStart: detectColumn(headers, [/electric.*contract.*start/i, /electric.*start.*date/i, /electric.*begin/i]) || '',
     electricEnd: detectColumn(headers, [/electric.*contract.*end/i, /electric.*(end|expir).*date/i, /electric.*term.*end/i]) || '',
     electricContractPrice: detectColumn(headers, [/electric.*contract.*(price|rate)/i, /electric.*\$\s*\/\s*kwh/i, /electric.*supply\s*(price|rate)/i, /(power|electricity).*contract.*price/i]) || '',
+    electricContractName: detectColumn(headers, [/electric.*contract.*name/i, /(power|electricity).*contract.*name/i, /electric.*deal\s*name/i]) || '',
+    electricProductType: detectColumn(headers, [/electric.*product/i, /(power|electricity).*product/i, /electric.*structure/i]) || '',
     gasStart: detectColumn(headers, [/gas.*contract.*start/i, /gas.*start.*date/i, /gas.*begin/i]) || '',
     gasEnd: detectColumn(headers, [/gas.*contract.*end/i, /gas.*(end|expir).*date/i, /gas.*term.*end/i]) || '',
     gasContractPrice: detectColumn(headers, [/gas.*contract.*(price|rate)/i, /gas.*\$\s*\/\s*(therm|mmbtu|dth)/i, /gas.*supply\s*(price|rate)/i]) || '',
+    gasContractName: detectColumn(headers, [/gas.*contract.*name/i, /gas.*deal\s*name/i]) || '',
+    gasProductType: detectColumn(headers, [/gas.*product/i, /gas.*structure/i]) || '',
   };
 }
 
@@ -292,6 +296,10 @@ export function SitesView({ settings, updateSettings } = {}) {
   const [countryOverride, setCountryOverride] = useState(null);
   const [electricContractPriceOverride, setElectricContractPriceOverride] = useState(null);
   const [gasContractPriceOverride, setGasContractPriceOverride] = useState(null);
+  const [electricContractNameOverride, setElectricContractNameOverride] = useState(null);
+  const [electricProductTypeOverride, setElectricProductTypeOverride] = useState(null);
+  const [gasContractNameOverride, setGasContractNameOverride] = useState(null);
+  const [gasProductTypeOverride, setGasProductTypeOverride] = useState(null);
   // Per-vendor accept/reject decisions for the fuzzy supplier lookup.
   // Keyed by lowercased raw vendor string. Stored in localStorage so
   // a curated mapping survives a refresh and doesn't have to be
@@ -385,6 +393,10 @@ export function SitesView({ settings, updateSettings } = {}) {
         setCountryOverride(m.country || null);
         setElectricContractPriceOverride(m.electricContractPrice || null);
         setGasContractPriceOverride(m.gasContractPrice || null);
+        setElectricContractNameOverride(m.electricContractName || null);
+        setElectricProductTypeOverride(m.electricProductType || null);
+        setGasContractNameOverride(m.gasContractName || null);
+        setGasProductTypeOverride(m.gasProductType || null);
       }
       setUtility(util);
       setUtilityLoaded(true);
@@ -455,7 +467,9 @@ export function SitesView({ settings, updateSettings } = {}) {
         'electricCost', 'gasCost',
         'electricSupplier', 'gasSupplier',
         'electricStart', 'electricEnd', 'electricContractPrice',
+        'electricContractName', 'electricProductType',
         'gasStart', 'gasEnd', 'gasContractPrice',
+        'gasContractName', 'gasProductType',
       ];
       const mappedHeaders = TARGET_KEYS.map(k => mapping[k]).filter(Boolean);
       const keep = new Set(mappedHeaders);
@@ -485,6 +499,10 @@ export function SitesView({ settings, updateSettings } = {}) {
       setCountryOverride(mapping.country || null);
       setElectricContractPriceOverride(mapping.electricContractPrice || null);
       setGasContractPriceOverride(mapping.gasContractPrice || null);
+      setElectricContractNameOverride(mapping.electricContractName || null);
+      setElectricProductTypeOverride(mapping.electricProductType || null);
+      setGasContractNameOverride(mapping.gasContractName || null);
+      setGasProductTypeOverride(mapping.gasProductType || null);
       if (sheetName && !/site/i.test(sheetName)) {
         setUploadError(`No tab named "Site List" found — loaded sheet "${sheetName}" instead (${rows.length.toLocaleString()} rows). Rename the tab or drop a different file if that's not what you wanted.`);
       }
@@ -951,13 +969,17 @@ export function SitesView({ settings, updateSettings } = {}) {
         __electricStart__: electricStartOverride ? r[electricStartOverride] : null,
         __electricEnd__: electricEndOverride ? r[electricEndOverride] : null,
         __electricContractPrice__: electricContractPrice,
+        __electricContractName__: electricContractNameOverride ? String(r[electricContractNameOverride] || '').trim() || null : null,
+        __electricProductType__: electricProductTypeOverride ? String(r[electricProductTypeOverride] || '').trim() || null : null,
         __gasStart__: gasStartOverride ? r[gasStartOverride] : null,
         __gasEnd__: gasEndOverride ? r[gasEndOverride] : null,
         __gasContractPrice__: gasContractPrice,
+        __gasContractName__: gasContractNameOverride ? String(r[gasContractNameOverride] || '').trim() || null : null,
+        __gasProductType__: gasProductTypeOverride ? String(r[gasProductTypeOverride] || '').trim() || null : null,
         __matched__: !!match || electricUtilityTokens.length > 0 || gasUtilityTokens.length > 0,
       };
     });
-  }, [cleanSitesData, zipColumn, utility, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, electricContractPriceOverride, gasContractPriceOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
+  }, [cleanSitesData, zipColumn, utility, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, electricContractPriceOverride, gasContractPriceOverride, electricContractNameOverride, electricProductTypeOverride, gasContractNameOverride, gasProductTypeOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return rows;
@@ -1697,6 +1719,61 @@ export function SitesView({ settings, updateSettings } = {}) {
     return out;
   }, [overviewByCommodity]);
 
+  // Contract Overview — one row per (site, commodity) where there's
+  // any contract data filled in (supplier, contract name, dates, or
+  // contract price). Suppresses empty-shell rows so the sheet stays
+  // readable when half the portfolio doesn't have contract info in
+  // the source file yet.
+  const contractOverviewRows = useMemo(() => {
+    const out = [];
+    const siteName = siteNameOverride || '';
+    const hasAny = (...vals) => vals.some(v => v != null && String(v).trim() !== '');
+    for (const r of rows) {
+      const name = siteName ? r[siteName] : (r.__siteName__ || r.Site || r.SITE || r.Name || '');
+      // Per-commodity row. Both electric and gas use the same column
+      // names — the Commodity column distinguishes them, and Excel's
+      // pivot table can group on it. Unit is implicit (kWh / therms)
+      // and shown in the column-header rendered on export.
+      if (hasAny(r.__electricSupplier__, r.__electricContractName__, r.__electricProductType__, r.__electricStart__, r.__electricEnd__, r.__electricContractPrice__)) {
+        out.push({
+          'Site': name,
+          'State': r.__state__ || '',
+          'Commodity': 'Electric',
+          'Utility': r.__electric__ || '',
+          'Supplier': r.__electricSupplier__ || '',
+          'Contract Name': r.__electricContractName__ || '',
+          'Product Type': r.__electricProductType__ || '',
+          'Contract Start': r.__electricStart__ || '',
+          'Contract End': r.__electricEnd__ || '',
+          'Contract Price': r.__electricContractPrice__ ?? '',
+          'Price Unit': r.__electricContractPrice__ != null ? '$/kWh' : '',
+          'Annual Consumption': r.__kwh__ ?? '',
+          'Consumption Unit': r.__kwh__ != null ? 'kWh' : '',
+          'Annual Cost': r.__electricCost__ ?? '',
+        });
+      }
+      if (hasAny(r.__gasSupplier__, r.__gasContractName__, r.__gasProductType__, r.__gasStart__, r.__gasEnd__, r.__gasContractPrice__)) {
+        out.push({
+          'Site': name,
+          'State': r.__state__ || '',
+          'Commodity': 'Gas',
+          'Utility': r.__gas__ || '',
+          'Supplier': r.__gasSupplier__ || '',
+          'Contract Name': r.__gasContractName__ || '',
+          'Product Type': r.__gasProductType__ || '',
+          'Contract Start': r.__gasStart__ || '',
+          'Contract End': r.__gasEnd__ || '',
+          'Contract Price': r.__gasContractPrice__ ?? '',
+          'Price Unit': r.__gasContractPrice__ != null ? '$/therm' : '',
+          'Annual Consumption': r.__therms__ ?? '',
+          'Consumption Unit': r.__therms__ != null ? 'therms' : '',
+          'Annual Cost': r.__gasCost__ ?? '',
+        });
+      }
+    }
+    return out;
+  }, [rows, siteNameOverride]);
+
   const exportExtraSheets = useMemo(() => {
     const sheets = [];
     if (overviewByCommodity.electric.length) {
@@ -1705,11 +1782,14 @@ export function SitesView({ settings, updateSettings } = {}) {
     if (overviewByCommodity.gas.length) {
       sheets.push({ name: 'Gas Overview', rows: overviewByCommodity.gas });
     }
+    if (contractOverviewRows.length) {
+      sheets.push({ name: 'Contract Overview', rows: contractOverviewRows });
+    }
     if (summaryRows.length) {
       sheets.push({ name: 'Summary', rows: summaryRows });
     }
     return sheets;
-  }, [overviewByCommodity, summaryRows]);
+  }, [overviewByCommodity, contractOverviewRows, summaryRows]);
 
   // Blank Sites-upload template — column headers + three sample rows
   // + an Instructions sheet. Mirrors the TARGET_FIELDS list rendered
@@ -1747,10 +1827,14 @@ export function SitesView({ settings, updateSettings } = {}) {
       { label: 'Electric Contract Start', required: false, hint: 'Start date of the existing electric supply contract. Formatted as Excel Short Date.', examples: [d('2024-01-01'), '', d('2023-06-15')], dateColumn: true },
       { label: 'Electric Contract End', required: false, hint: 'End / expiration date of the existing electric supply contract. Formatted as Excel Short Date.', examples: [d('2026-12-31'), '', d('2026-06-14')], dateColumn: true },
       { label: 'Electric Contract Price ($/kWh)', required: false, hint: 'Per-kWh price under the existing electric supply contract. Captured for comparison against indicative state rates.', examples: [0.087, 0.061, 0.072], priceColumn: 'kwh' },
+      { label: 'Electric Contract Name', required: false, hint: 'Human-readable identifier for the existing electric contract.', examples: ['Constellation - NE Cluster 2024', 'ComEd Default Supply', ''] },
+      { label: 'Electric Product Type', required: false, hint: 'Pricing structure of the electric contract — pick from the dropdown or type a custom value.', examples: ['Fixed', 'Index', 'Block & Index'], validation: { type: 'list', options: ['Fixed', 'Index', 'Block & Index', 'Heat Rate', 'Hybrid', 'Pass-through', 'Utility Default'] } },
       { label: 'Gas Supplier / Vendor', required: false, hint: 'If the value matches a utility from the rates file it lands in the Gas Utility column; otherwise it lands in the Supplier column.', examples: ['National Grid', '', 'SoCalGas'] },
       { label: 'Gas Contract Start', required: false, hint: 'Start date of the existing gas supply contract. Formatted as Excel Short Date.', examples: [d('2024-04-01'), '', d('2024-01-01')], dateColumn: true },
       { label: 'Gas Contract End', required: false, hint: 'End / expiration date of the existing gas supply contract. Formatted as Excel Short Date.', examples: [d('2026-03-31'), '', d('2025-12-31')], dateColumn: true },
       { label: 'Gas Contract Price ($/therm)', required: false, hint: 'Per-therm price under the existing gas supply contract. Captured for comparison against indicative state rates.', examples: [0.65, '', 0.78], priceColumn: 'therm' },
+      { label: 'Gas Contract Name', required: false, hint: 'Human-readable identifier for the existing gas contract.', examples: ['Direct Energy Northeast Block', '', 'SoCalGas Core Aggregation'] },
+      { label: 'Gas Product Type', required: false, hint: 'Pricing structure of the gas contract — pick from the dropdown or type a custom value.', examples: ['NYMEX + Basis', '', 'Fixed'], validation: { type: 'list', options: ['Fixed', 'Index', 'NYMEX + Basis', 'Block & Index', 'Hybrid', 'Pass-through', 'Utility Default'] } },
     ];
 
     const wb = new Workbook();
@@ -3130,7 +3214,7 @@ export function SitesView({ settings, updateSettings } = {}) {
           const label = String(headers[i] || '').toLowerCase();
           if (typeof v === 'number') {
             if (/spend|cost|savings/.test(label)) cell.numFmt = '"$"#,##0';
-            else if (/rate/.test(label)) cell.numFmt = '$0.000';
+            else if (/(rate|price)/.test(label)) cell.numFmt = '"$"0.000';
             else if (/kwh|therm|consumption/.test(label)) cell.numFmt = '#,##0';
           }
         }
@@ -3573,10 +3657,14 @@ export function SitesView({ settings, updateSettings } = {}) {
             { key: 'electricStart', label: 'Electric Contract Start', required: false, hint: 'Start date of the existing electric supply contract.' },
             { key: 'electricEnd', label: 'Electric Contract End', required: false, hint: 'End / expiration date of the existing electric supply contract.' },
             { key: 'electricContractPrice', label: 'Electric Contract Price ($/kWh)', required: false, hint: 'Per-kWh contract price from the existing electric supply agreement.' },
+            { key: 'electricContractName', label: 'Electric Contract Name', required: false, hint: 'Human-readable identifier for the existing electric contract (e.g. "Constellation - Atlanta Cluster 2024").' },
+            { key: 'electricProductType', label: 'Electric Product Type', required: false, hint: 'Pricing structure of the electric contract (Fixed, Index, Block & Index, Heat Rate, etc.).' },
             { key: 'gasSupplier', label: 'Gas Supplier / Vendor', required: false, hint: 'If the value matches a known utility from the rates file it goes in the Gas Utility column; otherwise it lands in the Supplier column.' },
             { key: 'gasStart', label: 'Gas Contract Start', required: false, hint: 'Start date of the existing gas supply contract.' },
             { key: 'gasEnd', label: 'Gas Contract End', required: false, hint: 'End / expiration date of the existing gas supply contract.' },
             { key: 'gasContractPrice', label: 'Gas Contract Price ($/therm)', required: false, hint: 'Per-therm contract price from the existing gas supply agreement.' },
+            { key: 'gasContractName', label: 'Gas Contract Name', required: false, hint: 'Human-readable identifier for the existing gas contract.' },
+            { key: 'gasProductType', label: 'Gas Product Type', required: false, hint: 'Pricing structure of the gas contract (Fixed, NYMEX + Basis, Index, etc.).' },
           ];
           // The full set of columns that show up on the Utility Lookup
           // table after import — split into the mapped inputs above
