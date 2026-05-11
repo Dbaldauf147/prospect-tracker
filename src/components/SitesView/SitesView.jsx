@@ -17,6 +17,8 @@ import {
   normalizeState,
   detectConsumptionColumns,
   detectConsumptionUnit,
+  normalizeElectricUom,
+  normalizeGasUom,
   toKwh,
   toTherms,
   stateRate,
@@ -55,16 +57,21 @@ function detectSitesMapping(headers) {
   return {
     siteName,
     zip: pickZipColumn(headers),
-    electric: detectColumn(headers, [/electric.*kwh|kwh.*electric/i, /annual.*electric.*kwh/i, /annual.*kwh/i, /^kwh$/i, /electric.*usage/i, /electric.*consumption/i]) || '',
-    gas: detectColumn(headers, [/gas.*therm|therm.*gas/i, /annual.*gas.*(therm|dth|mmbtu)/i, /natural\s*gas.*usage/i, /gas.*usage/i, /gas.*consumption/i, /^therms?$/i, /^dth$/i, /^mmbtu$/i]) || '',
+    country: detectColumn(headers, [/^country$/i, /\bcountry\b/i, /\bnation\b/i]) || '',
+    electric: detectColumn(headers, [/electric.*kwh|kwh.*electric/i, /annual.*electric.*kwh/i, /annual.*kwh/i, /^kwh$/i, /electric.*usage/i, /electric.*consumption/i, /annual.*electric/i, /^electric$/i]) || '',
+    electricUom: detectColumn(headers, [/electric.*\b(uom|unit\s*of\s*measure|units?)\b/i, /\b(uom|unit\s*of\s*measure|units?)\b.*electric/i]) || '',
+    gas: detectColumn(headers, [/gas.*therm|therm.*gas/i, /annual.*gas.*(therm|dth|mmbtu)/i, /natural\s*gas.*usage/i, /gas.*usage/i, /gas.*consumption/i, /^therms?$/i, /^dth$/i, /^mmbtu$/i, /annual.*gas/i, /^gas$/i]) || '',
+    gasUom: detectColumn(headers, [/gas.*\b(uom|unit\s*of\s*measure|units?)\b/i, /\b(uom|unit\s*of\s*measure|units?)\b.*gas/i]) || '',
     electricCost: detectColumn(headers, [/electric.*(actual|annual).*(cost|spend|amount|\$)/i, /(actual|annual).*electric.*(cost|spend)/i, /electric.*cost/i, /electric.*spend/i, /electric.*\$/i]) || '',
     gasCost: detectColumn(headers, [/gas.*(actual|annual).*(cost|spend|amount|\$)/i, /(actual|annual).*gas.*(cost|spend)/i, /gas.*cost/i, /gas.*spend/i, /gas.*\$/i]) || '',
     electricSupplier: detectColumn(headers, [/electric.*(supplier|provider|vendor)/i, /(supplier|provider|vendor).*electric/i]) || '',
     gasSupplier: detectColumn(headers, [/gas.*(supplier|provider|vendor)/i, /(supplier|provider|vendor).*gas/i]) || '',
     electricStart: detectColumn(headers, [/electric.*contract.*start/i, /electric.*start.*date/i, /electric.*begin/i]) || '',
     electricEnd: detectColumn(headers, [/electric.*contract.*end/i, /electric.*(end|expir).*date/i, /electric.*term.*end/i]) || '',
+    electricContractPrice: detectColumn(headers, [/electric.*contract.*(price|rate)/i, /electric.*\$\s*\/\s*kwh/i, /electric.*supply\s*(price|rate)/i, /(power|electricity).*contract.*price/i]) || '',
     gasStart: detectColumn(headers, [/gas.*contract.*start/i, /gas.*start.*date/i, /gas.*begin/i]) || '',
     gasEnd: detectColumn(headers, [/gas.*contract.*end/i, /gas.*(end|expir).*date/i, /gas.*term.*end/i]) || '',
+    gasContractPrice: detectColumn(headers, [/gas.*contract.*(price|rate)/i, /gas.*\$\s*\/\s*(therm|mmbtu|dth)/i, /gas.*supply\s*(price|rate)/i]) || '',
   };
 }
 
@@ -277,6 +284,14 @@ export function SitesView({ settings, updateSettings } = {}) {
   const [electricEndOverride, setElectricEndOverride] = useState(null);
   const [gasStartOverride, setGasStartOverride] = useState(null);
   const [gasEndOverride, setGasEndOverride] = useState(null);
+  // Per-row UoM and country columns from the template. Filled when
+  // present, otherwise the existing header-based unit detection and
+  // zip-derived state continue to apply.
+  const [electricUomOverride, setElectricUomOverride] = useState(null);
+  const [gasUomOverride, setGasUomOverride] = useState(null);
+  const [countryOverride, setCountryOverride] = useState(null);
+  const [electricContractPriceOverride, setElectricContractPriceOverride] = useState(null);
+  const [gasContractPriceOverride, setGasContractPriceOverride] = useState(null);
   // Per-vendor accept/reject decisions for the fuzzy supplier lookup.
   // Keyed by lowercased raw vendor string. Stored in localStorage so
   // a curated mapping survives a refresh and doesn't have to be
@@ -365,6 +380,11 @@ export function SitesView({ settings, updateSettings } = {}) {
         setElectricEndOverride(m.electricEnd || null);
         setGasStartOverride(m.gasStart || null);
         setGasEndOverride(m.gasEnd || null);
+        setElectricUomOverride(m.electricUom || null);
+        setGasUomOverride(m.gasUom || null);
+        setCountryOverride(m.country || null);
+        setElectricContractPriceOverride(m.electricContractPrice || null);
+        setGasContractPriceOverride(m.gasContractPrice || null);
       }
       setUtility(util);
       setUtilityLoaded(true);
@@ -430,10 +450,12 @@ export function SitesView({ settings, updateSettings } = {}) {
       // pass-through column ends up rendered on the Utility Lookup
       // table even though the user only wanted these specific fields.
       const TARGET_KEYS = [
-        'siteName', 'zip', 'electric', 'gas',
+        'siteName', 'zip', 'country',
+        'electric', 'electricUom', 'gas', 'gasUom',
         'electricCost', 'gasCost',
         'electricSupplier', 'gasSupplier',
-        'electricStart', 'electricEnd', 'gasStart', 'gasEnd',
+        'electricStart', 'electricEnd', 'electricContractPrice',
+        'gasStart', 'gasEnd', 'gasContractPrice',
       ];
       const mappedHeaders = TARGET_KEYS.map(k => mapping[k]).filter(Boolean);
       const keep = new Set(mappedHeaders);
@@ -458,6 +480,11 @@ export function SitesView({ settings, updateSettings } = {}) {
       setElectricEndOverride(mapping.electricEnd || null);
       setGasStartOverride(mapping.gasStart || null);
       setGasEndOverride(mapping.gasEnd || null);
+      setElectricUomOverride(mapping.electricUom || null);
+      setGasUomOverride(mapping.gasUom || null);
+      setCountryOverride(mapping.country || null);
+      setElectricContractPriceOverride(mapping.electricContractPrice || null);
+      setGasContractPriceOverride(mapping.gasContractPrice || null);
       if (sheetName && !/site/i.test(sheetName)) {
         setUploadError(`No tab named "Site List" found — loaded sheet "${sheetName}" instead (${rows.length.toLocaleString()} rows). Rename the tab or drop a different file if that's not what you wanted.`);
       }
@@ -713,10 +740,14 @@ export function SitesView({ settings, updateSettings } = {}) {
   // column (typically labelled "Est. Natural Gas" / "Est. Electric")
   // as the canonical value, falling through to later candidates only
   // when the primary is blank.
-  const pickFirstConsumption = (row, candidates, toUnit) => {
+  const pickFirstConsumption = (row, candidates, toUnit, rowUnitOverride) => {
     for (const { header, unit } of candidates) {
       const raw = row[header];
-      const converted = toUnit(raw, unit);
+      // Per-row UoM (from the template's Electric UoM / Gas UoM
+      // column) wins over the column-header-detected unit when the
+      // user filled it in — that's the whole point of the column.
+      const effectiveUnit = rowUnitOverride || unit;
+      const converted = toUnit(raw, effectiveUnit);
       if (converted == null || !Number.isFinite(converted) || converted <= 0) continue;
       return { value: converted, sourceHeader: header };
     }
@@ -766,8 +797,18 @@ export function SitesView({ settings, updateSettings } = {}) {
       const state = match?.state || zipToState(zip);
       const electricRate = state ? stateRate(state, 'electric') : null;
       const gasRate = state ? stateRate(state, 'gas') : null;
-      const elec = pickFirstConsumption(r, consumption.electric, toKwh);
-      const gas = pickFirstConsumption(r, consumption.gas, toTherms);
+      const electricUomRaw = electricUomOverride ? r[electricUomOverride] : '';
+      const gasUomRaw = gasUomOverride ? r[gasUomOverride] : '';
+      const elec = pickFirstConsumption(r, consumption.electric, toKwh, normalizeElectricUom(electricUomRaw));
+      const gas = pickFirstConsumption(r, consumption.gas, toTherms, normalizeGasUom(gasUomRaw));
+      const inputCountry = countryOverride ? String(r[countryOverride] || '').trim() : '';
+      const parseRate = (v) => {
+        if (v == null || v === '') return null;
+        const n = Number(String(v).replace(/[^0-9.\-]/g, ''));
+        return Number.isFinite(n) && n > 0 ? n : null;
+      };
+      const electricContractPrice = electricContractPriceOverride ? parseRate(r[electricContractPriceOverride]) : null;
+      const gasContractPrice = gasContractPriceOverride ? parseRate(r[gasContractPriceOverride]) : null;
       const estElectricCost = electricRate != null && elec.value != null ? electricRate * elec.value : null;
       const estGasCost = gasRate != null && gas.value != null ? gasRate * gas.value : null;
       // Actual cost columns from the file when the user mapped them.
@@ -890,7 +931,7 @@ export function SitesView({ settings, updateSettings } = {}) {
         __gasUtilityTokens__: gasUtilityTokens,
         __water__: match?.water,
         __city__: match?.city,
-        __country__: match?.country,
+        __country__: inputCountry || match?.country,
         __state__: state,
         __kwh__: elec.value,
         __therms__: gas.value,
@@ -909,12 +950,14 @@ export function SitesView({ settings, updateSettings } = {}) {
         __gasSupplier__: supplierOverrides[`${i}_gas`] || gasSupplierResolved,
         __electricStart__: electricStartOverride ? r[electricStartOverride] : null,
         __electricEnd__: electricEndOverride ? r[electricEndOverride] : null,
+        __electricContractPrice__: electricContractPrice,
         __gasStart__: gasStartOverride ? r[gasStartOverride] : null,
         __gasEnd__: gasEndOverride ? r[gasEndOverride] : null,
+        __gasContractPrice__: gasContractPrice,
         __matched__: !!match || electricUtilityTokens.length > 0 || gasUtilityTokens.length > 0,
       };
     });
-  }, [cleanSitesData, zipColumn, utility, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
+  }, [cleanSitesData, zipColumn, utility, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, electricContractPriceOverride, gasContractPriceOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return rows;
@@ -1672,7 +1715,9 @@ export function SitesView({ settings, updateSettings } = {}) {
   // + an Instructions sheet. Mirrors the TARGET_FIELDS list rendered
   // inside the upload-mapping modal so a user who downloads the
   // template, fills it in, and uploads it lands every field directly
-  // without needing to re-map columns.
+  // without needing to re-map columns. The UoM columns have inline
+  // data-validation dropdowns so users pick from the supported units
+  // instead of typing free-form strings the converter doesn't know.
   async function downloadSitesTemplate() {
     const { Workbook } = await import('exceljs');
     const SE_GREEN_DARK = 'FF009530';
@@ -1680,19 +1725,32 @@ export function SitesView({ settings, updateSettings } = {}) {
     const SE_BORDER = 'FFD4DDE1';
     const SE_TEXT_DARK = 'FF1E293B';
 
+    const ELECTRIC_UOM_OPTIONS = ['kWh', 'MWh', 'GWh'];
+    const GAS_UOM_OPTIONS = ['therms', 'MMBtu', 'Dth', 'Mcf', 'Ccf', 'BTU'];
+    const COUNTRY_OPTIONS = ['United States', 'Canada', 'Mexico', 'United Kingdom', 'Germany', 'France', 'Spain', 'Italy', 'Netherlands', 'Australia'];
+
+    // Excel date objects are recognized by the workbook; the numFmt
+    // below stamps "Short Date" on the column so empty cells still
+    // pick up the format when the user types a date later.
+    const d = (s) => (s ? new Date(s) : '');
     const FIELDS = [
       { label: 'Site Name', required: true, hint: 'Row label. Required so the row isn\'t filtered as blank.', examples: ['Downtown HQ', 'Midwest Plant 2', 'West Coast Warehouse'] },
       { label: 'Zip / Postal Code', required: true, hint: 'US/Canadian zip or postal code — drives the utility lookup and state derivation.', examples: ['10001', '60601', '90210'] },
-      { label: 'Annual Electric (kWh)', required: false, hint: 'Annual electricity usage. Used for cost estimates when Total Electric Cost is blank.', examples: [3500000, 1200000, ''] },
-      { label: 'Annual Gas (therms / MMBtu / Dth)', required: false, hint: 'Annual gas usage. Used for cost estimates when Total Natural Gas Cost is blank.', examples: [12000, '', 4500] },
-      { label: 'Total Electric Cost ($)', required: false, hint: 'Actual annual electric spend. Overrides the kWh × rate estimate when provided.', examples: ['', '', 450000] },
-      { label: 'Total Natural Gas Cost ($)', required: false, hint: 'Actual annual gas spend. Overrides the Dth × rate estimate when provided.', examples: ['', '', 65000] },
+      { label: 'Country', required: false, hint: 'Country of the site. Pick from the dropdown — falls back to the utility-rates file when blank.', examples: ['United States', 'United States', 'United States'], validation: { type: 'list', options: COUNTRY_OPTIONS } },
+      { label: 'Annual Electric Consumption', required: false, hint: 'Annual electricity usage. Pair with Electric UoM so the tool can convert to kWh for cost estimates. Used when Total Electric Cost is blank.', examples: [3500000, 1200, ''] },
+      { label: 'Electric UoM', required: false, hint: 'Unit of measure for the Electric Consumption column. Pick from the dropdown — defaults to kWh when blank.', examples: ['kWh', 'MWh', ''], validation: { type: 'list', options: ELECTRIC_UOM_OPTIONS } },
+      { label: 'Annual Gas Consumption', required: false, hint: 'Annual gas usage. Pair with Gas UoM so the tool can convert to therms. Used when Total Natural Gas Cost is blank.', examples: [12000, '', 4500] },
+      { label: 'Gas UoM', required: false, hint: 'Unit of measure for the Gas Consumption column. Pick from the dropdown — defaults to therms when blank.', examples: ['therms', '', 'MMBtu'], validation: { type: 'list', options: GAS_UOM_OPTIONS } },
+      { label: 'Total Electric Cost ($)', required: false, hint: 'Actual annual electric spend. Overrides the consumption × rate estimate when provided.', examples: ['', '', 450000] },
+      { label: 'Total Natural Gas Cost ($)', required: false, hint: 'Actual annual gas spend. Overrides the consumption × rate estimate when provided.', examples: ['', '', 65000] },
       { label: 'Electric Supplier / Vendor', required: false, hint: 'If the value matches a utility from the rates file it lands in the Electric Utility column; otherwise it lands in the Supplier column.', examples: ['Con Edison', 'ComEd', 'Constellation Energy'] },
-      { label: 'Electric Contract Start', required: false, hint: 'Start date of the existing electric supply contract (any common date format).', examples: ['2024-01-01', '', '2023-06-15'] },
-      { label: 'Electric Contract End', required: false, hint: 'End / expiration date of the existing electric supply contract.', examples: ['2026-12-31', '', '2026-06-14'] },
+      { label: 'Electric Contract Start', required: false, hint: 'Start date of the existing electric supply contract. Formatted as Excel Short Date.', examples: [d('2024-01-01'), '', d('2023-06-15')], dateColumn: true },
+      { label: 'Electric Contract End', required: false, hint: 'End / expiration date of the existing electric supply contract. Formatted as Excel Short Date.', examples: [d('2026-12-31'), '', d('2026-06-14')], dateColumn: true },
+      { label: 'Electric Contract Price ($/kWh)', required: false, hint: 'Per-kWh price under the existing electric supply contract. Captured for comparison against indicative state rates.', examples: [0.087, 0.061, 0.072], priceColumn: 'kwh' },
       { label: 'Gas Supplier / Vendor', required: false, hint: 'If the value matches a utility from the rates file it lands in the Gas Utility column; otherwise it lands in the Supplier column.', examples: ['National Grid', '', 'SoCalGas'] },
-      { label: 'Gas Contract Start', required: false, hint: 'Start date of the existing gas supply contract.', examples: ['2024-04-01', '', '2024-01-01'] },
-      { label: 'Gas Contract End', required: false, hint: 'End / expiration date of the existing gas supply contract.', examples: ['2026-03-31', '', '2025-12-31'] },
+      { label: 'Gas Contract Start', required: false, hint: 'Start date of the existing gas supply contract. Formatted as Excel Short Date.', examples: [d('2024-04-01'), '', d('2024-01-01')], dateColumn: true },
+      { label: 'Gas Contract End', required: false, hint: 'End / expiration date of the existing gas supply contract. Formatted as Excel Short Date.', examples: [d('2026-03-31'), '', d('2025-12-31')], dateColumn: true },
+      { label: 'Gas Contract Price ($/therm)', required: false, hint: 'Per-therm price under the existing gas supply contract. Captured for comparison against indicative state rates.', examples: [0.65, '', 0.78], priceColumn: 'therm' },
     ];
 
     const wb = new Workbook();
@@ -1718,6 +1776,14 @@ export function SitesView({ settings, updateSettings } = {}) {
     });
     headerRow.height = 32;
 
+    // 1-based column index → Excel letter ("A", "B", ..., "AA").
+    const colLetter = (idx) => {
+      let s = '';
+      let n = idx;
+      while (n > 0) { n--; s = String.fromCharCode(65 + (n % 26)) + s; n = Math.floor(n / 26); }
+      return s;
+    };
+
     const exampleCount = Math.max(...FIELDS.map(f => f.examples.length));
     for (let r = 0; r < exampleCount; r++) {
       const row = ws.getRow(2 + r);
@@ -1726,20 +1792,56 @@ export function SitesView({ settings, updateSettings } = {}) {
         const cell = row.getCell(i + 1);
         cell.value = v === '' || v == null ? null : v;
         cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-        cell.alignment = { vertical: 'middle', horizontal: typeof v === 'number' ? 'right' : 'left', indent: 1 };
+        const isNumeric = typeof v === 'number';
+        const isDate = v instanceof Date;
+        cell.alignment = { vertical: 'middle', horizontal: (isNumeric || isDate) ? 'right' : 'left', indent: 1 };
         cell.border = {
           bottom: { style: 'thin', color: { argb: SE_BORDER } },
           left:   { style: 'thin', color: { argb: SE_BORDER } },
           right:  { style: 'thin', color: { argb: SE_BORDER } },
         };
-        const lower = String(f.label).toLowerCase();
-        if (typeof v === 'number') {
-          if (/cost|spend|\$/.test(lower)) cell.numFmt = '"$"#,##0';
-          else if (/kwh|therm|gas|mmbtu|dth/.test(lower)) cell.numFmt = '#,##0';
-        }
       });
       row.height = 18;
     }
+
+    // Apply column-wide number formats + data validation across the
+    // first 1000 data rows so the formatting / dropdowns persist when
+    // the user pastes rows beyond the three sample rows. Excel honors
+    // numFmt on blank cells, so the format sticks even for rows that
+    // start empty.
+    const DATA_LAST_ROW = 1001;
+    FIELDS.forEach((f, i) => {
+      const colIdx = i + 1;
+      const col = ws.getColumn(colIdx);
+      const lower = String(f.label).toLowerCase();
+      if (f.dateColumn) {
+        col.numFmt = 'm/d/yyyy';
+      } else if (f.priceColumn === 'kwh') {
+        col.numFmt = '"$"0.000';
+      } else if (f.priceColumn === 'therm') {
+        col.numFmt = '"$"0.000';
+      } else if (/cost|spend|\$/.test(lower)) {
+        col.numFmt = '"$"#,##0';
+      } else if (/(consumption|kwh|therm|mmbtu|dth|mcf|ccf)/.test(lower) && !/uom|unit/.test(lower)) {
+        col.numFmt = '#,##0';
+      }
+      if (f.validation?.type === 'list') {
+        const letter = colLetter(colIdx);
+        const range = `${letter}2:${letter}${DATA_LAST_ROW}`;
+        // Excel inline-list formula: `"option1,option2,..."` (single
+        // quoted string). Commas in option text would break the list,
+        // but none of our UoM / country values include commas.
+        ws.dataValidations.add(range, {
+          type: 'list',
+          allowBlank: true,
+          formulae: [`"${f.validation.options.join(',')}"`],
+          showInputMessage: true,
+          promptTitle: f.label,
+          prompt: `Pick one of: ${f.validation.options.join(', ')}`,
+        });
+      }
+    });
+
     ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: FIELDS.length } };
 
     // Sheet 2: Instructions
@@ -1748,7 +1850,7 @@ export function SitesView({ settings, updateSettings } = {}) {
 
     notes.mergeCells(1, 1, 1, 3);
     const intro = notes.getCell(1, 1);
-    intro.value = 'Site Name and Zip / Postal Code are required. Everything else is optional — the Utility Lookup page derives State, Utility, Market, Rate, and Total Cost automatically from the rates file.';
+    intro.value = 'Site Name and Zip / Postal Code are required. Everything else is optional — the Utility Lookup page derives State, Utility, Market, Rate, and Total Cost automatically from the rates file. Use the Electric UoM / Gas UoM dropdowns to choose what unit your consumption values are in; the tool converts to kWh / therms internally.';
     intro.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
     intro.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
     notes.getRow(1).height = 44;
@@ -3460,16 +3562,21 @@ export function SitesView({ settings, updateSettings } = {}) {
           const TARGET_FIELDS = [
             { key: 'siteName', label: 'Site Name', required: true, hint: 'Row label / blank-row filter.' },
             { key: 'zip', label: 'Zip / Postal Code', required: true, hint: 'Drives the utility lookup.' },
-            { key: 'electric', label: 'Annual Electric (kWh)', required: false, hint: 'Annual electric usage for cost estimates.' },
-            { key: 'gas', label: 'Annual Gas (therms / MMBtu / Dth)', required: false, hint: 'Annual gas usage for cost estimates.' },
+            { key: 'country', label: 'Country', required: false, hint: 'Country of the site. Falls back to the utility-rates file when blank.' },
+            { key: 'electric', label: 'Annual Electric Consumption', required: false, hint: 'Annual electric usage. Pair with Electric UoM to control how the value is converted to kWh for cost estimates.' },
+            { key: 'electricUom', label: 'Electric UoM', required: false, hint: 'Unit of measure for the Electric column (kWh / MWh / GWh). Overrides any unit baked into the header.' },
+            { key: 'gas', label: 'Annual Gas Consumption', required: false, hint: 'Annual gas usage. Pair with Gas UoM to control how the value is converted to therms for cost estimates.' },
+            { key: 'gasUom', label: 'Gas UoM', required: false, hint: 'Unit of measure for the Gas column (therms / MMBtu / Dth / Mcf / Ccf / BTU). Overrides any unit baked into the header.' },
             { key: 'electricCost', label: 'Total Electric Cost ($)', required: false, hint: 'Actual annual electric spend. Used in place of the kWh × rate estimate when present.' },
             { key: 'gasCost', label: 'Total Natural Gas Cost ($)', required: false, hint: 'Actual annual gas spend. Used in place of the Dth × rate estimate when present.' },
             { key: 'electricSupplier', label: 'Electric Supplier / Vendor', required: false, hint: 'If the value matches a known utility from the rates file it goes in the Electric Utility column; otherwise it lands in the Supplier column.' },
             { key: 'electricStart', label: 'Electric Contract Start', required: false, hint: 'Start date of the existing electric supply contract.' },
             { key: 'electricEnd', label: 'Electric Contract End', required: false, hint: 'End / expiration date of the existing electric supply contract.' },
+            { key: 'electricContractPrice', label: 'Electric Contract Price ($/kWh)', required: false, hint: 'Per-kWh contract price from the existing electric supply agreement.' },
             { key: 'gasSupplier', label: 'Gas Supplier / Vendor', required: false, hint: 'If the value matches a known utility from the rates file it goes in the Gas Utility column; otherwise it lands in the Supplier column.' },
             { key: 'gasStart', label: 'Gas Contract Start', required: false, hint: 'Start date of the existing gas supply contract.' },
             { key: 'gasEnd', label: 'Gas Contract End', required: false, hint: 'End / expiration date of the existing gas supply contract.' },
+            { key: 'gasContractPrice', label: 'Gas Contract Price ($/therm)', required: false, hint: 'Per-therm contract price from the existing gas supply agreement.' },
           ];
           // The full set of columns that show up on the Utility Lookup
           // table after import — split into the mapped inputs above

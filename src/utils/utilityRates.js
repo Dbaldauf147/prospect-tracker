@@ -179,7 +179,7 @@ export function normalizeState(value) {
 export function detectConsumptionColumns(headers, commodity) {
   if (!headers?.length) return [];
   const unitsElectric = /\b(kwh|mwh|gwh)\b/i;
-  const unitsGas = /\b(therms?|mmbtu|mcf|ccf|btu)\b/i;
+  const unitsGas = /\b(therms?|mmbtu|mcf|ccf|btu|dth|dekatherm|decatherm)\b/i;
   const unitPat = commodity === 'electric' ? unitsElectric : unitsGas;
 
   const commodityWord = commodity === 'electric'
@@ -216,6 +216,32 @@ export function detectConsumptionColumn(headers, commodity) {
   return detectConsumptionColumns(headers, commodity)[0] || '';
 }
 
+// Normalize a free-form unit-of-measure string (typed by the user
+// into an "Electric UoM" / "Gas UoM" column, or chosen from the
+// template's data-validation dropdown) to the canonical token that
+// toKwh / toTherms expect. Returns '' when the input is blank or
+// unrecognized, letting the caller fall back to header-detected
+// units instead of silently treating the value as the wrong unit.
+export function normalizeElectricUom(raw) {
+  const s = String(raw || '').trim().toLowerCase();
+  if (!s) return '';
+  if (/\bgwh\b|gigawatt/.test(s)) return 'GWh';
+  if (/\bmwh\b|megawatt/.test(s)) return 'MWh';
+  if (/\bkwh\b|kilowatt/.test(s)) return 'kWh';
+  return '';
+}
+export function normalizeGasUom(raw) {
+  const s = String(raw || '').trim().toLowerCase();
+  if (!s) return '';
+  if (/\b(dth|dekatherm|decatherm)\b/.test(s)) return 'Dth';
+  if (/\bmmbtu\b/.test(s)) return 'MMBtu';
+  if (/\bmcf\b/.test(s)) return 'Mcf';
+  if (/\bccf\b/.test(s)) return 'Ccf';
+  if (/\bbtu\b/.test(s) && !/mmbtu/.test(s)) return 'BTU';
+  if (/\btherms?\b/.test(s)) return 'therms';
+  return '';
+}
+
 // Detect the unit of a consumption column so we can convert to the
 // table's canonical unit ($/kWh × kWh for electric, $/therm × therms
 // for gas). Defaults to the canonical unit when the header is quiet.
@@ -226,6 +252,7 @@ export function detectConsumptionUnit(header, commodity) {
     if (/\bmwh\b/.test(h)) return 'MWh';
     return 'kWh';
   }
+  if (/\b(dth|dekatherm|decatherm)\b/.test(h)) return 'Dth';
   if (/\bmmbtu\b/.test(h)) return 'MMBtu';
   if (/\bmcf\b/.test(h)) return 'Mcf';
   if (/\bccf\b/.test(h)) return 'Ccf';
@@ -270,6 +297,7 @@ export function toTherms(value, unit) {
   const n = looseNumber(value);
   if (!Number.isFinite(n)) return null;
   switch (unit) {
+    case 'Dth':   return n * 10;        // 1 dekatherm = 10 therms = 1 MMBtu
     case 'MMBtu': return n * 10;        // 1 MMBtu = 10 therms
     case 'Mcf':   return n * 10.37;     // 1 Mcf ≈ 10.37 therms (US avg heating value)
     case 'Ccf':   return n * 1.037;
