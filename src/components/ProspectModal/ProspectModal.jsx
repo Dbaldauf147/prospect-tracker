@@ -3451,15 +3451,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     }
   }
 
-  const isPlatinumEquity = companiesMatch(fields.company, 'Platinum Equity');
-
   return (
     <div className={styles.overlay} onClick={onClose}>
-      <div
-        className={styles.modal}
-        onClick={e => e.stopPropagation()}
-        style={isPlatinumEquity ? { background: '#EDE9FE' } : undefined}
-      >
+      <div className={styles.modal} onClick={e => e.stopPropagation()}>
         <div className={styles.header}>
           <h2 className={styles.title}>{isNew ? 'Add Prospect' : fields.company}</h2>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
