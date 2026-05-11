@@ -25,7 +25,7 @@ import {
   formatMoney,
   formatRate,
 } from '../../utils/utilityRates';
-import { parseBestSheet } from '../../utils/xlsxParse';
+import { parseBestSheet, parseSplitSitesTemplate } from '../../utils/xlsxParse';
 import { findFuzzyMatch } from '../../utils/utilityNameMatch';
 import { ENERGY_SUPPLIERS } from '../../data/energySuppliers';
 import { isRegulatedRateOpportunity } from '../../data/regulatedRateOpportunities';
@@ -429,13 +429,18 @@ export function SitesView({ settings, updateSettings } = {}) {
     setUploadError('');
     try {
       const buf = await file.arrayBuffer();
-      // A Portfolio Companies workbook has several tabs (main portfolio,
-      // Top 5 Overview, Top 5 Deep Dives, Site List). Prefer the one
-      // that actually lists sites; fall back to the raw best-scoring
-      // sheet for spreadsheets that only contain a sites table.
-      const { rows, sheetName } = parseBestSheet(new Uint8Array(buf), {
-        preferSheetName: /site\s*list|^\s*sites?\s*$/i,
-      });
+      const bytes = new Uint8Array(buf);
+      // First try the two-tab template (Electric Power + Gas merged by
+      // Site Name). Falls through to parseBestSheet for any workbook
+      // that doesn't have both tabs — Portfolio Companies workbooks,
+      // CSVs, or single-sheet sites tables.
+      let parsed = parseSplitSitesTemplate(bytes);
+      if (!parsed) {
+        parsed = parseBestSheet(bytes, {
+          preferSheetName: /site\s*list|^\s*sites?\s*$/i,
+        });
+      }
+      const { rows, sheetName } = parsed;
       const headers = rows.length ? Object.keys(rows[0]) : [];
       setSitesMappingModal({
         rows,
@@ -1791,14 +1796,13 @@ export function SitesView({ settings, updateSettings } = {}) {
     return sheets;
   }, [overviewByCommodity, contractOverviewRows, summaryRows]);
 
-  // Blank Sites-upload template — header row + 200 empty data rows
-  // that already carry text formatting, number formats, and dropdown
-  // validations, plus an Instructions sheet. Mirrors the
-  // TARGET_FIELDS list rendered inside the upload-mapping modal so a
-  // user who downloads the template, fills it in, and uploads it
-  // lands every field directly without needing to re-map columns.
-  // First column (Site Name) is frozen so it stays visible while the
-  // user scrolls right through the wide column set.
+  // Blank Sites-upload template — TWO commodity tabs (Electric Power
+  // and Gas) each with header row + 200 pre-formatted blank data
+  // rows. Common columns (Site Name, Zip, Country) appear on both
+  // tabs so the user can fill in just one or split the data between
+  // them. On upload the importer joins the two tabs by Site Name.
+  // First column (Site Name) and header row are frozen so they stay
+  // visible while the user scrolls.
   async function downloadSitesTemplate() {
     const { Workbook } = await import('exceljs');
     const SE_GREEN_DARK = 'FF009530';
@@ -1809,55 +1813,40 @@ export function SitesView({ settings, updateSettings } = {}) {
     const ELECTRIC_UOM_OPTIONS = ['kWh', 'MWh', 'GWh'];
     const GAS_UOM_OPTIONS = ['therms', 'MMBtu', 'Dth', 'Mcf', 'Ccf', 'BTU'];
     const COUNTRY_OPTIONS = ['United States', 'Canada', 'Mexico', 'United Kingdom', 'Germany', 'France', 'Spain', 'Italy', 'Netherlands', 'Australia'];
+    const ELECTRIC_PRODUCT_OPTIONS = ['Fixed', 'Index', 'Block & Index', 'Heat Rate', 'Hybrid', 'Pass-through', 'Utility Default'];
+    const GAS_PRODUCT_OPTIONS = ['Fixed', 'Index', 'NYMEX + Basis', 'Block & Index', 'Hybrid', 'Pass-through', 'Utility Default'];
 
-    const FIELDS = [
-      { label: 'Site Name', required: true, hint: 'Row label. Required so the row isn\'t filtered as blank.' },
+    const COMMON_FIELDS = [
+      { label: 'Site Name', required: true, hint: 'Row label. Required so the row isn\'t filtered as blank. Use the same Site Name on the Electric Power and Gas tabs so the importer can merge them.' },
       { label: 'Zip / Postal Code', required: true, hint: 'US/Canadian zip or postal code — drives the utility lookup and state derivation.' },
       { label: 'Country', required: false, hint: 'Country of the site. Pick from the dropdown — falls back to the utility-rates file when blank.', validation: { type: 'list', options: COUNTRY_OPTIONS } },
+    ];
+    const ELECTRIC_FIELDS = [
       { label: 'Annual Electric Consumption', required: false, hint: 'Annual electricity usage. Pair with Electric UoM so the tool can convert to kWh for cost estimates. Used when Total Electric Cost is blank.' },
       { label: 'Electric UoM', required: false, hint: 'Unit of measure for the Electric Consumption column. Pick from the dropdown — defaults to kWh when blank.', validation: { type: 'list', options: ELECTRIC_UOM_OPTIONS } },
-      { label: 'Annual Gas Consumption', required: false, hint: 'Annual gas usage. Pair with Gas UoM so the tool can convert to therms. Used when Total Natural Gas Cost is blank.' },
-      { label: 'Gas UoM', required: false, hint: 'Unit of measure for the Gas Consumption column. Pick from the dropdown — defaults to therms when blank.', validation: { type: 'list', options: GAS_UOM_OPTIONS } },
       { label: 'Total Electric Cost ($)', required: false, hint: 'Actual annual electric spend. Overrides the consumption × rate estimate when provided.' },
-      { label: 'Total Natural Gas Cost ($)', required: false, hint: 'Actual annual gas spend. Overrides the consumption × rate estimate when provided.' },
       { label: 'Electric Supplier / Vendor', required: false, hint: 'If the value matches a utility from the rates file it lands in the Electric Utility column; otherwise it lands in the Supplier column.' },
       { label: 'Electric Contract Start', required: false, hint: 'Start date of the existing electric supply contract. Formatted as Excel Short Date.', dateColumn: true },
       { label: 'Electric Contract End', required: false, hint: 'End / expiration date of the existing electric supply contract. Formatted as Excel Short Date.', dateColumn: true },
       { label: 'Electric Contract Price ($/kWh)', required: false, hint: 'Per-kWh price under the existing electric supply contract. Captured for comparison against indicative state rates.', priceColumn: 'kwh' },
       { label: 'Electric Contract Name', required: false, hint: 'Human-readable identifier for the existing electric contract.' },
-      { label: 'Electric Product Type', required: false, hint: 'Pricing structure of the electric contract — pick from the dropdown or type a custom value.', validation: { type: 'list', options: ['Fixed', 'Index', 'Block & Index', 'Heat Rate', 'Hybrid', 'Pass-through', 'Utility Default'] } },
+      { label: 'Electric Product Type', required: false, hint: 'Pricing structure of the electric contract — pick from the dropdown or type a custom value.', validation: { type: 'list', options: ELECTRIC_PRODUCT_OPTIONS } },
+    ];
+    const GAS_FIELDS = [
+      { label: 'Annual Gas Consumption', required: false, hint: 'Annual gas usage. Pair with Gas UoM so the tool can convert to therms. Used when Total Natural Gas Cost is blank.' },
+      { label: 'Gas UoM', required: false, hint: 'Unit of measure for the Gas Consumption column. Pick from the dropdown — defaults to therms when blank.', validation: { type: 'list', options: GAS_UOM_OPTIONS } },
+      { label: 'Total Natural Gas Cost ($)', required: false, hint: 'Actual annual gas spend. Overrides the consumption × rate estimate when provided.' },
       { label: 'Gas Supplier / Vendor', required: false, hint: 'If the value matches a utility from the rates file it lands in the Gas Utility column; otherwise it lands in the Supplier column.' },
       { label: 'Gas Contract Start', required: false, hint: 'Start date of the existing gas supply contract. Formatted as Excel Short Date.', dateColumn: true },
       { label: 'Gas Contract End', required: false, hint: 'End / expiration date of the existing gas supply contract. Formatted as Excel Short Date.', dateColumn: true },
       { label: 'Gas Contract Price ($/therm)', required: false, hint: 'Per-therm price under the existing gas supply contract. Captured for comparison against indicative state rates.', priceColumn: 'therm' },
       { label: 'Gas Contract Name', required: false, hint: 'Human-readable identifier for the existing gas contract.' },
-      { label: 'Gas Product Type', required: false, hint: 'Pricing structure of the gas contract — pick from the dropdown or type a custom value.', validation: { type: 'list', options: ['Fixed', 'Index', 'NYMEX + Basis', 'Block & Index', 'Hybrid', 'Pass-through', 'Utility Default'] } },
+      { label: 'Gas Product Type', required: false, hint: 'Pricing structure of the gas contract — pick from the dropdown or type a custom value.', validation: { type: 'list', options: GAS_PRODUCT_OPTIONS } },
     ];
 
     const wb = new Workbook();
     wb.creator = 'Schneider Electric · Prospect Tracker';
     wb.created = new Date();
-
-    // Sheet 1: Sites — header row + 200 blank data rows pre-formatted
-    // and pre-validated. Freezing column A keeps Site Name visible
-    // when the user scrolls right through the wide column list.
-    const ws = wb.addWorksheet('Sites', { views: [{ state: 'frozen', xSplit: 1, ySplit: 1 }] });
-    ws.columns = FIELDS.map(f => ({ width: Math.max(String(f.label).length + 4, 16) }));
-    const headerRow = ws.getRow(1);
-    FIELDS.forEach((f, i) => {
-      const cell = headerRow.getCell(i + 1);
-      cell.value = f.label;
-      cell.font = { name: 'Nunito Sans', bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: f.required ? SE_GREEN_DARK : SE_SLATE } };
-      cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
-      cell.border = {
-        top:    { style: 'thin', color: { argb: SE_BORDER } },
-        bottom: { style: 'thin', color: { argb: SE_BORDER } },
-        left:   { style: 'thin', color: { argb: SE_BORDER } },
-        right:  { style: 'thin', color: { argb: SE_BORDER } },
-      };
-    });
-    headerRow.height = 32;
 
     // 1-based column index → Excel letter ("A", "B", ..., "AA").
     const colLetter = (idx) => {
@@ -1867,67 +1856,81 @@ export function SitesView({ settings, updateSettings } = {}) {
       return s;
     };
 
-    // Stamp text formatting (font, alignment, borders) onto the first
-    // 200 data rows so the template looks consistent the moment the
-    // user starts typing — even though every cell is blank on
-    // download. Numeric / date columns get right-aligned so typed
-    // numbers line up naturally; text columns stay left-aligned.
+    // Header + 200 pre-formatted blank rows, with column-wide number
+    // formats and dropdown validations stamped in place. Used twice —
+    // once per commodity tab.
     const DATA_FORMATTED_ROWS = 200;
     const DATA_LAST_ROW = 1 + DATA_FORMATTED_ROWS;
-    for (let r = 2; r <= DATA_LAST_ROW; r++) {
-      const row = ws.getRow(r);
-      FIELDS.forEach((f, i) => {
-        const cell = row.getCell(i + 1);
-        cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-        const rightAligned = !!(f.dateColumn || f.priceColumn)
-          || /(cost|spend|\$|consumption|kwh|therm|mmbtu|dth|mcf|ccf|price|rate)/.test(String(f.label).toLowerCase())
-          && !/uom|unit/.test(String(f.label).toLowerCase());
-        cell.alignment = { vertical: 'middle', horizontal: rightAligned ? 'right' : 'left', indent: 1 };
+    function renderCommoditySheet(name, fields) {
+      const ws = wb.addWorksheet(name, { views: [{ state: 'frozen', xSplit: 1, ySplit: 1 }] });
+      ws.columns = fields.map(f => ({ width: Math.max(String(f.label).length + 4, 16) }));
+      const headerRow = ws.getRow(1);
+      fields.forEach((f, i) => {
+        const cell = headerRow.getCell(i + 1);
+        cell.value = f.label;
+        cell.font = { name: 'Nunito Sans', bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: f.required ? SE_GREEN_DARK : SE_SLATE } };
+        cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
         cell.border = {
+          top:    { style: 'thin', color: { argb: SE_BORDER } },
           bottom: { style: 'thin', color: { argb: SE_BORDER } },
           left:   { style: 'thin', color: { argb: SE_BORDER } },
           right:  { style: 'thin', color: { argb: SE_BORDER } },
         };
       });
-      row.height = 18;
+      headerRow.height = 32;
+
+      for (let r = 2; r <= DATA_LAST_ROW; r++) {
+        const row = ws.getRow(r);
+        fields.forEach((f, i) => {
+          const cell = row.getCell(i + 1);
+          cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+          const lower = String(f.label).toLowerCase();
+          const rightAligned = !!(f.dateColumn || f.priceColumn)
+            || (/(cost|spend|\$|consumption|kwh|therm|mmbtu|dth|mcf|ccf|price|rate)/.test(lower) && !/uom|unit/.test(lower));
+          cell.alignment = { vertical: 'middle', horizontal: rightAligned ? 'right' : 'left', indent: 1 };
+          cell.border = {
+            bottom: { style: 'thin', color: { argb: SE_BORDER } },
+            left:   { style: 'thin', color: { argb: SE_BORDER } },
+            right:  { style: 'thin', color: { argb: SE_BORDER } },
+          };
+        });
+        row.height = 18;
+      }
+
+      fields.forEach((f, i) => {
+        const colIdx = i + 1;
+        const col = ws.getColumn(colIdx);
+        const lower = String(f.label).toLowerCase();
+        if (f.dateColumn) {
+          col.numFmt = 'm/d/yyyy';
+        } else if (f.priceColumn === 'kwh' || f.priceColumn === 'therm') {
+          col.numFmt = '"$"0.000';
+        } else if (/cost|spend|\$/.test(lower)) {
+          col.numFmt = '"$"#,##0';
+        } else if (/(consumption|kwh|therm|mmbtu|dth|mcf|ccf)/.test(lower) && !/uom|unit/.test(lower)) {
+          col.numFmt = '#,##0';
+        }
+        if (f.validation?.type === 'list') {
+          const letter = colLetter(colIdx);
+          const range = `${letter}2:${letter}${DATA_LAST_ROW}`;
+          ws.dataValidations.add(range, {
+            type: 'list',
+            allowBlank: true,
+            formulae: [`"${f.validation.options.join(',')}"`],
+            showInputMessage: true,
+            promptTitle: f.label,
+            prompt: `Pick one of: ${f.validation.options.join(', ')}`,
+          });
+        }
+      });
+
+      ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: fields.length } };
     }
 
-    // Column-wide number formats apply to every row (including blank
-    // ones), so a typed value picks up the format automatically.
-    // Validation dropdowns are scoped to the same 200-row range.
-    FIELDS.forEach((f, i) => {
-      const colIdx = i + 1;
-      const col = ws.getColumn(colIdx);
-      const lower = String(f.label).toLowerCase();
-      if (f.dateColumn) {
-        col.numFmt = 'm/d/yyyy';
-      } else if (f.priceColumn === 'kwh') {
-        col.numFmt = '"$"0.000';
-      } else if (f.priceColumn === 'therm') {
-        col.numFmt = '"$"0.000';
-      } else if (/cost|spend|\$/.test(lower)) {
-        col.numFmt = '"$"#,##0';
-      } else if (/(consumption|kwh|therm|mmbtu|dth|mcf|ccf)/.test(lower) && !/uom|unit/.test(lower)) {
-        col.numFmt = '#,##0';
-      }
-      if (f.validation?.type === 'list') {
-        const letter = colLetter(colIdx);
-        const range = `${letter}2:${letter}${DATA_LAST_ROW}`;
-        // Excel inline-list formula: `"option1,option2,..."` (single
-        // quoted string). Commas in option text would break the list,
-        // but none of our UoM / country values include commas.
-        ws.dataValidations.add(range, {
-          type: 'list',
-          allowBlank: true,
-          formulae: [`"${f.validation.options.join(',')}"`],
-          showInputMessage: true,
-          promptTitle: f.label,
-          prompt: `Pick one of: ${f.validation.options.join(', ')}`,
-        });
-      }
-    });
-
-    ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: FIELDS.length } };
+    renderCommoditySheet('Electric Power', [...COMMON_FIELDS, ...ELECTRIC_FIELDS]);
+    renderCommoditySheet('Gas', [...COMMON_FIELDS, ...GAS_FIELDS]);
+    const FIELDS = [...COMMON_FIELDS, ...ELECTRIC_FIELDS, ...GAS_FIELDS];
 
     // Sheet 2: Instructions
     const notes = wb.addWorksheet('Instructions');
@@ -1935,10 +1938,10 @@ export function SitesView({ settings, updateSettings } = {}) {
 
     notes.mergeCells(1, 1, 1, 3);
     const intro = notes.getCell(1, 1);
-    intro.value = 'Site Name and Zip / Postal Code are required. Everything else is optional — the Utility Lookup page derives State, Utility, Market, Rate, and Total Cost automatically from the rates file. Use the Electric UoM / Gas UoM dropdowns to choose what unit your consumption values are in; the tool converts to kWh / therms internally.';
+    intro.value = 'Fill in the Electric Power tab and the Gas tab separately. Use the SAME Site Name on both tabs for each site — the importer joins the two tabs together by Site Name on upload. Site Name and Zip / Postal Code are required on each tab the site appears on. Everything else is optional. The Utility Lookup page derives State, Utility, Market, Rate, and Total Cost automatically from the rates file. Use the Electric UoM / Gas UoM dropdowns to choose what unit your consumption values are in; the tool converts to kWh / therms internally.';
     intro.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
     intro.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
-    notes.getRow(1).height = 44;
+    notes.getRow(1).height = 80;
 
     const notesHeader = notes.getRow(2);
     ['Column', 'Required', 'Description'].forEach((h, i) => {

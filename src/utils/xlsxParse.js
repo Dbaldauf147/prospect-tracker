@@ -72,6 +72,72 @@ function parseSheet(sheet, sheetName) {
   return { sheetName, rows, headers };
 }
 
+// Detects the two-tab Utility Lookup template (one "Electric Power"
+// sheet + one "Gas" / "Natural Gas" sheet sharing a Site Name
+// column) and returns the merged rows + union of headers. Returns
+// `null` when the workbook doesn't look like that template, so the
+// caller can fall back to parseBestSheet. Common columns (Site Name,
+// Zip, Country) are deduplicated; commodity-specific columns from
+// both sheets are preserved in document order. Rows are matched
+// case-insensitively on Site Name, and the first non-empty value
+// wins when a common column appears on both tabs.
+export function parseSplitSitesTemplate(buffer) {
+  const wb = XLSX.read(buffer, { type: 'array' });
+  if (!wb.SheetNames?.length) return null;
+  const electricName = wb.SheetNames.find(n => /^electric(\s*power)?$/i.test(String(n).trim()));
+  const gasName = wb.SheetNames.find(n => /^(natural\s*)?gas$/i.test(String(n).trim()));
+  if (!electricName || !gasName) return null;
+  const electric = parseSheet(wb.Sheets[electricName], electricName);
+  const gas = parseSheet(wb.Sheets[gasName], gasName);
+  if (electric.rows.length === 0 && gas.rows.length === 0) return null;
+
+  const findSiteCol = (headers) => headers.find(h => /^site\s*name$/i.test(String(h).trim())) || headers[0];
+  const elecSiteCol = findSiteCol(electric.headers);
+  const gasSiteCol = findSiteCol(gas.headers);
+  const normKey = (s) => String(s ?? '').trim().toLowerCase();
+
+  // Union of headers: electric first, then any gas headers that
+  // aren't already present (the common columns appear in electric).
+  const headers = [...electric.headers];
+  for (const h of gas.headers) {
+    if (!headers.includes(h)) headers.push(h);
+  }
+
+  // Merge by Site Name. First sheet to mention a site sets the row
+  // order; subsequent rows for the same site fill in any blank cells.
+  const merged = new Map();
+  let order = 0;
+  const ingest = (sourceRows, sourceSiteCol) => {
+    for (const r of sourceRows) {
+      const key = normKey(r[sourceSiteCol]);
+      if (!key) continue;
+      let entry = merged.get(key);
+      if (!entry) {
+        entry = { row: {}, order: order++ };
+        for (const h of headers) entry.row[h] = '';
+        merged.set(key, entry);
+      }
+      for (const h of headers) {
+        const v = r[h];
+        if (v == null || v === '') continue;
+        if (entry.row[h] == null || entry.row[h] === '') entry.row[h] = v;
+      }
+    }
+  };
+  ingest(electric.rows, elecSiteCol);
+  ingest(gas.rows, gasSiteCol);
+
+  const rows = Array.from(merged.values())
+    .sort((a, b) => a.order - b.order)
+    .map(e => e.row);
+
+  return {
+    sheetName: `${electricName} + ${gasName}`,
+    headers,
+    rows,
+  };
+}
+
 // Parses an xlsx/csv buffer and returns the sheet with the most rows.
 // If `options.preferSheetName` is a regex, any sheet whose name
 // matches and parses with >0 rows wins over the raw row-count leader —
