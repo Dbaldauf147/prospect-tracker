@@ -1817,9 +1817,9 @@ export function SitesView({ settings, updateSettings } = {}) {
     const GAS_PRODUCT_OPTIONS = ['Fixed', 'Index', 'NYMEX + Basis', 'Block & Index', 'Hybrid', 'Pass-through', 'Utility Default'];
 
     const COMMON_FIELDS = [
-      { label: 'Site Name', required: true, hint: 'Row label. Required so the row isn\'t filtered as blank. Use the same Site Name on the Electric Power and Gas tabs so the importer can merge them.' },
-      { label: 'Zip / Postal Code', required: true, hint: 'US/Canadian zip or postal code — drives the utility lookup and state derivation.' },
-      { label: 'Country', required: false, hint: 'Country of the site. Pick from the dropdown — falls back to the utility-rates file when blank.', validation: { type: 'list', options: COUNTRY_OPTIONS } },
+      { label: 'Site Name', required: true, hint: 'Row label. Required so the row isn\'t filtered as blank. Enter on the Electric Power tab — the Gas tab pulls Site Name from there via formula.' },
+      { label: 'Zip / Postal Code', required: true, hint: 'US/Canadian zip or postal code — drives the utility lookup and state derivation. Enter on the Electric Power tab; the Gas tab pulls from there via formula.' },
+      { label: 'Country', greenHeader: true, hint: 'Country of the site. Pick from the dropdown on the Electric Power tab — the Gas tab pulls from there via formula. Falls back to the utility-rates file when blank.', validation: { type: 'list', options: COUNTRY_OPTIONS } },
     ];
     const ELECTRIC_FIELDS = [
       { label: 'Annual Electric Consumption', required: false, hint: 'Annual electricity usage. Pair with Electric UoM so the tool can convert to kWh for cost estimates. Used when Total Electric Cost is blank.' },
@@ -1861,7 +1861,7 @@ export function SitesView({ settings, updateSettings } = {}) {
     // once per commodity tab.
     const DATA_FORMATTED_ROWS = 200;
     const DATA_LAST_ROW = 1 + DATA_FORMATTED_ROWS;
-    function renderCommoditySheet(name, fields) {
+    function renderCommoditySheet(name, fields, options = {}) {
       const ws = wb.addWorksheet(name, { views: [{ state: 'frozen', xSplit: 1, ySplit: 1 }] });
       ws.columns = fields.map(f => ({ width: Math.max(String(f.label).length + 4, 16) }));
       const headerRow = ws.getRow(1);
@@ -1869,7 +1869,8 @@ export function SitesView({ settings, updateSettings } = {}) {
         const cell = headerRow.getCell(i + 1);
         cell.value = f.label;
         cell.font = { name: 'Nunito Sans', bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: f.required ? SE_GREEN_DARK : SE_SLATE } };
+        const useGreen = f.required || f.greenHeader;
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: useGreen ? SE_GREEN_DARK : SE_SLATE } };
         cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
         cell.border = {
           top:    { style: 'thin', color: { argb: SE_BORDER } },
@@ -1911,7 +1912,13 @@ export function SitesView({ settings, updateSettings } = {}) {
         } else if (/(consumption|kwh|therm|mmbtu|dth|mcf|ccf)/.test(lower) && !/uom|unit/.test(lower)) {
           col.numFmt = '#,##0';
         }
-        if (f.validation?.type === 'list') {
+        // Skip dropdown validation on linked columns — the value
+        // there comes from a formula referencing the source sheet,
+        // and stacking list validation on top of a formula leads to
+        // confusing prompts ("you must pick from the list") when
+        // the source cell is blank.
+        const isLinked = options.linkColumns && colIdx <= options.linkColumns.count;
+        if (f.validation?.type === 'list' && !isLinked) {
           const letter = colLetter(colIdx);
           const range = `${letter}2:${letter}${DATA_LAST_ROW}`;
           ws.dataValidations.add(range, {
@@ -1925,11 +1932,32 @@ export function SitesView({ settings, updateSettings } = {}) {
         }
       });
 
+      // Mirror the leftmost N columns from a source sheet via Excel
+      // formulas. Wrapped in IF(... = "", "", ...) so empty source
+      // rows stay blank instead of rendering as 0. Light gray font
+      // signals "computed value — don't type here, go to the source
+      // tab instead".
+      if (options.linkColumns) {
+        const { fromSheet, count } = options.linkColumns;
+        const quotedSheet = `'${fromSheet}'`;
+        for (let r = 2; r <= DATA_LAST_ROW; r++) {
+          for (let i = 0; i < count; i++) {
+            const letter = colLetter(i + 1);
+            const ref = `${quotedSheet}!${letter}${r}`;
+            const cell = ws.getRow(r).getCell(i + 1);
+            cell.value = { formula: `IF(${ref}="","",${ref})` };
+            cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_SLATE }, italic: true };
+          }
+        }
+      }
+
       ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: fields.length } };
     }
 
     renderCommoditySheet('Electric Power', [...COMMON_FIELDS, ...ELECTRIC_FIELDS]);
-    renderCommoditySheet('Gas', [...COMMON_FIELDS, ...GAS_FIELDS]);
+    renderCommoditySheet('Gas', [...COMMON_FIELDS, ...GAS_FIELDS], {
+      linkColumns: { fromSheet: 'Electric Power', count: COMMON_FIELDS.length },
+    });
     const FIELDS = [...COMMON_FIELDS, ...ELECTRIC_FIELDS, ...GAS_FIELDS];
 
     // Sheet 2: Instructions
