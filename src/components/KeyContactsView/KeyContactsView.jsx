@@ -1180,7 +1180,7 @@ function KeyContactsViewInner({
   }
 
   const DEFAULT_CONTACT_COL_WIDTHS = {
-    name: 180, category: 160, title: 200, company: 200, suggestedCompany: 220, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, tags: 200,
+    name: 180, category: 160, title: 200, company: 200, suggestedCompany: 220, email: 240, phone: 140, lastOutreach: 160, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, tags: 200,
   };
   // Column visibility — every contact column except Name (always
   // shown; it's the primary identifier). Stored per-page so the Key,
@@ -1188,7 +1188,7 @@ function KeyContactsViewInner({
   // State sit alongside Location so a user who wants the combined
   // "City, State" string keeps it, while the separate columns are
   // available for filtering / sorting on either field independently.
-  const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', 'events', 'tags'];
+  const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', 'email', 'phone', 'lastOutreach', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', 'events', 'tags'];
   const [visibleCols, setVisibleCols] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(lsKey('visible-cols')));
@@ -1668,6 +1668,43 @@ function KeyContactsViewInner({
     ? sortedRows.filter(r => (r.companyName || '').toLowerCase().includes(q))
     : sortedRows;
 
+  // Latest call / email per contact, sourced from the
+  // hubspot-activity-cache localStorage entry that the Activity tab
+  // populates. Keyed by contact id and (lowercased) email so we hit on
+  // either an HubSpot-association id or an address match. Returns the
+  // newest event of either type.
+  const lastOutreachByContact = useMemo(() => {
+    const byId = new Map();
+    const byEmail = new Map();
+    let raw;
+    try { raw = JSON.parse(localStorage.getItem('hubspot-activity-cache') || 'null'); } catch { raw = null; }
+    if (!raw) return { byId, byEmail };
+    const record = (key, map, entry) => {
+      if (!key) return;
+      const cur = map.get(key);
+      if (!cur || new Date(entry.timestamp || 0) > new Date(cur.timestamp || 0)) map.set(key, entry);
+    };
+    for (const e of raw.emails || []) {
+      const subject = (e.hs_email_subject || '').toLowerCase();
+      if (subject.includes('(sample email)')) continue;
+      const ts = e.hs_timestamp;
+      if (!ts) continue;
+      const entry = { type: 'email', timestamp: ts };
+      for (const id of e._contactIds || []) record(String(id), byId, entry);
+      const to = (e.hs_email_to_email || '').toLowerCase().split(/[;,]/).map(s => s.trim()).filter(Boolean);
+      const from = (e.hs_email_from_email || '').toLowerCase().trim();
+      for (const addr of to) record(addr, byEmail, entry);
+      if (from) record(from, byEmail, entry);
+    }
+    for (const c of raw.calls || []) {
+      const ts = c.hs_timestamp;
+      if (!ts) continue;
+      const entry = { type: 'call', timestamp: ts };
+      for (const id of c._contactIds || []) record(String(id), byId, entry);
+    }
+    return { byId, byEmail };
+  }, [rows]);
+
   // Flat list of every Dan Key Target contact, paired with the matched
   // prospect (when one) so we can route the open-prospect arrow.
   const flatContacts = useMemo(() => {
@@ -1675,19 +1712,29 @@ function KeyContactsViewInner({
     for (const row of rows) {
       if (row.prospect) prospectByKey.set(row.key, row.prospect);
     }
+    const { byId, byEmail } = lastOutreachByContact;
     const out = [];
     for (const row of rows) {
       for (const c of row.contacts) {
+        const idHit = byId.get(String(c.id || ''));
+        const emailHit = byEmail.get(String(c.email || '').toLowerCase());
+        let lastOutreach = null;
+        if (idHit && emailHit) {
+          lastOutreach = new Date(idHit.timestamp) >= new Date(emailHit.timestamp) ? idHit : emailHit;
+        } else {
+          lastOutreach = idHit || emailHit || null;
+        }
         out.push({
           ...c,
           companyName: row.companyName,
           prospect: row.prospect || null,
           rowKey: row.key,
+          lastOutreach,
         });
       }
     }
     return out;
-  }, [rows]);
+  }, [rows, lastOutreachByContact]);
 
   const sortedContacts = useMemo(() => {
     const arr = [...flatContacts];
@@ -1710,6 +1757,12 @@ function KeyContactsViewInner({
         case 'country': cmp = (a.country || '').localeCompare(b.country || ''); break;
         case 'events':  cmp = (contactEvents[String(a.id || '')] || '').localeCompare(contactEvents[String(b.id || '')] || ''); break;
         case 'met':     cmp = Number(!!a.metInPerson) - Number(!!b.metInPerson); break;
+        case 'lastOutreach': {
+          const at = a.lastOutreach?.timestamp ? new Date(a.lastOutreach.timestamp).getTime() : 0;
+          const bt = b.lastOutreach?.timestamp ? new Date(b.lastOutreach.timestamp).getTime() : 0;
+          cmp = at - bt;
+          break;
+        }
         default: cmp = 0;
       }
       if (contactSortDir === 'desc') cmp = -cmp;
@@ -1734,6 +1787,13 @@ function KeyContactsViewInner({
     salesNav: c => '',
     met:      c => c.metInPerson ? 'yes' : 'no',
     events:   c => contactEvents[String(c.id || '')] || '',
+    lastOutreach: c => {
+      if (!c.lastOutreach?.timestamp) return '';
+      try {
+        const d = new Date(c.lastOutreach.timestamp);
+        return `${c.lastOutreach.type} ${d.toLocaleDateString()}`;
+      } catch { return c.lastOutreach.type || ''; }
+    },
   };
   const activeContactFilters = Object.entries(contactColFilters)
     .map(([k, v]) => [k, String(v || '').trim().toLowerCase()])
@@ -1873,6 +1933,7 @@ function KeyContactsViewInner({
                     ...(showSuggestedCompany ? [{ key: 'suggestedCompany', label: 'Suggested Company' }] : []),
                     { key: 'email', label: 'Email' },
                     { key: 'phone', label: 'Phone' },
+                    { key: 'lastOutreach', label: 'Last Outreach' },
                     { key: 'location', label: 'Location' },
                     { key: 'city', label: 'City' },
                     { key: 'state', label: 'State' },
@@ -2167,6 +2228,7 @@ function KeyContactsViewInner({
               ...(showSuggestedCompany ? [{ key: 'suggestedCompany', label: 'Suggested Company' }] : []),
               { key: 'email',    label: 'Email' },
               { key: 'phone',    label: 'Phone' },
+              { key: 'lastOutreach', label: 'Last Outreach' },
               { key: 'location', label: 'Location' },
               { key: 'city',     label: 'City' },
               { key: 'state',    label: 'State' },
@@ -2454,6 +2516,37 @@ function KeyContactsViewInner({
                       onCommit={v => inlineUpdateField(c.raw || c, 'phone', v)}
                       textColor="#64748B"
                     />
+                    )}
+                    {visibleSet.has('lastOutreach') && (
+                      <div style={{ padding: '0.45rem 0.6rem', fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden' }}>
+                        {c.lastOutreach?.timestamp ? (() => {
+                          const d = new Date(c.lastOutreach.timestamp);
+                          const dateStr = Number.isFinite(d.getTime())
+                            ? d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+                            : '';
+                          const isCall = c.lastOutreach.type === 'call';
+                          const pill = isCall
+                            ? { bg: '#E0F2FE', border: '#7DD3FC', color: '#075985', label: 'Call' }
+                            : { bg: '#F1F5F9', border: '#CBD5E1', color: '#334155', label: 'Email' };
+                          return (
+                            <>
+                              <span
+                                style={{
+                                  background: pill.bg,
+                                  border: `1px solid ${pill.border}`,
+                                  color: pill.color,
+                                  padding: '1px 6px',
+                                  borderRadius: 999,
+                                  fontSize: '0.6rem',
+                                  fontWeight: 700,
+                                  whiteSpace: 'nowrap',
+                                }}
+                              >{pill.label}</span>
+                              <span style={{ color: '#475569', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={d.toLocaleString()}>{dateStr}</span>
+                            </>
+                          );
+                        })() : <span style={{ color: '#CBD5E1' }}>—</span>}
+                      </div>
                     )}
                     {visibleSet.has('location') && (
                     <InlineCell
