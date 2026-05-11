@@ -1791,13 +1791,14 @@ export function SitesView({ settings, updateSettings } = {}) {
     return sheets;
   }, [overviewByCommodity, contractOverviewRows, summaryRows]);
 
-  // Blank Sites-upload template — column headers + three sample rows
-  // + an Instructions sheet. Mirrors the TARGET_FIELDS list rendered
-  // inside the upload-mapping modal so a user who downloads the
-  // template, fills it in, and uploads it lands every field directly
-  // without needing to re-map columns. The UoM columns have inline
-  // data-validation dropdowns so users pick from the supported units
-  // instead of typing free-form strings the converter doesn't know.
+  // Blank Sites-upload template — header row + 200 empty data rows
+  // that already carry text formatting, number formats, and dropdown
+  // validations, plus an Instructions sheet. Mirrors the
+  // TARGET_FIELDS list rendered inside the upload-mapping modal so a
+  // user who downloads the template, fills it in, and uploads it
+  // lands every field directly without needing to re-map columns.
+  // First column (Site Name) is frozen so it stays visible while the
+  // user scrolls right through the wide column set.
   async function downloadSitesTemplate() {
     const { Workbook } = await import('exceljs');
     const SE_GREEN_DARK = 'FF009530';
@@ -1809,40 +1810,38 @@ export function SitesView({ settings, updateSettings } = {}) {
     const GAS_UOM_OPTIONS = ['therms', 'MMBtu', 'Dth', 'Mcf', 'Ccf', 'BTU'];
     const COUNTRY_OPTIONS = ['United States', 'Canada', 'Mexico', 'United Kingdom', 'Germany', 'France', 'Spain', 'Italy', 'Netherlands', 'Australia'];
 
-    // Excel date objects are recognized by the workbook; the numFmt
-    // below stamps "Short Date" on the column so empty cells still
-    // pick up the format when the user types a date later.
-    const d = (s) => (s ? new Date(s) : '');
     const FIELDS = [
-      { label: 'Site Name', required: true, hint: 'Row label. Required so the row isn\'t filtered as blank.', examples: ['Downtown HQ', 'Midwest Plant 2', 'West Coast Warehouse'] },
-      { label: 'Zip / Postal Code', required: true, hint: 'US/Canadian zip or postal code — drives the utility lookup and state derivation.', examples: ['10001', '60601', '90210'] },
-      { label: 'Country', required: false, hint: 'Country of the site. Pick from the dropdown — falls back to the utility-rates file when blank.', examples: ['United States', 'United States', 'United States'], validation: { type: 'list', options: COUNTRY_OPTIONS } },
-      { label: 'Annual Electric Consumption', required: false, hint: 'Annual electricity usage. Pair with Electric UoM so the tool can convert to kWh for cost estimates. Used when Total Electric Cost is blank.', examples: [3500000, 1200, ''] },
-      { label: 'Electric UoM', required: false, hint: 'Unit of measure for the Electric Consumption column. Pick from the dropdown — defaults to kWh when blank.', examples: ['kWh', 'MWh', ''], validation: { type: 'list', options: ELECTRIC_UOM_OPTIONS } },
-      { label: 'Annual Gas Consumption', required: false, hint: 'Annual gas usage. Pair with Gas UoM so the tool can convert to therms. Used when Total Natural Gas Cost is blank.', examples: [12000, '', 4500] },
-      { label: 'Gas UoM', required: false, hint: 'Unit of measure for the Gas Consumption column. Pick from the dropdown — defaults to therms when blank.', examples: ['therms', '', 'MMBtu'], validation: { type: 'list', options: GAS_UOM_OPTIONS } },
-      { label: 'Total Electric Cost ($)', required: false, hint: 'Actual annual electric spend. Overrides the consumption × rate estimate when provided.', examples: ['', '', 450000] },
-      { label: 'Total Natural Gas Cost ($)', required: false, hint: 'Actual annual gas spend. Overrides the consumption × rate estimate when provided.', examples: ['', '', 65000] },
-      { label: 'Electric Supplier / Vendor', required: false, hint: 'If the value matches a utility from the rates file it lands in the Electric Utility column; otherwise it lands in the Supplier column.', examples: ['Con Edison', 'ComEd', 'Constellation Energy'] },
-      { label: 'Electric Contract Start', required: false, hint: 'Start date of the existing electric supply contract. Formatted as Excel Short Date.', examples: [d('2024-01-01'), '', d('2023-06-15')], dateColumn: true },
-      { label: 'Electric Contract End', required: false, hint: 'End / expiration date of the existing electric supply contract. Formatted as Excel Short Date.', examples: [d('2026-12-31'), '', d('2026-06-14')], dateColumn: true },
-      { label: 'Electric Contract Price ($/kWh)', required: false, hint: 'Per-kWh price under the existing electric supply contract. Captured for comparison against indicative state rates.', examples: [0.087, 0.061, 0.072], priceColumn: 'kwh' },
-      { label: 'Electric Contract Name', required: false, hint: 'Human-readable identifier for the existing electric contract.', examples: ['Constellation - NE Cluster 2024', 'ComEd Default Supply', ''] },
-      { label: 'Electric Product Type', required: false, hint: 'Pricing structure of the electric contract — pick from the dropdown or type a custom value.', examples: ['Fixed', 'Index', 'Block & Index'], validation: { type: 'list', options: ['Fixed', 'Index', 'Block & Index', 'Heat Rate', 'Hybrid', 'Pass-through', 'Utility Default'] } },
-      { label: 'Gas Supplier / Vendor', required: false, hint: 'If the value matches a utility from the rates file it lands in the Gas Utility column; otherwise it lands in the Supplier column.', examples: ['National Grid', '', 'SoCalGas'] },
-      { label: 'Gas Contract Start', required: false, hint: 'Start date of the existing gas supply contract. Formatted as Excel Short Date.', examples: [d('2024-04-01'), '', d('2024-01-01')], dateColumn: true },
-      { label: 'Gas Contract End', required: false, hint: 'End / expiration date of the existing gas supply contract. Formatted as Excel Short Date.', examples: [d('2026-03-31'), '', d('2025-12-31')], dateColumn: true },
-      { label: 'Gas Contract Price ($/therm)', required: false, hint: 'Per-therm price under the existing gas supply contract. Captured for comparison against indicative state rates.', examples: [0.65, '', 0.78], priceColumn: 'therm' },
-      { label: 'Gas Contract Name', required: false, hint: 'Human-readable identifier for the existing gas contract.', examples: ['Direct Energy Northeast Block', '', 'SoCalGas Core Aggregation'] },
-      { label: 'Gas Product Type', required: false, hint: 'Pricing structure of the gas contract — pick from the dropdown or type a custom value.', examples: ['NYMEX + Basis', '', 'Fixed'], validation: { type: 'list', options: ['Fixed', 'Index', 'NYMEX + Basis', 'Block & Index', 'Hybrid', 'Pass-through', 'Utility Default'] } },
+      { label: 'Site Name', required: true, hint: 'Row label. Required so the row isn\'t filtered as blank.' },
+      { label: 'Zip / Postal Code', required: true, hint: 'US/Canadian zip or postal code — drives the utility lookup and state derivation.' },
+      { label: 'Country', required: false, hint: 'Country of the site. Pick from the dropdown — falls back to the utility-rates file when blank.', validation: { type: 'list', options: COUNTRY_OPTIONS } },
+      { label: 'Annual Electric Consumption', required: false, hint: 'Annual electricity usage. Pair with Electric UoM so the tool can convert to kWh for cost estimates. Used when Total Electric Cost is blank.' },
+      { label: 'Electric UoM', required: false, hint: 'Unit of measure for the Electric Consumption column. Pick from the dropdown — defaults to kWh when blank.', validation: { type: 'list', options: ELECTRIC_UOM_OPTIONS } },
+      { label: 'Annual Gas Consumption', required: false, hint: 'Annual gas usage. Pair with Gas UoM so the tool can convert to therms. Used when Total Natural Gas Cost is blank.' },
+      { label: 'Gas UoM', required: false, hint: 'Unit of measure for the Gas Consumption column. Pick from the dropdown — defaults to therms when blank.', validation: { type: 'list', options: GAS_UOM_OPTIONS } },
+      { label: 'Total Electric Cost ($)', required: false, hint: 'Actual annual electric spend. Overrides the consumption × rate estimate when provided.' },
+      { label: 'Total Natural Gas Cost ($)', required: false, hint: 'Actual annual gas spend. Overrides the consumption × rate estimate when provided.' },
+      { label: 'Electric Supplier / Vendor', required: false, hint: 'If the value matches a utility from the rates file it lands in the Electric Utility column; otherwise it lands in the Supplier column.' },
+      { label: 'Electric Contract Start', required: false, hint: 'Start date of the existing electric supply contract. Formatted as Excel Short Date.', dateColumn: true },
+      { label: 'Electric Contract End', required: false, hint: 'End / expiration date of the existing electric supply contract. Formatted as Excel Short Date.', dateColumn: true },
+      { label: 'Electric Contract Price ($/kWh)', required: false, hint: 'Per-kWh price under the existing electric supply contract. Captured for comparison against indicative state rates.', priceColumn: 'kwh' },
+      { label: 'Electric Contract Name', required: false, hint: 'Human-readable identifier for the existing electric contract.' },
+      { label: 'Electric Product Type', required: false, hint: 'Pricing structure of the electric contract — pick from the dropdown or type a custom value.', validation: { type: 'list', options: ['Fixed', 'Index', 'Block & Index', 'Heat Rate', 'Hybrid', 'Pass-through', 'Utility Default'] } },
+      { label: 'Gas Supplier / Vendor', required: false, hint: 'If the value matches a utility from the rates file it lands in the Gas Utility column; otherwise it lands in the Supplier column.' },
+      { label: 'Gas Contract Start', required: false, hint: 'Start date of the existing gas supply contract. Formatted as Excel Short Date.', dateColumn: true },
+      { label: 'Gas Contract End', required: false, hint: 'End / expiration date of the existing gas supply contract. Formatted as Excel Short Date.', dateColumn: true },
+      { label: 'Gas Contract Price ($/therm)', required: false, hint: 'Per-therm price under the existing gas supply contract. Captured for comparison against indicative state rates.', priceColumn: 'therm' },
+      { label: 'Gas Contract Name', required: false, hint: 'Human-readable identifier for the existing gas contract.' },
+      { label: 'Gas Product Type', required: false, hint: 'Pricing structure of the gas contract — pick from the dropdown or type a custom value.', validation: { type: 'list', options: ['Fixed', 'Index', 'NYMEX + Basis', 'Block & Index', 'Hybrid', 'Pass-through', 'Utility Default'] } },
     ];
 
     const wb = new Workbook();
     wb.creator = 'Schneider Electric · Prospect Tracker';
     wb.created = new Date();
 
-    // Sheet 1: Sites — headers + three sample rows
-    const ws = wb.addWorksheet('Sites', { views: [{ state: 'frozen', ySplit: 1 }] });
+    // Sheet 1: Sites — header row + 200 blank data rows pre-formatted
+    // and pre-validated. Freezing column A keeps Site Name visible
+    // when the user scrolls right through the wide column list.
+    const ws = wb.addWorksheet('Sites', { views: [{ state: 'frozen', xSplit: 1, ySplit: 1 }] });
     ws.columns = FIELDS.map(f => ({ width: Math.max(String(f.label).length + 4, 16) }));
     const headerRow = ws.getRow(1);
     FIELDS.forEach((f, i) => {
@@ -1868,17 +1867,22 @@ export function SitesView({ settings, updateSettings } = {}) {
       return s;
     };
 
-    const exampleCount = Math.max(...FIELDS.map(f => f.examples.length));
-    for (let r = 0; r < exampleCount; r++) {
-      const row = ws.getRow(2 + r);
+    // Stamp text formatting (font, alignment, borders) onto the first
+    // 200 data rows so the template looks consistent the moment the
+    // user starts typing — even though every cell is blank on
+    // download. Numeric / date columns get right-aligned so typed
+    // numbers line up naturally; text columns stay left-aligned.
+    const DATA_FORMATTED_ROWS = 200;
+    const DATA_LAST_ROW = 1 + DATA_FORMATTED_ROWS;
+    for (let r = 2; r <= DATA_LAST_ROW; r++) {
+      const row = ws.getRow(r);
       FIELDS.forEach((f, i) => {
-        const v = f.examples[r];
         const cell = row.getCell(i + 1);
-        cell.value = v === '' || v == null ? null : v;
         cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-        const isNumeric = typeof v === 'number';
-        const isDate = v instanceof Date;
-        cell.alignment = { vertical: 'middle', horizontal: (isNumeric || isDate) ? 'right' : 'left', indent: 1 };
+        const rightAligned = !!(f.dateColumn || f.priceColumn)
+          || /(cost|spend|\$|consumption|kwh|therm|mmbtu|dth|mcf|ccf|price|rate)/.test(String(f.label).toLowerCase())
+          && !/uom|unit/.test(String(f.label).toLowerCase());
+        cell.alignment = { vertical: 'middle', horizontal: rightAligned ? 'right' : 'left', indent: 1 };
         cell.border = {
           bottom: { style: 'thin', color: { argb: SE_BORDER } },
           left:   { style: 'thin', color: { argb: SE_BORDER } },
@@ -1888,12 +1892,9 @@ export function SitesView({ settings, updateSettings } = {}) {
       row.height = 18;
     }
 
-    // Apply column-wide number formats + data validation across the
-    // first 1000 data rows so the formatting / dropdowns persist when
-    // the user pastes rows beyond the three sample rows. Excel honors
-    // numFmt on blank cells, so the format sticks even for rows that
-    // start empty.
-    const DATA_LAST_ROW = 1001;
+    // Column-wide number formats apply to every row (including blank
+    // ones), so a typed value picks up the format automatically.
+    // Validation dropdowns are scoped to the same 200-row range.
     FIELDS.forEach((f, i) => {
       const colIdx = i + 1;
       const col = ws.getColumn(colIdx);
