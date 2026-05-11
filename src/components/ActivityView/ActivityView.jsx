@@ -33,7 +33,14 @@ function companiesMatchFuzz(a, b) {
 function loadCache() {
   try { return JSON.parse(localStorage.getItem(CACHE_KEY)); } catch { return null; }
 }
-function saveCache(data) { try { localStorage.setItem(CACHE_KEY, JSON.stringify(data)); } catch (err) { console.warn('ActivityView cache write skipped (quota):', err?.message || err); } }
+function saveCache(data) {
+  try {
+    localStorage.setItem(CACHE_KEY, JSON.stringify(data));
+    // Notify in-tab consumers (e.g. the Last Outreach column on
+    // KeyContactsView) since the `storage` event only fires across tabs.
+    window.dispatchEvent(new CustomEvent('hubspot-activity-cache-updated'));
+  } catch (err) { console.warn('ActivityView cache write skipped (quota):', err?.message || err); }
+}
 
 function fmtDate(dateStr) {
   if (!dateStr) return '—';

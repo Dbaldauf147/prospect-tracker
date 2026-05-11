@@ -1180,7 +1180,7 @@ function KeyContactsViewInner({
   }
 
   const DEFAULT_CONTACT_COL_WIDTHS = {
-    name: 180, category: 160, title: 200, company: 200, suggestedCompany: 220, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, tags: 200,
+    name: 180, category: 160, title: 200, company: 200, suggestedCompany: 220, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, tags: 200, lastOutreach: 160,
   };
   // Column visibility — every contact column except Name (always
   // shown; it's the primary identifier). Stored per-page so the Key,
@@ -1188,11 +1188,21 @@ function KeyContactsViewInner({
   // State sit alongside Location so a user who wants the combined
   // "City, State" string keeps it, while the separate columns are
   // available for filtering / sorting on either field independently.
-  const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', 'events', 'tags'];
+  const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', 'events', 'tags', 'lastOutreach'];
   const [visibleCols, setVisibleCols] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(lsKey('visible-cols')));
-      if (Array.isArray(saved) && saved.length > 0) return saved;
+      if (Array.isArray(saved) && saved.length > 0) {
+        // One-time migration: surface the new Last Outreach column for
+        // users whose saved visibility predates it. Migration flag is
+        // sticky so we don't re-add the column if the user hides it.
+        const migKey = lsKey('visible-cols-mig-lastOutreach');
+        if (!localStorage.getItem(migKey) && !saved.includes('lastOutreach')) {
+          try { localStorage.setItem(migKey, '1'); } catch {}
+          return [...saved, 'lastOutreach'];
+        }
+        return saved;
+      }
     } catch {}
     return DEFAULT_VISIBLE_COLS;
   });
@@ -1255,6 +1265,26 @@ function KeyContactsViewInner({
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
 
+  // Activity cache (emails / calls / meetings) populated by the
+  // Activity tab — used to drive the "Last Outreach" column. Read on
+  // mount and refreshed on the custom event from ActivityView's
+  // saveCache plus the cross-tab `storage` event.
+  const [activityCache, setActivityCache] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('hubspot-activity-cache')); } catch { return null; }
+  });
+  useEffect(() => {
+    const reload = () => {
+      try { setActivityCache(JSON.parse(localStorage.getItem('hubspot-activity-cache'))); } catch { setActivityCache(null); }
+    };
+    const onStorage = (e) => { if (e.key === 'hubspot-activity-cache') reload(); };
+    window.addEventListener('hubspot-activity-cache-updated', reload);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener('hubspot-activity-cache-updated', reload);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
+
   // Tag options for the inline Tags column. Union of (a) the canonical
   // Dan-curated list plus (b) every distinct dans_tags value already
   // in the loaded HubSpot cache, so a tag the user has typed
@@ -1280,6 +1310,92 @@ function KeyContactsViewInner({
     }
     return out.sort((a, b) => a.localeCompare(b));
   }, [hubspotCache]);
+
+  // contactId → latest call/email activity. The HubSpot API only
+  // attaches associated contact IDs to meetings, so we match emails
+  // by to/from address and calls by normalized phone number (last 10
+  // digits, US-style). Meetings are excluded by design — the user
+  // asked specifically for calls + emails.
+  const contactLastOutreach = useMemo(() => {
+    const map = new Map();
+    if (!activityCache) return map;
+    const contacts = hubspotCache?.contacts || [];
+    if (contacts.length === 0) return map;
+
+    const normalizePhone = (p) => {
+      const digits = String(p || '').replace(/\D/g, '');
+      return digits.length >= 10 ? digits.slice(-10) : digits;
+    };
+
+    const emailToIds = new Map();
+    const phoneToIds = new Map();
+    for (const c of contacts) {
+      const id = String(c.id || '');
+      if (!id) continue;
+      if (c.email) {
+        const k = String(c.email).toLowerCase().trim();
+        if (k) {
+          if (!emailToIds.has(k)) emailToIds.set(k, []);
+          emailToIds.get(k).push(id);
+        }
+      }
+      if (c.phone) {
+        const k = normalizePhone(c.phone);
+        if (k.length >= 10) {
+          if (!phoneToIds.has(k)) phoneToIds.set(k, []);
+          phoneToIds.get(k).push(id);
+        }
+      }
+    }
+
+    const consider = (ids, ts, type) => {
+      if (!ts || !ids || ids.length === 0) return;
+      const tsMs = new Date(ts).getTime();
+      if (!Number.isFinite(tsMs)) return;
+      for (const id of ids) {
+        const prev = map.get(id);
+        if (!prev || tsMs > prev.tsMs) map.set(id, { tsMs, ts, type });
+      }
+    };
+
+    for (const e of (activityCache.emails || [])) {
+      const subj = String(e.hs_email_subject || '').toLowerCase();
+      if (subj.includes('(sample email)')) continue;
+      const idSet = new Set();
+      for (const field of ['hs_email_to_email', 'hs_email_from_email']) {
+        const raw = e[field];
+        if (!raw) continue;
+        for (const part of String(raw).split(/[;,]/)) {
+          const em = part.trim().toLowerCase();
+          if (!em) continue;
+          const ids = emailToIds.get(em);
+          if (ids) for (const id of ids) idSet.add(id);
+        }
+      }
+      consider(Array.from(idSet), e.hs_timestamp, 'email');
+    }
+    for (const c of (activityCache.calls || [])) {
+      const idSet = new Set();
+      for (const field of ['hs_call_to_number', 'hs_call_from_number']) {
+        const ph = normalizePhone(c[field]);
+        if (ph.length < 10) continue;
+        const ids = phoneToIds.get(ph);
+        if (ids) for (const id of ids) idSet.add(id);
+      }
+      consider(Array.from(idSet), c.hs_timestamp, 'call');
+    }
+
+    return map;
+  }, [activityCache, hubspotCache]);
+
+  const fmtLastOutreach = (entry) => {
+    if (!entry) return '';
+    const d = new Date(entry.ts);
+    if (isNaN(d)) return '';
+    const date = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const label = entry.type === 'call' ? 'Call' : 'Email';
+    return `${date} · ${label}`;
+  };
 
   const DEFAULT_COL_WIDTHS = { company: 260, aum: 100, type: 120, status: 130, keyContacts: 130, dm: 150, met: 130, ratio: 110 };
   const [colWidths, setColWidths] = useState(() => {
@@ -1710,6 +1826,12 @@ function KeyContactsViewInner({
         case 'country': cmp = (a.country || '').localeCompare(b.country || ''); break;
         case 'events':  cmp = (contactEvents[String(a.id || '')] || '').localeCompare(contactEvents[String(b.id || '')] || ''); break;
         case 'met':     cmp = Number(!!a.metInPerson) - Number(!!b.metInPerson); break;
+        case 'lastOutreach': {
+          const av = contactLastOutreach.get(String(a.id || ''))?.tsMs || 0;
+          const bv = contactLastOutreach.get(String(b.id || ''))?.tsMs || 0;
+          cmp = av - bv;
+          break;
+        }
         default: cmp = 0;
       }
       if (contactSortDir === 'desc') cmp = -cmp;
@@ -1717,7 +1839,7 @@ function KeyContactsViewInner({
       return cmp;
     });
     return arr;
-  }, [flatContacts, contactSortKey, contactSortDir]);
+  }, [flatContacts, contactSortKey, contactSortDir, contactLastOutreach, contactEvents]);
 
   const contactFieldGetters = {
     name:     c => c.name || '',
@@ -1734,6 +1856,7 @@ function KeyContactsViewInner({
     salesNav: c => '',
     met:      c => c.metInPerson ? 'yes' : 'no',
     events:   c => contactEvents[String(c.id || '')] || '',
+    lastOutreach: c => fmtLastOutreach(contactLastOutreach.get(String(c.id || ''))),
   };
   const activeContactFilters = Object.entries(contactColFilters)
     .map(([k, v]) => [k, String(v || '').trim().toLowerCase()])
@@ -1881,6 +2004,7 @@ function KeyContactsViewInner({
                     { key: 'salesNav', label: 'LinkedIn Search' },
                     { key: 'met', label: 'Met' },
                     { key: 'events', label: 'Events' },
+                    { key: 'lastOutreach', label: 'Last Outreach' },
                   ].map(opt => (
                     <label key={opt.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0.35rem 0.75rem', fontSize: '0.74rem', color: '#1E293B', cursor: 'pointer' }}>
                       <input
@@ -2176,6 +2300,7 @@ function KeyContactsViewInner({
               { key: 'met',      label: 'Met' },
               { key: 'events',   label: 'Events' },
               { key: 'tags',     label: 'Tags', sortable: false },
+              { key: 'lastOutreach', label: 'Last Outreach' },
             ];
             const visibleSet = new Set(visibleCols);
             const CONTACT_COLS = ALL_CONTACT_COLS.filter(c => c.alwaysOn || visibleSet.has(c.key));
@@ -2551,6 +2676,48 @@ function KeyContactsViewInner({
                       onCommit={v => inlineUpdateField(c.raw || c, 'dans_tags', v)}
                     />
                     )}
+                    {visibleSet.has('lastOutreach') && (() => {
+                      const entry = contactLastOutreach.get(String(c.id || ''));
+                      if (!entry) {
+                        return (
+                          <div
+                            style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: '#CBD5E1' }}
+                            title={activityCache ? 'No call or email logged in the Activity feed for this contact' : 'Open the Activity tab once to load HubSpot activity'}
+                          >—</div>
+                        );
+                      }
+                      const d = new Date(entry.ts);
+                      const dateLabel = isNaN(d)
+                        ? ''
+                        : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                      const isCall = entry.type === 'call';
+                      const tip = isNaN(d)
+                        ? ''
+                        : `Most recent ${isCall ? 'call' : 'email'} on ${d.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })} (from the Activity tab)`;
+                      return (
+                        <div
+                          style={{ padding: '0.45rem 0.6rem', fontSize: '0.7rem', color: '#475569', display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                          title={tip}
+                        >
+                          <span
+                            style={{
+                              display: 'inline-block',
+                              padding: '1px 6px',
+                              fontSize: '0.58rem',
+                              fontWeight: 700,
+                              borderRadius: 999,
+                              background: isCall ? '#FEF3C7' : '#DBEAFE',
+                              color: isCall ? '#92400E' : '#1E3A8A',
+                              border: `1px solid ${isCall ? '#FCD34D' : '#93C5FD'}`,
+                              textTransform: 'uppercase',
+                              letterSpacing: '0.04em',
+                              flexShrink: 0,
+                            }}
+                          >{isCall ? 'Call' : 'Email'}</span>
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{dateLabel}</span>
+                        </div>
+                      );
+                    })()}
                     <div style={{ padding: '0.2rem 0.2rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <button
                         type="button"
