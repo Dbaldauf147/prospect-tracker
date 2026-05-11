@@ -1668,6 +1668,130 @@ export function SitesView({ settings, updateSettings } = {}) {
     return sheets;
   }, [overviewByCommodity, summaryRows]);
 
+  // Blank Sites-upload template — column headers + three sample rows
+  // + an Instructions sheet. Mirrors the TARGET_FIELDS list rendered
+  // inside the upload-mapping modal so a user who downloads the
+  // template, fills it in, and uploads it lands every field directly
+  // without needing to re-map columns.
+  async function downloadSitesTemplate() {
+    const { Workbook } = await import('exceljs');
+    const SE_GREEN_DARK = 'FF009530';
+    const SE_SLATE = 'FF475569';
+    const SE_BORDER = 'FFD4DDE1';
+    const SE_TEXT_DARK = 'FF1E293B';
+
+    const FIELDS = [
+      { label: 'Site Name', required: true, hint: 'Row label. Required so the row isn\'t filtered as blank.', examples: ['Downtown HQ', 'Midwest Plant 2', 'West Coast Warehouse'] },
+      { label: 'Zip / Postal Code', required: true, hint: 'US/Canadian zip or postal code — drives the utility lookup and state derivation.', examples: ['10001', '60601', '90210'] },
+      { label: 'Annual Electric (kWh)', required: false, hint: 'Annual electricity usage. Used for cost estimates when Total Electric Cost is blank.', examples: [3500000, 1200000, ''] },
+      { label: 'Annual Gas (therms / MMBtu / Dth)', required: false, hint: 'Annual gas usage. Used for cost estimates when Total Natural Gas Cost is blank.', examples: [12000, '', 4500] },
+      { label: 'Total Electric Cost ($)', required: false, hint: 'Actual annual electric spend. Overrides the kWh × rate estimate when provided.', examples: ['', '', 450000] },
+      { label: 'Total Natural Gas Cost ($)', required: false, hint: 'Actual annual gas spend. Overrides the Dth × rate estimate when provided.', examples: ['', '', 65000] },
+      { label: 'Electric Supplier / Vendor', required: false, hint: 'If the value matches a utility from the rates file it lands in the Electric Utility column; otherwise it lands in the Supplier column.', examples: ['Con Edison', 'ComEd', 'Constellation Energy'] },
+      { label: 'Electric Contract Start', required: false, hint: 'Start date of the existing electric supply contract (any common date format).', examples: ['2024-01-01', '', '2023-06-15'] },
+      { label: 'Electric Contract End', required: false, hint: 'End / expiration date of the existing electric supply contract.', examples: ['2026-12-31', '', '2026-06-14'] },
+      { label: 'Gas Supplier / Vendor', required: false, hint: 'If the value matches a utility from the rates file it lands in the Gas Utility column; otherwise it lands in the Supplier column.', examples: ['National Grid', '', 'SoCalGas'] },
+      { label: 'Gas Contract Start', required: false, hint: 'Start date of the existing gas supply contract.', examples: ['2024-04-01', '', '2024-01-01'] },
+      { label: 'Gas Contract End', required: false, hint: 'End / expiration date of the existing gas supply contract.', examples: ['2026-03-31', '', '2025-12-31'] },
+    ];
+
+    const wb = new Workbook();
+    wb.creator = 'Schneider Electric · Prospect Tracker';
+    wb.created = new Date();
+
+    // Sheet 1: Sites — headers + three sample rows
+    const ws = wb.addWorksheet('Sites', { views: [{ state: 'frozen', ySplit: 1 }] });
+    ws.columns = FIELDS.map(f => ({ width: Math.max(String(f.label).length + 4, 16) }));
+    const headerRow = ws.getRow(1);
+    FIELDS.forEach((f, i) => {
+      const cell = headerRow.getCell(i + 1);
+      cell.value = f.label;
+      cell.font = { name: 'Nunito Sans', bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: f.required ? SE_GREEN_DARK : SE_SLATE } };
+      cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+      cell.border = {
+        top:    { style: 'thin', color: { argb: SE_BORDER } },
+        bottom: { style: 'thin', color: { argb: SE_BORDER } },
+        left:   { style: 'thin', color: { argb: SE_BORDER } },
+        right:  { style: 'thin', color: { argb: SE_BORDER } },
+      };
+    });
+    headerRow.height = 32;
+
+    const exampleCount = Math.max(...FIELDS.map(f => f.examples.length));
+    for (let r = 0; r < exampleCount; r++) {
+      const row = ws.getRow(2 + r);
+      FIELDS.forEach((f, i) => {
+        const v = f.examples[r];
+        const cell = row.getCell(i + 1);
+        cell.value = v === '' || v == null ? null : v;
+        cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+        cell.alignment = { vertical: 'middle', horizontal: typeof v === 'number' ? 'right' : 'left', indent: 1 };
+        cell.border = {
+          bottom: { style: 'thin', color: { argb: SE_BORDER } },
+          left:   { style: 'thin', color: { argb: SE_BORDER } },
+          right:  { style: 'thin', color: { argb: SE_BORDER } },
+        };
+        const lower = String(f.label).toLowerCase();
+        if (typeof v === 'number') {
+          if (/cost|spend|\$/.test(lower)) cell.numFmt = '"$"#,##0';
+          else if (/kwh|therm|gas|mmbtu|dth/.test(lower)) cell.numFmt = '#,##0';
+        }
+      });
+      row.height = 18;
+    }
+    ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: FIELDS.length } };
+
+    // Sheet 2: Instructions
+    const notes = wb.addWorksheet('Instructions');
+    notes.columns = [{ width: 38 }, { width: 12 }, { width: 90 }];
+
+    notes.mergeCells(1, 1, 1, 3);
+    const intro = notes.getCell(1, 1);
+    intro.value = 'Site Name and Zip / Postal Code are required. Everything else is optional — the Utility Lookup page derives State, Utility, Market, Rate, and Total Cost automatically from the rates file.';
+    intro.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
+    intro.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+    notes.getRow(1).height = 44;
+
+    const notesHeader = notes.getRow(2);
+    ['Column', 'Required', 'Description'].forEach((h, i) => {
+      const cell = notesHeader.getCell(i + 1);
+      cell.value = h;
+      cell.font = { name: 'Nunito Sans', bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+      cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    });
+    notesHeader.height = 26;
+
+    FIELDS.forEach((f, i) => {
+      const row = notes.getRow(3 + i);
+      const c1 = row.getCell(1);
+      c1.value = f.label;
+      c1.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_TEXT_DARK } };
+      c1.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      const c2 = row.getCell(2);
+      c2.value = f.required ? 'Yes' : 'No';
+      c2.font = { name: 'Nunito Sans', bold: f.required, size: 10, color: { argb: f.required ? SE_GREEN_DARK : SE_SLATE } };
+      c2.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      const c3 = row.getCell(3);
+      c3.value = f.hint;
+      c3.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_SLATE } };
+      c3.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+      row.height = 26;
+    });
+
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'Utility Lookup Template.xlsx';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   // Schneider-branded "Indicative Savings by State" workbook. Single
   // sheet, two sections (Electric Power + Natural Gas), per-state
   // rows with 2 % – 4 % indicative savings on the deregulated spend
@@ -3164,6 +3288,14 @@ export function SitesView({ settings, updateSettings } = {}) {
             onChange={handleSitesUpload}
             style={{ display: 'none' }}
           />
+          <button
+            type="button"
+            onClick={downloadSitesTemplate}
+            title="Download a blank Excel template with every column the Utility Lookup page accepts, plus three sample rows and an Instructions tab. Required columns (Site Name, Zip) are highlighted in green."
+            style={{ padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: '#fff', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit', color: '#1E293B' }}
+          >
+            ⬇ Template
+          </button>
           <button
             type="button"
             onClick={() => sitesFileRef.current?.click()}
