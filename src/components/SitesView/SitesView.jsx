@@ -2088,6 +2088,15 @@ export function SitesView({ settings, updateSettings } = {}) {
       cell.value = ' ';
       if (hasNumFmt) cell.ignoredErrors = { numberStoredAsText: true };
     };
+    // Integer-display formats — anything Excel would render with no
+    // decimals. Spend / consumption / sites columns all flow through
+    // here; rate / price columns ('$0.000') keep their precision.
+    const isIntegerFmt = (fmt) => fmt === '#,##0' || fmt === '"$"#,##0';
+    const ceilForFmt = (v, fmt) => {
+      if (!isIntegerFmt(fmt)) return v;
+      const n = typeof v === 'number' ? v : Number(v);
+      return Number.isFinite(n) ? Math.ceil(n) : v;
+    };
     // Helper: write a scenario-aware Excel formula and pre-emptively
     // silence the green "inconsistent formula" / "formula" warning
     // triangle that Excel sometimes raises when a column mixes
@@ -2582,7 +2591,7 @@ export function SitesView({ settings, updateSettings } = {}) {
             // also stamps ignoredErrors on the cell so the warning
             // triangle is suppressed even if it would otherwise fire.
             if (v && typeof v === 'object') {
-              writeScenarioFormula(cell, v.low, v.mid, v.high, c.yearGate);
+              writeScenarioFormula(cell, ceilForFmt(v.low, c.numFmt), ceilForFmt(v.mid, c.numFmt), ceilForFmt(v.high, c.numFmt), c.yearGate);
             } else {
               writeScenarioFormula(cell, 0, 0, 0, c.yearGate);
             }
@@ -2590,11 +2599,11 @@ export function SitesView({ settings, updateSettings } = {}) {
             // Non-scenario column that still needs the term-length
             // gate (reg-rate Year 1-5 cumulative). Wrap the constant
             // in IF(years>=N, value, 0) so it follows the dropdown.
-            writeYearGatedConstant(cell, v, c.yearGate);
+            writeYearGatedConstant(cell, ceilForFmt(v, c.numFmt), c.yearGate);
           } else if (v === '' || v == null) {
             writeBlank(cell, !!c.numFmt);
           } else {
-            cell.value = v;
+            cell.value = ceilForFmt(v, c.numFmt);
           }
           cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
           // Bottom-aligned data rows (per user spec) — values sit
@@ -2645,11 +2654,11 @@ export function SitesView({ settings, updateSettings } = {}) {
           cell.value = 'Total';
         } else if (c.scenario && c.sumKey) {
           const t = scenarioTotals[c.sumKey];
-          writeScenarioFormula(cell, t.low, t.mid, t.high, c.yearGate);
+          writeScenarioFormula(cell, ceilForFmt(t.low, c.numFmt), ceilForFmt(t.mid, c.numFmt), ceilForFmt(t.high, c.numFmt), c.yearGate);
         } else if (c.yearGate != null && c.sumKey) {
-          writeYearGatedConstant(cell, scalarTotals[c.sumKey] || 0, c.yearGate);
+          writeYearGatedConstant(cell, ceilForFmt(scalarTotals[c.sumKey] || 0, c.numFmt), c.yearGate);
         } else if (c.sumKey) {
-          cell.value = scalarTotals[c.sumKey] || 0;
+          cell.value = ceilForFmt(scalarTotals[c.sumKey] || 0, c.numFmt);
         } else {
           writeBlank(cell, !!c.numFmt);
         }
@@ -2923,7 +2932,7 @@ export function SitesView({ settings, updateSettings } = {}) {
         if (v === '' || v == null) {
           writeBlank(cell, !!c.numFmt);
         } else {
-          cell.value = v;
+          cell.value = ceilForFmt(v, c.numFmt);
         }
         cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
         cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
@@ -3045,18 +3054,18 @@ export function SitesView({ settings, updateSettings } = {}) {
             // "inconsistent formula" / "number stored as text"
             // chevrons even if the row has no savings band.
             if (v && typeof v === 'object') {
-              writeScenarioFormula(cell, v.low, v.mid, v.high, c.yearGate);
+              writeScenarioFormula(cell, ceilForFmt(v.low, c.numFmt), ceilForFmt(v.mid, c.numFmt), ceilForFmt(v.high, c.numFmt), c.yearGate);
             } else {
               writeScenarioFormula(cell, 0, 0, 0, c.yearGate);
             }
           } else if (c.monthGate != null) {
-            writeMonthGatedConstant(cell, v, c.monthGate);
+            writeMonthGatedConstant(cell, ceilForFmt(v, c.numFmt), c.monthGate);
           } else if (c.yearGate != null) {
-            writeYearGatedConstant(cell, v, c.yearGate);
+            writeYearGatedConstant(cell, ceilForFmt(v, c.numFmt), c.yearGate);
           } else if (v === '' || v == null) {
             writeBlank(cell, !!c.numFmt);
           } else {
-            cell.value = v;
+            cell.value = ceilForFmt(v, c.numFmt);
           }
           cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
           cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
@@ -3106,7 +3115,7 @@ export function SitesView({ settings, updateSettings } = {}) {
               high += Number(t.high) || 0;
             }
           }
-          writeScenarioFormula(cell, low, mid, high, c.yearGate);
+          writeScenarioFormula(cell, ceilForFmt(low, c.numFmt), ceilForFmt(mid, c.numFmt), ceilForFmt(high, c.numFmt), c.yearGate);
         } else if (c.monthGate != null && allSiteRows.length > 0) {
           const letter = colLetter(i + 1);
           cell.value = {
@@ -3115,9 +3124,9 @@ export function SitesView({ settings, updateSettings } = {}) {
           };
           cell.ignoredErrors = { formula: true, formulaRange: true, numberStoredAsText: true };
         } else if (c.label === 'Annual Spend') {
-          cell.value = allSiteRows.reduce((a, s) => a + (s.annualSpend || 0), 0);
+          cell.value = ceilForFmt(allSiteRows.reduce((a, s) => a + (s.annualSpend || 0), 0), c.numFmt);
         } else if (c.label === '5-Year Mid Savings') {
-          cell.value = Math.round(allSiteRows.reduce((a, s) => a + (s.fiveYearMid || 0), 0));
+          cell.value = ceilForFmt(allSiteRows.reduce((a, s) => a + (s.fiveYearMid || 0), 0), c.numFmt);
         } else {
           writeBlank(cell, !!c.numFmt);
         }
@@ -3242,12 +3251,22 @@ export function SitesView({ settings, updateSettings } = {}) {
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: MARKET_FILL[asText] } };
             cell.font = { ...cell.font, bold: true, color: { argb: MARKET_FG[asText] } };
           }
-          // Numeric formats for known column types
+          // Numeric formats for known column types. Spend and
+          // consumption columns get ceiling-rounded so the displayed
+          // whole number can't be less than the true value (the
+          // user's analysis budgets should never under-report), and
+          // both formats use comma thousands separators.
           const label = String(headers[i] || '').toLowerCase();
           if (typeof v === 'number') {
-            if (/spend|cost|savings/.test(label)) cell.numFmt = '"$"#,##0';
-            else if (/(rate|price)/.test(label)) cell.numFmt = '"$"0.000';
-            else if (/kwh|therm|consumption/.test(label)) cell.numFmt = '#,##0';
+            if (/spend|cost|savings/.test(label)) {
+              cell.value = Math.ceil(v);
+              cell.numFmt = '"$"#,##0';
+            } else if (/(rate|price)/.test(label)) {
+              cell.numFmt = '"$"0.000';
+            } else if (/(consumption|kwh|mwh|gwh|therm|mmbtu|dth|mcf|ccf|btu)/.test(label) && !/uom|unit/.test(label)) {
+              cell.value = Math.ceil(v);
+              cell.numFmt = '#,##0';
+            }
           }
         }
         row.height = 18;
@@ -3341,8 +3360,15 @@ export function SitesView({ settings, updateSettings } = {}) {
             };
             const label = String(cols[i] || '').toLowerCase();
             if (typeof v === 'number') {
-              if (/spend|savings/.test(label)) cell.numFmt = '"$"#,##0';
-              else if (/sites/.test(label)) cell.numFmt = '#,##0';
+              if (/spend|savings/.test(label)) {
+                cell.value = Math.ceil(v);
+                cell.numFmt = '"$"#,##0';
+              } else if (/sites/.test(label)) {
+                cell.numFmt = '#,##0';
+              } else if (/(consumption|kwh|mwh|gwh|therm|mmbtu|dth|mcf|ccf|btu)/.test(label) && !/uom|unit/.test(label)) {
+                cell.value = Math.ceil(v);
+                cell.numFmt = '#,##0';
+              }
             }
           }
           row.height = 18;
