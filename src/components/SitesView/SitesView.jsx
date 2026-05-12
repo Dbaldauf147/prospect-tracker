@@ -1812,6 +1812,8 @@ export function SitesView({ settings, updateSettings } = {}) {
 
     const ELECTRIC_UOM_OPTIONS = ['kWh', 'MWh', 'GWh'];
     const GAS_UOM_OPTIONS = ['therms', 'MMBtu', 'Dth', 'Mcf', 'Ccf', 'BTU'];
+    const ELECTRIC_PRICE_UOM_OPTIONS = ['$/kWh', '$/MWh'];
+    const GAS_PRICE_UOM_OPTIONS = ['$/therm', '$/Dth', '$/MMBtu', '$/Mcf', '$/Ccf'];
     const COUNTRY_OPTIONS = ['United States', 'Canada', 'Mexico', 'United Kingdom', 'Germany', 'France', 'Spain', 'Italy', 'Netherlands', 'Australia'];
     const ELECTRIC_PRODUCT_OPTIONS = ['Fixed', 'Index', 'Block & Index', 'Heat Rate', 'Hybrid', 'Pass-through', 'Utility Default'];
     const GAS_PRODUCT_OPTIONS = ['Fixed', 'Index', 'NYMEX + Basis', 'Block & Index', 'Hybrid', 'Pass-through', 'Utility Default'];
@@ -1829,6 +1831,7 @@ export function SitesView({ settings, updateSettings } = {}) {
       { label: 'Electric Contract Start', required: false, hint: 'Start date of the existing electric supply contract. Formatted as Excel Short Date.', dateColumn: true },
       { label: 'Electric Contract End', required: false, hint: 'End / expiration date of the existing electric supply contract. Formatted as Excel Short Date.', dateColumn: true },
       { label: 'Electric Contract Price ($/kWh)', required: false, hint: 'Per-kWh price under the existing electric supply contract. Captured for comparison against indicative state rates.', priceColumn: 'kwh' },
+      { label: 'Electric Contract Price UoM', required: false, hint: 'Unit the Electric Contract Price is quoted in. Pick from the dropdown — defaults to $/kWh when blank.', validation: { type: 'list', options: ELECTRIC_PRICE_UOM_OPTIONS } },
       { label: 'Electric Contract Name', required: false, hint: 'Human-readable identifier for the existing electric contract.' },
       { label: 'Electric Product Type', required: false, hint: 'Pricing structure of the electric contract — pick from the dropdown or type a custom value.', validation: { type: 'list', options: ELECTRIC_PRODUCT_OPTIONS } },
     ];
@@ -1840,6 +1843,7 @@ export function SitesView({ settings, updateSettings } = {}) {
       { label: 'Gas Contract Start', required: false, hint: 'Start date of the existing gas supply contract. Formatted as Excel Short Date.', dateColumn: true },
       { label: 'Gas Contract End', required: false, hint: 'End / expiration date of the existing gas supply contract. Formatted as Excel Short Date.', dateColumn: true },
       { label: 'Gas Contract Price ($/therm)', required: false, hint: 'Per-therm price under the existing gas supply contract. Captured for comparison against indicative state rates.', priceColumn: 'therm' },
+      { label: 'Gas Contract Price UoM', required: false, hint: 'Unit the Gas Contract Price is quoted in. Pick from the dropdown — defaults to $/therm when blank.', validation: { type: 'list', options: GAS_PRICE_UOM_OPTIONS } },
       { label: 'Gas Contract Name', required: false, hint: 'Human-readable identifier for the existing gas contract.' },
       { label: 'Gas Product Type', required: false, hint: 'Pricing structure of the gas contract — pick from the dropdown or type a custom value.', validation: { type: 'list', options: GAS_PRODUCT_OPTIONS } },
     ];
