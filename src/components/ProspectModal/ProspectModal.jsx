@@ -3725,7 +3725,18 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             </div>
 
             <div className={styles.fieldFull}>
-              <label className={styles.label}>Sustainability Targets</label>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+                <label className={styles.label}>Sustainability Targets</label>
+                {fields.company && (
+                  <a
+                    href={`https://www.google.com/search?q=${encodeURIComponent(`"${fields.company}" sustainability report OR ESG OR "net zero" OR "science based target" OR "climate commitment"`)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title={`Open a Google search for ${fields.company}'s sustainability program, targets, and ESG reports`}
+                    style={{ padding: '0.2rem 0.55rem', border: '1px solid #BBF7D0', borderRadius: 6, background: '#F0FDF4', color: '#15803D', fontSize: '0.68rem', fontWeight: 700, textDecoration: 'none', whiteSpace: 'nowrap', fontFamily: 'inherit' }}
+                  >Research sustainability ↗</a>
+                )}
+              </div>
               <CommitOnBlurInput
                 multiline
                 autoGrow
