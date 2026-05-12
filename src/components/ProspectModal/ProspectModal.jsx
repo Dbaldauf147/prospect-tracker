@@ -2205,7 +2205,27 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const [listsMatchOpen, setListsMatchOpen] = useState(false);
   const listsMatchBtnRef = useRef(null);
   const [pastePortfolio, setPastePortfolio] = useState('');
-  const [sustainResearch, setSustainResearch] = useState({ loading: false, data: null, error: null });
+  // Slug used as the Firestore path segment for persisted research
+  // results — same shape as companySlug below; declared earlier here
+  // so the sustainResearch state can read/write the saved blob.
+  const sustainResearchSlug = useMemo(
+    () => (fields.company || '').toLowerCase().replace(/[^a-z0-9]/g, '-'),
+    [fields.company]
+  );
+  const [sustainResearch, setSustainResearch] = useState(() => {
+    const saved = (settings?.companyResearch || {})[sustainResearchSlug];
+    return { loading: false, data: saved || null, error: null };
+  });
+  // Re-hydrate when the modal switches companies (different slug) or
+  // when a Firestore sync brings in fresh companyResearch data. Skip
+  // the trample when a fetch is in flight.
+  useEffect(() => {
+    const saved = (settings?.companyResearch || {})[sustainResearchSlug];
+    setSustainResearch(prev => {
+      if (prev.loading) return prev;
+      return { loading: false, data: saved || null, error: null };
+    });
+  }, [sustainResearchSlug, settings?.companyResearch]);
   const runSustainabilityResearch = useCallback(async () => {
     const company = (fields.company || '').trim();
     if (!company) return;
@@ -2224,11 +2244,21 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         return;
       }
       const data = await r.json();
-      setSustainResearch({ loading: false, data, error: null });
+      const stamped = { ...data, savedAt: Date.now() };
+      setSustainResearch({ loading: false, data: stamped, error: null });
+      if (sustainResearchSlug) {
+        updateSettingsPath({ [`companyResearch.${sustainResearchSlug}`]: stamped });
+      }
     } catch (err) {
       setSustainResearch({ loading: false, data: null, error: err?.message || 'Request failed' });
     }
-  }, [fields.company]);
+  }, [fields.company, sustainResearchSlug, updateSettingsPath]);
+  const clearSustainResearch = useCallback(() => {
+    setSustainResearch({ loading: false, data: null, error: null });
+    if (sustainResearchSlug) {
+      updateSettingsPath({ [`companyResearch.${sustainResearchSlug}`]: null });
+    }
+  }, [sustainResearchSlug, updateSettingsPath]);
   const [researchingPortfolio, setResearchingPortfolio] = useState(false);
   const [portfolioResearchError, setPortfolioResearchError] = useState(null);
   const [portfolioColWidths, setPortfolioColWidths] = useState({
@@ -3889,7 +3919,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               />
               <SustainabilityResearchPanel
                 state={sustainResearch}
-                onClear={() => setSustainResearch({ loading: false, data: null, error: null })}
+                onClear={clearSustainResearch}
                 onUseTargets={() => {
                   const lines = (sustainResearch.data?.targets || []).join('\n');
                   if (!lines) return;
