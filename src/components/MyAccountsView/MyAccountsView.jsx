@@ -166,7 +166,10 @@ const ACCOUNT_COLUMNS = [
   { key: 'reAum', label: 'RE AUM', defaultWidth: 90, render: (row) => formatAum(row.reAum) },
   { key: 'peAum', label: 'PE AUM', defaultWidth: 90, render: (row) => formatAum(row.peAum) },
   { key: 'numberOfSites', label: 'Sites', defaultWidth: 70, render: (row) => row.numberOfSites != null ? row.numberOfSites.toLocaleString() : '—' },
-  { key: 'frameworks', label: 'Frameworks', defaultWidth: 140, render: (row) => (row.frameworks || []).join(', ') || '—' },
+  // Frameworks now render as pills via the listFlags column below — the
+  // two surfaces (My Accounts column + prospect-modal Frameworks
+  // dropdown) share storage via prospect.frameworks plus the Lists-page
+  // confirmed mappings.
   { key: 'hqRegion', label: 'HQ Region', defaultWidth: 130 },
   { key: 'naRegion', label: 'HQ Location', defaultWidth: 180, render: null },
   { key: 'bfoCompanyId', label: 'BFO Company ID', defaultWidth: 120 },
@@ -239,7 +242,7 @@ const ACCOUNT_COLUMNS = [
       }}>{s}</span>)}
     </span>;
   }},
-  { key: 'listFlags', label: 'List Flags', defaultWidth: 220, render: null /* set in columns memo */ },
+  { key: 'listFlags', label: 'Frameworks', defaultWidth: 220, render: null /* set in columns memo */ },
 ];
 
 // Fuzzy company name matching — returns true if names are "close enough"
@@ -2049,7 +2052,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     let cancelled = false;
     (async () => {
       const names = allAccounts.map(a => a.company).filter(Boolean);
-      const flags = await computeListFlags(names);
+      const flags = await computeListFlags(names, { prospects: allAccounts });
       if (!cancelled) setListFlagsByCompany(flags);
     })();
     return () => { cancelled = true; };
@@ -2376,7 +2379,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
                 return (
                   <span
                     key={label}
-                    title={`Flagged on the ${label} list`}
+                    title={label}
                     style={{ padding: '1px 6px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, background: color.bg, color: color.text, whiteSpace: 'nowrap' }}
                   >{label}</span>
                 );

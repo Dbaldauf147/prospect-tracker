@@ -53,11 +53,18 @@ export const ASSET_TYPES = [
   'Private Equity',
 ];
 
+// Frameworks the Frameworks dropdown in the prospect modal offers.
+// Kept in sync with LIST_FLAG_SOURCES so the modal and the My Accounts
+// Frameworks column read from the same vocabulary.
 export const FRAMEWORKS = [
-  'GRESB',
+  'RECA',
+  'CSRD',
   'CDP',
-  'UN PRI',
+  'GRESB',
   'SBT',
+  'Ecovadis',
+  'UN PRI',
+  'CA SB',
   'NZAM',
 ];
 

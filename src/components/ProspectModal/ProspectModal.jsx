@@ -3138,11 +3138,35 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         if (!cancelled) setPortfolioListFlags(new Map());
         return;
       }
-      const flags = await computeListFlags(names);
+      const flags = await computeListFlags(names, { prospects });
       if (!cancelled) setPortfolioListFlags(flags);
     })();
     return () => { cancelled = true; };
-  }, [fields.portfolioCompanies, portfolioFlagVersion]);
+  }, [fields.portfolioCompanies, portfolioFlagVersion, prospects]);
+
+  // Frameworks dropdown shows the union of the prospect's manual
+  // frameworks array and any Lists-page confirmed mappings. Editing
+  // the dropdown writes only to fields.frameworks; Lists-page flags
+  // come through computeListFlags. The two surfaces stay consistent
+  // without a migration.
+  const [companyFrameworkFlags, setCompanyFrameworkFlags] = useState(() => new Set());
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const name = fields.company;
+      if (!name) { if (!cancelled) setCompanyFrameworkFlags(new Set()); return; }
+      const flags = await computeListFlags([name], { prospects });
+      if (cancelled) return;
+      const set = flags.get(name.toLowerCase().trim()) || new Set();
+      setCompanyFrameworkFlags(set);
+    })();
+    return () => { cancelled = true; };
+  }, [fields.company, portfolioFlagVersion, prospects, fields.frameworks]);
+  const effectiveFrameworks = useMemo(() => {
+    const out = new Set(fields.frameworks || []);
+    for (const f of companyFrameworkFlags) out.add(f);
+    return [...out];
+  }, [fields.frameworks, companyFrameworkFlags]);
 
   const updateDeal = useCallback((dealId, patch) => {
     writeCompanyDeals(companyDeals.map(d => d.id === dealId ? { ...d, ...patch, updatedAt: Date.now() } : d));
@@ -3716,7 +3740,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
 
             <div style={{ gridColumn: 'span 2' }}>
               <label className={styles.label}>Frameworks</label>
-              <MultiSelectDropdown options={FRAMEWORKS} selected={fields.frameworks || []} onToggle={(val) => toggleArrayField('frameworks', val)} />
+              <MultiSelectDropdown options={FRAMEWORKS} selected={effectiveFrameworks} onToggle={(val) => toggleArrayField('frameworks', val)} />
             </div>
 
             <div className={styles.fieldFull}>

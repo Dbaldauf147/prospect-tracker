@@ -17,7 +17,7 @@ function extractSpreadsheetId(url) {
   return match ? match[1] : null;
 }
 
-const VALID_FRAMEWORKS = new Set(['GRESB', 'CDP', 'UN PRI', 'SBT', 'NZAM']);
+const VALID_FRAMEWORKS = new Set(['RECA', 'CSRD', 'CDP', 'GRESB', 'SBT', 'Ecovadis', 'UN PRI', 'CA SB', 'NZAM']);
 
 function parseProspectsFromSheetData(rows) {
   // rows is an array of prospect objects from the API
