@@ -2619,8 +2619,28 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
                 defaultWidth: 36,
                 render: (c) => <input type="checkbox" checked={selected.has(c.id)} onChange={() => toggleSelect(c.id)} onClick={e => e.stopPropagation()} style={{ accentColor: 'var(--color-accent)' }} />
               }] : []),
-              { key: 'firstname', label: 'First Name', defaultWidth: 120, render: (c) => <HubSpotInlineCell contact={c} field="firstname" value={c.firstname} onSave={handleInlineUpdate} /> },
-              { key: 'lastname', label: 'Last Name', defaultWidth: 120, render: (c) => <HubSpotInlineCell contact={c} field="lastname" value={c.lastname} onSave={handleInlineUpdate} /> },
+              { key: 'firstname', label: 'First Name', defaultWidth: 120, render: (c) => emailFilterMode === 'only-se'
+                ? (
+                  <button
+                    type="button"
+                    onClick={() => setEditContact(c)}
+                    title="Open contact card"
+                    style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--color-accent)', fontSize: 'inherit', fontFamily: 'inherit', fontWeight: 600, textAlign: 'left' }}
+                  >{c.firstname || <span style={{ color: 'var(--color-text-muted)' }}>—</span>}</button>
+                )
+                : <HubSpotInlineCell contact={c} field="firstname" value={c.firstname} onSave={handleInlineUpdate} />
+              },
+              { key: 'lastname', label: 'Last Name', defaultWidth: 120, render: (c) => emailFilterMode === 'only-se'
+                ? (
+                  <button
+                    type="button"
+                    onClick={() => setEditContact(c)}
+                    title="Open contact card"
+                    style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--color-accent)', fontSize: 'inherit', fontFamily: 'inherit', fontWeight: 600, textAlign: 'left' }}
+                  >{c.lastname || <span style={{ color: 'var(--color-text-muted)' }}>—</span>}</button>
+                )
+                : <HubSpotInlineCell contact={c} field="lastname" value={c.lastname} onSave={handleInlineUpdate} />
+              },
               { key: 'email', label: 'Email', defaultWidth: 200, render: (c) => <HubSpotInlineCell contact={c} field="email" value={c.email} onSave={handleInlineUpdate} /> },
               { key: 'phone', label: 'Phone', defaultWidth: 130, render: (c) => <HubSpotInlineCell contact={c} field="phone" value={c.phone} onSave={handleInlineUpdate} /> },
               { key: 'company', label: 'Company', defaultWidth: 180, render: (c) => (
