@@ -1,6 +1,16 @@
 import { useMemo, useState } from 'react';
 import { DataTable } from '../common/DataTable';
 import { matchesCdm } from '../../utils/cdmMatch';
+import { DealsView } from '../DealsView/DealsView';
+
+const SUBTAB_STORAGE_KEY = 'clients-view:active-subtab';
+function readSavedSubtab() {
+  try {
+    const s = localStorage.getItem(SUBTAB_STORAGE_KEY);
+    if (s === 'clients' || s === 'deals') return s;
+  } catch {}
+  return 'clients';
+}
 
 function getServicesCount(p) {
   const svc = p.servicesExplored || {};
@@ -8,6 +18,11 @@ function getServicesCount(p) {
 }
 
 export function ClientsView({ prospects = [], onSelectProspect, cdmName, settings, updateSettings }) {
+  const [subtab, setSubtab] = useState(readSavedSubtab);
+  function selectSubtab(key) {
+    setSubtab(key);
+    try { localStorage.setItem(SUBTAB_STORAGE_KEY, key); } catch {}
+  }
   const [showOld, setShowOld] = useState(false);
   const [query, setQuery] = useState('');
 
@@ -103,8 +118,50 @@ export function ClientsView({ prospects = [], onSelectProspect, cdmName, setting
     },
   ], []);
 
+  const subtabBar = (
+    <div style={{ display: 'flex', gap: '0.25rem', padding: '0.5rem 1.25rem 0', borderBottom: '1px solid #E2E8F0', flexShrink: 0 }}>
+      {[
+        { key: 'clients', label: 'Clients' },
+        { key: 'deals', label: 'Deals' },
+      ].map(t => {
+        const active = subtab === t.key;
+        return (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => selectSubtab(t.key)}
+            style={{
+              padding: '0.45rem 0.85rem',
+              border: '1px solid',
+              borderColor: active ? '#CBD5E1' : 'transparent',
+              borderBottomColor: active ? '#fff' : 'transparent',
+              borderRadius: '6px 6px 0 0',
+              marginBottom: -1,
+              background: active ? '#fff' : 'transparent',
+              color: active ? '#1E293B' : '#64748B',
+              fontSize: '0.78rem',
+              fontWeight: active ? 700 : 600,
+              cursor: active ? 'default' : 'pointer',
+              fontFamily: 'inherit',
+            }}
+          >{t.label}</button>
+        );
+      })}
+    </div>
+  );
+
+  if (subtab === 'deals') {
+    return (
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+        {subtabBar}
+        <DealsView settings={settings} updateSettings={updateSettings} />
+      </div>
+    );
+  }
+
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+      {subtabBar}
       <div style={{ padding: '1rem 1.25rem 0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexShrink: 0, flexWrap: 'wrap' }}>
         <div>
           <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#1E293B', margin: 0 }}>Clients</h2>
