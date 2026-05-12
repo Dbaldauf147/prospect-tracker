@@ -48,6 +48,14 @@ function safeReadMap(key) {
   } catch { return {}; }
 }
 
+// Prefer the Firestore-synced copy of a list-mapping field when it
+// exists; fall back to localStorage so coverage still works before
+// Firestore loads or on the legacy local-only path.
+function pickRemoteOrLocal(remote, field, lsKey) {
+  if (remote && remote[field] && typeof remote[field] === 'object') return remote[field];
+  return safeReadMap(lsKey);
+}
+
 function readSavedUrl(key) {
   try { return localStorage.getItem(key) || ''; } catch { return ''; }
 }
@@ -162,6 +170,10 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
   // triggers a recompute.
   const [coverageVersion, setCoverageVersion] = useState(0);
   useEffect(() => { setCoverageVersion(v => v + 1); }, [subtab]);
+  // Firestore-driven mapping/dismiss/block updates don't fire storage
+  // events, so bump coverage explicitly whenever the synced
+  // listMappings slice changes identity (every persist or remote sync).
+  useEffect(() => { setCoverageVersion(v => v + 1); }, [settings?.listMappings]);
   useEffect(() => {
     const bump = () => setCoverageVersion(v => v + 1);
     window.addEventListener('my-accounts-coverage-changed', bump);
@@ -218,7 +230,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
         .filter(a => a.norm);
       const portfolioExactByNorm = new Map(portfolioNorms.map(a => [a.norm, a.key]));
 
-      function computeForSet(listRows, mapping, dismissed, targetSet, targetNorms, exactByNorm) {
+      function computeForSet(listRows, mapping, dismissed, blocked, targetSet, targetNorms, exactByNorm) {
         const confirmed = new Set();
         const suggested = new Set();
         const headers = Object.keys(listRows[0] || {});
@@ -237,11 +249,19 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             if (targetSet.has(key)) confirmed.add(key);
             continue;
           }
+          // A globally-blocked prospect hides the suggestion pill in
+          // UploadedListView via filterBlocked, so leaving it counted
+          // here would keep the tab perpetually < 100% with no pill
+          // for the user to act on.
           const exact = exactByNorm.get(norm);
-          if (exact) { suggested.add(exact); continue; }
+          if (exact) {
+            if (!blocked[norm]) suggested.add(exact);
+            continue;
+          }
           let best = null;
           for (const a of targetNorms) {
             if (a.norm.length < 3) continue;
+            if (blocked[a.norm]) continue;
             if (norm.includes(a.norm) || a.norm.includes(norm)) {
               if (!best || a.norm.length < best.norm.length) best = a;
             }
@@ -268,13 +288,16 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
           };
           continue;
         }
-        const myAccountsMapping = safeReadMap(`${def.storageKey}:my-accounts-mapping`);
-        const myAccountsDismissed = safeReadMap(`${def.storageKey}:my-accounts-dismissed`);
-        const portfolioMapping = safeReadMap(`${def.storageKey}:portfolio-mapping`);
-        const portfolioDismissed = safeReadMap(`${def.storageKey}:portfolio-dismissed`);
+        const remote = settings?.listMappings?.[def.storageKey];
+        const myAccountsMapping = pickRemoteOrLocal(remote, 'myAccountMapping', `${def.storageKey}:my-accounts-mapping`);
+        const myAccountsDismissed = pickRemoteOrLocal(remote, 'myAccountDismissed', `${def.storageKey}:my-accounts-dismissed`);
+        const myAccountsBlocked = pickRemoteOrLocal(remote, 'myAccountBlocked', `${def.storageKey}:my-accounts-blocked`);
+        const portfolioMapping = pickRemoteOrLocal(remote, 'portfolioMapping', `${def.storageKey}:portfolio-mapping`);
+        const portfolioDismissed = pickRemoteOrLocal(remote, 'portfolioDismissed', `${def.storageKey}:portfolio-dismissed`);
+        const portfolioBlocked = pickRemoteOrLocal(remote, 'portfolioBlocked', `${def.storageKey}:portfolio-blocked`);
         result[def.key] = {
-          myAccounts: computeForSet(listRows, myAccountsMapping, myAccountsDismissed, accountSet, accountNorms, accountExactByNorm),
-          portfolio:  computeForSet(listRows, portfolioMapping,  portfolioDismissed,  portfolioSet, portfolioNorms, portfolioExactByNorm),
+          myAccounts: computeForSet(listRows, myAccountsMapping, myAccountsDismissed, myAccountsBlocked, accountSet, accountNorms, accountExactByNorm),
+          portfolio:  computeForSet(listRows, portfolioMapping,  portfolioDismissed,  portfolioBlocked,  portfolioSet, portfolioNorms, portfolioExactByNorm),
         };
       }
       if (!cancelled) setCoverageByKey(result);
