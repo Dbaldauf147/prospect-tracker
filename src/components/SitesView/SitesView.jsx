@@ -1817,7 +1817,9 @@ export function SitesView({ settings, updateSettings } = {}) {
     // drops on the Gas tab. The Contract Price column already implies
     // dollars; this column just carries the per-unit denominator.
     const ELECTRIC_PRICE_UOM_OPTIONS = ['kWh', 'MWh'];
-    const GAS_PRICE_UOM_OPTIONS = ['therm', 'Dth', 'MMBtu', 'Mcf', 'Ccf'];
+    // Gas accepts MWh too — used in some European markets where gas is
+    // priced on its energy-content equivalent.
+    const GAS_PRICE_UOM_OPTIONS = ['therm', 'Dth', 'MMBtu', 'Mcf', 'Ccf', 'MWh'];
     const COUNTRY_OPTIONS = ['United States', 'Canada', 'Mexico', 'United Kingdom', 'Germany', 'France', 'Spain', 'Italy', 'Netherlands', 'Australia'];
     const ELECTRIC_PRODUCT_OPTIONS = ['Fixed', 'Index', 'Block & Index', 'Heat Rate', 'Hybrid', 'Pass-through', 'Utility Default'];
     const GAS_PRODUCT_OPTIONS = ['Fixed', 'Index', 'NYMEX + Basis', 'Block & Index', 'Hybrid', 'Pass-through', 'Utility Default'];
@@ -1846,7 +1848,7 @@ export function SitesView({ settings, updateSettings } = {}) {
       { label: 'Gas Supplier / Vendor', required: false, hint: 'If the value matches a utility from the rates file it lands in the Gas Utility column; otherwise it lands in the Supplier column.' },
       { label: 'Gas Contract Start', required: false, hint: 'Start date of the existing gas supply contract. Formatted as Excel Short Date.', dateColumn: true },
       { label: 'Gas Contract End', required: false, hint: 'End / expiration date of the existing gas supply contract. Formatted as Excel Short Date.', dateColumn: true },
-      { label: 'Gas Contract Price', required: false, hint: 'Price under the existing gas supply contract. Numeric — pair with Gas Contract Price UoM to indicate whether the figure is per therm, Dth, MMBtu, Mcf, or Ccf.', priceColumn: 'therm' },
+      { label: 'Gas Contract Price', required: false, hint: 'Price under the existing gas supply contract. Numeric — pair with Gas Contract Price UoM to indicate whether the figure is per therm, Dth, MMBtu, Mcf, Ccf, or MWh.', priceColumn: 'therm' },
       { label: 'Gas Contract Price UoM', required: false, hint: 'Per-unit denominator the Gas Contract Price is quoted against. Pick from the dropdown — defaults to therm when blank.', validation: { type: 'list', options: GAS_PRICE_UOM_OPTIONS } },
       { label: 'Gas Contract Name', required: false, hint: 'Human-readable identifier for the existing gas contract.' },
       { label: 'Gas Product Type', required: false, hint: 'Pricing structure of the gas contract — pick from the dropdown or type a custom value.', validation: { type: 'list', options: GAS_PRODUCT_OPTIONS } },
