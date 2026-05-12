@@ -13,6 +13,18 @@ const NON_ALNUM_SPACE_RE = /[^a-z0-9 ]/g;
 const WS_RE = /\s+/g;
 const CORP_SUFFIX_RE = /\b(inc|llc|ltd|corp|co|lp)\b\.?/gi;
 
+// Ownership phrases like ", a Simon Property Group Co." or
+// "(a Brookfield Co.)" — patterns where a subsidiary is described by
+// embedding its parent's full name. The substring rule below would
+// otherwise see the parent inside the subsidiary's display name and
+// merge them (e.g. "Kering, a Simon Property Group Co." matched
+// "Simon Property Group"). Strip the phrase off the query before the
+// substring check so subsidiaries don't inherit parent matches.
+const OWNERSHIP_PHRASE_RE = /[,(]\s*an?\s+[^()]+?\s+co(\.|mpany)?\)?\.?\s*$/i;
+function removeOwnershipPhrase(s) {
+  return String(s || '').replace(OWNERSHIP_PHRASE_RE, '').trim();
+}
+
 function flatten(s) {
   return String(s || '')
     .normalize('NFKD')
@@ -125,7 +137,8 @@ export function findMatchesInIndex(index, query) {
   // where the extra word isn't a corporate suffix the strip rule knows
   // about.
   if (lower.length >= 4) {
-    const queryStripped = strip(lower);
+    const queryNoOwner = removeOwnershipPhrase(lower);
+    const queryStripped = strip(queryNoOwner);
     const candidates = new Set();
     for (const t of tokens) {
       if (t.length < 3) continue;
@@ -136,7 +149,7 @@ export function findMatchesInIndex(index, query) {
       if (matches.has(s)) continue;
       const m = index.meta && index.meta.get(s);
       if (!m) continue;
-      if (substringMatch(lower, m.lower)) { matches.add(s); continue; }
+      if (substringMatch(queryNoOwner, m.lower)) { matches.add(s); continue; }
       if (queryStripped && m.stripped && substringMatch(queryStripped, m.stripped)) {
         matches.add(s);
       }
