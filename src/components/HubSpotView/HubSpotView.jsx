@@ -2744,6 +2744,16 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
                 const hasReal = c.firstname && c.lastname;
                 const val = hasReal ? `${c.firstname} ${c.lastname}`.trim() : c.guessedName;
                 if (!val) return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
+                if (emailFilterMode === 'only-se') {
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => setEditContact(c)}
+                      title="Open contact card"
+                      style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--color-accent)', fontSize: 'inherit', fontFamily: 'inherit', fontWeight: 600, textAlign: 'left' }}
+                    >{val}</button>
+                  );
+                }
                 return <HubSpotInlineCell contact={c} field={!c.firstname ? 'firstname' : 'lastname'} value={val} onSave={async (id, updates) => {
                   const rawVal = (Object.values(updates)[0] || '').trim();
                   if (!rawVal) { dismissGuess(c.id, 'name'); return; }
