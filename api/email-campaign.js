@@ -49,6 +49,43 @@ export default async function handler(req, res) {
     const sentEmails = matching.filter(e => e.hs_email_direction === 'EMAIL' || e.hs_email_direction === 'FORWARDED_EMAIL');
     const replyEmails = matching.filter(e => e.hs_email_direction === 'INCOMING_EMAIL');
 
+    // Auto-reply detection. HubSpot doesn't surface RFC 'Auto-Submitted'
+    // headers, so we lean on the two signals available on the email
+    // object: the subject line (where every major mail server stamps an
+    // OOO / vacation / auto-reply prefix) and the from address (where
+    // bounce / delivery notifications come from system mailboxes).
+    const AUTO_REPLY_SUBJECT_PATTERNS = [
+      /^\s*(?:re:\s*)?automatic reply\b/i,
+      /^\s*(?:re:\s*)?auto[\s-]?reply\b/i,
+      /^\s*(?:re:\s*)?auto[\s-]?response\b/i,
+      /^\s*(?:re:\s*)?out of (?:the )?office\b/i,
+      /^\s*(?:re:\s*)?ooo\b/i,
+      /^\s*(?:re:\s*)?(?:i am |i'm )?away from (?:the )?office\b/i,
+      /^\s*(?:re:\s*)?(?:i am |i'm )?on (?:vacation|leave|holiday|pto|parental leave|maternity leave|paternity leave|sabbatical)\b/i,
+      /^\s*(?:re:\s*)?vacation (?:reply|notification|message)\b/i,
+      /^\s*undeliverable:?\b/i,
+      /^\s*delivery (?:status notification|failure|notification|has failed)/i,
+      /^\s*returned mail\b/i,
+      /^\s*mail delivery (?:failed|subsystem|failure)/i,
+      /^\s*postmaster\b/i,
+      /\b(automatic|auto)[\s-]?reply\b/i,
+      /\bbounce notification\b/i,
+    ];
+    const AUTO_REPLY_FROM_PATTERNS = [
+      /^postmaster@/i,
+      /^mailer-daemon@/i,
+      /^no-?reply@/i,
+      /^do-?not-?reply@/i,
+      /^bounce[s]?@/i,
+    ];
+    function isAutoReply(e) {
+      const subject = e.hs_email_subject || '';
+      for (const re of AUTO_REPLY_SUBJECT_PATTERNS) if (re.test(subject)) return true;
+      const from = e.hs_email_from_email || '';
+      for (const re of AUTO_REPLY_FROM_PATTERNS) if (re.test(from)) return true;
+      return false;
+    }
+
     // Group sent emails — deduplicate by recipient(s)
     // If the same person is emailed multiple times, keep only the most recent
     const sendsByRecipients = {};
@@ -72,11 +109,16 @@ export default async function handler(req, res) {
     }
     const sends = Object.values(sendsByRecipients);
 
-    // Check which sends got a reply (any recipient replying counts)
+    // Check which sends got a reply (any recipient replying counts).
+    // Out-of-office / auto-reply / bounce notifications are excluded
+    // from the response count but tallied separately so the UI can show
+    // them as a footnote.
     const allRecipientEmails = new Set();
     for (const s of sends) s.recipients.forEach(r => allRecipientEmails.add(r));
 
+    let autoReplyCount = 0;
     for (const reply of replyEmails) {
+      if (isAutoReply(reply)) { autoReplyCount++; continue; }
       const from = (reply.hs_email_from_email || '').toLowerCase().trim();
       if (!from) continue;
       // Find the send this reply belongs to
@@ -113,6 +155,7 @@ export default async function handler(req, res) {
       totalEmails: matching.length,
       sent: totalSends,
       replies: totalReplied,
+      autoRepliesSuppressed: autoReplyCount,
       uniqueRecipients: totalSends,
       uniqueRepliers: totalReplied,
       responseRate: parseFloat(responseRate),

@@ -82,6 +82,7 @@ export function EmailCampaignView() {
       totalEmails: results.totalEmails,
       sent: results.sent,
       replies: results.replies,
+      autoRepliesSuppressed: results.autoRepliesSuppressed || 0,
       contacts: results.contacts,
     };
     // Replace if same subject exists, otherwise add
@@ -191,6 +192,12 @@ export function EmailCampaignView() {
             <div style={{ fontSize: '0.75rem', color: 'var(--color-text-secondary)' }}>
               Matching subject: <strong>"{displayResults.subject}"</strong>
               {viewingSaved !== null && <span style={{ marginLeft: '0.5rem', padding: '1px 6px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 600, background: '#DBEAFE', color: '#1E40AF' }}>Saved</span>}
+              {displayResults.autoRepliesSuppressed > 0 && (
+                <span
+                  title="Out-of-office, vacation, and delivery-failure replies are excluded from the response count."
+                  style={{ marginLeft: '0.5rem', padding: '1px 6px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 600, background: '#F1F5F9', color: '#475569' }}
+                >{displayResults.autoRepliesSuppressed} auto-reply{displayResults.autoRepliesSuppressed === 1 ? '' : 's'} suppressed</span>
+              )}
             </div>
             {viewingSaved === null && (
               <button
