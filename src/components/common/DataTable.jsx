@@ -647,6 +647,17 @@ export function DataTable({
         }}>
           Export Excel
         </button>
+        {/* Defensive row-count indicator: surfaces what the table
+            actually sees right next to the export controls. If the
+            parent says 'showing 42' but this badge shows '0 rows',
+            the bug is upstream of the table; if it shows '42 rows'
+            but the body is blank, the bug is in the body render. */}
+        <span
+          title={`${sortedRows.length} of ${rows.length} rows rendered`}
+          style={{ marginLeft: 'auto', padding: '0.25rem 0.5rem', borderRadius: 4, background: sortedRows.length === 0 ? '#FEF3C7' : '#F1F5F9', color: sortedRows.length === 0 ? '#92400E' : '#475569', fontSize: '0.65rem', fontWeight: 600 }}
+        >
+          {sortedRows.length} row{sortedRows.length === 1 ? '' : 's'}
+        </span>
       </div>
       {/* Always render the table header + body shell so the column
           headers stay visible when a search / column filter zeros out
