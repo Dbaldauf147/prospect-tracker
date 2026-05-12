@@ -1838,6 +1838,99 @@ const ALL_SERVICE_ITEMS_LOWER = new Set(
   SERVICE_CATEGORIES.flatMap(cat => cat.items.map(i => i.toLowerCase()))
 );
 
+function SustainabilityResearchPanel({ state, onClear, onUseTargets, onMergeFrameworks }) {
+  if (!state.loading && !state.data && !state.error) return null;
+  const data = state.data;
+  return (
+    <div style={{ marginTop: '0.5rem', border: '1px solid #BBF7D0', background: '#F0FDF4', borderRadius: 6, padding: '0.6rem 0.75rem', fontSize: '0.75rem', color: '#14532D' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', marginBottom: '0.4rem' }}>
+        <strong style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Claude research</strong>
+        <button type="button" onClick={onClear} aria-label="Dismiss" style={{ background: 'transparent', border: 'none', color: '#15803D', cursor: 'pointer', fontSize: '0.85rem', lineHeight: 1, padding: 0 }}>×</button>
+      </div>
+      {state.loading && <div style={{ color: '#166534' }}>Searching the web and summarizing… this can take 20–40 seconds.</div>}
+      {state.error && <div style={{ color: '#991B1B' }}>Research failed: {state.error}</div>}
+      {data && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+          {data.summary && (
+            <div style={{ lineHeight: 1.4 }}>{data.summary}</div>
+          )}
+          {Array.isArray(data.programs) && data.programs.length > 0 && (
+            <div>
+              <div style={{ fontSize: '0.65rem', fontWeight: 700, color: '#166534', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 2 }}>Programs</div>
+              <ul style={{ margin: 0, paddingLeft: '1rem' }}>
+                {data.programs.map((p, i) => <li key={i} style={{ lineHeight: 1.4 }}>{p}</li>)}
+              </ul>
+            </div>
+          )}
+          {Array.isArray(data.targets) && data.targets.length > 0 && (
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+                <div style={{ fontSize: '0.65rem', fontWeight: 700, color: '#166534', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 2 }}>Targets</div>
+                <button
+                  type="button"
+                  onClick={onUseTargets}
+                  title="Append these targets to the Sustainability Targets field above"
+                  style={{ padding: '0.15rem 0.5rem', border: '1px solid #86EFAC', borderRadius: 6, background: '#fff', color: '#15803D', fontSize: '0.62rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}
+                >Use in Sustainability Targets</button>
+              </div>
+              <ul style={{ margin: 0, paddingLeft: '1rem' }}>
+                {data.targets.map((t, i) => <li key={i} style={{ lineHeight: 1.4 }}>{t}</li>)}
+              </ul>
+            </div>
+          )}
+          {Array.isArray(data.frameworks) && data.frameworks.length > 0 && (
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+                <div style={{ fontSize: '0.65rem', fontWeight: 700, color: '#166534', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 2 }}>Frameworks found</div>
+                <button
+                  type="button"
+                  onClick={onMergeFrameworks}
+                  title="Add these frameworks to the Frameworks dropdown above"
+                  style={{ padding: '0.15rem 0.5rem', border: '1px solid #86EFAC', borderRadius: 6, background: '#fff', color: '#15803D', fontSize: '0.62rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}
+                >Add to Frameworks</button>
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 2 }}>
+                {data.frameworks.map(f => (
+                  <span key={f} style={{ padding: '1px 6px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, background: '#DCFCE7', color: '#166534', border: '1px solid #86EFAC' }}>{f}</span>
+                ))}
+              </div>
+            </div>
+          )}
+          {Array.isArray(data.reports) && data.reports.length > 0 && (
+            <div>
+              <div style={{ fontSize: '0.65rem', fontWeight: 700, color: '#166534', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 2 }}>Reports</div>
+              <ul style={{ margin: 0, paddingLeft: '1rem' }}>
+                {data.reports.map((r, i) => (
+                  <li key={i} style={{ lineHeight: 1.4 }}>
+                    <a href={r.url} target="_blank" rel="noopener noreferrer" style={{ color: '#15803D', textDecoration: 'underline' }}>
+                      {r.title || r.url}
+                    </a>
+                    {r.year ? <span style={{ color: '#166534', marginLeft: 4 }}>({r.year})</span> : null}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {Array.isArray(data.sources) && data.sources.length > 0 && (
+            <details>
+              <summary style={{ cursor: 'pointer', fontSize: '0.65rem', fontWeight: 700, color: '#166534', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Sources ({data.sources.length})</summary>
+              <ul style={{ margin: '0.25rem 0 0', paddingLeft: '1rem' }}>
+                {data.sources.map((s, i) => (
+                  <li key={i} style={{ lineHeight: 1.4 }}>
+                    <a href={s.url} target="_blank" rel="noopener noreferrer" style={{ color: '#15803D', textDecoration: 'underline' }}>
+                      {s.title || s.url}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew, onDeleteProspect, onUpdateProspect, hubspotContacts = [], onDeleteContact, orgCharts = {}, onUpdateOrgChart = () => {}, settings = {}, updateSettings = () => {}, updateSettingsPath = () => {}, targetAccountsData = null, cdmName = '' }) {
   const [fields, setFields] = useState(() => {
     if (prospect) return { ...EMPTY, ...prospect };
@@ -2112,6 +2205,30 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const [listsMatchOpen, setListsMatchOpen] = useState(false);
   const listsMatchBtnRef = useRef(null);
   const [pastePortfolio, setPastePortfolio] = useState('');
+  const [sustainResearch, setSustainResearch] = useState({ loading: false, data: null, error: null });
+  const runSustainabilityResearch = useCallback(async () => {
+    const company = (fields.company || '').trim();
+    if (!company) return;
+    setSustainResearch({ loading: true, data: null, error: null });
+    try {
+      const r = await fetch('/api/research-sustainability', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company }),
+      });
+      if (!r.ok) {
+        const txt = await r.text();
+        let msg = `HTTP ${r.status}`;
+        try { msg = JSON.parse(txt).error || msg; } catch { msg = txt.slice(0, 200) || msg; }
+        setSustainResearch({ loading: false, data: null, error: msg });
+        return;
+      }
+      const data = await r.json();
+      setSustainResearch({ loading: false, data, error: null });
+    } catch (err) {
+      setSustainResearch({ loading: false, data: null, error: err?.message || 'Request failed' });
+    }
+  }, [fields.company]);
   const [researchingPortfolio, setResearchingPortfolio] = useState(false);
   const [portfolioResearchError, setPortfolioResearchError] = useState(null);
   const [portfolioColWidths, setPortfolioColWidths] = useState({
@@ -3752,13 +3869,13 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
                 <label className={styles.label}>Sustainability Targets</label>
                 {fields.company && (
-                  <a
-                    href={`https://www.google.com/search?q=${encodeURIComponent(`"${fields.company}" sustainability report OR ESG OR "net zero" OR "science based target" OR "climate commitment"`)}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    title={`Open a Google search for ${fields.company}'s sustainability program, targets, and ESG reports`}
-                    style={{ padding: '0.2rem 0.55rem', border: '1px solid #BBF7D0', borderRadius: 6, background: '#F0FDF4', color: '#15803D', fontSize: '0.68rem', fontWeight: 700, textDecoration: 'none', whiteSpace: 'nowrap', fontFamily: 'inherit' }}
-                  >Research sustainability ↗</a>
+                  <button
+                    type="button"
+                    onClick={runSustainabilityResearch}
+                    disabled={sustainResearch.loading}
+                    title={`Ask Claude to research ${fields.company}'s sustainability program, targets, frameworks, and ESG reports`}
+                    style={{ padding: '0.2rem 0.55rem', border: '1px solid #BBF7D0', borderRadius: 6, background: sustainResearch.loading ? '#F0FDF4' : '#DCFCE7', color: '#15803D', fontSize: '0.68rem', fontWeight: 700, cursor: sustainResearch.loading ? 'default' : 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+                  >{sustainResearch.loading ? 'Researching…' : 'Research with Claude'}</button>
                 )}
               </div>
               <CommitOnBlurInput
@@ -3769,6 +3886,23 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 onCommit={v => set('sustainabilityTargets', v)}
                 rows={2}
                 placeholder={'One per line, e.g.\nNet zero by 2050\n50% emissions reduction by 2030 vs 2019 baseline\n100% renewable electricity by 2025'}
+              />
+              <SustainabilityResearchPanel
+                state={sustainResearch}
+                onClear={() => setSustainResearch({ loading: false, data: null, error: null })}
+                onUseTargets={() => {
+                  const lines = (sustainResearch.data?.targets || []).join('\n');
+                  if (!lines) return;
+                  const current = (fields.sustainabilityTargets || '').trim();
+                  set('sustainabilityTargets', current ? `${current}\n${lines}` : lines);
+                }}
+                onMergeFrameworks={() => {
+                  const found = sustainResearch.data?.frameworks || [];
+                  if (!found.length) return;
+                  const existing = new Set(fields.frameworks || []);
+                  for (const f of found) existing.add(f);
+                  set('frameworks', [...existing]);
+                }}
               />
             </div>
           </div>
