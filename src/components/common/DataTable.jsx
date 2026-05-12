@@ -648,11 +648,12 @@ export function DataTable({
           Export Excel
         </button>
       </div>
-      {sortedRows.length === 0 && !enableColumnFilters ? (
-        <div className={styles.empty}>{emptyMessage}</div>
-      ) : (
-        <>
-          <div className={styles.headerWrap} ref={headerRef}>
+      {/* Always render the table header + body shell so the column
+          headers stay visible when a search / column filter zeros out
+          the rows — users need to see which columns exist (and clear
+          their filter) instead of staring at a blank panel. */}
+      <>
+        <div className={styles.headerWrap} ref={headerRef}>
             <table className={styles.table} style={{ tableLayout: 'fixed', width: visibleColumns.reduce((s, c) => s + getWidth(c), 0) }}>
               <colgroup>
                 {visibleColumns.map(col => (
@@ -773,7 +774,6 @@ export function DataTable({
             );
           })()}
         </>
-      )}
     </div>
   );
 }
