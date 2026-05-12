@@ -1779,6 +1779,90 @@ export function SitesView({ settings, updateSettings } = {}) {
     return out;
   }, [rows, siteNameOverride]);
 
+  // Contract Summary — one row per (Company, Commodity, Supplier,
+  // Contract Name) rolled up across every site sharing that contract.
+  // Powers the renewal pipeline: how big is each existing supply
+  // contract, when does it expire, what's the blended price.
+  const contractSummaryRows = useMemo(() => {
+    if (!siteCompanyColumn) return [];
+    const groups = new Map();
+    const upsert = (commodity, supplier, contractName, productType, start, end, price, consumption, cost, consumptionUnit, priceUnit, company) => {
+      // Skip rows that have no contract signal at all — supplier,
+      // contract name, dates, and price all empty means there's
+      // nothing to summarize for this fuel at this site.
+      if (!supplier && !contractName && !start && !end && price == null) return;
+      const key = `${company}||${commodity}||${supplier || ''}||${contractName || ''}`;
+      let g = groups.get(key);
+      if (!g) {
+        g = {
+          company, commodity, supplier: supplier || '', contractName: contractName || '',
+          productType: productType || '',
+          earliestStart: null, latestEnd: null,
+          siteCount: 0, totalConsumption: 0, totalCost: 0,
+          weightedPriceNum: 0, weightedPriceDenom: 0,
+          consumptionUnit, priceUnit,
+        };
+        groups.set(key, g);
+      }
+      g.siteCount++;
+      if (start) {
+        const d = new Date(start);
+        if (!isNaN(d) && (!g.earliestStart || d < g.earliestStart)) g.earliestStart = d;
+      }
+      if (end) {
+        const d = new Date(end);
+        if (!isNaN(d) && (!g.latestEnd || d > g.latestEnd)) g.latestEnd = d;
+      }
+      if (typeof consumption === 'number' && Number.isFinite(consumption)) g.totalConsumption += consumption;
+      if (typeof cost === 'number' && Number.isFinite(cost)) g.totalCost += cost;
+      if (typeof price === 'number' && Number.isFinite(price) && typeof consumption === 'number' && Number.isFinite(consumption) && consumption > 0) {
+        g.weightedPriceNum += price * consumption;
+        g.weightedPriceDenom += consumption;
+      }
+      if (!g.productType && productType) g.productType = productType;
+    };
+
+    for (const r of rows) {
+      const company = String(r[siteCompanyColumn] ?? '').trim();
+      if (!company) continue;
+      upsert('Electric',
+        r.__electricSupplier__, r.__electricContractName__, r.__electricProductType__,
+        r.__electricStart__, r.__electricEnd__, r.__electricContractPrice__,
+        r.__kwh__, r.__electricCost__, 'kWh', '$/kWh', company);
+      upsert('Gas',
+        r.__gasSupplier__, r.__gasContractName__, r.__gasProductType__,
+        r.__gasStart__, r.__gasEnd__, r.__gasContractPrice__,
+        r.__therms__, r.__gasCost__, 'therms', '$/therm', company);
+    }
+
+    const fmtD = (d) => d ? `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}` : '';
+    const out = [];
+    for (const g of groups.values()) {
+      const avg = g.weightedPriceDenom > 0 ? g.weightedPriceNum / g.weightedPriceDenom : null;
+      out.push({
+        'Company': g.company,
+        'Commodity': g.commodity,
+        'Supplier': g.supplier,
+        'Contract Name': g.contractName,
+        'Product Type': g.productType,
+        'Sites': g.siteCount,
+        'Earliest Start': fmtD(g.earliestStart),
+        'Latest End': fmtD(g.latestEnd),
+        'Total Annual Consumption': g.totalConsumption ? Math.round(g.totalConsumption) : '',
+        'Consumption Unit': g.consumptionUnit,
+        'Total Annual Cost': g.totalCost ? Math.round(g.totalCost * 100) / 100 : '',
+        'Avg Contract Price': avg != null ? Math.round(avg * 10000) / 10000 : '',
+        'Price Unit': g.priceUnit,
+      });
+    }
+    out.sort((a, b) => {
+      if (a.Company !== b.Company) return a.Company.localeCompare(b.Company);
+      if (a.Commodity !== b.Commodity) return a.Commodity.localeCompare(b.Commodity);
+      return (a.Supplier || '').localeCompare(b.Supplier || '');
+    });
+    return out;
+  }, [rows, siteCompanyColumn]);
+
   const exportExtraSheets = useMemo(() => {
     const sheets = [];
     if (overviewByCommodity.electric.length) {
@@ -1790,11 +1874,14 @@ export function SitesView({ settings, updateSettings } = {}) {
     if (contractOverviewRows.length) {
       sheets.push({ name: 'Contract Overview', rows: contractOverviewRows });
     }
+    if (contractSummaryRows.length) {
+      sheets.push({ name: 'Contract Summary', rows: contractSummaryRows });
+    }
     if (summaryRows.length) {
       sheets.push({ name: 'Summary', rows: summaryRows });
     }
     return sheets;
-  }, [overviewByCommodity, contractOverviewRows, summaryRows]);
+  }, [overviewByCommodity, contractOverviewRows, contractSummaryRows, summaryRows]);
 
   // Blank Sites-upload template — TWO commodity tabs (Electric Power
   // and Gas) each with header row + 200 pre-formatted blank data
