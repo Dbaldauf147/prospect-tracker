@@ -4,6 +4,7 @@ import { DataTable } from '../common/DataTable';
 import { saveList as saveListToIDB, loadList as loadListFromIDB, clearList as clearListFromIDB } from '../../utils/uploadedListStore';
 import { parseBestSheet } from '../../utils/xlsxParse';
 import { matchesCdm } from '../../utils/cdmMatch';
+import { normalizeCompany, pickNameKey } from '../../utils/companyNorm';
 import styles from './UploadedListView.module.css';
 
 function loadMapping(key) {
@@ -12,27 +13,6 @@ function loadMapping(key) {
     const raw = localStorage.getItem(key);
     return raw ? (JSON.parse(raw) || {}) : {};
   } catch { return {}; }
-}
-
-// Normalize a company name for fuzzy matching:
-// lowercase, strip accents, drop punctuation, collapse whitespace, drop
-// common corporate suffixes. Two names that normalize to the same token
-// are treated as the same company.
-const CORP_SUFFIXES = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|oy|ab|spa|kk|pty|holdings|group|grp)\b\.?/g;
-function normalizeCompany(name) {
-  return String(name || '')
-    .toLowerCase()
-    .normalize('NFKD').replace(/[̀-ͯ]/g, '')
-    .replace(/&/g, ' and ')
-    .replace(CORP_SUFFIXES, ' ')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function pickNameKey(headers) {
-  const key = headers.find(k => /company|name|organi[sz]ation|signatory|entity/i.test(k));
-  return key || headers[0];
 }
 
 const TIER_COLORS = {
