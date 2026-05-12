@@ -13,6 +13,7 @@ import { KeyProspectsView } from '../KeyProspectsView/KeyProspectsView';
 
 const SUBTABS = [
   { key: 'hubspot',    label: 'HubSpot Contacts' },
+  { key: 'se',         label: 'SE Contacts' },
   { key: 'bulk',       label: 'Bulk Add Contacts' },
   { key: 'all',        label: 'All Contacts' },
   { key: 'key',        label: 'Key Contacts' },
@@ -68,6 +69,9 @@ export function ContactsView({
       <div className={styles.content}>
         {subtab === 'hubspot' && (
           <HubSpotView prospects={prospects} settings={settings} updateSettings={updateSettings} />
+        )}
+        {subtab === 'se' && (
+          <HubSpotView prospects={prospects} settings={settings} updateSettings={updateSettings} emailFilterMode="only-se" />
         )}
         {subtab === 'bulk' && (
           <AgendaView

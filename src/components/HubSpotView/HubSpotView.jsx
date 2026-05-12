@@ -1133,7 +1133,7 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
   );
 }
 
-export function HubSpotView({ prospects, settings, updateSettings }) {
+export function HubSpotView({ prospects, settings, updateSettings, emailFilterMode = 'exclude-se' }) {
   const { user } = useAuth();
   const [data, setData] = useState(null);
   useEffect(() => {
@@ -1936,9 +1936,13 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
         // Hide contacts with "Hide" tag
         const tags = (c.dans_tags || c.dan_s_tags || c.dans_tag || '').toLowerCase();
         if (tags.includes('hide')) return false;
-        // Hide @se.com emails
+        // @se.com filter: 'exclude-se' (default for the HubSpot Contacts
+        // tab) hides Schneider Electric employees; 'only-se' (used by
+        // the SE Contacts sub-tab) keeps only them.
         const email = (c.email || '').toLowerCase();
-        return !email.endsWith('@se.com');
+        const isSe = email.endsWith('@se.com');
+        if (emailFilterMode === 'only-se') return isSe;
+        return !isSe;
       })
       .map(c => {
         // Merge local-only fields from Firestore settings. The
@@ -2057,7 +2061,7 @@ export function HubSpotView({ prospects, settings, updateSettings }) {
           tier,
         };
       });
-  }, [contacts, prospects, domainToCompany, tierByCompany, prospectKeyToCanonical, prospectTokenPrefixMap, prospectTokenPrefixKeysDesc, FREE_MAIL, TWO_PART_TLDS, contactLocalFields]);
+  }, [contacts, prospects, emailFilterMode, domainToCompany, tierByCompany, prospectKeyToCanonical, prospectTokenPrefixMap, prospectTokenPrefixKeysDesc, FREE_MAIL, TWO_PART_TLDS, contactLocalFields]);
 
   // Dynamic filter options for HubSpot columns
   const HUBSPOT_FILTER_SKIP = new Set(['id', '_select', '_delete', '_deleteRow', '_edit', 'guessedCompany', 'guessedName', 'guessedFirstName', 'guessedLastName', 'effectiveCompany', 'matchedProspect', 'enrolledCount', 'isEnrolled', 'hs_sequences_is_enrolled', 'hs_sequences_actively_enrolled_count']);
