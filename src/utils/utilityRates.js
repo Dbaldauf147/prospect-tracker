@@ -239,6 +239,7 @@ export function normalizeGasUom(raw) {
   if (/\bccf\b/.test(s)) return 'Ccf';
   if (/\bbtu\b/.test(s) && !/mmbtu/.test(s)) return 'BTU';
   if (/\btherms?\b/.test(s)) return 'therms';
+  if (/\bmwh\b|megawatt/.test(s)) return 'MWh';
   return '';
 }
 
@@ -257,6 +258,7 @@ export function detectConsumptionUnit(header, commodity) {
   if (/\bmcf\b/.test(h)) return 'Mcf';
   if (/\bccf\b/.test(h)) return 'Ccf';
   if (/\bbtu\b/.test(h) && !/mmbtu/i.test(h)) return 'BTU';
+  if (/\bmwh\b/.test(h)) return 'MWh';
   return 'therms';
 }
 
@@ -302,6 +304,7 @@ export function toTherms(value, unit) {
     case 'Mcf':   return n * 10.37;     // 1 Mcf ≈ 10.37 therms (US avg heating value)
     case 'Ccf':   return n * 1.037;
     case 'BTU':   return n / 100_000;   // 1 therm = 100,000 BTU
+    case 'MWh':   return n * 34.1214;   // 1 MWh = 3,412,140 BTU = 34.1214 therms
     case 'therms':
     default:      return n;
   }
