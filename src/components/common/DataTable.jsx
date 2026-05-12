@@ -19,7 +19,10 @@ function saveColWidths(tableId, w) { localStorage.setItem(COL_WIDTHS_PREFIX + ta
 function loadColVisible(tableId, allKeys) {
   try {
     const saved = JSON.parse(localStorage.getItem(COL_VISIBLE_PREFIX + tableId));
-    if (saved) return new Set(saved);
+    // An empty array means the user (or a sync race) saved a "no
+    // columns visible" set. That's never a usable state — fall back to
+    // showing everything so the table doesn't render as a blank panel.
+    if (Array.isArray(saved) && saved.length > 0) return new Set(saved);
     return new Set(allKeys);
   } catch { return new Set(allKeys); }
 }
@@ -347,7 +350,10 @@ export function DataTable({
   const settingsLoaded = !!(settings && settings._lastWriteAt);
   const [colWidths, setColWidths] = useState(() => remotePrefs?.widths || loadColWidths(tableId));
   const [visibleCols, setVisibleCols] = useState(() => (
-    Array.isArray(remotePrefs?.visible)
+    // Same empty-array safeguard as loadColVisible: an empty Firestore
+    // set has historically rendered the table as blank, so fall through
+    // to the local default (= every column visible).
+    Array.isArray(remotePrefs?.visible) && remotePrefs.visible.length > 0
       ? new Set(remotePrefs.visible)
       : loadColVisible(tableId, columns.map(c => c.key))
   ));
@@ -366,7 +372,9 @@ export function DataTable({
     if (remotePrefs.widths && JSON.stringify(remotePrefs.widths) !== JSON.stringify(colWidths)) {
       setColWidths(remotePrefs.widths);
     }
-    if (Array.isArray(remotePrefs.visible)) {
+    // Skip empty-array remotes for the same reason loadColVisible
+    // does: a synced "nothing visible" state would blank the table.
+    if (Array.isArray(remotePrefs.visible) && remotePrefs.visible.length > 0) {
       const incoming = new Set(remotePrefs.visible);
       const same = incoming.size === visibleCols.size && [...incoming].every(k => visibleCols.has(k));
       if (!same) setVisibleCols(incoming);
