@@ -308,7 +308,7 @@ const HEADER_MAP = {
   'tier list': 'tierList',
 };
 
-const VALID_FRAMEWORKS = new Set(['GRESB', 'CDP', 'UN PRI', 'SBT', 'NZAM']);
+const VALID_FRAMEWORKS = new Set(['RECA', 'CSRD', 'CDP', 'GRESB', 'SBT', 'Ecovadis', 'UN PRI', 'CA SB', 'NZAM']);
 
 function parseNumber(val) {
   if (!val || val === 'Missing Data') return null;

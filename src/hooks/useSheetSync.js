@@ -5,7 +5,7 @@ import { db } from '../firebase';
 const SYNC_SETTINGS_KEY = 'prospect-sync-settings';
 const LAST_AUTO_SYNC_KEY = 'prospect-last-auto-sync';
 const DEFAULT_INTERVAL = 5 * 60 * 1000; // 5 minutes
-const VALID_FRAMEWORKS = new Set(['GRESB', 'CDP', 'UN PRI', 'SBT', 'NZAM']);
+const VALID_FRAMEWORKS = new Set(['RECA', 'CSRD', 'CDP', 'GRESB', 'SBT', 'Ecovadis', 'UN PRI', 'CA SB', 'NZAM']);
 
 function loadSettings() {
   try { return JSON.parse(localStorage.getItem(SYNC_SETTINGS_KEY)) || {}; } catch { return {}; }

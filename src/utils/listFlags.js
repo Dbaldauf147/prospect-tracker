@@ -18,10 +18,15 @@ export const LIST_FLAG_SOURCES = [
   { label: 'Ecovadis', storageKey: 'ecovadis-list-override', color: { bg: '#E0F2FE', text: '#075985' } },
   { label: 'UN PRI',   storageKey: 'unpri-list-override',   color: { bg: '#F3E8FF', text: '#6B21A8' } },
   { label: 'CA SB',    storageKey: 'casb-list-override',    color: { bg: '#FFEDD5', text: '#9A3412' } },
+  { label: 'NZAM',     storageKey: 'nzam-list-override',    color: { bg: '#CCFBF1', text: '#115E59' } },
 ];
 export const LIST_FLAG_BY_LABEL = Object.fromEntries(
   LIST_FLAG_SOURCES.map(s => [s.label, s])
 );
+// All framework / list-flag labels, in display order, so the modal's
+// Frameworks dropdown and the My Accounts column read from the same
+// vocabulary.
+export const ALL_FRAMEWORK_LABELS = LIST_FLAG_SOURCES.map(s => s.label);
 
 const LIST_CORP_SUFFIXES = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|oy|ab|spa|kk|pty|holdings|group|grp)\b\.?/g;
 export function normalizeListCompany(name) {
@@ -69,16 +74,19 @@ export function safeReadListMapping(storageKey) {
   } catch { return {}; }
 }
 
-// Compute which List tabs each of the given company names has been
-// explicitly mapped to. Returns a Map keyed by the lowercased-trimmed
-// company name to a Set of list labels (e.g. 'CDP', 'GRESB'). A flag
-// turns on only when the user confirmed a mapping in either the
-// My Accounts or Portfolio Companies column for that list — raw list
-// entries with no decision do not flag.
+// Compute which framework labels each of the given company names should
+// show. Returns a Map keyed by the lowercased-trimmed company name to a
+// Set of labels (e.g. 'CDP', 'GRESB'). A label turns on when EITHER:
+//   - The prospect's frameworks array (manual edits from the modal)
+//     includes that label.
+//   - The Lists page has a confirmed mapping (My Accounts or Portfolio
+//     scope) on the corresponding list pointing to that company.
+// The union means the Lists page and the modal are the same data: an
+// edit in either surface shows up in both.
 //
 // The function is async for backwards compatibility with existing call
 // sites that await it; the body itself runs synchronously.
-export async function computeListFlags(names) {
+export async function computeListFlags(names, opts = {}) {
   const flags = new Map();
   const addFlag = (companyKey, label) => {
     if (!companyKey) return;
@@ -90,6 +98,23 @@ export async function computeListFlags(names) {
     .map(n => ({ company: n, key: String(n).toLowerCase().trim() }))
     .filter(t => t.key);
   if (!targets.length) return flags;
+
+  // Pull in the prospect.frameworks signal. We match a prospect to a
+  // target name by exact lowercased-trimmed equality on `company` —
+  // tighter than companiesMatch on purpose, since this side has a real
+  // identifier to anchor on.
+  const prospectsByKey = new Map();
+  for (const p of (opts.prospects || [])) {
+    const key = String(p?.company || '').toLowerCase().trim();
+    if (key) prospectsByKey.set(key, p);
+  }
+  for (const t of targets) {
+    const p = prospectsByKey.get(t.key);
+    if (!p || !Array.isArray(p.frameworks)) continue;
+    for (const label of p.frameworks) {
+      if (typeof label === 'string' && label) addFlag(t.key, label);
+    }
+  }
 
   for (const source of LIST_FLAG_SOURCES) {
     const myAccountsMapping = safeReadListMapping(`${source.storageKey}:my-accounts-mapping`);
