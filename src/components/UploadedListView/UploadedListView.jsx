@@ -402,6 +402,12 @@ export function UploadedListView({
   const myAccountDismissedKey = storageKey ? `${storageKey}:my-accounts-dismissed` : '';
   const portfolioMappingKey = storageKey ? `${storageKey}:portfolio-mapping` : '';
   const portfolioDismissedKey = storageKey ? `${storageKey}:portfolio-dismissed` : '';
+  // Per-list block sets, keyed by normalized company name. Suppress a
+  // suggested account from showing as a yellow pill on every row of
+  // this list (without affecting confirmed mappings or other lists).
+  const tableViewBlockedKey = storageKey ? `${storageKey}:table-view-blocked` : '';
+  const myAccountBlockedKey = storageKey ? `${storageKey}:my-accounts-blocked` : '';
+  const portfolioBlockedKey = storageKey ? `${storageKey}:portfolio-blocked` : '';
   const textValuesKey = storageKey && textColumn ? `${storageKey}:${textColumn.key}-values` : '';
 
   // Firestore-backed mappings — these survive a browser "Clear site
@@ -424,6 +430,9 @@ export function UploadedListView({
   const [myAccountDismissed, setMyAccountDismissed] = useState(() => initFromRemote('myAccountDismissed', myAccountDismissedKey));
   const [portfolioMapping, setPortfolioMapping] = useState(() => initFromRemote('portfolioMapping', portfolioMappingKey));
   const [portfolioDismissed, setPortfolioDismissed] = useState(() => initFromRemote('portfolioDismissed', portfolioDismissedKey));
+  const [tableViewBlocked, setTableViewBlocked] = useState(() => initFromRemote('tableViewBlocked', tableViewBlockedKey));
+  const [myAccountBlocked, setMyAccountBlocked] = useState(() => initFromRemote('myAccountBlocked', myAccountBlockedKey));
+  const [portfolioBlocked, setPortfolioBlocked] = useState(() => initFromRemote('portfolioBlocked', portfolioBlockedKey));
   const [textValues, setTextValues] = useState(() => {
     if (!textColumn) return {};
     const remote = remoteMappings?.textValues?.[textColumn.key];
@@ -514,6 +523,9 @@ export function UploadedListView({
     setMyAccountDismissed(pickRemote('myAccountDismissed', `${storageKey}:my-accounts-dismissed`));
     setPortfolioMapping(pickRemote('portfolioMapping', `${storageKey}:portfolio-mapping`));
     setPortfolioDismissed(pickRemote('portfolioDismissed', `${storageKey}:portfolio-dismissed`));
+    setTableViewBlocked(pickRemote('tableViewBlocked', `${storageKey}:table-view-blocked`));
+    setMyAccountBlocked(pickRemote('myAccountBlocked', `${storageKey}:my-accounts-blocked`));
+    setPortfolioBlocked(pickRemote('portfolioBlocked', `${storageKey}:portfolio-blocked`));
     if (textColumn) {
       const remoteText = newRemote?.textValues?.[textColumn.key];
       setTextValues(remoteText && typeof remoteText === 'object' ? remoteText : loadMapping(`${storageKey}:${textColumn.key}-values`));
@@ -543,11 +555,14 @@ export function UploadedListView({
       if (e.key === myAccountDismissedKey) setMyAccountDismissed(loadMapping(myAccountDismissedKey));
       if (e.key === portfolioMappingKey) setPortfolioMapping(loadMapping(portfolioMappingKey));
       if (e.key === portfolioDismissedKey) setPortfolioDismissed(loadMapping(portfolioDismissedKey));
+      if (e.key === tableViewBlockedKey) setTableViewBlocked(loadMapping(tableViewBlockedKey));
+      if (e.key === myAccountBlockedKey) setMyAccountBlocked(loadMapping(myAccountBlockedKey));
+      if (e.key === portfolioBlockedKey) setPortfolioBlocked(loadMapping(portfolioBlockedKey));
       if (textValuesKey && e.key === textValuesKey) setTextValues(loadMapping(textValuesKey));
     }
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
-  }, [mappingKey, dismissedKey, myAccountMappingKey, myAccountDismissedKey, portfolioMappingKey, portfolioDismissedKey, textValuesKey]);
+  }, [mappingKey, dismissedKey, myAccountMappingKey, myAccountDismissedKey, portfolioMappingKey, portfolioDismissedKey, tableViewBlockedKey, myAccountBlockedKey, portfolioBlockedKey, textValuesKey]);
 
   // Persist every mapping change to BOTH localStorage AND Firestore via
   // persistMapping / persistTextValues defined above. Firestore is the
@@ -575,6 +590,17 @@ export function UploadedListView({
     window.dispatchEvent(new Event('my-accounts-coverage-changed'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [portfolioDismissed, portfolioDismissedKey]);
+  useEffect(() => { persistMapping('tableViewBlocked', tableViewBlockedKey, tableViewBlocked); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [tableViewBlocked, tableViewBlockedKey]);
+  useEffect(() => {
+    persistMapping('myAccountBlocked', myAccountBlockedKey, myAccountBlocked);
+    window.dispatchEvent(new Event('my-accounts-coverage-changed'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myAccountBlocked, myAccountBlockedKey]);
+  useEffect(() => {
+    persistMapping('portfolioBlocked', portfolioBlockedKey, portfolioBlocked);
+    window.dispatchEvent(new Event('my-accounts-coverage-changed'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [portfolioBlocked, portfolioBlockedKey]);
   useEffect(() => { persistTextValues(textValues); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [textValues, textValuesKey]);
 
   // Sync local state from Firestore when it loads or changes
@@ -589,6 +615,9 @@ export function UploadedListView({
     if (remoteMappings.myAccountDismissed && !sameJson(remoteMappings.myAccountDismissed, myAccountDismissed)) setMyAccountDismissed(remoteMappings.myAccountDismissed);
     if (remoteMappings.portfolioMapping && !sameJson(remoteMappings.portfolioMapping, portfolioMapping)) setPortfolioMapping(remoteMappings.portfolioMapping);
     if (remoteMappings.portfolioDismissed && !sameJson(remoteMappings.portfolioDismissed, portfolioDismissed)) setPortfolioDismissed(remoteMappings.portfolioDismissed);
+    if (remoteMappings.tableViewBlocked && !sameJson(remoteMappings.tableViewBlocked, tableViewBlocked)) setTableViewBlocked(remoteMappings.tableViewBlocked);
+    if (remoteMappings.myAccountBlocked && !sameJson(remoteMappings.myAccountBlocked, myAccountBlocked)) setMyAccountBlocked(remoteMappings.myAccountBlocked);
+    if (remoteMappings.portfolioBlocked && !sameJson(remoteMappings.portfolioBlocked, portfolioBlocked)) setPortfolioBlocked(remoteMappings.portfolioBlocked);
     if (textColumn) {
       const remoteText = remoteMappings.textValues?.[textColumn.key];
       if (remoteText && !sameJson(remoteText, textValues)) setTextValues(remoteText);
@@ -743,14 +772,24 @@ export function UploadedListView({
     return { prospect: best.prospect, score };
   }
 
+  // A suggestion is dropped when the normalized matched company name is
+  // listed in the scope's per-list block set. Confirmed mappings ignore
+  // the block — only the auto-suggestion yellow pill is suppressed.
+  const filterBlocked = (s, blocked) => {
+    if (!s) return null;
+    const norm = normalizeCompany(s.prospect?.company || '');
+    if (norm && blocked[norm]) return null;
+    return s;
+  };
+
   const prospectSuggestionFor = useMemo(
-    () => (raw) => suggestFrom(raw, prospectsByNorm, prospectNorms),
-    [prospectsByNorm, prospectNorms]
+    () => (raw) => filterBlocked(suggestFrom(raw, prospectsByNorm, prospectNorms), tableViewBlocked),
+    [prospectsByNorm, prospectNorms, tableViewBlocked]
   );
 
   const myAccountSuggestionFor = useMemo(
-    () => (raw) => suggestFrom(raw, myAccountsByNorm, myAccountNorms),
-    [myAccountsByNorm, myAccountNorms]
+    () => (raw) => filterBlocked(suggestFrom(raw, myAccountsByNorm, myAccountNorms), myAccountBlocked),
+    [myAccountsByNorm, myAccountNorms, myAccountBlocked]
   );
 
   // Union of portfolio companies across every prospect. Duplicates by
@@ -778,8 +817,8 @@ export function UploadedListView({
   }, [prospects]);
 
   const portfolioSuggestionFor = useMemo(
-    () => (raw) => suggestFrom(raw, portfolioByNorm, portfolioNorms),
-    [portfolioByNorm, portfolioNorms]
+    () => (raw) => filterBlocked(suggestFrom(raw, portfolioByNorm, portfolioNorms), portfolioBlocked),
+    [portfolioByNorm, portfolioNorms, portfolioBlocked]
   );
 
   const rows = useMemo(() => {
@@ -845,6 +884,17 @@ export function UploadedListView({
   function dismissSuggestion(matchKey, scope = 'tableView') {
     const { setDis } = mapSettersFor(scope);
     setDis(prev => ({ ...prev, [matchKey]: true }));
+  }
+  function blockSuggestedCompany(scope, companyName) {
+    const norm = normalizeCompany(companyName || '');
+    if (!norm) return;
+    const setBlocked = scope === 'myAccounts'
+      ? setMyAccountBlocked
+      : scope === 'portfolio'
+        ? setPortfolioBlocked
+        : setTableViewBlocked;
+    setBlocked(prev => (prev[norm] ? prev : { ...prev, [norm]: true }));
+    setPicker(null);
   }
   function toggleSelectKey(matchKey) {
     setSelectedKeys(prev => {
@@ -1867,6 +1917,22 @@ export function UploadedListView({
               style={{ marginTop: '0.25rem', padding: '0.3rem 0.5rem', background: 'none', border: 'none', color: '#DC2626', cursor: 'pointer', fontSize: '0.7rem', fontFamily: 'inherit', textAlign: 'left' }}
             >Clear mapping</button>
           )}
+          {(() => {
+            const scopeMap = picker.scope === 'myAccounts' ? myAccountMapping : picker.scope === 'portfolio' ? portfolioMapping : mapping;
+            if (scopeMap[picker.matchKey]) return null;
+            const suggestFn = picker.scope === 'myAccounts' ? myAccountSuggestionFor : picker.scope === 'portfolio' ? portfolioSuggestionFor : prospectSuggestionFor;
+            const sugg = suggestFn(picker.raw || '');
+            const suggCompany = sugg?.prospect?.company;
+            if (!suggCompany) return null;
+            return (
+              <button
+                type="button"
+                onClick={() => blockSuggestedCompany(picker.scope, suggCompany)}
+                style={{ marginTop: '0.25rem', padding: '0.3rem 0.5rem', background: 'none', border: 'none', color: '#92400E', cursor: 'pointer', fontSize: '0.7rem', fontFamily: 'inherit', textAlign: 'left' }}
+                title={`Stop suggesting "${suggCompany}" on every row of this list. Confirmed mappings to this company aren't affected.`}
+              >⛔ Don't suggest "{suggCompany}" on this list</button>
+            );
+          })()}
         </div>,
         document.body
       )}
