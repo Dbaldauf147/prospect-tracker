@@ -238,6 +238,30 @@ function ColumnToggle({ columns, visibleCols, onToggle, alwaysVisible, colNames,
   );
 }
 
+// Firestore rejects map field names that both start AND end with "__"
+// (e.g. UploadedListView's helper columns __select__, __myAccountsList__).
+// We prefix those keys with a sentinel before persisting and strip it
+// back off on read so the rest of the app sees the original key.
+const REMOTE_KEY_PREFIX = '_x_';
+function encodeRemoteKey(k) {
+  return /^__.*__$/.test(k) ? REMOTE_KEY_PREFIX + k : k;
+}
+function decodeRemoteKey(k) {
+  return k.startsWith(REMOTE_KEY_PREFIX) ? k.slice(REMOTE_KEY_PREFIX.length) : k;
+}
+function encodeRemoteMap(m) {
+  if (!m || typeof m !== 'object') return m;
+  const out = {};
+  for (const [k, v] of Object.entries(m)) out[encodeRemoteKey(k)] = v;
+  return out;
+}
+function decodeRemoteMap(m) {
+  if (!m || typeof m !== 'object') return m;
+  const out = {};
+  for (const [k, v] of Object.entries(m)) out[decodeRemoteKey(k)] = v;
+  return out;
+}
+
 // When settings + updateSettings are provided, column prefs (widths,
 // visibility, renames) are mirrored to Firestore at
 // settings.tablePrefs[tableId]. Localstorage continues to be written
@@ -252,9 +276,9 @@ function persistPrefs(tableId, settings, updateSettings, prefsUpdate) {
   if (!settings || !updateSettings || !tableId) return;
   const current = settings.tablePrefs?.[tableId] || {};
   const nextEntry = { ...current };
-  if (prefsUpdate.widths !== undefined) nextEntry.widths = prefsUpdate.widths;
+  if (prefsUpdate.widths !== undefined) nextEntry.widths = encodeRemoteMap(prefsUpdate.widths);
   if (prefsUpdate.visible !== undefined) nextEntry.visible = [...prefsUpdate.visible];
-  if (prefsUpdate.names !== undefined) nextEntry.names = prefsUpdate.names;
+  if (prefsUpdate.names !== undefined) nextEntry.names = encodeRemoteMap(prefsUpdate.names);
   updateSettings({
     tablePrefs: { ...(settings.tablePrefs || {}), [tableId]: nextEntry },
   });
@@ -306,7 +330,15 @@ export function DataTable({
   settings,
   updateSettings,
 }) {
-  const remotePrefs = settings?.tablePrefs?.[tableId];
+  const rawRemotePrefs = settings?.tablePrefs?.[tableId];
+  const remotePrefs = useMemo(() => {
+    if (!rawRemotePrefs) return rawRemotePrefs;
+    return {
+      ...rawRemotePrefs,
+      widths: decodeRemoteMap(rawRemotePrefs.widths),
+      names: decodeRemoteMap(rawRemotePrefs.names),
+    };
+  }, [rawRemotePrefs]);
   // settings._lastWriteAt is the canonical "Firestore subscription has
   // produced data" signal — it's stamped by every saveUserSettings call.
   // We use it to distinguish "Firestore has no entry for this table"
