@@ -16,6 +16,7 @@ import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { getHubspotCache, updateHubspotCache, notifyCacheUpdated } from '../../utils/hubspotContactsCache';
 import { dbGet } from '../../utils/db';
+import { ListsMatchPanel } from './ListsMatchPanel';
 import styles from './ProspectModal.module.css';
 
 async function loadOppsFromIndexedDB() {
@@ -2108,6 +2109,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const [portfolioOpen, setPortfolioOpen] = useState(false);
   const [mergeOpen, setMergeOpen] = useState(false);
   const [mergeQuery, setMergeQuery] = useState('');
+  const [listsMatchOpen, setListsMatchOpen] = useState(false);
+  const listsMatchBtnRef = useRef(null);
   const [pastePortfolio, setPastePortfolio] = useState('');
   const [researchingPortfolio, setResearchingPortfolio] = useState(false);
   const [portfolioResearchError, setPortfolioResearchError] = useState(null);
@@ -3457,6 +3460,15 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         <div className={styles.header}>
           <h2 className={styles.title}>{isNew ? 'Add Prospect' : fields.company}</h2>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            {!isNew && fields.company && (
+              <button
+                ref={listsMatchBtnRef}
+                type="button"
+                onClick={() => setListsMatchOpen(o => !o)}
+                title="Scan every uploaded list for rows matching this company name and accept or reject the mapping"
+                style={{ padding: '0.25rem 0.6rem', border: '1px solid #CBD5E1', borderRadius: 6, background: listsMatchOpen ? '#EFF6FF' : '#fff', fontSize: '0.72rem', fontWeight: 600, color: '#334155', cursor: 'pointer', fontFamily: 'inherit' }}
+              >Search lists…</button>
+            )}
             {!isNew && onDeleteProspect && onUpdateProspect && (
               <button
                 type="button"
@@ -3468,6 +3480,15 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             <button className={styles.closeBtn} onClick={onClose}>&times;</button>
           </div>
         </div>
+        {!isNew && listsMatchOpen && fields.company && (
+          <ListsMatchPanel
+            anchorRef={listsMatchBtnRef}
+            prospectCompany={fields.company}
+            settings={settings}
+            updateSettingsPath={updateSettingsPath}
+            onClose={() => setListsMatchOpen(false)}
+          />
+        )}
         <div className={styles.body}>
           <div className={styles.grid}>
             <div style={{ gridColumn: 'span 2' }}>
