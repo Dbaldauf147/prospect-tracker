@@ -4296,6 +4296,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const ws = wb.addWorksheet('Methodology', {
         properties: { tabColor: { argb: SE_GREEN_DARK } },
         views: [{ showGridLines: false, state: 'frozen', ySplit: 1 }],
+        // Hidden by default so the workbook opens on the headline
+        // sheets. The user can right-click any visible tab → Unhide
+        // → Methodology to see the reference tables when needed.
+        state: 'hidden',
       });
       const COLS = 7;
       ws.columns = [38, 13, 17, 19, 17, 21, 24].map(w => ({ width: w }));
