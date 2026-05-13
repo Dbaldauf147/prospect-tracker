@@ -1909,7 +1909,7 @@ export function SitesView({ settings, updateSettings } = {}) {
     const GAS_PRICE_UOM_OPTIONS = ['therm', 'Dth', 'MMBtu', 'Mcf', 'Ccf', 'MWh'];
     const COUNTRY_OPTIONS = ['United States', 'Canada', 'Mexico', 'United Kingdom', 'Germany', 'France', 'Spain', 'Italy', 'Netherlands', 'Australia'];
     const ELECTRIC_PRODUCT_OPTIONS = ['Fixed', 'Index', 'Block & Index', 'Heat Rate', 'Hybrid', 'Pass-through', 'Utility Default'];
-    const GAS_PRODUCT_OPTIONS = ['Fixed', 'Index', 'NYMEX + Basis', 'Block & Index', 'Hybrid', 'Pass-through', 'Utility Default'];
+    const GAS_PRODUCT_OPTIONS = ['Fixed', 'Index', 'NYMEX + Basis', 'Block & Index', 'Hybrid', 'Flexible', 'Pass-through', 'Utility Default'];
 
     const COMMON_FIELDS = [
       { label: 'Site Name', required: true, hint: 'Row label. Required so the row isn\'t filtered as blank. Enter on the Electric Power tab — the Gas tab pulls Site Name from there via formula.' },
