@@ -34,12 +34,15 @@ import {
   normalizePropertyType,
   estimateConsumption,
   propertyTypeAccounts,
+  CONSUMPTION_ESTIMATES,
+  ACCOUNT_ESTIMATES,
 } from '../../data/propertyTypeEstimates';
 import {
   normalizeCountryName,
   countryElectricSavings,
   countryGasSavings,
   countryHasRegulatedRateOpportunity,
+  COUNTRY_DEREGULATION,
 } from '../../data/countryDeregulation';
 import styles from './SitesView.module.css';
 
@@ -3985,6 +3988,164 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
         ws.getRow(rowIdx).height = 28;
       });
+    }
+
+    // ---- Methodology sheet ------------------------------------------
+    // Three stacked sections on a single sheet:
+    //   1. Energy estimation methodology + the per-property-type
+    //      reference consumption table (electric kWh, gas Dth, etc.).
+    //   2. Account-number estimation methodology + the per-property-type
+    //      expected utility-account counts.
+    //   3. Country deregulation reference — every country's electric /
+    //      gas / power-rate-optimization bucket.
+    // No links to any other tab — read-only reference.
+    {
+      const ws = wb.addWorksheet('Methodology', {
+        properties: { tabColor: { argb: SE_GREEN_DARK } },
+        views: [{ showGridLines: false, state: 'frozen', ySplit: 1 }],
+      });
+      const COLS = 7;
+      ws.columns = [38, 13, 17, 19, 17, 21, 24].map(w => ({ width: w }));
+
+      let r = 1;
+
+      // Row 1 — title band
+      ws.mergeCells(r, 1, r, COLS);
+      const title = ws.getCell(r, 1);
+      title.value = 'Methodology & Reference Data';
+      title.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
+      title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+      title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(r).height = 30;
+      r += 1;
+
+      // Helpers — section banner, subtle paragraph, header row, data row.
+      const sectionBanner = (text) => {
+        ws.mergeCells(r, 1, r, COLS);
+        const c = ws.getCell(r, 1);
+        c.value = text;
+        c.font = { name: 'Nunito Sans', bold: true, size: 13, color: { argb: SE_GREEN_DARK } };
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+        c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        ws.getRow(r).height = 24;
+        r += 1;
+      };
+      const paragraph = (text) => {
+        ws.mergeCells(r, 1, r, COLS);
+        const c = ws.getCell(r, 1);
+        c.value = text;
+        c.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+        c.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
+        ws.getRow(r).height = Math.max(28, Math.min(110, Math.ceil(String(text).length / 110) * 16));
+        r += 1;
+      };
+      const blank = () => { r += 1; };
+      const headerRow = (labels) => {
+        labels.forEach((label, i) => {
+          const c = ws.getCell(r, i + 1);
+          c.value = label;
+          c.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+          c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+          c.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+          c.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
+        });
+        ws.getRow(r).height = 28;
+        r += 1;
+      };
+      const dataRow = (vals, numFmts) => {
+        vals.forEach((v, i) => {
+          const c = ws.getCell(r, i + 1);
+          c.value = v === '' || v == null ? ' ' : v;
+          c.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+          c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          c.border = {
+            bottom: { style: 'hair', color: { argb: SE_BORDER } },
+            right:  { style: 'hair', color: { argb: SE_BORDER } },
+          };
+          if (numFmts && numFmts[i]) c.numFmt = numFmts[i];
+        });
+        ws.getRow(r).height = 18;
+        r += 1;
+      };
+
+      // ---- Section 1: Energy estimation methodology ----
+      sectionBanner('1. Energy Consumption Estimates');
+      paragraph('Annual electric (kWh) and gas (Dth / kWh-equivalent) numbers are derived from a per-property-type reference profile. Each property type carries representative annual usage anchored to a reference square-footage. When a site\'s actual Size_ft² is provided, the reference values are scaled linearly: scaledValue = referenceValue × (actualSize / referenceSize). Sites without a size fall back to the reference values. Land and Debt property types have no consumption profile and are skipped.');
+      blank();
+      headerRow(['Property Type', 'Category', 'Reference Size (ft²)', 'Electric (kWh / yr)', 'Gas (Dth / yr)', 'Gas — kWh Equivalent', 'Total (kWh / yr)']);
+      const consumptionRows = Object.entries(CONSUMPTION_ESTIMATES)
+        .filter(([, v]) => v.electricKwh != null)
+        .sort((a, b) => (b[1].totalKwh || 0) - (a[1].totalKwh || 0));
+      consumptionRows.forEach(([name, v]) => {
+        dataRow(
+          [name, v.category, v.sizeFt2, v.electricKwh, v.gasDth, v.gasKwh, v.totalKwh],
+          [null, null, '#,##0', '#,##0', '#,##0', '#,##0', '#,##0']
+        );
+      });
+
+      blank();
+      blank();
+
+      // ---- Section 2: Account-count methodology ----
+      sectionBanner('2. Utility Account Number Estimates');
+      paragraph('Per-site utility-account counts (Water / Steam / Gas / Electric / Waste) are looked up by property type from a reference table. "Multiple" is treated as 3 for roll-up totals; "0 – 1" ranges as 0.5. "N/A" cells contribute 0 to totals so they do not skew portfolio sums. The displayed cell preserves the original label ("Multiple", "0 – 1", "N/A") rather than substituting the numeric placeholder.');
+      blank();
+      headerRow(['Property Type', 'Water', 'Steam', 'Gas', 'Electric', 'Waste', '']);
+      const accountRows = Object.entries(ACCOUNT_ESTIMATES);
+      accountRows.forEach(([name, v]) => {
+        dataRow([name, v.water?.label || '', v.steam?.label || '', v.gas?.label || '', v.electric?.label || '', v.waste?.label || '', '']);
+      });
+
+      blank();
+      blank();
+
+      // ---- Section 3: Country deregulation reference ----
+      sectionBanner('3. Country Deregulation Reference');
+      paragraph('Per-country bucket for each commodity. "Deregulated" / "Some deregulation" on Electric Power or Gas opens the commodity-savings motion (2 – 4 % on annual spend). "Deregulated" / "Some deregulation" on Power Rate Optimization opens the regulated-rate motion (0.25 % on regulated electric spend) — the two motions are mutually exclusive per site, so a country whose Electric Power is already deregulated does not also earn reg-rate savings on top. "Unlikely" and "No opportunity" disqualify a country from each motion.');
+      blank();
+      headerRow(['Country', 'Region', 'Electric Power', 'Gas', 'Power Rate Optimization', '', '']);
+      const countryRows = Object.entries(COUNTRY_DEREGULATION)
+        .sort((a, b) => {
+          const ra = a[1].region || '';
+          const rb = b[1].region || '';
+          if (ra !== rb) return ra.localeCompare(rb);
+          return a[0].localeCompare(b[0]);
+        });
+      const statusFill = (s) => {
+        if (s === 'Deregulated') return 'FFDCFCE7';
+        if (s === 'Some deregulation') return 'FFFEF9C3';
+        if (s === 'Unlikely') return 'FFFFEDD5';
+        if (s === 'No opportunity') return 'FFFEE2E2';
+        return null;
+      };
+      const statusFg = (s) => {
+        if (s === 'Deregulated') return 'FF166534';
+        if (s === 'Some deregulation') return 'FF92400E';
+        if (s === 'Unlikely') return 'FF9A3412';
+        if (s === 'No opportunity') return 'FF991B1B';
+        return SE_TEXT_DARK;
+      };
+      countryRows.forEach(([country, v]) => {
+        dataRow([country, v.region || '', v.electric || '', v.gas || '', v.powerRateOptimization || '', '', '']);
+        // Re-style the three status cells on the just-written row.
+        const rowIdx = r - 1;
+        [3, 4, 5].forEach((col, k) => {
+          const statusVal = [v.electric, v.gas, v.powerRateOptimization][k];
+          const fg = statusFill(statusVal);
+          if (!fg) return;
+          const c = ws.getCell(rowIdx, col);
+          c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fg } };
+          c.font = { name: 'Nunito Sans', size: 10, bold: true, color: { argb: statusFg(statusVal) } };
+        });
+      });
+
+      // Auto-filter on the country table so the reader can slice by
+      // region / status without leaving the sheet.
+      const countryTableHeaderRow = r - countryRows.length - 1;
+      ws.autoFilter = {
+        from: { row: countryTableHeaderRow, column: 1 },
+        to:   { row: r - 1, column: 5 },
+      };
     }
 
     const buf = await wb.xlsx.writeBuffer();
