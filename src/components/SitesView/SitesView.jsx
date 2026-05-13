@@ -2845,6 +2845,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
               // Risk Management threshold.
               const consumptionMWh = g.consumption / 1000;
               if (consumptionMWh > 10_000) out.push('⚠ Risk Management should be considered (>10,000 MWh)');
+              // Wholesale Plus: > 44,000 MWh/yr of deregulated electric
+              // in a single state is large enough to justify exploring
+              // the structured wholesale procurement product.
+              if (consumptionMWh > 44_000) out.push('★ Wholesale Plus should be explored (>44,000 MWh)');
               if (g.hasMexicoSourcing) out.push('★ Potential Mexico sourcing opportunity');
             } else if (commodity === 'gas') {
               if (g.spend > 0 && g.spend < 30_000) out.push('⚠ Natural gas consumption might be too low for sourcing (<$30K)');
@@ -3243,11 +3247,15 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       .map(r => r.state);
     const summaryFindings = [];
     const riskMgmtStates = collectStates(electricRows, 'Risk Management');
+    const wholesalePlusStates = collectStates(electricRows, 'Wholesale Plus');
     const smallElectricStates = collectStates(electricRows, 'Spend < $1M');
     const mexicoStates = collectStates(electricRows, 'Mexico sourcing');
     const smallGasStates = collectStates(gasRows, 'too low for sourcing');
     if (riskMgmtStates.length) {
       summaryFindings.push(`Risk Management should be considered (>10,000 MWh) — ${riskMgmtStates.join(', ')}`);
+    }
+    if (wholesalePlusStates.length) {
+      summaryFindings.push(`Wholesale Plus should be explored (>44,000 MWh) — ${wholesalePlusStates.join(', ')}`);
     }
     if (smallElectricStates.length) {
       summaryFindings.push(`Small electric market — Deregulated spend < $1M — ${smallElectricStates.join(', ')}`);
