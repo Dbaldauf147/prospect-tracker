@@ -10,6 +10,14 @@ service cloud.firestore {
         && request.auth.token.email == "baldaufdan@gmail.com";
     }
 
+    // Indicative Savings analyses saved against a prospect from the
+    // Utility Lookup page. Lives in a subcollection so the bulk
+    // /prospects query doesn't have to fetch the base64 XLSX blob.
+    match /prospects/{prospectId}/analyses/{analysisId} {
+      allow read, write: if request.auth != null
+        && request.auth.token.email == "baldaufdan@gmail.com";
+    }
+
     // Users collection: users can only read/write their own document
     match /users/{userId} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
@@ -17,6 +25,11 @@ service cloud.firestore {
 
     // Per-user prospects: users can only access their own prospects
     match /users/{userId}/prospects/{prospectId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Per-user analyses subcollection (Indicative Savings blobs).
+    match /users/{userId}/prospects/{prospectId}/analyses/{analysisId} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
 
