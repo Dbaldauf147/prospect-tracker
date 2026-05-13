@@ -1893,7 +1893,6 @@ export function SitesView({ settings, updateSettings } = {}) {
   async function downloadSitesTemplate() {
     const { Workbook } = await import('exceljs');
     const SE_GREEN_DARK = 'FF009530';
-    const SE_GREEN_LIGHT = 'FFE6F7EC';
     const SE_SLATE = 'FF475569';
     const SE_BORDER = 'FFD4DDE1';
     const SE_TEXT_DARK = 'FF1E293B';
@@ -2056,254 +2055,6 @@ export function SitesView({ settings, updateSettings } = {}) {
     });
     const FIELDS = [...COMMON_FIELDS, ...ELECTRIC_FIELDS, ...GAS_FIELDS];
 
-    // Display-only tab illustrating a 10-layer hedging strategy.
-    // Standalone — no formula links to Electric Power / Gas — kept
-    // here so it ships with the template the user hands to clients.
-    function renderHedgingExampleSheet() {
-      const ws = wb.addWorksheet('Hedging Strategy Example', {
-        properties: { tabColor: { argb: SE_GREEN_DARK } },
-        views: [{ showGridLines: false, state: 'frozen', ySplit: 7 }],
-      });
-
-      const COLS = 10;
-      const widths = [6, 16, 11, 14, 19, 19, 14, 16, 16, 18];
-      ws.columns = widths.map(w => ({ width: w }));
-
-      // Row 1 — title band
-      ws.mergeCells(1, 1, 1, COLS);
-      const title = ws.getCell(1, 1);
-      title.value = 'Layered Hedging Strategy — Illustrative Example';
-      title.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
-      title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
-      title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-      ws.getRow(1).height = 30;
-
-      // Row 2 — subtitle
-      ws.mergeCells(2, 1, 2, COLS);
-      const sub = ws.getCell(2, 1);
-      sub.value = 'Display only — independent of the Electric Power and Gas tabs. Shows how splitting an annual electric (or gas) buy into 10 layered hedges across the year can deliver a better blended price than buying everything at delivery-year spot.';
-      sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
-      sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
-      ws.getRow(2).height = 38;
-
-      // Row 3 — scenario assumptions
-      ws.mergeCells(3, 1, 3, COLS);
-      const scn = ws.getCell(3, 1);
-      scn.value = 'Scenario: Industrial buyer, 100,000 MWh/year electric load, 2027 delivery year. Forward-curve prices observed at 10 execution windows during 2026. Spot-only reference: $75.00 / MWh annual average for 2027 deliveries.';
-      scn.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-      scn.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
-      scn.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
-      ws.getRow(3).height = 32;
-
-      // Row 5 — section header
-      ws.mergeCells(5, 1, 5, COLS);
-      const sh1 = ws.getCell(5, 1);
-      sh1.value = '10 Hedge Layers Executed Across the Year';
-      sh1.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
-      sh1.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
-      sh1.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-      ws.getRow(5).height = 22;
-
-      // Row 6 — table header
-      const headers = [
-        '#', 'Execution Date', 'Tranche %', 'Cumulative %',
-        'Locked Price ($/MWh)', 'Spot Ref. ($/MWh)', 'Volume (MWh)',
-        'Locked Cost', 'Spot Cost', 'Saving vs Spot',
-      ];
-      const hr = ws.getRow(6);
-      headers.forEach((h, i) => {
-        const c = hr.getCell(i + 1);
-        c.value = h;
-        c.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
-        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
-        c.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
-        c.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
-      });
-      hr.height = 32;
-
-      // Rows 7-16 — 10 hedge tranches. Each tranche = 10,000 MWh
-      // (10 % of the 100,000 MWh annual load). Spot reference is a
-      // constant $75 / MWh annual average for 2027; the hedge prices
-      // walk through a plausible forward-curve shape across 2026
-      // (dip in spring, peak in summer, settle in fall).
-      const SPOT_REF = 75.00;
-      const VOLUME = 10000;
-      const hedges = [
-        { date: '2026-01-14', price: 74.50 },
-        { date: '2026-02-11', price: 71.25 },
-        { date: '2026-03-18', price: 68.80 },
-        { date: '2026-04-22', price: 67.40 },
-        { date: '2026-05-13', price: 69.10 },
-        { date: '2026-06-10', price: 72.30 },
-        { date: '2026-07-15', price: 76.80 },
-        { date: '2026-08-19', price: 78.40 },
-        { date: '2026-09-16', price: 74.60 },
-        { date: '2026-10-14', price: 73.20 },
-      ];
-
-      hedges.forEach((h, i) => {
-        const r = ws.getRow(7 + i);
-        const cumPct = ((i + 1) * 10) / 100;
-        const lockedCost = h.price * VOLUME;
-        const spotCost = SPOT_REF * VOLUME;
-        const saving = spotCost - lockedCost;
-
-        const vals = [i + 1, h.date, 0.10, cumPct, h.price, SPOT_REF, VOLUME, lockedCost, spotCost, saving];
-        vals.forEach((v, ci) => {
-          const c = r.getCell(ci + 1);
-          c.value = v;
-          c.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-          c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-          c.border = {
-            bottom: { style: 'hair', color: { argb: SE_BORDER } },
-            right:  { style: 'hair', color: { argb: SE_BORDER } },
-          };
-        });
-
-        r.getCell(3).numFmt = '0%';
-        r.getCell(4).numFmt = '0%';
-        r.getCell(5).numFmt = '"$"0.00';
-        r.getCell(6).numFmt = '"$"0.00';
-        r.getCell(7).numFmt = '#,##0';
-        r.getCell(8).numFmt = '"$"#,##0';
-        r.getCell(9).numFmt = '"$"#,##0';
-        r.getCell(10).numFmt = '"$"#,##0;[Red]("$"#,##0)';
-
-        // Green when the hedge beat spot, red when it missed — the
-        // point of layering is that the misses still pull average
-        // variance down vs an all-or-nothing buy.
-        const lockedCell = r.getCell(5);
-        const beatSpot = h.price < SPOT_REF;
-        lockedCell.fill = {
-          type: 'pattern', pattern: 'solid',
-          fgColor: { argb: beatSpot ? 'FFDCFCE7' : 'FFFEE2E2' },
-        };
-        lockedCell.font = {
-          name: 'Nunito Sans', size: 10, bold: true,
-          color: { argb: beatSpot ? 'FF166534' : 'FF991B1B' },
-        };
-
-        r.height = 20;
-      });
-
-      // Row 17 — totals
-      const totalLockedCost = hedges.reduce((s, h) => s + h.price * VOLUME, 0);
-      const totalVolume = VOLUME * hedges.length;
-      const totalSpotCost = SPOT_REF * totalVolume;
-      const totalSaving = totalSpotCost - totalLockedCost;
-      const blendedPrice = totalLockedCost / totalVolume;
-
-      const tr = ws.getRow(17);
-      const totalVals = [null, 'TOTAL', null, 1.0, blendedPrice, SPOT_REF, totalVolume, totalLockedCost, totalSpotCost, totalSaving];
-      totalVals.forEach((v, ci) => {
-        const c = tr.getCell(ci + 1);
-        c.value = v;
-        c.font = { name: 'Nunito Sans', size: 11, bold: true, color: { argb: SE_TEXT_DARK } };
-        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
-        c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-        c.border = {
-          top:    { style: 'thin', color: { argb: SE_GREEN_DARK } },
-          bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } },
-        };
-      });
-      tr.getCell(4).numFmt = '0%';
-      tr.getCell(5).numFmt = '"$"0.00';
-      tr.getCell(6).numFmt = '"$"0.00';
-      tr.getCell(7).numFmt = '#,##0';
-      tr.getCell(8).numFmt = '"$"#,##0';
-      tr.getCell(9).numFmt = '"$"#,##0';
-      tr.getCell(10).numFmt = '"$"#,##0;[Red]("$"#,##0)';
-      tr.height = 26;
-
-      // Per-row data bars on the Saving column so the visual story
-      // (longer bar = bigger tranche contribution) jumps out at a
-      // glance. ExcelJS supports dataBar conditional formatting.
-      ws.addConditionalFormatting({
-        ref: 'J7:J16',
-        rules: [{
-          type: 'dataBar',
-          cfvo: [{ type: 'num', value: -50000 }, { type: 'num', value: 100000 }],
-          color: { argb: 'FF22C55E' },
-          showValue: true,
-          gradient: false,
-        }],
-      });
-
-      // Row 19 — Result header
-      ws.mergeCells(19, 1, 19, COLS);
-      const rh = ws.getCell(19, 1);
-      rh.value = 'Result';
-      rh.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
-      rh.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
-      rh.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-      ws.getRow(19).height = 22;
-
-      // Rows 20-24 — label/value pairs. Last row highlights the headline saving.
-      const fmtMoney = (n) => `$${Math.round(n).toLocaleString()}`;
-      const stats = [
-        ['Blended Hedged Price', `$${blendedPrice.toFixed(2)} / MWh`],
-        ['Spot-Only Reference Price', `$${SPOT_REF.toFixed(2)} / MWh`],
-        [`Total Hedged Cost (${totalVolume.toLocaleString()} MWh)`, fmtMoney(totalLockedCost)],
-        [`Total Spot Cost (${totalVolume.toLocaleString()} MWh)`, fmtMoney(totalSpotCost)],
-        ['Savings vs Spot', `${fmtMoney(totalSaving)}   (${((totalSaving / totalSpotCost) * 100).toFixed(2)} %)`],
-      ];
-      stats.forEach((s, i) => {
-        const rowIdx = 20 + i;
-        ws.mergeCells(rowIdx, 1, rowIdx, 4);
-        ws.mergeCells(rowIdx, 5, rowIdx, COLS);
-        const row = ws.getRow(rowIdx);
-        const labelCell = row.getCell(1);
-        const valCell = row.getCell(5);
-        labelCell.value = s[0];
-        valCell.value = s[1];
-        const isHighlight = i === stats.length - 1;
-        labelCell.font = {
-          name: 'Nunito Sans',
-          size: isHighlight ? 12 : 11,
-          bold: isHighlight,
-          color: { argb: isHighlight ? SE_GREEN_DARK : SE_SLATE },
-        };
-        labelCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-        valCell.font = {
-          name: 'Nunito Sans',
-          size: isHighlight ? 14 : 11,
-          bold: isHighlight,
-          color: { argb: isHighlight ? SE_GREEN_DARK : SE_TEXT_DARK },
-        };
-        valCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-        if (isHighlight) {
-          labelCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
-          valCell.fill   = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
-        }
-        row.height = isHighlight ? 30 : 20;
-      });
-
-      // Row 26 — "Why layering works" explainer
-      ws.mergeCells(26, 1, 26, COLS);
-      const wh = ws.getCell(26, 1);
-      wh.value = 'Why layering works';
-      wh.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
-      wh.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
-      wh.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-      ws.getRow(26).height = 22;
-
-      const bullets = [
-        'Splitting the buy into 10 tranches catches multiple points on the forward curve instead of betting on a single execution date.',
-        'Tranches 2–5 captured the spring price dip; tranches 7–8 came in above spot, but their drag is more than offset by the gains on the dips.',
-        'The same approach applies to natural gas — substitute $/MMBtu (or $/Dth) and gas volumes for the figures above. The mechanic and the variance-reduction benefit are identical.',
-      ];
-      bullets.forEach((b, i) => {
-        const rowIdx = 27 + i;
-        ws.mergeCells(rowIdx, 1, rowIdx, COLS);
-        const cell = ws.getCell(rowIdx, 1);
-        cell.value = `•  ${b}`;
-        cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-        cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
-        ws.getRow(rowIdx).height = 28;
-      });
-    }
-    renderHedgingExampleSheet();
-
     // Sheet 2: Instructions
     const notes = wb.addWorksheet('Instructions');
     notes.columns = [{ width: 38 }, { width: 12 }, { width: 90 }];
@@ -2368,6 +2119,7 @@ export function SitesView({ settings, updateSettings } = {}) {
     const SE_TEXT_DARK = 'FF1E293B';
     const SE_BORDER = 'FFD4DDE1';
     const SE_GREEN = 'FF3DCD58';
+    const SE_SLATE = 'FF475569';
     // Both commodities use a per-state curated savings range — see
     // ELECTRIC_DEREGULATION and GAS_DEREGULATION above for the
     // canonical status / range / lowPct / highPct lookup.
@@ -3489,6 +3241,309 @@ export function SitesView({ settings, updateSettings } = {}) {
         from: { row: 2, column: 1 },
         to: { row: 2 + allSiteRows.length, column: cols.length },
       };
+    }
+
+    // ---- Contract Overview sheet ------------------------------------
+    // One row per (site, commodity) where any contract field is filled
+    // in — supplier, contract name, dates, or contract price. Sites
+    // with zero contract signal across both commodities don't appear
+    // here so the sheet stays readable when the source data is sparse.
+    if (contractOverviewRows.length > 0) {
+      const ws = wb.addWorksheet('Contract Overview', {
+        properties: { tabColor: { argb: SE_GREEN } },
+        views: [{ showGridLines: false, state: 'frozen', ySplit: 2 }],
+      });
+      const cols = [
+        { label: 'Site',                key: 'Site',                width: 28 },
+        { label: 'State',               key: 'State',               width: 9  },
+        { label: 'Commodity',           key: 'Commodity',           width: 12 },
+        { label: 'Utility',             key: 'Utility',             width: 22 },
+        { label: 'Supplier',            key: 'Supplier',            width: 22 },
+        { label: 'Contract Name',       key: 'Contract Name',       width: 22 },
+        { label: 'Product Type',        key: 'Product Type',        width: 16 },
+        { label: 'Contract Start',      key: 'Contract Start',      width: 14 },
+        { label: 'Contract End',        key: 'Contract End',        width: 14 },
+        { label: 'Contract Price',      key: 'Contract Price',      width: 16, numFmt: '"$"0.0000' },
+        { label: 'Price Unit',          key: 'Price Unit',          width: 11 },
+        { label: 'Annual Consumption',  key: 'Annual Consumption',  width: 18, numFmt: '#,##0' },
+        { label: 'Consumption Unit',    key: 'Consumption Unit',    width: 14 },
+        { label: 'Annual Cost',         key: 'Annual Cost',         width: 16, numFmt: '"$"#,##0' },
+      ];
+      ws.columns = cols.map(c => ({ width: c.width }));
+
+      ws.mergeCells(1, 1, 1, cols.length);
+      const title = ws.getCell(1, 1);
+      title.value = 'Contract Overview';
+      title.font = { name: 'Nunito Sans', bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
+      title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+      title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(1).height = 28;
+
+      const hdr = ws.getRow(2);
+      cols.forEach((c, i) => {
+        const cell = hdr.getCell(i + 1);
+        cell.value = c.label;
+        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+        cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
+        cell.border = {
+          bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } },
+          right:  { style: 'hair', color: { argb: 'FFFFFFFF' } },
+        };
+      });
+      hdr.height = 30;
+
+      contractOverviewRows.forEach((r, idx) => {
+        const dataRow = ws.getRow(3 + idx);
+        cols.forEach((c, i) => {
+          const cell = dataRow.getCell(i + 1);
+          const v = r[c.key];
+          if (v === '' || v == null) cell.value = ' ';
+          else cell.value = v;
+          cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+          cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          if (c.numFmt) cell.numFmt = c.numFmt;
+          cell.border = {
+            bottom: { style: 'hair', color: { argb: SE_BORDER } },
+            right:  { style: 'hair', color: { argb: SE_BORDER } },
+          };
+        });
+        dataRow.height = 18;
+      });
+
+      ws.autoFilter = {
+        from: { row: 2, column: 1 },
+        to:   { row: 2 + contractOverviewRows.length, column: cols.length },
+      };
+    }
+
+    // ---- Hedging Strategy Example sheet -----------------------------
+    // Display-only — illustrative example of layering 10 hedges on a
+    // 100,000 MWh/year electric load to capture a better blended
+    // price than buying delivery-year spot. No formula links to other
+    // sheets; the same mechanic applies to gas.
+    {
+      const ws = wb.addWorksheet('Hedging Strategy Example', {
+        properties: { tabColor: { argb: SE_GREEN_DARK } },
+        views: [{ showGridLines: false, state: 'frozen', ySplit: 7 }],
+      });
+
+      const COLS = 10;
+      const widths = [6, 16, 11, 14, 19, 19, 14, 16, 16, 18];
+      ws.columns = widths.map(w => ({ width: w }));
+
+      ws.mergeCells(1, 1, 1, COLS);
+      const title = ws.getCell(1, 1);
+      title.value = 'Layered Hedging Strategy — Illustrative Example';
+      title.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
+      title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+      title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(1).height = 30;
+
+      ws.mergeCells(2, 1, 2, COLS);
+      const sub = ws.getCell(2, 1);
+      sub.value = 'Display only — independent of the other tabs. Shows how splitting an annual electric (or gas) buy into 10 layered hedges across the year can deliver a better blended price than buying everything at delivery-year spot.';
+      sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
+      sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+      ws.getRow(2).height = 38;
+
+      ws.mergeCells(3, 1, 3, COLS);
+      const scn = ws.getCell(3, 1);
+      scn.value = 'Scenario: Industrial buyer, 100,000 MWh/year electric load, 2027 delivery year. Forward-curve prices observed at 10 execution windows during 2026. Spot-only reference: $75.00 / MWh annual average for 2027 deliveries.';
+      scn.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+      scn.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+      scn.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
+      ws.getRow(3).height = 32;
+
+      ws.mergeCells(5, 1, 5, COLS);
+      const sh1 = ws.getCell(5, 1);
+      sh1.value = '10 Hedge Layers Executed Across the Year';
+      sh1.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
+      sh1.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+      sh1.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(5).height = 22;
+
+      const headers = [
+        '#', 'Execution Date', 'Tranche %', 'Cumulative %',
+        'Locked Price ($/MWh)', 'Spot Ref. ($/MWh)', 'Volume (MWh)',
+        'Locked Cost', 'Spot Cost', 'Saving vs Spot',
+      ];
+      const hr = ws.getRow(6);
+      headers.forEach((h, i) => {
+        const c = hr.getCell(i + 1);
+        c.value = h;
+        c.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+        c.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+        c.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
+      });
+      hr.height = 32;
+
+      const SPOT_REF = 75.00;
+      const VOLUME = 10000;
+      const hedges = [
+        { date: '2026-01-14', price: 74.50 },
+        { date: '2026-02-11', price: 71.25 },
+        { date: '2026-03-18', price: 68.80 },
+        { date: '2026-04-22', price: 67.40 },
+        { date: '2026-05-13', price: 69.10 },
+        { date: '2026-06-10', price: 72.30 },
+        { date: '2026-07-15', price: 76.80 },
+        { date: '2026-08-19', price: 78.40 },
+        { date: '2026-09-16', price: 74.60 },
+        { date: '2026-10-14', price: 73.20 },
+      ];
+
+      hedges.forEach((h, i) => {
+        const r = ws.getRow(7 + i);
+        const cumPct = ((i + 1) * 10) / 100;
+        const lockedCost = h.price * VOLUME;
+        const spotCost = SPOT_REF * VOLUME;
+        const saving = spotCost - lockedCost;
+
+        const vals = [i + 1, h.date, 0.10, cumPct, h.price, SPOT_REF, VOLUME, lockedCost, spotCost, saving];
+        vals.forEach((v, ci) => {
+          const c = r.getCell(ci + 1);
+          c.value = v;
+          c.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+          c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          c.border = {
+            bottom: { style: 'hair', color: { argb: SE_BORDER } },
+            right:  { style: 'hair', color: { argb: SE_BORDER } },
+          };
+        });
+
+        r.getCell(3).numFmt = '0%';
+        r.getCell(4).numFmt = '0%';
+        r.getCell(5).numFmt = '"$"0.00';
+        r.getCell(6).numFmt = '"$"0.00';
+        r.getCell(7).numFmt = '#,##0';
+        r.getCell(8).numFmt = '"$"#,##0';
+        r.getCell(9).numFmt = '"$"#,##0';
+        r.getCell(10).numFmt = '"$"#,##0;[Red]("$"#,##0)';
+
+        const lockedCell = r.getCell(5);
+        const beatSpot = h.price < SPOT_REF;
+        lockedCell.fill = {
+          type: 'pattern', pattern: 'solid',
+          fgColor: { argb: beatSpot ? 'FFDCFCE7' : 'FFFEE2E2' },
+        };
+        lockedCell.font = {
+          name: 'Nunito Sans', size: 10, bold: true,
+          color: { argb: beatSpot ? 'FF166534' : 'FF991B1B' },
+        };
+
+        r.height = 20;
+      });
+
+      const totalLockedCost = hedges.reduce((s, h) => s + h.price * VOLUME, 0);
+      const totalVolume = VOLUME * hedges.length;
+      const totalSpotCost = SPOT_REF * totalVolume;
+      const totalSaving = totalSpotCost - totalLockedCost;
+      const blendedPrice = totalLockedCost / totalVolume;
+
+      const tr = ws.getRow(17);
+      const totalVals = [null, 'TOTAL', null, 1.0, blendedPrice, SPOT_REF, totalVolume, totalLockedCost, totalSpotCost, totalSaving];
+      totalVals.forEach((v, ci) => {
+        const c = tr.getCell(ci + 1);
+        c.value = v;
+        c.font = { name: 'Nunito Sans', size: 11, bold: true, color: { argb: SE_TEXT_DARK } };
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
+        c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        c.border = {
+          top:    { style: 'thin', color: { argb: SE_GREEN_DARK } },
+          bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } },
+        };
+      });
+      tr.getCell(4).numFmt = '0%';
+      tr.getCell(5).numFmt = '"$"0.00';
+      tr.getCell(6).numFmt = '"$"0.00';
+      tr.getCell(7).numFmt = '#,##0';
+      tr.getCell(8).numFmt = '"$"#,##0';
+      tr.getCell(9).numFmt = '"$"#,##0';
+      tr.getCell(10).numFmt = '"$"#,##0;[Red]("$"#,##0)';
+      tr.height = 26;
+
+      ws.addConditionalFormatting({
+        ref: 'J7:J16',
+        rules: [{
+          type: 'dataBar',
+          cfvo: [{ type: 'num', value: -50000 }, { type: 'num', value: 100000 }],
+          color: { argb: 'FF22C55E' },
+          showValue: true,
+          gradient: false,
+        }],
+      });
+
+      ws.mergeCells(19, 1, 19, COLS);
+      const rh = ws.getCell(19, 1);
+      rh.value = 'Result';
+      rh.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
+      rh.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+      rh.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(19).height = 22;
+
+      const fmtMoney = (n) => `$${Math.round(n).toLocaleString()}`;
+      const stats = [
+        ['Blended Hedged Price', `$${blendedPrice.toFixed(2)} / MWh`],
+        ['Spot-Only Reference Price', `$${SPOT_REF.toFixed(2)} / MWh`],
+        [`Total Hedged Cost (${totalVolume.toLocaleString()} MWh)`, fmtMoney(totalLockedCost)],
+        [`Total Spot Cost (${totalVolume.toLocaleString()} MWh)`, fmtMoney(totalSpotCost)],
+        ['Savings vs Spot', `${fmtMoney(totalSaving)}   (${((totalSaving / totalSpotCost) * 100).toFixed(2)} %)`],
+      ];
+      stats.forEach((s, i) => {
+        const rowIdx = 20 + i;
+        ws.mergeCells(rowIdx, 1, rowIdx, 4);
+        ws.mergeCells(rowIdx, 5, rowIdx, COLS);
+        const row = ws.getRow(rowIdx);
+        const labelCell = row.getCell(1);
+        const valCell = row.getCell(5);
+        labelCell.value = s[0];
+        valCell.value = s[1];
+        const isHighlight = i === stats.length - 1;
+        labelCell.font = {
+          name: 'Nunito Sans',
+          size: isHighlight ? 12 : 11,
+          bold: isHighlight,
+          color: { argb: isHighlight ? SE_GREEN_DARK : SE_SLATE },
+        };
+        labelCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        valCell.font = {
+          name: 'Nunito Sans',
+          size: isHighlight ? 14 : 11,
+          bold: isHighlight,
+          color: { argb: isHighlight ? SE_GREEN_DARK : SE_TEXT_DARK },
+        };
+        valCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        if (isHighlight) {
+          labelCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+          valCell.fill   = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+        }
+        row.height = isHighlight ? 30 : 20;
+      });
+
+      ws.mergeCells(26, 1, 26, COLS);
+      const wh = ws.getCell(26, 1);
+      wh.value = 'Why layering works';
+      wh.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
+      wh.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+      wh.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(26).height = 22;
+
+      const bullets = [
+        'Splitting the buy into 10 tranches catches multiple points on the forward curve instead of betting on a single execution date.',
+        'Tranches 2–5 captured the spring price dip; tranches 7–8 came in above spot, but their drag is more than offset by the gains on the dips.',
+        'The same approach applies to natural gas — substitute $/MMBtu (or $/Dth) and gas volumes for the figures above. The mechanic and the variance-reduction benefit are identical.',
+      ];
+      bullets.forEach((b, i) => {
+        const rowIdx = 27 + i;
+        ws.mergeCells(rowIdx, 1, rowIdx, COLS);
+        const cell = ws.getCell(rowIdx, 1);
+        cell.value = `•  ${b}`;
+        cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+        cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+        ws.getRow(rowIdx).height = 28;
+      });
     }
 
     const buf = await wb.xlsx.writeBuffer();
