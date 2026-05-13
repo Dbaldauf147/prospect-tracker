@@ -2503,6 +2503,19 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const n = typeof v === 'number' ? v : Number(v);
       return Number.isFinite(n) ? Math.ceil(n) : v;
     };
+    // Coerce a value into a Date when the column is flagged as a
+    // date column. Returns the existing Date as-is, parses date-like
+    // strings ("3/15/2025", "Mon Jan 15 2024 …"), and passes anything
+    // else through unchanged so placeholder strings like 'TBD' still
+    // render as text.
+    const toExcelDate = (v) => {
+      if (v == null || v === '') return v;
+      if (v instanceof Date) return Number.isFinite(v.getTime()) ? v : v;
+      const s = String(v).trim();
+      if (!s) return v;
+      const d = new Date(s);
+      return Number.isFinite(d.getTime()) ? d : v;
+    };
     // Helper: write a scenario-aware Excel formula and pre-emptively
     // silence the green "inconsistent formula" / "formula" warning
     // triangle that Excel sometimes raises when a column mixes
@@ -3093,6 +3106,11 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             writeYearGatedConstant(cell, ceilForFmt(v, c.numFmt), c.yearGate);
           } else if (v === '' || v == null) {
             writeBlank(cell, !!c.numFmt);
+          } else if (c.dateColumn) {
+            // Coerce date-like strings / Dates to a true Date so the
+            // cell numFmt 'm/d/yyyy' renders as a short date instead
+            // of falling back to General (raw text / serial number).
+            cell.value = toExcelDate(v);
           } else {
             cell.value = ceilForFmt(v, c.numFmt);
           }
@@ -3190,8 +3208,8 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       { label: 'Year 5 Cumulative', scenario: true, yearGate: 5, get: (g) => g.year5, numFmt: '"$"#,##0', sumKey: 'year5' },
       { label: 'Utility Vendor(s)', get: (g) => g.utilities },
       { label: 'Supplier Name(s)', get: (g) => g.suppliers },
-      { label: 'Contract Start', get: (g) => g.earliestStart },
-      { label: 'Contract End', get: (g) => g.latestEnd },
+      { label: 'Contract Start', get: (g) => g.earliestStart, numFmt: 'm/d/yyyy', dateColumn: true },
+      { label: 'Contract End', get: (g) => g.latestEnd, numFmt: 'm/d/yyyy', dateColumn: true },
       // Spacer column — physically separates the deregulated block
       // from the regulated-rate block so the two motions read as
       // distinct stories on the sheet. (Per-state flags now live in
@@ -3231,8 +3249,8 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       { label: 'Year 5 Cumulative', scenario: true, yearGate: 5, get: (g) => g.year5, numFmt: '"$"#,##0', sumKey: 'year5' },
       { label: 'Utility Vendor(s)', get: (g) => g.utilities },
       { label: 'Supplier Name(s)', get: (g) => g.suppliers },
-      { label: 'Contract Start', get: (g) => g.earliestStart },
-      { label: 'Contract End', get: (g) => g.latestEnd },
+      { label: 'Contract Start', get: (g) => g.earliestStart, numFmt: 'm/d/yyyy', dateColumn: true },
+      { label: 'Contract End', get: (g) => g.latestEnd, numFmt: 'm/d/yyyy', dateColumn: true },
     ];
 
     // Findings & Recommendations summary band — pulled from the
@@ -3310,14 +3328,14 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       { label: 'Reg. Rate Savings Opportunity', get: (s) => s.regRateOpportunity, width: 28 },
       { label: 'Annual Electric (kWh)', get: (s) => s.kwh, numFmt: '#,##0', width: 18 },
       { label: 'Total Electric Cost', get: (s) => s.electricCost, numFmt: '"$"#,##0', width: 16 },
-      { label: 'Electric Contract Start', get: (s) => s.electricStart, width: 18 },
-      { label: 'Electric Contract End', get: (s) => s.electricEnd, width: 18 },
+      { label: 'Electric Contract Start', get: (s) => s.electricStart, width: 18, numFmt: 'm/d/yyyy', dateColumn: true },
+      { label: 'Electric Contract End', get: (s) => s.electricEnd, width: 18, numFmt: 'm/d/yyyy', dateColumn: true },
       { label: 'Gas Utility', get: (s) => s.gasUtility, width: 22 },
       { label: 'Gas Supplier', get: (s) => s.gasSupplier, width: 22 },
       { label: 'Annual Gas (Dth)', get: (s) => s.dth, numFmt: '#,##0', width: 16 },
       { label: 'Total Natural Gas Cost', get: (s) => s.gasCost, numFmt: '"$"#,##0', width: 18 },
-      { label: 'Gas Contract Start', get: (s) => s.gasStart, width: 18 },
-      { label: 'Gas Contract End', get: (s) => s.gasEnd, width: 18 },
+      { label: 'Gas Contract Start', get: (s) => s.gasStart, width: 18, numFmt: 'm/d/yyyy', dateColumn: true },
+      { label: 'Gas Contract End', get: (s) => s.gasEnd, width: 18, numFmt: 'm/d/yyyy', dateColumn: true },
       // Per-site Mexico-sourcing flag (any Mexican site with > 1 MWh
       // of electric consumption). Other site-level flags can plug in
       // here later without growing the column.
@@ -3446,6 +3464,8 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         // green "number stored as text" triangle.
         if (v === '' || v == null) {
           writeBlank(cell, !!c.numFmt);
+        } else if (c.dateColumn) {
+          cell.value = toExcelDate(v);
         } else {
           cell.value = ceilForFmt(v, c.numFmt);
         }
@@ -3513,8 +3533,8 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         { label: 'Commodity', get: (s) => s.commodity === 'electric' ? 'Electric' : 'Gas', width: 14 },
         { label: 'Utility', get: (s) => s.utility, width: 22 },
         { label: 'Supplier', get: (s) => s.supplier, width: 22 },
-        { label: 'Contract Start', get: (s) => s.contractStart, width: 14 },
-        { label: 'Contract End', get: (s) => s.contractEnd, width: 14 },
+        { label: 'Contract Start', get: (s) => s.contractStart, width: 14, numFmt: 'm/d/yyyy', dateColumn: true },
+        { label: 'Contract End', get: (s) => s.contractEnd, width: 14, numFmt: 'm/d/yyyy', dateColumn: true },
         { label: 'Annual Spend', get: (s) => s.annualSpend, numFmt: '"$"#,##0', width: 14 },
         { label: 'Low %', get: (s) => s.lowPct, numFmt: '0.0%', width: 9 },
         { label: 'High %', get: (s) => s.highPct, numFmt: '0.0%', width: 9 },
@@ -3588,6 +3608,8 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             writeYearGatedConstant(cell, ceilForFmt(v, c.numFmt), c.yearGate);
           } else if (v === '' || v == null) {
             writeBlank(cell, !!c.numFmt);
+          } else if (c.dateColumn) {
+            cell.value = toExcelDate(v);
           } else {
             cell.value = ceilForFmt(v, c.numFmt);
           }
@@ -3828,8 +3850,8 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         { label: 'Supplier',            key: 'Supplier',            width: 22 },
         { label: 'Contract Name',       key: 'Contract Name',       width: 22 },
         { label: 'Product Type',        key: 'Product Type',        width: 16 },
-        { label: 'Contract Start',      key: 'Contract Start',      width: 14 },
-        { label: 'Contract End',        key: 'Contract End',        width: 14 },
+        { label: 'Contract Start',      key: 'Contract Start',      width: 14, numFmt: 'm/d/yyyy', dateColumn: true },
+        { label: 'Contract End',        key: 'Contract End',        width: 14, numFmt: 'm/d/yyyy', dateColumn: true },
         { label: 'Contract Price',      key: 'Contract Price',      width: 16, numFmt: '"$"0.0000' },
         { label: 'Price Unit',          key: 'Price Unit',          width: 11 },
         { label: 'Annual Consumption',  key: 'Annual Consumption',  width: 18, numFmt: '#,##0' },
@@ -3866,6 +3888,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           const cell = dataRow.getCell(i + 1);
           const v = r[c.key];
           if (v === '' || v == null) cell.value = ' ';
+          else if (c.dateColumn) cell.value = toExcelDate(v);
           else cell.value = v;
           cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
           cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
