@@ -914,36 +914,57 @@ export function PricingView() {
 
   function exportCsv() {
     if (!workbook) return;
-    const rows = [['Option', 'Section', 'Line Item', 'Type', 'CTS', 'Start Month', 'Comments', 'Effective GM%', 'GM Source', 'Marked-up Price', 'Linked To']];
+    const wb = XLSX.utils.book_new();
+
+    // One sheet per option, formatted so parsePricingWorkbook can
+    // read this file back through the same path it uses for a fresh
+    // fee workbook upload. The parser skips the first 18 rows, then
+    // looks for header rows containing both "Type" and "CTS"; the
+    // section title is the nearest single-cell row above each header.
+    // A trailing "Cost Summary" anchor bounds the data range.
     for (const opt of workbook.options) {
+      const rows = [];
+      for (let i = 0; i < 18; i++) rows.push([]);
       for (const sec of opt.sections) {
+        rows.push([sec.title]);
+        rows.push(['Line Item', 'Type', 'CTS', 'Start Month', 'Comments', 'GM %', 'Marked-up Price']);
         for (const item of sec.items) {
-          const { gm, source, price } = priceFor(item);
+          const { price } = priceFor(item);
           rows.push([
-            opt.sheetName,
-            sec.title,
             item.description || '',
             effectiveType(item),
             item.cts ?? '',
             item.startMonth || '',
             item.comments || '',
-            gm === null ? '' : (gm * 100).toFixed(2),
-            source,
-            price === null ? '' : price.toFixed(2),
-            resolvedLinkedTo(item),
+            item.gmPct != null ? item.gmPct : '',
+            price != null ? price : '',
           ]);
         }
+        rows.push([]);
       }
-    }
-    const ws = XLSX.utils.aoa_to_sheet(rows);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Pricing');
+      rows.push(['Cost Summary']);
 
-    // Hidden state sheet — JSON snapshot of every piece of state the
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+      // Apply percent format to the GM% column (col F → index 5).
+      // GM values are stored as decimals (0.5 = 50 %); the parser's
+      // toPct handles both forms but humans read 50 % more easily.
+      for (let r = 0; r < rows.length; r++) {
+        if (rows[r].length < 6) continue;
+        const v = rows[r][5];
+        if (typeof v !== 'number') continue;
+        const addr = XLSX.utils.encode_cell({ c: 5, r });
+        if (ws[addr]) ws[addr].z = '0%';
+      }
+      const sheetName = opt.sheetName || `Option ${opt.optionNumber}`;
+      XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    }
+
+    // State sheet — JSON snapshot of every piece of state the
     // IndexedDB cache persists, chunked into 30k-char cells so each
-    // value stays under Excel's 32,767 cell-text limit. Dropping this
-    // workbook back onto the Pricing page rehydrates from these rows
-    // instead of re-running the fee-workbook parser.
+    // value stays under Excel's 32,767 cell-text limit. Dropping
+    // this workbook back rehydrates from this sheet for full
+    // fidelity; without it the per-option sheets above still parse
+    // cleanly as a fresh fee workbook (no overrides preserved).
     const snapshot = {
       parserVersion: PARSER_VERSION,
       workbook, globalGmPct, overrides, activeOption, colWidths,
