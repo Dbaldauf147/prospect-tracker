@@ -2004,6 +2004,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         out.push({
           'Site': name,
           'State': r.__state__ || '',
+          'Country': r.__country__ || '',
           'Commodity': 'Electric',
           'Utility': r.__electric__ || '',
           'Supplier': r.__electricSupplier__ || '',
@@ -2022,6 +2023,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         out.push({
           'Site': name,
           'State': r.__state__ || '',
+          'Country': r.__country__ || '',
           'Commodity': 'Gas',
           'Utility': r.__gas__ || '',
           'Supplier': r.__gasSupplier__ || '',
@@ -4054,6 +4056,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const cols = [
         { label: 'Site',                key: 'Site',                width: 28 },
         { label: 'State',               key: 'State',               width: 9  },
+        { label: 'Country',             key: 'Country',             width: 16 },
         { label: 'Commodity',           key: 'Commodity',           width: 12 },
         { label: 'Utility',             key: 'Utility',             width: 22 },
         { label: 'Supplier',            key: 'Supplier',            width: 22 },
