@@ -45,6 +45,11 @@ import {
   countryHasRegulatedRateOpportunity,
   COUNTRY_DEREGULATION,
 } from '../../data/countryDeregulation';
+import {
+  countryElectricRate,
+  countryGasRatePerTherm,
+  normalizeCountryRateName,
+} from '../../data/countryRates';
 import styles from './SitesView.module.css';
 
 const SITES_STORAGE_KEY = 'sites-list-override';
@@ -893,13 +898,38 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const zip = zipColumn ? normalizeZip(r[zipColumn]) : '';
       const match = utility?.zipMap && zip ? utility.zipMap[zip] : null;
       const state = match?.state || zipToState(zip);
-      const electricRate = state ? stateRate(state, 'electric') : null;
-      const gasRate = state ? stateRate(state, 'gas') : null;
+      const stateElectricRate = state ? stateRate(state, 'electric') : null;
+      const stateGasRate = state ? stateRate(state, 'gas') : null;
       const electricUomRaw = electricUomOverride ? r[electricUomOverride] : '';
       const gasUomRaw = gasUomOverride ? r[gasUomOverride] : '';
       const elec = pickFirstConsumption(r, consumption.electric, toKwh, normalizeElectricUom(electricUomRaw));
       const gas = pickFirstConsumption(r, consumption.gas, toTherms, normalizeGasUom(gasUomRaw));
       const inputCountry = countryOverride ? String(r[countryOverride] || '').trim() : '';
+      // Country-rate fallback. When the state rate didn't resolve
+      // (non-US sites, or US sites whose state code we couldn't
+      // derive), look up an indicative commercial rate from the
+      // country reference table and substitute it. Electric drops in
+      // as $/kWh directly; gas converts from $/kWh-equiv to $/therm
+      // via the 29.3001 kWh/therm energy-content factor so the cost
+      // helpers downstream stay shape-compatible.
+      const resolvedCountryForRate = inputCountry || match?.country || null;
+      const countryElectricRateVal = stateElectricRate == null
+        ? countryElectricRate(resolvedCountryForRate)
+        : null;
+      const countryGasRateVal = stateGasRate == null
+        ? countryGasRatePerTherm(resolvedCountryForRate)
+        : null;
+      const electricRate = stateElectricRate ?? countryElectricRateVal ?? null;
+      const gasRate = stateGasRate ?? countryGasRateVal ?? null;
+      const electricRateSource = stateElectricRate != null
+        ? 'state'
+        : (countryElectricRateVal != null ? 'country' : null);
+      const gasRateSource = stateGasRate != null
+        ? 'state'
+        : (countryGasRateVal != null ? 'country' : null);
+      const resolvedCountryRateName = (electricRateSource === 'country' || gasRateSource === 'country')
+        ? normalizeCountryRateName(resolvedCountryForRate)
+        : null;
       const inputPropertyType = propertyTypeOverride ? String(r[propertyTypeOverride] || '').trim() : '';
       const canonicalPropertyType = inputPropertyType ? normalizePropertyType(inputPropertyType) : null;
       // Loose numeric parse for the optional Size_ft2 column — strips
@@ -1072,6 +1102,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         __thermsSource__: gas.sourceHeader,
         __electricRate__: electricRate,
         __gasRate__: gasRate,
+        __electricRateSource__: electricRateSource,
+        __gasRateSource__: gasRateSource,
+        __rateCountry__: resolvedCountryRateName,
         __electricCost__: electricCost,
         __gasCost__: gasCost,
         __electricCostActual__: actualElectricCost,
@@ -1304,9 +1337,13 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       render: (row) => {
         const val = row[`__${commodity}Rate__`];
         if (val == null) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
+        const source = row[`__${commodity}RateSource__`];
+        const tip = source === 'country'
+          ? `${row.__rateCountry__ || 'country'} indicative commercial rate. Drops in when no state rate resolves and no actual cost was provided. Indicative only — not a tariff rate.`
+          : `${row.__state__ || 'unknown state'} commercial average. Indicative only — not a tariff rate.`;
         return (
           <span
-            title={`${row.__state__ || 'unknown state'} commercial average. Indicative only — not a tariff rate.`}
+            title={tip}
             style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
           >{formatRate(val, commodity)}</span>
         );
