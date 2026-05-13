@@ -3526,7 +3526,8 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     });
     const detailCols = [
       { label: 'Site Name', get: (s) => s.siteName, width: 28 },
-      { label: 'ST / Prov / Country', get: (s) => s.state, width: 22 },
+      { label: 'ST / Prov', get: (s) => s.state, width: 14 },
+      { label: 'Country', get: (s) => s.country, width: 18 },
       { label: 'Zip', get: (s) => s.zip, width: 9 },
       { label: 'Electric Utility', get: (s) => s.electricUtility, width: 22 },
       { label: 'Electric Supplier', get: (s) => s.electricSupplier, width: 22 },
