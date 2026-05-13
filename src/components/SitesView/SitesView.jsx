@@ -49,6 +49,29 @@ import styles from './SitesView.module.css';
 
 const SITES_STORAGE_KEY = 'sites-list-override';
 
+// xlsxParse reads date cells with raw:true, so source date values
+// arrive as Excel serial numbers (e.g., 45673) rather than JS Dates.
+// Convert at the row-creation boundary so every downstream consumer
+// (Contract Summary, Contract Overview, Site Detail, the by-state
+// Earliest Start aggregation) gets a real Date object — which Excel
+// then displays correctly with a short-date numFmt.
+function parseSourceDate(v) {
+  if (v == null || v === '') return null;
+  if (v instanceof Date) return Number.isFinite(v.getTime()) ? v : null;
+  const asNum = typeof v === 'number'
+    ? v
+    : (typeof v === 'string' && /^\s*\d+(\.\d+)?\s*$/.test(v) ? Number(v) : NaN);
+  if (Number.isFinite(asNum) && asNum >= 1 && asNum < 73050) {
+    // Excel epoch is 1899-12-30 (accounts for its 1900-leap-year bug
+    // on any realistic date). UTC midnight keeps the displayed day
+    // stable across local-timezone DST shifts.
+    const d = new Date(Date.UTC(1899, 11, 30) + asNum * 86400000);
+    return Number.isFinite(d.getTime()) ? d : null;
+  }
+  const d = new Date(String(v).trim());
+  return Number.isFinite(d.getTime()) ? d : null;
+}
+
 function detectColumn(headers, patterns) {
   for (const pat of patterns) {
     const hit = headers.find(h => pat.test(String(h)));
@@ -1058,13 +1081,13 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         __totalCost__: (electricCost != null || gasCost != null) ? totalCost : null,
         __electricSupplier__: supplierOverrides[`${i}_electric`] || electricSupplierResolved,
         __gasSupplier__: supplierOverrides[`${i}_gas`] || gasSupplierResolved,
-        __electricStart__: electricStartOverride ? r[electricStartOverride] : null,
-        __electricEnd__: electricEndOverride ? r[electricEndOverride] : null,
+        __electricStart__: electricStartOverride ? parseSourceDate(r[electricStartOverride]) : null,
+        __electricEnd__: electricEndOverride ? parseSourceDate(r[electricEndOverride]) : null,
         __electricContractPrice__: electricContractPrice,
         __electricContractName__: electricContractNameOverride ? String(r[electricContractNameOverride] || '').trim() || null : null,
         __electricProductType__: electricProductTypeOverride ? String(r[electricProductTypeOverride] || '').trim() || null : null,
-        __gasStart__: gasStartOverride ? r[gasStartOverride] : null,
-        __gasEnd__: gasEndOverride ? r[gasEndOverride] : null,
+        __gasStart__: gasStartOverride ? parseSourceDate(r[gasStartOverride]) : null,
+        __gasEnd__: gasEndOverride ? parseSourceDate(r[gasEndOverride]) : null,
         __gasContractPrice__: gasContractPrice,
         __gasContractName__: gasContractNameOverride ? String(r[gasContractNameOverride] || '').trim() || null : null,
         __gasProductType__: gasProductTypeOverride ? String(r[gasProductTypeOverride] || '').trim() || null : null,
@@ -2503,14 +2526,32 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const n = typeof v === 'number' ? v : Number(v);
       return Number.isFinite(n) ? Math.ceil(n) : v;
     };
-    // Coerce a value into a Date when the column is flagged as a
-    // date column. Returns the existing Date as-is, parses date-like
-    // strings ("3/15/2025", "Mon Jan 15 2024 …"), and passes anything
-    // else through unchanged so placeholder strings like 'TBD' still
-    // render as text.
+    // Coerce a value into a real Excel-date-typed cell value when the
+    // column is flagged as a date column.
+    //  - Date instance → returned as-is.
+    //  - Excel serial number (1-73050, covering 1900 – 2099) — whether
+    //    arriving as a JS number or a numeric string from xlsxParse's
+    //    raw:true read — gets converted to a JS Date.
+    //  - Date-like string ("3/15/2025", "Mon Jan 15 2024 …") goes
+    //    through new Date() and is returned as a Date when parseable.
+    //  - Everything else (e.g. 'TBD', blanks, unparseable strings)
+    //    passes through unchanged so the cell renders as text.
     const toExcelDate = (v) => {
       if (v == null || v === '') return v;
       if (v instanceof Date) return Number.isFinite(v.getTime()) ? v : v;
+      const asNum = typeof v === 'number'
+        ? v
+        : (typeof v === 'string' && /^\s*\d+(\.\d+)?\s*$/.test(v) ? Number(v) : NaN);
+      if (Number.isFinite(asNum) && asNum >= 1 && asNum < 73050) {
+        // Excel's date epoch is 1899-12-30 (matching its 1900-leap-year
+        // bug for any realistic date past 1900-03-01). Adding asNum
+        // days from that epoch — in UTC, to avoid local-timezone DST
+        // shifts that would flip the displayed day on either side of
+        // midnight — yields the right calendar day in Excel.
+        const ms = Date.UTC(1899, 11, 30) + asNum * 86400000;
+        const d = new Date(ms);
+        if (Number.isFinite(d.getTime())) return d;
+      }
       const s = String(v).trim();
       if (!s) return v;
       const d = new Date(s);
@@ -3393,6 +3434,12 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         const therms = r.__therms__;
         const dth = (typeof therms === 'number' && Number.isFinite(therms)) ? Math.round(therms / 10) : null;
         const tbdIfMissing = (date, supplierPresent) => {
+          // Preserve Date / numeric types so downstream dateColumn
+          // cells can format them as short dates. Strings are still
+          // trimmed; only when the value is fully empty do we fall
+          // through to 'TBD' / ''.
+          if (date instanceof Date && Number.isFinite(date.getTime())) return date;
+          if (typeof date === 'number' && Number.isFinite(date)) return date;
           const trimmed = String(date || '').trim();
           if (trimmed) return trimmed;
           return supplierPresent ? 'TBD' : '';
