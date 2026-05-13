@@ -2935,6 +2935,12 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           savingsPct: hasPct
             ? { low: lowPct, mid: (lowPct + highPct) / 2, high: highPct }
             : null,
+          // Raw low / high percentages exposed so the by-state sheet
+          // can write them as editable input cells; downstream
+          // formula-driven cells read these to recompute Savings % /
+          // Annual / Year 1-5 live when the user edits them.
+          lowPct: hasPct ? lowPct : null,
+          highPct: hasPct ? highPct : null,
           // Each scenario-aware triple is `{ low, mid, high }` (or null
           // when the state has no savings band). The writeSection
           // helper turns these into Excel formulas keyed off the
@@ -3093,7 +3099,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
 
     ws.mergeCells(3, 1, 3, SPAN);
     const toggleHint = ws.getCell(3, 1);
-    toggleHint.value = 'Conservative = low end of the savings range · Base = average · Aggressive = high end. # of Years controls how far the savings extend — Year N columns and any month past N×12 zero out below it. Every savings number on this sheet recalculates from these cells.';
+    toggleHint.value = 'Conservative = low end of the savings range · Base = average · Aggressive = high end. # of Years controls how far the savings extend — Year N columns zero out below it. The Low % and High % cells per state are editable (yellow) — type a new range and Savings %, Indicative Annual Savings, and Year 1–5 Cumulative all recompute live.';
     toggleHint.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_TEXT_DARK } };
     toggleHint.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
     toggleHint.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
@@ -3136,17 +3142,103 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // down the sheet flow through this same writeSection call.
       headerRow.height = 45;
       r += 1;
+
+      // Build a tag → column-letter map so the per-row formula
+      // branches below can reference sibling cells in the same row
+      // (Spend, Low %, High %, Savings %, Annual Savings).
+      const colByTag = {};
+      columnDefs.forEach((c, i) => {
+        if (c.tag) colByTag[c.tag] = i + 1;
+      });
+      const colLetterFor = (n) => {
+        let s = '';
+        let m = n;
+        while (m > 0) { m--; s = String.fromCharCode(65 + (m % 26)) + s; m = Math.floor(m / 26); }
+        return s;
+      };
+      const cellRef = (tag, rowNum) => {
+        const col = colByTag[tag];
+        return col ? `${colLetterFor(col)}${rowNum}` : null;
+      };
+      const INPUT_FILL = 'FFFFF9C3';
+      const INPUT_BORDER = 'FFCA8A04';
+      const dataStartRow = r;
+
       // Data rows — every cell left-aligned regardless of type so the
       // sheet reads as a flat report rather than a finance ledger.
-      // Scenario columns get a formula (low / mid / high inlined) so
-      // the toggle at the top recalculates the whole sheet.
+      // Scenario / formula columns become Excel formulas so the
+      // toggle (Conservative / Base / Aggressive), the # of Years
+      // dropdown, and the editable Low / High % cells all recompute
+      // every savings number on the sheet.
       for (const row of sectionRows) {
         const dataRow = ws.getRow(r);
         columnDefs.forEach((c, i) => {
           const cell = dataRow.getCell(i + 1);
           if (c.spacer) return;
           const v = c.get(row);
-          if (c.scenario) {
+
+          // Editable Low % / High % cell — yellow fill signals input.
+          if (c.editable === 'lowPct' || c.editable === 'highPct') {
+            if (typeof v === 'number' && Number.isFinite(v)) cell.value = v;
+            else writeBlank(cell, !!c.numFmt);
+            cell.font = { name: 'Nunito Sans', size: 10, bold: true, color: { argb: SE_TEXT_DARK } };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: INPUT_FILL } };
+            cell.alignment = { vertical: 'bottom', horizontal: 'left', indent: 1 };
+            if (c.numFmt) cell.numFmt = c.numFmt;
+            cell.border = {
+              top:    { style: 'thin', color: { argb: INPUT_BORDER } },
+              bottom: { style: 'thin', color: { argb: INPUT_BORDER } },
+              left:   { style: 'thin', color: { argb: INPUT_BORDER } },
+              right:  { style: 'thin', color: { argb: INPUT_BORDER } },
+            };
+            return;
+          }
+
+          // Savings % = scenario toggle picks low / mid / high from
+          // the row's editable Low / High cells.
+          if (c.formulaKind === 'savingsPct') {
+            const lowRef = cellRef('lowPct', r);
+            const highRef = cellRef('highPct', r);
+            const midResult = (v && typeof v === 'object' && Number.isFinite(v.mid)) ? v.mid : 0;
+            if (lowRef && highRef) {
+              const formula = `IF(${SCENARIO_REF}="Conservative",${lowRef},IF(${SCENARIO_REF}="Aggressive",${highRef},(${lowRef}+${highRef})/2))`;
+              cell.value = { formula, result: midResult };
+              cell.ignoredErrors = { formula: true, formulaRange: true, numberStoredAsText: true };
+            } else {
+              cell.value = midResult;
+            }
+          }
+          // Indicative Annual Savings = Spend × Savings %.
+          else if (c.formulaKind === 'annualSavings') {
+            const spendRef = cellRef('spend', r);
+            const pctRef = cellRef('savingsPct', r);
+            const midResult = (v && typeof v === 'object' && Number.isFinite(v.mid)) ? Math.round(v.mid) : 0;
+            if (spendRef && pctRef) {
+              cell.value = { formula: `${spendRef}*${pctRef}`, result: midResult };
+              cell.ignoredErrors = { formula: true, formulaRange: true, numberStoredAsText: true };
+            } else {
+              cell.value = midResult;
+            }
+          }
+          // Year N Cumulative = IF(years_toggle >= N, Annual × N, 0).
+          // Loses the contract-month-precise gating the old monthly
+          // accumulator did, in exchange for live recompute when the
+          // user edits Low / High.
+          else if (c.formulaKind === 'yearCumulative') {
+            const annualRef = cellRef('annualSavings', r);
+            const N = c.yearGate;
+            const midResult = (v && typeof v === 'object' && Number.isFinite(v.mid)) ? Math.round(v.mid * (N || 1)) : 0;
+            if (annualRef && N) {
+              cell.value = {
+                formula: `IF(--${YEARS_REF}>=${N},${annualRef}*${N},0)`,
+                result: midResult,
+              };
+              cell.ignoredErrors = { formula: true, formulaRange: true, numberStoredAsText: true };
+            } else {
+              cell.value = midResult;
+            }
+          }
+          else if (c.scenario) {
             // Even when the row has no savings band (regulated state)
             // we still emit a formula returning 0 — that keeps every
             // cell in the column shaped the same way so Excel doesn't
@@ -3216,11 +3308,58 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           scalarTotals[c.sumKey] = s;
         }
       }
+      const dataEndRow = r - 1;
+      const colRange = (tag) => {
+        const col = colByTag[tag];
+        if (!col || dataEndRow < dataStartRow) return null;
+        const letter = colLetterFor(col);
+        return `${letter}${dataStartRow}:${letter}${dataEndRow}`;
+      };
       columnDefs.forEach((c, i) => {
         const cell = totalRow.getCell(i + 1);
         if (c.spacer) return;
         if (i === 0) {
           cell.value = 'Total';
+        } else if (c.editable === 'lowPct' || c.editable === 'highPct') {
+          // Per-state min / max so the totals row reads as the range
+          // span across the table rather than a meaningless sum.
+          const range = colRange(c.editable);
+          if (range) {
+            const fn = c.editable === 'lowPct' ? 'MIN' : 'MAX';
+            cell.value = { formula: `${fn}(${range})`, result: 0 };
+            cell.ignoredErrors = { formula: true };
+          } else {
+            writeBlank(cell, !!c.numFmt);
+          }
+        } else if (c.formulaKind === 'savingsPct') {
+          // Spend-weighted average so the total row reflects the
+          // portfolio-weighted savings rate rather than a flat mean.
+          const spendRange = colRange('spend');
+          const pctRange = colRange('savingsPct');
+          if (spendRange && pctRange) {
+            cell.value = {
+              formula: `IFERROR(SUMPRODUCT(${spendRange},${pctRange})/SUM(${spendRange}),0)`,
+              result: 0,
+            };
+            cell.ignoredErrors = { formula: true };
+          } else {
+            writeBlank(cell, !!c.numFmt);
+          }
+        } else if (c.formulaKind === 'annualSavings') {
+          const r2 = colRange('annualSavings');
+          if (r2) {
+            cell.value = { formula: `SUM(${r2})`, result: 0 };
+            cell.ignoredErrors = { formula: true };
+          } else writeBlank(cell, !!c.numFmt);
+        } else if (c.formulaKind === 'yearCumulative') {
+          // Each Year N column lives at its own column letter — find
+          // it via the column index, not a tag.
+          const col = colLetterFor(i + 1);
+          const r2 = `${col}${dataStartRow}:${col}${dataEndRow}`;
+          if (dataEndRow >= dataStartRow) {
+            cell.value = { formula: `SUM(${r2})`, result: 0 };
+            cell.ignoredErrors = { formula: true };
+          } else writeBlank(cell, !!c.numFmt);
         } else if (c.scenario && c.sumKey) {
           const t = scenarioTotals[c.sumKey];
           writeScenarioFormula(cell, ceilForFmt(t.low, c.numFmt), ceilForFmt(t.mid, c.numFmt), ceilForFmt(t.high, c.numFmt), c.yearGate);
@@ -3250,22 +3389,24 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       { label: 'Total Sites', get: (g) => g.totalSites, numFmt: '#,##0', sumKey: 'totalSites' },
       { label: 'Deregulated Sites', get: (g) => g.deregulatedSites, numFmt: '#,##0', sumKey: 'deregulatedSites' },
       { label: 'Deregulated Consumption kWh/yr', get: (g) => g.consumption, numFmt: '#,##0', sumKey: 'consumption' },
-      { label: 'Deregulated Spend/yr', get: (g) => g.spend, numFmt: '"$"#,##0', sumKey: 'spend' },
-      { label: 'Indicative Savings Range', get: (g) => g.range },
-      // Savings % follows the toggle: Conservative shows the low end
-      // of the range, Base shows the average, Aggressive shows the
-      // high end. Stored as a raw decimal so '0.0%' format renders
-      // it correctly.
-      { label: 'Savings %', scenario: true, get: (g) => g.savingsPct, numFmt: '0.0%' },
-      // Annual + Year 1-5 cumulative for the deregulated motion only —
-      // each cell is a scenario-aware formula keyed off the toggle.
+      { label: 'Deregulated Spend/yr', tag: 'spend', get: (g) => g.spend, numFmt: '"$"#,##0', sumKey: 'spend' },
+      // Editable Low / High range inputs replace the static "Range"
+      // text column. Yellow fill signals input; downstream Savings %
+      // / Annual Savings / Year 1-5 cells are formulas that read
+      // these so editing them recomputes the rest of the row.
+      { label: 'Low %', tag: 'lowPct', editable: 'lowPct', get: (g) => g.lowPct, numFmt: '0.0%' },
+      { label: 'High %', tag: 'highPct', editable: 'highPct', get: (g) => g.highPct, numFmt: '0.0%' },
+      // Savings % picks low / mid / high from the row's editable
+      // cells based on the scenario toggle at the top of the sheet.
+      { label: 'Savings %', tag: 'savingsPct', formulaKind: 'savingsPct', get: (g) => g.savingsPct, numFmt: '0.0%' },
+      // Annual + Year 1-5 cumulative for the deregulated motion only.
       // Reg-rate savings live in their own block to the right.
-      { label: 'Indicative Annual Savings', scenario: true, get: (g) => g.annualSavings, numFmt: '"$"#,##0', sumKey: 'annualSavings' },
-      { label: 'Year 1 Cumulative', scenario: true, yearGate: 1, get: (g) => g.year1, numFmt: '"$"#,##0', sumKey: 'year1' },
-      { label: 'Year 2 Cumulative', scenario: true, yearGate: 2, get: (g) => g.year2, numFmt: '"$"#,##0', sumKey: 'year2' },
-      { label: 'Year 3 Cumulative', scenario: true, yearGate: 3, get: (g) => g.year3, numFmt: '"$"#,##0', sumKey: 'year3' },
-      { label: 'Year 4 Cumulative', scenario: true, yearGate: 4, get: (g) => g.year4, numFmt: '"$"#,##0', sumKey: 'year4' },
-      { label: 'Year 5 Cumulative', scenario: true, yearGate: 5, get: (g) => g.year5, numFmt: '"$"#,##0', sumKey: 'year5' },
+      { label: 'Indicative Annual Savings', tag: 'annualSavings', formulaKind: 'annualSavings', get: (g) => g.annualSavings, numFmt: '"$"#,##0', sumKey: 'annualSavings' },
+      { label: 'Year 1 Cumulative', formulaKind: 'yearCumulative', yearGate: 1, get: (g) => g.year1, numFmt: '"$"#,##0', sumKey: 'year1' },
+      { label: 'Year 2 Cumulative', formulaKind: 'yearCumulative', yearGate: 2, get: (g) => g.year2, numFmt: '"$"#,##0', sumKey: 'year2' },
+      { label: 'Year 3 Cumulative', formulaKind: 'yearCumulative', yearGate: 3, get: (g) => g.year3, numFmt: '"$"#,##0', sumKey: 'year3' },
+      { label: 'Year 4 Cumulative', formulaKind: 'yearCumulative', yearGate: 4, get: (g) => g.year4, numFmt: '"$"#,##0', sumKey: 'year4' },
+      { label: 'Year 5 Cumulative', formulaKind: 'yearCumulative', yearGate: 5, get: (g) => g.year5, numFmt: '"$"#,##0', sumKey: 'year5' },
       { label: 'Utility Vendor(s)', get: (g) => g.utilities },
       { label: 'Supplier Name(s)', get: (g) => g.suppliers },
       { label: 'Contract Start', get: (g) => g.earliestStart, numFmt: 'm/d/yyyy', dateColumn: true },
@@ -3294,19 +3435,21 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       { label: 'Sites', get: (g) => g.totalSites, numFmt: '#,##0', sumKey: 'totalSites' },
       { label: 'Deregulated Sites', get: (g) => g.deregulatedSites, numFmt: '#,##0', sumKey: 'deregulatedSites' },
       { label: 'Deregulated Consumption Dth/yr', get: (g) => g.consumption, numFmt: '#,##0', sumKey: 'consumption' },
-      { label: 'Deregulated Spend/yr', get: (g) => g.spend, numFmt: '"$"#,##0', sumKey: 'spend' },
-      { label: 'Indicative Savings Range', get: (g) => g.range },
-      // Savings % mirrors the electric column — toggle picks low /
-      // mid / high from the state's gas deregulation band.
-      { label: 'Savings %', scenario: true, get: (g) => g.savingsPct, numFmt: '0.0%' },
-      // Year 1-5 cumulative savings on the gas side use the same
-      // scenario toggle as electric — there's no gas reg-rate motion.
-      { label: 'Indicative Annual Savings', scenario: true, get: (g) => g.annualSavings, numFmt: '"$"#,##0', sumKey: 'annualSavings' },
-      { label: 'Year 1 Cumulative', scenario: true, yearGate: 1, get: (g) => g.year1, numFmt: '"$"#,##0', sumKey: 'year1' },
-      { label: 'Year 2 Cumulative', scenario: true, yearGate: 2, get: (g) => g.year2, numFmt: '"$"#,##0', sumKey: 'year2' },
-      { label: 'Year 3 Cumulative', scenario: true, yearGate: 3, get: (g) => g.year3, numFmt: '"$"#,##0', sumKey: 'year3' },
-      { label: 'Year 4 Cumulative', scenario: true, yearGate: 4, get: (g) => g.year4, numFmt: '"$"#,##0', sumKey: 'year4' },
-      { label: 'Year 5 Cumulative', scenario: true, yearGate: 5, get: (g) => g.year5, numFmt: '"$"#,##0', sumKey: 'year5' },
+      { label: 'Deregulated Spend/yr', tag: 'spend', get: (g) => g.spend, numFmt: '"$"#,##0', sumKey: 'spend' },
+      // Editable Low / High range inputs replace the static "Range"
+      // text column. Yellow fill signals input; downstream Savings %
+      // / Annual Savings / Year 1-5 cells are formulas that read
+      // these so editing them recomputes the rest of the row.
+      { label: 'Low %', tag: 'lowPct', editable: 'lowPct', get: (g) => g.lowPct, numFmt: '0.0%' },
+      { label: 'High %', tag: 'highPct', editable: 'highPct', get: (g) => g.highPct, numFmt: '0.0%' },
+      { label: 'Savings %', tag: 'savingsPct', formulaKind: 'savingsPct', get: (g) => g.savingsPct, numFmt: '0.0%' },
+      // Annual + Year 1-5 cumulative for the deregulated motion.
+      { label: 'Indicative Annual Savings', tag: 'annualSavings', formulaKind: 'annualSavings', get: (g) => g.annualSavings, numFmt: '"$"#,##0', sumKey: 'annualSavings' },
+      { label: 'Year 1 Cumulative', formulaKind: 'yearCumulative', yearGate: 1, get: (g) => g.year1, numFmt: '"$"#,##0', sumKey: 'year1' },
+      { label: 'Year 2 Cumulative', formulaKind: 'yearCumulative', yearGate: 2, get: (g) => g.year2, numFmt: '"$"#,##0', sumKey: 'year2' },
+      { label: 'Year 3 Cumulative', formulaKind: 'yearCumulative', yearGate: 3, get: (g) => g.year3, numFmt: '"$"#,##0', sumKey: 'year3' },
+      { label: 'Year 4 Cumulative', formulaKind: 'yearCumulative', yearGate: 4, get: (g) => g.year4, numFmt: '"$"#,##0', sumKey: 'year4' },
+      { label: 'Year 5 Cumulative', formulaKind: 'yearCumulative', yearGate: 5, get: (g) => g.year5, numFmt: '"$"#,##0', sumKey: 'year5' },
       { label: 'Utility Vendor(s)', get: (g) => g.utilities },
       { label: 'Supplier Name(s)', get: (g) => g.suppliers },
       { label: 'Contract Start', get: (g) => g.earliestStart, numFmt: 'm/d/yyyy', dateColumn: true },
