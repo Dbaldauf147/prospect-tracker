@@ -29,6 +29,12 @@ import { parseBestSheet, parseSplitSitesTemplate } from '../../utils/xlsxParse';
 import { findFuzzyMatch } from '../../utils/utilityNameMatch';
 import { ENERGY_SUPPLIERS } from '../../data/energySuppliers';
 import { isRegulatedRateOpportunity } from '../../data/regulatedRateOpportunities';
+import {
+  normalizeCountryName,
+  countryElectricSavings,
+  countryGasSavings,
+  countryHasRegulatedRateOpportunity,
+} from '../../data/countryDeregulation';
 import styles from './SitesView.module.css';
 
 const SITES_STORAGE_KEY = 'sites-list-override';
@@ -2252,22 +2258,78 @@ export function SitesView({ settings, updateSettings } = {}) {
       const supplierKey = commodity === 'electric' ? '__electricSupplier__' : '__gasSupplier__';
       const startKey = commodity === 'electric' ? '__electricStart__' : '__gasStart__';
       const endKey = commodity === 'electric' ? '__electricEnd__' : '__gasEnd__';
-      const pctsFor = (state) => {
-        const entry = commodity === 'electric'
-          ? ELECTRIC_DEREGULATION[state]
-          : GAS_DEREGULATION[state];
-        return { lowPct: entry?.lowPct ?? null, highPct: entry?.highPct ?? null };
-      };
+      // Per-bucket savings band: pre-resolved during bucket creation so
+      // we can route US/Canada (state-keyed) and international (country-
+      // keyed) buckets through the same lookup. `pctsFor` then just
+      // reads the cached numbers off the bucket.
+      const pctsFor = (g) => ({ lowPct: g.lowPct, highPct: g.highPct });
       const states = new Map();
       // Per-site detail kept for the Monthly Savings Breakdown sheet.
       const siteRows = [];
       for (const r of rows) {
         const state = r.__state__ || '';
-        if (!state) continue;
-        let g = states.get(state);
+        // International (non-US/Canada) sites bucket by country —
+        // pulled from the row's resolved country tag and matched against
+        // the COUNTRY_DEREGULATION reference. Falls back to skipping the
+        // row when there's neither a state nor a recognized country.
+        const country = state ? null : normalizeCountryName(r.__country__ || '');
+        let bucketKey;
+        let isCountryBucket = false;
+        if (state) {
+          bucketKey = state;
+        } else if (country) {
+          bucketKey = `__country__:${country}`;
+          isCountryBucket = true;
+        } else {
+          continue;
+        }
+        let g = states.get(bucketKey);
         if (!g) {
+          // Resolve the bucket's savings band once at creation. US/CA
+          // buckets read the state-level ELECTRIC_DEREGULATION /
+          // GAS_DEREGULATION maps; country buckets read the country
+          // reference table. Both expose the same { status, range,
+          // lowPct, highPct } shape so the rest of the code is source-
+          // agnostic.
+          let bandStatus;
+          let bandRange = '';
+          let bandLowPct = null;
+          let bandHighPct = null;
+          let countryRegRateOpportunity = false;
+          if (isCountryBucket) {
+            const entry = commodity === 'electric'
+              ? countryElectricSavings(country)
+              : countryGasSavings(country);
+            bandStatus = entry?.status || 'No opportunity';
+            bandRange = entry?.range ?? '';
+            bandLowPct = entry?.lowPct ?? null;
+            bandHighPct = entry?.highPct ?? null;
+            countryRegRateOpportunity = countryHasRegulatedRateOpportunity(country);
+          } else {
+            const entry = commodity === 'electric'
+              ? ELECTRIC_DEREGULATION[state]
+              : GAS_DEREGULATION[state];
+            bandStatus = entry?.status || 'no';
+            bandRange = entry?.range ?? '';
+            bandLowPct = entry?.lowPct ?? null;
+            bandHighPct = entry?.highPct ?? null;
+          }
           g = {
-            state,
+            // `state` here is the bucket label that lands in the ST /
+            // Prov / Country column — either a US/CA state code or a
+            // country name. Lookup uses bucketKey above so two buckets
+            // can't ever collide.
+            state: isCountryBucket ? country : state,
+            isCountry: isCountryBucket,
+            status: bandStatus,
+            range: bandRange,
+            lowPct: bandLowPct,
+            highPct: bandHighPct,
+            // True when the country's Power Rate Optimization column is
+            // Deregulated or Some deregulation — drives the country-
+            // level reg-rate motion below. Always false for US/CA
+            // buckets, which use the per-utility curated list instead.
+            countryRegRateOpportunity,
             totalSites: 0,
             deregulatedSites: 0,
             regulatedRateOpportunitySites: 0,
@@ -2288,7 +2350,7 @@ export function SitesView({ settings, updateSettings } = {}) {
             // total electric / gas spend + consumption.
             hasMexicoSourcing: false,
           };
-          states.set(state, g);
+          states.set(bucketKey, g);
         }
         g.totalSites += 1;
         const provider = r[providerKey];
@@ -2296,26 +2358,46 @@ export function SitesView({ settings, updateSettings } = {}) {
         // deregulated ones) so the Utility column captures PG&E /
         // ComEd / Dominion etc. even on regulated rows.
         if (provider) g.utilities.push(provider);
-        // Electric sites whose utility is on the regulated-rate
-        // opportunity list count toward the new Reg-rate column,
-        // and their full electric spend feeds the 0.25 % savings line.
-        if (commodity === 'electric' && isRegulatedRateOpportunity(state, provider)) {
-          g.regulatedRateOpportunitySites += 1;
-          const regCost = r[costKey];
-          if (typeof regCost === 'number' && Number.isFinite(regCost)) {
-            g.regulatedRateOpportunitySpend += regCost;
+        // Reg-rate motion. US/CA: count any electric site whose utility
+        // is on the curated (state, utility) opportunity list. Country
+        // buckets: count every electric site in the country when the
+        // country's Power Rate Optimization column says Deregulated /
+        // Some deregulation AND the country's electric market itself
+        // isn't already deregulated (otherwise the commodity-savings
+        // motion already captures it; doubling up would inflate).
+        if (commodity === 'electric') {
+          if (isCountryBucket) {
+            const electricIsDereg = g.status === 'Deregulated' || g.status === 'Some deregulation';
+            if (g.countryRegRateOpportunity && !electricIsDereg) {
+              g.regulatedRateOpportunitySites += 1;
+              const regCost = r[costKey];
+              if (typeof regCost === 'number' && Number.isFinite(regCost)) {
+                g.regulatedRateOpportunitySpend += regCost;
+              }
+            }
+          } else if (isRegulatedRateOpportunity(state, provider)) {
+            g.regulatedRateOpportunitySites += 1;
+            const regCost = r[costKey];
+            if (typeof regCost === 'number' && Number.isFinite(regCost)) {
+              g.regulatedRateOpportunitySpend += regCost;
+            }
           }
         }
-        // Mexico tracking: any electric site in this state with a
+        // Mexico tracking: any electric site in this bucket with a
         // Mexico country tag and over 1 MWh of consumption flags the
-        // state as a potential sourcing opportunity. Runs before the
+        // bucket as a potential sourcing opportunity. Runs before the
         // dereg gate so a regulated Mexican site still surfaces.
         if (commodity === 'electric'
           && /^mexic/i.test(String(r.__country__ || ''))) {
           const kwh = (typeof r.__kwh__ === 'number' && Number.isFinite(r.__kwh__)) ? r.__kwh__ : 0;
           if (kwh > 1000) g.hasMexicoSourcing = true;
         }
-        const isDereg = classifyUtility(provider) === 'Deregulated' || !!r[supplierKey];
+        // Country buckets defer to the country reference for the dereg
+        // classification — the per-utility classifier is keyed off US
+        // naming patterns and would mis-classify international utilities.
+        const isDereg = isCountryBucket
+          ? (g.status === 'Deregulated' || g.status === 'Some deregulation')
+          : (classifyUtility(provider) === 'Deregulated' || !!r[supplierKey]);
         if (!isDereg) continue;
         g.deregulatedSites += 1;
         const consumption = r[consumptionKey];
@@ -2341,7 +2423,7 @@ export function SitesView({ settings, updateSettings } = {}) {
         // gating: zero for any month whose first day is still inside
         // the supplier's contract window. The state vector is a
         // running sum of these.
-        const { lowPct, highPct } = pctsFor(state);
+        const { lowPct, highPct } = pctsFor(g);
         const annualLow = (spend > 0 && lowPct != null) ? spend * lowPct : 0;
         const annualHigh = (spend > 0 && highPct != null) ? spend * highPct : 0;
         const annualMid = (annualLow + annualHigh) / 2;
@@ -2368,7 +2450,10 @@ export function SitesView({ settings, updateSettings } = {}) {
         }
         siteRows.push({
           siteName: siteNameColumn ? String(r[siteNameColumn] || '').trim() : '',
-          state,
+          // Mirror the bucket label so the Monthly Savings sheet shows
+          // either the US/CA state code or the country name in the
+          // ST / Prov / Country column.
+          state: g.state,
           commodity,
           utility: provider || '',
           supplier: supplierName,
@@ -2394,16 +2479,14 @@ export function SitesView({ settings, updateSettings } = {}) {
       }
       const out = [...states.values()].sort((a, b) => a.state.localeCompare(b.state));
       const stateRows = out.map(g => {
-        // Electric: per-state curated status / range / pct from
-        // ELECTRIC_DEREGULATION. Gas: per-state map of the same shape
-        // — see GAS_DEREGULATION above. States not in the map land as
-        // 'no' with no savings.
-        const entry = commodity === 'electric'
-          ? ELECTRIC_DEREGULATION[g.state]
-          : GAS_DEREGULATION[g.state];
-        const status = entry?.status || 'no';
-        const range = entry?.range ?? '';
-        const { lowPct, highPct } = pctsFor(g.state);
+        // Each bucket already resolved its savings band at creation —
+        // US/CA from ELECTRIC_DEREGULATION / GAS_DEREGULATION, countries
+        // from the COUNTRY_DEREGULATION reference. Pull straight off the
+        // bucket so the source-of-truth lookup happens in exactly one
+        // place.
+        const status = g.status;
+        const range = g.range ?? '';
+        const { lowPct, highPct } = pctsFor(g);
         const hasPct = lowPct != null && highPct != null;
         // Year-N cumulative = sum of the per-state monthly vector
         // through month N*12. Each month is already gated by its
@@ -2534,7 +2617,7 @@ export function SitesView({ settings, updateSettings } = {}) {
     // SPAN so the headings stay aligned across both sections.
     const SPAN = 26;
     const widths = [
-      10, 14, 11, 13, 16, 18, 16,        // ST/Prov..Range (7)
+      22, 14, 11, 13, 16, 18, 16,        // ST/Prov/Country..Range (7)
       11,                                // Savings % (scenario, 1)
       16, 14, 14, 14, 14, 14,            // Annual Savings + Year 1-5 (6)
       24, 24, 14, 14,                    // Utility/Supplier/Contract Start/End (4)
@@ -2789,7 +2872,7 @@ export function SitesView({ settings, updateSettings } = {}) {
     }
 
     const electricCols = [
-      { label: 'ST/Prov', get: (g) => g.state },
+      { label: 'ST / Prov / Country', get: (g) => g.state },
       { label: 'Deregulated Status', get: (g) => g.status },
       { label: 'Total Sites', get: (g) => g.totalSites, numFmt: '#,##0', sumKey: 'totalSites' },
       { label: 'Deregulated Sites', get: (g) => g.deregulatedSites, numFmt: '#,##0', sumKey: 'deregulatedSites' },
@@ -2833,7 +2916,7 @@ export function SitesView({ settings, updateSettings } = {}) {
       { label: 'Reg. Rate Year 5 Cumulative', yearGate: 5, get: (g) => g.regYear5 || 0, numFmt: '"$"#,##0', sumKey: 'regYear5' },
     ];
     const gasCols = [
-      { label: 'ST/Prov', get: (g) => g.state },
+      { label: 'ST / Prov / Country', get: (g) => g.state },
       { label: 'Deregulated Status', get: (g) => g.status },
       { label: 'Sites', get: (g) => g.totalSites, numFmt: '#,##0', sumKey: 'totalSites' },
       { label: 'Deregulated Sites', get: (g) => g.deregulatedSites, numFmt: '#,##0', sumKey: 'deregulatedSites' },
@@ -2921,7 +3004,7 @@ export function SitesView({ settings, updateSettings } = {}) {
     });
     const detailCols = [
       { label: 'Site Name', get: (s) => s.siteName, width: 28 },
-      { label: 'ST/Prov', get: (s) => s.state, width: 9 },
+      { label: 'ST / Prov / Country', get: (s) => s.state, width: 22 },
       { label: 'Zip', get: (s) => s.zip, width: 9 },
       { label: 'Electric Utility', get: (s) => s.electricUtility, width: 22 },
       { label: 'Electric Supplier', get: (s) => s.electricSupplier, width: 22 },
@@ -2998,9 +3081,18 @@ export function SitesView({ settings, updateSettings } = {}) {
           return supplierPresent ? 'TBD' : '';
         };
         const stateCode = r.__state__ || '';
-        const isRegRateOpportunity = !!electricUtility
-          && isRegulatedRateOpportunity(stateCode, electricUtility);
-        const country = String(r.__country__ || '').trim();
+        const rawCountry = String(r.__country__ || '').trim();
+        // Use the canonical country label when there's no state so the
+        // ST / Prov / Country column on Site Detail matches the by-
+        // state sheet's bucket labels for international sites.
+        const canonicalCountry = stateCode ? '' : (normalizeCountryName(rawCountry) || rawCountry);
+        // US/CA reg-rate motion is per-utility curated; country sites
+        // pick up the reg-rate flag from the Power Rate Optimization
+        // column on the country reference instead.
+        const isRegRateOpportunity = stateCode
+          ? (!!electricUtility && isRegulatedRateOpportunity(stateCode, electricUtility))
+          : countryHasRegulatedRateOpportunity(rawCountry);
+        const country = rawCountry;
         const kwh = typeof r.__kwh__ === 'number' ? Math.round(r.__kwh__) : null;
         // Mexico sourcing flag: any site in Mexico with > 1 MWh of
         // electric consumption (1 MWh = 1,000 kWh) is a potential
@@ -3009,7 +3101,7 @@ export function SitesView({ settings, updateSettings } = {}) {
         const isMexicoSourcing = /^mexic/i.test(country) && (kwh ?? 0) > 1000;
         return {
           siteName: siteNameColumn ? String(r[siteNameColumn] || '').trim() : '',
-          state: stateCode,
+          state: stateCode || canonicalCountry,
           zip: r.__zipNorm__ || '',
           country,
           electricUtility,
@@ -3098,7 +3190,7 @@ export function SitesView({ settings, updateSettings } = {}) {
         : { low: s.lowPct, mid: (s.lowPct + s.highPct) / 2, high: s.highPct };
       const fixedCols = [
         { label: 'Site Name', get: (s) => s.siteName, width: 28 },
-        { label: 'ST/Prov', get: (s) => s.state, width: 9 },
+        { label: 'ST / Prov / Country', get: (s) => s.state, width: 22 },
         { label: 'Commodity', get: (s) => s.commodity === 'electric' ? 'Electric' : 'Gas', width: 14 },
         { label: 'Utility', get: (s) => s.utility, width: 22 },
         { label: 'Supplier', get: (s) => s.supplier, width: 22 },
