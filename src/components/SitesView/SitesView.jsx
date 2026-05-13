@@ -2119,7 +2119,7 @@ export function SitesView({ settings, updateSettings } = {}) {
         c.value = h;
         c.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
         c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
-        c.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+        c.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
         c.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
       });
       hr.height = 32;
@@ -2156,11 +2156,7 @@ export function SitesView({ settings, updateSettings } = {}) {
           const c = r.getCell(ci + 1);
           c.value = v;
           c.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-          c.alignment = {
-            vertical: 'middle',
-            horizontal: ci === 0 || ci === 1 ? 'center' : 'right',
-            indent: ci > 1 ? 1 : 0,
-          };
+          c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
           c.border = {
             bottom: { style: 'hair', color: { argb: SE_BORDER } },
             right:  { style: 'hair', color: { argb: SE_BORDER } },
@@ -2207,11 +2203,7 @@ export function SitesView({ settings, updateSettings } = {}) {
         c.value = v;
         c.font = { name: 'Nunito Sans', size: 11, bold: true, color: { argb: SE_TEXT_DARK } };
         c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
-        c.alignment = {
-          vertical: 'middle',
-          horizontal: ci === 0 || ci === 1 ? 'center' : 'right',
-          indent: ci > 1 ? 1 : 0,
-        };
+        c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
         c.border = {
           top:    { style: 'thin', color: { argb: SE_GREEN_DARK } },
           bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } },
@@ -2274,7 +2266,7 @@ export function SitesView({ settings, updateSettings } = {}) {
           bold: isHighlight,
           color: { argb: isHighlight ? SE_GREEN_DARK : SE_SLATE },
         };
-        labelCell.alignment = { vertical: 'middle', horizontal: 'right', indent: 1 };
+        labelCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
         valCell.font = {
           name: 'Nunito Sans',
           size: isHighlight ? 14 : 11,
