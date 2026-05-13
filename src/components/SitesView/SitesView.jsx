@@ -30,6 +30,11 @@ import { findFuzzyMatch } from '../../utils/utilityNameMatch';
 import { ENERGY_SUPPLIERS } from '../../data/energySuppliers';
 import { isRegulatedRateOpportunity } from '../../data/regulatedRateOpportunities';
 import {
+  normalizePropertyType,
+  estimateConsumption,
+  propertyTypeAccounts,
+} from '../../data/propertyTypeEstimates';
+import {
   normalizeCountryName,
   countryElectricSavings,
   countryGasSavings,
@@ -64,6 +69,8 @@ function detectSitesMapping(headers) {
     siteName,
     zip: pickZipColumn(headers),
     country: detectColumn(headers, [/^country$/i, /\bcountry\b/i, /\bnation\b/i]) || '',
+    propertyType: detectColumn(headers, [/property\s*type/i, /building\s*type/i, /property\s*class/i, /asset\s*type/i, /^use$/i, /\buse\s*type\b/i, /\bsegment\b/i]) || '',
+    propertySize: detectColumn(headers, [/sq\s*\.?\s*ft/i, /square\s*(feet|foot)/i, /\bft\s*2\b/i, /\bft\^?2\b/i, /\bsf\b/i, /size.*ft/i, /building.*size/i, /gross.*area/i, /^size$/i, /rsf|gsf/i]) || '',
     electric: detectColumn(headers, [/electric.*kwh|kwh.*electric/i, /annual.*electric.*kwh/i, /annual.*kwh/i, /^kwh$/i, /electric.*usage/i, /electric.*consumption/i, /annual.*electric/i, /^electric$/i]) || '',
     electricUom: detectColumn(headers, [/electric.*\b(uom|unit\s*of\s*measure|units?)\b/i, /\b(uom|unit\s*of\s*measure|units?)\b.*electric/i]) || '',
     gas: detectColumn(headers, [/gas.*therm|therm.*gas/i, /annual.*gas.*(therm|dth|mmbtu)/i, /natural\s*gas.*usage/i, /gas.*usage/i, /gas.*consumption/i, /^therms?$/i, /^dth$/i, /^mmbtu$/i, /annual.*gas/i, /^gas$/i]) || '',
@@ -300,6 +307,13 @@ export function SitesView({ settings, updateSettings } = {}) {
   const [electricUomOverride, setElectricUomOverride] = useState(null);
   const [gasUomOverride, setGasUomOverride] = useState(null);
   const [countryOverride, setCountryOverride] = useState(null);
+  // Optional Property Type + Size columns from the upload — drive the
+  // per-property-type consumption / account-count estimates shown on
+  // the Indicative Savings export's Property Type Estimates tab. Both
+  // are optional; with only Property Type the export uses the
+  // reference Size_ft2 for that type and skips per-site size scaling.
+  const [propertyTypeOverride, setPropertyTypeOverride] = useState(null);
+  const [propertySizeOverride, setPropertySizeOverride] = useState(null);
   const [electricContractPriceOverride, setElectricContractPriceOverride] = useState(null);
   const [gasContractPriceOverride, setGasContractPriceOverride] = useState(null);
   const [electricContractNameOverride, setElectricContractNameOverride] = useState(null);
@@ -397,6 +411,8 @@ export function SitesView({ settings, updateSettings } = {}) {
         setElectricUomOverride(m.electricUom || null);
         setGasUomOverride(m.gasUom || null);
         setCountryOverride(m.country || null);
+        setPropertyTypeOverride(m.propertyType || null);
+        setPropertySizeOverride(m.propertySize || null);
         setElectricContractPriceOverride(m.electricContractPrice || null);
         setGasContractPriceOverride(m.gasContractPrice || null);
         setElectricContractNameOverride(m.electricContractName || null);
@@ -474,6 +490,7 @@ export function SitesView({ settings, updateSettings } = {}) {
       // table even though the user only wanted these specific fields.
       const TARGET_KEYS = [
         'siteName', 'zip', 'country',
+        'propertyType', 'propertySize',
         'electric', 'electricUom', 'gas', 'gasUom',
         'electricCost', 'gasCost',
         'electricSupplier', 'gasSupplier',
@@ -508,6 +525,8 @@ export function SitesView({ settings, updateSettings } = {}) {
       setElectricUomOverride(mapping.electricUom || null);
       setGasUomOverride(mapping.gasUom || null);
       setCountryOverride(mapping.country || null);
+      setPropertyTypeOverride(mapping.propertyType || null);
+      setPropertySizeOverride(mapping.propertySize || null);
       setElectricContractPriceOverride(mapping.electricContractPrice || null);
       setGasContractPriceOverride(mapping.gasContractPrice || null);
       setElectricContractNameOverride(mapping.electricContractName || null);
@@ -831,6 +850,16 @@ export function SitesView({ settings, updateSettings } = {}) {
       const elec = pickFirstConsumption(r, consumption.electric, toKwh, normalizeElectricUom(electricUomRaw));
       const gas = pickFirstConsumption(r, consumption.gas, toTherms, normalizeGasUom(gasUomRaw));
       const inputCountry = countryOverride ? String(r[countryOverride] || '').trim() : '';
+      const inputPropertyType = propertyTypeOverride ? String(r[propertyTypeOverride] || '').trim() : '';
+      const canonicalPropertyType = inputPropertyType ? normalizePropertyType(inputPropertyType) : null;
+      // Loose numeric parse for the optional Size_ft2 column — strips
+      // commas, "sf"/"sqft" suffixes, etc.
+      const parseSize = (v) => {
+        if (v == null || v === '') return null;
+        const n = Number(String(v).replace(/[^0-9.]/g, ''));
+        return Number.isFinite(n) && n > 0 ? n : null;
+      };
+      const inputPropertySize = propertySizeOverride ? parseSize(r[propertySizeOverride]) : null;
       const parseRate = (v) => {
         if (v == null || v === '') return null;
         const n = Number(String(v).replace(/[^0-9.\-]/g, ''));
@@ -962,6 +991,9 @@ export function SitesView({ settings, updateSettings } = {}) {
         __city__: match?.city,
         __country__: inputCountry || match?.country,
         __state__: state,
+        __propertyTypeRaw__: inputPropertyType || null,
+        __propertyType__: canonicalPropertyType,
+        __propertySizeFt2__: inputPropertySize,
         __kwh__: elec.value,
         __therms__: gas.value,
         __kwhSource__: elec.sourceHeader,
@@ -990,7 +1022,7 @@ export function SitesView({ settings, updateSettings } = {}) {
         __matched__: !!match || electricUtilityTokens.length > 0 || gasUtilityTokens.length > 0,
       };
     });
-  }, [cleanSitesData, zipColumn, utility, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, electricContractPriceOverride, gasContractPriceOverride, electricContractNameOverride, electricProductTypeOverride, gasContractNameOverride, gasProductTypeOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
+  }, [cleanSitesData, zipColumn, utility, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, propertyTypeOverride, propertySizeOverride, electricContractPriceOverride, gasContractPriceOverride, electricContractNameOverride, electricProductTypeOverride, gasContractNameOverride, gasProductTypeOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return rows;
@@ -3349,6 +3381,145 @@ export function SitesView({ settings, updateSettings } = {}) {
       monthlySheet.autoFilter = {
         from: { row: 2, column: 1 },
         to: { row: 2 + allSiteRows.length, column: cols.length },
+      };
+    }
+
+    // ---- Property Type Estimates sheet ------------------------------
+    // Reference-table-driven estimate of annual consumption and the
+    // expected utility-account count per commodity, keyed off the
+    // Property Type column on the source sheet. Optional Size_ft2
+    // column scales the consumption numbers proportionally to the
+    // reference Size_ft2 baked into the table; account counts are
+    // independent of size. Skips sites with no recognized property
+    // type, and skips the whole sheet when no site carried one.
+    const propertyTypeSiteRows = rows
+      .map((r) => {
+        const canonicalType = r.__propertyType__;
+        if (!canonicalType) return null;
+        const sizeFt2 = r.__propertySizeFt2__;
+        const cons = estimateConsumption(canonicalType, sizeFt2);
+        const accounts = propertyTypeAccounts(canonicalType);
+        return {
+          siteName: siteNameColumn ? String(r[siteNameColumn] || '').trim() : '',
+          state: r.__state__ || '',
+          country: String(r.__country__ || '').trim(),
+          rawPropertyType: r.__propertyTypeRaw__ || '',
+          propertyType: canonicalType,
+          category: cons?.category ?? '',
+          sizeFt2: cons?.sizeFt2 ?? null,
+          referenceSizeFt2: cons?.referenceSizeFt2 ?? null,
+          electricKwh: cons?.electricKwh ?? null,
+          gasDth: cons?.gasDth ?? null,
+          gasKwh: cons?.gasKwh ?? null,
+          totalKwh: cons?.totalKwh ?? null,
+          accounts: accounts || null,
+        };
+      })
+      .filter(Boolean);
+
+    if (propertyTypeSiteRows.length > 0) {
+      const ws = wb.addWorksheet('Property Type Estimates', {
+        properties: { tabColor: { argb: SE_GREEN } },
+        views: [{ showGridLines: false, state: 'frozen', ySplit: 2, xSplit: 1 }],
+      });
+      const ptCols = [
+        { label: 'Site Name',                  width: 28, get: (s) => s.siteName },
+        { label: 'ST / Prov / Country',        width: 22, get: (s) => s.state || s.country },
+        { label: 'Property Type',              width: 30, get: (s) => s.propertyType },
+        { label: 'Category',                   width: 11, get: (s) => s.category },
+        { label: 'Size (ft²)',                 width: 13, get: (s) => s.sizeFt2 ?? '', numFmt: '#,##0' },
+        { label: 'Reference Size (ft²)',       width: 16, get: (s) => s.referenceSizeFt2 ?? '', numFmt: '#,##0' },
+        { label: 'Est. Annual Electric (kWh)', width: 22, get: (s) => s.electricKwh ?? '', numFmt: '#,##0' },
+        { label: 'Est. Annual Gas (Dth)',      width: 18, get: (s) => s.gasDth ?? '', numFmt: '#,##0' },
+        { label: 'Est. Annual Gas (kWh equiv)', width: 22, get: (s) => s.gasKwh ?? '', numFmt: '#,##0' },
+        { label: 'Est. Total Energy (kWh equiv)', width: 24, get: (s) => s.totalKwh ?? '', numFmt: '#,##0' },
+        { label: 'Water Accounts',    width: 13, get: (s) => s.accounts?.water?.label ?? '',    sumValue: (s) => s.accounts?.water?.count ?? 0,    numFmt: '0.##' },
+        { label: 'Steam Accounts',    width: 13, get: (s) => s.accounts?.steam?.label ?? '',    sumValue: (s) => s.accounts?.steam?.count ?? 0,    numFmt: '0.##' },
+        { label: 'Gas Accounts',      width: 14, get: (s) => s.accounts?.gas?.label ?? '',      sumValue: (s) => s.accounts?.gas?.count ?? 0,      numFmt: '0.##' },
+        { label: 'Electric Accounts', width: 14, get: (s) => s.accounts?.electric?.label ?? '', sumValue: (s) => s.accounts?.electric?.count ?? 0, numFmt: '0.##' },
+        { label: 'Waste Accounts',    width: 13, get: (s) => s.accounts?.waste?.label ?? '',    sumValue: (s) => s.accounts?.waste?.count ?? 0,    numFmt: '0.##' },
+      ];
+      ws.columns = ptCols.map((c) => ({ width: c.width }));
+
+      ws.mergeCells(1, 1, 1, ptCols.length);
+      const ptTitle = ws.getCell(1, 1);
+      ptTitle.value = 'Property Type Estimates';
+      ptTitle.font = { name: 'Nunito Sans', bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
+      ptTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+      ptTitle.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(1).height = 28;
+
+      const ptHdr = ws.getRow(2);
+      ptCols.forEach((c, i) => {
+        const cell = ptHdr.getCell(i + 1);
+        cell.value = c.label;
+        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+        cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
+        cell.border = {
+          bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } },
+          right:  { style: 'hair', color: { argb: 'FFFFFFFF' } },
+        };
+      });
+      ptHdr.height = 36;
+
+      propertyTypeSiteRows.forEach((s, idx) => {
+        const dataRow = ws.getRow(3 + idx);
+        ptCols.forEach((c, i) => {
+          const cell = dataRow.getCell(i + 1);
+          const v = c.get(s);
+          if (v === '' || v == null) {
+            writeBlank(cell, !!c.numFmt);
+          } else {
+            cell.value = v;
+          }
+          cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+          cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          if (c.numFmt) cell.numFmt = c.numFmt;
+          cell.border = {
+            bottom: { style: 'hair', color: { argb: SE_BORDER } },
+            right:  { style: 'hair', color: { argb: SE_BORDER } },
+          };
+        });
+        dataRow.height = 18;
+      });
+
+      // Totals row — sum the numeric columns (consumption + the
+      // count-fields-via-sumValue accessor for accounts). "Multiple"
+      // is treated as 3 for totals; the label still reads "Multiple"
+      // on the per-site row so the user keeps the qualitative signal.
+      const totalIdx = 3 + propertyTypeSiteRows.length;
+      const totalRow = ws.getRow(totalIdx);
+      ptCols.forEach((c, i) => {
+        const cell = totalRow.getCell(i + 1);
+        if (i === 0) {
+          cell.value = 'Total';
+        } else if (c.sumValue) {
+          const sum = propertyTypeSiteRows.reduce((a, s) => a + (Number(c.sumValue(s)) || 0), 0);
+          cell.value = Math.round(sum * 100) / 100;
+        } else if (c.numFmt && c.label.startsWith('Est.')) {
+          const sum = propertyTypeSiteRows.reduce((a, s) => {
+            const v = c.get(s);
+            return a + (Number.isFinite(Number(v)) ? Number(v) : 0);
+          }, 0);
+          cell.value = Math.round(sum);
+        } else {
+          writeBlank(cell, !!c.numFmt);
+        }
+        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_GREEN_DARK } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+        cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        if (c.numFmt) cell.numFmt = c.numFmt;
+        cell.border = {
+          top:    { style: 'thin', color: { argb: SE_GREEN_DARK } },
+          bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } },
+        };
+      });
+      totalRow.height = 20;
+
+      ws.autoFilter = {
+        from: { row: 2, column: 1 },
+        to:   { row: 2 + propertyTypeSiteRows.length, column: ptCols.length },
       };
     }
 
