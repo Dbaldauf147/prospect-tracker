@@ -1979,6 +1979,20 @@ export function SitesView({ settings, updateSettings } = {}) {
       });
       headerRow.height = 32;
 
+      // Per-field number format, computed once. Applied per cell
+      // below — ExcelJS column-level numFmts are silently dropped
+      // once a cell has its own font / alignment / border style, so
+      // the blank template rows end up reading as "General" without
+      // this. Mirrors the column-level numFmt set further down.
+      const fieldNumFmt = fields.map(f => {
+        const lower = String(f.label).toLowerCase();
+        if (f.dateColumn) return 'm/d/yyyy';
+        if (f.priceColumn === 'kwh' || f.priceColumn === 'therm') return '"$"0.000';
+        if (/cost|spend|\$/.test(lower)) return '"$"#,##0';
+        if (/(consumption|kwh|therm|mmbtu|dth|mcf|ccf)/.test(lower) && !/uom|unit/.test(lower)) return '#,##0';
+        return null;
+      });
+
       for (let r = 2; r <= DATA_LAST_ROW; r++) {
         const row = ws.getRow(r);
         fields.forEach((f, i) => {
@@ -1990,6 +2004,7 @@ export function SitesView({ settings, updateSettings } = {}) {
             left:   { style: 'thin', color: { argb: SE_BORDER } },
             right:  { style: 'thin', color: { argb: SE_BORDER } },
           };
+          if (fieldNumFmt[i]) cell.numFmt = fieldNumFmt[i];
         });
         row.height = 18;
       }
