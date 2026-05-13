@@ -860,6 +860,25 @@ export function SitesView({ settings, updateSettings } = {}) {
         return Number.isFinite(n) && n > 0 ? n : null;
       };
       const inputPropertySize = propertySizeOverride ? parseSize(r[propertySizeOverride]) : null;
+      // Property-type-driven consumption fallback. When the source
+      // sheet didn't carry actual electric / gas consumption for this
+      // site but the property type is recognized, the reference table
+      // gives us a representative annual usage to plug in (scaled by
+      // Size_ft2 if the user mapped one). The estimate flows through
+      // the same downstream columns as real data — cost, indicative
+      // savings, monthly breakdown — flagged via __kwhFromEstimate__ /
+      // __thermsFromEstimate__ so the UI can render an italic / muted
+      // hint that the number is modeled rather than measured.
+      const propertyTypeEstimate = canonicalPropertyType
+        ? estimateConsumption(canonicalPropertyType, inputPropertySize)
+        : null;
+      const elecValueFinal = elec.value ?? propertyTypeEstimate?.electricKwh ?? null;
+      const elecValueFromEstimate = elec.value == null && elecValueFinal != null;
+      // gasDth → therms is ×10 (1 Dth = 10 therms). The on-screen
+      // gas-usage cell is denominated in therms, matching what
+      // toTherms normalizes to for actual data.
+      const gasValueFinal = gas.value ?? (propertyTypeEstimate ? propertyTypeEstimate.gasDth * 10 : null);
+      const gasValueFromEstimate = gas.value == null && gasValueFinal != null;
       const parseRate = (v) => {
         if (v == null || v === '') return null;
         const n = Number(String(v).replace(/[^0-9.\-]/g, ''));
@@ -867,8 +886,8 @@ export function SitesView({ settings, updateSettings } = {}) {
       };
       const electricContractPrice = electricContractPriceOverride ? parseRate(r[electricContractPriceOverride]) : null;
       const gasContractPrice = gasContractPriceOverride ? parseRate(r[gasContractPriceOverride]) : null;
-      const estElectricCost = electricRate != null && elec.value != null ? electricRate * elec.value : null;
-      const estGasCost = gasRate != null && gas.value != null ? gasRate * gas.value : null;
+      const estElectricCost = electricRate != null && elecValueFinal != null ? electricRate * elecValueFinal : null;
+      const estGasCost = gasRate != null && gasValueFinal != null ? gasRate * gasValueFinal : null;
       // Actual cost columns from the file when the user mapped them.
       // Strings like "$1,234.56" parse cleanly; null when blank or
       // unparseable so the per-row total can fall back to the rate
@@ -994,8 +1013,10 @@ export function SitesView({ settings, updateSettings } = {}) {
         __propertyTypeRaw__: inputPropertyType || null,
         __propertyType__: canonicalPropertyType,
         __propertySizeFt2__: inputPropertySize,
-        __kwh__: elec.value,
-        __therms__: gas.value,
+        __kwhFromEstimate__: elecValueFromEstimate,
+        __thermsFromEstimate__: gasValueFromEstimate,
+        __kwh__: elecValueFinal,
+        __therms__: gasValueFinal,
         __kwhSource__: elec.sourceHeader,
         __thermsSource__: gas.sourceHeader,
         __electricRate__: electricRate,
@@ -1095,6 +1116,57 @@ export function SitesView({ settings, updateSettings } = {}) {
       },
       exportValue: (row) => row[`__${key}__`] ?? '',
     });
+    // Property Type — surfaces the canonical match from the
+    // CONSUMPTION_ESTIMATES reference table plus a one-line summary of
+    // what the table predicts for this site. Lets the user spot rows
+    // whose mapping failed (raw string in muted red) before relying on
+    // the Property Type Estimates export tab. Consumption numbers are
+    // already size-scaled when the upload carried a Size_ft2 column.
+    const propertyTypeCol = {
+      key: 'propertyType',
+      label: 'Property Type',
+      defaultWidth: 180,
+      render: (row) => {
+        const canonical = row.__propertyType__;
+        const raw = row.__propertyTypeRaw__;
+        if (!canonical && !raw) {
+          return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
+        }
+        if (!canonical) {
+          return (
+            <span
+              title={`Unrecognized property type: "${raw}". Add an alias in propertyTypeEstimates.js to enable estimates.`}
+              style={{ fontSize: '0.72rem', color: '#B91C1C', fontStyle: 'italic' }}
+            >{raw}</span>
+          );
+        }
+        const est = estimateConsumption(canonical, row.__propertySizeFt2__);
+        const accounts = propertyTypeAccounts(canonical);
+        const sub = est
+          ? `Est. ${Math.round(est.electricKwh).toLocaleString()} kWh · ${Math.round(est.gasDth).toLocaleString()} Dth`
+          : '';
+        const acctSummary = accounts
+          ? [
+              accounts.electric ? `Elec ${accounts.electric.label}` : null,
+              accounts.gas ? `Gas ${accounts.gas.label}` : null,
+              accounts.water ? `Water ${accounts.water.label}` : null,
+              accounts.waste ? `Waste ${accounts.waste.label}` : null,
+              accounts.steam && accounts.steam.label !== '0' ? `Steam ${accounts.steam.label}` : null,
+            ].filter(Boolean).join(' · ')
+          : '';
+        const tip = [canonical, est ? sub : null, acctSummary || null]
+          .filter(Boolean).join('\n');
+        return (
+          <span title={tip} style={{ display: 'inline-flex', flexDirection: 'column', lineHeight: 1.15, maxWidth: '100%' }}>
+            <span style={{ fontSize: '0.72rem', color: 'var(--color-text-primary)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{canonical}</span>
+            {sub && (
+              <span style={{ fontSize: '0.65rem', color: 'var(--color-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub}</span>
+            )}
+          </span>
+        );
+      },
+      exportValue: (row) => row.__propertyType__ || row.__propertyTypeRaw__ || '',
+    };
     const makeMarketCol = (utilityKey, label) => ({
       key: `${utilityKey}_market`,
       label,
@@ -1226,13 +1298,19 @@ export function SitesView({ settings, updateSettings } = {}) {
           const raw = isElectric ? row.__kwh__ : row.__therms__;
           if (raw == null) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
           const val = isElectric ? raw : raw / 10; // therms → Dth
+          const fromEstimate = isElectric ? row.__kwhFromEstimate__ : row.__thermsFromEstimate__;
           const sourceHeader = isElectric ? row.__kwhSource__ : row.__thermsSource__;
-          const tip = sourceHeader ? `From "${sourceHeader}" column` : `${isElectric ? 'kWh' : 'Dth'} pulled from the uploaded sites file`;
+          // Italicized + muted when the value came from the property-
+          // type reference rather than the uploaded data, so the user
+          // can tell modeled rows from measured ones at a glance.
+          const tip = fromEstimate
+            ? `Estimated from Property Type "${row.__propertyType__}" — no actual ${isElectric ? 'electric' : 'gas'} consumption in the upload`
+            : (sourceHeader ? `From "${sourceHeader}" column` : `${isElectric ? 'kWh' : 'Dth'} pulled from the uploaded sites file`);
           return (
             <span
               title={tip}
-              style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
-            >{Math.round(val).toLocaleString()}</span>
+              style={{ fontSize: '0.72rem', color: fromEstimate ? '#94A3B8' : 'var(--color-text-secondary)', fontStyle: fromEstimate ? 'italic' : 'normal', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
+            >{Math.round(val).toLocaleString()}{fromEstimate ? ' (est)' : ''}</span>
           );
         },
         exportValue: (row) => {
@@ -1405,6 +1483,7 @@ export function SitesView({ settings, updateSettings } = {}) {
       makeUtilityCol('water', 'Water Utility', { bg: '#DCFCE7', border: '#86EFAC', text: '#166534' }),
       makeLocationCol('city', 'Lookup City'),
       makeLocationCol('country', 'Lookup Country'),
+      propertyTypeCol,
     ];
   }, [sitesData, zipColumn, utility, supplierOverrides, editingSupplier]);
 
@@ -1412,6 +1491,7 @@ export function SitesView({ settings, updateSettings } = {}) {
     if (!columns.length) return [];
     return [
       columns[0].key,
+      'propertyType',
       'electric', 'electric_market', 'electric_rate', 'electricCost',
       'gas', 'gas_market', 'gas_rate', 'gasCost',
       'totalCost',
