@@ -388,6 +388,11 @@ const KEY = 'current';
 // parses are silently discarded on hydration so the user re-uploads
 // against the current parser.
 const PARSER_VERSION = 8;
+// Hidden sheet inside Pricing-page exports carrying a JSON snapshot
+// of the full page state. Presence of this sheet on a dropped file
+// switches the import path from fee-workbook parsing to state
+// rehydration.
+const STATE_SHEET_NAME = '__pricing_state__';
 
 const fmtMoney = (n) => {
   if (n === null || n === undefined || Number.isNaN(n)) return '';
@@ -430,6 +435,7 @@ export function PricingView() {
   const [colMenuOpen, setColMenuOpen] = useState(false);
   const [summaryMenuOpen, setSummaryMenuOpen] = useState(false);
   const [error, setError] = useState('');
+  const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef(null);
   const hydratedRef = useRef(false);
 
@@ -676,10 +682,50 @@ export function PricingView() {
     if (!exists) setActiveOption(workbook.options[0].optionNumber);
   }, [workbook, activeOption]);
 
+  // Pull the JSON snapshot out of a dropped Pricing-page export. The
+  // state sheet stores the payload in chunked rows (column A, row 2+)
+  // because individual cells max out at 32,767 characters in Excel.
+  // Returns the parsed snapshot, or null if the sheet isn't present
+  // or its payload can't be parsed.
+  function readPricingStateFromBuffer(buf) {
+    const wb = XLSX.read(buf, { type: 'array' });
+    if (!wb.SheetNames.includes(STATE_SHEET_NAME)) return null;
+    const sheet = wb.Sheets[STATE_SHEET_NAME];
+    const aoa = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, blankrows: false });
+    const chunks = aoa.slice(1).map(r => String(r?.[0] ?? ''));
+    const json = chunks.join('');
+    if (!json) return null;
+    return JSON.parse(json);
+  }
+
+  function restorePricingState(s) {
+    if (s.workbook) setWorkbook(s.workbook);
+    if (typeof s.globalGmPct === 'number') setGlobalGmPct(s.globalGmPct);
+    setOverrides(s.overrides || {});
+    if (typeof s.activeOption === 'number') setActiveOption(s.activeOption);
+    else if (s.workbook?.options?.[0]?.optionNumber != null) setActiveOption(s.workbook.options[0].optionNumber);
+    setColWidths(s.colWidths || {});
+    setAltFees(s.altFees || {});
+    setLinkedToDefaults(s.linkedToDefaults || {});
+    if (typeof s.termMonths === 'number') setTermMonths(s.termMonths);
+    if (typeof s.annualEscalator === 'number') setAnnualEscalator(s.annualEscalator);
+    if (typeof s.chartTag === 'string') setChartTag(s.chartTag);
+    if (s.chartView === 'chart' || s.chartView === 'table') setChartView(s.chartView);
+    if (typeof s.techDeprPct === 'number') setTechDeprPct(s.techDeprPct);
+    setColVisibility(s.colVisibility || {});
+    setSummaryColWidths(s.summaryColWidths || {});
+    setSummaryColVisibility(s.summaryColVisibility || {});
+  }
+
   async function handleFile(file) {
     setError('');
     try {
       const buf = await file.arrayBuffer();
+      const snapshot = readPricingStateFromBuffer(buf);
+      if (snapshot) {
+        restorePricingState(snapshot);
+        return;
+      }
       const parsed = parsePricingWorkbook(buf);
       setWorkbook({
         fileName: file.name,
@@ -692,6 +738,25 @@ export function PricingView() {
     } catch (err) {
       setError(err?.message || 'Failed to parse file.');
     }
+  }
+
+  function handleDrop(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+    const file = e.dataTransfer?.files?.[0];
+    if (file) handleFile(file);
+  }
+  function handleDragOver(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!dragOver) setDragOver(true);
+  }
+  function handleDragLeave(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.currentTarget.contains(e.relatedTarget)) return;
+    setDragOver(false);
   }
 
   function clearAll() {
@@ -870,6 +935,30 @@ export function PricingView() {
     const ws = XLSX.utils.aoa_to_sheet(rows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Pricing');
+
+    // Hidden state sheet — JSON snapshot of every piece of state the
+    // IndexedDB cache persists, chunked into 30k-char cells so each
+    // value stays under Excel's 32,767 cell-text limit. Dropping this
+    // workbook back onto the Pricing page rehydrates from these rows
+    // instead of re-running the fee-workbook parser.
+    const snapshot = {
+      parserVersion: PARSER_VERSION,
+      workbook, globalGmPct, overrides, activeOption, colWidths,
+      altFees, linkedToDefaults, termMonths, annualEscalator,
+      chartTag, chartView, techDeprPct, colVisibility,
+      summaryColWidths, summaryColVisibility,
+    };
+    const json = JSON.stringify(snapshot);
+    const CHUNK = 30000;
+    const stateRows = [['__pricing_state__', 'DO NOT EDIT — Pricing page round-trip payload']];
+    for (let i = 0; i < json.length; i += CHUNK) stateRows.push([json.slice(i, i + CHUNK)]);
+    const stateWs = XLSX.utils.aoa_to_sheet(stateRows);
+    XLSX.utils.book_append_sheet(wb, stateWs, STATE_SHEET_NAME);
+    // Mark the state sheet as hidden so a human opening the workbook
+    // only sees the readable 'Pricing' sheet. SheetJS expects an
+    // entry per sheet in workbook order.
+    wb.Workbook = { Sheets: [{}, { Hidden: 1 }] };
+
     XLSX.writeFile(wb, `pricing-markup-${new Date().toISOString().slice(0, 10)}.xlsx`);
   }
 
@@ -892,7 +981,14 @@ export function PricingView() {
   }, [workbook, overrides, globalGmPct]);
 
   return (
-    <div className={styles.wrapper}>
+    <div
+      className={styles.wrapper}
+      onDrop={handleDrop}
+      onDragOver={handleDragOver}
+      onDragEnter={handleDragOver}
+      onDragLeave={handleDragLeave}
+      style={dragOver ? { outline: '2px dashed var(--color-accent)', outlineOffset: -4, background: '#F0F9FF' } : undefined}
+    >
       <div className={styles.header}>
         <div className={styles.titleBlock}>
           <h1 className={styles.title}>Pricing</h1>
