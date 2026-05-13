@@ -71,6 +71,9 @@ function detectSitesMapping(headers) {
   const siteName = headers.find(h => /\b(site\s*name|site|property|location|facility|building|name)\b/i.test(String(h))) || headers[0];
   return {
     siteName,
+    address: detectColumn(headers, [/^address$/i, /^street\s*address$/i, /street/i, /\baddress\b/i]) || '',
+    city: detectColumn(headers, [/^city$/i, /^town$/i, /^municipality$/i, /\bcity\b/i]) || '',
+    state: detectColumn(headers, [/^state$/i, /^province$/i, /^state\s*\/\s*province$/i, /\bstate\b/i, /\bregion\b/i]) || '',
     zip: pickZipColumn(headers),
     country: detectColumn(headers, [/^country$/i, /\bcountry\b/i, /\bnation\b/i]) || '',
     propertyType: detectColumn(headers, [/property\s*type/i, /building\s*type/i, /property\s*class/i, /asset\s*type/i, /^use$/i, /\buse\s*type\b/i, /\bsegment\b/i]) || '',
@@ -317,6 +320,13 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
   const [electricUomOverride, setElectricUomOverride] = useState(null);
   const [gasUomOverride, setGasUomOverride] = useState(null);
   const [countryOverride, setCountryOverride] = useState(null);
+  // Optional Address / City / State columns from the upload — purely
+  // descriptive (don't drive any computation). Surface on the on-page
+  // table and in the Indicative Savings Site Detail / Contract
+  // Overview sheets when mapped.
+  const [addressOverride, setAddressOverride] = useState(null);
+  const [cityOverride, setCityOverride] = useState(null);
+  const [stateColumnOverride, setStateColumnOverride] = useState(null);
   // Optional Property Type + Size columns from the upload — drive the
   // per-property-type consumption / account-count estimates shown on
   // the Indicative Savings export's Property Type Estimates tab. Both
@@ -421,6 +431,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         setElectricUomOverride(m.electricUom || null);
         setGasUomOverride(m.gasUom || null);
         setCountryOverride(m.country || null);
+        setAddressOverride(m.address || null);
+        setCityOverride(m.city || null);
+        setStateColumnOverride(m.state || null);
         setPropertyTypeOverride(m.propertyType || null);
         setPropertySizeOverride(m.propertySize || null);
         setElectricContractPriceOverride(m.electricContractPrice || null);
@@ -499,7 +512,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // pass-through column ends up rendered on the Utility Lookup
       // table even though the user only wanted these specific fields.
       const TARGET_KEYS = [
-        'siteName', 'zip', 'country',
+        'siteName', 'address', 'city', 'state', 'zip', 'country',
         'propertyType', 'propertySize',
         'electric', 'electricUom', 'gas', 'gasUom',
         'electricCost', 'gasCost',
@@ -535,6 +548,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       setElectricUomOverride(mapping.electricUom || null);
       setGasUomOverride(mapping.gasUom || null);
       setCountryOverride(mapping.country || null);
+      setAddressOverride(mapping.address || null);
+      setCityOverride(mapping.city || null);
+      setStateColumnOverride(mapping.state || null);
       setPropertyTypeOverride(mapping.propertyType || null);
       setPropertySizeOverride(mapping.propertySize || null);
       setElectricContractPriceOverride(mapping.electricContractPrice || null);
@@ -1017,9 +1033,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         __electricUtilityTokens__: electricUtilityTokens,
         __gasUtilityTokens__: gasUtilityTokens,
         __water__: match?.water,
-        __city__: match?.city,
+        __address__: addressOverride ? String(r[addressOverride] || '').trim() || null : null,
+        __city__: (cityOverride ? String(r[cityOverride] || '').trim() : '') || match?.city,
         __country__: inputCountry || match?.country,
-        __state__: state,
+        __state__: (stateColumnOverride ? String(r[stateColumnOverride] || '').trim() : '') || state,
         __propertyTypeRaw__: inputPropertyType || null,
         __propertyType__: canonicalPropertyType,
         __propertySizeFt2__: inputPropertySize,
@@ -1053,7 +1070,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         __matched__: !!match || electricUtilityTokens.length > 0 || gasUtilityTokens.length > 0,
       };
     });
-  }, [cleanSitesData, zipColumn, utility, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, propertyTypeOverride, propertySizeOverride, electricContractPriceOverride, gasContractPriceOverride, electricContractNameOverride, electricProductTypeOverride, gasContractNameOverride, gasProductTypeOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
+  }, [cleanSitesData, zipColumn, utility, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, addressOverride, cityOverride, stateColumnOverride, propertyTypeOverride, propertySizeOverride, electricContractPriceOverride, gasContractPriceOverride, electricContractNameOverride, electricProductTypeOverride, gasContractNameOverride, gasProductTypeOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return rows;
@@ -2043,6 +2060,8 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     const COMMON_FIELDS = [
       { label: 'Site Name', required: true, hint: 'Row label. Required so the row isn\'t filtered as blank. Enter on the Electric Power tab — the Gas tab pulls Site Name from there via formula.' },
       { label: 'Address', greenHeader: true, hint: 'Street address of the site. Optional reference field. Enter on the Electric Power tab — the Gas tab pulls from there via formula.' },
+      { label: 'City', greenHeader: true, hint: 'City / town of the site. Optional reference field. Enter on the Electric Power tab — the Gas tab pulls from there via formula.' },
+      { label: 'State / Province', greenHeader: true, hint: 'State or province. Optional reference field — auto-derived from Zip for US / Canada when blank. Enter on the Electric Power tab — the Gas tab pulls from there via formula.' },
       { label: 'Zip / Postal Code', greenHeader: true, hint: 'Required for US and Canada sites — drives the utility lookup and state derivation. Leave blank for sites outside US / Canada. Enter on the Electric Power tab; the Gas tab pulls from there via formula.' },
       { label: 'Country', greenHeader: true, hint: 'Country of the site. Pick from the dropdown on the Electric Power tab — the Gas tab pulls from there via formula. Falls back to the utility-rates file when blank.', validation: { type: 'list', options: COUNTRY_OPTIONS } },
       { label: 'Currency', greenHeader: true, hint: 'Currency the site reports costs in. Pick from the dropdown on the Electric Power tab — the Gas tab pulls from there via formula.', validation: { type: 'list', options: CURRENCY_OPTIONS } },
@@ -4801,6 +4820,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         (() => {
           const TARGET_FIELDS = [
             { key: 'siteName', label: 'Site Name', required: true, hint: 'Row label / blank-row filter.' },
+            { key: 'address', label: 'Address', required: false, hint: 'Street address of the site. Optional reference field — surfaced on the Site Detail and Contract Overview tabs of the Indicative Savings export.' },
+            { key: 'city', label: 'City', required: false, hint: 'City / town of the site. Optional reference field. Falls back to the utility-rates file lookup when blank.' },
+            { key: 'state', label: 'State / Province', required: false, hint: 'State or province. Optional reference field. Auto-derived from Zip for US / Canada sites when blank.' },
             { key: 'zip', label: 'Zip / Postal Code', required: false, hint: 'Required for US and Canada sites — drives the utility lookup. Leave blank on international rows; mapping the column at all is optional if the file has no US / Canada sites.' },
             { key: 'country', label: 'Country', required: false, hint: 'Country of the site. Falls back to the utility-rates file when blank.' },
             { key: 'electric', label: 'Annual Electric Consumption', required: false, hint: 'Annual electric usage. Pair with Electric UoM to control how the value is converted to kWh for cost estimates.' },
