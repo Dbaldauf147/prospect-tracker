@@ -36,6 +36,7 @@ import {
   propertyTypeAccounts,
   CONSUMPTION_ESTIMATES,
   ACCOUNT_ESTIMATES,
+  PROPERTY_TYPE_OPTIONS,
 } from '../../data/propertyTypeEstimates';
 import {
   normalizeCountryName,
@@ -1511,6 +1512,79 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       makeLocationCol('city', 'Lookup City'),
       makeLocationCol('country', 'Lookup Country'),
       propertyTypeCol,
+      // Property-type-based estimates — always show the reference
+      // figure regardless of whether the upload also carried actual
+      // values, so the user can spot under- / over-reported sites by
+      // comparing the actual columns against these.
+      ...(() => {
+        const muted = { color: 'var(--color-text-muted)', fontSize: '0.7rem' };
+        const dash = <span style={muted}>—</span>;
+        const fmtInt = (n) => Math.round(n).toLocaleString();
+        const estCol = (key, label, get, exportGet) => ({
+          key, label, defaultWidth: 140,
+          render: (row) => {
+            const canonical = row.__propertyType__;
+            if (!canonical) return dash;
+            const est = estimateConsumption(canonical, row.__propertySizeFt2__);
+            if (!est) return dash;
+            const v = get(row, est);
+            if (v == null || !Number.isFinite(v)) return dash;
+            return <span style={{ fontSize: '0.72rem', fontFamily: 'var(--font-mono, ui-monospace, monospace)' }}>{fmtInt(v)}</span>;
+          },
+          exportValue: (row) => {
+            const canonical = row.__propertyType__;
+            if (!canonical) return '';
+            const est = estimateConsumption(canonical, row.__propertySizeFt2__);
+            if (!est) return '';
+            return exportGet ? exportGet(row, est) : (get(row, est) ?? '');
+          },
+        });
+        return [
+          estCol('estElectricKwh', 'Est. Electric (kWh)', (_r, est) => est.electricKwh),
+          estCol('estElectricCost', 'Est. Electric Cost', (r, est) => {
+            const rate = r.__electricRate__;
+            return rate != null ? rate * est.electricKwh : null;
+          }),
+          estCol('estGasDth', 'Est. Gas (Dth)', (_r, est) => est.gasDth),
+          estCol('estGasCost', 'Est. Gas Cost', (r, est) => {
+            const rate = r.__gasRate__;
+            // gas rate is per-therm; one Dth = 10 therms.
+            return rate != null ? rate * est.gasDth * 10 : null;
+          }),
+          {
+            key: 'estAccounts',
+            label: 'Est. Accounts',
+            defaultWidth: 200,
+            render: (row) => {
+              const canonical = row.__propertyType__;
+              if (!canonical) return dash;
+              const acc = propertyTypeAccounts(canonical);
+              if (!acc) return dash;
+              const text = [
+                acc.electric ? `Elec ${acc.electric.label}` : null,
+                acc.gas ? `Gas ${acc.gas.label}` : null,
+                acc.water ? `Water ${acc.water.label}` : null,
+                acc.waste ? `Waste ${acc.waste.label}` : null,
+                acc.steam && acc.steam.label !== '0' ? `Steam ${acc.steam.label}` : null,
+              ].filter(Boolean).join(' · ');
+              return <span style={{ fontSize: '0.68rem', color: 'var(--color-text-secondary)' }} title={text}>{text || '—'}</span>;
+            },
+            exportValue: (row) => {
+              const canonical = row.__propertyType__;
+              if (!canonical) return '';
+              const acc = propertyTypeAccounts(canonical);
+              if (!acc) return '';
+              return [
+                acc.electric ? `Elec ${acc.electric.label}` : null,
+                acc.gas ? `Gas ${acc.gas.label}` : null,
+                acc.water ? `Water ${acc.water.label}` : null,
+                acc.waste ? `Waste ${acc.waste.label}` : null,
+                acc.steam && acc.steam.label !== '0' ? `Steam ${acc.steam.label}` : null,
+              ].filter(Boolean).join(' · ');
+            },
+          },
+        ];
+      })(),
     ];
   }, [sitesData, zipColumn, utility, supplierOverrides, editingSupplier]);
 
@@ -2065,6 +2139,8 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       { label: 'Zip / Postal Code', greenHeader: true, hint: 'Required for US and Canada sites — drives the utility lookup and state derivation. Leave blank for sites outside US / Canada. Enter on the Electric Power tab; the Gas tab pulls from there via formula.' },
       { label: 'Country', greenHeader: true, hint: 'Country of the site. Pick from the dropdown on the Electric Power tab — the Gas tab pulls from there via formula. Falls back to the utility-rates file when blank.', validation: { type: 'list', options: COUNTRY_OPTIONS } },
       { label: 'Currency', greenHeader: true, hint: 'Currency the site reports costs in. Pick from the dropdown on the Electric Power tab — the Gas tab pulls from there via formula.', validation: { type: 'list', options: CURRENCY_OPTIONS } },
+      { label: 'Property Type', greenHeader: true, hint: 'Building / use type. Drives the per-property-type consumption + account-count estimates surfaced on the page and on the Indicative Savings export. Pick from the dropdown on the Electric Power tab — the Gas tab pulls from there via formula.', validation: { type: 'list', options: PROPERTY_TYPE_OPTIONS } },
+      { label: 'Size (ft²)', greenHeader: true, hint: 'Square footage of the site. Scales the property-type reference consumption linearly. Optional — when blank the reference size for the property type is used as-is. Enter on the Electric Power tab — the Gas tab pulls from there via formula.' },
     ];
     const ELECTRIC_FIELDS = [
       { label: 'Annual Electric Consumption', required: false, hint: 'Annual electricity usage. Pair with Electric UoM so the tool can convert to kWh for cost estimates. Used when Total Electric Cost is blank.' },
@@ -4825,6 +4901,8 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             { key: 'state', label: 'State / Province', required: false, hint: 'State or province. Optional reference field. Auto-derived from Zip for US / Canada sites when blank.' },
             { key: 'zip', label: 'Zip / Postal Code', required: false, hint: 'Required for US and Canada sites — drives the utility lookup. Leave blank on international rows; mapping the column at all is optional if the file has no US / Canada sites.' },
             { key: 'country', label: 'Country', required: false, hint: 'Country of the site. Falls back to the utility-rates file when blank.' },
+            { key: 'propertyType', label: 'Property Type', required: false, hint: 'Building / use type (Office, Hospital, Warehouse, etc.) — drives the per-property-type consumption + account-count estimates surfaced on the page and on the Indicative Savings export.' },
+            { key: 'propertySize', label: 'Size (ft²)', required: false, hint: 'Square footage of the site. Scales the property-type reference consumption linearly. Optional — when blank the reference size for the property type is used as-is.' },
             { key: 'electric', label: 'Annual Electric Consumption', required: false, hint: 'Annual electric usage. Pair with Electric UoM to control how the value is converted to kWh for cost estimates.' },
             { key: 'electricUom', label: 'Electric UoM', required: false, hint: 'Unit of measure for the Electric column (kWh / MWh / GWh). Overrides any unit baked into the header.' },
             { key: 'gas', label: 'Annual Gas Consumption', required: false, hint: 'Annual gas usage. Pair with Gas UoM to control how the value is converted to therms for cost estimates.' },
