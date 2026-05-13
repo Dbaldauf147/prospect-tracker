@@ -1913,7 +1913,7 @@ export function SitesView({ settings, updateSettings } = {}) {
 
     const COMMON_FIELDS = [
       { label: 'Site Name', required: true, hint: 'Row label. Required so the row isn\'t filtered as blank. Enter on the Electric Power tab — the Gas tab pulls Site Name from there via formula.' },
-      { label: 'Address', hint: 'Street address of the site. Optional reference field. Enter on the Electric Power tab — the Gas tab pulls from there via formula.' },
+      { label: 'Address', greenHeader: true, hint: 'Street address of the site. Optional reference field. Enter on the Electric Power tab — the Gas tab pulls from there via formula.' },
       { label: 'Zip / Postal Code', required: true, hint: 'US/Canadian zip or postal code — drives the utility lookup and state derivation. Enter on the Electric Power tab; the Gas tab pulls from there via formula.' },
       { label: 'Country', greenHeader: true, hint: 'Country of the site. Pick from the dropdown on the Electric Power tab — the Gas tab pulls from there via formula. Falls back to the utility-rates file when blank.', validation: { type: 'list', options: COUNTRY_OPTIONS } },
     ];
