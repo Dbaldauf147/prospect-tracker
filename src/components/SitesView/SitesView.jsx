@@ -1497,6 +1497,22 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     });
     // Contract dates from the file — pass through as text since the
     // file may already contain a friendly format the user prefers.
+    // Short-date formatter for the page table: prefers a real Date,
+    // also handles raw Excel serials (number) and date-like strings
+    // that snuck through without parseSourceDate. Falls back to the
+    // original value so unparseable cells still render their source
+    // text (e.g. 'TBD').
+    const fmtShortDate = (v) => {
+      if (v == null || v === '') return '';
+      const d = v instanceof Date ? v : (() => {
+        const parsed = parseSourceDate(v);
+        return parsed || null;
+      })();
+      if (d && Number.isFinite(d.getTime())) {
+        return `${d.getUTCMonth() + 1}/${d.getUTCDate()}/${d.getUTCFullYear()}`;
+      }
+      return String(v);
+    };
     const makeDateCol = (key, label, color) => ({
       key,
       label,
@@ -1505,10 +1521,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         const val = row[`__${key}__`];
         if (val == null || val === '') return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
         return (
-          <span style={{ fontSize: '0.72rem', color, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{String(val)}</span>
+          <span style={{ fontSize: '0.72rem', color, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{fmtShortDate(val)}</span>
         );
       },
-      exportValue: (row) => row[`__${key}__`] ?? '',
+      exportValue: (row) => fmtShortDate(row[`__${key}__`]),
     });
     return [
       ...base,
