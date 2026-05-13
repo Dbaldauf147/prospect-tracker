@@ -4464,6 +4464,8 @@ export function SitesView({ settings, updateSettings } = {}) {
             { key: 'siteName', label: 'Site Name', required: true, hint: 'Row label / blank-row filter.' },
             { key: 'zip', label: 'Zip / Postal Code', required: true, hint: 'Drives the utility lookup.' },
             { key: 'country', label: 'Country', required: false, hint: 'Country of the site. Falls back to the utility-rates file when blank.' },
+            { key: 'propertyType', label: 'Property Type', required: false, hint: 'Building / property type (e.g. "Office - High-Rise", "Data Center", "Hospital / Healthcare"). Drives the Property Type Estimates export tab and fills in estimated consumption / cost when actual numbers are blank.' },
+            { key: 'propertySize', label: 'Size (sq ft)', required: false, hint: 'Building size in square feet. Scales the property-type consumption estimate proportionally to the reference size baked into the table. Optional — falls back to the reference size when blank.' },
             { key: 'electric', label: 'Annual Electric Consumption', required: false, hint: 'Annual electric usage. Pair with Electric UoM to control how the value is converted to kWh for cost estimates.' },
             { key: 'electricUom', label: 'Electric UoM', required: false, hint: 'Unit of measure for the Electric column (kWh / MWh / GWh). Overrides any unit baked into the header.' },
             { key: 'gas', label: 'Annual Gas Consumption', required: false, hint: 'Annual gas usage. Pair with Gas UoM to control how the value is converted to therms for cost estimates.' },
