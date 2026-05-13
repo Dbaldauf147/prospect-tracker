@@ -26,6 +26,7 @@ import {
   formatRate,
 } from '../../utils/utilityRates';
 import { parseBestSheet, parseSplitSitesTemplate } from '../../utils/xlsxParse';
+import { saveIndicativeAnalysis } from '../../utils/firestoreSync';
 import { findFuzzyMatch } from '../../utils/utilityNameMatch';
 import { ENERGY_SUPPLIERS } from '../../data/energySuppliers';
 import { isRegulatedRateOpportunity } from '../../data/regulatedRateOpportunities';
@@ -275,7 +276,7 @@ function SupplierAutocomplete({ initialValue, onCommit, onCancel }) {
   );
 }
 
-export function SitesView({ settings, updateSettings } = {}) {
+export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
   const [sitesData, setSitesData] = useState([]);
   const [sitesLoaded, setSitesLoaded] = useState(false);
   const [utility, setUtility] = useState(null); // { zipMap, meta }
@@ -285,6 +286,12 @@ export function SitesView({ settings, updateSettings } = {}) {
   const [utilityBusy, setUtilityBusy] = useState(false);
   const [mappingModal, setMappingModal] = useState(null);
   const [dragOver, setDragOver] = useState(false);
+  // Picker for "Save to Company": null = closed, '' = open & empty,
+  // string = open & user is typing. saveStatus drives the button
+  // label / disabled state while the analysis blob is being built and
+  // uploaded to Firestore.
+  const [savePickerSearch, setSavePickerSearch] = useState(null);
+  const [saveStatus, setSaveStatus] = useState({ state: 'idle', message: '' });
   const [electricColOverride, setElectricColOverride] = useState(null);
   const [gasColOverride, setGasColOverride] = useState(null);
   const [siteNameOverride, setSiteNameOverride] = useState(null);
@@ -2166,8 +2173,53 @@ export function SitesView({ settings, updateSettings } = {}) {
   // plus supplier name and contract dates trailing the standard
   // savings columns. Triggered by its own button so it ships
   // independent of the raw-data export.
-  async function exportIndicativeSavings() {
-    if (!rows.length) return;
+  // Convert an ArrayBuffer (what exceljs writeBuffer returns) into a
+  // plain base64 string for storage in Firestore. Chunked so we don't
+  // overflow the call stack on String.fromCharCode(...big array).
+  function arrayBufferToBase64(buf) {
+    const bytes = new Uint8Array(buf);
+    let binary = '';
+    const CHUNK = 0x8000;
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+      const slice = bytes.subarray(i, i + CHUNK);
+      binary += String.fromCharCode.apply(null, slice);
+    }
+    return btoa(binary);
+  }
+
+  async function saveIndicativeSavingsToCompany(prospect) {
+    if (!prospect?.id) return;
+    setSaveStatus({ state: 'saving', message: `Saving to ${prospect.company || 'company'}…` });
+    try {
+      const result = await exportIndicativeSavings({ returnBuffer: true });
+      if (!result) {
+        setSaveStatus({ state: 'error', message: 'Nothing to save — load sites first.' });
+        return;
+      }
+      const { buffer, fileName } = result;
+      const dataBase64 = arrayBufferToBase64(buffer);
+      // Firestore single-document limit is 1 MiB; warn the user well
+      // below that since the wrapper metadata adds a few KB on top.
+      if (dataBase64.length > 950_000) {
+        setSaveStatus({ state: 'error', message: 'Analysis is too large for a single Firestore doc (> ~700 KB raw). Trim sites and retry.' });
+        return;
+      }
+      await saveIndicativeAnalysis(prospect.id, {
+        fileName,
+        dataBase64,
+        sizeBytes: buffer.byteLength,
+      });
+      setSaveStatus({ state: 'success', message: `Saved to ${prospect.company || 'company'}.` });
+      setSavePickerSearch(null);
+      setTimeout(() => setSaveStatus({ state: 'idle', message: '' }), 4000);
+    } catch (err) {
+      console.error('Save indicative analysis failed:', err);
+      setSaveStatus({ state: 'error', message: err?.message || 'Save failed.' });
+    }
+  }
+
+  async function exportIndicativeSavings({ returnBuffer = false } = {}) {
+    if (!rows.length) return null;
     const { Workbook } = await import('exceljs');
     const SE_GREEN_DARK = 'FF009530';
     const SE_GREEN_LIGHT = 'FFE6F7EC';
@@ -3856,15 +3908,18 @@ export function SitesView({ settings, updateSettings } = {}) {
     }
 
     const buf = await wb.xlsx.writeBuffer();
+    const fileName = `Indicative Savings by State - ${new Date().toISOString().slice(0, 10)}.xlsx`;
+    if (returnBuffer) return { buffer: buf, fileName };
     const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `Indicative Savings by State - ${new Date().toISOString().slice(0, 10)}.xlsx`;
+    a.download = fileName;
     document.body.appendChild(a);
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+    return null;
   }
 
   // Schneider Electric branded export — title band, green headers,
@@ -4259,11 +4314,21 @@ export function SitesView({ settings, updateSettings } = {}) {
           {sitesData.length > 0 && (
             <button
               type="button"
-              onClick={exportIndicativeSavings}
+              onClick={() => exportIndicativeSavings()}
               title="Download an Indicative Savings by State workbook (Schneider-branded). Aggregates the loaded sites by state with 2 % – 4 % savings on the deregulated spend, plus supplier name + contract dates."
               style={{ padding: '0.4rem 0.8rem', border: '1px solid #009530', background: '#009530', color: '#fff', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}
             >
               ⬇ Indicative Savings
+            </button>
+          )}
+          {sitesData.length > 0 && (
+            <button
+              type="button"
+              onClick={() => { setSavePickerSearch(''); setSaveStatus({ state: 'idle', message: '' }); }}
+              title="Save the current Indicative Savings analysis against a specific company. The saved file shows up on that company's prospect / client popup and can be downloaded from there."
+              style={{ padding: '0.4rem 0.8rem', border: '1px solid #009530', background: '#fff', color: '#009530', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}
+            >
+              💾 Save to Company
             </button>
           )}
           {sitesData.length > 0 && (
@@ -4277,7 +4342,91 @@ export function SitesView({ settings, updateSettings } = {}) {
             </button>
           )}
         </div>
+        {saveStatus.state !== 'idle' && (
+          <div style={{
+            marginTop: '0.4rem',
+            padding: '0.35rem 0.6rem',
+            fontSize: '0.72rem',
+            borderRadius: 6,
+            background: saveStatus.state === 'success' ? '#DCFCE7' : saveStatus.state === 'error' ? '#FEE2E2' : '#F1F5F9',
+            color: saveStatus.state === 'success' ? '#166534' : saveStatus.state === 'error' ? '#991B1B' : '#475569',
+            fontFamily: 'inherit',
+          }}>{saveStatus.message}</div>
+        )}
       </div>
+
+      {savePickerSearch !== null && createPortal(
+        <div
+          onClick={() => setSavePickerSearch(null)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.4)', zIndex: 10000,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#fff', borderRadius: 8, width: 'min(440px, 92vw)', maxHeight: '70vh',
+              display: 'flex', flexDirection: 'column', boxShadow: '0 12px 40px rgba(15, 23, 42, 0.2)',
+            }}
+          >
+            <div style={{ padding: '0.9rem 1rem 0.5rem', borderBottom: '1px solid #E2E8F0' }}>
+              <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#0F172A' }}>Save Indicative Savings to a Company</div>
+              <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: '0.2rem' }}>Pick a company — the analysis appears on its prospect / client popup.</div>
+              <input
+                type="text"
+                value={savePickerSearch}
+                onChange={(e) => setSavePickerSearch(e.target.value)}
+                placeholder="Search companies…"
+                autoFocus
+                style={{
+                  marginTop: '0.6rem', width: '100%', padding: '0.45rem 0.6rem',
+                  border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.8rem', fontFamily: 'inherit',
+                }}
+              />
+            </div>
+            <div style={{ overflowY: 'auto', flex: 1, padding: '0.3rem 0' }}>
+              {(() => {
+                const q = String(savePickerSearch || '').trim().toLowerCase();
+                const list = (prospects || [])
+                  .filter(p => p.company)
+                  .filter(p => !q || p.company.toLowerCase().includes(q))
+                  .sort((a, b) => a.company.localeCompare(b.company))
+                  .slice(0, 60);
+                if (list.length === 0) {
+                  return <div style={{ padding: '0.6rem 1rem', fontSize: '0.72rem', color: '#94A3B8' }}>No matching companies.</div>;
+                }
+                return list.map(p => (
+                  <div
+                    key={p.id}
+                    onClick={() => saveIndicativeSavingsToCompany(p)}
+                    style={{
+                      padding: '0.4rem 1rem', fontSize: '0.78rem', color: '#1E293B', cursor: 'pointer',
+                    }}
+                    onMouseOver={(e) => e.currentTarget.style.background = '#F1F5F9'}
+                    onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}
+                  >
+                    <div style={{ fontWeight: 600 }}>{p.company}</div>
+                    {(p.status || p.cdm) && (
+                      <div style={{ fontSize: '0.68rem', color: '#64748B', marginTop: '0.1rem' }}>
+                        {[p.status, p.cdm].filter(Boolean).join(' · ')}
+                      </div>
+                    )}
+                  </div>
+                ));
+              })()}
+            </div>
+            <div style={{ padding: '0.6rem 1rem', borderTop: '1px solid #E2E8F0', display: 'flex', justifyContent: 'flex-end', gap: '0.4rem' }}>
+              <button
+                type="button"
+                onClick={() => setSavePickerSearch(null)}
+                style={{ padding: '0.35rem 0.8rem', background: '#fff', border: '1px solid #CBD5E1', borderRadius: 6, fontSize: '0.78rem', cursor: 'pointer', fontFamily: 'inherit' }}
+              >Cancel</button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
 
       <div className={styles.utilityBar}>
         <input

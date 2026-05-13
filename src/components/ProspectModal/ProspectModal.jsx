@@ -16,6 +16,7 @@ import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { getHubspotCache, updateHubspotCache, notifyCacheUpdated } from '../../utils/hubspotContactsCache';
 import { dbGet } from '../../utils/db';
+import { subscribeIndicativeAnalysis } from '../../utils/firestoreSync';
 import { ListsMatchPanel } from './ListsMatchPanel';
 import styles from './ProspectModal.module.css';
 
@@ -1943,6 +1944,33 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // must be initialized first or we hit a temporal-dead-zone error).
   const [showHiddenContacts, setShowHiddenContacts] = useState(false);
 
+  // Indicative Savings analysis saved against this prospect from the
+  // Utility Lookup page. Stored in a /analyses/main subcollection so
+  // the bulk prospects query stays lean — fetched only when the modal
+  // opens. null while loading or when no analysis has been saved.
+  const [indicativeAnalysis, setIndicativeAnalysis] = useState(null);
+  useEffect(() => {
+    if (!prospect?.id || isNew) { setIndicativeAnalysis(null); return; }
+    const unsub = subscribeIndicativeAnalysis(prospect.id, (data) => setIndicativeAnalysis(data));
+    return () => { if (unsub) unsub(); };
+  }, [prospect?.id, isNew]);
+
+  function downloadIndicativeAnalysis() {
+    if (!indicativeAnalysis?.dataBase64) return;
+    const binary = atob(indicativeAnalysis.dataBase64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = indicativeAnalysis.fileName || 'Indicative Savings.xlsx';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   // Local contact state — updated optimistically after HubSpot saves
   const baseContacts = useMemo(() => {
     if (!fields.company || isNew) return [];
@@ -3661,6 +3689,52 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           />
         )}
         <div className={styles.body}>
+          {indicativeAnalysis && (
+            <div style={{
+              marginBottom: '0.8rem',
+              padding: '0.6rem 0.8rem',
+              background: '#F0FDF4',
+              border: '1px solid #BBF7D0',
+              borderRadius: 6,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '0.8rem',
+              flexWrap: 'wrap',
+            }}>
+              <div style={{ minWidth: 0, flex: '1 1 200px' }}>
+                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#166534', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  Indicative Savings Analysis
+                </div>
+                <div style={{ fontSize: '0.78rem', color: '#1E293B', fontWeight: 600, marginTop: '0.15rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {indicativeAnalysis.fileName || 'Indicative Savings by State.xlsx'}
+                </div>
+                <div style={{ fontSize: '0.68rem', color: '#475569', marginTop: '0.1rem' }}>
+                  {(() => {
+                    const ts = indicativeAnalysis.capturedAt?.toDate?.();
+                    const when = ts ? ts.toLocaleString() : 'Recently saved';
+                    const kb = indicativeAnalysis.sizeBytes ? ` · ${Math.round(indicativeAnalysis.sizeBytes / 1024).toLocaleString()} KB` : '';
+                    return `Saved ${when}${kb}`;
+                  })()}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={downloadIndicativeAnalysis}
+                style={{
+                  padding: '0.4rem 0.9rem',
+                  background: '#009530',
+                  color: '#fff',
+                  border: '1px solid #009530',
+                  borderRadius: 6,
+                  fontSize: '0.78rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                }}
+              >⬇ Download</button>
+            </div>
+          )}
           <div className={styles.grid}>
             <div style={{ gridColumn: 'span 2' }}>
               <label className={styles.label}>Company</label>

@@ -1,6 +1,12 @@
 import { collection, doc, setDoc, updateDoc, deleteDoc, getDocs, writeBatch, onSnapshot, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 
+// Subcollection path for analyses saved against a prospect. Kept
+// separate from the prospect doc so the bulk subscribeToProspects
+// query stays lean — a 500 KB base64 XLSX would otherwise multiply
+// initial-load size across the whole list.
+const ANALYSIS_DOC_ID = 'main';
+
 const SHARED_COL = 'prospects';
 
 // Admin uses the shared collection; everyone else gets their own
@@ -89,6 +95,33 @@ export async function replaceAllProspects(existingIds, newProspects, onProgress)
     await report('Writing new data');
   }
   return { deleted: existingIds.length, added: newProspects.length };
+}
+
+function getAnalysisDoc(prospectId) {
+  if (_useShared) return doc(db, SHARED_COL, prospectId, 'analyses', ANALYSIS_DOC_ID);
+  if (_userId) return doc(db, 'users', _userId, 'prospects', prospectId, 'analyses', ANALYSIS_DOC_ID);
+  return doc(db, SHARED_COL, prospectId, 'analyses', ANALYSIS_DOC_ID);
+}
+
+export async function saveIndicativeAnalysis(prospectId, { fileName, dataBase64, sizeBytes }) {
+  await setDoc(getAnalysisDoc(prospectId), {
+    fileName,
+    dataBase64,
+    sizeBytes,
+    capturedAt: serverTimestamp(),
+  });
+}
+
+export function subscribeIndicativeAnalysis(prospectId, onChange) {
+  return onSnapshot(getAnalysisDoc(prospectId), (snap) => {
+    onChange(snap.exists() ? snap.data() : null);
+  }, (err) => {
+    console.error('Firestore analysis subscription error:', err);
+  });
+}
+
+export async function deleteIndicativeAnalysis(prospectId) {
+  await deleteDoc(getAnalysisDoc(prospectId));
 }
 
 export async function seedProspects(prospects) {

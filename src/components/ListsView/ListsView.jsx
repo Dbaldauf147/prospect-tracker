@@ -371,7 +371,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             updateSettingsPath={updateSettingsPath}
           />
         )}
-        {subtab === 'sites' && <SitesView settings={settings} updateSettings={updateSettings} />}
+        {subtab === 'sites' && <SitesView settings={settings} updateSettings={updateSettings} prospects={prospects} />}
         {subtab === 'csrd' && (
           <UploadedListView
             storageKey="csrd-list-override"
