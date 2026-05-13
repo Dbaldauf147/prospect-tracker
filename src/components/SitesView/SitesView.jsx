@@ -3390,6 +3390,17 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         // sourcing-opportunity flag (CFE + > 6 GWh/yr) or the
         // too-low-consumption flag (< 6 GWh/yr).
         const mxFlag = mexicoSiteFlag(country, stateCode, electricUtility, kwh);
+        // Property-type mapping flag: when the upload carried a raw
+        // property-type value but normalizePropertyType couldn't
+        // resolve it to a canonical entry, the per-property-type
+        // consumption / account estimates can't run for this site.
+        // Surface the unrecognized string so the user knows which
+        // rows need an alias added in propertyTypeEstimates.js
+        // (or a corrected source value).
+        const propertyTypeFlag = (r.__propertyTypeRaw__ && !r.__propertyType__)
+          ? `⚠ Property type "${r.__propertyTypeRaw__}" not recognized — estimates will not run for this site. Add an alias in propertyTypeEstimates.js or correct the source value.`
+          : '';
+        const allFlags = [mxFlag, propertyTypeFlag].filter(Boolean).join('\n');
         return {
           siteName: siteNameColumn ? String(r[siteNameColumn] || '').trim() : '',
           state: stateCode || canonicalCountry,
@@ -3408,7 +3419,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           gasCost: typeof r.__gasCost__ === 'number' ? Math.round(r.__gasCost__) : null,
           gasStart: tbdIfMissing(r.__gasStart__, !!gasSupplier),
           gasEnd: tbdIfMissing(r.__gasEnd__, !!gasSupplier),
-          flags: mxFlag,
+          flags: allFlags,
         };
       })
       .filter(s => s.siteName)
@@ -3431,7 +3442,12 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           cell.value = ceilForFmt(v, c.numFmt);
         }
         cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-        cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        // Flags can carry multiple newline-separated lines; wrap so
+        // the user sees both the Mexico flag and the property-type
+        // warning when they fire on the same row. Other columns stay
+        // single-line to keep the table compact.
+        const isFlagsCol = c.label === 'Flags';
+        cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: isFlagsCol };
         if (c.numFmt) cell.numFmt = c.numFmt;
         // Hair border on bottom (row separator) AND right (column
         // separator) so the table reads with light visible gridlines
@@ -3441,7 +3457,11 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           right:  { style: 'hair', color: { argb: SE_BORDER } },
         };
       });
-      dataRow.height = 18;
+      // Bump the row when Flags wraps to multiple lines so both
+      // messages are visible without the user having to drag the row
+      // open. 16 px per extra line is enough at the cell's 10 pt font.
+      const flagLines = String(s.flags || '').split('\n').filter(Boolean).length;
+      dataRow.height = flagLines > 1 ? 18 + (flagLines - 1) * 16 : 18;
     });
     if (sitesForDetail.length > 0) {
       detailSheet.autoFilter = {
