@@ -1984,10 +1984,7 @@ export function SitesView({ settings, updateSettings } = {}) {
         fields.forEach((f, i) => {
           const cell = row.getCell(i + 1);
           cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-          const lower = String(f.label).toLowerCase();
-          const rightAligned = !!(f.dateColumn || f.priceColumn)
-            || (/(cost|spend|\$|consumption|kwh|therm|mmbtu|dth|mcf|ccf|price|rate)/.test(lower) && !/uom|unit/.test(lower));
-          cell.alignment = { vertical: 'middle', horizontal: rightAligned ? 'right' : 'left', indent: 1 };
+          cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
           cell.border = {
             bottom: { style: 'thin', color: { argb: SE_BORDER } },
             left:   { style: 'thin', color: { argb: SE_BORDER } },
