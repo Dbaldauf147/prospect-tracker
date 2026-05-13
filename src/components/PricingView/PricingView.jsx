@@ -388,11 +388,13 @@ const KEY = 'current';
 // parses are silently discarded on hydration so the user re-uploads
 // against the current parser.
 const PARSER_VERSION = 8;
-// Hidden sheet inside Pricing-page exports carrying a JSON snapshot
-// of the full page state. Presence of this sheet on a dropped file
+// Sheet inside Pricing-page exports carrying a JSON snapshot of
+// the full page state. Presence of this sheet on a dropped file
 // switches the import path from fee-workbook parsing to state
-// rehydration.
-const STATE_SHEET_NAME = '__pricing_state__';
+// rehydration. The legacy double-underscore name is still accepted
+// for any exports produced before the rename.
+const STATE_SHEET_NAME = 'Pricing State';
+const LEGACY_STATE_SHEET_NAMES = ['__pricing_state__'];
 
 const fmtMoney = (n) => {
   if (n === null || n === undefined || Number.isNaN(n)) return '';
@@ -689,8 +691,9 @@ export function PricingView() {
   // or its payload can't be parsed.
   function readPricingStateFromBuffer(buf) {
     const wb = XLSX.read(buf, { type: 'array' });
-    if (!wb.SheetNames.includes(STATE_SHEET_NAME)) return null;
-    const sheet = wb.Sheets[STATE_SHEET_NAME];
+    const found = [STATE_SHEET_NAME, ...LEGACY_STATE_SHEET_NAMES].find(n => wb.SheetNames.includes(n));
+    if (!found) return null;
+    const sheet = wb.Sheets[found];
     const aoa = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, blankrows: false });
     const chunks = aoa.slice(1).map(r => String(r?.[0] ?? ''));
     const json = chunks.join('');
@@ -950,14 +953,10 @@ export function PricingView() {
     };
     const json = JSON.stringify(snapshot);
     const CHUNK = 30000;
-    const stateRows = [['__pricing_state__', 'DO NOT EDIT — Pricing page round-trip payload']];
+    const stateRows = [['DO NOT EDIT — Pricing page round-trip payload. Drop this workbook back onto the Pricing page to restore state.']];
     for (let i = 0; i < json.length; i += CHUNK) stateRows.push([json.slice(i, i + CHUNK)]);
     const stateWs = XLSX.utils.aoa_to_sheet(stateRows);
     XLSX.utils.book_append_sheet(wb, stateWs, STATE_SHEET_NAME);
-    // Mark the state sheet as hidden so a human opening the workbook
-    // only sees the readable 'Pricing' sheet. SheetJS expects an
-    // entry per sheet in workbook order.
-    wb.Workbook = { Sheets: [{}, { Hidden: 1 }] };
 
     XLSX.writeFile(wb, `pricing-markup-${new Date().toISOString().slice(0, 10)}.xlsx`);
   }
