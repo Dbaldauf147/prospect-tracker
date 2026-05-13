@@ -1109,21 +1109,42 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
   const columns = useMemo(() => {
     if (!sitesData.length) return [];
     const headers = Object.keys(sitesData[0]);
-    const base = headers.map((k, i) => ({
-      key: k,
-      label: k,
-      defaultWidth: i === 0 ? 220 : 140,
-      ...(i === 0 ? { sticky: true } : {}),
-      render: (row) => {
-        const v = row[k];
-        if (k === zipColumn && row.__zipNorm__) return row.__zipNorm__;
-        return v == null || v === '' ? <span style={{ color: 'var(--color-text-muted)' }}>—</span> : String(v);
-      },
-      exportValue: (row) => {
-        if (k === zipColumn && row.__zipNorm__) return row.__zipNorm__;
-        return row[k] ?? '';
-      },
-    }));
+    // Short-date formatter for any column the user mapped as a
+    // contract start / end. Used by both the auto-pass-through base
+    // columns (so the source header for that field stops showing the
+    // raw Excel serial) and the derived makeDateCol columns below.
+    const fmtShortDate = (v) => {
+      if (v == null || v === '') return '';
+      const d = v instanceof Date ? v : parseSourceDate(v);
+      if (d && Number.isFinite(d.getTime())) {
+        return `${d.getUTCMonth() + 1}/${d.getUTCDate()}/${d.getUTCFullYear()}`;
+      }
+      return String(v);
+    };
+    const dateOverrideCols = new Set(
+      [electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride].filter(Boolean)
+    );
+    const base = headers.map((k, i) => {
+      const isDate = dateOverrideCols.has(k);
+      return {
+        key: k,
+        label: k,
+        defaultWidth: i === 0 ? 220 : 140,
+        ...(i === 0 ? { sticky: true } : {}),
+        render: (row) => {
+          const v = row[k];
+          if (k === zipColumn && row.__zipNorm__) return row.__zipNorm__;
+          if (v == null || v === '') return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
+          return isDate ? fmtShortDate(v) : String(v);
+        },
+        exportValue: (row) => {
+          if (k === zipColumn && row.__zipNorm__) return row.__zipNorm__;
+          const v = row[k];
+          if (isDate) return fmtShortDate(v);
+          return v ?? '';
+        },
+      };
+    });
     const makeUtilityCol = (key, label, color) => ({
       key,
       label,
@@ -1495,24 +1516,6 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         return (commodity === 'electric' ? row.__electricSupplier__ : row.__gasSupplier__) || '';
       },
     });
-    // Contract dates from the file — pass through as text since the
-    // file may already contain a friendly format the user prefers.
-    // Short-date formatter for the page table: prefers a real Date,
-    // also handles raw Excel serials (number) and date-like strings
-    // that snuck through without parseSourceDate. Falls back to the
-    // original value so unparseable cells still render their source
-    // text (e.g. 'TBD').
-    const fmtShortDate = (v) => {
-      if (v == null || v === '') return '';
-      const d = v instanceof Date ? v : (() => {
-        const parsed = parseSourceDate(v);
-        return parsed || null;
-      })();
-      if (d && Number.isFinite(d.getTime())) {
-        return `${d.getUTCMonth() + 1}/${d.getUTCDate()}/${d.getUTCFullYear()}`;
-      }
-      return String(v);
-    };
     const makeDateCol = (key, label, color) => ({
       key,
       label,
@@ -1625,7 +1628,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         ];
       })(),
     ];
-  }, [sitesData, zipColumn, utility, supplierOverrides, editingSupplier]);
+  }, [sitesData, zipColumn, utility, supplierOverrides, editingSupplier, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride]);
 
   const alwaysVisible = useMemo(() => {
     if (!columns.length) return [];
@@ -4089,7 +4092,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         const rowNum = 7 + i;
         const r = ws.getRow(rowNum);
         r.getCell(1).value = i + 1;
-        r.getCell(2).value = h.date;
+        // Write the execution date as a real Date so Excel applies
+        // the m/d/yyyy short-date format on column B.
+        r.getCell(2).value = new Date(h.date + 'T00:00:00Z');
         r.getCell(3).value = 0.10;
         r.getCell(4).value = i === 0
           ? { formula: `C${rowNum}`, result: 0.10 }
@@ -4110,6 +4115,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             right:  { style: 'hair', color: { argb: SE_BORDER } },
           };
         }
+        r.getCell(2).numFmt = 'm/d/yyyy';
         r.getCell(3).numFmt = '0%';
         r.getCell(4).numFmt = '0%';
         r.getCell(5).numFmt = '"$"0.00';
