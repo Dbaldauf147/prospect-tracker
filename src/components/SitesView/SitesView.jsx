@@ -2175,6 +2175,31 @@ export function SitesView({ settings, updateSettings } = {}) {
     const SE_BORDER = 'FFD4DDE1';
     const SE_GREEN = 'FF3DCD58';
     const SE_SLATE = 'FF475569';
+
+    // Mexico-specific helpers. Baja California / Baja California Sur
+    // run on a grid separate from CFE's national system, so they
+    // never count as a CFE sourcing opportunity. CFE is the only
+    // viable counterparty for the rest of Mexico — other utilities
+    // are private generators or self-supply and aren't a target.
+    // Threshold: 6 GWh/yr (6,000,000 kWh) per site for the
+    // procurement opportunity to be worth pursuing.
+    const MEXICO_CFE_KWH_THRESHOLD = 6_000_000;
+    const isMexico = (country) => /^mexic/i.test(String(country || ''));
+    const isBajaState = (state) => /\bbaja\b/i.test(String(state || ''));
+    const isCFE = (utility) => {
+      const s = String(utility || '').toLowerCase();
+      if (!s) return false;
+      if (/\bcfe\b/.test(s)) return true;
+      return /comisi[oó]n\s+federal\s+de\s+electricidad/.test(s);
+    };
+    const mexicoSiteFlag = (country, state, utility, kwh) => {
+      if (!isMexico(country)) return '';
+      if (isBajaState(state)) return '';
+      const k = typeof kwh === 'number' && Number.isFinite(kwh) ? kwh : 0;
+      if (k < MEXICO_CFE_KWH_THRESHOLD) return '⚠ Mexico consumption likely too low (< 6,000,000 kWh/yr)';
+      if (isCFE(utility)) return '★ Potential Mexico sourcing opportunity (CFE, > 6,000,000 kWh/yr)';
+      return '';
+    };
     // Both commodities use a per-state curated savings range — see
     // ELECTRIC_DEREGULATION and GAS_DEREGULATION above for the
     // canonical status / range / lowPct / highPct lookup.
@@ -2415,14 +2440,18 @@ export function SitesView({ settings, updateSettings } = {}) {
             }
           }
         }
-        // Mexico tracking: any electric site in this bucket with a
-        // Mexico country tag and over 1 MWh of consumption flags the
-        // bucket as a potential sourcing opportunity. Runs before the
-        // dereg gate so a regulated Mexican site still surfaces.
+        // Mexico tracking: a state / bucket counts as a sourcing
+        // opportunity only when at least one site there is on CFE
+        // (Comisión Federal de Electricidad), has > 6 GWh/yr of
+        // consumption, and isn't in Baja (which runs on a grid
+        // separate from CFE's national system). Runs before the
+        // dereg gate so a regulated CFE site still surfaces.
         if (commodity === 'electric'
-          && /^mexic/i.test(String(r.__country__ || ''))) {
+          && isMexico(r.__country__)
+          && !isBajaState(r.__state__)
+          && isCFE(r.__electric__)) {
           const kwh = (typeof r.__kwh__ === 'number' && Number.isFinite(r.__kwh__)) ? r.__kwh__ : 0;
-          if (kwh > 1000) g.hasMexicoSourcing = true;
+          if (kwh > MEXICO_CFE_KWH_THRESHOLD) g.hasMexicoSourcing = true;
         }
         // Country buckets defer to the country reference for the dereg
         // classification — the per-utility classifier is keyed off US
@@ -3126,11 +3155,11 @@ export function SitesView({ settings, updateSettings } = {}) {
           : countryHasRegulatedRateOpportunity(rawCountry);
         const country = rawCountry;
         const kwh = typeof r.__kwh__ === 'number' ? Math.round(r.__kwh__) : null;
-        // Mexico sourcing flag: any site in Mexico with > 1 MWh of
-        // electric consumption (1 MWh = 1,000 kWh) is a potential
-        // sourcing target, so it carries a per-site flag here so the
-        // user can pull the list straight off Site Detail.
-        const isMexicoSourcing = /^mexic/i.test(country) && (kwh ?? 0) > 1000;
+        // Mexico flag: Baja sites are off CFE's grid so they don't
+        // get tagged at all. Other Mexican sites get either the
+        // sourcing-opportunity flag (CFE + > 6 GWh/yr) or the
+        // too-low-consumption flag (< 6 GWh/yr).
+        const mxFlag = mexicoSiteFlag(country, stateCode, electricUtility, kwh);
         return {
           siteName: siteNameColumn ? String(r[siteNameColumn] || '').trim() : '',
           state: stateCode || canonicalCountry,
@@ -3149,7 +3178,7 @@ export function SitesView({ settings, updateSettings } = {}) {
           gasCost: typeof r.__gasCost__ === 'number' ? Math.round(r.__gasCost__) : null,
           gasStart: tbdIfMissing(r.__gasStart__, !!gasSupplier),
           gasEnd: tbdIfMissing(r.__gasEnd__, !!gasSupplier),
-          flags: isMexicoSourcing ? '★ Potential Mexico sourcing opportunity' : '',
+          flags: mxFlag,
         };
       })
       .filter(s => s.siteName)
