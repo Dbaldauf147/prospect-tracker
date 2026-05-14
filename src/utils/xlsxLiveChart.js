@@ -228,12 +228,48 @@ export async function injectLiveLineChart(buffer, { sheetName, title, catRef, se
     }
     zip.file(sheetRelsPath, sheetRelsContent);
 
-    // Worksheet XML: insert <drawing r:id="..."/> before </worksheet>.
-    // Strip any existing drawing element first so we don't end up with
-    // two (e.g. if a previous pass left one behind).
+    // Worksheet XML: insert <drawing r:id="..."/> at the correct
+    // schema-mandated position. Per CT_Worksheet, `<drawing>` must
+    // come AFTER pageSetup/headerFooter/etc. and BEFORE legacyDrawing
+    // / picture / oleObjects / controls / webPublishItems /
+    // tableParts / extLst at the worksheet top level. ExcelJS emits a
+    // worksheet-level <extLst> when x14 conditional-formatting
+    // features are used (data bars produce an inner extLst inside
+    // <cfRule> AND a worksheet-level extLst for the
+    // <x14:conditionalFormattings> block) — a naive "insert before
+    // </worksheet>" puts <drawing> after that extLst, and a naive
+    // "insert before first <extLst>" puts <drawing> *inside* the
+    // dataBar cfRule. Excel rejects both → the entire sheet renders
+    // blank.
     let sheetXml = await zip.file(sheetXmlPath).async('string');
     sheetXml = sheetXml.replace(/<drawing\s+[^/>]*\/>/g, '');
-    sheetXml = sheetXml.replace(/<\/worksheet>\s*$/, `<drawing r:id="rId${drawingRid}"/></worksheet>`);
+    const drawingTag = `<drawing r:id="rId${drawingRid}"/>`;
+
+    // Build candidate insertion points and pick the earliest one. The
+    // top-level extLst is identified by anchoring on `</extLst>` that
+    // sits directly before `</worksheet>` — the inner cfRule extLst
+    // is followed by `</cfRule>`, not `</worksheet>`, so it's ruled
+    // out. Other followers (legacyDrawing, picture, oleObjects,
+    // controls, webPublishItems, tableParts) don't nest inside the
+    // worksheet's other content, so the first occurrence is the
+    // top-level one.
+    const candidates = [];
+    const wsExtLstCloseIdx = sheetXml.search(/<\/extLst>\s*<\/worksheet>/);
+    if (wsExtLstCloseIdx !== -1) {
+      const wsExtLstOpenIdx = sheetXml.lastIndexOf('<extLst>', wsExtLstCloseIdx);
+      if (wsExtLstOpenIdx !== -1) candidates.push(wsExtLstOpenIdx);
+    }
+    for (const name of ['legacyDrawing', 'legacyDrawingHF', 'picture', 'oleObjects', 'controls', 'webPublishItems', 'tableParts']) {
+      const re = new RegExp(`<${name}\\b`);
+      const m = re.exec(sheetXml);
+      if (m) candidates.push(m.index);
+    }
+    if (candidates.length > 0) {
+      const insertAt = Math.min(...candidates);
+      sheetXml = sheetXml.slice(0, insertAt) + drawingTag + sheetXml.slice(insertAt);
+    } else {
+      sheetXml = sheetXml.replace(/<\/worksheet>\s*$/, `${drawingTag}</worksheet>`);
+    }
     zip.file(sheetXmlPath, sheetXml);
 
     // [Content_Types].xml: register chart + drawing overrides.
