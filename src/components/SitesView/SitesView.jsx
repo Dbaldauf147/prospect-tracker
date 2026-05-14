@@ -593,6 +593,13 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           });
       await saveListToIDB(SITES_STORAGE_KEY, filteredRows);
       setSitesData(filteredRows);
+      // Wipe per-row supplier overrides from the previous sites list.
+      // They're keyed by row index (e.g. `5_gas` -> "NRG Energy"), so
+      // they bleed straight onto row 5 of the new list when row counts
+      // overlap. Vendor-name decisions stay — those are brand-keyed and
+      // still meaningful across uploads.
+      setSupplierOverrides({});
+      try { localStorage.removeItem('utility-lookup:supplier-overrides'); } catch {}
       setSiteNameOverride(mapping.siteName || null);
       setZipColOverride(mapping.zip || null);
       setElectricColOverride(mapping.electric || '__none__');
