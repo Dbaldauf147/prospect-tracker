@@ -243,16 +243,28 @@ function OptionPanel({ opt, onChange }) {
 
       <div className={styles.gridWrap}>
         <table className={styles.grid}>
+          <colgroup>
+            <col className={styles.colFeeSchedule} />
+            <col className={styles.colType} />
+            <col className={styles.colFee} />
+            <col className={styles.colUnit} />
+            <col className={styles.colUnitCount} />
+            <col className={styles.colStartMonth} />
+            {Array.from({ length: MAX_YEARS }, (_, i) => (
+              <col key={`yc-${i}`} className={styles.colYear} />
+            ))}
+            <col className={styles.colAction} />
+          </colgroup>
           <thead>
             <tr>
               <th className={styles.colInput}>Fee Schedule</th>
               <th className={styles.colInput}>Type</th>
-              <th className={`${styles.colInput} ${styles.numCell}`}>Fee</th>
+              <th className={styles.colInput}>Fee</th>
               <th className={styles.colInput}>Unit</th>
-              <th className={`${styles.colInput} ${styles.numCell}`}>Est. Unit Count</th>
-              <th className={`${styles.colInput} ${styles.numCell}`}>Fee Start Month</th>
+              <th className={styles.colInput}>Est. Unit Count</th>
+              <th className={styles.colInput}>Fee Start Month</th>
               {Array.from({ length: MAX_YEARS }, (_, i) => (
-                <th key={`yh-${i}`} className={`${styles.colCalc} ${styles.numCell}`}>{`Year ${i + 1}`}</th>
+                <th key={`yh-${i}`} className={styles.colCalc}>{`Year ${i + 1}`}</th>
               ))}
               <th className={styles.actionCol} />
             </tr>
@@ -279,13 +291,12 @@ function OptionPanel({ opt, onChange }) {
                       {TYPE_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
                     </select>
                   </td>
-                  <td className={`${styles.tan} ${styles.numCell}`}>
+                  <td className={styles.tan}>
                     <CellInput
                       key={`fee-${rowKey}`}
                       value={row.fee !== '' && row.fee != null && !Number.isNaN(toNum(row.fee))
                         ? `$${(toNum(row.fee) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                         : (row.fee ?? '')}
-                      align="right"
                       onCommit={(v) => updateRow(idx, 'fee', v)}
                     />
                   </td>
@@ -302,14 +313,14 @@ function OptionPanel({ opt, onChange }) {
                       )}
                     </select>
                   </td>
-                  <td className={`${styles.tan} ${styles.numCell}`}>
-                    <CellInput key={`uc-${rowKey}`} value={row.unitCount} align="right" onCommit={(v) => updateRow(idx, 'unitCount', v)} />
+                  <td className={styles.tan}>
+                    <CellInput key={`uc-${rowKey}`} value={row.unitCount} onCommit={(v) => updateRow(idx, 'unitCount', v)} />
                   </td>
-                  <td className={`${styles.tan} ${styles.numCell} ${startMonthEmpty && (row.feeSchedule || row.type || row.fee) ? styles.missingStart : ''}`}>
-                    <CellInput key={`sm-${rowKey}`} value={row.startMonth} align="right" onCommit={(v) => updateRow(idx, 'startMonth', v)} />
+                  <td className={`${styles.tan} ${startMonthEmpty && (row.feeSchedule || row.type || row.fee) ? styles.missingStart : ''}`}>
+                    <CellInput key={`sm-${rowKey}`} value={row.startMonth} onCommit={(v) => updateRow(idx, 'startMonth', v)} />
                   </td>
                   {yearVals.map((v, i) => (
-                    <td key={`yv-${idx}-${i}`} className={`${styles.calc} ${styles.numCell}`}>
+                    <td key={`yv-${idx}-${i}`} className={styles.calc}>
                       {v ? fmtMoneyWhole(v) : '$0'}
                     </td>
                   ))}
@@ -325,9 +336,9 @@ function OptionPanel({ opt, onChange }) {
               );
             })}
             <tr className={styles.totalsRow}>
-              <td colSpan={6} style={{ textAlign: 'right' }}>Year totals</td>
+              <td colSpan={6}>Year totals</td>
               {yearTotals.map((v, i) => (
-                <td key={`yt-${i}`} className={styles.numCell}>{fmtMoneyWhole(v)}</td>
+                <td key={`yt-${i}`}>{fmtMoneyWhole(v)}</td>
               ))}
               <td />
             </tr>
