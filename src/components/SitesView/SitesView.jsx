@@ -5303,7 +5303,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     {
       const ws = wb.addWorksheet('Floating vs Hedging Example', {
         properties: { tabColor: { argb: SE_GREEN_DARK } },
-        views: [{ showGridLines: false, state: 'frozen', ySplit: 6 }],
+        views: [{ showGridLines: false }],
       });
 
       const COLS = 9;
