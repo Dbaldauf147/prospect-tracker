@@ -3486,15 +3486,13 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         ctx.strokeStyle = '#0F172A';
         ctx.lineWidth = 0.5;
         ctx.stroke();
-        if (b.count > 1) {
-          ctx.fillStyle = '#FFFFFF';
-          ctx.strokeStyle = '#0F172A';
-          ctx.font = `bold ${Math.max(10, Math.min(16, Math.round(r * 0.9)))}px Nunito Sans, Arial, sans-serif`;
-          ctx.textAlign = 'center';
-          ctx.lineWidth = 3;
-          ctx.strokeText(String(b.count), x, y + 4);
-          ctx.fillText(String(b.count), x, y + 4);
-        }
+        ctx.fillStyle = '#FFFFFF';
+        ctx.strokeStyle = '#0F172A';
+        ctx.font = `bold ${Math.max(10, Math.min(16, Math.round(r * 0.9)))}px Nunito Sans, Arial, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.lineWidth = 3;
+        ctx.strokeText(String(b.count), x, y + 4);
+        ctx.fillText(String(b.count), x, y + 4);
       }
 
       // Legend is rendered as Excel cells to the RIGHT of the map
