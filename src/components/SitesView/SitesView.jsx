@@ -26,7 +26,7 @@ import {
   formatRate,
 } from '../../utils/utilityRates';
 import { parseAllSheets, parseBestSheet, parseSplitSitesTemplate, readRoundTripState, isIndicativeSavingsExport } from '../../utils/xlsxParse';
-import { saveIndicativeAnalysis } from '../../utils/firestoreSync';
+import { saveIndicativeAnalysis, deleteIndicativeAnalysis } from '../../utils/firestoreSync';
 import { findFuzzyMatch } from '../../utils/utilityNameMatch';
 import { ENERGY_SUPPLIERS } from '../../data/energySuppliers';
 import { isRegulatedRateOpportunity } from '../../data/regulatedRateOpportunities';
@@ -2651,6 +2651,11 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         setSaveStatus({ state: 'error', message: 'Analysis is too large for a single Firestore doc (> ~700 KB raw). Trim sites and retry.' });
         return;
       }
+      // Wipe any prior saved analysis on this prospect before writing
+      // the new one, so the save is a clean replace rather than relying
+      // solely on setDoc semantics — guards against any stale field
+      // surviving an interrupted prior write.
+      try { await deleteIndicativeAnalysis(prospect.id); } catch { /* nothing to delete is fine */ }
       await saveIndicativeAnalysis(prospect.id, {
         fileName,
         dataBase64,
