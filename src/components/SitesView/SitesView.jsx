@@ -4607,7 +4607,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         { label: 'Supplier', get: (s) => s.supplier, width: 22 },
         { label: 'Contract Start', get: (s) => s.contractStart, width: 14, numFmt: 'm/d/yyyy', dateColumn: true },
         { label: 'Contract End', get: (s) => s.contractEnd, width: 14, numFmt: 'm/d/yyyy', dateColumn: true },
-        { label: 'Annual Spend', get: (s) => s.annualSpend, numFmt: '"$"#,##0', width: 14 },
+        { label: 'Annual Spend', get: (s) => s.annualSpend, numFmt: '"$"#,##0', width: 18 },
         { label: 'Low %', get: (s) => s.lowPct, numFmt: '0.0%', width: 9 },
         { label: 'High %', get: (s) => s.highPct, numFmt: '0.0%', width: 9 },
         { label: 'Savings %', scenario: true, get: sitePctTriple, numFmt: '0.0%', width: 11 },
