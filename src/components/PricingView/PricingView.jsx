@@ -1797,6 +1797,39 @@ export function PricingView() {
                         })()}
                       </div>
 
+                      {(() => {
+                        // Year 1 cash-flow check. Revenue: sum
+                        // altFeeYearRevenue(row, 1) over this option's
+                        // alt-fee rows. Cost: per item, Setup / One
+                        // Time hit Y1 in full; Rolled variants
+                        // amortize across the term so Y1 gets 12
+                        // months' worth; Recurring (monthly) charges
+                        // 12 months of cost in Y1 at face value
+                        // (escalator only kicks in from Y2). If
+                        // revenue − cost is negative, flag it.
+                        const flatItems = opt.sections.flatMap(s => s.items);
+                        const y1Cost = flatItems.reduce((acc, i) => {
+                          const c = typeof i.cts === 'number' ? i.cts : 0;
+                          if (!c) return acc;
+                          const t = effectiveType(i);
+                          const isRecurring = /recurring.*monthly|monthly.*recurring|^recurring/i.test(t);
+                          const isRolled = /\brolled\b/i.test(t);
+                          if (isRecurring) return acc + c * 12;
+                          if (isRolled && termMonths > 0) return acc + (c / termMonths) * 12;
+                          return acc + c;
+                        }, 0);
+                        const y1Revenue = (altFees[opt.optionNumber] || [])
+                          .reduce((s, r) => s + altFeeYearRevenue(r, 1), 0);
+                        const y1CashFlow = y1Revenue - y1Cost;
+                        if (y1CashFlow >= 0) return null;
+                        const fmtAbs = (n) => Math.abs(Math.round(n)).toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+                        return (
+                          <div className={styles.year1Warning} role="alert">
+                            ⚠ Negative cash flow in Year 1 — projected revenue {fmtAbs(y1Revenue)} vs cost {fmtAbs(y1Cost)} (shortfall {fmtAbs(y1CashFlow)}). Consider restructuring fees or shifting Setup costs.
+                          </div>
+                        );
+                      })()}
+
                       <AltFeeTable
                         rows={altFees[opt.optionNumber] || altFeeStarter()}
                         globalGmPct={globalGmPct}
