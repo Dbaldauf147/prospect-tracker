@@ -154,6 +154,23 @@
   border-color: var(--color-accent);
 }
 
+.btnDanger {
+  padding: 0.4rem 0.7rem;
+  border: 1px solid #fecaca;
+  border-radius: var(--radius-md);
+  background: #fff;
+  color: #b91c1c;
+  font-size: var(--font-size-xs);
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btnDanger:hover {
+  border-color: #ef4444;
+  background: #fef2f2;
+}
+
 .flash {
   font-size: var(--font-size-xs);
   color: #047857;
@@ -360,4 +377,48 @@
 
 .summaryTable .dim {
   color: #94a3b8;
+}
+
+.monthlyBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.monthlyHeader {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.monthlyTable {
+  border-collapse: collapse;
+  width: auto;
+  font-size: var(--font-size-sm);
+  background: var(--color-bg);
+}
+
+.monthlyTable th,
+.monthlyTable td {
+  border: 1px solid #e5e7eb;
+  padding: 0.35rem 0.55rem;
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.monthlyTable th {
+  background: #f1f5f9;
+  font-weight: 600;
+  font-size: var(--font-size-xs);
+  color: #475569;
+}
+
+.monthlyTable td {
+  background: #f9fafb;
+}
+
+.monthlyTotal {
+  background: #e2e8f0 !important;
+  font-weight: 600;
 }
