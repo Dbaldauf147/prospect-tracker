@@ -1817,15 +1817,21 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     let elecFromSupplier = 0, elecFromZip = 0, elecUnknown = 0;
     let gasFromSupplier = 0, gasFromZip = 0, gasUnknown = 0;
     for (const r of rows) {
+      // __kwhFromEstimate__ / __thermsFromEstimate__ are BOOLEAN
+      // flags ("did this value come from the property-type estimate
+      // fallback?"), not numbers. The kWh / therms total lives on
+      // __kwh__ / __therms__ regardless of provenance — pick the
+      // right bucket via the source / estimate flag, then accumulate
+      // the actual number from __kwh__ / __therms__.
       if (r.__kwhSource__ && typeof r.__kwh__ === 'number' && Number.isFinite(r.__kwh__)) {
         elecActualKwh += r.__kwh__; elecActualKwhSites++;
-      } else if (typeof r.__kwhFromEstimate__ === 'number' && Number.isFinite(r.__kwhFromEstimate__)) {
-        elecEstKwh += r.__kwhFromEstimate__; elecEstKwhSites++;
+      } else if (r.__kwhFromEstimate__ && typeof r.__kwh__ === 'number' && Number.isFinite(r.__kwh__)) {
+        elecEstKwh += r.__kwh__; elecEstKwhSites++;
       }
       if (r.__thermsSource__ && typeof r.__therms__ === 'number' && Number.isFinite(r.__therms__)) {
         gasActualTherms += r.__therms__; gasActualThermsSites++;
-      } else if (typeof r.__thermsFromEstimate__ === 'number' && Number.isFinite(r.__thermsFromEstimate__)) {
-        gasEstTherms += r.__thermsFromEstimate__; gasEstThermsSites++;
+      } else if (r.__thermsFromEstimate__ && typeof r.__therms__ === 'number' && Number.isFinite(r.__therms__)) {
+        gasEstTherms += r.__therms__; gasEstThermsSites++;
       }
       if (typeof r.__electricCostActual__ === 'number' && Number.isFinite(r.__electricCostActual__)) {
         elecActualCost += r.__electricCostActual__; elecActualCostSites++;
