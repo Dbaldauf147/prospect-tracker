@@ -4,6 +4,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, CartesianGrid, Responsive
 import styles from './PricingView.module.css';
 import { parsePricingWorkbook, priceFromCostAndGm } from '../../utils/pricingParse';
 import { dbGet, dbPut, dbDelete } from '../../utils/db';
+import { OptionsTab } from './OptionsTab';
 
 // Local-draft text input keyed off the upstream value. The parent
 // remounts the input (via React's `key` prop on the wrapping cell)
@@ -665,7 +666,8 @@ export function PricingView() {
   const [summaryColVisibility, setSummaryColVisibility] = useState({});
   const [colMenuOpen, setColMenuOpen] = useState(false);
   const [summaryMenuOpen, setSummaryMenuOpen] = useState(false);
-  const [pageSubtab, setPageSubtab] = useState('pricing'); // 'pricing' | 'linkedTo'
+  const [pageSubtab, setPageSubtab] = useState('pricing'); // 'pricing' | 'linkedTo' | 'options'
+  const [optionsTabData, setOptionsTabData] = useState(null); // OptionsTab state: array of { name, years, escPct, rows: [...] }
   const [error, setError] = useState('');
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef(null);
@@ -700,7 +702,8 @@ export function PricingView() {
         if (saved.colVisibility) setColVisibility(saved.colVisibility);
         if (saved.summaryColWidths) setSummaryColWidths(saved.summaryColWidths);
         if (saved.summaryColVisibility) setSummaryColVisibility(saved.summaryColVisibility);
-        if (saved.pageSubtab === 'pricing' || saved.pageSubtab === 'linkedTo') setPageSubtab(saved.pageSubtab);
+        if (saved.pageSubtab === 'pricing' || saved.pageSubtab === 'linkedTo' || saved.pageSubtab === 'options') setPageSubtab(saved.pageSubtab);
+        if (Array.isArray(saved.optionsTabData)) setOptionsTabData(saved.optionsTabData);
       } catch (err) {
         console.warn('Failed to load pricing cache:', err);
       } finally {
@@ -713,9 +716,9 @@ export function PricingView() {
   // Persist on changes (skip the first render until hydration finishes).
   useEffect(() => {
     if (!hydratedRef.current) return;
-    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, termMonths, annualEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab };
+    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, termMonths, annualEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData };
     dbPut(STORE, payload, KEY).catch(err => console.warn('Failed to save pricing cache:', err));
-  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, termMonths, annualEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab]);
+  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, termMonths, annualEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData]);
 
   // Per-year cost contribution from a single upper-table CTS item.
   // Setup / One Time hit year 1 in full; Rolled variants amortize
@@ -1373,6 +1376,13 @@ export function PricingView() {
         >
           Linked To
         </button>
+        <button
+          type="button"
+          className={pageSubtab === 'options' ? styles.subtabActive : styles.subtab}
+          onClick={() => setPageSubtab('options')}
+        >
+          Options
+        </button>
       </div>
 
       {pageSubtab === 'linkedTo' && (
@@ -1389,7 +1399,14 @@ export function PricingView() {
         />
       )}
 
-      <div className={styles.body} style={pageSubtab === 'linkedTo' ? { display: 'none' } : undefined}>
+      {pageSubtab === 'options' && (
+        <OptionsTab
+          options={optionsTabData || []}
+          setOptions={setOptionsTabData}
+        />
+      )}
+
+      <div className={styles.body} style={pageSubtab !== 'pricing' ? { display: 'none' } : undefined}>
         {!workbook && (
           <div className={styles.empty}>
             <div>No workbook loaded.</div>
