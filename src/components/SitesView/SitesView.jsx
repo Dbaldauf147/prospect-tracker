@@ -51,9 +51,12 @@ import {
   CANADA_PROVINCE_CENTERS,
   statusTier,
   TIER_COLORS,
+  TIER_COLORS_FADED,
   TIER_LABELS,
+  getCountryFeatures,
+  TOPO_NAME_TO_DEREG_KEY,
+  MIXED_TIER_COUNTRY_IDS,
 } from '../../data/worldGeo';
-import worldMapUrl from '../../assets/world-map.png';
 import {
   countryElectricRate,
   countryGasRatePerTherm,
@@ -3289,30 +3292,94 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         else gasUnknown += b.count;
       }
 
-      // Canvas render — equirectangular projection. The map graphic
-      // is a blank political world map (country outlines only, no
-      // physical / satellite imagery — public domain, sourced from
-      // Wikimedia Commons File:BlankMap-World-Equirectangular.svg).
-      // Bundled at src/assets/world-map.png. Lat/lng → pixel uses
-      // the same linear projection the dots use because the source
-      // image is equirectangular.
+      // Per-country aggregation for the choropleth fill + the
+      // country-breakdown table below the map. Aggregates EVERY row
+      // (including the un-mappable ones the dot pass skipped) so the
+      // table is a faithful portfolio summary even when a country
+      // doesn't have a center we can drop a dot at.
+      const countryAggs = new Map();
+      for (const r of rows) {
+        const rawCountry = String(r.__country__ || '').trim();
+        const country = normalizeCountryName(rawCountry) || rawCountry;
+        if (!country) continue;
+        let agg = countryAggs.get(country);
+        if (!agg) {
+          const c = COUNTRY_DEREGULATION[country];
+          const isUS = /^(united states|usa|us)$/i.test(country);
+          const isCA = /^(canada|ca)$/i.test(country);
+          const tier = (isUS || isCA)
+            ? 'mixed'
+            : (c ? statusTier(c.electric) : 'unknown');
+          agg = {
+            country,
+            tier,
+            elecStatus: c?.electric || (isUS || isCA ? 'Mixed' : ''),
+            gasStatus: c?.gas || (isUS || isCA ? 'Mixed' : ''),
+            sites: 0,
+            kwh: 0,
+            therms: 0,
+            costActual: 0,
+            costEstimated: 0,
+          };
+          countryAggs.set(country, agg);
+        }
+        agg.sites++;
+        if (typeof r.__kwh__ === 'number' && Number.isFinite(r.__kwh__)) agg.kwh += r.__kwh__;
+        if (typeof r.__therms__ === 'number' && Number.isFinite(r.__therms__)) agg.therms += r.__therms__;
+        if (typeof r.__electricCostActual__ === 'number' && Number.isFinite(r.__electricCostActual__)) agg.costActual += r.__electricCostActual__;
+        else if (typeof r.__electricCostEstimated__ === 'number' && Number.isFinite(r.__electricCostEstimated__)) agg.costEstimated += r.__electricCostEstimated__;
+        if (typeof r.__gasCostActual__ === 'number' && Number.isFinite(r.__gasCostActual__)) agg.costActual += r.__gasCostActual__;
+        else if (typeof r.__gasCostEstimated__ === 'number' && Number.isFinite(r.__gasCostEstimated__)) agg.costEstimated += r.__gasCostEstimated__;
+      }
+      const countryRows = [...countryAggs.values()].sort((a, b) => b.sites - a.sites);
+
+      // Canvas render — equirectangular projection. The map itself
+      // is now drawn from the bundled world-atlas TopoJSON
+      // (src/data/countries-110m.json) so each country can be filled
+      // independently by its deregulation tier. Lat/lng → pixel uses
+      // the same linear projection the dots use.
       const W = 1200, H = 600;
       const canvas = document.createElement('canvas');
       canvas.width = W; canvas.height = H;
       const ctx = canvas.getContext('2d');
-      // Light ocean fill first; the map PNG has a transparent ocean
-      // so the canvas color shows through wherever there's no land.
+      // Ocean background.
       ctx.fillStyle = '#F1F5F9';
       ctx.fillRect(0, 0, W, H);
-      const worldMapImg = await new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => resolve(img);
-        img.onerror = () => reject(new Error('Failed to load world map image'));
-        img.src = worldMapUrl;
-      });
-      ctx.drawImage(worldMapImg, 0, 0, W, H);
 
       const project = (lng, lat) => [((lng + 180) / 360) * W, ((90 - lat) / 180) * H];
+
+      // Choropleth fills — color each country polygon by its
+      // deregulation tier. Countries the portfolio HAS sites in
+      // render in the saturated tier color so they pop visually;
+      // countries with no sites render in a faded variant so the
+      // dereg tier is still legible (the user can scan for likely
+      // future expansion markets). US and Canada use the "mixed"
+      // tier because per-state nuance is out of scope at country
+      // granularity.
+      const countryFeatures = getCountryFeatures();
+      for (const feat of countryFeatures) {
+        const derGKey = TOPO_NAME_TO_DEREG_KEY[feat.name] || feat.name;
+        const c = COUNTRY_DEREGULATION[derGKey];
+        const isMixed = MIXED_TIER_COUNTRY_IDS.has(String(feat.id));
+        let tier;
+        if (isMixed) tier = 'mixed';
+        else if (!c) tier = 'unknown';
+        else tier = statusTier(c.electric);
+        const hasSites = countryAggs.has(derGKey);
+        ctx.fillStyle = hasSites ? TIER_COLORS[tier] : TIER_COLORS_FADED[tier];
+        ctx.strokeStyle = '#94A3B8';
+        ctx.lineWidth = 0.5;
+        for (const ring of feat.rings) {
+          ctx.beginPath();
+          for (let i = 0; i < ring.length; i++) {
+            const [px, py] = project(ring[i][0], ring[i][1]);
+            if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+          }
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+        }
+      }
 
       // Plot dots — radius scales with sqrt(count) so a 100-site
       // bucket isn't 100× the area of a 1-site bucket.
@@ -3356,9 +3423,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         }
       }
 
-      // Legend (top-left of the map).
-      const legX = 16, legY = 16, legW = 280, legH = 130;
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+      // Legend (top-left of the map). Lists the five tier colors
+      // used by both the country fills and the site dots.
+      const legX = 16, legY = 16, legW = 280, legH = 170;
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.94)';
       ctx.strokeStyle = '#CBD5E1';
       ctx.lineWidth = 1;
       ctx.fillRect(legX, legY, legW, legH);
@@ -3366,18 +3434,23 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       ctx.fillStyle = '#0F172A';
       ctx.font = 'bold 12px Nunito Sans, Arial, sans-serif';
       ctx.textAlign = 'left';
-      ctx.fillText('Each dot — left half = Electric, right = Gas', legX + 10, legY + 18);
+      ctx.fillText('Country fill = dereg tier · saturated = sites', legX + 10, legY + 18);
+      ctx.fillText('Each dot — left half Electric, right Gas', legX + 10, legY + 34);
       ctx.font = '11px Nunito Sans, Arial, sans-serif';
-      const tiersForLegend = ['dereg', 'some', 'reg', 'unknown'];
+      const tiersForLegend = ['dereg', 'some', 'reg', 'mixed', 'unknown'];
       tiersForLegend.forEach((t, i) => {
-        const ly = legY + 36 + i * 20;
+        const ly = legY + 52 + i * 20;
+        // Saturated swatch + faded swatch side by side so the user
+        // sees the with-sites / without-sites encoding at a glance.
         ctx.fillStyle = TIER_COLORS[t];
-        ctx.fillRect(legX + 12, ly - 8, 14, 14);
+        ctx.fillRect(legX + 12, ly - 8, 12, 14);
+        ctx.fillStyle = TIER_COLORS_FADED[t];
+        ctx.fillRect(legX + 26, ly - 8, 12, 14);
         ctx.strokeStyle = '#0F172A';
         ctx.lineWidth = 0.5;
-        ctx.strokeRect(legX + 12, ly - 8, 14, 14);
+        ctx.strokeRect(legX + 12, ly - 8, 26, 14);
         ctx.fillStyle = '#0F172A';
-        ctx.fillText(TIER_LABELS[t], legX + 34, ly + 3);
+        ctx.fillText(TIER_LABELS[t], legX + 46, ly + 3);
       });
 
       const dataUrl = canvas.toDataURL('image/png');
@@ -3455,6 +3528,66 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         }
         r.height = 20;
       });
+
+      // ---- Country breakdown table -----------------------------
+      // One row per country in the portfolio: dereg status, site
+      // count, load (kWh + Dth), cost (actual + estimated). Sorted
+      // by descending site count so the heaviest concentrations
+      // sit at the top.
+      if (countryRows.length > 0) {
+        const countryHdrRow = tableHeaderRow + tierRows.length + 3;
+        ws.mergeCells(countryHdrRow, 1, countryHdrRow, COLS);
+        const cHdr = ws.getCell(countryHdrRow, 1);
+        cHdr.value = 'Sites by country';
+        cHdr.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
+        cHdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+        cHdr.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        ws.getRow(countryHdrRow).height = 22;
+
+        const cTblHdrRow = countryHdrRow + 1;
+        const cHdrCells = ws.getRow(cTblHdrRow);
+        const cCols = [
+          'Country',
+          'Electric — Status',
+          'Gas — Status',
+          'Sites',
+          'Load (kWh)',
+          'Load (Dth)',
+          'Annual Cost ($)',
+        ];
+        cCols.forEach((label, i) => {
+          const cell = cHdrCells.getCell(i + 1);
+          cell.value = label;
+          cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+          cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        });
+        cHdrCells.height = 22;
+
+        countryRows.forEach((cr, i) => {
+          const rr = ws.getRow(cTblHdrRow + 1 + i);
+          rr.getCell(1).value = cr.country;
+          rr.getCell(2).value = cr.elecStatus || '';
+          rr.getCell(3).value = cr.gasStatus || '';
+          rr.getCell(4).value = cr.sites;
+          rr.getCell(5).value = Math.round(cr.kwh);
+          rr.getCell(6).value = Math.round(cr.therms / 10);
+          rr.getCell(7).value = Math.round(cr.costActual + cr.costEstimated);
+          rr.getCell(4).numFmt = '#,##0';
+          rr.getCell(5).numFmt = '#,##0';
+          rr.getCell(6).numFmt = '#,##0';
+          rr.getCell(7).numFmt = '"$"#,##0';
+          for (let ci = 1; ci <= 7; ci++) {
+            rr.getCell(ci).font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+            rr.getCell(ci).alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+            rr.getCell(ci).border = {
+              bottom: { style: 'hair', color: { argb: SE_BORDER } },
+              right:  { style: 'hair', color: { argb: SE_BORDER } },
+            };
+          }
+          rr.height = 20;
+        });
+      }
     }
 
     // When any bucket is a country (international site outside US/CA),
