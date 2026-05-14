@@ -3455,8 +3455,17 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       });
     }
 
-    const ws = wb.addWorksheet('Indicative Savings by State', {
-      properties: { tabColor: { argb: SE_GREEN } },
+    // When any bucket is a country (international site outside US/CA),
+    // the tab is no longer purely by-state — rename it and (further
+    // down) nest the US states under a parent "United States" row so
+    // they read as a country bucket in the broader portfolio.
+    const hasGlobalSites = electricRows.some(g => g.isCountry) || gasRows.some(g => g.isCountry);
+    const SCENARIO_SHEET_NAME = hasGlobalSites ? 'Indicative Savings' : 'Indicative Savings by State';
+    const ws = wb.addWorksheet(SCENARIO_SHEET_NAME, {
+      // summaryBelow: false → Excel renders the "+/-" outline toggle
+      // ABOVE the grouped children (next to the United States parent
+      // row), which is the layout we use when nesting state rows.
+      properties: { tabColor: { argb: SE_GREEN }, outlineProperties: { summaryBelow: false } },
       // Freeze the title + scenario block (rows 1-3) so the toggle
       // stays visible as the user scrolls down through the electric /
       // gas / reg-rate blocks.
@@ -3484,7 +3493,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     // of the savings columns recalculate at once. Always written as a
     // qualified `'Sheet Name'!$D$2` reference so the same formula is
     // valid on the by-state sheet AND on the monthly-breakdown sheet.
-    const SCENARIO_SHEET_NAME = 'Indicative Savings by State';
+    // SCENARIO_SHEET_NAME was already declared above so the
+    // worksheet name + the qualified formula references share one
+    // source of truth.
     const SCENARIO_LOCAL_CELL = 'D2';
     const SCENARIO_REF = `'${SCENARIO_SHEET_NAME}'!$${SCENARIO_LOCAL_CELL[0]}$${SCENARIO_LOCAL_CELL.slice(1)}`;
     // Term-length toggle (1-5 years). Drives the same scenario-aware
@@ -3515,7 +3526,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     // Title row — Schneider green band, white text.
     ws.mergeCells(1, 1, 1, SPAN);
     const title = ws.getCell(1, 1);
-    title.value = 'Indicative Savings by State';
+    title.value = SCENARIO_SHEET_NAME;
     title.font = { name: 'Nunito Sans', bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
     title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
     title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
@@ -3651,13 +3662,22 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // every savings number on the sheet.
       for (const row of sectionRows) {
         const dataRow = ws.getRow(r);
+        // Children of a country-aggregate row (US states / Canadian
+        // provinces) get outline level 1 so Excel shows the +/-
+        // collapse button next to the parent United States / Canada
+        // row above them.
+        if (row._outlineLevel) dataRow.outlineLevel = row._outlineLevel;
         columnDefs.forEach((c, i) => {
           const cell = dataRow.getCell(i + 1);
           if (c.spacer) return;
           const v = c.get(row);
 
           // Editable Low % / High % cell — yellow fill signals input.
-          if (c.editable === 'lowPct' || c.editable === 'highPct') {
+          // Parent aggregate rows (United States, Canada) suppress
+          // the yellow editable cell because their savings band is
+          // a mix of children; user edits happen on the per-state
+          // rows nested below.
+          if ((c.editable === 'lowPct' || c.editable === 'highPct') && !row.isParent) {
             if (typeof v === 'number' && Number.isFinite(v)) cell.value = v;
             else writeBlank(cell, !!c.numFmt);
             cell.font = { name: 'Nunito Sans', size: 10, bold: true, color: { argb: SE_TEXT_DARK } };
@@ -3679,7 +3699,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             const lowRef = cellRef('lowPct', r);
             const highRef = cellRef('highPct', r);
             const midResult = (v && typeof v === 'object' && Number.isFinite(v.mid)) ? v.mid : 0;
-            if (lowRef && highRef) {
+            // Parent aggregate rows have no editable Low/High cells
+            // to point at, so write the precomputed mid value as a
+            // plain number instead of a formula referencing blanks.
+            if (lowRef && highRef && !row.isParent) {
               const formula = `IF(${SCENARIO_REF}="Conservative",${lowRef},IF(${SCENARIO_REF}="Aggressive",${highRef},(${lowRef}+${highRef})/2))`;
               cell.value = { formula, result: midResult };
               cell.ignoredErrors = { formula: true, formulaRange: true, numberStoredAsText: true };
@@ -3692,10 +3715,11 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             const spendRef = cellRef('spend', r);
             const pctRef = cellRef('savingsPct', r);
             const midResult = (v && typeof v === 'object' && Number.isFinite(v.mid)) ? Math.round(v.mid) : 0;
-            if (spendRef && pctRef) {
+            if (spendRef && pctRef && !row.isParent) {
               cell.value = { formula: `${spendRef}*${pctRef}`, result: midResult };
               cell.ignoredErrors = { formula: true, formulaRange: true, numberStoredAsText: true };
             } else {
+              // Parent row: precomputed sum-of-children Annual.
               cell.value = midResult;
             }
           }
@@ -3707,13 +3731,15 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             const annualRef = cellRef('annualSavings', r);
             const N = c.yearGate;
             const midResult = (v && typeof v === 'object' && Number.isFinite(v.mid)) ? Math.round(v.mid * (N || 1)) : 0;
-            if (annualRef && N) {
+            if (annualRef && N && !row.isParent) {
               cell.value = {
                 formula: `IF(--${YEARS_REF}>=${N},${annualRef}*${N},0)`,
                 result: midResult,
               };
               cell.ignoredErrors = { formula: true, formulaRange: true, numberStoredAsText: true };
             } else {
+              // Parent row keeps the precomputed value (already a
+              // sum of the children's Year N values).
               cell.value = midResult;
             }
           }
@@ -3745,7 +3771,15 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           } else {
             cell.value = ceilForFmt(v, c.numFmt);
           }
-          cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+          // Parent aggregate rows (United States / Canada) render
+          // bold + a light green band so they visually separate from
+          // the per-state children grouped below them.
+          if (row.isParent) {
+            cell.font = { name: 'Nunito Sans', size: 10, bold: true, color: { argb: SE_TEXT_DARK } };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+          } else {
+            cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+          }
           // Bottom-aligned data rows (per user spec) — values sit
           // tight to the bottom of the cell so the section reads as
           // one block. Heights stay just tall enough for one line of
@@ -3768,11 +3802,15 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const totalRow = ws.getRow(r);
       const scalarTotals = {};
       const scenarioTotals = {};
+      // Sum across LEAF rows only. Parent aggregate rows (United
+      // States / Canada) carry sum-of-children values; summing them
+      // alongside their children would double-count the totals.
+      const summable = sectionRows.filter(row => !row.isParent);
       for (const c of columnDefs) {
         if (!c.sumKey) continue;
         if (c.scenario) {
           let low = 0, mid = 0, high = 0;
-          for (const row of sectionRows) {
+          for (const row of summable) {
             const t = c.get(row);
             if (t && typeof t === 'object') {
               low += Number(t.low) || 0;
@@ -3783,7 +3821,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           scenarioTotals[c.sumKey] = { low, mid, high };
         } else {
           let s = 0;
-          for (const row of sectionRows) s += Number(c.get(row)) || 0;
+          for (const row of summable) s += Number(c.get(row)) || 0;
           scalarTotals[c.sumKey] = s;
         }
       }
@@ -3991,8 +4029,99 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       r += 1; // breather row before the Electric Power section
     }
 
-    writeSection('Electric Power', electricRows, electricCols);
-    writeSection('Natural Gas', gasRows, gasCols);
+    // When the portfolio is global, nest US state rows under a
+    // synthetic "United States" parent row (and same for Canadian
+    // provinces). Country buckets bubble to the top; the parent row
+    // carries the rolled-up US totals so the user reads it as a
+    // single line in the country list, with the per-state breakdown
+    // collapsible below it. When the portfolio is US-only, this is a
+    // no-op and the rows render in the existing alphabetical order.
+    function restructureForGlobal(sectionRows) {
+      if (!hasGlobalSites) return sectionRows;
+      const countries = [];
+      const usStates = [];
+      const caProvinces = [];
+      for (const g of sectionRows) {
+        if (g.isCountry) countries.push(g);
+        else if (CANADA_PROVINCE_CENTERS[String(g.state).toUpperCase()]) caProvinces.push(g);
+        else usStates.push(g);
+      }
+      // Sort each group alphabetically by display label.
+      const byState = (a, b) => String(a.state).localeCompare(String(b.state));
+      countries.sort(byState);
+      usStates.sort(byState);
+      caProvinces.sort(byState);
+
+      // Build a synthetic parent row that aggregates the child rows
+      // for a country group. Numeric scalars sum; per-scenario triples
+      // ({low, mid, high}) sum element-wise; lowPct/highPct stay null
+      // because the editable yellow cells only make sense per state.
+      const buildParent = (label, children) => {
+        if (!children.length) return null;
+        const sum = (k) => children.reduce((a, c) => a + (Number(c[k]) || 0), 0);
+        const sumTriple = (k) => {
+          let lo = 0, mi = 0, hi = 0;
+          let any = false;
+          for (const c of children) {
+            const t = c[k];
+            if (t && typeof t === 'object') {
+              lo += Number(t.low)  || 0;
+              mi += Number(t.mid)  || 0;
+              hi += Number(t.high) || 0;
+              any = true;
+            }
+          }
+          return any ? { low: Math.round(lo), mid: Math.round(mi), high: Math.round(hi) } : null;
+        };
+        return {
+          state: label,
+          isCountry: true, // groups visually with the other country rows
+          isParent: true,  // suppresses the editable Low/High yellow cells
+          status: '',
+          totalSites: sum('totalSites'),
+          deregulatedSites: sum('deregulatedSites'),
+          regulatedRateOpportunitySites: sum('regulatedRateOpportunitySites'),
+          regulatedRateOpportunitySpend: sum('regulatedRateOpportunitySpend'),
+          regRateSavings: sum('regRateSavings'),
+          consumption: sum('consumption'),
+          spend: sum('spend'),
+          range: '',
+          savingsPct: null,
+          lowPct: null,
+          highPct: null,
+          annualSavings: sumTriple('annualSavings'),
+          year1: sumTriple('year1'),
+          year2: sumTriple('year2'),
+          year3: sumTriple('year3'),
+          year4: sumTriple('year4'),
+          year5: sumTriple('year5'),
+          flags: '',
+          // Empty supplier / contract metadata — the underlying state
+          // rows still carry per-state values for these columns.
+          supplierNames: '',
+          earliestContractStart: null,
+          latestContractEnd: null,
+          monthsUnderContract: null,
+          monthsOffContract: null,
+        };
+      };
+
+      const usParent = buildParent('United States', usStates);
+      const caParent = buildParent('Canada', caProvinces);
+      // Mark children for outline grouping. writeSection reads
+      // `_outlineLevel` and applies it to the dataRow.
+      for (const s of usStates) s._outlineLevel = 1;
+      for (const s of caProvinces) s._outlineLevel = 1;
+
+      const out = [];
+      out.push(...countries);
+      if (usParent) { out.push(usParent); out.push(...usStates); }
+      if (caParent) { out.push(caParent); out.push(...caProvinces); }
+      return out;
+    }
+
+    writeSection('Electric Power', restructureForGlobal(electricRows), electricCols);
+    writeSection('Natural Gas',   restructureForGlobal(gasRows),       gasCols);
 
     // ---- Second sheet: Site Detail ---------------------------------
     // Flat per-site listing so the user can see the underlying data
