@@ -3557,11 +3557,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         right:  { style: 'thin', color: { argb: 'FF94A3B8' } },
       };
       const legendEntries = [
-        ['dereg',   TIER_COLORS.dereg,   TIER_LABELS.dereg],
-        ['some',    TIER_COLORS.some,    TIER_LABELS.some],
-        ['reg',     TIER_COLORS.reg,     TIER_LABELS.reg],
-        ['unknown', TIER_COLORS.unknown, TIER_LABELS.unknown],
-        ['nosite',  NO_SITES_FILL,       'No sites'],
+        ['dereg',  TIER_COLORS.dereg, TIER_LABELS.dereg],
+        ['some',   TIER_COLORS.some,  TIER_LABELS.some],
+        ['reg',    TIER_COLORS.reg,   TIER_LABELS.reg],
+        ['nosite', NO_SITES_FILL,     'No sites'],
       ];
       legendEntries.forEach(([_t, color, label], i) => {
         const rowIdx = legendStart + 2 + i;
@@ -3717,12 +3716,14 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       }
     }
 
-    // When any bucket is a country (international site outside US/CA),
-    // the tab is no longer purely by-state — rename it and (further
-    // down) nest the US states under a parent "United States" row so
-    // they read as a country bucket in the broader portfolio.
+    // The second tab in the workbook is always named "Indicative
+    // Savings" now — the old "Indicative Savings by State"
+    // formulation was confusing when the portfolio happened to be
+    // US-only but conceptually applies to any geography. The
+    // separate hasGlobalSites flag still gates the US-state nesting
+    // (parent "United States" row + outlineLevel children).
     const hasGlobalSites = electricRows.some(g => g.isCountry) || gasRows.some(g => g.isCountry);
-    const SCENARIO_SHEET_NAME = hasGlobalSites ? 'Indicative Savings' : 'Indicative Savings by State';
+    const SCENARIO_SHEET_NAME = 'Indicative Savings';
     const ws = wb.addWorksheet(SCENARIO_SHEET_NAME, {
       // summaryBelow: false → Excel renders the "+/-" outline toggle
       // ABOVE the grouped children (next to the United States parent
