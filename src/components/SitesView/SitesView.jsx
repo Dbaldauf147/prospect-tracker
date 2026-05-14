@@ -5429,6 +5429,17 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         r.getCell(8).value = { formula: `D${rowNum}*F${rowNum}`, result: 100000 * loadPct * 75 };
         // Saving = Hedge Cost - Float Cost (positive = floating wins).
         r.getCell(9).value = { formula: `H${rowNum}-G${rowNum}`, result: 100000 * loadPct * (75 - m.spot) };
+        // Helper columns U (21) and V (22) feed the chart's
+        // stacked-area "savings shading" between spot and hedge:
+        //   U = MIN(spot, hedge)    — invisible base of the stack
+        //   V = MAX(hedge - spot, 0) — the green band, only present
+        //                              when hedge sits above spot
+        // The columns are hidden (see below); the chart references
+        // them and renders the area via plotVisOnly=0.
+        r.getCell(21).value = { formula: `MIN(E${rowNum},F${rowNum})`, result: Math.min(m.spot, 75) };
+        r.getCell(22).value = { formula: `MAX(F${rowNum}-E${rowNum},0)`, result: Math.max(75 - m.spot, 0) };
+        r.getCell(21).numFmt = '"$"0.00';
+        r.getCell(22).numFmt = '"$"0.00';
 
         for (let ci = 1; ci <= COLS; ci++) {
           const c = r.getCell(ci);
@@ -5454,6 +5465,12 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         }
         r.height = 20;
       });
+
+      // Hide the chart-helper columns U + V so they don't clutter the
+      // sheet but stay live for the chart (plotVisOnly=0 in the chart
+      // XML lets Excel keep plotting hidden ranges).
+      ws.getColumn(21).hidden = true;
+      ws.getColumn(22).hidden = true;
 
       // Totals row at 19. Blended float price is the weighted avg
       // (total float cost / total load MWh).
@@ -5772,24 +5789,49 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     }
 
     const rawBuf = await wb.xlsx.writeBuffer();
-    // Inject a native Excel line chart into the Floating vs Hedging
-    // Example sheet, referencing the spot / hedge cell ranges so the
-    // chart updates live as the user edits the yellow inputs in Excel.
-    // The helper falls back to returning the original buffer on any
-    // failure — the workbook still opens, just without the chart.
+    // Inject a native Excel chart into the Floating vs Hedging Example
+    // sheet. Combo chart: a stacked area chart underneath supplies the
+    // green "savings" band wherever spot sits below hedge (driven by
+    // hidden helper columns U + V), and a line chart on top draws the
+    // Spot and Hedge series. Helper data, axis bounds, and all series
+    // resolve from live cell ranges so the chart recomputes as the
+    // user edits the yellow inputs.
     const SHEET = 'Floating vs Hedging Example';
+    // Y axis bounds derived from the *default* dataset so the axis
+    // stays tight (≤30 % padding above/below the data range) without
+    // depending on Excel's autoscale.
+    const _spotDefaults = [84,82,68,63,60,65,78,80,72,66,74,80];
+    const _hedgeDefault = 75;
+    const _dataMin = Math.min(_hedgeDefault, ..._spotDefaults);
+    const _dataMax = Math.max(_hedgeDefault, ..._spotDefaults);
+    const yMin = Math.floor(_dataMin * 0.7);
+    const yMax = Math.ceil(_dataMax * 1.3);
     const buf = await injectLiveLineChart(rawBuf, {
       sheetName: SHEET,
-      title: 'Spot Price vs 100 % Hedge — Default Scenario',
+      title: 'Spot Price Savings vs. Current Hedging Scenario',
       catRef: `'${SHEET}'!$B$7:$B$18`,
-      series: [
+      // Area series first → drawn underneath. Index 0 is the
+      // invisible base (min of spot/hedge); index 1 is the green
+      // savings band (hedge − spot, clipped to ≥0). Both share the
+      // category axis with the lines.
+      areaSeries: [
+        { name: '',        valRef: `'${SHEET}'!$U$7:$U$18`, noFill: true },
+        { name: 'Savings', valRef: `'${SHEET}'!$V$7:$V$18`, color: '22C55E', alpha: 40000 },
+      ],
+      lineSeries: [
         { name: 'Spot Price',  color: 'F97316', marker: 'circle', markerSize: 6, valRef: `'${SHEET}'!$E$7:$E$18` },
         { name: '100 % Hedge', color: '1E40AF', dash: 'dash',                    valRef: `'${SHEET}'!$F$7:$F$18` },
       ],
+      // The invisible base series would otherwise show up as a blank
+      // chip in the legend — strip it.
+      hideLegendIndices: [0],
+      yMin,
+      yMax,
       // ~640 × 340 px (1 px ≈ 9525 EMU), anchored just right of the
       // 9-column data table with a 0.2-col gutter so the chart sits
-      // beside the inputs instead of overlapping them.
-      anchor: { col: 9, colOff: 190500, row: 4, rowOff: 0, cx: 6096000, cy: 3238500 },
+      // beside the inputs instead of overlapping them. Row index is
+      // 0-based, so row: 5 = Excel row 6.
+      anchor: { col: 9, colOff: 190500, row: 5, rowOff: 0, cx: 6096000, cy: 3238500 },
     });
     const fileName = `Indicative Savings by State - ${new Date().toISOString().slice(0, 10)}.xlsx`;
     if (returnBuffer) return { buffer: buf, fileName };

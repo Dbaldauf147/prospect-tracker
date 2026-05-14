@@ -1,14 +1,13 @@
-// Inject a native Excel line chart into an .xlsx buffer produced by
+// Inject a native Excel chart into an .xlsx buffer produced by
 // ExcelJS. ExcelJS has no chart API (only addImage for static PNGs),
 // so the workbook is opened as a zip, chart + drawing XML files are
 // appended, the worksheet is wired up to the new drawing, and
 // [Content_Types].xml is updated. The resulting chart references
 // live cell ranges, so edits in Excel recompute it.
 //
-// Limitations: this helper writes one line chart per call, targeted at
-// a single sheet. It picks free chart{N}.xml / drawing{N}.xml indices
-// so it co-exists with any drawings ExcelJS already created (e.g.
-// addImage outputs on other sheets).
+// Supports two chart types layered in one plot area: an optional
+// stacked area chart (for "fill between curves" effects) plus a line
+// chart. Both share the same category and value axes.
 
 import JSZip from 'jszip';
 
@@ -41,36 +40,90 @@ function pickFreeIndex(zip, prefix, suffix) {
   return n;
 }
 
-function buildChartXml({ title, catRef, series }) {
-  const seriesXml = series.map((s, i) => {
-    const markerBlock = s.marker
-      ? `<c:marker>
-          <c:symbol val="${s.marker}"/>
-          <c:size val="${s.markerSize || 6}"/>
-          <c:spPr>
-            <a:solidFill><a:srgbClr val="${s.color}"/></a:solidFill>
-            <a:ln><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill></a:ln>
-          </c:spPr>
-        </c:marker>`
-      : `<c:marker><c:symbol val="none"/></c:marker>`;
-    const dashBlock = s.dash ? `<a:prstDash val="${s.dash}"/>` : '';
-    return `<c:ser>
-      <c:idx val="${i}"/>
-      <c:order val="${i}"/>
-      <c:tx><c:v>${escapeXml(s.name)}</c:v></c:tx>
-      <c:spPr>
-        <a:ln w="28575" cap="rnd">
+function lineSeriesXml(s, idx, catRef) {
+  const markerBlock = s.marker
+    ? `<c:marker>
+        <c:symbol val="${s.marker}"/>
+        <c:size val="${s.markerSize || 6}"/>
+        <c:spPr>
           <a:solidFill><a:srgbClr val="${s.color}"/></a:solidFill>
-          ${dashBlock}
-          <a:round/>
-        </a:ln>
-      </c:spPr>
-      ${markerBlock}
-      <c:cat><c:strRef><c:f>${escapeXml(catRef)}</c:f></c:strRef></c:cat>
-      <c:val><c:numRef><c:f>${escapeXml(s.valRef)}</c:f></c:numRef></c:val>
-      <c:smooth val="0"/>
-    </c:ser>`;
-  }).join('');
+          <a:ln><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill></a:ln>
+        </c:spPr>
+      </c:marker>`
+    : `<c:marker><c:symbol val="none"/></c:marker>`;
+  const dashBlock = s.dash ? `<a:prstDash val="${s.dash}"/>` : '';
+  return `<c:ser>
+    <c:idx val="${idx}"/>
+    <c:order val="${idx}"/>
+    <c:tx><c:v>${escapeXml(s.name)}</c:v></c:tx>
+    <c:spPr>
+      <a:ln w="28575" cap="rnd">
+        <a:solidFill><a:srgbClr val="${s.color}"/></a:solidFill>
+        ${dashBlock}
+        <a:round/>
+      </a:ln>
+    </c:spPr>
+    ${markerBlock}
+    <c:cat><c:strRef><c:f>${escapeXml(catRef)}</c:f></c:strRef></c:cat>
+    <c:val><c:numRef><c:f>${escapeXml(s.valRef)}</c:f></c:numRef></c:val>
+    <c:smooth val="0"/>
+  </c:ser>`;
+}
+
+function areaSeriesXml(s, idx, catRef) {
+  const fillBlock = s.noFill
+    ? `<a:noFill/>`
+    : `<a:solidFill><a:srgbClr val="${s.color}"/>${s.alpha != null ? `<a:alpha val="${s.alpha}"/>` : ''}</a:solidFill>`;
+  return `<c:ser>
+    <c:idx val="${idx}"/>
+    <c:order val="${idx}"/>
+    <c:tx><c:v>${escapeXml(s.name || '')}</c:v></c:tx>
+    <c:spPr>
+      ${fillBlock}
+      <a:ln><a:noFill/></a:ln>
+    </c:spPr>
+    <c:cat><c:strRef><c:f>${escapeXml(catRef)}</c:f></c:strRef></c:cat>
+    <c:val><c:numRef><c:f>${escapeXml(s.valRef)}</c:f></c:numRef></c:val>
+  </c:ser>`;
+}
+
+function buildChartXml({ title, catRef, lineSeries = [], areaSeries = [], yMin, yMax, hideLegendIndices = [] }) {
+  // Series indices are global across chart types. Areas come first
+  // (drawn underneath) so they get the leading indices.
+  let idx = 0;
+  const areaSerialised = areaSeries.map((s) => areaSeriesXml(s, idx++, catRef)).join('');
+  const lineSerialised = lineSeries.map((s) => lineSeriesXml(s, idx++, catRef)).join('');
+
+  const areaBlock = areaSeries.length
+    ? `<c:areaChart>
+        <c:grouping val="stacked"/>
+        <c:varyColors val="0"/>
+        ${areaSerialised}
+        <c:axId val="111111111"/>
+        <c:axId val="222222222"/>
+      </c:areaChart>`
+    : '';
+
+  const lineBlock = lineSeries.length
+    ? `<c:lineChart>
+        <c:grouping val="standard"/>
+        <c:varyColors val="0"/>
+        ${lineSerialised}
+        <c:marker val="1"/>
+        <c:axId val="111111111"/>
+        <c:axId val="222222222"/>
+      </c:lineChart>`
+    : '';
+
+  const yScaling = `<c:scaling>
+        <c:orientation val="minMax"/>
+        ${yMax != null ? `<c:max val="${yMax}"/>` : ''}
+        ${yMin != null ? `<c:min val="${yMin}"/>` : ''}
+      </c:scaling>`;
+
+  const legendEntryDeletions = hideLegendIndices
+    .map((i) => `<c:legendEntry><c:idx val="${i}"/><c:delete val="1"/></c:legendEntry>`)
+    .join('');
 
   return `${XML_HEADER}
 <c:chartSpace xmlns:c="${NS.c}" xmlns:a="${NS.a}" xmlns:r="${NS.r}">
@@ -91,14 +144,8 @@ function buildChartXml({ title, catRef, series }) {
     <c:autoTitleDeleted val="0"/>
     <c:plotArea>
       <c:layout/>
-      <c:lineChart>
-        <c:grouping val="standard"/>
-        <c:varyColors val="0"/>
-        ${seriesXml}
-        <c:marker val="1"/>
-        <c:axId val="111111111"/>
-        <c:axId val="222222222"/>
-      </c:lineChart>
+      ${areaBlock}
+      ${lineBlock}
       <c:catAx>
         <c:axId val="111111111"/>
         <c:scaling><c:orientation val="minMax"/></c:scaling>
@@ -113,7 +160,7 @@ function buildChartXml({ title, catRef, series }) {
       </c:catAx>
       <c:valAx>
         <c:axId val="222222222"/>
-        <c:scaling><c:orientation val="minMax"/></c:scaling>
+        ${yScaling}
         <c:delete val="0"/>
         <c:axPos val="l"/>
         <c:numFmt formatCode="&quot;$&quot;#,##0" sourceLinked="0"/>
@@ -126,9 +173,10 @@ function buildChartXml({ title, catRef, series }) {
     </c:plotArea>
     <c:legend>
       <c:legendPos val="t"/>
+      ${legendEntryDeletions}
       <c:overlay val="0"/>
     </c:legend>
-    <c:plotVisOnly val="1"/>
+    <c:plotVisOnly val="0"/>
     <c:dispBlanksAs val="gap"/>
   </c:chart>
 </c:chartSpace>`;
@@ -176,8 +224,21 @@ function buildDrawingRelsXml({ chartTarget }) {
 // the browser). Returns a new ArrayBuffer with the chart injected. On
 // any failure the original buffer is returned and a warning logged —
 // the caller's export still produces a valid (chart-less) workbook.
-export async function injectLiveLineChart(buffer, { sheetName, title, catRef, series, anchor }) {
+//
+// Options:
+//   sheetName  — target worksheet (must already exist)
+//   title      — chart title
+//   catRef     — fully-qualified range for category axis labels
+//   lineSeries — array of { name, color, marker?, markerSize?, dash?, valRef }
+//   areaSeries — array of { name?, color, alpha?, noFill?, valRef } (rendered as a stacked area chart)
+//   yMin, yMax — explicit value-axis bounds (optional)
+//   hideLegendIndices — series indices to suppress from the legend
+//   anchor     — { col, colOff, row, rowOff, cx, cy } in EMU
+export async function injectLiveLineChart(buffer, { sheetName, title, catRef, lineSeries, areaSeries, yMin, yMax, hideLegendIndices, anchor, series }) {
   try {
+    // Back-compat: if the caller passed a single `series` array, treat
+    // it as lineSeries.
+    const effectiveLineSeries = lineSeries ?? series ?? [];
     const zip = await JSZip.loadAsync(buffer);
 
     const workbookXml = await zip.file('xl/workbook.xml').async('string');
@@ -195,10 +256,10 @@ export async function injectLiveLineChart(buffer, { sheetName, title, catRef, se
       'i'
     ).exec(workbookRelsXml);
     if (!sheetTargetMatch) throw new Error(`Relationship ${sheetRid} not found in workbook.xml.rels`);
-    const sheetRelTarget = sheetTargetMatch[1]; // e.g. "worksheets/sheet3.xml"
+    const sheetRelTarget = sheetTargetMatch[1];
 
     const sheetXmlPath = `xl/${sheetRelTarget}`;
-    const sheetFileBase = sheetRelTarget.replace(/^worksheets\//, ''); // sheet3.xml
+    const sheetFileBase = sheetRelTarget.replace(/^worksheets\//, '');
     const sheetRelsPath = `xl/worksheets/_rels/${sheetFileBase}.rels`;
 
     const chartIdx = pickFreeIndex(zip, 'xl/charts/chart', '.xml');
@@ -208,7 +269,15 @@ export async function injectLiveLineChart(buffer, { sheetName, title, catRef, se
     const drawingFile = `xl/drawings/drawing${drawingIdx}.xml`;
     const drawingRelsFile = `xl/drawings/_rels/drawing${drawingIdx}.xml.rels`;
 
-    zip.file(chartFile, buildChartXml({ title, catRef, series }));
+    zip.file(chartFile, buildChartXml({
+      title,
+      catRef,
+      lineSeries: effectiveLineSeries,
+      areaSeries: areaSeries ?? [],
+      yMin,
+      yMax,
+      hideLegendIndices: hideLegendIndices ?? [],
+    }));
     zip.file(drawingFile, buildDrawingXml(anchor));
     zip.file(drawingRelsFile, buildDrawingRelsXml({ chartTarget: `../charts/chart${chartIdx}.xml` }));
 
@@ -245,14 +314,6 @@ export async function injectLiveLineChart(buffer, { sheetName, title, catRef, se
     sheetXml = sheetXml.replace(/<drawing\s+[^/>]*\/>/g, '');
     const drawingTag = `<drawing r:id="rId${drawingRid}"/>`;
 
-    // Build candidate insertion points and pick the earliest one. The
-    // top-level extLst is identified by anchoring on `</extLst>` that
-    // sits directly before `</worksheet>` — the inner cfRule extLst
-    // is followed by `</cfRule>`, not `</worksheet>`, so it's ruled
-    // out. Other followers (legacyDrawing, picture, oleObjects,
-    // controls, webPublishItems, tableParts) don't nest inside the
-    // worksheet's other content, so the first occurrence is the
-    // top-level one.
     const candidates = [];
     const wsExtLstCloseIdx = sheetXml.search(/<\/extLst>\s*<\/worksheet>/);
     if (wsExtLstCloseIdx !== -1) {
