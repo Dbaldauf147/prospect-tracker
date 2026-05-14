@@ -340,6 +340,235 @@ Type a value to override.`
   );
 }
 
+// Read-only panel describing the existing Linked To logic and showing
+// the active relationships on the current workbook. Rendered on the
+// "Linked To" page subtab.
+function LinkedToPanel({
+  workbook,
+  activeOption,
+  setActiveOption,
+  overrides,
+  linkedToDefaults,
+  altFees,
+  resolvedLinkedTo,
+  effectiveType,
+  linkedToDefaultKey,
+}) {
+  const opt = workbook?.options.find(o => o.optionNumber === activeOption) || workbook?.options[0];
+  const flatItems = opt ? opt.sections.flatMap(s => s.items) : [];
+
+  // Per-row overrides on the active option, including ones that are
+  // explicit empty strings (which mute an inherited default).
+  const overrideRows = flatItems
+    .map(item => {
+      const ov = overrides[item.id]?.linkedTo;
+      if (ov === undefined) return null;
+      return { item, override: ov, type: effectiveType(item) };
+    })
+    .filter(Boolean);
+
+  // Saved (Line Item, Type) defaults that are reachable from at least
+  // one row on this option — keeps the panel focused on what's wired
+  // up here, not orphan keys left from other workbooks.
+  const reachableDefaults = (() => {
+    const out = [];
+    const seen = new Set();
+    for (const item of flatItems) {
+      const key = linkedToDefaultKey(item.description, effectiveType(item));
+      if (seen.has(key)) continue;
+      const val = linkedToDefaults[key];
+      if (!val) continue;
+      seen.add(key);
+      out.push({ key, lineItem: item.description, type: effectiveType(item), value: val });
+    }
+    return out;
+  })();
+
+  // Group rows by the alt-fee tag they currently resolve to. Untagged
+  // rows go under "(no link)".
+  const byTag = new Map();
+  for (const item of flatItems) {
+    const tag = resolvedLinkedTo(item).trim();
+    const key = tag || '(no link)';
+    if (!byTag.has(key)) byTag.set(key, []);
+    byTag.get(key).push(item);
+  }
+  // Surface tags referenced by alt-fee rows even when no CTS row links
+  // to them yet — those are the dangling alt-fee tags the user might
+  // want to wire up.
+  const altRows = opt ? (altFees[opt.optionNumber] || []) : [];
+  const altTags = new Set();
+  for (const r of altRows) {
+    const t = (r.altItem || '').trim();
+    if (t) altTags.add(t);
+  }
+  for (const t of altTags) {
+    if (!byTag.has(t)) byTag.set(t, []);
+  }
+  const tagEntries = Array.from(byTag.entries())
+    .filter(([k]) => k !== '(no link)')
+    .sort(([a], [b]) => a.localeCompare(b));
+
+  return (
+    <div className={styles.linkedPanel}>
+      <section className={styles.linkedDocBlock}>
+        <h2 className={styles.linkedHeading}>How "Linked To" works</h2>
+        <ul className={styles.linkedDocList}>
+          <li>
+            Every upper-table CTS row carries a free-text <strong>Linked To</strong> tag. It connects a cost row
+            to the alt-fee item (lower table) that recovers that cost.
+          </li>
+          <li>
+            Resolution order: a <strong>per-row override</strong> always wins. With no override, the row falls
+            back to the saved <strong>default for its (Line Item, Type) pair</strong>. With neither, the row is unlinked.
+          </li>
+          <li>
+            The ☆ / ★ button next to the input <strong>promotes the current value to the default</strong> for
+            that (Line Item, Type) pair across every option — or clears it. Defaults persist with the page state.
+          </li>
+          <li>
+            Alt-fee margin: for each alt-fee tag, the page sums <em>fee × unit count</em> over alt-fee rows
+            sharing the tag (recurring rows are projected over the term with the annual escalator), then sums
+            CTS over upper-table rows whose resolved Linked To matches the tag. <code>margin% = (fee − cost) / fee</code>.
+          </li>
+          <li>
+            The bottom-of-page breakdown chart filters rows by the tag selected in its dropdown — only CTS rows
+            whose resolved Linked To matches that tag contribute to the chart.
+          </li>
+          <li>
+            Matching is case-insensitive and ignores surrounding whitespace.
+          </li>
+        </ul>
+      </section>
+
+      {!workbook ? (
+        <div className={styles.linkedEmpty}>
+          Upload a workbook on the <strong>Pricing</strong> subtab to see the live Linked To wiring.
+        </div>
+      ) : (
+        <>
+          <div className={styles.subtabStrip} style={{ marginTop: '0.75rem' }}>
+            {workbook.options.map(o => {
+              const isActive = o.optionNumber === (opt?.optionNumber);
+              return (
+                <button
+                  key={o.sheetName}
+                  type="button"
+                  className={isActive ? styles.subtabActive : styles.subtab}
+                  onClick={() => setActiveOption(o.optionNumber)}
+                >
+                  {o.sheetName}
+                </button>
+              );
+            })}
+          </div>
+
+          <section className={styles.linkedSection}>
+            <h3 className={styles.linkedSubheading}>Saved defaults ({reachableDefaults.length})</h3>
+            <p className={styles.linkedHint}>
+              Defaults apply to any row matching the same Line Item + Type, on any option, unless that row has its own override.
+            </p>
+            {reachableDefaults.length === 0 ? (
+              <div className={styles.linkedEmptyInline}>No saved defaults are reachable from rows on this option.</div>
+            ) : (
+              <table className={styles.linkedTable}>
+                <thead>
+                  <tr><th>Line Item</th><th>Type</th><th>Default Linked To</th></tr>
+                </thead>
+                <tbody>
+                  {reachableDefaults.map(d => (
+                    <tr key={d.key}>
+                      <td>{d.lineItem}</td>
+                      <td>{d.type || <span className={styles.linkedMuted}>—</span>}</td>
+                      <td><code>{d.value}</code></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </section>
+
+          <section className={styles.linkedSection}>
+            <h3 className={styles.linkedSubheading}>Per-row overrides ({overrideRows.length})</h3>
+            <p className={styles.linkedHint}>
+              Overrides set on individual rows of this option. An empty override mutes any inherited default.
+            </p>
+            {overrideRows.length === 0 ? (
+              <div className={styles.linkedEmptyInline}>No per-row overrides on this option.</div>
+            ) : (
+              <table className={styles.linkedTable}>
+                <thead>
+                  <tr><th>Line Item</th><th>Type</th><th>Override</th></tr>
+                </thead>
+                <tbody>
+                  {overrideRows.map(({ item, override, type }) => (
+                    <tr key={item.id}>
+                      <td>{item.description}</td>
+                      <td>{type || <span className={styles.linkedMuted}>—</span>}</td>
+                      <td>
+                        {override
+                          ? <code>{override}</code>
+                          : <span className={styles.linkedMuted}>(cleared — inherits nothing)</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </section>
+
+          <section className={styles.linkedSection}>
+            <h3 className={styles.linkedSubheading}>Tag → linked CTS rows ({tagEntries.length})</h3>
+            <p className={styles.linkedHint}>
+              Live mapping of resolved Linked To values to the CTS rows that carry them. Tags marked
+              <span className={styles.linkedBadge}> alt-fee</span> are referenced by at least one alt-fee
+              row; tags with no badge are linked only on the CTS side and will not contribute to alt-fee margin.
+            </p>
+            {tagEntries.length === 0 ? (
+              <div className={styles.linkedEmptyInline}>No Linked To tags resolve on this option yet.</div>
+            ) : (
+              <table className={styles.linkedTable}>
+                <thead>
+                  <tr><th>Tag</th><th>Source</th><th>Linked CTS rows</th></tr>
+                </thead>
+                <tbody>
+                  {tagEntries.map(([tag, items]) => {
+                    const lower = tag.toLowerCase();
+                    const altMatch = Array.from(altTags).some(t => t.toLowerCase() === lower);
+                    return (
+                      <tr key={tag}>
+                        <td><code>{tag}</code></td>
+                        <td>
+                          {altMatch && <span className={styles.linkedBadge}>alt-fee</span>}
+                          {!altMatch && <span className={styles.linkedMuted}>CTS only</span>}
+                        </td>
+                        <td>
+                          {items.length === 0
+                            ? <span className={styles.linkedMuted}>none — alt-fee tag with no CTS rows linked</span>
+                            : (
+                              <ul className={styles.linkedRowList}>
+                                {items.map(it => (
+                                  <li key={it.id}>
+                                    {it.description}
+                                    <span className={styles.linkedMuted}> · {effectiveType(it)}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </section>
+        </>
+      )}
+    </div>
+  );
+}
+
 // Free-text per-row cell input. Local-draft like GmInput so typing
 // doesn't fight a re-rendered controlled value.
 function LinkedToInput({ initial, isDefault, onCommit }) {
@@ -436,6 +665,7 @@ export function PricingView() {
   const [summaryColVisibility, setSummaryColVisibility] = useState({});
   const [colMenuOpen, setColMenuOpen] = useState(false);
   const [summaryMenuOpen, setSummaryMenuOpen] = useState(false);
+  const [pageSubtab, setPageSubtab] = useState('pricing'); // 'pricing' | 'linkedTo'
   const [error, setError] = useState('');
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef(null);
@@ -470,6 +700,7 @@ export function PricingView() {
         if (saved.colVisibility) setColVisibility(saved.colVisibility);
         if (saved.summaryColWidths) setSummaryColWidths(saved.summaryColWidths);
         if (saved.summaryColVisibility) setSummaryColVisibility(saved.summaryColVisibility);
+        if (saved.pageSubtab === 'pricing' || saved.pageSubtab === 'linkedTo') setPageSubtab(saved.pageSubtab);
       } catch (err) {
         console.warn('Failed to load pricing cache:', err);
       } finally {
@@ -482,9 +713,9 @@ export function PricingView() {
   // Persist on changes (skip the first render until hydration finishes).
   useEffect(() => {
     if (!hydratedRef.current) return;
-    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, termMonths, annualEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility };
+    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, termMonths, annualEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab };
     dbPut(STORE, payload, KEY).catch(err => console.warn('Failed to save pricing cache:', err));
-  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, termMonths, annualEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility]);
+  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, termMonths, annualEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab]);
 
   // Per-year cost contribution from a single upper-table CTS item.
   // Setup / One Time hit year 1 in full; Rolled variants amortize
@@ -1127,7 +1358,38 @@ export function PricingView() {
         <div style={{ margin: '0 1.25rem 0.5rem', color: '#b91c1c' }}>{error}</div>
       )}
 
-      <div className={styles.body}>
+      <div className={styles.subtabStrip}>
+        <button
+          type="button"
+          className={pageSubtab === 'pricing' ? styles.subtabActive : styles.subtab}
+          onClick={() => setPageSubtab('pricing')}
+        >
+          Pricing
+        </button>
+        <button
+          type="button"
+          className={pageSubtab === 'linkedTo' ? styles.subtabActive : styles.subtab}
+          onClick={() => setPageSubtab('linkedTo')}
+        >
+          Linked To
+        </button>
+      </div>
+
+      {pageSubtab === 'linkedTo' && (
+        <LinkedToPanel
+          workbook={workbook}
+          activeOption={activeOption}
+          setActiveOption={setActiveOption}
+          overrides={overrides}
+          linkedToDefaults={linkedToDefaults}
+          altFees={altFees}
+          resolvedLinkedTo={resolvedLinkedTo}
+          effectiveType={effectiveType}
+          linkedToDefaultKey={linkedToDefaultKey}
+        />
+      )}
+
+      <div className={styles.body} style={pageSubtab === 'linkedTo' ? { display: 'none' } : undefined}>
         {!workbook && (
           <div className={styles.empty}>
             <div>No workbook loaded.</div>
