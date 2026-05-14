@@ -4951,7 +4951,11 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
 
       const COLS = 9;
       const widths = [6, 14, 11, 14, 18, 18, 16, 16, 20];
-      ws.columns = widths.map(w => ({ width: w }));
+      // Pad with a small spacer + chart-area columns so the chart
+      // image (anchored at col 9.3) sits over right-sized cells
+      // instead of Excel's default-narrow columns.
+      const chartAreaWidths = [3, 12, 12, 12, 12, 12, 12, 12, 12, 12];
+      ws.columns = [...widths, ...chartAreaWidths].map(w => ({ width: w }));
 
       const INPUT_FILL = 'FFFFF9C3';
       const INPUT_BORDER = 'FFCA8A04';
@@ -5246,9 +5250,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // 12-month spot curve vs the constant hedge line; bands are
       // shaded green when spot beats the hedge (floating wins) and
       // red when spot lags. The chart freezes the defaults at export
-      // time; the table above this is the live comparison.
+      // time; the table to its left is the live comparison.
       {
-        const W = 760, H = 340;
+        const W = 640, H = 340;
         const canvas = document.createElement('canvas');
         canvas.width = W; canvas.height = H;
         const ctx = canvas.getContext('2d');
@@ -5385,19 +5389,13 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         const dataUrl = canvas.toDataURL('image/png');
         const imageId = wb.addImage({ base64: dataUrl, extension: 'png' });
 
-        // Chart header row + image just below it.
-        const chartHeaderRow = 34;
-        ws.mergeCells(chartHeaderRow, 1, chartHeaderRow, COLS);
-        const chartHdr = ws.getCell(chartHeaderRow, 1);
-        chartHdr.value = 'Default scenario — Spot Price vs 100 % Hedge';
-        chartHdr.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
-        chartHdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
-        chartHdr.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-        ws.getRow(chartHeaderRow).height = 22;
-        // tl is 0-indexed; row 34 (1-indexed) for the image start
-        // means tl.row = 34.
+        // Anchor the chart to the right of the data table. The table
+        // spans columns A–I (cols 0–8 in 0-indexed terms); we anchor
+        // at col 9.3 to leave a small gap, and at row 4 (1-indexed
+        // row 5) so the chart's top aligns with the section header
+        // just above the table.
         ws.addImage(imageId, {
-          tl: { col: 0, row: chartHeaderRow },
+          tl: { col: 9.3, row: 4 },
           ext: { width: W, height: H },
         });
       }
