@@ -3218,8 +3218,18 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         properties: { tabColor: { argb: SE_GREEN_DARK } },
         views: [{ showGridLines: false }],
       });
-      const COLS = 14;
-      ws.columns = Array.from({ length: COLS }, () => ({ width: 12 }));
+      // COLS covers the map image (≈ cols 1-14) plus a few extra
+      // columns to the right that host the legend block.
+      const MAP_COLS = 14;
+      const LEGEND_COLS = 4;
+      const COLS = MAP_COLS + LEGEND_COLS;
+      ws.columns = [
+        ...Array.from({ length: MAP_COLS }, () => ({ width: 12 })),
+        { width: 4 },  // gutter between map and legend
+        { width: 6 },  // saturated swatch
+        { width: 6 },  // faded swatch
+        { width: 24 }, // tier label
+      ];
 
       // Bucket sites by (country, state-or-province) and look up the
       // dereg tier + map coordinates. The lookup chain is:
@@ -3423,35 +3433,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         }
       }
 
-      // Legend (top-left of the map). Lists the five tier colors
-      // used by both the country fills and the site dots.
-      const legX = 16, legY = 16, legW = 280, legH = 170;
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.94)';
-      ctx.strokeStyle = '#CBD5E1';
-      ctx.lineWidth = 1;
-      ctx.fillRect(legX, legY, legW, legH);
-      ctx.strokeRect(legX, legY, legW, legH);
-      ctx.fillStyle = '#0F172A';
-      ctx.font = 'bold 12px Nunito Sans, Arial, sans-serif';
-      ctx.textAlign = 'left';
-      ctx.fillText('Country fill = dereg tier · saturated = sites', legX + 10, legY + 18);
-      ctx.fillText('Each dot — left half Electric, right Gas', legX + 10, legY + 34);
-      ctx.font = '11px Nunito Sans, Arial, sans-serif';
-      const tiersForLegend = ['dereg', 'some', 'reg', 'mixed', 'unknown'];
-      tiersForLegend.forEach((t, i) => {
-        const ly = legY + 52 + i * 20;
-        // Saturated swatch + faded swatch side by side so the user
-        // sees the with-sites / without-sites encoding at a glance.
-        ctx.fillStyle = TIER_COLORS[t];
-        ctx.fillRect(legX + 12, ly - 8, 12, 14);
-        ctx.fillStyle = TIER_COLORS_FADED[t];
-        ctx.fillRect(legX + 26, ly - 8, 12, 14);
-        ctx.strokeStyle = '#0F172A';
-        ctx.lineWidth = 0.5;
-        ctx.strokeRect(legX + 12, ly - 8, 26, 14);
-        ctx.fillStyle = '#0F172A';
-        ctx.fillText(TIER_LABELS[t], legX + 46, ly + 3);
-      });
+      // Legend is rendered as Excel cells to the RIGHT of the map
+      // image (further down) so the user gets searchable, copyable,
+      // resizable swatches instead of pixels burned into the PNG.
 
       const dataUrl = canvas.toDataURL('image/png');
       const imageId = wb.addImage({ base64: dataUrl, extension: 'png' });
@@ -3480,6 +3464,81 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         tl: { col: 0, row: 3 },
         ext: { width: W, height: H },
       });
+
+      // Legend block — rendered as Excel cells to the right of the
+      // map image. MAP_COLS + 1 = the swatch column (after the
+      // gutter); MAP_COLS + 3 = the tier-label column.
+      const legendStart = 4; // 1-indexed row
+      const swatchSatCol = MAP_COLS + 2;  // 1-indexed
+      const swatchFadeCol = MAP_COLS + 3;
+      const labelCol = MAP_COLS + 4;
+
+      // Legend title.
+      ws.mergeCells(legendStart, swatchSatCol, legendStart, labelCol);
+      const legTitle = ws.getCell(legendStart, swatchSatCol);
+      legTitle.value = 'Legend';
+      legTitle.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
+      legTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+      legTitle.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(legendStart).height = 22;
+
+      // Caption.
+      ws.mergeCells(legendStart + 1, swatchSatCol, legendStart + 1, labelCol);
+      const legCap = ws.getCell(legendStart + 1, swatchSatCol);
+      legCap.value = 'Country fill = dereg tier. Saturated = portfolio has sites; faded = no sites.';
+      legCap.font = { name: 'Nunito Sans', italic: true, size: 9, color: { argb: SE_SLATE } };
+      legCap.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
+      ws.getRow(legendStart + 1).height = 36;
+
+      // Column-header band above the swatch pairs.
+      const swatchHdrRow = legendStart + 2;
+      const satHdr = ws.getCell(swatchHdrRow, swatchSatCol);
+      satHdr.value = 'Has sites';
+      satHdr.font = { name: 'Nunito Sans', bold: true, size: 9, color: { argb: 'FFFFFFFF' } };
+      satHdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+      satHdr.alignment = { vertical: 'middle', horizontal: 'center' };
+      const fadeHdr = ws.getCell(swatchHdrRow, swatchFadeCol);
+      fadeHdr.value = 'No sites';
+      fadeHdr.font = { name: 'Nunito Sans', bold: true, size: 9, color: { argb: 'FFFFFFFF' } };
+      fadeHdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+      fadeHdr.alignment = { vertical: 'middle', horizontal: 'center' };
+      const tierHdr = ws.getCell(swatchHdrRow, labelCol);
+      tierHdr.value = 'Tier';
+      tierHdr.font = { name: 'Nunito Sans', bold: true, size: 9, color: { argb: 'FFFFFFFF' } };
+      tierHdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+      tierHdr.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(swatchHdrRow).height = 18;
+
+      // One row per tier with saturated swatch + faded swatch + label.
+      // ExcelJS fill colors expect 8-char ARGB (FF + 6-char hex), so
+      // strip the leading '#' from TIER_COLORS values when emitting.
+      const tiersForLegend = ['dereg', 'some', 'reg', 'mixed', 'unknown'];
+      const hexToArgb = (hex) => 'FF' + String(hex).replace(/^#/, '').toUpperCase();
+      tiersForLegend.forEach((t, i) => {
+        const rowIdx = swatchHdrRow + 1 + i;
+        const satCell = ws.getCell(rowIdx, swatchSatCol);
+        const fadeCell = ws.getCell(rowIdx, swatchFadeCol);
+        const labelCell = ws.getCell(rowIdx, labelCol);
+        satCell.value = '';
+        satCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: hexToArgb(TIER_COLORS[t]) } };
+        satCell.border = { top: { style: 'thin', color: { argb: 'FF94A3B8' } }, bottom: { style: 'thin', color: { argb: 'FF94A3B8' } }, left: { style: 'thin', color: { argb: 'FF94A3B8' } }, right: { style: 'thin', color: { argb: 'FF94A3B8' } } };
+        fadeCell.value = '';
+        fadeCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: hexToArgb(TIER_COLORS_FADED[t]) } };
+        fadeCell.border = { top: { style: 'thin', color: { argb: 'FF94A3B8' } }, bottom: { style: 'thin', color: { argb: 'FF94A3B8' } }, left: { style: 'thin', color: { argb: 'FF94A3B8' } }, right: { style: 'thin', color: { argb: 'FF94A3B8' } } };
+        labelCell.value = TIER_LABELS[t];
+        labelCell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+        labelCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        ws.getRow(rowIdx).height = 18;
+      });
+
+      // Site-dot caption below the tier table.
+      const dotsCapRow = swatchHdrRow + 1 + tiersForLegend.length + 1;
+      ws.mergeCells(dotsCapRow, swatchSatCol, dotsCapRow, labelCol);
+      const dotsCap = ws.getCell(dotsCapRow, swatchSatCol);
+      dotsCap.value = 'Each site dot — left half = Electric tier, right half = Gas tier. Dot size scales with the number of sites in that bucket.';
+      dotsCap.font = { name: 'Nunito Sans', italic: true, size: 9, color: { argb: SE_SLATE } };
+      dotsCap.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
+      ws.getRow(dotsCapRow).height = 42;
 
       // Summary table starting after the image (~row 38 with default
       // row heights). Push it down enough to leave clear space.

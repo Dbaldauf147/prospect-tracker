@@ -103,9 +103,12 @@ export const TOPO_NAME_TO_DEREG_KEY = {
 // ISO 3166-1 numeric ids for countries that don't have a clean
 // single-tier classification at the country level (their dereg
 // status varies materially by sub-region). We render these in the
-// "Mixed" tier (blue-gray) on the map.
+// "Mixed" tier (blue-gray) on the map. The US used to live here
+// but the country reference now classifies it as Deregulated, and
+// the user prefers it rendered green to match the country
+// classification — Canada is the only remaining country we treat
+// as Mixed.
 export const MIXED_TIER_COUNTRY_IDS = new Set([
-  '840', // United States of America
   '124', // Canada
 ]);
 
