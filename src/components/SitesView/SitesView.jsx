@@ -54,7 +54,6 @@ import {
   TIER_LABELS,
   getCountryFeatures,
   TOPO_NAME_TO_DEREG_KEY,
-  MIXED_TIER_COUNTRY_IDS,
 } from '../../data/worldGeo';
 import {
   countryElectricRate,
@@ -3362,16 +3361,11 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         let agg = countryAggs.get(country);
         if (!agg) {
           const c = COUNTRY_DEREGULATION[country];
-          const isUS = /^(united states|usa|us)$/i.test(country);
-          const isCA = /^(canada|ca)$/i.test(country);
-          const tier = (isUS || isCA)
-            ? 'mixed'
-            : (c ? statusTier(c.electric) : 'unknown');
           agg = {
             country,
-            tier,
-            elecStatus: c?.electric || (isUS || isCA ? 'Mixed' : ''),
-            gasStatus: c?.gas || (isUS || isCA ? 'Mixed' : ''),
+            tier: c ? statusTier(c.electric) : 'unknown',
+            elecStatus: c?.electric || '',
+            gasStatus: c?.gas || '',
             sites: 0,
             kwh: 0,
             therms: 0,
@@ -3405,24 +3399,18 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
 
       const project = (lng, lat) => [((lng + 180) / 360) * W, ((90 - lat) / 180) * H];
 
-      // Choropleth fills — color each country polygon by its
-      // deregulation tier. Countries the portfolio HAS sites in
-      // render in the saturated tier color so they pop visually;
-      // countries with no sites render in a uniform gray so the
-      // sites-having countries clearly dominate. US uses its
-      // country-reference classification (Deregulated). Canada is
-      // pinned to the "mixed" tier because the country-level
-      // entry doesn't capture per-province nuance.
+      // Choropleth fills — every country's color comes from its
+      // COUNTRY_DEREGULATION entry so the map matches the Country
+      // level view table below. Portfolio has sites → saturated
+      // tier color; no sites → uniform light gray so the sites-
+      // having countries dominate visually. No more "Mixed" tier;
+      // US and Canada read their country reference directly.
       const NO_SITES_FILL = '#E2E8F0';
       const countryFeatures = getCountryFeatures();
       for (const feat of countryFeatures) {
         const derGKey = TOPO_NAME_TO_DEREG_KEY[feat.name] || feat.name;
         const c = COUNTRY_DEREGULATION[derGKey];
-        const isMixed = MIXED_TIER_COUNTRY_IDS.has(String(feat.id));
-        let tier;
-        if (isMixed) tier = 'mixed';
-        else if (!c) tier = 'unknown';
-        else tier = statusTier(c.electric);
+        const tier = c ? statusTier(c.electric) : 'unknown';
         const hasSites = countryAggs.has(derGKey);
         ctx.fillStyle = hasSites ? TIER_COLORS[tier] : NO_SITES_FILL;
         ctx.strokeStyle = '#94A3B8';
@@ -3572,7 +3560,6 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         ['dereg',   TIER_COLORS.dereg,   TIER_LABELS.dereg],
         ['some',    TIER_COLORS.some,    TIER_LABELS.some],
         ['reg',     TIER_COLORS.reg,     TIER_LABELS.reg],
-        ['mixed',   TIER_COLORS.mixed,   TIER_LABELS.mixed],
         ['unknown', TIER_COLORS.unknown, TIER_LABELS.unknown],
         ['nosite',  NO_SITES_FILL,       'No sites'],
       ];
@@ -3615,10 +3602,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const tableHeaderRow = SUMMARY_START + 1;
       const overviewHeaders = [
         'Tier',
-        'Electric — Sites',
-        'Electric — %',
-        'Gas — Sites',
-        'Gas — %',
+        'Electric Sites',
+        'Electric %',
+        'Gas Sites',
+        'Gas %',
         'Load (kWh)',
         'Load (Dth)',
         'Total Cost ($)',
@@ -3688,8 +3675,8 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         const cHdrCells = ws.getRow(cTblHdrRow);
         const cCols = [
           'Country',
-          'Electric — Status',
-          'Gas — Status',
+          'Electric',
+          'Gas',
           'Sites',
           'Load (kWh)',
           'Load (Dth)',
