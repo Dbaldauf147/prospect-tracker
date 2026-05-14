@@ -53,7 +53,7 @@ import {
   TIER_COLORS,
   TIER_LABELS,
 } from '../../data/worldGeo';
-import worldMapUrl from '../../assets/world-map.jpg';
+import worldMapUrl from '../../assets/world-map.png';
 import {
   countryElectricRate,
   countryGasRatePerTherm,
@@ -3290,14 +3290,20 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       }
 
       // Canvas render — equirectangular projection. The map graphic
-      // (NASA Blue Marble, public domain, bundled at
-      // src/assets/world-map.jpg) is drawn as the canvas background.
-      // Lat/lng → pixel uses the same linear projection the dots use
-      // because the source image is equirectangular.
+      // is a blank political world map (country outlines only, no
+      // physical / satellite imagery — public domain, sourced from
+      // Wikimedia Commons File:BlankMap-World-Equirectangular.svg).
+      // Bundled at src/assets/world-map.png. Lat/lng → pixel uses
+      // the same linear projection the dots use because the source
+      // image is equirectangular.
       const W = 1200, H = 600;
       const canvas = document.createElement('canvas');
       canvas.width = W; canvas.height = H;
       const ctx = canvas.getContext('2d');
+      // Light ocean fill first; the map PNG has a transparent ocean
+      // so the canvas color shows through wherever there's no land.
+      ctx.fillStyle = '#F1F5F9';
+      ctx.fillRect(0, 0, W, H);
       const worldMapImg = await new Promise((resolve, reject) => {
         const img = new Image();
         img.onload = () => resolve(img);
@@ -3305,10 +3311,6 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         img.src = worldMapUrl;
       });
       ctx.drawImage(worldMapImg, 0, 0, W, H);
-      // Apply a slight white wash so the dots stand out against the
-      // photographic background without losing geographic context.
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.18)';
-      ctx.fillRect(0, 0, W, H);
 
       const project = (lng, lat) => [((lng + 180) / 360) * W, ((90 - lat) / 180) * H];
 
