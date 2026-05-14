@@ -138,6 +138,28 @@ export function parseSplitSitesTemplate(buffer) {
   };
 }
 
+// Parses every sheet in an xlsx/csv buffer and returns the ones that
+// have at least one data row. Used by the Sites column-mapping modal
+// so the user can pick which tab to map. Order matches the workbook's
+// own SheetNames order.
+export function parseAllSheets(buffer) {
+  const wb = XLSX.read(buffer, { type: 'array' });
+  if (!wb.SheetNames?.length) return [];
+  const out = [];
+  for (const name of wb.SheetNames) {
+    const sheet = wb.Sheets[name];
+    if (!sheet) continue;
+    try {
+      const parsed = parseSheet(sheet, name);
+      if (parsed.rows.length > 0) out.push(parsed);
+    } catch {
+      // Skip unparseable sheets silently — the user picks from the
+      // ones that worked.
+    }
+  }
+  return out;
+}
+
 // Parses an xlsx/csv buffer and returns the sheet with the most rows.
 // If `options.preferSheetName` is a regex, any sheet whose name
 // matches and parses with >0 rows wins over the raw row-count leader —

@@ -25,7 +25,7 @@ import {
   formatMoney,
   formatRate,
 } from '../../utils/utilityRates';
-import { parseBestSheet, parseSplitSitesTemplate } from '../../utils/xlsxParse';
+import { parseAllSheets, parseBestSheet, parseSplitSitesTemplate } from '../../utils/xlsxParse';
 import { saveIndicativeAnalysis } from '../../utils/firestoreSync';
 import { findFuzzyMatch } from '../../utils/utilityNameMatch';
 import { ENERGY_SUPPLIERS } from '../../data/energySuppliers';
@@ -504,24 +504,53 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     try {
       const buf = await file.arrayBuffer();
       const bytes = new Uint8Array(buf);
-      // First try the two-tab template (Electric Power + Gas merged by
-      // Site Name). Falls through to parseBestSheet for any workbook
-      // that doesn't have both tabs — Portfolio Companies workbooks,
-      // CSVs, or single-sheet sites tables.
-      let parsed = parseSplitSitesTemplate(bytes);
-      if (!parsed) {
-        parsed = parseBestSheet(bytes, {
-          preferSheetName: /site\s*list|^\s*sites?\s*$/i,
+      // Parse every sheet so the user can pick which one to map. When
+      // the workbook matches the two-tab Utility Lookup template
+      // (Electric Power + Gas), include the auto-merged result as an
+      // extra "Merged" pseudo-tab and default to it — it's almost
+      // always the one the user wants for that template.
+      const sheets = parseAllSheets(bytes).map(s => ({
+        sheetName: s.sheetName,
+        rows: s.rows,
+        headers: s.headers,
+        mapping: detectSitesMapping(s.headers),
+        isMerged: false,
+      }));
+      const merged = parseSplitSitesTemplate(bytes);
+      if (merged) {
+        sheets.unshift({
+          sheetName: `Merged: ${merged.sheetName}`,
+          rows: merged.rows,
+          headers: merged.headers,
+          mapping: detectSitesMapping(merged.headers),
+          isMerged: true,
         });
       }
-      const { rows, sheetName } = parsed;
-      const headers = rows.length ? Object.keys(rows[0]) : [];
+      if (sheets.length === 0) {
+        // No sheet had data. Fall back to parseBestSheet so the
+        // existing "Sheets scanned: ..." error message surfaces.
+        const parsed = parseBestSheet(bytes, {
+          preferSheetName: /site\s*list|^\s*sites?\s*$/i,
+        });
+        sheets.push({
+          sheetName: parsed.sheetName,
+          rows: parsed.rows,
+          headers: parsed.headers,
+          mapping: detectSitesMapping(parsed.headers),
+          isMerged: false,
+        });
+      }
+      // Prefer the merged tab (index 0 when present); otherwise prefer
+      // a sheet whose name looks like a Site List; otherwise the first.
+      let selectedIdx = 0;
+      if (!sheets[0].isMerged) {
+        const preferredIdx = sheets.findIndex(s => /site\s*list|^\s*sites?\s*$/i.test(s.sheetName));
+        if (preferredIdx >= 0) selectedIdx = preferredIdx;
+      }
       setSitesMappingModal({
-        rows,
-        headers,
-        sheetName,
         fileName: file.name,
-        mapping: detectSitesMapping(headers),
+        sheets,
+        selectedIdx,
       });
     } catch (err) {
       setUploadError(err?.message || 'Failed to read the sites file');
@@ -534,7 +563,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
   // can still try to match.
   async function executeSitesImport() {
     if (!sitesMappingModal) return;
-    const { rows, mapping, sheetName } = sitesMappingModal;
+    const active = sitesMappingModal.sheets[sitesMappingModal.selectedIdx];
+    if (!active) return;
+    const { rows, mapping } = active;
     setUploadError('');
     try {
       // Drop columns the user didn't assign a target — otherwise every
@@ -588,9 +619,6 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       setElectricProductTypeOverride(mapping.electricProductType || null);
       setGasContractNameOverride(mapping.gasContractName || null);
       setGasProductTypeOverride(mapping.gasProductType || null);
-      if (sheetName && !/site/i.test(sheetName)) {
-        setUploadError(`No tab named "Site List" found — loaded sheet "${sheetName}" instead (${rows.length.toLocaleString()} rows). Rename the tab or drop a different file if that's not what you wanted.`);
-      }
     } catch (err) {
       setUploadError(err?.message || 'Failed to save the sites file');
     }
@@ -642,11 +670,15 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     });
     setUploadError('');
     setSitesMappingModal({
-      rows,
-      headers,
-      sheetName: '',
       fileName: `(pasted ${rows.length.toLocaleString()} row${rows.length === 1 ? '' : 's'})`,
-      mapping: detectSitesMapping(headers),
+      sheets: [{
+        sheetName: 'Pasted rows',
+        rows,
+        headers,
+        mapping: detectSitesMapping(headers),
+        isMerged: false,
+      }],
+      selectedIdx: 0,
     });
   }
 
@@ -5328,28 +5360,38 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             { name: 'Lookup City', from: 'rates file × Zip' },
             { name: 'Lookup Country', from: 'rates file × Zip' },
           ];
+          const active = sitesMappingModal.sheets[sitesMappingModal.selectedIdx];
           const targetForHeader = {};
           for (const t of TARGET_FIELDS) {
-            const h = sitesMappingModal.mapping[t.key];
+            const h = active.mapping[t.key];
             if (h) targetForHeader[h] = t.key;
           }
           function setTargetForHeader(header, targetKey) {
             setSitesMappingModal(m => {
               if (!m) return m;
-              const next = { ...m.mapping };
+              const idx = m.selectedIdx;
+              const cur = m.sheets[idx];
+              const next = { ...cur.mapping };
               for (const t of TARGET_FIELDS) {
                 if (next[t.key] === header) next[t.key] = '';
               }
               if (targetKey) next[targetKey] = header;
-              return { ...m, mapping: next };
+              const sheets = m.sheets.slice();
+              sheets[idx] = { ...cur, mapping: next };
+              return { ...m, sheets };
             });
           }
+          function selectSheet(idx) {
+            setSitesMappingModal(m => (m ? { ...m, selectedIdx: idx } : m));
+          }
           const missingRequired = TARGET_FIELDS
-            .filter(t => t.required && !sitesMappingModal.mapping[t.key])
+            .filter(t => t.required && !active.mapping[t.key])
             .map(t => t.label);
           const targetLabel = (key) => TARGET_FIELDS.find(t => t.key === key)?.label || key;
           const colHeader = { fontSize: '0.7rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em', padding: '0.5rem 0.75rem', background: '#F8FAFC', borderBottom: '1px solid #E2E8F0' };
           const cellBase = { padding: '0.4rem 0.75rem', borderBottom: '1px solid #F1F5F9', fontSize: '0.78rem' };
+          const tabBase = { padding: '0.35rem 0.7rem', fontSize: '0.75rem', fontWeight: 600, border: '1px solid #E2E8F0', borderBottom: 'none', borderTopLeftRadius: 6, borderTopRightRadius: 6, background: '#F8FAFC', color: '#475569', cursor: 'pointer', whiteSpace: 'nowrap' };
+          const tabActive = { ...tabBase, background: '#FFFFFF', color: '#0F172A', borderColor: '#CBD5E1', boxShadow: 'inset 0 -2px 0 #2563EB' };
           return (
             <div className={styles.modalBackdrop} onClick={() => setSitesMappingModal(null)}>
               <div className={styles.modalCard} onClick={e => e.stopPropagation()} style={{ maxWidth: 1000, width: '95vw' }}>
@@ -5357,8 +5399,23 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
                   <h3 className={styles.modalTitle}>Sites File — Column Mapping</h3>
                   <button className={styles.modalClose} onClick={() => setSitesMappingModal(null)}>×</button>
                 </div>
+                {sitesMappingModal.sheets.length > 1 && (
+                  <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, margin: '0 0 0.5rem', borderBottom: '1px solid #E2E8F0', overflowX: 'auto' }}>
+                    {sitesMappingModal.sheets.map((s, i) => (
+                      <button
+                        key={`${s.sheetName}-${i}`}
+                        type="button"
+                        style={i === sitesMappingModal.selectedIdx ? tabActive : tabBase}
+                        onClick={() => selectSheet(i)}
+                        title={`${s.rows.length.toLocaleString()} rows · ${s.headers.length} columns`}
+                      >
+                        {s.sheetName} <span style={{ color: '#94A3B8', fontWeight: 500 }}>({s.rows.length.toLocaleString()})</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <p className={styles.modalHelp}>
-                  {sitesMappingModal.rows.length.toLocaleString()} rows found{sitesMappingModal.sheetName ? ` on sheet "${sitesMappingModal.sheetName}"` : ''} in <code>{sitesMappingModal.fileName}</code>. The left side lists every column that shows up on the Utility Lookup page; the right side lists every column from your file. Pick which file column should fill each Utility Lookup field.
+                  {active.rows.length.toLocaleString()} rows found on tab "{active.sheetName}" in <code>{sitesMappingModal.fileName}</code>. The left side lists every column that shows up on the Utility Lookup page; the right side lists every column from this tab. Pick which file column should fill each Utility Lookup field.{sitesMappingModal.sheets.length > 1 ? ' Switch tabs above to map a different sheet — only the selected tab is imported.' : ''}
                 </p>
                 {missingRequired.length > 0 && (
                   <div style={{ margin: '0 0 0.5rem', padding: '0.4rem 0.6rem', background: '#FEE2E2', border: '1px solid #FCA5A5', borderRadius: 6, fontSize: '0.75rem', color: '#991B1B', fontWeight: 600 }}>
@@ -5370,7 +5427,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
                   <div style={{ border: '1px solid #E2E8F0', borderRadius: 6, overflow: 'auto' }}>
                     <div style={colHeader}>Utility Lookup page columns</div>
                     {TARGET_FIELDS.map(t => {
-                      const header = sitesMappingModal.mapping[t.key];
+                      const header = active.mapping[t.key];
                       return (
                         <div key={t.key} style={{ ...cellBase, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                           <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={t.hint}>
@@ -5401,8 +5458,8 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
                   </div>
                   {/* RIGHT — file columns */}
                   <div style={{ border: '1px solid #E2E8F0', borderRadius: 6, overflow: 'auto' }}>
-                    <div style={colHeader}>Columns in your file ({sitesMappingModal.headers.length})</div>
-                    {sitesMappingModal.headers.map(h => {
+                    <div style={colHeader}>Columns on this tab ({active.headers.length})</div>
+                    {active.headers.map(h => {
                       const target = targetForHeader[h] || '';
                       return (
                         <div key={h} style={{ ...cellBase, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
@@ -5436,7 +5493,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
                     onClick={executeSitesImport}
                     disabled={missingRequired.length > 0}
                   >
-                    Import {sitesMappingModal.rows.length.toLocaleString()} sites
+                    Import {active.rows.length.toLocaleString()} sites
                   </button>
                 </div>
               </div>
