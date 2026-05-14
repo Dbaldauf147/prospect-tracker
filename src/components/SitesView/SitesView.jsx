@@ -106,6 +106,7 @@ function detectSitesMapping(headers) {
     zip: pickZipColumn(headers),
     country: detectColumn(headers, [/^country$/i, /\bcountry\b/i, /\bnation\b/i]) || '',
     propertyType: detectColumn(headers, [/property\s*type/i, /building\s*type/i, /property\s*class/i, /asset\s*type/i, /^use$/i, /\buse\s*type\b/i, /\bsegment\b/i]) || '',
+    siteDescription: detectColumn(headers, [/^site\s*description$/i, /^description$/i, /\bdescription\b/i]) || '',
     propertySize: detectColumn(headers, [/sq\s*\.?\s*ft/i, /square\s*(feet|foot)/i, /\bft\s*2\b/i, /\bft\^?2\b/i, /\bsf\b/i, /size.*ft/i, /building.*size/i, /gross.*area/i, /^size$/i, /rsf|gsf/i]) || '',
     electric: detectColumn(headers, [/electric.*kwh|kwh.*electric/i, /annual.*electric.*kwh/i, /annual.*kwh/i, /^kwh$/i, /electric.*usage/i, /electric.*consumption/i, /annual.*electric/i, /^electric$/i]) || '',
     electricUom: detectColumn(headers, [/electric.*\b(uom|unit\s*of\s*measure|units?)\b/i, /\b(uom|unit\s*of\s*measure|units?)\b.*electric/i]) || '',
@@ -362,6 +363,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
   // are optional; with only Property Type the export uses the
   // reference Size_ft2 for that type and skips per-site size scaling.
   const [propertyTypeOverride, setPropertyTypeOverride] = useState(null);
+  const [siteDescriptionOverride, setSiteDescriptionOverride] = useState(null);
   const [propertySizeOverride, setPropertySizeOverride] = useState(null);
   const [electricContractPriceOverride, setElectricContractPriceOverride] = useState(null);
   const [gasContractPriceOverride, setGasContractPriceOverride] = useState(null);
@@ -464,6 +466,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         setCityOverride(m.city || null);
         setStateColumnOverride(m.state || null);
         setPropertyTypeOverride(m.propertyType || null);
+        setSiteDescriptionOverride(m.siteDescription || null);
         setPropertySizeOverride(m.propertySize || null);
         setElectricContractPriceOverride(m.electricContractPrice || null);
         setGasContractPriceOverride(m.gasContractPrice || null);
@@ -584,7 +587,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // table even though the user only wanted these specific fields.
       const TARGET_KEYS = [
         'siteName', 'address', 'city', 'state', 'zip', 'country',
-        'propertyType', 'propertySize',
+        'propertyType', 'siteDescription', 'propertySize',
         'electric', 'electricUom', 'gas', 'gasUom',
         'electricCost', 'gasCost',
         'electricSupplier', 'gasSupplier',
@@ -630,6 +633,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       setCityOverride(mapping.city || null);
       setStateColumnOverride(mapping.state || null);
       setPropertyTypeOverride(mapping.propertyType || null);
+      setSiteDescriptionOverride(mapping.siteDescription || null);
       setPropertySizeOverride(mapping.propertySize || null);
       setElectricContractPriceOverride(mapping.electricContractPrice || null);
       setGasContractPriceOverride(mapping.gasContractPrice || null);
@@ -993,6 +997,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         : null;
       const inputPropertyType = propertyTypeOverride ? String(r[propertyTypeOverride] || '').trim() : '';
       const canonicalPropertyType = inputPropertyType ? normalizePropertyType(inputPropertyType) : null;
+      const inputSiteDescription = siteDescriptionOverride ? String(r[siteDescriptionOverride] || '').trim() : '';
       // Loose numeric parse for the optional Size_ft2 column — strips
       // commas, "sf"/"sqft" suffixes, etc.
       const parseSize = (v) => {
@@ -1154,6 +1159,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         __state__: (stateColumnOverride ? String(r[stateColumnOverride] || '').trim() : '') || state,
         __propertyTypeRaw__: inputPropertyType || null,
         __propertyType__: canonicalPropertyType,
+        __siteDescription__: inputSiteDescription || null,
         __propertySizeFt2__: inputPropertySize,
         __kwhFromEstimate__: elecValueFromEstimate,
         __thermsFromEstimate__: gasValueFromEstimate,
@@ -1188,7 +1194,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         __matched__: !!match || electricUtilityTokens.length > 0 || gasUtilityTokens.length > 0,
       };
     });
-  }, [cleanSitesData, zipColumn, utility, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, addressOverride, cityOverride, stateColumnOverride, propertyTypeOverride, propertySizeOverride, electricContractPriceOverride, gasContractPriceOverride, electricContractNameOverride, electricProductTypeOverride, gasContractNameOverride, gasProductTypeOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
+  }, [cleanSitesData, zipColumn, utility, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, addressOverride, cityOverride, stateColumnOverride, propertyTypeOverride, siteDescriptionOverride, propertySizeOverride, electricContractPriceOverride, gasContractPriceOverride, electricContractNameOverride, electricProductTypeOverride, gasContractNameOverride, gasProductTypeOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return rows;
@@ -1332,6 +1338,25 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         );
       },
       exportValue: (row) => row.__propertyType__ || row.__propertyTypeRaw__ || '',
+    };
+    // Free-text site annotation that lives next to Property Type. No
+    // canonicalization or estimates — purely a passthrough column for
+    // the user's notes / descriptions of each site.
+    const siteDescriptionCol = {
+      key: 'siteDescription',
+      label: 'Site Description',
+      defaultWidth: 220,
+      render: (row) => {
+        const v = row.__siteDescription__;
+        if (!v) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
+        return (
+          <span
+            title={v}
+            style={{ fontSize: '0.72rem', color: 'var(--color-text-primary)', display: 'inline-block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+          >{v}</span>
+        );
+      },
+      exportValue: (row) => row.__siteDescription__ || '',
     };
     const makeMarketCol = (utilityKey, label) => ({
       key: `${utilityKey}_market`,
@@ -1652,6 +1677,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       makeLocationCol('city', 'Lookup City'),
       makeLocationCol('country', 'Lookup Country'),
       propertyTypeCol,
+      siteDescriptionCol,
       // Property-type-based estimates — always show the reference
       // figure regardless of whether the upload also carried actual
       // values, so the user can spot under- / over-reported sites by
@@ -1733,6 +1759,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     return [
       columns[0].key,
       'propertyType',
+      'siteDescription',
       'electric', 'electric_market', 'electric_rate', 'electricCost',
       'gas', 'gas_market', 'gas_rate', 'gasCost',
       'totalCost',
@@ -2282,6 +2309,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       { label: 'Country', greenHeader: true, hint: 'Country of the site. Pick from the dropdown on the Electric Power tab — the Gas tab pulls from there via formula. Falls back to the utility-rates file when blank.', validation: { type: 'list', options: COUNTRY_OPTIONS } },
       { label: 'Currency', greenHeader: true, hint: 'Currency the site reports costs in. Pick from the dropdown on the Electric Power tab — the Gas tab pulls from there via formula.', validation: { type: 'list', options: CURRENCY_OPTIONS } },
       { label: 'Property Type', greenHeader: true, hint: 'Building / use type. Drives the per-property-type consumption + account-count estimates surfaced on the page and on the Indicative Savings export. Pick from the dropdown on the Electric Power tab — the Gas tab pulls from there via formula.', validation: { type: 'list', options: PROPERTY_TYPE_OPTIONS } },
+      { label: 'Site Description', greenHeader: true, hint: 'Free-text annotation for the site — building name, internal code, notes, anything that helps identify the row. Passthrough only; shown next to Property Type on the Utility Lookup page. Enter on the Electric Power tab — the Gas tab pulls from there via formula.' },
       { label: 'Size (ft²)', greenHeader: true, hint: 'Square footage of the site. Scales the property-type reference consumption linearly. Optional — when blank the reference size for the property type is used as-is. Enter on the Electric Power tab — the Gas tab pulls from there via formula.' },
     ];
     const ELECTRIC_FIELDS = [
@@ -5719,6 +5747,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             { key: 'zip', label: 'Zip / Postal Code', required: false, hint: 'Required for US and Canada sites — drives the utility lookup. Leave blank on international rows; mapping the column at all is optional if the file has no US / Canada sites.' },
             { key: 'country', label: 'Country', required: false, hint: 'Country of the site. Falls back to the utility-rates file when blank.' },
             { key: 'propertyType', label: 'Property Type', required: false, hint: 'Building / use type (Office, Hospital, Warehouse, etc.) — drives the per-property-type consumption + account-count estimates surfaced on the page and on the Indicative Savings export.' },
+            { key: 'siteDescription', label: 'Site Description', required: false, hint: 'Free-text annotation for the site (building name, internal code, notes). Passthrough only; surfaced next to Property Type on the Utility Lookup page.' },
             { key: 'propertySize', label: 'Size (ft²)', required: false, hint: 'Square footage of the site. Scales the property-type reference consumption linearly. Optional — when blank the reference size for the property type is used as-is.' },
             { key: 'electric', label: 'Annual Electric Consumption', required: false, hint: 'Annual electric usage. Pair with Electric UoM to control how the value is converted to kWh for cost estimates.' },
             { key: 'electricUom', label: 'Electric UoM', required: false, hint: 'Unit of measure for the Electric column (kWh / MWh / GWh). Overrides any unit baked into the header.' },
