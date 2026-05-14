@@ -1,0 +1,339 @@
+.wrapper {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 1rem 1.25rem 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.intro {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  max-width: 920px;
+  line-height: 1.5;
+}
+
+.labelRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.miniField {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.miniField input {
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  font-family: inherit;
+  width: 12rem;
+}
+
+.summaryStrip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.summaryCard {
+  flex: 1 1 240px;
+  min-width: 240px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.summaryHeader {
+  background: #f1f5f9;
+  padding: 0.45rem 0.75rem;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-text);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.summaryGrid {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  row-gap: 0.25rem;
+  column-gap: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  font-size: var(--font-size-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.unitTag {
+  margin-left: 0.25rem;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.deltaUp { color: #b91c1c; font-weight: 600; }
+.deltaDown { color: #047857; font-weight: 600; }
+
+.tablesRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.75rem;
+}
+
+@media (max-width: 1100px) {
+  .tablesRow {
+    grid-template-columns: 1fr;
+  }
+}
+
+.tablePanel {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+}
+
+.tableHeader {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--color-border);
+  background: #f8fafc;
+  flex-wrap: wrap;
+}
+
+.tableTitle {
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  margin-right: auto;
+}
+
+.btn {
+  padding: 0.35rem 0.65rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: var(--font-size-xs);
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn:hover {
+  border-color: var(--color-accent);
+}
+
+.flash {
+  font-size: var(--font-size-xs);
+  color: #047857;
+  background: #d1fae5;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+}
+
+.pasteBox {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  border-bottom: 1px solid var(--color-border);
+  padding: 0.7rem 0.85rem;
+  background: #f8fafc;
+}
+
+.pasteHint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.pasteArea {
+  width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--font-size-xs);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0.5rem;
+  resize: vertical;
+}
+
+.pasteActions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.gridWrap {
+  overflow: auto;
+}
+
+.grid {
+  border-collapse: collapse;
+  width: 100%;
+  table-layout: fixed;
+  font-size: var(--font-size-sm);
+  background: var(--color-bg);
+}
+
+.colBucket { width: 130px; }
+.colCategory { width: 180px; }
+.colType { width: 140px; }
+.colCts { width: 90px; }
+.colStart { width: 80px; }
+.colCombine { width: 130px; }
+.actionCol { width: 32px; background: #f1f5f9; }
+
+.grid th,
+.grid td {
+  border: 1px solid #e5e7eb;
+  padding: 0;
+  vertical-align: middle;
+  height: 30px;
+}
+
+.grid th {
+  background: #f1f5f9;
+  text-align: left;
+  font-weight: 600;
+  font-size: var(--font-size-xs);
+  color: #475569;
+  padding: 0.35rem 0.55rem;
+}
+
+.cellCurrent {
+  background: #fdf6e3; /* tan, mirroring the Excel "Current" side */
+}
+
+.cellNew {
+  background: #e7f1ff; /* light blue for the "New" side */
+}
+
+.numCell {
+  text-align: right;
+}
+
+.input {
+  width: 100%;
+  height: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  padding: 0.35rem 0.5rem;
+  font-size: var(--font-size-sm);
+  font-family: inherit;
+  color: var(--color-text);
+}
+
+.input:focus {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+  background: #fff;
+}
+
+.actionCell {
+  text-align: center;
+  background: #fff;
+}
+
+.removeBtn {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  font-family: inherit;
+}
+
+.removeBtn:hover {
+  border-color: #fecaca;
+  color: #b91c1c;
+  background: #fef2f2;
+}
+
+.totalsRow td {
+  background: #e2e8f0;
+  font-weight: 600;
+  padding: 0.4rem 0.55rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.compareBlock {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.compareHeader {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.55rem 0.85rem;
+  background: #f1f5f9;
+  border-bottom: 1px solid var(--color-border);
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+  flex-wrap: wrap;
+}
+
+.compareHint {
+  font-weight: 400;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.compareTableWrap {
+  overflow: auto;
+}
+
+.compareTable {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: var(--font-size-sm);
+}
+
+.compareTable th,
+.compareTable td {
+  border-bottom: 1px solid #f1f5f9;
+  padding: 0.4rem 0.75rem;
+  font-variant-numeric: tabular-nums;
+  vertical-align: middle;
+}
+
+.compareTable th {
+  background: #f8fafc;
+  text-align: left;
+  font-weight: 600;
+  font-size: var(--font-size-xs);
+  color: #475569;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.compareTable th.numCell,
+.compareTable td.numCell {
+  text-align: right;
+}
+
+.compareTotalsRow td {
+  background: #e2e8f0;
+  font-weight: 600;
+  border-top: 1px solid var(--color-border);
+}
+
+.empty {
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  padding: 1rem;
+}
