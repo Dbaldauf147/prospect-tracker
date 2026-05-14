@@ -63,6 +63,26 @@ function rowYearRevenue(row, yearIdx, termYears, escPct) {
   return fee * uc * months * esc;
 }
 
+// Revenue billed by a single row in a specific contract month
+// (1-indexed, where 1..12 = Year 1). Setup / One Time hits only the
+// row's start month; Recurring bills every month from its start
+// through the end of the contract, with the escalator applied to the
+// year the revenue lands in.
+function rowMonthRevenue(row, month, termYears, escPct) {
+  const fee = toNum(row.fee);
+  const uc = toNum(row.unitCount);
+  if (fee == null || uc == null) return 0;
+  const startMonth = toNum(row.startMonth);
+  if (startMonth == null || startMonth < 1) return 0;
+  const lastMonth = termYears * 12;
+  if (month < startMonth || month > lastMonth) return 0;
+  const yearIdx = Math.ceil(month / 12);
+  const esc = Math.pow(1 + (escPct || 0) / 100, yearIdx - 1);
+  const t = (row.type || '').toLowerCase();
+  if (t.startsWith('recurring')) return fee * uc * esc;
+  return month === startMonth ? fee * uc : 0;
+}
+
 // Parse tab- or comma-separated text from Excel into rows.
 function parseRowsFromText(text) {
   if (!text) return [];
@@ -124,6 +144,15 @@ function OptionPanel({ opt, onChange }) {
     rows.splice(idx, 1);
     onChange({ ...opt, rows: rows.length ? rows : [EMPTY_ROW()] });
   };
+  // Reset every row and the term / escalator inputs back to defaults
+  // while keeping the option's name (so the user's tab labelling
+  // survives a Clear).
+  const clearOption = () => onChange({
+    name: opt.name,
+    years: 3,
+    escPct: 4,
+    rows: Array.from({ length: 12 }, EMPTY_ROW),
+  });
 
   function handleTablePaste(e) {
     const cd = e.clipboardData;
@@ -167,6 +196,15 @@ function OptionPanel({ opt, onChange }) {
     .filter(r => (r.type || '').toLowerCase() === 'setup')
     .reduce((s, r) => s + (toNum(r.fee) || 0) * (toNum(r.unitCount) || 0), 0);
 
+  // Year 1 monthly fee breakdown (12 numbers + a year-end total). Each
+  // entry is the sum across every row in this option for that contract
+  // month. Drives the per-month strip below the grid.
+  const year1Monthly = Array.from({ length: 12 }, (_, i) => {
+    const month = i + 1;
+    return opt.rows.reduce((s, r) => s + rowMonthRevenue(r, month, termYears, esc), 0);
+  });
+  const year1MonthlyTotal = year1Monthly.reduce((s, v) => s + v, 0);
+
   return (
     <div className={styles.optionPanel} onPaste={handleTablePaste}>
       <div className={styles.optHeader}>
@@ -199,6 +237,7 @@ function OptionPanel({ opt, onChange }) {
           {pasteOpen ? 'Close paste' : 'Paste from Excel'}
         </button>
         <button type="button" className={styles.btn} onClick={addRow}>+ Row</button>
+        <button type="button" className={styles.btnDanger} onClick={clearOption}>Clear</button>
         {flash && <span className={styles.flash}>{flash}</span>}
       </div>
 
@@ -240,6 +279,42 @@ function OptionPanel({ opt, onChange }) {
           </div>
         </div>
       )}
+
+      <div className={styles.summary}>
+        <div className={styles.summaryBlock}>
+          <div className={styles.summaryHeader}>Total Contract Value</div>
+          <table className={styles.summaryTable}>
+            <tbody>
+              {termValues.map((v, i) => {
+                const t = i + 1;
+                return (
+                  <tr key={`tv-${i}`} className={t > termYears ? styles.dim : ''}>
+                    <td>Year {t}</td>
+                    <td className={styles.numCell}>{fmtMoneyWhole(v)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div className={styles.summaryBlock}>
+          <div className={styles.summaryHeader}>Setup &amp; Year Breakdown</div>
+          <table className={styles.summaryTable}>
+            <tbody>
+              <tr>
+                <td>Setup</td>
+                <td className={styles.numCell}>{fmtMoneyWhole(setupTotal)}</td>
+              </tr>
+              {Array.from({ length: termYears }, (_, i) => (
+                <tr key={`yb-${i}`}>
+                  <td>Year {i + 1}</td>
+                  <td className={styles.numCell}>{fmtMoneyWhole(yearTotals[i] || 0)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
 
       <div className={styles.gridWrap}>
         <table className={styles.grid}>
@@ -346,37 +421,25 @@ function OptionPanel({ opt, onChange }) {
         </table>
       </div>
 
-      <div className={styles.summary}>
-        <div className={styles.summaryBlock}>
-          <div className={styles.summaryHeader}>Total Contract Value</div>
-          <table className={styles.summaryTable}>
-            <tbody>
-              {termValues.map((v, i) => {
-                const t = i + 1;
-                return (
-                  <tr key={`tv-${i}`} className={t > termYears ? styles.dim : ''}>
-                    <td>Year {t}</td>
-                    <td className={styles.numCell}>{fmtMoneyWhole(v)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-        <div className={styles.summaryBlock}>
-          <div className={styles.summaryHeader}>Setup &amp; Year Breakdown</div>
-          <table className={styles.summaryTable}>
+      <div className={styles.monthlyBlock}>
+        <div className={styles.monthlyHeader}>Year 1 monthly total fees</div>
+        <div className={styles.gridWrap}>
+          <table className={styles.monthlyTable}>
+            <thead>
+              <tr>
+                {Array.from({ length: 12 }, (_, i) => (
+                  <th key={`mh-${i}`}>{`M${i + 1}`}</th>
+                ))}
+                <th>Total</th>
+              </tr>
+            </thead>
             <tbody>
               <tr>
-                <td>Setup</td>
-                <td className={styles.numCell}>{fmtMoneyWhole(setupTotal)}</td>
+                {year1Monthly.map((v, i) => (
+                  <td key={`mv-${i}`}>{fmtMoneyWhole(v)}</td>
+                ))}
+                <td className={styles.monthlyTotal}>{fmtMoneyWhole(year1MonthlyTotal)}</td>
               </tr>
-              {Array.from({ length: termYears }, (_, i) => (
-                <tr key={`yb-${i}`}>
-                  <td>Year {i + 1}</td>
-                  <td className={styles.numCell}>{fmtMoneyWhole(yearTotals[i] || 0)}</td>
-                </tr>
-              ))}
             </tbody>
           </table>
         </div>
