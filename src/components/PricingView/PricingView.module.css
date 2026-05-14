@@ -782,3 +782,169 @@ select.altCellInput::-ms-expand {
   position: sticky;
   left: 0;
 }
+
+/* Page-level subtab strip (Pricing / Linked To). Smaller than the
+   option tabs that live inside the Pricing subtab. */
+.subtabStrip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0.4rem 1.25rem 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.subtab,
+.subtabActive {
+  padding: 0.4rem 0.85rem;
+  border: 1px solid transparent;
+  border-bottom: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  cursor: pointer;
+  border-top-left-radius: 6px;
+  border-top-right-radius: 6px;
+  font-family: inherit;
+  position: relative;
+  top: 1px;
+}
+
+.subtab:hover {
+  background: #f1f5f9;
+  color: #334155;
+}
+
+.subtabActive {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-weight: 600;
+  border-color: var(--color-border);
+  border-bottom-color: var(--color-bg);
+}
+
+/* Linked To subtab body. */
+.linkedPanel {
+  padding: 1rem 1.25rem 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.linkedHeading {
+  margin: 0 0 0.5rem;
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+}
+
+.linkedSubheading {
+  margin: 0 0 0.25rem;
+  font-size: var(--font-size-md);
+  font-weight: 600;
+}
+
+.linkedDocBlock {
+  background: #f8fafc;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 0.9rem 1.1rem;
+}
+
+.linkedDocList {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  line-height: 1.45;
+}
+
+.linkedDocList code {
+  background: #eef2ff;
+  padding: 0 0.25rem;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+
+.linkedSection {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.linkedHint {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.linkedTable {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: var(--font-size-sm);
+  background: var(--color-bg);
+}
+
+.linkedTable th,
+.linkedTable td {
+  text-align: left;
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid var(--color-border);
+  vertical-align: top;
+}
+
+.linkedTable th {
+  background: #f1f5f9;
+  font-weight: 600;
+  color: #334155;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.linkedTable code {
+  background: #eef2ff;
+  padding: 0 0.3rem;
+  border-radius: 3px;
+  font-size: 0.95em;
+}
+
+.linkedEmpty {
+  padding: 1rem;
+  border: 1px dashed var(--color-border);
+  border-radius: 8px;
+  color: var(--color-text-muted);
+  background: var(--color-bg);
+}
+
+.linkedEmptyInline {
+  padding: 0.5rem 0.7rem;
+  border: 1px dashed var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  background: #fafafa;
+}
+
+.linkedMuted {
+  color: var(--color-text-muted);
+  font-size: 0.9em;
+}
+
+.linkedBadge {
+  display: inline-block;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
+.linkedRowList {
+  margin: 0;
+  padding-left: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
