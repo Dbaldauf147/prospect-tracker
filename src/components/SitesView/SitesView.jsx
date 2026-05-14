@@ -4528,6 +4528,311 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       });
     }
 
+    // ---- Floating vs Hedging Example sheet --------------------------
+    // Interactive comparison of a fully-hedged annual contract vs a
+    // pure float (index / spot) buy across 12 months. Inputs (yellow
+    // cells): Annual Volume (E4), 100 % Hedged Price (H4), per-month
+    // Load % (column C), per-month Spot Price (column E). Every other
+    // column is an Excel formula so edits update live.
+    {
+      const ws = wb.addWorksheet('Floating vs Hedging Example', {
+        properties: { tabColor: { argb: SE_GREEN_DARK } },
+        views: [{ showGridLines: false, state: 'frozen', ySplit: 6 }],
+      });
+
+      const COLS = 9;
+      const widths = [6, 14, 11, 14, 18, 18, 16, 16, 20];
+      ws.columns = widths.map(w => ({ width: w }));
+
+      const INPUT_FILL = 'FFFFF9C3';
+      const INPUT_BORDER = 'FFCA8A04';
+      const inputBorder = {
+        top:    { style: 'thin', color: { argb: INPUT_BORDER } },
+        bottom: { style: 'thin', color: { argb: INPUT_BORDER } },
+        left:   { style: 'thin', color: { argb: INPUT_BORDER } },
+        right:  { style: 'thin', color: { argb: INPUT_BORDER } },
+      };
+
+      ws.mergeCells(1, 1, 1, COLS);
+      const title = ws.getCell(1, 1);
+      title.value = 'Floating vs Hedging — Interactive Example';
+      title.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
+      title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+      title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(1).height = 30;
+
+      ws.mergeCells(2, 1, 2, COLS);
+      const sub = ws.getCell(2, 1);
+      sub.value = 'Edit the yellow cells (Annual Volume on E4, 100 % Hedged Price on H4, plus per-month Load % in column C and Spot Price in column E) to model your portfolio. Load MWh / Float Cost / Hedge Cost / Saving and the totals + Result block are Excel formulas — they update live as inputs change. Positive Saving = floating the market beats locking 100 % at the hedged price.';
+      sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
+      sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+      ws.getRow(2).height = 58;
+
+      ws.mergeCells(3, 1, 3, COLS);
+      const sh0 = ws.getCell(3, 1);
+      sh0.value = 'Inputs (edit yellow cells)';
+      sh0.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
+      sh0.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+      sh0.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(3).height = 22;
+
+      ws.mergeCells(4, 1, 4, 4);
+      ws.getCell(4, 1).value = 'Annual Volume (MWh)';
+      ws.getCell(4, 1).font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: SE_SLATE } };
+      ws.getCell(4, 1).alignment = { vertical: 'middle', horizontal: 'right', indent: 1 };
+      const volInput = ws.getCell('E4');
+      volInput.value = 100000;
+      volInput.numFmt = '#,##0';
+      volInput.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: INPUT_FILL } };
+      volInput.font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: SE_TEXT_DARK } };
+      volInput.alignment = { vertical: 'middle', horizontal: 'right', indent: 1 };
+      volInput.border = inputBorder;
+
+      ws.mergeCells(4, 6, 4, 7);
+      ws.getCell(4, 6).value = '100 % Hedged Price ($/MWh)';
+      ws.getCell(4, 6).font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: SE_SLATE } };
+      ws.getCell(4, 6).alignment = { vertical: 'middle', horizontal: 'right', indent: 1 };
+      const hedgeInput = ws.getCell('H4');
+      hedgeInput.value = 75.00;
+      hedgeInput.numFmt = '"$"0.00';
+      hedgeInput.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: INPUT_FILL } };
+      hedgeInput.font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: SE_TEXT_DARK } };
+      hedgeInput.alignment = { vertical: 'middle', horizontal: 'right', indent: 1 };
+      hedgeInput.border = inputBorder;
+      ws.getRow(4).height = 22;
+
+      ws.mergeCells(5, 1, 5, COLS);
+      const sh1 = ws.getCell(5, 1);
+      sh1.value = '12 Months — Float vs Hedge';
+      sh1.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
+      sh1.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+      sh1.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(5).height = 22;
+
+      const headers = [
+        '#', 'Month', 'Load %', 'Load (MWh)',
+        'Spot Price ($/MWh)', 'Hedged ($/MWh)',
+        'Float Cost', 'Hedge Cost', 'Saving vs Hedge',
+      ];
+      const hr = ws.getRow(6);
+      headers.forEach((h, i) => {
+        const c = hr.getCell(i + 1);
+        c.value = h;
+        c.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+        c.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+        c.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
+      });
+      hr.height = 32;
+
+      // Default monthly shape — flat 1/12 load so the example focuses
+      // on the price story, plus a plausible winter-peak / summer-peak
+      // spot curve that averages ~$72.67 → ~3 % savings vs the $75
+      // hedge default. Users edit either column to model their
+      // portfolio's actual seasonality + price expectations.
+      const months = [
+        { label: 'Jan', spot: 84.00 },
+        { label: 'Feb', spot: 82.00 },
+        { label: 'Mar', spot: 68.00 },
+        { label: 'Apr', spot: 63.00 },
+        { label: 'May', spot: 60.00 },
+        { label: 'Jun', spot: 65.00 },
+        { label: 'Jul', spot: 78.00 },
+        { label: 'Aug', spot: 80.00 },
+        { label: 'Sep', spot: 72.00 },
+        { label: 'Oct', spot: 66.00 },
+        { label: 'Nov', spot: 74.00 },
+        { label: 'Dec', spot: 80.00 },
+      ];
+      const loadPct = 1 / 12;
+
+      months.forEach((m, i) => {
+        const rowNum = 7 + i;
+        const r = ws.getRow(rowNum);
+        r.getCell(1).value = i + 1;
+        r.getCell(2).value = m.label;
+        r.getCell(3).value = loadPct;
+        r.getCell(4).value = { formula: `$E$4*C${rowNum}`, result: 100000 * loadPct };
+        r.getCell(5).value = m.spot;
+        r.getCell(6).value = { formula: '$H$4', result: 75 };
+        r.getCell(7).value = { formula: `D${rowNum}*E${rowNum}`, result: 100000 * loadPct * m.spot };
+        r.getCell(8).value = { formula: `D${rowNum}*F${rowNum}`, result: 100000 * loadPct * 75 };
+        // Saving = Hedge Cost - Float Cost (positive = floating wins).
+        r.getCell(9).value = { formula: `H${rowNum}-G${rowNum}`, result: 100000 * loadPct * (75 - m.spot) };
+
+        for (let ci = 1; ci <= COLS; ci++) {
+          const c = r.getCell(ci);
+          c.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+          c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          c.border = {
+            bottom: { style: 'hair', color: { argb: SE_BORDER } },
+            right:  { style: 'hair', color: { argb: SE_BORDER } },
+          };
+        }
+        r.getCell(3).numFmt = '0.00%';
+        r.getCell(4).numFmt = '#,##0';
+        r.getCell(5).numFmt = '"$"0.00';
+        r.getCell(6).numFmt = '"$"0.00';
+        r.getCell(7).numFmt = '"$"#,##0';
+        r.getCell(8).numFmt = '"$"#,##0';
+        r.getCell(9).numFmt = '"$"#,##0;[Red]("$"#,##0)';
+
+        // Mark the editable cells (Load % + Spot Price) yellow.
+        for (const col of [3, 5]) {
+          const c = r.getCell(col);
+          c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: INPUT_FILL } };
+        }
+        r.height = 20;
+      });
+
+      // Totals row at 19. Blended float price is the weighted avg
+      // (total float cost / total load MWh).
+      const tr = ws.getRow(19);
+      tr.getCell(2).value = 'TOTAL';
+      tr.getCell(3).value = { formula: 'SUM(C7:C18)', result: 1.0 };
+      tr.getCell(4).value = { formula: 'SUM(D7:D18)', result: 100000 };
+      tr.getCell(5).value = { formula: 'G19/D19', result: 72.67 };
+      tr.getCell(6).value = { formula: '$H$4', result: 75 };
+      tr.getCell(7).value = { formula: 'SUM(G7:G18)', result: 7266667 };
+      tr.getCell(8).value = { formula: 'SUM(H7:H18)', result: 7500000 };
+      tr.getCell(9).value = { formula: 'SUM(I7:I18)', result: 233333 };
+      for (let ci = 1; ci <= COLS; ci++) {
+        const c = tr.getCell(ci);
+        c.font = { name: 'Nunito Sans', size: 11, bold: true, color: { argb: SE_TEXT_DARK } };
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
+        c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        c.border = {
+          top:    { style: 'thin', color: { argb: SE_GREEN_DARK } },
+          bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } },
+        };
+      }
+      tr.getCell(3).numFmt = '0.00%';
+      tr.getCell(4).numFmt = '#,##0';
+      tr.getCell(5).numFmt = '"$"0.00';
+      tr.getCell(6).numFmt = '"$"0.00';
+      tr.getCell(7).numFmt = '"$"#,##0';
+      tr.getCell(8).numFmt = '"$"#,##0';
+      tr.getCell(9).numFmt = '"$"#,##0;[Red]("$"#,##0)';
+      tr.height = 26;
+
+      // Spot-vs-Hedge color: green when spot is below the hedged
+      // price (floating wins that month), red when spot is above
+      // (hedge wins). Compares column E to column F.
+      ws.addConditionalFormatting({
+        ref: 'E7:E18',
+        rules: [
+          {
+            type: 'cellIs', operator: 'lessThan', formulae: ['F7'], priority: 1,
+            style: {
+              fill: { type: 'pattern', pattern: 'solid', bgColor: { argb: 'FFDCFCE7' } },
+              font: { color: { argb: 'FF166534' }, bold: true },
+            },
+          },
+          {
+            type: 'cellIs', operator: 'greaterThanOrEqual', formulae: ['F7'], priority: 2,
+            style: {
+              fill: { type: 'pattern', pattern: 'solid', bgColor: { argb: 'FFFEE2E2' } },
+              font: { color: { argb: 'FF991B1B' }, bold: true },
+            },
+          },
+        ],
+      });
+
+      // Data-bar on the Savings column (negative = hedge wins that
+      // month, positive = floating wins). Centered on zero.
+      ws.addConditionalFormatting({
+        ref: 'I7:I18',
+        rules: [{
+          type: 'dataBar',
+          cfvo: [{ type: 'num', value: -100000 }, { type: 'num', value: 100000 }],
+          color: { argb: 'FF22C55E' },
+          showValue: true,
+          gradient: false,
+        }],
+      });
+
+      ws.mergeCells(21, 1, 21, COLS);
+      const rh = ws.getCell(21, 1);
+      rh.value = 'Result';
+      rh.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
+      rh.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+      rh.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(21).height = 22;
+
+      const stats = [
+        { label: 'Blended Float Price', formula: 'G19/D19', result: 72.67, fmt: '"$"0.00" / MWh"' },
+        { label: '100 % Hedged Price', formula: '$H$4', result: 75, fmt: '"$"0.00" / MWh"' },
+        { labelFormula: '"Total Float Cost ("&TEXT(D19,"#,##0")&" MWh)"', labelFallback: 'Total Float Cost', formula: 'G19', result: 7266667, fmt: '"$"#,##0' },
+        { labelFormula: '"Total Hedge Cost ("&TEXT(D19,"#,##0")&" MWh)"', labelFallback: 'Total Hedge Cost', formula: 'H19', result: 7500000, fmt: '"$"#,##0' },
+        { label: 'Saving (Float vs Hedge)', valueFormula: 'TEXT(I19,"$#,##0")&"   ("&TEXT(I19/H19,"0.00%")&")"', result: '$233,333   (3.11%)' },
+      ];
+      stats.forEach((s, i) => {
+        const rowIdx = 22 + i;
+        ws.mergeCells(rowIdx, 1, rowIdx, 4);
+        ws.mergeCells(rowIdx, 5, rowIdx, COLS);
+        const row = ws.getRow(rowIdx);
+        const labelCell = row.getCell(1);
+        const valCell = row.getCell(5);
+        if (s.labelFormula) {
+          labelCell.value = { formula: s.labelFormula, result: s.labelFallback };
+        } else {
+          labelCell.value = s.label;
+        }
+        if (s.valueFormula) {
+          valCell.value = { formula: s.valueFormula, result: s.result };
+        } else if (s.formula) {
+          valCell.value = { formula: s.formula, result: s.result };
+          if (s.fmt) valCell.numFmt = s.fmt;
+        } else {
+          valCell.value = s.result;
+        }
+        const isHighlight = i === stats.length - 1;
+        labelCell.font = {
+          name: 'Nunito Sans',
+          size: isHighlight ? 12 : 11,
+          bold: isHighlight,
+          color: { argb: isHighlight ? SE_GREEN_DARK : SE_SLATE },
+        };
+        labelCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        valCell.font = {
+          name: 'Nunito Sans',
+          size: isHighlight ? 14 : 11,
+          bold: isHighlight,
+          color: { argb: isHighlight ? SE_GREEN_DARK : SE_TEXT_DARK },
+        };
+        valCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        if (isHighlight) {
+          labelCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+          valCell.fill   = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+        }
+        row.height = isHighlight ? 30 : 20;
+      });
+
+      ws.mergeCells(28, 1, 28, COLS);
+      const wh = ws.getCell(28, 1);
+      wh.value = 'When floating wins — and when it doesn\'t';
+      wh.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
+      wh.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+      wh.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(28).height = 22;
+
+      const floatBullets = [
+        'Floating pays the spot / index price every month — when the curve averages below the hedge price, that gap compounds across the year into the Saving figure above. The 100 % hedge locks the price at H4 regardless of where the market actually settles.',
+        'Edit column C to weight months by your real load shape — a winter-peaking gas portfolio pays more for the January and February spot cells than a flat MWh assumption, which can flip the answer.',
+        'Edit column E to model curve scenarios: a low-summer / high-winter shape (heating-led demand), an industrial flat curve, or a stressed winter where spot blows past the hedge for two months. Green spot cells beat the hedge, red cells lag.',
+        'Reality is between the two extremes. Most portfolios use this comparison to decide a layered-hedge ratio (e.g. 60 / 40 hedged-to-float) — see the Hedging Strategy Example tab for the layered approach.',
+      ];
+      floatBullets.forEach((b, i) => {
+        const rowIdx = 29 + i;
+        ws.mergeCells(rowIdx, 1, rowIdx, COLS);
+        const cell = ws.getCell(rowIdx, 1);
+        cell.value = `•  ${b}`;
+        cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+        cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+        ws.getRow(rowIdx).height = 36;
+      });
+    }
+
     // ---- Methodology sheet ------------------------------------------
     // Three stacked sections on a single sheet:
     //   1. Energy estimation methodology + the per-property-type
