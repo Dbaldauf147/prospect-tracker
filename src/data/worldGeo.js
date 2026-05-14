@@ -3,75 +3,10 @@
 // the renderer can project equirectangular ((lng+180)/360 * width,
 // (90-lat)/180 * height) directly.
 //
-// CONTINENT_POLYGONS is hand-authored — shape accuracy is rough but
-// each continent is recognizable on the rendered map. Coordinates
-// are written as [lng, lat] pairs to match the canvas X / Y order.
-// We deliberately skip Antarctica for the portfolio map; the site
-// list never lands there and the bottom of the map reads cleaner.
-
-export const CONTINENT_POLYGONS = [
-  {
-    name: 'North America',
-    points: [
-      [-168, 66], [-156, 71], [-130, 71], [-110, 75], [-90, 80], [-75, 82],
-      [-60, 82], [-30, 84], [-20, 74], [-22, 65], [-45, 60], [-55, 53],
-      [-60, 50], [-66, 44], [-69, 41], [-72, 41], [-77, 35], [-80, 26],
-      [-83, 25], [-87, 21], [-95, 18], [-104, 19], [-110, 25], [-117, 32],
-      [-122, 37], [-125, 48], [-130, 55], [-150, 60], [-168, 66],
-    ],
-  },
-  {
-    name: 'South America',
-    points: [
-      [-81, 12], [-72, 12], [-60, 8], [-52, 5], [-47, 0], [-35, -6],
-      [-38, -14], [-39, -22], [-43, -23], [-49, -28], [-54, -34],
-      [-58, -39], [-63, -42], [-65, -50], [-72, -54], [-74, -50],
-      [-72, -42], [-72, -35], [-72, -28], [-72, -18], [-78, -8],
-      [-80, -3], [-81, 4], [-81, 12],
-    ],
-  },
-  {
-    name: 'Europe',
-    points: [
-      [-10, 36], [-9, 43], [-2, 44], [-5, 49], [-5, 56], [-10, 58],
-      [-8, 62], [5, 62], [12, 67], [22, 70], [28, 71], [40, 67],
-      [50, 67], [60, 62], [60, 55], [55, 50], [45, 45], [40, 41],
-      [35, 36], [30, 36], [25, 36], [15, 38], [10, 37], [0, 36],
-      [-10, 36],
-    ],
-  },
-  {
-    name: 'Africa',
-    points: [
-      [-17, 22], [-17, 28], [-10, 32], [0, 32], [10, 36], [20, 32],
-      [25, 32], [30, 31], [33, 28], [36, 22], [38, 17], [42, 12],
-      [50, 11], [51, 4], [42, -2], [40, -10], [40, -17], [36, -22],
-      [33, -28], [25, -33], [20, -34], [15, -34], [10, -28], [5, -20],
-      [0, -10], [-5, -5], [-9, 0], [-9, 6], [-13, 10], [-17, 14],
-      [-17, 22],
-    ],
-  },
-  {
-    name: 'Asia',
-    points: [
-      [30, 71], [50, 75], [70, 76], [90, 76], [110, 74], [130, 73],
-      [150, 70], [165, 66], [180, 65], [175, 60], [165, 60], [155, 56],
-      [145, 50], [142, 45], [140, 35], [132, 30], [125, 28], [120, 22],
-      [115, 19], [108, 14], [109, 10], [105, 6], [100, 4], [95, 5],
-      [88, 11], [80, 8], [72, 14], [68, 22], [62, 25], [56, 26],
-      [50, 28], [44, 35], [38, 38], [35, 41], [32, 45], [35, 50],
-      [40, 55], [45, 60], [50, 65], [40, 67], [30, 71],
-    ],
-  },
-  {
-    name: 'Oceania',
-    points: [
-      [113, -22], [122, -18], [130, -12], [142, -11], [145, -16],
-      [153, -25], [153, -32], [148, -38], [140, -38], [130, -32],
-      [122, -33], [115, -33], [113, -28], [113, -22],
-    ],
-  },
-];
+// The map graphic is the NASA Blue Marble equirectangular world
+// image (public domain, sourced from Wikimedia Commons) bundled at
+// src/assets/world-map.jpg. The renderer draws it as the canvas
+// background, then overlays the dot buckets defined here.
 
 // Country centers — approximate centroids in [lng, lat]. Covers the
 // ~80 most likely upload destinations; lookups fall back to the
