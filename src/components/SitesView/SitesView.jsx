@@ -25,7 +25,7 @@ import {
   formatMoney,
   formatRate,
 } from '../../utils/utilityRates';
-import { parseAllSheets, parseBestSheet, parseSplitSitesTemplate } from '../../utils/xlsxParse';
+import { parseAllSheets, parseBestSheet, parseSplitSitesTemplate, readRoundTripState, isIndicativeSavingsExport } from '../../utils/xlsxParse';
 import { saveIndicativeAnalysis } from '../../utils/firestoreSync';
 import { findFuzzyMatch } from '../../utils/utilityNameMatch';
 import { ENERGY_SUPPLIERS } from '../../data/energySuppliers';
@@ -540,17 +540,28 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           isMerged: false,
         });
       }
+      // Workbook is an Indicative Savings export when it has the
+      // distinctive Site Detail / Methodology tabs alongside Site
+      // List — in that case force-pick Site List and skip the merged
+      // Electric/Gas pseudo-tab default (those tabs aren't even
+      // present in an export, but be explicit).
+      const isExportRoundTrip = isIndicativeSavingsExport(bytes);
       // Prefer the merged tab (index 0 when present); otherwise prefer
       // a sheet whose name looks like a Site List; otherwise the first.
       let selectedIdx = 0;
-      if (!sheets[0].isMerged) {
+      if (isExportRoundTrip) {
+        const idx = sheets.findIndex(s => s.sheetName === 'Site List');
+        if (idx >= 0) selectedIdx = idx;
+      } else if (!sheets[0].isMerged) {
         const preferredIdx = sheets.findIndex(s => /site\s*list|^\s*sites?\s*$/i.test(s.sheetName));
         if (preferredIdx >= 0) selectedIdx = preferredIdx;
       }
+      const roundTripState = isExportRoundTrip ? readRoundTripState(bytes) : null;
       setSitesMappingModal({
         fileName: file.name,
         sheets,
         selectedIdx,
+        roundTripState,
       });
     } catch (err) {
       setUploadError(err?.message || 'Failed to read the sites file');
@@ -626,6 +637,16 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       setElectricProductTypeOverride(mapping.electricProductType || null);
       setGasContractNameOverride(mapping.gasContractName || null);
       setGasProductTypeOverride(mapping.gasProductType || null);
+      // Restore round-trip state from an Indicative Savings export's
+      // hidden sheet (vendor accept/reject decisions). Replaces — not
+      // merges — to match the supplierOverrides "fresh slate" model:
+      // an export-then-import flow is a session restore, not a merge
+      // of two different sessions.
+      const rt = sitesMappingModal.roundTripState;
+      if (rt && rt.vendorDecisions && typeof rt.vendorDecisions === 'object') {
+        setVendorDecisions(rt.vendorDecisions);
+        try { localStorage.setItem('utility-lookup:vendor-decisions', JSON.stringify(rt.vendorDecisions)); } catch {}
+      }
     } catch (err) {
       setUploadError(err?.message || 'Failed to save the sites file');
     }
@@ -686,6 +707,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         isMerged: false,
       }],
       selectedIdx: 0,
+      roundTripState: null,
     });
   }
 
@@ -4967,13 +4989,64 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       renderSheet(extra.name, `${extra.name}  ·  ${new Date().toLocaleDateString()}`, headers, vals);
     }
 
-    // Site List tab — clean, re-uploadable raw input. Plain styling
-    // (no merged title rows) with headers in row 1 so parseBestSheet's
-    // header detector reads them straight, and named "Site List" so
-    // the upload's preferSheetName regex auto-picks this tab when the
-    // workbook is dropped back onto the Utility Lookup page.
+    // Site List tab — round-trippable input. Bakes resolved /
+    // manually-edited supplier values back into the source supplier
+    // columns (or appends new columns if the source had none), and
+    // appends derived snapshot columns (State, Electric/Gas Utility,
+    // Electric/Gas Rate). Named "Site List" so the upload's tab
+    // picker auto-selects this tab when the workbook is dropped back
+    // onto the Utility Lookup page.
     if (cleanSitesData.length > 0) {
-      const inputHeaders = Object.keys(cleanSitesData[0]);
+      const sourceHeaders = Object.keys(cleanSitesData[0]);
+      // Decide where the resolved supplier values go: overwrite the
+      // mapped source column when present, else append a new one with
+      // a name detectSitesMapping will recognize on re-upload.
+      const electricSupplierCol = electricSupplierOverride || 'Electric Supplier';
+      const gasSupplierCol = gasSupplierOverride || 'Gas Supplier';
+      const stateCol = stateColumnOverride || 'State';
+      const appended = [];
+      const addAppended = (name) => {
+        if (!sourceHeaders.includes(name) && !appended.includes(name)) appended.push(name);
+      };
+      addAppended(electricSupplierCol);
+      addAppended(gasSupplierCol);
+      addAppended(stateCol);
+      // Informational snapshot columns — not mapping targets, so
+      // they're dropped on re-import (the page re-derives them).
+      const SNAPSHOT_UTILITY_ELECTRIC = 'Electric Utility';
+      const SNAPSHOT_UTILITY_GAS = 'Gas Utility';
+      const SNAPSHOT_RATE_ELECTRIC = 'Electric Rate ($/kWh)';
+      const SNAPSHOT_RATE_GAS = 'Gas Rate ($/therm)';
+      addAppended(SNAPSHOT_UTILITY_ELECTRIC);
+      addAppended(SNAPSHOT_UTILITY_GAS);
+      addAppended(SNAPSHOT_RATE_ELECTRIC);
+      addAppended(SNAPSHOT_RATE_GAS);
+      const inputHeaders = [...sourceHeaders, ...appended];
+
+      // Build enriched rows from the derived `rows` array so the
+      // baked-in values reflect everything the page is showing —
+      // per-row supplier overrides, fuzzy-match canonicalization,
+      // zip-derived state, rates-file utility lookups. Keep the raw
+      // source values for every other column.
+      const enrichedRows = rows.map(r => {
+        const out = {};
+        for (const h of sourceHeaders) out[h] = r[h];
+        const electricResolved = r.__electricSupplier__ || '';
+        const gasResolved = r.__gasSupplier__ || '';
+        if (electricResolved) out[electricSupplierCol] = electricResolved;
+        else if (!(electricSupplierCol in out)) out[electricSupplierCol] = '';
+        if (gasResolved) out[gasSupplierCol] = gasResolved;
+        else if (!(gasSupplierCol in out)) out[gasSupplierCol] = '';
+        const stateResolved = r.__state__ || '';
+        if (stateResolved) out[stateCol] = stateResolved;
+        else if (!(stateCol in out)) out[stateCol] = '';
+        out[SNAPSHOT_UTILITY_ELECTRIC] = r.__electric__ || '';
+        out[SNAPSHOT_UTILITY_GAS] = r.__gas__ || '';
+        out[SNAPSHOT_RATE_ELECTRIC] = typeof r.__electricRate__ === 'number' ? r.__electricRate__ : '';
+        out[SNAPSHOT_RATE_GAS] = typeof r.__gasRate__ === 'number' ? r.__gasRate__ : '';
+        return out;
+      });
+
       const inputWs = wb.addWorksheet('Site List', {
         properties: { tabColor: { argb: SE_GREEN } },
         views: [{ state: 'frozen', ySplit: 1 }],
@@ -4983,13 +5056,27 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         key: h,
         width: Math.max(String(h).length + 2, 14),
       }));
-      for (const row of cleanSitesData) inputWs.addRow(row);
+      for (const row of enrichedRows) inputWs.addRow(row);
       const hdr = inputWs.getRow(1);
       hdr.font = { name: 'Nunito Sans', bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
       hdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
       hdr.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
       hdr.height = 22;
       inputWs.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: inputHeaders.length } };
+    }
+
+    // Hidden round-trip state sheet — single JSON blob at A1 carrying
+    // page state that doesn't live in the column data (vendor
+    // accept/reject decisions). readRoundTripState picks this up on
+    // re-upload; the user never sees it in Excel because the sheet is
+    // hidden and starts with `__` so parseAllSheets skips it.
+    {
+      const stateWs = wb.addWorksheet('__rt_state__', { state: 'hidden' });
+      stateWs.getCell('A1').value = JSON.stringify({
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        vendorDecisions,
+      });
     }
 
     const buf = await wb.xlsx.writeBuffer();
