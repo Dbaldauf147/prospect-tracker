@@ -54,6 +54,7 @@ import {
   TIER_LABELS,
 } from '../../data/worldGeo';
 import worldMapUrl from '../../assets/world-map.png';
+import { injectLineChart } from '../../utils/excelLiveChart';
 import {
   countryElectricRate,
   countryGasRatePerTherm,
@@ -5346,160 +5347,11 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         ws.getRow(rowIdx).height = 36;
       });
 
-      // Static line chart of the default scenario — embedded as a PNG
-      // because ExcelJS doesn't write native Excel charts. Shows the
-      // 12-month spot curve vs the constant hedge line; bands are
-      // shaded green when spot beats the hedge (floating wins) and
-      // red when spot lags. The chart freezes the defaults at export
-      // time; the table to its left is the live comparison.
-      {
-        const W = 640, H = 340;
-        const canvas = document.createElement('canvas');
-        canvas.width = W; canvas.height = H;
-        const ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#FFFFFF';
-        ctx.fillRect(0, 0, W, H);
-
-        const pad = { top: 50, right: 30, bottom: 50, left: 70 };
-        const cw = W - pad.left - pad.right;
-        const ch = H - pad.top - pad.bottom;
-
-        const hedge = 75;
-        const allPrices = months.map(m => m.spot).concat([hedge]);
-        const minP = Math.min(...allPrices), maxP = Math.max(...allPrices);
-        const yMin = Math.floor((minP - 5) / 5) * 5;
-        const yMax = Math.ceil((maxP + 5) / 5) * 5;
-        const yScale = (v) => pad.top + ch - ((v - yMin) / (yMax - yMin)) * ch;
-        const xScale = (i) => pad.left + (i / (months.length - 1)) * cw;
-
-        ctx.fillStyle = '#0F172A';
-        ctx.font = 'bold 14px Nunito Sans, Arial, sans-serif';
-        ctx.textAlign = 'left';
-        ctx.fillText('Spot Price vs 100 % Hedge — Default Scenario', pad.left, 24);
-
-        ctx.font = '11px Nunito Sans, Arial, sans-serif';
-        ctx.fillStyle = '#64748B';
-        ctx.textAlign = 'right';
-        ctx.strokeStyle = '#E2E8F0';
-        ctx.lineWidth = 1;
-        const ySteps = 5;
-        for (let i = 0; i <= ySteps; i++) {
-          const y = pad.top + (i / ySteps) * ch;
-          const val = yMax - (i / ySteps) * (yMax - yMin);
-          ctx.beginPath();
-          ctx.moveTo(pad.left, y);
-          ctx.lineTo(W - pad.right, y);
-          ctx.stroke();
-          ctx.fillText(`$${val.toFixed(0)}`, pad.left - 8, y + 4);
-        }
-
-        const hedgeY = yScale(hedge);
-        // Per-segment fill between spot and hedge — color by which
-        // side of the hedge line both segment endpoints sit on. Mixed
-        // (crossover) segments get a neutral gray so the eye isn't
-        // misled by a half-green / half-red block.
-        for (let i = 0; i < months.length - 1; i++) {
-          const x1 = xScale(i), x2 = xScale(i + 1);
-          const sy1 = yScale(months[i].spot);
-          const sy2 = yScale(months[i + 1].spot);
-          ctx.beginPath();
-          ctx.moveTo(x1, sy1);
-          ctx.lineTo(x2, sy2);
-          ctx.lineTo(x2, hedgeY);
-          ctx.lineTo(x1, hedgeY);
-          ctx.closePath();
-          if (months[i].spot < hedge && months[i + 1].spot < hedge) {
-            ctx.fillStyle = 'rgba(34, 197, 94, 0.18)';
-          } else if (months[i].spot >= hedge && months[i + 1].spot >= hedge) {
-            ctx.fillStyle = 'rgba(239, 68, 68, 0.18)';
-          } else {
-            ctx.fillStyle = 'rgba(148, 163, 184, 0.10)';
-          }
-          ctx.fill();
-        }
-
-        // Hedge line — dashed dark blue.
-        ctx.strokeStyle = '#1E40AF';
-        ctx.lineWidth = 2;
-        ctx.setLineDash([6, 4]);
-        ctx.beginPath();
-        ctx.moveTo(pad.left, hedgeY);
-        ctx.lineTo(W - pad.right, hedgeY);
-        ctx.stroke();
-        ctx.setLineDash([]);
-
-        // Spot line — solid orange.
-        ctx.strokeStyle = '#F97316';
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        for (let i = 0; i < months.length; i++) {
-          const x = xScale(i), y = yScale(months[i].spot);
-          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-        }
-        ctx.stroke();
-
-        // Spot dots — green when below hedge (floating wins), red
-        // when at/above (hedge wins).
-        for (let i = 0; i < months.length; i++) {
-          ctx.fillStyle = months[i].spot < hedge ? '#16A34A' : '#DC2626';
-          ctx.beginPath();
-          ctx.arc(xScale(i), yScale(months[i].spot), 4.5, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.strokeStyle = '#FFFFFF';
-          ctx.lineWidth = 1.5;
-          ctx.stroke();
-        }
-
-        // X axis labels.
-        ctx.font = '11px Nunito Sans, Arial, sans-serif';
-        ctx.fillStyle = '#475569';
-        ctx.textAlign = 'center';
-        for (let i = 0; i < months.length; i++) {
-          ctx.fillText(months[i].label, xScale(i), H - pad.bottom + 18);
-        }
-
-        // Legend (top-right of chart area).
-        ctx.font = '11px Nunito Sans, Arial, sans-serif';
-        ctx.textAlign = 'left';
-        const legX = W - pad.right - 180;
-        const legY = pad.top + 8;
-        ctx.strokeStyle = '#F97316';
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        ctx.moveTo(legX, legY);
-        ctx.lineTo(legX + 24, legY);
-        ctx.stroke();
-        ctx.fillStyle = '#0F172A';
-        ctx.fillText('Spot Price', legX + 30, legY + 4);
-        ctx.strokeStyle = '#1E40AF';
-        ctx.setLineDash([6, 4]);
-        ctx.beginPath();
-        ctx.moveTo(legX, legY + 18);
-        ctx.lineTo(legX + 24, legY + 18);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.fillStyle = '#0F172A';
-        ctx.fillText('100 % Hedge', legX + 30, legY + 22);
-
-        // Footnote.
-        ctx.font = 'italic 10px Nunito Sans, Arial, sans-serif';
-        ctx.fillStyle = '#94A3B8';
-        ctx.textAlign = 'left';
-        ctx.fillText('Snapshot of default values — green band = months where floating beats the hedge; red band = months where hedging wins.', pad.left, H - 12);
-
-        const dataUrl = canvas.toDataURL('image/png');
-        const imageId = wb.addImage({ base64: dataUrl, extension: 'png' });
-
-        // Anchor the chart to the right of the data table. The table
-        // spans columns A–I (cols 0–8 in 0-indexed terms); we anchor
-        // at col 9.3 to leave a small gap, and at row 4 (1-indexed
-        // row 5) so the chart's top aligns with the section header
-        // just above the table.
-        ws.addImage(imageId, {
-          tl: { col: 9.3, row: 4 },
-          ext: { width: W, height: H },
-        });
-      }
+      // (The chart that used to live here as a static PNG snapshot
+      // has been promoted to a native Excel line chart so it can
+      // recompute live as the user edits the table. The injection
+      // happens after wb.xlsx.writeBuffer() — see the
+      // injectLineChart call near the end of this function.)
     }
 
     // ---- Methodology sheet ------------------------------------------
@@ -5664,7 +5516,31 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       };
     }
 
-    const buf = await wb.xlsx.writeBuffer();
+    let buf = await wb.xlsx.writeBuffer();
+    // Inject a native Excel line chart on the Floating vs Hedging
+    // Example tab. ExcelJS doesn't write chart XML natively, so this
+    // post-processes the xlsx zip to add chart1.xml + the drawing
+    // anchor + relationships. The chart references the spot column
+    // (E7:E18), hedge column (F7:F18) and the month-label column
+    // (B7:B18), so editing any cell in those ranges recomputes the
+    // chart live in Excel.
+    try {
+      buf = await injectLineChart(buf, {
+        sheetName: 'Floating vs Hedging Example',
+        categoriesRange: '$B$7:$B$18',
+        series1: { name: 'Spot Price', range: '$E$7:$E$18' },
+        series2: { name: '100 % Hedge', range: '$F$7:$F$18' },
+        titleText: 'Spot Price vs 100 % Hedge — Live',
+        anchor: { fromCol: 9, fromRow: 4, toCol: 18, toRow: 22 },
+      });
+    } catch (err) {
+      // Chart injection is best-effort — if the XML post-processing
+      // fails we still want the workbook to open. The table on the
+      // Floating vs Hedging Example tab is fully functional without
+      // the chart; it just won't have a visual curve view.
+      // eslint-disable-next-line no-console
+      console.error('Live chart injection failed:', err);
+    }
     const fileName = `Indicative Savings by State - ${new Date().toISOString().slice(0, 10)}.xlsx`;
     if (returnBuffer) return { buffer: buf, fileName };
     const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
