@@ -46,7 +46,6 @@ import {
   COUNTRY_DEREGULATION,
 } from '../../data/countryDeregulation';
 import {
-  CONTINENT_POLYGONS,
   COUNTRY_CENTERS,
   US_STATE_CENTERS,
   CANADA_PROVINCE_CENTERS,
@@ -54,6 +53,7 @@ import {
   TIER_COLORS,
   TIER_LABELS,
 } from '../../data/worldGeo';
+import worldMapUrl from '../../assets/world-map.jpg';
 import {
   countryElectricRate,
   countryGasRatePerTherm,
@@ -3283,64 +3283,28 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         else gasUnknown += b.count;
       }
 
-      // Canvas render — equirectangular projection. Each lat/lng is
-      // mapped linearly so the polygon points and dot centers share
-      // the same coordinate system.
+      // Canvas render — equirectangular projection. The map graphic
+      // (NASA Blue Marble, public domain, bundled at
+      // src/assets/world-map.jpg) is drawn as the canvas background.
+      // Lat/lng → pixel uses the same linear projection the dots use
+      // because the source image is equirectangular.
       const W = 1200, H = 600;
       const canvas = document.createElement('canvas');
       canvas.width = W; canvas.height = H;
       const ctx = canvas.getContext('2d');
-
-      // Ocean background.
-      ctx.fillStyle = '#E0F2FE';
+      const worldMapImg = await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error('Failed to load world map image'));
+        img.src = worldMapUrl;
+      });
+      ctx.drawImage(worldMapImg, 0, 0, W, H);
+      // Apply a slight white wash so the dots stand out against the
+      // photographic background without losing geographic context.
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.18)';
       ctx.fillRect(0, 0, W, H);
-      // Faint graticule (every 30°) so the user reads it as a map.
-      ctx.strokeStyle = '#BAE6FD';
-      ctx.lineWidth = 1;
-      for (let lng = -150; lng <= 150; lng += 30) {
-        const x = ((lng + 180) / 360) * W;
-        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
-      }
-      for (let lat = -60; lat <= 60; lat += 30) {
-        const y = ((90 - lat) / 180) * H;
-        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
-      }
 
       const project = (lng, lat) => [((lng + 180) / 360) * W, ((90 - lat) / 180) * H];
-
-      // Continent fills.
-      ctx.fillStyle = '#FDE68A';
-      ctx.strokeStyle = '#92400E';
-      ctx.lineWidth = 1;
-      for (const cont of CONTINENT_POLYGONS) {
-        ctx.beginPath();
-        cont.points.forEach(([lng, lat], i) => {
-          const [x, y] = project(lng, lat);
-          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-        });
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-      }
-
-      // Continent labels (centered roughly on each polygon).
-      ctx.fillStyle = '#78350F';
-      ctx.font = 'italic 14px Nunito Sans, Arial, sans-serif';
-      ctx.textAlign = 'center';
-      const labelPositions = {
-        'North America': [-100, 48],
-        'South America': [-60, -15],
-        'Europe':         [15, 53],
-        'Africa':         [20, 5],
-        'Asia':           [95, 50],
-        'Oceania':        [134, -25],
-      };
-      for (const cont of CONTINENT_POLYGONS) {
-        const pos = labelPositions[cont.name];
-        if (!pos) continue;
-        const [x, y] = project(pos[0], pos[1]);
-        ctx.fillText(cont.name, x, y);
-      }
 
       // Plot dots — radius scales with sqrt(count) so a 100-site
       // bucket isn't 100× the area of a 1-site bucket.
