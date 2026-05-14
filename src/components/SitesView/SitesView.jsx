@@ -1358,6 +1358,22 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       },
       exportValue: (row) => row.__siteDescription__ || '',
     };
+    // Square footage of the site. Same value that scales the
+    // property-type consumption estimates — surfaced here so the user
+    // can see what the page used per row.
+    const propertySizeCol = {
+      key: 'propertySize',
+      label: 'Size (ft²)',
+      defaultWidth: 110,
+      render: (row) => {
+        const v = row.__propertySizeFt2__;
+        if (v == null || !Number.isFinite(v)) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
+        return (
+          <span style={{ fontSize: '0.72rem', fontFamily: 'var(--font-mono, ui-monospace, monospace)' }}>{Math.round(v).toLocaleString()}</span>
+        );
+      },
+      exportValue: (row) => (typeof row.__propertySizeFt2__ === 'number' && Number.isFinite(row.__propertySizeFt2__)) ? Math.round(row.__propertySizeFt2__) : '',
+    };
     const makeMarketCol = (utilityKey, label) => ({
       key: `${utilityKey}_market`,
       label,
@@ -1678,6 +1694,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       makeLocationCol('country', 'Lookup Country'),
       propertyTypeCol,
       siteDescriptionCol,
+      propertySizeCol,
       // Property-type-based estimates — always show the reference
       // figure regardless of whether the upload also carried actual
       // values, so the user can spot under- / over-reported sites by
@@ -1760,6 +1777,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       columns[0].key,
       'propertyType',
       'siteDescription',
+      'propertySize',
       'electric', 'electric_market', 'electric_rate', 'electricCost',
       'gas', 'gas_market', 'gas_rate', 'gasCost',
       'totalCost',
