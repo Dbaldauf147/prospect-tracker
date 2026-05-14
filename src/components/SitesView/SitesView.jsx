@@ -3598,9 +3598,12 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       dotsCap.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
       ws.getRow(dotsCapRow).height = 42;
 
-      // Overview table starting after the image (~row 38 with default
-      // row heights). Push it down enough to leave clear space.
-      const SUMMARY_START = 38;
+      // Overview table sits just below the map image. Anchored at
+      // row 30 so the table starts before the image bleeds into
+      // taller cell heights below it — the Country level view
+      // follows immediately underneath (the country header recalcs
+      // its row offset from this constant).
+      const SUMMARY_START = 30;
       ws.mergeCells(SUMMARY_START, 1, SUMMARY_START, COLS);
       const sumHdr = ws.getCell(SUMMARY_START, 1);
       sumHdr.value = 'Overview';
