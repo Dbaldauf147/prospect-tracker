@@ -3,10 +3,111 @@
 // the renderer can project equirectangular ((lng+180)/360 * width,
 // (90-lat)/180 * height) directly.
 //
-// The map graphic is the NASA Blue Marble equirectangular world
-// image (public domain, sourced from Wikimedia Commons) bundled at
-// src/assets/world-map.jpg. The renderer draws it as the canvas
-// background, then overlays the dot buckets defined here.
+// The map graphic is a public-domain blank political world map
+// (Wikimedia Commons File:BlankMap-World-Equirectangular.svg)
+// bundled at src/assets/world-map.png. Country polygons for
+// choropleth coloring come from world-atlas's countries-110m.json
+// (TopoJSON, ~108 KB) decoded inline below.
+
+// ---------------- TopoJSON decoder ----------------
+// Minimal decoder for the world-atlas TopoJSON shape — accepts a
+// `topology` object and returns an array of features
+// `{ id, name, rings: [[[lng,lat], ...], ...] }`. Each ring is a
+// closed polygon; multipolygons contribute multiple rings under the
+// same feature so the renderer can fill each one.
+//
+// Arcs are delta-encoded against the previous point in the arc, then
+// scaled by `transform.scale` and offset by `transform.translate` to
+// recover real lng/lat. Negative arc indices mean the arc is reversed
+// (twoComplementsNot via `~i`).
+
+import countriesTopology from './countries-110m.json';
+
+function decodeArcs(topology) {
+  const { scale: [kx, ky], translate: [dx, dy] } = topology.transform;
+  return topology.arcs.map(arc => {
+    let x = 0, y = 0;
+    return arc.map(([dxd, dyd]) => {
+      x += dxd; y += dyd;
+      return [x * kx + dx, y * ky + dy];
+    });
+  });
+}
+
+function buildRing(ringArcIndices, decodedArcs) {
+  const points = [];
+  for (let i = 0; i < ringArcIndices.length; i++) {
+    const arcIdx = ringArcIndices[i];
+    const reverse = arcIdx < 0;
+    const arc = decodedArcs[reverse ? ~arcIdx : arcIdx];
+    const arcPoints = reverse ? arc.slice().reverse() : arc;
+    // Each arc shares its first point with the prior arc's last
+    // point — drop the duplicate when stitching them together.
+    if (i > 0) points.pop();
+    points.push(...arcPoints);
+  }
+  return points;
+}
+
+function buildRingsFromGeometry(geometry, decodedArcs) {
+  if (geometry.type === 'Polygon') {
+    return geometry.arcs.map(ring => buildRing(ring, decodedArcs));
+  }
+  if (geometry.type === 'MultiPolygon') {
+    return geometry.arcs.flatMap(poly => poly.map(ring => buildRing(ring, decodedArcs)));
+  }
+  return [];
+}
+
+let _decodedCountries = null;
+export function getCountryFeatures() {
+  if (_decodedCountries) return _decodedCountries;
+  const arcs = decodeArcs(countriesTopology);
+  _decodedCountries = countriesTopology.objects.countries.geometries.map(g => ({
+    id: g.id,
+    name: g.properties?.name || '',
+    rings: buildRingsFromGeometry(g, arcs),
+  }));
+  return _decodedCountries;
+}
+
+// TopoJSON uses slightly different country names than the
+// COUNTRY_DEREGULATION reference. Mapping resolves the common
+// mismatches; anything not listed here is matched directly by name
+// (and if no entry in COUNTRY_DEREGULATION matches the country falls
+// through to the "unknown" tier).
+export const TOPO_NAME_TO_DEREG_KEY = {
+  'United States of America': 'United States',
+  'Czech Republic':            'Czechia',
+  "Côte d'Ivoire":             'Ivory Coast',
+  'Dominican Rep.':            'Dominican Republic',
+  'Dem. Rep. Congo':           'Democratic Republic of the Congo',
+  'Eq. Guinea':                'Equatorial Guinea',
+  'Macedonia':                 'North Macedonia',
+  'Bosnia and Herz.':          'Bosnia and Herzegovina',
+  'Central African Rep.':      'Central African Republic',
+  "Lao PDR":                   'Laos',
+  'Korea':                     'South Korea',
+  'Dem. Rep. Korea':           'North Korea',
+  'Solomon Is.':               'Solomon Islands',
+  'eSwatini':                  'Eswatini',
+  'S. Sudan':                  'South Sudan',
+  'W. Sahara':                 'Western Sahara',
+  'N. Cyprus':                 'Cyprus',
+  'Russia':                    'Russia',
+  'Vietnam':                   'Vietnam',
+  'Brunei':                    'Brunei',
+  'Falkland Is.':              'Falkland Islands',
+};
+
+// ISO 3166-1 numeric ids for countries that don't have a clean
+// single-tier classification at the country level (their dereg
+// status varies materially by sub-region). We render these in the
+// "Mixed" tier (blue-gray) on the map.
+export const MIXED_TIER_COUNTRY_IDS = new Set([
+  '840', // United States of America
+  '124', // Canada
+]);
 
 // Country centers — approximate centroids in [lng, lat]. Covers the
 // ~80 most likely upload destinations; lookups fall back to the
@@ -172,18 +273,32 @@ export function statusTier(status) {
   return 'unknown';
 }
 
-// Color hex for each tier — used by the dot fill in the renderer and
-// also the legend block.
+// Color hex for each tier — used by the dot fill, country fill,
+// table swatch, and legend block.
 export const TIER_COLORS = {
   dereg:   '#16A34A',
   some:    '#F59E0B',
   reg:     '#DC2626',
+  mixed:   '#64748B',
   unknown: '#94A3B8',
+};
+
+// Lighter "faded" variants for choropleth fill on countries the
+// portfolio does not have sites in. Keeps the same hue so the dereg
+// tier is still legible, but drops saturation so the with-sites
+// countries pop.
+export const TIER_COLORS_FADED = {
+  dereg:   '#BBF7D0',
+  some:    '#FDE68A',
+  reg:     '#FECACA',
+  mixed:   '#CBD5E1',
+  unknown: '#E2E8F0',
 };
 
 export const TIER_LABELS = {
   dereg:   'Deregulated',
   some:    'Some deregulation',
   reg:     'Regulated / unlikely',
+  mixed:   'Mixed (US / Canada)',
   unknown: 'No data',
 };
