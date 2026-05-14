@@ -135,7 +135,7 @@
   border-radius: var(--radius-sm);
   font-size: var(--font-size-sm);
   font-family: inherit;
-  text-align: right;
+  text-align: left;
 }
 
 .btn {
@@ -201,10 +201,23 @@
 
 .grid {
   border-collapse: collapse;
-  width: 100%;
+  width: auto;
+  table-layout: fixed;
   font-size: var(--font-size-sm);
   background: var(--color-bg);
 }
+
+/* Per-column widths sized to header / typical content + a bit of
+   breathing room. The grid is `width: auto` + `table-layout: fixed`,
+   so these widths set the actual rendered column sizes. */
+.colFeeSchedule { width: 160px; }
+.colType { width: 150px; }
+.colFee { width: 90px; }
+.colUnit { width: 110px; }
+.colUnitCount { width: 110px; }
+.colStartMonth { width: 120px; }
+.colYear { width: 95px; }
+.colAction { width: 32px; }
 
 .grid th,
 .grid td {
@@ -243,7 +256,7 @@
 }
 
 .numCell {
-  text-align: right;
+  text-align: left;
 }
 
 .missingStart {
