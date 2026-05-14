@@ -51,7 +51,6 @@ import {
   CANADA_PROVINCE_CENTERS,
   statusTier,
   TIER_COLORS,
-  TIER_COLORS_FADED,
   TIER_LABELS,
   getCountryFeatures,
   TOPO_NAME_TO_DEREG_KEY,
@@ -3223,12 +3222,20 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const MAP_COLS = 14;
       const LEGEND_COLS = 4;
       const COLS = MAP_COLS + LEGEND_COLS;
+      // Widen the columns the summary tables use for large numbers
+      // — Load (kWh / Dth) and Cost — so a comma-formatted figure
+      // like "12,345,678" or "$1,234,567" doesn't get truncated.
+      // Columns E (5) and G (7) are the user-visible big-number
+      // columns on the Country level view; F and H benefit too.
+      const NUMERIC_WIDE_COLS = new Set([5, 6, 7, 8]);
       ws.columns = [
-        ...Array.from({ length: MAP_COLS }, () => ({ width: 12 })),
+        ...Array.from({ length: MAP_COLS }, (_, i) => ({
+          width: NUMERIC_WIDE_COLS.has(i + 1) ? 17 : 12,
+        })),
         { width: 4 },  // gutter between map and legend
         { width: 6 },  // saturated swatch
-        { width: 6 },  // faded swatch
-        { width: 24 }, // tier label
+        { width: 6 },  // (kept for legacy header alignment)
+        { width: 28 }, // tier label
       ];
 
       // Bucket sites by (country, state-or-province) and look up the
@@ -3286,7 +3293,11 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         buckets.get(key).count++;
       }
 
-      // Tier totals across mapped buckets for the summary table.
+      // Tier totals across mapped buckets for the Overview table.
+      // Site count rolls up per-bucket; load + cost aggregate over
+      // the original rows array so we get per-site precision. Cost
+      // uses the actual upload value when present and falls back to
+      // the consumption × rate estimate.
       let elecDereg = 0, elecSome = 0, elecReg = 0, elecUnknown = 0;
       let gasDereg = 0, gasSome = 0, gasReg = 0, gasUnknown = 0;
       let mappedSites = 0;
@@ -3300,6 +3311,42 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         else if (b.gasTier === 'some') gasSome += b.count;
         else if (b.gasTier === 'reg') gasReg += b.count;
         else gasUnknown += b.count;
+      }
+      // Per-tier load + cost — keyed by the same tier label the
+      // Overview table uses. `electric` tracks electric-tier
+      // attribution (kWh + electric cost); `gas` tracks gas-tier
+      // attribution (therms + gas cost).
+      const blankTierAgg = () => ({ kwh: 0, therms: 0, cost: 0 });
+      const electricTierAgg = { dereg: blankTierAgg(), some: blankTierAgg(), reg: blankTierAgg(), mixed: blankTierAgg(), unknown: blankTierAgg() };
+      const gasTierAgg      = { dereg: blankTierAgg(), some: blankTierAgg(), reg: blankTierAgg(), mixed: blankTierAgg(), unknown: blankTierAgg() };
+      const rowTierFor = (commodity, country, stateCode, isUS, isCA) => {
+        if (isUS && US_STATE_CENTERS[stateCode]) {
+          const m = commodity === 'electric' ? ELECTRIC_DEREGULATION[stateCode] : GAS_DEREGULATION[stateCode];
+          return m?.status === 'yes' ? 'dereg' : (m?.status === 'large' ? 'some' : 'reg');
+        }
+        if (isCA && CANADA_PROVINCE_CENTERS[stateCode]) return 'dereg';
+        const c = COUNTRY_DEREGULATION[country];
+        if (!c) return 'unknown';
+        return statusTier(commodity === 'electric' ? c.electric : c.gas);
+      };
+      for (const r of rows) {
+        const rawCountry = String(r.__country__ || '').trim();
+        const country = normalizeCountryName(rawCountry) || rawCountry;
+        const stateCode = String(r.__state__ || '').trim().toUpperCase();
+        const isUS = /^(united states|usa|us)$/i.test(country);
+        const isCA = /^(canada|ca)$/i.test(country);
+        const eTier = rowTierFor('electric', country, stateCode, isUS, isCA);
+        const gTier = rowTierFor('gas',      country, stateCode, isUS, isCA);
+        if (typeof r.__kwh__ === 'number' && Number.isFinite(r.__kwh__)) electricTierAgg[eTier].kwh += r.__kwh__;
+        if (typeof r.__therms__ === 'number' && Number.isFinite(r.__therms__)) gasTierAgg[gTier].therms += r.__therms__;
+        const eCost = (typeof r.__electricCostActual__ === 'number' && Number.isFinite(r.__electricCostActual__))
+          ? r.__electricCostActual__
+          : (typeof r.__electricCostEstimated__ === 'number' && Number.isFinite(r.__electricCostEstimated__) ? r.__electricCostEstimated__ : 0);
+        const gCost = (typeof r.__gasCostActual__ === 'number' && Number.isFinite(r.__gasCostActual__))
+          ? r.__gasCostActual__
+          : (typeof r.__gasCostEstimated__ === 'number' && Number.isFinite(r.__gasCostEstimated__) ? r.__gasCostEstimated__ : 0);
+        electricTierAgg[eTier].cost += eCost;
+        gasTierAgg[gTier].cost += gCost;
       }
 
       // Per-country aggregation for the choropleth fill + the
@@ -3361,11 +3408,12 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // Choropleth fills — color each country polygon by its
       // deregulation tier. Countries the portfolio HAS sites in
       // render in the saturated tier color so they pop visually;
-      // countries with no sites render in a faded variant so the
-      // dereg tier is still legible (the user can scan for likely
-      // future expansion markets). US and Canada use the "mixed"
-      // tier because per-state nuance is out of scope at country
-      // granularity.
+      // countries with no sites render in a uniform gray so the
+      // sites-having countries clearly dominate. US uses its
+      // country-reference classification (Deregulated). Canada is
+      // pinned to the "mixed" tier because the country-level
+      // entry doesn't capture per-province nuance.
+      const NO_SITES_FILL = '#E2E8F0';
       const countryFeatures = getCountryFeatures();
       for (const feat of countryFeatures) {
         const derGKey = TOPO_NAME_TO_DEREG_KEY[feat.name] || feat.name;
@@ -3376,18 +3424,40 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         else if (!c) tier = 'unknown';
         else tier = statusTier(c.electric);
         const hasSites = countryAggs.has(derGKey);
-        ctx.fillStyle = hasSites ? TIER_COLORS[tier] : TIER_COLORS_FADED[tier];
+        ctx.fillStyle = hasSites ? TIER_COLORS[tier] : NO_SITES_FILL;
         ctx.strokeStyle = '#94A3B8';
         ctx.lineWidth = 0.5;
+        // Antimeridian-aware sub-ring splitting: countries that
+        // cross the date line (Russia, Fiji, the Aleutians) have
+        // adjacent ring points whose longitudes jump by ~360°.
+        // Drawing those connectors straight in equirectangular space
+        // streaks a long line across the entire map. Splitting the
+        // ring at each big jump and drawing each sub-ring as its
+        // own closed polygon keeps the fill intact without the
+        // wraparound artifact.
         for (const ring of feat.rings) {
-          ctx.beginPath();
-          for (let i = 0; i < ring.length; i++) {
-            const [px, py] = project(ring[i][0], ring[i][1]);
-            if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+          const subRings = [];
+          let cur = [];
+          let prevLng = null;
+          for (const pt of ring) {
+            if (prevLng !== null && Math.abs(pt[0] - prevLng) > 180) {
+              if (cur.length > 2) subRings.push(cur);
+              cur = [];
+            }
+            cur.push(pt);
+            prevLng = pt[0];
           }
-          ctx.closePath();
-          ctx.fill();
-          ctx.stroke();
+          if (cur.length > 2) subRings.push(cur);
+          for (const sr of subRings) {
+            ctx.beginPath();
+            for (let i = 0; i < sr.length; i++) {
+              const [px, py] = project(sr[i][0], sr[i][1]);
+              if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+            }
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+          }
         }
       }
 
@@ -3466,94 +3536,92 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       });
 
       // Legend block — rendered as Excel cells to the right of the
-      // map image. MAP_COLS + 1 = the swatch column (after the
-      // gutter); MAP_COLS + 3 = the tier-label column.
+      // map image. The swatch sits in the swatch column; the tier
+      // label sits in the label column. Single swatch per tier
+      // (countries with sites only); a final gray row marks the
+      // no-sites fill.
       const legendStart = 4; // 1-indexed row
-      const swatchSatCol = MAP_COLS + 2;  // 1-indexed
-      const swatchFadeCol = MAP_COLS + 3;
+      const swatchCol = MAP_COLS + 2;
       const labelCol = MAP_COLS + 4;
 
-      // Legend title.
-      ws.mergeCells(legendStart, swatchSatCol, legendStart, labelCol);
-      const legTitle = ws.getCell(legendStart, swatchSatCol);
+      ws.mergeCells(legendStart, swatchCol, legendStart, labelCol);
+      const legTitle = ws.getCell(legendStart, swatchCol);
       legTitle.value = 'Legend';
       legTitle.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
       legTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
       legTitle.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
       ws.getRow(legendStart).height = 22;
 
-      // Caption.
-      ws.mergeCells(legendStart + 1, swatchSatCol, legendStart + 1, labelCol);
-      const legCap = ws.getCell(legendStart + 1, swatchSatCol);
-      legCap.value = 'Country fill = dereg tier. Saturated = portfolio has sites; faded = no sites.';
+      ws.mergeCells(legendStart + 1, swatchCol, legendStart + 1, labelCol);
+      const legCap = ws.getCell(legendStart + 1, swatchCol);
+      legCap.value = 'Country fill = deregulation tier. Countries with no portfolio sites are grayed out.';
       legCap.font = { name: 'Nunito Sans', italic: true, size: 9, color: { argb: SE_SLATE } };
       legCap.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
       ws.getRow(legendStart + 1).height = 36;
 
-      // Column-header band above the swatch pairs.
-      const swatchHdrRow = legendStart + 2;
-      const satHdr = ws.getCell(swatchHdrRow, swatchSatCol);
-      satHdr.value = 'Has sites';
-      satHdr.font = { name: 'Nunito Sans', bold: true, size: 9, color: { argb: 'FFFFFFFF' } };
-      satHdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
-      satHdr.alignment = { vertical: 'middle', horizontal: 'center' };
-      const fadeHdr = ws.getCell(swatchHdrRow, swatchFadeCol);
-      fadeHdr.value = 'No sites';
-      fadeHdr.font = { name: 'Nunito Sans', bold: true, size: 9, color: { argb: 'FFFFFFFF' } };
-      fadeHdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
-      fadeHdr.alignment = { vertical: 'middle', horizontal: 'center' };
-      const tierHdr = ws.getCell(swatchHdrRow, labelCol);
-      tierHdr.value = 'Tier';
-      tierHdr.font = { name: 'Nunito Sans', bold: true, size: 9, color: { argb: 'FFFFFFFF' } };
-      tierHdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
-      tierHdr.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-      ws.getRow(swatchHdrRow).height = 18;
-
-      // One row per tier with saturated swatch + faded swatch + label.
-      // ExcelJS fill colors expect 8-char ARGB (FF + 6-char hex), so
-      // strip the leading '#' from TIER_COLORS values when emitting.
-      const tiersForLegend = ['dereg', 'some', 'reg', 'mixed', 'unknown'];
+      // One row per tier: tier-color swatch + tier label. Plus a
+      // final gray "No sites" row that matches the no-sites fill.
       const hexToArgb = (hex) => 'FF' + String(hex).replace(/^#/, '').toUpperCase();
-      tiersForLegend.forEach((t, i) => {
-        const rowIdx = swatchHdrRow + 1 + i;
-        const satCell = ws.getCell(rowIdx, swatchSatCol);
-        const fadeCell = ws.getCell(rowIdx, swatchFadeCol);
-        const labelCell = ws.getCell(rowIdx, labelCol);
-        satCell.value = '';
-        satCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: hexToArgb(TIER_COLORS[t]) } };
-        satCell.border = { top: { style: 'thin', color: { argb: 'FF94A3B8' } }, bottom: { style: 'thin', color: { argb: 'FF94A3B8' } }, left: { style: 'thin', color: { argb: 'FF94A3B8' } }, right: { style: 'thin', color: { argb: 'FF94A3B8' } } };
-        fadeCell.value = '';
-        fadeCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: hexToArgb(TIER_COLORS_FADED[t]) } };
-        fadeCell.border = { top: { style: 'thin', color: { argb: 'FF94A3B8' } }, bottom: { style: 'thin', color: { argb: 'FF94A3B8' } }, left: { style: 'thin', color: { argb: 'FF94A3B8' } }, right: { style: 'thin', color: { argb: 'FF94A3B8' } } };
-        labelCell.value = TIER_LABELS[t];
-        labelCell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-        labelCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      const swatchBorder = {
+        top:    { style: 'thin', color: { argb: 'FF94A3B8' } },
+        bottom: { style: 'thin', color: { argb: 'FF94A3B8' } },
+        left:   { style: 'thin', color: { argb: 'FF94A3B8' } },
+        right:  { style: 'thin', color: { argb: 'FF94A3B8' } },
+      };
+      const legendEntries = [
+        ['dereg',   TIER_COLORS.dereg,   TIER_LABELS.dereg],
+        ['some',    TIER_COLORS.some,    TIER_LABELS.some],
+        ['reg',     TIER_COLORS.reg,     TIER_LABELS.reg],
+        ['mixed',   TIER_COLORS.mixed,   TIER_LABELS.mixed],
+        ['unknown', TIER_COLORS.unknown, TIER_LABELS.unknown],
+        ['nosite',  NO_SITES_FILL,       'No sites'],
+      ];
+      legendEntries.forEach(([_t, color, label], i) => {
+        const rowIdx = legendStart + 2 + i;
+        const sw = ws.getCell(rowIdx, swatchCol);
+        sw.value = '';
+        sw.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: hexToArgb(color) } };
+        sw.border = swatchBorder;
+        const lbl = ws.getCell(rowIdx, labelCol);
+        lbl.value = label;
+        lbl.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+        lbl.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
         ws.getRow(rowIdx).height = 18;
       });
 
-      // Site-dot caption below the tier table.
-      const dotsCapRow = swatchHdrRow + 1 + tiersForLegend.length + 1;
-      ws.mergeCells(dotsCapRow, swatchSatCol, dotsCapRow, labelCol);
-      const dotsCap = ws.getCell(dotsCapRow, swatchSatCol);
+      // Caption explaining the dot encoding sits below the tier list.
+      const dotsCapRow = legendStart + 2 + legendEntries.length + 1;
+      ws.mergeCells(dotsCapRow, swatchCol, dotsCapRow, labelCol);
+      const dotsCap = ws.getCell(dotsCapRow, swatchCol);
       dotsCap.value = 'Each site dot — left half = Electric tier, right half = Gas tier. Dot size scales with the number of sites in that bucket.';
       dotsCap.font = { name: 'Nunito Sans', italic: true, size: 9, color: { argb: SE_SLATE } };
       dotsCap.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
       ws.getRow(dotsCapRow).height = 42;
 
-      // Summary table starting after the image (~row 38 with default
+      // Overview table starting after the image (~row 38 with default
       // row heights). Push it down enough to leave clear space.
       const SUMMARY_START = 38;
       ws.mergeCells(SUMMARY_START, 1, SUMMARY_START, COLS);
       const sumHdr = ws.getCell(SUMMARY_START, 1);
-      sumHdr.value = 'Sites by deregulation tier';
+      sumHdr.value = 'Overview';
       sumHdr.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
       sumHdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
       sumHdr.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
       ws.getRow(SUMMARY_START).height = 22;
 
       const tableHeaderRow = SUMMARY_START + 1;
+      const overviewHeaders = [
+        'Tier',
+        'Electric — Sites',
+        'Electric — %',
+        'Gas — Sites',
+        'Gas — %',
+        'Load (kWh)',
+        'Load (Dth)',
+        'Total Cost ($)',
+      ];
       const hdr = ws.getRow(tableHeaderRow);
-      ['Tier', 'Electric — Sites', 'Electric — % of plotted', 'Gas — Sites', 'Gas — % of plotted'].forEach((label, i) => {
+      overviewHeaders.forEach((label, i) => {
         const cell = hdr.getCell(i + 1);
         cell.value = label;
         cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
@@ -3562,22 +3630,32 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       });
       hdr.height = 22;
       const tierRows = [
-        ['Deregulated',         elecDereg,   gasDereg],
-        ['Some deregulation',   elecSome,    gasSome],
-        ['Regulated / unlikely',elecReg,     gasReg],
-        ['No data',             elecUnknown, gasUnknown],
+        ['Deregulated',          'dereg',   elecDereg,   gasDereg],
+        ['Some deregulation',    'some',    elecSome,    gasSome],
+        ['Regulated / unlikely', 'reg',     elecReg,     gasReg],
+        ['No data',              'unknown', elecUnknown, gasUnknown],
       ];
       const pct = (n) => mappedSites > 0 ? n / mappedSites : 0;
       tierRows.forEach((tr, i) => {
         const r = ws.getRow(tableHeaderRow + 1 + i);
-        r.getCell(1).value = tr[0];
-        r.getCell(2).value = tr[1];
-        r.getCell(3).value = pct(tr[1]);
-        r.getCell(4).value = tr[2];
-        r.getCell(5).value = pct(tr[2]);
+        const [label, tierKey, eSites, gSites] = tr;
+        const kwh = electricTierAgg[tierKey]?.kwh || 0;
+        const therms = gasTierAgg[tierKey]?.therms || 0;
+        const cost = (electricTierAgg[tierKey]?.cost || 0) + (gasTierAgg[tierKey]?.cost || 0);
+        r.getCell(1).value = label;
+        r.getCell(2).value = eSites;
+        r.getCell(3).value = pct(eSites);
+        r.getCell(4).value = gSites;
+        r.getCell(5).value = pct(gSites);
+        r.getCell(6).value = Math.round(kwh);
+        r.getCell(7).value = Math.round(therms / 10); // therms → Dth
+        r.getCell(8).value = Math.round(cost);
         r.getCell(3).numFmt = '0.0%';
         r.getCell(5).numFmt = '0.0%';
-        for (let ci = 1; ci <= 5; ci++) {
+        r.getCell(6).numFmt = '#,##0';
+        r.getCell(7).numFmt = '#,##0';
+        r.getCell(8).numFmt = '"$"#,##0';
+        for (let ci = 1; ci <= overviewHeaders.length; ci++) {
           r.getCell(ci).font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
           r.getCell(ci).alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
           r.getCell(ci).border = {
@@ -3597,7 +3675,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         const countryHdrRow = tableHeaderRow + tierRows.length + 3;
         ws.mergeCells(countryHdrRow, 1, countryHdrRow, COLS);
         const cHdr = ws.getCell(countryHdrRow, 1);
-        cHdr.value = 'Sites by country';
+        cHdr.value = 'Country level view';
         cHdr.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
         cHdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
         cHdr.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
