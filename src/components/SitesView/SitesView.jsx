@@ -4391,7 +4391,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     // that rolled up into the by-state summary above.
     const detailSheet = wb.addWorksheet('Site Detail', {
       properties: { tabColor: { argb: SE_GREEN } },
-      views: [{ showGridLines: false, state: 'frozen', ySplit: 2 }],
+      views: [{ showGridLines: false, state: 'frozen', ySplit: 1 }],
     });
     const detailCols = [
       { label: 'Site Name', get: (s) => s.siteName, width: 28 },
@@ -4418,18 +4418,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     ];
     detailSheet.columns = detailCols.map(c => ({ width: c.width }));
 
-    // Title band — same Schneider green as the by-state sheet.
-    detailSheet.mergeCells(1, 1, 1, detailCols.length);
-    const detailTitle = detailSheet.getCell(1, 1);
-    detailTitle.value = 'Site Detail';
-    detailTitle.font = { name: 'Nunito Sans', bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
-    detailTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
-    detailTitle.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-    detailSheet.getRow(1).height = 28;
-
     // Header row. Borders on bottom + right so the column separators
     // continue down through the data rows.
-    const detailHeader = detailSheet.getRow(2);
+    const detailHeader = detailSheet.getRow(1);
     detailCols.forEach((c, i) => {
       const cell = detailHeader.getCell(i + 1);
       cell.value = c.label;
@@ -4533,7 +4524,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       .sort((a, b) => (a.state || '').localeCompare(b.state || '') || a.siteName.localeCompare(b.siteName));
 
     sitesForDetail.forEach((s, idx) => {
-      const dataRow = detailSheet.getRow(3 + idx);
+      const dataRow = detailSheet.getRow(2 + idx);
       detailCols.forEach((c, i) => {
         const cell = dataRow.getCell(i + 1);
         const v = c.get(s);
@@ -4574,8 +4565,8 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     });
     if (sitesForDetail.length > 0) {
       detailSheet.autoFilter = {
-        from: { row: 2, column: 1 },
-        to: { row: 2 + sitesForDetail.length, column: detailCols.length },
+        from: { row: 1, column: 1 },
+        to: { row: 1 + sitesForDetail.length, column: detailCols.length },
       };
     }
 
