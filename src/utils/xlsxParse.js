@@ -141,12 +141,14 @@ export function parseSplitSitesTemplate(buffer) {
 // Parses every sheet in an xlsx/csv buffer and returns the ones that
 // have at least one data row. Used by the Sites column-mapping modal
 // so the user can pick which tab to map. Order matches the workbook's
-// own SheetNames order.
+// own SheetNames order. Sheets whose name starts with `__` are
+// reserved for internal round-trip state and never surface to the UI.
 export function parseAllSheets(buffer) {
   const wb = XLSX.read(buffer, { type: 'array' });
   if (!wb.SheetNames?.length) return [];
   const out = [];
   for (const name of wb.SheetNames) {
+    if (String(name).startsWith('__')) continue;
     const sheet = wb.Sheets[name];
     if (!sheet) continue;
     try {
@@ -158,6 +160,36 @@ export function parseAllSheets(buffer) {
     }
   }
   return out;
+}
+
+// Reads the hidden `__rt_state__` sheet that the Indicative Savings
+// export writes to round-trip page state (vendor decisions, etc.).
+// Returns the parsed JSON or null when the sheet / cell is missing or
+// unreadable. The hidden sheet has a single cell at A1 with a JSON
+// payload, so this dodges parseSheet's header-row heuristic entirely.
+export function readRoundTripState(buffer) {
+  const wb = XLSX.read(buffer, { type: 'array' });
+  const sheet = wb.Sheets?.['__rt_state__'];
+  if (!sheet) return null;
+  const cell = sheet['A1'];
+  const raw = cell?.v;
+  if (raw == null) return null;
+  try {
+    const parsed = JSON.parse(String(raw));
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+// Returns true when the workbook looks like an Indicative Savings
+// export (carries the distinctive 'Site Detail' + 'Methodology' tabs
+// alongside a 'Site List' tab). Used to bias the column-mapping
+// modal's default tab selection.
+export function isIndicativeSavingsExport(buffer) {
+  const wb = XLSX.read(buffer, { type: 'array' });
+  const names = new Set((wb.SheetNames || []).map(n => String(n)));
+  return names.has('Site List') && (names.has('Site Detail') || names.has('Methodology'));
 }
 
 // Parses an xlsx/csv buffer and returns the sheet with the most rows.
