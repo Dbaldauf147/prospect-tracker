@@ -4256,6 +4256,18 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     const smallElectricStates = collectStates(electricRows, 'Spend < $1M');
     const mexicoStates = collectStates(electricRows, 'Mexico sourcing');
     const smallGasStates = collectStates(gasRows, 'too low for sourcing');
+    // Portfolio-wide VPPA opportunity flag. North America electric
+    // load above 100,000 MWh/yr is the threshold where a Virtual PPA
+    // typically pencils out. NA = US states + Canadian provinces
+    // (which bucket at state level — non-NA countries roll up as
+    // isCountry rows and are excluded). Consumption is stored in kWh,
+    // so divide by 1000 to compare in MWh.
+    const naElectricMWh = electricRows
+      .filter(r => !r.isCountry)
+      .reduce((sum, r) => sum + (r.consumption || 0), 0) / 1000;
+    if (naElectricMWh > 100_000) {
+      summaryFindings.push(`A VPPA should be explored — North America electric consumption ${Math.round(naElectricMWh).toLocaleString()} MWh exceeds 100,000 MWh threshold`);
+    }
     if (riskMgmtStates.length) {
       summaryFindings.push(`Risk Management should be considered (>10,000 MWh) — ${riskMgmtStates.join(', ')}`);
     }
