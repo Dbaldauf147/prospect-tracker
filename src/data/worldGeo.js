@@ -100,17 +100,13 @@ export const TOPO_NAME_TO_DEREG_KEY = {
   'Falkland Is.':              'Falkland Islands',
 };
 
-// ISO 3166-1 numeric ids for countries that don't have a clean
-// single-tier classification at the country level (their dereg
-// status varies materially by sub-region). We render these in the
-// "Mixed" tier (blue-gray) on the map. The US used to live here
-// but the country reference now classifies it as Deregulated, and
-// the user prefers it rendered green to match the country
-// classification — Canada is the only remaining country we treat
-// as Mixed.
-export const MIXED_TIER_COUNTRY_IDS = new Set([
-  '124', // Canada
-]);
+// Reserved export — kept (empty) so any downstream code that still
+// imports MIXED_TIER_COUNTRY_IDS doesn't break. Mixed-tier handling
+// was removed because the country reference already gives every
+// country a clean Electric / Gas classification and the special-
+// casing made the map drift out of sync with the Country level
+// view table.
+export const MIXED_TIER_COUNTRY_IDS = new Set();
 
 // Country centers — approximate centroids in [lng, lat]. Covers the
 // ~80 most likely upload destinations; lookups fall back to the
@@ -282,19 +278,16 @@ export const TIER_COLORS = {
   dereg:   '#16A34A',
   some:    '#F59E0B',
   reg:     '#DC2626',
-  mixed:   '#64748B',
   unknown: '#94A3B8',
 };
 
-// Lighter "faded" variants for choropleth fill on countries the
-// portfolio does not have sites in. Keeps the same hue so the dereg
-// tier is still legible, but drops saturation so the with-sites
-// countries pop.
+// Lighter "faded" variants kept for any future per-tier muted use;
+// the choropleth no longer uses them (no-site countries render in a
+// single neutral gray instead).
 export const TIER_COLORS_FADED = {
   dereg:   '#BBF7D0',
   some:    '#FDE68A',
   reg:     '#FECACA',
-  mixed:   '#CBD5E1',
   unknown: '#E2E8F0',
 };
 
@@ -302,6 +295,5 @@ export const TIER_LABELS = {
   dereg:   'Deregulated',
   some:    'Some deregulation',
   reg:     'Regulated / unlikely',
-  mixed:   'Mixed (US / Canada)',
   unknown: 'No data',
 };
