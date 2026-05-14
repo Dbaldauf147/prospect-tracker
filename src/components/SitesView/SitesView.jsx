@@ -46,6 +46,15 @@ import {
   COUNTRY_DEREGULATION,
 } from '../../data/countryDeregulation';
 import {
+  CONTINENT_POLYGONS,
+  COUNTRY_CENTERS,
+  US_STATE_CENTERS,
+  CANADA_PROVINCE_CENTERS,
+  statusTier,
+  TIER_COLORS,
+  TIER_LABELS,
+} from '../../data/worldGeo';
+import {
   countryElectricRate,
   countryGasRatePerTherm,
   normalizeCountryRateName,
@@ -3187,6 +3196,295 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     const wb = new Workbook();
     wb.creator = 'Schneider Electric · Prospect Tracker';
     wb.created = new Date();
+
+    // ---- Portfolio Overview sheet -----------------------------------
+    // World map + per-bucket dot rendering. Each dot is split
+    // vertically — left half colored by electric deregulation tier,
+    // right half by gas — so the user can read both commodities at
+    // once. Sites bucket by US state / Canadian province / country;
+    // dot radius scales with site count. Map is rendered to a canvas
+    // and embedded as a PNG because ExcelJS doesn't write charts.
+    {
+      const ws = wb.addWorksheet('Portfolio Overview', {
+        properties: { tabColor: { argb: SE_GREEN_DARK } },
+        views: [{ showGridLines: false }],
+      });
+      const COLS = 14;
+      ws.columns = Array.from({ length: COLS }, () => ({ width: 12 }));
+
+      // Bucket sites by (country, state-or-province) and look up the
+      // dereg tier + map coordinates. The lookup chain is:
+      //   1. US/CA site with state code in the per-state center map →
+      //      drop dot at the state's centroid, tier from
+      //      ELECTRIC_DEREGULATION / GAS_DEREGULATION.
+      //   2. International site whose country is in COUNTRY_CENTERS →
+      //      drop dot at the country center, tier from
+      //      COUNTRY_DEREGULATION.
+      //   3. Country we don't have a center for → skip the dot but
+      //      still count in the summary table.
+      const buckets = new Map();
+      let skippedCount = 0;
+      for (const r of rows) {
+        const rawCountry = String(r.__country__ || '').trim();
+        const country = normalizeCountryName(rawCountry) || rawCountry;
+        const stateCode = String(r.__state__ || '').trim().toUpperCase();
+        let key, location, elecTier, gasTier, label;
+        const isUS = /^(united states|usa|us)$/i.test(country);
+        const isCA = /^(canada|ca)$/i.test(country);
+        if (isUS && US_STATE_CENTERS[stateCode]) {
+          key = `US/${stateCode}`;
+          location = US_STATE_CENTERS[stateCode];
+          label = `${stateCode}, USA`;
+          // US states: 'yes' in the per-state dereg map → dereg;
+          // 'large' → some deregulation; otherwise regulated.
+          const e = ELECTRIC_DEREGULATION[stateCode];
+          const g = GAS_DEREGULATION[stateCode];
+          elecTier = e?.status === 'yes' ? 'dereg' : (e?.status === 'large' ? 'some' : 'reg');
+          gasTier  = g?.status === 'yes' ? 'dereg' : (g?.status === 'large' ? 'some' : 'reg');
+        } else if (isCA && CANADA_PROVINCE_CENTERS[stateCode]) {
+          key = `CA/${stateCode}`;
+          location = CANADA_PROVINCE_CENTERS[stateCode];
+          label = `${stateCode}, Canada`;
+          // Canada is universally deregulated in the country
+          // reference for both commodities; per-province nuance is
+          // out of scope for the map.
+          elecTier = 'dereg';
+          gasTier = 'dereg';
+        } else if (COUNTRY_CENTERS[country]) {
+          key = country;
+          location = COUNTRY_CENTERS[country];
+          label = country;
+          const c = COUNTRY_DEREGULATION[country];
+          elecTier = statusTier(c?.electric);
+          gasTier = statusTier(c?.gas);
+        } else {
+          skippedCount++;
+          continue;
+        }
+        if (!buckets.has(key)) {
+          buckets.set(key, { location, elecTier, gasTier, label, count: 0 });
+        }
+        buckets.get(key).count++;
+      }
+
+      // Tier totals across mapped buckets for the summary table.
+      let elecDereg = 0, elecSome = 0, elecReg = 0, elecUnknown = 0;
+      let gasDereg = 0, gasSome = 0, gasReg = 0, gasUnknown = 0;
+      let mappedSites = 0;
+      for (const b of buckets.values()) {
+        mappedSites += b.count;
+        if (b.elecTier === 'dereg') elecDereg += b.count;
+        else if (b.elecTier === 'some') elecSome += b.count;
+        else if (b.elecTier === 'reg') elecReg += b.count;
+        else elecUnknown += b.count;
+        if (b.gasTier === 'dereg') gasDereg += b.count;
+        else if (b.gasTier === 'some') gasSome += b.count;
+        else if (b.gasTier === 'reg') gasReg += b.count;
+        else gasUnknown += b.count;
+      }
+
+      // Canvas render — equirectangular projection. Each lat/lng is
+      // mapped linearly so the polygon points and dot centers share
+      // the same coordinate system.
+      const W = 1200, H = 600;
+      const canvas = document.createElement('canvas');
+      canvas.width = W; canvas.height = H;
+      const ctx = canvas.getContext('2d');
+
+      // Ocean background.
+      ctx.fillStyle = '#E0F2FE';
+      ctx.fillRect(0, 0, W, H);
+      // Faint graticule (every 30°) so the user reads it as a map.
+      ctx.strokeStyle = '#BAE6FD';
+      ctx.lineWidth = 1;
+      for (let lng = -150; lng <= 150; lng += 30) {
+        const x = ((lng + 180) / 360) * W;
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+      }
+      for (let lat = -60; lat <= 60; lat += 30) {
+        const y = ((90 - lat) / 180) * H;
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+      }
+
+      const project = (lng, lat) => [((lng + 180) / 360) * W, ((90 - lat) / 180) * H];
+
+      // Continent fills.
+      ctx.fillStyle = '#FDE68A';
+      ctx.strokeStyle = '#92400E';
+      ctx.lineWidth = 1;
+      for (const cont of CONTINENT_POLYGONS) {
+        ctx.beginPath();
+        cont.points.forEach(([lng, lat], i) => {
+          const [x, y] = project(lng, lat);
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        });
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      }
+
+      // Continent labels (centered roughly on each polygon).
+      ctx.fillStyle = '#78350F';
+      ctx.font = 'italic 14px Nunito Sans, Arial, sans-serif';
+      ctx.textAlign = 'center';
+      const labelPositions = {
+        'North America': [-100, 48],
+        'South America': [-60, -15],
+        'Europe':         [15, 53],
+        'Africa':         [20, 5],
+        'Asia':           [95, 50],
+        'Oceania':        [134, -25],
+      };
+      for (const cont of CONTINENT_POLYGONS) {
+        const pos = labelPositions[cont.name];
+        if (!pos) continue;
+        const [x, y] = project(pos[0], pos[1]);
+        ctx.fillText(cont.name, x, y);
+      }
+
+      // Plot dots — radius scales with sqrt(count) so a 100-site
+      // bucket isn't 100× the area of a 1-site bucket.
+      const maxCount = Math.max(1, ...Array.from(buckets.values()).map(b => b.count));
+      const dots = Array.from(buckets.values());
+      // Larger dots first so smaller dots don't get hidden underneath.
+      dots.sort((a, b) => b.count - a.count);
+      for (const b of dots) {
+        const [x, y] = project(b.location[0], b.location[1]);
+        const r = 6 + Math.sqrt(b.count / maxCount) * 18;
+        // Two-tone fill: electric (left half) + gas (right half).
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(x, y, r, Math.PI / 2, (3 * Math.PI) / 2, false);
+        ctx.closePath();
+        ctx.fillStyle = TIER_COLORS[b.elecTier];
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(x, y, r, -Math.PI / 2, Math.PI / 2, false);
+        ctx.closePath();
+        ctx.fillStyle = TIER_COLORS[b.gasTier];
+        ctx.fill();
+        ctx.restore();
+        // White outline + count number for buckets with >1 site.
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.strokeStyle = '#0F172A';
+        ctx.lineWidth = 0.5;
+        ctx.stroke();
+        if (b.count > 1) {
+          ctx.fillStyle = '#FFFFFF';
+          ctx.strokeStyle = '#0F172A';
+          ctx.font = `bold ${Math.max(10, Math.min(16, Math.round(r * 0.9)))}px Nunito Sans, Arial, sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.lineWidth = 3;
+          ctx.strokeText(String(b.count), x, y + 4);
+          ctx.fillText(String(b.count), x, y + 4);
+        }
+      }
+
+      // Legend (top-left of the map).
+      const legX = 16, legY = 16, legW = 280, legH = 130;
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+      ctx.strokeStyle = '#CBD5E1';
+      ctx.lineWidth = 1;
+      ctx.fillRect(legX, legY, legW, legH);
+      ctx.strokeRect(legX, legY, legW, legH);
+      ctx.fillStyle = '#0F172A';
+      ctx.font = 'bold 12px Nunito Sans, Arial, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText('Each dot — left half = Electric, right = Gas', legX + 10, legY + 18);
+      ctx.font = '11px Nunito Sans, Arial, sans-serif';
+      const tiersForLegend = ['dereg', 'some', 'reg', 'unknown'];
+      tiersForLegend.forEach((t, i) => {
+        const ly = legY + 36 + i * 20;
+        ctx.fillStyle = TIER_COLORS[t];
+        ctx.fillRect(legX + 12, ly - 8, 14, 14);
+        ctx.strokeStyle = '#0F172A';
+        ctx.lineWidth = 0.5;
+        ctx.strokeRect(legX + 12, ly - 8, 14, 14);
+        ctx.fillStyle = '#0F172A';
+        ctx.fillText(TIER_LABELS[t], legX + 34, ly + 3);
+      });
+
+      const dataUrl = canvas.toDataURL('image/png');
+      const imageId = wb.addImage({ base64: dataUrl, extension: 'png' });
+
+      // Title band.
+      ws.mergeCells(1, 1, 1, COLS);
+      const title = ws.getCell(1, 1);
+      title.value = 'Portfolio Overview — Site Distribution by Market';
+      title.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
+      title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+      title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(1).height = 30;
+
+      ws.mergeCells(2, 1, 2, COLS);
+      const sub = ws.getCell(2, 1);
+      const subtotal = mappedSites;
+      const skippedNote = skippedCount > 0 ? ` (${skippedCount} site${skippedCount === 1 ? '' : 's'} skipped — country not in the geographic reference)` : '';
+      sub.value = `${subtotal} site${subtotal === 1 ? '' : 's'} plotted across ${buckets.size} bucket${buckets.size === 1 ? '' : 's'}. Dots are split vertically — left half is the Electric deregulation tier, right half is the Gas tier. Dot size scales with the number of sites in that state / country.${skippedNote}`;
+      sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
+      sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+      ws.getRow(2).height = 36;
+
+      // Anchor the image starting at row 4. Image dimensions are in
+      // pixels; cell-grid sizing scales it visually.
+      ws.addImage(imageId, {
+        tl: { col: 0, row: 3 },
+        ext: { width: W, height: H },
+      });
+
+      // Summary table starting after the image (~row 38 with default
+      // row heights). Push it down enough to leave clear space.
+      const SUMMARY_START = 38;
+      ws.mergeCells(SUMMARY_START, 1, SUMMARY_START, COLS);
+      const sumHdr = ws.getCell(SUMMARY_START, 1);
+      sumHdr.value = 'Sites by deregulation tier';
+      sumHdr.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
+      sumHdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+      sumHdr.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(SUMMARY_START).height = 22;
+
+      const tableHeaderRow = SUMMARY_START + 1;
+      const hdr = ws.getRow(tableHeaderRow);
+      ['Tier', 'Electric — Sites', 'Electric — % of plotted', 'Gas — Sites', 'Gas — % of plotted'].forEach((label, i) => {
+        const cell = hdr.getCell(i + 1);
+        cell.value = label;
+        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+        cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      });
+      hdr.height = 22;
+      const tierRows = [
+        ['Deregulated',         elecDereg,   gasDereg],
+        ['Some deregulation',   elecSome,    gasSome],
+        ['Regulated / unlikely',elecReg,     gasReg],
+        ['No data',             elecUnknown, gasUnknown],
+      ];
+      const pct = (n) => mappedSites > 0 ? n / mappedSites : 0;
+      tierRows.forEach((tr, i) => {
+        const r = ws.getRow(tableHeaderRow + 1 + i);
+        r.getCell(1).value = tr[0];
+        r.getCell(2).value = tr[1];
+        r.getCell(3).value = pct(tr[1]);
+        r.getCell(4).value = tr[2];
+        r.getCell(5).value = pct(tr[2]);
+        r.getCell(3).numFmt = '0.0%';
+        r.getCell(5).numFmt = '0.0%';
+        for (let ci = 1; ci <= 5; ci++) {
+          r.getCell(ci).font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+          r.getCell(ci).alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          r.getCell(ci).border = {
+            bottom: { style: 'hair', color: { argb: SE_BORDER } },
+            right:  { style: 'hair', color: { argb: SE_BORDER } },
+          };
+        }
+        r.height = 20;
+      });
+    }
+
     const ws = wb.addWorksheet('Indicative Savings by State', {
       properties: { tabColor: { argb: SE_GREEN } },
       // Freeze the title + scenario block (rows 1-3) so the toggle
