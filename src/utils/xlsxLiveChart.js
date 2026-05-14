@@ -158,7 +158,8 @@ function buildDrawingXml({ col, colOff, row, rowOff, cx, cy }) {
         <a:graphicData uri="${NS.c}">
           <c:chart xmlns:c="${NS.c}" r:id="rId1"/>
         </a:graphicData>
-      </xdr:graphicFrame>
+      </a:graphic>
+    </xdr:graphicFrame>
     <xdr:clientData/>
   </xdr:oneCellAnchor>
 </xdr:wsDr>`;
