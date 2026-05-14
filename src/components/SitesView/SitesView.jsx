@@ -1790,6 +1790,71 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     [columns]
   );
 
+  // Actual vs estimated split across the portfolio for the on-page
+  // summary panel. Actual = value came from a column in the source
+  // file (consumption, cost, or supplier name). Estimated = value was
+  // derived (property-type consumption × rate, or zip-based utility
+  // lookup with no supplier name to back it up).
+  const analysisSummary = useMemo(() => {
+    if (!rows.length) return null;
+    let elecActualKwh = 0, elecActualKwhSites = 0;
+    let elecEstKwh = 0, elecEstKwhSites = 0;
+    let gasActualTherms = 0, gasActualThermsSites = 0;
+    let gasEstTherms = 0, gasEstThermsSites = 0;
+    let elecActualCost = 0, elecActualCostSites = 0;
+    let elecEstCost = 0, elecEstCostSites = 0;
+    let gasActualCost = 0, gasActualCostSites = 0;
+    let gasEstCost = 0, gasEstCostSites = 0;
+    let elecFromSupplier = 0, elecFromZip = 0, elecUnknown = 0;
+    let gasFromSupplier = 0, gasFromZip = 0, gasUnknown = 0;
+    for (const r of rows) {
+      if (r.__kwhSource__ && typeof r.__kwh__ === 'number' && Number.isFinite(r.__kwh__)) {
+        elecActualKwh += r.__kwh__; elecActualKwhSites++;
+      } else if (typeof r.__kwhFromEstimate__ === 'number' && Number.isFinite(r.__kwhFromEstimate__)) {
+        elecEstKwh += r.__kwhFromEstimate__; elecEstKwhSites++;
+      }
+      if (r.__thermsSource__ && typeof r.__therms__ === 'number' && Number.isFinite(r.__therms__)) {
+        gasActualTherms += r.__therms__; gasActualThermsSites++;
+      } else if (typeof r.__thermsFromEstimate__ === 'number' && Number.isFinite(r.__thermsFromEstimate__)) {
+        gasEstTherms += r.__thermsFromEstimate__; gasEstThermsSites++;
+      }
+      if (typeof r.__electricCostActual__ === 'number' && Number.isFinite(r.__electricCostActual__)) {
+        elecActualCost += r.__electricCostActual__; elecActualCostSites++;
+      } else if (typeof r.__electricCostEstimated__ === 'number' && Number.isFinite(r.__electricCostEstimated__)) {
+        elecEstCost += r.__electricCostEstimated__; elecEstCostSites++;
+      }
+      if (typeof r.__gasCostActual__ === 'number' && Number.isFinite(r.__gasCostActual__)) {
+        gasActualCost += r.__gasCostActual__; gasActualCostSites++;
+      } else if (typeof r.__gasCostEstimated__ === 'number' && Number.isFinite(r.__gasCostEstimated__)) {
+        gasEstCost += r.__gasCostEstimated__; gasEstCostSites++;
+      }
+      // Utility company provenance — vendor-match wins (the source
+      // file named a supplier that resolved to a utility); else zip-
+      // based rates lookup; else nothing.
+      if (r.__electricVendorMatchKind__ === 'utility') elecFromSupplier++;
+      else if (r.__electric__) elecFromZip++;
+      else elecUnknown++;
+      if (r.__gasVendorMatchKind__ === 'utility') gasFromSupplier++;
+      else if (r.__gas__) gasFromZip++;
+      else gasUnknown++;
+    }
+    return {
+      total: rows.length,
+      consumption: {
+        electric: { actual: elecActualKwh, actualSites: elecActualKwhSites, est: elecEstKwh, estSites: elecEstKwhSites },
+        gas:      { actual: gasActualTherms, actualSites: gasActualThermsSites, est: gasEstTherms, estSites: gasEstThermsSites },
+      },
+      cost: {
+        electric: { actual: elecActualCost, actualSites: elecActualCostSites, est: elecEstCost, estSites: elecEstCostSites },
+        gas:      { actual: gasActualCost, actualSites: gasActualCostSites, est: gasEstCost, estSites: gasEstCostSites },
+      },
+      utility: {
+        electric: { fromSupplier: elecFromSupplier, fromZip: elecFromZip, unknown: elecUnknown },
+        gas:      { fromSupplier: gasFromSupplier, fromZip: gasFromZip, unknown: gasUnknown },
+      },
+    };
+  }, [rows]);
+
   const matchStats = useMemo(() => {
     if (!utility?.zipMap || !rows.length) return null;
     let matched = 0;
@@ -5715,6 +5780,58 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           {uploadError}
         </div>
       )}
+
+      {analysisSummary && (() => {
+        const s = analysisSummary;
+        const ELEC = '#92400E';
+        const GAS = '#1E3A8A';
+        const SLATE = '#475569';
+        const MUTED = '#94A3B8';
+        const cardStyle = { border: '1px solid #E2E8F0', borderRadius: 8, background: '#FFFFFF', padding: '0.65rem 0.85rem' };
+        const cardTitleStyle = { fontSize: '0.72rem', fontWeight: 700, color: '#0F172A', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.45rem' };
+        const rowStyle = { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '0.5rem', padding: '0.2rem 0', borderBottom: '1px dashed #F1F5F9' };
+        const labelStyle = (color) => ({ fontSize: '0.72rem', color, fontWeight: 600, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+        const valueStyle = { fontSize: '0.78rem', fontWeight: 600, color: '#0F172A', fontVariantNumeric: 'tabular-nums' };
+        const subStyle = { fontSize: '0.65rem', color: MUTED, fontWeight: 500, marginLeft: '0.35rem' };
+        const fmtInt = (n) => Math.round(n).toLocaleString();
+        const fmtPct = (num, den) => den > 0 ? `${Math.round((num / den) * 100)}%` : '0%';
+        const sumLine = (color, label, value, sub) => (
+          <div style={rowStyle}>
+            <span style={labelStyle(color)}>{label}</span>
+            <span>
+              <span style={valueStyle}>{value}</span>
+              {sub && <span style={subStyle}>{sub}</span>}
+            </span>
+          </div>
+        );
+        return (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem', margin: '0.5rem 1.25rem 0.75rem' }}>
+            <div style={cardStyle}>
+              <div style={cardTitleStyle}>Consumption</div>
+              {sumLine(ELEC, 'Electric — Actual',    `${fmtInt(s.consumption.electric.actual)} kWh`,   `${s.consumption.electric.actualSites} site${s.consumption.electric.actualSites === 1 ? '' : 's'}`)}
+              {sumLine(ELEC, 'Electric — Estimated', `${fmtInt(s.consumption.electric.est)} kWh`,      `${s.consumption.electric.estSites} site${s.consumption.electric.estSites === 1 ? '' : 's'}`)}
+              {sumLine(GAS,  'Gas — Actual',         `${fmtInt(s.consumption.gas.actual)} therms`,     `${s.consumption.gas.actualSites} site${s.consumption.gas.actualSites === 1 ? '' : 's'}`)}
+              {sumLine(GAS,  'Gas — Estimated',      `${fmtInt(s.consumption.gas.est)} therms`,        `${s.consumption.gas.estSites} site${s.consumption.gas.estSites === 1 ? '' : 's'}`)}
+            </div>
+            <div style={cardStyle}>
+              <div style={cardTitleStyle}>Cost</div>
+              {sumLine(ELEC, 'Electric — Actual',    formatMoney(s.cost.electric.actual), `${s.cost.electric.actualSites} site${s.cost.electric.actualSites === 1 ? '' : 's'}`)}
+              {sumLine(ELEC, 'Electric — Estimated', formatMoney(s.cost.electric.est),    `${s.cost.electric.estSites} site${s.cost.electric.estSites === 1 ? '' : 's'}`)}
+              {sumLine(GAS,  'Gas — Actual',         formatMoney(s.cost.gas.actual),      `${s.cost.gas.actualSites} site${s.cost.gas.actualSites === 1 ? '' : 's'}`)}
+              {sumLine(GAS,  'Gas — Estimated',      formatMoney(s.cost.gas.est),         `${s.cost.gas.estSites} site${s.cost.gas.estSites === 1 ? '' : 's'}`)}
+            </div>
+            <div style={cardStyle}>
+              <div style={cardTitleStyle} title="Source = the upload's supplier column named a utility we recognized. Zip lookup = no supplier in the source, utility derived from the rates file via zip code.">Utility Companies</div>
+              {sumLine(ELEC, 'Electric — From Supplier',  fmtInt(s.utility.electric.fromSupplier), fmtPct(s.utility.electric.fromSupplier, s.total))}
+              {sumLine(ELEC, 'Electric — From Zip Lookup', fmtInt(s.utility.electric.fromZip),     fmtPct(s.utility.electric.fromZip, s.total))}
+              {sumLine(SLATE, 'Electric — Unknown',        fmtInt(s.utility.electric.unknown),     fmtPct(s.utility.electric.unknown, s.total))}
+              {sumLine(GAS,  'Gas — From Supplier',        fmtInt(s.utility.gas.fromSupplier),     fmtPct(s.utility.gas.fromSupplier, s.total))}
+              {sumLine(GAS,  'Gas — From Zip Lookup',      fmtInt(s.utility.gas.fromZip),          fmtPct(s.utility.gas.fromZip, s.total))}
+              {sumLine(SLATE, 'Gas — Unknown',             fmtInt(s.utility.gas.unknown),          fmtPct(s.utility.gas.unknown, s.total))}
+            </div>
+          </div>
+        );
+      })()}
 
       <div className={styles.searchRow}>
         <input
