@@ -22,6 +22,7 @@ import { OppsView } from './components/OppsView/OppsView';
 import { OppsView2 } from './components/OppsView2/OppsView2';
 import { ClientsView } from './components/ClientsView/ClientsView';
 import { ActivityView } from './components/ActivityView/ActivityView';
+import { AgentsView } from './components/AgentsView/AgentsView';
 import { loadTargetAccountsFromDB } from './components/TargetAccountsView/TargetAccountsView';
 import { DraftEmailsPage } from './components/DraftEmailView/DraftEmailsPage';
 import { VibeProspecting } from './components/VibeProspecting/VibeProspecting';
@@ -314,6 +315,8 @@ function App() {
             <PrivacyPolicy />
           ) : view === 'activity' ? (
             <ActivityView prospects={prospects} settings={settings} updateSettings={updateSettings} />
+          ) : view === 'agents' ? (
+            <AgentsView />
           ) : view === 'pe' ? (
             <PEPortfolioView prospects={prospects} onSelectProspect={handleSelect} />
           ) : view === 'contacts' ? (
