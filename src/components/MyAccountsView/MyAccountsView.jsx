@@ -2511,6 +2511,49 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
           const col = ACCOUNT_COLUMNS.find(c => c.key === key);
           return <FilterDrop key={key} label={col?.label || key} options={options} selected={filters[key] || []} onToggle={v => toggleFilter(key, v)} />;
         })}
+        {(() => {
+          // Surface any dismissed (hidden) companies that match the
+          // current search term — without this, a user searching for a
+          // company they previously hid sees an empty result list and
+          // has no way to know the company is sitting in the dismissed
+          // pile. Each match is a chip with a one-click Restore.
+          const term = search.trim().toLowerCase();
+          if (!term) return null;
+          const matches = (dismissedCompanies || []).filter(name => (name || '').toLowerCase().includes(term));
+          if (matches.length === 0) return null;
+          return (
+            <div
+              role="status"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                gap: '0.3rem',
+                padding: '0.25rem 0.55rem',
+                background: '#FEF3C7',
+                border: '1px solid #F59E0B',
+                borderRadius: '6px',
+                fontSize: '0.7rem',
+                color: '#92400E',
+                fontWeight: 600,
+              }}
+              title="These companies are currently hidden from the accounts list. Click ↺ to restore."
+            >
+              ⚠ Hidden compan{matches.length === 1 ? 'y' : 'ies'} match{matches.length === 1 ? 'es' : ''}:
+              {matches.map(name => (
+                <span key={name} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem', padding: '0.05rem 0.45rem', background: '#fff', border: '1px solid #FDE68A', borderRadius: '999px' }}>
+                  <span style={{ color: '#92400E' }}>{name}</span>
+                  <button
+                    type="button"
+                    onClick={() => undismissCompany(name)}
+                    title={`Restore "${name}"`}
+                    style={{ background: 'none', border: 'none', color: '#92400E', fontSize: '0.78rem', cursor: 'pointer', padding: '0 2px', lineHeight: 1, fontWeight: 700 }}
+                  >↺</button>
+                </span>
+              ))}
+            </div>
+          );
+        })()}
         {bucketFilter && <span style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem', borderRadius: '999px', background: '#EBF2FC', color: '#3B7DDD', fontWeight: 600 }}>Showing: {bucketFilter === 'tier1' ? 'Tier 1' : bucketFilter === 'tier2' ? 'Tier 2' : bucketFilter === 'client' ? 'Clients' : bucketFilter === 'noTarget' ? 'No Target Mapped' : 'Tier 3'}</span>}
         {(activeFilterCount > 0 || bucketFilter) && <button className={styles.clearBtn} onClick={clearFilters}>Clear all</button>}
         <button
