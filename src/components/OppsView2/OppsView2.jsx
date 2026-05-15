@@ -1,14 +1,51 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { db } from '../../firebase';
+import { useAuth } from '../../contexts/AuthContext';
 import { DataTable } from '../common/DataTable';
-import { dbGet } from '../../utils/db';
+import { dbGet, dbPut } from '../../utils/db';
 import { SOLUTIONS_CATALOG } from '../../data/dropdownLists';
 import styles from './OppsView2.module.css';
 
-// Second Opps tab — sandbox copy of OppsView. Intentionally NOT wired up
-// to Google Sheets, Firestore, IndexedDB, or any shared cache. Starts
-// empty so the original Opps tab and this one stay fully isolated while
-// the UI is being explored.
+// Second Opps tab — user-entered opps stored in Firestore
+// (`opps2Data/{uid}`) with an IndexedDB cache (`opps2-cache`, key
+// `data`) for instant rehydration on reload. The original Opps tab
+// stays the canonical Google Sheets view; Opps 2 is the place the
+// user types new opps directly into the app.
+
+const OPPS2_STORE = 'opps2-cache';
+const OPPS2_CACHE_KEY = 'data';
+const OPPS2_FIRESTORE_COLLECTION = 'opps2Data';
+
+async function loadOpps2Cache() {
+  try { return await dbGet(OPPS2_STORE, OPPS2_CACHE_KEY); }
+  catch (err) { console.error('opps2: IndexedDB load failed', err); return null; }
+}
+
+async function saveOpps2Cache(data) {
+  try { await dbPut(OPPS2_STORE, data, OPPS2_CACHE_KEY); }
+  catch (err) { console.error('opps2: IndexedDB save failed', err); }
+}
+
+async function loadOpps2FromFirestore(userId) {
+  try {
+    const ref = doc(db, OPPS2_FIRESTORE_COLLECTION, userId);
+    const snap = await getDoc(ref);
+    if (snap.exists()) {
+      const raw = snap.data();
+      if (raw?.json) return JSON.parse(raw.json);
+    }
+  } catch (err) { console.error('opps2: Firestore load failed', err); }
+  return null;
+}
+
+async function saveOpps2ToFirestore(userId, data) {
+  try {
+    const ref = doc(db, OPPS2_FIRESTORE_COLLECTION, userId);
+    await setDoc(ref, { json: JSON.stringify(data), updatedAt: new Date().toISOString() });
+  } catch (err) { console.error('opps2: Firestore save failed', err); }
+}
 
 // Default column set, seeded so the table has columns to show / sort /
 // filter / hide / resize even before any data exists.
@@ -630,10 +667,19 @@ function MultiSelectCell({ value, onChange, options }) {
 }
 
 export function OppsView2({ settings, updateSettings, prospects = [], updateProspect } = {}) {
-  // Local-only state. No fetch, no cache, no sync.
+  const { user } = useAuth();
+  // Seeded with DEFAULT_HEADERS so the table renders columns immediately;
+  // the hydration effect below replaces this with the user's saved
+  // headers + records once Firestore / IndexedDB returns.
   const [data, setData] = useState({ headers: DEFAULT_HEADERS, records: [] });
-  const [loading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error] = useState(null);
+  // Persisting only kicks in after the initial hydration finishes —
+  // otherwise the seed value would be written back, wiping the saved
+  // state for any user who happens to refresh before the load
+  // resolves.
+  const hydratedRef = useRef(false);
+  const firestoreSaveTimerRef = useRef(null);
   const [search, setSearch] = useState('');
   const [activeTab, setActiveTab] = useState('opps');
   const [dateFrom, setDateFrom] = useState('');
@@ -650,22 +696,44 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   const [hiddenServices, setHiddenServices] = useState(() => new Set());
   const [showHidden, setShowHidden] = useState(false);
 
-  // One-time read of the original Opps tab's IndexedDB cache so the
-  // column order here mirrors the live Opps tab exactly. Read-only,
-  // no writes, no subscriptions — Opps 2 stays isolated otherwise.
+  // Hydration — load the user's saved opps. Prefer Firestore (cross-
+  // device truth), fall back to the IndexedDB cache (last-known on
+  // this browser), fall back to the original Opps tab's header order
+  // so a brand-new Opps 2 user still sees the same column layout as
+  // the live Opps tab. Runs once per user change.
   useEffect(() => {
+    if (!user?.uid) {
+      // Logged-out / pre-auth: keep the seed but don't enable saves
+      // (we'd hit the dbPut scoping guard).
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
+    hydratedRef.current = false;
+    setLoading(true);
     (async () => {
-      try {
-        const cached = await dbGet('opps-cache', 'data');
+      let next = null;
+      const fromFs = await loadOpps2FromFirestore(user.uid);
+      if (cancelled) return;
+      if (fromFs && (Array.isArray(fromFs.records) || Array.isArray(fromFs.headers))) {
+        next = fromFs;
+        // Cache the Firestore copy locally for the next reload.
+        saveOpps2Cache(fromFs);
+      } else {
+        const fromIdb = await loadOpps2Cache();
         if (cancelled) return;
-        const cachedHeaders = cached?.headers;
-        if (Array.isArray(cachedHeaders) && cachedHeaders.length > 0) {
-          setData(prev => {
-            // Only overwrite the seed headers; never replace user-created
-            // records or wipe a header set the user already extended.
-            const recordsAreSeed = !prev?.records || prev.records.length === 0;
-            if (!recordsAreSeed) return prev;
+        if (fromIdb && (Array.isArray(fromIdb.records) || Array.isArray(fromIdb.headers))) {
+          next = fromIdb;
+        }
+      }
+      if (!next) {
+        // No saved opps yet — borrow header order from the live Opps
+        // tab's cache so the column layout matches what the user is
+        // used to. Records stay empty.
+        try {
+          const oppsCache = await dbGet('opps-cache', 'data');
+          const cachedHeaders = oppsCache?.headers;
+          if (Array.isArray(cachedHeaders) && cachedHeaders.length > 0) {
             const seen = new Set();
             const dedup = [];
             for (const h of cachedHeaders) {
@@ -674,13 +742,48 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               seen.add(t);
               dedup.push(t);
             }
-            return { ...prev, headers: dedup };
-          });
-        }
-      } catch {}
+            next = { headers: dedup, records: [] };
+          }
+        } catch {}
+      }
+      if (cancelled) return;
+      if (next) setData(next);
+      setLoading(false);
+      hydratedRef.current = true;
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [user?.uid]);
+
+  // Persistence — IndexedDB writes immediately (cheap, survives
+  // reload), Firestore writes are debounced 1.5s so a flurry of cell
+  // edits collapses into a single round-trip.
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    saveOpps2Cache(data);
+    if (!user?.uid) return;
+    if (firestoreSaveTimerRef.current) clearTimeout(firestoreSaveTimerRef.current);
+    firestoreSaveTimerRef.current = setTimeout(() => {
+      saveOpps2ToFirestore(user.uid, data);
+    }, 1500);
+    return () => {
+      if (firestoreSaveTimerRef.current) clearTimeout(firestoreSaveTimerRef.current);
+    };
+  }, [data, user?.uid]);
+
+  // Flush any pending Firestore save when the tab is closed / reloaded
+  // so the last keystroke before a reload still survives the round
+  // trip.
+  useEffect(() => {
+    function flush() {
+      if (firestoreSaveTimerRef.current && user?.uid) {
+        clearTimeout(firestoreSaveTimerRef.current);
+        firestoreSaveTimerRef.current = null;
+        saveOpps2ToFirestore(user.uid, data);
+      }
+    }
+    window.addEventListener('beforeunload', flush);
+    return () => window.removeEventListener('beforeunload', flush);
+  }, [data, user?.uid]);
 
   const addNewOpp = useCallback((accountName) => {
     setData(prev => {
