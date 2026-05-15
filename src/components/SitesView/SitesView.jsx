@@ -3990,35 +3990,99 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         agg.cost += eCost + gCost;
       }
 
-      // Canvas — NA-bounded equirectangular projection so the map
-      // fills the canvas with the US + Canada landmass. Lat range
-      // covers from northern Canada down to the southern US border;
-      // longitude covers Alaska through Newfoundland.
-      const W = 1200, H = 600;
+      // Two-panel choropleth — Natural Gas markets on the left,
+      // Electric Power markets on the right. Each portfolio state /
+      // province is filled with its market-status color and outlined
+      // in bold so the silhouette pops; states / provinces with no
+      // sites fade to a light grey so the highlighted set reads as a
+      // single foreground layer. Status data for the US comes from a
+      // curated authority table; Canadian provinces derive both panels
+      // from CA_MARKETS.
+      const NG_STATUS_US = {
+        DC: 'dereg', FL: 'dereg', GA: 'dereg', IL: 'dereg', IN: 'dereg',
+        KY: 'dereg', MD: 'dereg', MI: 'dereg', MT: 'dereg', NJ: 'dereg',
+        NY: 'dereg', OH: 'dereg', PA: 'dereg', VA: 'dereg', WV: 'dereg',
+        WY: 'dereg',
+        CA: 'limited', KS: 'limited', MA: 'limited', TX: 'limited',
+      };
+      const EP_STATUS_US = {
+        TX: 'dereg', PA: 'dereg', OH: 'dereg', NJ: 'dereg', NY: 'dereg',
+        IL: 'dereg', CT: 'dereg', MD: 'dereg', DE: 'dereg', MA: 'dereg',
+        ME: 'dereg', NH: 'dereg', RI: 'dereg', DC: 'dereg',
+        MI: 'limited',
+        CA: 'direct_access', OR: 'direct_access',
+      };
+      const caStatusFromCategory = (cat) => {
+        let ng = 'reg', ep = 'reg';
+        if (cat === 'DEREG_NG' || cat === 'DEREG_NG_EP' ||
+            cat === 'DEREG_NG_LIMITED_EP' || cat === 'DEREG_NG_HEAVY_EP') ng = 'dereg';
+        else if (cat === 'CA_LIMITED_NG_DEREG_EP' || cat === 'CA_LIMITED_NG_REG_EP') ng = 'limited';
+        if (cat === 'DEREG_NG_EP' || cat === 'CA_LIMITED_NG_DEREG_EP') ep = 'dereg';
+        else if (cat === 'DEREG_NG_LIMITED_EP' || cat === 'LIMITED_EP' ||
+                 cat === 'DEREG_NG_HEAVY_EP' || cat === 'HEAVY_EP') ep = 'limited';
+        else if (cat === 'DIRECT_ACCESS_EP') ep = 'direct_access';
+        return { ng, ep };
+      };
+      const ngStatusByKey = new Map();
+      const epStatusByKey = new Map();
+      for (const m of US_MARKETS) {
+        ngStatusByKey.set(`US/${m.code}`, NG_STATUS_US[m.code] || 'reg');
+        epStatusByKey.set(`US/${m.code}`, EP_STATUS_US[m.code] || 'reg');
+      }
+      for (const m of CA_MARKETS) {
+        const { ng, ep } = caStatusFromCategory(m.category);
+        ngStatusByKey.set(`CA/${m.code}`, ng);
+        epStatusByKey.set(`CA/${m.code}`, ep);
+      }
+      const hasSites = (key) => buckets.has(key);
+
+      const STATUS_FILL = {
+        reg:           '#94A3B8', // slate
+        dereg:         '#10B981', // emerald
+        limited:       '#F59E0B', // amber
+        direct_access: '#3B82F6', // sky blue
+      };
+      const STATUS_LABEL = {
+        reg:           'Regulated',
+        dereg:         'Deregulated',
+        limited:       'Limited Deregulation',
+        direct_access: 'Direct Access only',
+      };
+      const NO_SITES_FILL   = '#E5E7EB';
+      const NO_SITES_STROKE = '#9CA3AF';
+      const SITE_STROKE     = '#0F172A';
+      const MEXICO_FILL     = '#E5E7EB';
+
+      // Composite canvas — two panels side by side plus a shared
+      // legend strip underneath so the whole figure is one image.
+      const MAP_W = 800;
+      const MAP_H = 500;
+      const PAD = 16;
+      const TITLE_H = 36;
+      const LEGEND_H = 70;
+      const W = MAP_W * 2 + PAD * 3;
+      const H = TITLE_H + MAP_H + LEGEND_H + PAD * 2;
       const canvas = document.createElement('canvas');
       canvas.width = W; canvas.height = H;
       const ctx = canvas.getContext('2d');
-      ctx.fillStyle = '#F1F5F9';
+      ctx.fillStyle = '#FFFFFF';
       ctx.fillRect(0, 0, W, H);
 
       const NA_LNG_MIN = -170;
       const NA_LNG_MAX = -52;
       const NA_LAT_MIN = 18;
       // 84 °N keeps the Canadian Arctic archipelago (Ellesmere reaches
-      // ~83 °N) inside the canvas so the territories fill with their
-      // category colors instead of being clipped at the top edge.
+      // ~83 °N) on-canvas instead of clipping the top of Canada.
       const NA_LAT_MAX = 84;
-      const project = (lng, lat) => [
-        ((lng - NA_LNG_MIN) / (NA_LNG_MAX - NA_LNG_MIN)) * W,
-        ((NA_LAT_MAX - lat) / (NA_LAT_MAX - NA_LAT_MIN)) * H,
+      const projectInto = (originX, originY) => (lng, lat) => [
+        originX + ((lng - NA_LNG_MIN) / (NA_LNG_MAX - NA_LNG_MIN)) * MAP_W,
+        originY + ((NA_LAT_MAX - lat) / (NA_LAT_MAX - NA_LAT_MIN)) * MAP_H,
       ];
 
-      // Canvas helper — draws a feature's rings with antimeridian-
-      // aware sub-ring splitting (Alaska's Aleutian chain crosses
-      // -180°, otherwise the polygon streaks a connector all the way
-      // across the canvas). Shared by both the Mexico landmass pass
-      // and the per-state / per-province admin-1 pass below.
-      const drawFeature = (rings) => {
+      // Splits rings that cross the antimeridian (Alaska's Aleutians)
+      // into sub-rings so we don't draw a connector line across the
+      // whole panel.
+      const drawFeature = (project, rings) => {
         for (const ring of rings) {
           const subRings = [];
           let cur = [];
@@ -4045,88 +4109,76 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         }
       };
 
-      // Pass 1 — Mexico landmass at the southern edge. Drawn first
-      // (under the admin-1 polygons) and tinted with the no-sites
-      // gray so the map has a soft southern boundary instead of a
-      // hard cutoff at the US border. Pulled from the country
-      // TopoJSON; the admin-1 layer doesn't carry Mexican states.
-      const NO_SITES_FILL = '#E2E8F0';
-      ctx.strokeStyle = '#94A3B8';
-      ctx.lineWidth = 0.5;
-      ctx.fillStyle = NO_SITES_FILL;
       const countryFeatures = getCountryFeatures();
-      for (const feat of countryFeatures) {
-        const derGKey = TOPO_NAME_TO_DEREG_KEY[feat.name] || feat.name;
-        if (derGKey !== 'Mexico' && feat.name !== 'Mexico') continue;
-        drawFeature(feat.rings);
-      }
-
-      // Pass 2 — choropleth at the state / province level. Each US
-      // state + DC and each Canadian province is tinted by its
-      // NA_CATEGORIES color (matching the Markets Legend) and then
-      // darkened proportional to its portfolio site count, so the
-      // map reads "where are our sites" at a glance without needing
-      // labelled bubbles on top. States / provinces without an
-      // explicit category default to the regulated (NG & EP) swatch.
-      //
-      // Canadian territories (YT / NT / NU) are accurately REG_NG_EP
-      // in CA_MARKETS, but rendering them with the regulated gray
-      // makes the top of Canada look like ocean next to the colored
-      // southern provinces. We paint each territory with its southern
-      // neighbor's category color so the colors flow continuously
-      // across 60 °N. The breakdown table below still classifies them
-      // from CA_MARKETS, so this override is rendering-only.
-      const naMarketByPostal = new Map();
-      for (const m of US_MARKETS) naMarketByPostal.set(`US/${m.code}`, m);
-      for (const m of CA_MARKETS) naMarketByPostal.set(`CA/${m.code}`, m);
-      const CA_TERRITORY_MAP_FILL = {
-        YT: NA_CATEGORIES.CA_LIMITED_NG_DEREG_EP.fill,
-        NT: NA_CATEGORIES.CA_LIMITED_NG_REG_EP.fill,
-        NU: NA_CATEGORIES.DEREG_NG.fill,
-      };
       const naFeatures = getNAAdmin1Features();
-      ctx.lineWidth = 0.6;
-      ctx.strokeStyle = '#94A3B8';
-      const hexToCanvas = (argb) => '#' + String(argb).replace(/^FF/i, '');
-      const REG_NG_EP_FILL = hexToCanvas(NA_CATEGORIES.REG_NG_EP.fill);
 
-      // Site-count → darkness mapping. Sqrt scaling keeps mid-count
-      // states from collapsing into the no-site tier; 0-count states
-      // stay at a 25 % tint so the deregulation category is still
-      // readable but the state clearly reads "empty".
-      const naMaxCount = Math.max(1, ...Array.from(buckets.values()).map(b => b.count));
-      const naCountByKey = new Map();
-      for (const [k, v] of buckets.entries()) naCountByKey.set(k, v.count);
-      const argbToRgb = (hex) => {
-        const h = String(hex).replace(/^#/, '').replace(/^FF/i, '');
-        return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
-      };
-      const rgbToHex = (rgb) => '#' + rgb.map(v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('');
-      const shadeByCount = (baseHex, count) => {
-        const [r, g, b] = argbToRgb(baseHex);
-        const t = count > 0 ? Math.sqrt(count / naMaxCount) : 0;
-        const sat = count > 0 ? 0.45 + 0.55 * t : 0.25;
-        const dark = 0.20 * t;
-        const blend = (c) => (c * sat + 255 * (1 - sat)) * (1 - dark);
-        return rgbToHex([blend(r), blend(g), blend(b)]);
-      };
+      const drawPanel = (originX, originY, statusByKey, headerLabel) => {
+        const project = projectInto(originX, originY);
+        ctx.fillStyle = '#0F172A';
+        ctx.font = 'bold 18px Nunito Sans, Arial, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'alphabetic';
+        ctx.fillText(headerLabel, originX + MAP_W / 2, originY - 10);
 
-      for (const feat of naFeatures) {
-        const marketKey = `${feat.admin}/${feat.postal}`;
-        const m = naMarketByPostal.get(marketKey);
-        const cat = m ? NA_CATEGORIES[m.category] : null;
-        const territoryOverride = feat.admin === 'CA' ? CA_TERRITORY_MAP_FILL[feat.postal] : null;
-        let baseFill;
-        if (territoryOverride) {
-          baseFill = hexToCanvas(territoryOverride);
-        } else if (cat) {
-          baseFill = hexToCanvas(cat.fill);
-        } else {
-          baseFill = REG_NG_EP_FILL;
+        ctx.fillStyle = '#F1F5F9';
+        ctx.fillRect(originX, originY, MAP_W, MAP_H);
+
+        ctx.fillStyle = MEXICO_FILL;
+        ctx.strokeStyle = NO_SITES_STROKE;
+        ctx.lineWidth = 0.5;
+        for (const feat of countryFeatures) {
+          const derGKey = TOPO_NAME_TO_DEREG_KEY[feat.name] || feat.name;
+          if (derGKey !== 'Mexico' && feat.name !== 'Mexico') continue;
+          drawFeature(project, feat.rings);
         }
-        ctx.fillStyle = shadeByCount(baseFill, naCountByKey.get(marketKey) || 0);
-        drawFeature(feat.rings);
-      }
+
+        ctx.fillStyle = NO_SITES_FILL;
+        ctx.strokeStyle = NO_SITES_STROKE;
+        ctx.lineWidth = 0.5;
+        for (const feat of naFeatures) {
+          if (hasSites(`${feat.admin}/${feat.postal}`)) continue;
+          drawFeature(project, feat.rings);
+        }
+        ctx.lineWidth = 2.5;
+        ctx.strokeStyle = SITE_STROKE;
+        for (const feat of naFeatures) {
+          const key = `${feat.admin}/${feat.postal}`;
+          if (!hasSites(key)) continue;
+          const tier = statusByKey.get(key) || 'reg';
+          ctx.fillStyle = STATUS_FILL[tier];
+          drawFeature(project, feat.rings);
+        }
+      };
+
+      drawPanel(PAD,             TITLE_H, ngStatusByKey, 'Natural Gas Markets');
+      drawPanel(PAD * 2 + MAP_W, TITLE_H, epStatusByKey, 'Electric Power Markets');
+
+      // Shared legend strip along the bottom — one key for both panels.
+      const legendY = TITLE_H + MAP_H + PAD;
+      const legendTiers = ['dereg', 'limited', 'direct_access', 'reg'];
+      const noSitesLabel = 'No portfolio sites';
+      ctx.font = '14px Nunito Sans, Arial, sans-serif';
+      const SWATCH = 22;
+      const GAP_SWATCH_LABEL = 8;
+      const GAP_ITEMS = 28;
+      const itemW = (label) => SWATCH + GAP_SWATCH_LABEL + ctx.measureText(label).width;
+      const totalW = legendTiers.reduce((a, t) => a + itemW(STATUS_LABEL[t]) + GAP_ITEMS, 0)
+                   + itemW(noSitesLabel);
+      let cursorX = (W - totalW) / 2;
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'left';
+      const drawLegendChip = (color, label, bold) => {
+        ctx.fillStyle = color;
+        ctx.fillRect(cursorX, legendY, SWATCH, SWATCH);
+        ctx.strokeStyle = bold ? SITE_STROKE : NO_SITES_STROKE;
+        ctx.lineWidth = bold ? 2.5 : 1;
+        ctx.strokeRect(cursorX, legendY, SWATCH, SWATCH);
+        ctx.fillStyle = '#0F172A';
+        ctx.fillText(label, cursorX + SWATCH + GAP_SWATCH_LABEL, legendY + SWATCH / 2);
+        cursorX += SWATCH + GAP_SWATCH_LABEL + ctx.measureText(label).width + GAP_ITEMS;
+      };
+      for (const tier of legendTiers) drawLegendChip(STATUS_FILL[tier], STATUS_LABEL[tier], true);
+      drawLegendChip(NO_SITES_FILL, noSitesLabel, false);
 
       const dataUrl = canvas.toDataURL('image/png');
       const imageId = wb.addImage({ base64: dataUrl, extension: 'png' });
@@ -4142,7 +4194,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       ws.mergeCells(2, 1, 2, COLS);
       const sub = ws.getCell(2, 1);
       const skippedNote = skippedCount > 0 ? ` (${skippedCount} site${skippedCount === 1 ? '' : 's'} skipped — state / province code not in the geographic reference)` : '';
-      sub.value = `${naSiteCount} North America site${naSiteCount === 1 ? '' : 's'} across ${buckets.size} state/province bucket${buckets.size === 1 ? '' : 's'}. Each state / province is tinted by its deregulation category (legend at right) and darkened proportional to its portfolio site count — darker means more sites.${skippedNote}`;
+      sub.value = `${naSiteCount} North America site${naSiteCount === 1 ? '' : 's'} across ${buckets.size} state/province bucket${buckets.size === 1 ? '' : 's'}. Each panel highlights every portfolio state / province with a bold outline and a status color from the legend below; states / provinces with no sites fade to light grey for context.${skippedNote}`;
       sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
       sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
       ws.getRow(2).height = 36;
@@ -4151,56 +4203,6 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         tl: { col: 0, row: 3 },
         ext: { width: W, height: H },
       });
-
-      // Markets Legend — top-right of the map. Lists every NA market
-      // category with its swatch + label so the user reads the map
-      // and the legend side-by-side without scrolling. Same display
-      // order the SE deregulation reference uses top-to-bottom.
-      const legendStart = 4;
-      const swatchCol = MAP_COLS + 2;
-      const labelCol = MAP_COLS + 4;
-      ws.mergeCells(legendStart, swatchCol, legendStart, labelCol);
-      const legTitle = ws.getCell(legendStart, swatchCol);
-      legTitle.value = 'North America Markets Legend';
-      legTitle.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
-      legTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
-      legTitle.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-      ws.getRow(legendStart).height = 22;
-
-      const legendOrder = [
-        'REG_NG_EP', 'DEREG_NG', 'DEREG_NG_EP',
-        'DEREG_NG_LIMITED_EP', 'DEREG_NG_HEAVY_EP',
-        'LIMITED_EP', 'DIRECT_ACCESS_EP', 'HEAVY_EP',
-        'CA_LIMITED_NG_DEREG_EP', 'CA_LIMITED_NG_REG_EP',
-      ];
-      const swatchBorder = {
-        top:    { style: 'thin', color: { argb: SE_BORDER } },
-        bottom: { style: 'thin', color: { argb: SE_BORDER } },
-        left:   { style: 'thin', color: { argb: SE_BORDER } },
-        right:  { style: 'thin', color: { argb: SE_BORDER } },
-      };
-      legendOrder.forEach((key, idx) => {
-        const cat = NA_CATEGORIES[key];
-        if (!cat) return;
-        const rowIdx = legendStart + 1 + idx;
-        const sw = ws.getCell(rowIdx, swatchCol);
-        sw.value = '';
-        sw.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: cat.fill } };
-        sw.border = swatchBorder;
-        const lbl = ws.getCell(rowIdx, labelCol);
-        lbl.value = cat.label;
-        lbl.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-        lbl.alignment = { vertical: 'middle', horizontal: 'left', wrapText: false, indent: 1 };
-        ws.getRow(rowIdx).height = 28;
-      });
-
-      const dotsCapRow = legendStart + 1 + legendOrder.length + 1;
-      ws.mergeCells(dotsCapRow, swatchCol, dotsCapRow, labelCol);
-      const dotsCap = ws.getCell(dotsCapRow, swatchCol);
-      dotsCap.value = 'Each state / province is tinted by its deregulation category (above) and darkened proportional to its portfolio site count. Mexico is gray for geographic context only.';
-      dotsCap.font = { name: 'Nunito Sans', italic: true, size: 9, color: { argb: SE_SLATE } };
-      dotsCap.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
-      ws.getRow(dotsCapRow).height = 56;
 
       // Overview table — same tier rollup as Portfolio Overview but
       // scoped to NA sites only.
