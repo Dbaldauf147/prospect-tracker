@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { DataTable } from '../common/DataTable';
 import { dbGet } from '../../utils/db';
 import styles from './OppsView2.module.css';
@@ -252,6 +253,10 @@ function EditableCell({ value, onChange, suggestions }) {
   const [draft, setDraft] = useState(value ?? '');
   const [open, setOpen] = useState(false);
   const [hoverIdx, setHoverIdx] = useState(0);
+  // Dropdown is portaled to <body> so the table cell's overflow:hidden
+  // can't clip it; position is recomputed from the wrapper's bounding
+  // rect whenever the dropdown opens.
+  const [dropPos, setDropPos] = useState({ top: 0, left: 0, width: 0 });
   const wrapRef = useRef(null);
   useEffect(() => { if (!editing) setDraft(value ?? ''); }, [value, editing]);
 
@@ -280,6 +285,12 @@ function EditableCell({ value, onChange, suggestions }) {
     setOpen(false);
     if ((v ?? '') !== (value ?? '')) onChange(v);
   }
+
+  useLayoutEffect(() => {
+    if (!open || !wrapRef.current) return;
+    const rect = wrapRef.current.getBoundingClientRect();
+    setDropPos({ top: rect.bottom + 2, left: rect.left, width: rect.width });
+  }, [open, draft]);
 
   if (!editing) {
     const isEmpty = value === '' || value == null;
@@ -331,12 +342,13 @@ function EditableCell({ value, onChange, suggestions }) {
           background: '#fff',
         }}
       />
-      {open && matches.length > 0 && (
+      {open && matches.length > 0 && createPortal(
         <div
           onMouseDown={(e) => e.preventDefault()}
           style={{
-            position: 'absolute', top: '100%', left: 0, minWidth: '100%',
-            zIndex: 50, background: '#fff', border: '1px solid var(--color-border)',
+            position: 'fixed', top: dropPos.top, left: dropPos.left,
+            minWidth: Math.max(dropPos.width, 160),
+            zIndex: 9999, background: '#fff', border: '1px solid var(--color-border)',
             borderRadius: 4, boxShadow: '0 8px 20px rgba(15, 23, 42, 0.12)',
             maxHeight: 220, overflowY: 'auto', fontSize: '0.78rem',
           }}
@@ -355,7 +367,8 @@ function EditableCell({ value, onChange, suggestions }) {
               }}
             >{m}</div>
           ))}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
