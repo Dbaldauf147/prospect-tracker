@@ -4348,6 +4348,29 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       };
       const INPUT_FILL = 'FFFFF9C3';
       const INPUT_BORDER = 'FFCA8A04';
+      // Soft amber row tint for "too low" markets (small electric
+      // spend OR gas spend below the sourcing threshold). Applied to
+      // every non-editable cell on the row so the warning carries
+      // across the whole entry without overwriting the yellow Low /
+      // High % input fills.
+      const TOO_LOW_FILL = 'FFFEEAD2';
+      const isTooLow = (row) => {
+        const flags = String(row?.flags || '');
+        return flags.includes('small electric market') || flags.includes('too low for sourcing');
+      };
+      // Hide fully-regulated leaf rows that don't carry a reg-rate
+      // motion — they were dead lines on the table. Rows with status
+      // 'no' (US/CA per-state regulated), 'Regulated', 'Unlikely', or
+      // 'No opportunity' (country reference) are dropped unless they
+      // still report a reg-rate savings number. Parent aggregate rows
+      // (United States, Canada) are always kept; they roll up the
+      // surviving children below.
+      const REGULATED_STATUSES = new Set(['no', 'Regulated', 'Unlikely', 'No opportunity']);
+      const visibleRows = sectionRows.filter((row) => {
+        if (row.isParent) return true;
+        if (!REGULATED_STATUSES.has(row.status)) return true;
+        return Number(row.regRateSavings) > 0;
+      });
       const dataStartRow = r;
 
       // Data rows — every cell left-aligned regardless of type so the
@@ -4356,7 +4379,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // toggle (Conservative / Base / Aggressive), the # of Years
       // dropdown, and the editable Low / High % cells all recompute
       // every savings number on the sheet.
-      for (const row of sectionRows) {
+      for (const row of visibleRows) {
         const dataRow = ws.getRow(r);
         // Children of a country-aggregate row (US states / Canadian
         // provinces) get outline level 1 so Excel shows the +/-
@@ -4469,10 +4492,15 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           }
           // Parent aggregate rows (United States / Canada) render
           // bold + a light green band so they visually separate from
-          // the per-state children grouped below them.
+          // the per-state children grouped below them. "Too low"
+          // markets get an amber row tint so users can scan and skip
+          // them quickly.
           if (row.isParent) {
             cell.font = { name: 'Nunito Sans', size: 10, bold: true, color: { argb: SE_TEXT_DARK } };
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+          } else if (isTooLow(row)) {
+            cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TOO_LOW_FILL } };
           } else {
             cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
           }
@@ -4498,10 +4526,12 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const totalRow = ws.getRow(r);
       const scalarTotals = {};
       const scenarioTotals = {};
-      // Sum across LEAF rows only. Parent aggregate rows (United
+      // Sum across LEAF rows only — and only the rows that actually
+      // render after the regulated-with-no-reg-rate filter, so totals
+      // match what the user sees. Parent aggregate rows (United
       // States / Canada) carry sum-of-children values; summing them
       // alongside their children would double-count the totals.
-      const summable = sectionRows.filter(row => !row.isParent);
+      const summable = visibleRows.filter(row => !row.isParent);
       for (const c of columnDefs) {
         if (!c.sumKey) continue;
         if (c.scenario) {
