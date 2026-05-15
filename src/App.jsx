@@ -20,6 +20,7 @@ import { MyAccountsView } from './components/MyAccountsView/MyAccountsView';
 import { ContactsView } from './components/ContactsView/ContactsView';
 import { OppsView } from './components/OppsView/OppsView';
 import { OppsView2 } from './components/OppsView2/OppsView2';
+import { DropdownsView } from './components/DropdownsView/DropdownsView';
 import { ClientsView } from './components/ClientsView/ClientsView';
 import { ActivityView } from './components/ActivityView/ActivityView';
 import { AgentsView } from './components/AgentsView/AgentsView';
@@ -338,6 +339,8 @@ function App() {
             <OppsView settings={settings} updateSettings={updateSettings} />
           ) : view === 'opps2' ? (
             <OppsView2 settings={settings} updateSettings={updateSettings} prospects={prospects} />
+          ) : view === 'dropdowns' ? (
+            <DropdownsView />
           ) : view === 'accounts' ? (
             <MyAccountsView
               prospects={prospects}
