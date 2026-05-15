@@ -3967,10 +3967,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // NA_CATEGORIES color (matching the Markets Legend in the
       // sidebar). States / provinces without an explicit category
       // default to the regulated (NG & EP) bucket so every polygon
-      // carries a fill. The map uses a darker tone for the
-      // regulated bucket than the table cells do — without that,
-      // the northern Canadian territories (mostly REG_NG_EP) blend
-      // into the pale-blue ocean instead of reading as land.
+      // carries a fill that matches the legend swatch.
       const naMarketByPostal = new Map();
       for (const m of US_MARKETS) naMarketByPostal.set(`US/${m.code}`, m);
       for (const m of CA_MARKETS) naMarketByPostal.set(`CA/${m.code}`, m);
@@ -3978,16 +3975,12 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       ctx.lineWidth = 0.6;
       ctx.strokeStyle = '#94A3B8';
       const hexToCanvas = (argb) => '#' + String(argb).replace(/^FF/i, '');
-      const MAP_REG_FILL = '#9CA3AF';
+      const REG_NG_EP_FILL = hexToCanvas(NA_CATEGORIES.REG_NG_EP.fill);
       for (const feat of naFeatures) {
         const marketKey = `${feat.admin}/${feat.postal}`;
         const m = naMarketByPostal.get(marketKey);
         const cat = m ? NA_CATEGORIES[m.category] : null;
-        if (!cat || cat.key === 'REG_NG_EP') {
-          ctx.fillStyle = MAP_REG_FILL;
-        } else {
-          ctx.fillStyle = hexToCanvas(cat.fill);
-        }
+        ctx.fillStyle = cat ? hexToCanvas(cat.fill) : REG_NG_EP_FILL;
         drawFeature(feat.rings);
       }
 
