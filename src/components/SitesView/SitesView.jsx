@@ -59,6 +59,7 @@ import {
   TIER_COLORS,
   TIER_LABELS,
   getCountryFeatures,
+  getNAAdmin1Features,
   TOPO_NAME_TO_DEREG_KEY,
 } from '../../data/worldGeo';
 import {
@@ -3901,25 +3902,13 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         ((NA_LAT_MAX - lat) / (NA_LAT_MAX - NA_LAT_MIN)) * H,
       ];
 
-      // Fill only NA country features. Mexico is kept on the map as
-      // a neutral landmass (no portfolio relevance) so the southern
-      // edge isn't a hard cutoff; everything else clips to the NA
-      // bounding box and effectively disappears.
-      const NO_SITES_FILL = '#E2E8F0';
-      const NA_COUNTRY_KEYS = new Set(['United States', 'Canada', 'Mexico']);
-      const countryFeatures = getCountryFeatures();
-      for (const feat of countryFeatures) {
-        const derGKey = TOPO_NAME_TO_DEREG_KEY[feat.name] || feat.name;
-        if (!NA_COUNTRY_KEYS.has(derGKey) && !NA_COUNTRY_KEYS.has(feat.name)) continue;
-        const c = COUNTRY_DEREGULATION[derGKey];
-        const tier = c ? statusTier(c.electric) : 'unknown';
-        // Mexico is included for context but never gets a tier fill
-        // — the user's analysis here is NA portfolio only.
-        const isMexico = derGKey === 'Mexico' || feat.name === 'Mexico';
-        ctx.fillStyle = isMexico ? NO_SITES_FILL : TIER_COLORS[tier];
-        ctx.strokeStyle = '#94A3B8';
-        ctx.lineWidth = 0.5;
-        for (const ring of feat.rings) {
+      // Canvas helper — draws a feature's rings with antimeridian-
+      // aware sub-ring splitting (Alaska's Aleutian chain crosses
+      // -180°, otherwise the polygon streaks a connector all the way
+      // across the canvas). Shared by both the Mexico landmass pass
+      // and the per-state / per-province admin-1 pass below.
+      const drawFeature = (rings) => {
+        for (const ring of rings) {
           const subRings = [];
           let cur = [];
           let prevLng = null;
@@ -3943,6 +3932,43 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             ctx.stroke();
           }
         }
+      };
+
+      // Pass 1 — Mexico landmass at the southern edge. Drawn first
+      // (under the admin-1 polygons) and tinted with the no-sites
+      // gray so the map has a soft southern boundary instead of a
+      // hard cutoff at the US border. Pulled from the country
+      // TopoJSON; the admin-1 layer doesn't carry Mexican states.
+      const NO_SITES_FILL = '#E2E8F0';
+      ctx.strokeStyle = '#94A3B8';
+      ctx.lineWidth = 0.5;
+      ctx.fillStyle = NO_SITES_FILL;
+      const countryFeatures = getCountryFeatures();
+      for (const feat of countryFeatures) {
+        const derGKey = TOPO_NAME_TO_DEREG_KEY[feat.name] || feat.name;
+        if (derGKey !== 'Mexico' && feat.name !== 'Mexico') continue;
+        drawFeature(feat.rings);
+      }
+
+      // Pass 2 — choropleth at the state / province level. Each US
+      // state + DC and each Canadian province is filled with its
+      // NA_CATEGORIES color (matching the Markets Legend below the
+      // state/province table on this same tab). States / provinces
+      // without an explicit category default to the regulated
+      // (NG & EP) bucket so every polygon carries a fill.
+      const naMarketByPostal = new Map();
+      for (const m of US_MARKETS) naMarketByPostal.set(`US/${m.code}`, m);
+      for (const m of CA_MARKETS) naMarketByPostal.set(`CA/${m.code}`, m);
+      const naFeatures = getNAAdmin1Features();
+      ctx.lineWidth = 0.5;
+      ctx.strokeStyle = '#FFFFFF';
+      const hexToCanvas = (argb) => '#' + String(argb).replace(/^FF/i, '');
+      for (const feat of naFeatures) {
+        const marketKey = `${feat.admin}/${feat.postal}`;
+        const m = naMarketByPostal.get(marketKey);
+        const cat = m ? NA_CATEGORIES[m.category] : null;
+        ctx.fillStyle = cat ? hexToCanvas(cat.fill) : hexToCanvas(NA_CATEGORIES.REG_NG_EP.fill);
+        drawFeature(feat.rings);
       }
 
       // Site dots — same two-tone (electric left half / gas right
@@ -4019,44 +4045,18 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
 
       ws.mergeCells(legendStart + 1, swatchCol, legendStart + 1, labelCol);
       const legCap = ws.getCell(legendStart + 1, swatchCol);
-      legCap.value = 'Country fill = electric deregulation tier. Mexico is shown for geographic context and is not part of this NA-portfolio view.';
+      legCap.value = 'Each US state and Canadian province is shaded with its market-category color. Full color key is the "North America Markets Legend" below the state / province table. Mexico is gray for geographic context only.';
       legCap.font = { name: 'Nunito Sans', italic: true, size: 9, color: { argb: SE_SLATE } };
       legCap.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
-      ws.getRow(legendStart + 1).height = 36;
+      ws.getRow(legendStart + 1).height = 72;
 
-      const hexToArgb = (hex) => 'FF' + String(hex).replace(/^#/, '').toUpperCase();
-      const swatchBorder = {
-        top:    { style: 'thin', color: { argb: 'FF94A3B8' } },
-        bottom: { style: 'thin', color: { argb: 'FF94A3B8' } },
-        left:   { style: 'thin', color: { argb: 'FF94A3B8' } },
-        right:  { style: 'thin', color: { argb: 'FF94A3B8' } },
-      };
-      const legendEntries = [
-        ['dereg',  TIER_COLORS.dereg, TIER_LABELS.dereg],
-        ['some',   TIER_COLORS.some,  TIER_LABELS.some],
-        ['reg',    TIER_COLORS.reg,   TIER_LABELS.reg],
-        ['nosite', NO_SITES_FILL,     'Out of scope'],
-      ];
-      legendEntries.forEach(([_t, color, label], i) => {
-        const rowIdx = legendStart + 2 + i;
-        const sw = ws.getCell(rowIdx, swatchCol);
-        sw.value = '';
-        sw.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: hexToArgb(color) } };
-        sw.border = swatchBorder;
-        const lbl = ws.getCell(rowIdx, labelCol);
-        lbl.value = label;
-        lbl.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-        lbl.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-        ws.getRow(rowIdx).height = 18;
-      });
-
-      const dotsCapRow = legendStart + 2 + legendEntries.length + 1;
+      const dotsCapRow = legendStart + 3;
       ws.mergeCells(dotsCapRow, swatchCol, dotsCapRow, labelCol);
       const dotsCap = ws.getCell(dotsCapRow, swatchCol);
       dotsCap.value = 'Each site dot — left half = Electric tier, right half = Gas tier. Dot size scales with the number of sites in that bucket.';
       dotsCap.font = { name: 'Nunito Sans', italic: true, size: 9, color: { argb: SE_SLATE } };
       dotsCap.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
-      ws.getRow(dotsCapRow).height = 42;
+      ws.getRow(dotsCapRow).height = 56;
 
       // Overview table — same tier rollup as Portfolio Overview but
       // scoped to NA sites only.

@@ -22,6 +22,7 @@
 // (twoComplementsNot via `~i`).
 
 import countriesTopology from './countries-110m.json';
+import naAdmin1 from './naAdmin1.json';
 
 function decodeArcs(topology) {
   const { scale: [kx, ky], translate: [dx, dy] } = topology.transform;
@@ -69,6 +70,36 @@ export function getCountryFeatures() {
     rings: buildRingsFromGeometry(g, arcs),
   }));
   return _decodedCountries;
+}
+
+// North America admin-1 polygons (US states + DC, Canadian provinces +
+// territories) bundled at src/data/naAdmin1.json. Sourced from Natural
+// Earth's ne_50m_admin_1_states_provinces dataset, filtered to US + CA
+// only, with coordinates rounded to 0.1° (~10 km) so the file stays
+// small enough to bundle. Each feature carries:
+//   postal — two-letter state / province code (matches US_STATE_CENTERS
+//            and CANADA_PROVINCE_CENTERS keys + the codes in
+//            data/naMarkets.js).
+//   admin  — 'US' or 'CA'.
+//   name   — full state / province name.
+//   rings  — array of closed polygon rings (each [[lng, lat], ...]).
+// MultiPolygon geometries (Alaska's Aleutian arc, BC's outer islands,
+// Maine's coastal islands, etc.) contribute multiple rings under a
+// single feature.
+let _decodedNAAdmin1 = null;
+export function getNAAdmin1Features() {
+  if (_decodedNAAdmin1) return _decodedNAAdmin1;
+  _decodedNAAdmin1 = naAdmin1.features.map(f => {
+    const rings = [];
+    const g = f.geometry;
+    if (g?.type === 'Polygon') {
+      for (const ring of g.coordinates) rings.push(ring);
+    } else if (g?.type === 'MultiPolygon') {
+      for (const poly of g.coordinates) for (const ring of poly) rings.push(ring);
+    }
+    return { postal: f.postal, admin: f.admin, name: f.name, rings };
+  });
+  return _decodedNAAdmin1;
 }
 
 // TopoJSON uses slightly different country names than the
