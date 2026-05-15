@@ -3859,7 +3859,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         views: [{ showGridLines: false }],
       });
       const MAP_COLS = 14;
-      const LEGEND_COLS = 4;
+      const LEGEND_COLS = 6;
       const COLS = MAP_COLS + LEGEND_COLS;
       const NUMERIC_WIDE_COLS = new Set([5, 6, 7, 8]);
       ws.columns = [
@@ -3869,9 +3869,12 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         { width: 4 },
         { width: 6 },
         { width: 6 },
-        // Last column — kept narrow so the worksheet's right edge sits
-        // close to the right edge of the two-panel map image instead of
-        // leaving a wide empty band of column R.
+        // Cols R–T kept narrow so the worksheet's right edge sits next
+        // to the two-panel map image instead of leaving a wide empty
+        // band. The top green title band merges through column T so it
+        // visually spans the full width of the map figure.
+        { width: 12 },
+        { width: 12 },
         { width: 12 },
       ];
 
@@ -4139,7 +4142,11 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         ctx.textBaseline = 'alphabetic';
         ctx.fillText(headerLabel, originX + MAP_W / 2, originY - 10);
 
-        ctx.fillStyle = '#F1F5F9';
+        // Panel background uses the no-sites grey instead of the old
+        // slate ocean tint so Mexico's southern edge (clipped at the
+        // canvas's southern edge) blends into the background instead of
+        // showing a hard line where Mexico meets the panel.
+        ctx.fillStyle = NO_SITES_FILL;
         ctx.fillRect(originX, originY, MAP_W, MAP_H);
 
         ctx.fillStyle = MEXICO_FILL;
@@ -4185,7 +4192,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         ];
         const totalW = labels.reduce((a, it) => a + itemW(it.label), 0) + GAP_ITEMS * (labels.length - 1);
         let cursorX = originX + (MAP_W - totalW) / 2;
-        const legendY = TITLE_H + MAP_H + PAD;
+        // PAD * 2 of breathing room above the chips so each legend
+        // doesn't crowd the bottom edge of Mexico in the map above.
+        const legendY = TITLE_H + MAP_H + PAD * 2;
         for (const it of labels) {
           ctx.fillStyle = it.color;
           ctx.fillRect(cursorX, legendY, SWATCH, SWATCH);
@@ -4225,8 +4234,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       });
 
       // Overview table — same tier rollup as Portfolio Overview but
-      // scoped to NA sites only.
-      const SUMMARY_START = 30;
+      // scoped to NA sites only. Anchored at row 39 so the table
+      // clears the bottom edge of the 638-px map image above.
+      const SUMMARY_START = 39;
       ws.mergeCells(SUMMARY_START, 1, SUMMARY_START, COLS);
       const sumHdr = ws.getCell(SUMMARY_START, 1);
       sumHdr.value = 'NA Overview';
