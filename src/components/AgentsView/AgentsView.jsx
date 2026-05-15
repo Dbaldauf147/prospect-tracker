@@ -1,19 +1,22 @@
 import { useEffect, useMemo, useState } from 'react';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
-import { dbGet } from '../../utils/db';
+import { loadOppsFromCache } from '../../utils/oppsCache';
 import styles from './AgentsView.module.css';
 
 // Same localStorage key the Activity tab caches its HubSpot pull into.
 // We piggy-back on that cache instead of doing our own fetch so the two
 // views never disagree about what happened today.
 const ACTIVITY_CACHE_KEY = 'hubspot-activity-cache';
-const BFO_STORE = 'bfo-activity';
-const BFO_KEY = 'current';
 
 // "Did I send this?" is keyed off the work email on HubSpot, not the
 // Google auth address — the user signs in as baldaufdan@gmail.com but
 // HubSpot threads always carry the @se.com from-address.
 const SENDER_EMAIL = 'daniel.baldauf@se.com';
+
+// Extract every email-shaped token from an Opps "Contact" cell, which
+// can hold a single email, a name + email pair, or a comma/semicolon
+// list of either.
+const EMAIL_RE = /[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}/g;
 
 function readActivityCache() {
   try {
@@ -73,6 +76,19 @@ function normalizeCompany(name) {
     .trim();
 }
 
+// Best-effort company guess from a recipient's email domain — used
+// only when neither an Opps-tab row nor a HubSpot contact carries a
+// company so the Company column doesn't render empty.
+function domainCompanyGuess(addr) {
+  if (!addr) return '';
+  const at = String(addr).lastIndexOf('@');
+  if (at < 0) return '';
+  return String(addr).slice(at + 1)
+    .replace(/\.(com|org|net|io|co|us|ca|uk)$/i, '')
+    .replace(/\./g, ' ')
+    .replace(/\b\w/g, m => m.toUpperCase());
+}
+
 function companiesMatch(a, b) {
   const na = normalizeCompany(a);
   const nb = normalizeCompany(b);
@@ -87,7 +103,7 @@ function companiesMatch(a, b) {
 export function AgentsView() {
   const [cache, setCache] = useState(() => readActivityCache());
   const [hubspotCache, setHubspotCache] = useState(null);
-  const [bfoData, setBfoData] = useState({ headers: [], rows: [] });
+  const [oppsCache, setOppsCache] = useState(null);
 
   // Pick up new HubSpot activity pulls from the Activity tab.
   useEffect(() => {
@@ -111,14 +127,16 @@ export function AgentsView() {
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
 
-  // BFO export from the BFO Activity tab — provides Account Name →
-  // Opportunity Name. Refresh on window focus so a fresh paste over
-  // there shows up here without a manual reload.
+  // Opps cache (IndexedDB) — drives the BFO Opportunity Name tagging.
+  // Each opp record carries Contact (recipient email[s]), Account
+  // (company), and BFO Link (= BFO Opportunity Name). Refresh on
+  // window focus so a fresh paste over on the Opps tab shows up here
+  // without a manual reload.
   useEffect(() => {
     let cancelled = false;
     const refresh = () => {
-      dbGet(BFO_STORE, BFO_KEY)
-        .then(saved => { if (!cancelled && saved?.rows) setBfoData(saved); })
+      loadOppsFromCache()
+        .then(o => { if (!cancelled) setOppsCache(o); })
         .catch(() => {});
     };
     refresh();
@@ -135,29 +153,47 @@ export function AgentsView() {
     return map;
   }, [hubspotCache]);
 
-  // BFO rows surfaced as { accountName, opportunityName } so we can do
-  // fuzzy company → opp lookups without re-scanning the headers per
-  // email. Picks the first non-empty Opportunity Name per Account.
-  const bfoOppByCompany = useMemo(() => {
-    if (!bfoData?.headers?.length || !bfoData?.rows?.length) return [];
-    const accountCol = bfoData.headers.find(h => /account\s*name/i.test(h));
-    const oppCol = bfoData.headers.find(h => /opportunity\s*name/i.test(h));
-    if (!accountCol || !oppCol) return [];
-    const out = [];
-    for (const r of bfoData.rows) {
-      const acct = String(r[accountCol] || '').trim();
-      const opp = String(r[oppCol] || '').trim();
-      if (acct && opp) out.push({ account: acct, opp });
+  // Pre-index the Opps cache for two lookup modes:
+  //   1. email → opp  (Contact field carries email tokens)
+  //   2. company → opp (Account field, fuzzy-matched)
+  // The same opp can answer for either path. BFO Link is the BFO
+  // Opportunity Name (the column was renamed visibly elsewhere but the
+  // data key stayed "BFO Link").
+  const oppIndex = useMemo(() => {
+    const records = oppsCache?.records || [];
+    const byEmail = new Map(); // lower-case email → opp
+    const allOpps = [];
+    for (const r of records) {
+      const bfoOpp = String(r['BFO Link'] || '').trim();
+      const account = String(r['Account'] || '').trim();
+      // Skip opps that don't carry the data we need to surface.
+      if (!bfoOpp && !account) continue;
+      allOpps.push({ raw: r, account, bfoOpp });
+      const contactRaw = String(r['Contact'] || '').toLowerCase();
+      if (!contactRaw) continue;
+      const emails = contactRaw.match(EMAIL_RE) || [];
+      for (const e of emails) {
+        if (!byEmail.has(e)) byEmail.set(e, { raw: r, account, bfoOpp });
+      }
     }
-    return out;
-  }, [bfoData]);
+    return { byEmail, allOpps };
+  }, [oppsCache]);
 
-  const lookupOppForCompany = (company) => {
-    if (!company || bfoOppByCompany.length === 0) return '';
-    for (const { account, opp } of bfoOppByCompany) {
-      if (companiesMatch(account, company)) return opp;
+  // Primary path: which Opps-tab row covers this email recipient?
+  // Falls back to a fuzzy Account match on the HubSpot company so an
+  // unknown-contact email still finds its opp when the company has
+  // any open opportunity on the Opps tab.
+  const findOppForRecipient = (recipientEmail, hubspotCompany) => {
+    if (recipientEmail) {
+      const direct = oppIndex.byEmail.get(recipientEmail);
+      if (direct) return direct;
     }
-    return '';
+    if (hubspotCompany) {
+      for (const opp of oppIndex.allOpps) {
+        if (companiesMatch(opp.account, hubspotCompany)) return opp;
+      }
+    }
+    return null;
   };
 
   const { todaysOutbound, todaysMeetings } = useMemo(() => {
@@ -177,25 +213,25 @@ export function AgentsView() {
       .filter(e => hasExternalRecipient(e.hs_email_to_email))
       .map(e => {
         const recipients = externalRecipientList(e.hs_email_to_email);
-        // Take the first external recipient that we can map to a
-        // HubSpot contact's company. If none are mapped, fall back to
-        // a domain-derived guess so the row still shows something.
-        let company = '';
+        // Pick the HubSpot-company off the first recipient we have a
+        // contact record for. Used both as a fallback Company when no
+        // Opp matches and as the secondary-match key for the Opps-tab
+        // lookup.
+        let hubspotCompany = '';
         for (const addr of recipients) {
           const c = companyByEmail.get(addr);
-          if (c) { company = c; break; }
+          if (c) { hubspotCompany = c; break; }
         }
-        if (!company && recipients[0]) {
-          const at = recipients[0].lastIndexOf('@');
-          if (at >= 0) {
-            const domain = recipients[0].slice(at + 1);
-            company = domain
-              .replace(/\.(com|org|net|io|co|us|ca|uk)$/i, '')
-              .replace(/\./g, ' ')
-              .replace(/\b\w/g, m => m.toUpperCase());
-          }
+        // Walk the external recipients and take the first one that
+        // resolves to an Opp on the Opps tab (by Contact email or by
+        // Account-name fuzzy match against the HubSpot company).
+        let matchedOpp = null;
+        for (const addr of recipients) {
+          matchedOpp = findOppForRecipient(addr, companyByEmail.get(addr) || hubspotCompany);
+          if (matchedOpp) break;
         }
-        const bfoOpp = lookupOppForCompany(company);
+        const company = matchedOpp?.account || hubspotCompany || domainCompanyGuess(recipients[0]);
+        const bfoOpp = matchedOpp?.bfoOpp || '';
         return {
           id: e.id || e.hs_object_id,
           ts: e.hs_timestamp,
@@ -212,15 +248,22 @@ export function AgentsView() {
     const meetings = (cache?.meetings || [])
       .filter(m => inToday(m.hs_meeting_start_time || m.hs_timestamp))
       .map(m => {
-        // For meetings, scan associated contact IDs for a HubSpot
-        // contact's company so the same tagging applies.
+        // Walk associated HubSpot contact IDs for the first contact
+        // with an email or company, then try the same Opps-tab
+        // lookup the email path uses.
         const ids = m._contactIds || [];
-        let company = '';
+        let firstEmail = '';
+        let hubspotCompany = '';
         for (const id of ids) {
           const ct = (hubspotCache?.contacts || []).find(c => c.id === id);
-          if (ct?.company) { company = ct.company; break; }
+          if (!ct) continue;
+          if (!firstEmail && ct.email) firstEmail = String(ct.email).toLowerCase();
+          if (!hubspotCompany && ct.company) hubspotCompany = ct.company;
+          if (firstEmail && hubspotCompany) break;
         }
-        const bfoOpp = lookupOppForCompany(company);
+        const matchedOpp = findOppForRecipient(firstEmail, hubspotCompany);
+        const company = matchedOpp?.account || hubspotCompany;
+        const bfoOpp = matchedOpp?.bfoOpp || '';
         return {
           id: m.id || m.hs_object_id,
           ts: m.hs_meeting_start_time || m.hs_timestamp,
@@ -235,18 +278,18 @@ export function AgentsView() {
       .sort((a, b) => new Date(a.ts) - new Date(b.ts));
 
     return { todaysOutbound: outbound, todaysMeetings: meetings };
-    // lookupOppForCompany / companyByEmail are derived from the same
-    // dependency set as cache + hubspotCache + bfoOppByCompany, so they
+    // findOppForRecipient / companyByEmail are derived from the same
+    // dependency set as cache + hubspotCache + oppIndex, so they
     // don't need their own entries here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cache, hubspotCache, bfoOppByCompany]);
+  }, [cache, hubspotCache, oppIndex]);
 
   const dateLabel = useMemo(() => new Date().toLocaleDateString('en-US', {
     weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
   }), []);
 
   const fetchedLabel = fmtFetchedAt(cache?.fetchedAt);
-  const bfoLoaded = bfoData?.rows?.length > 0;
+  const oppsLoaded = (oppsCache?.records?.length || 0) > 0;
 
   return (
     <div className={styles.wrap}>
@@ -255,7 +298,7 @@ export function AgentsView() {
         <span className={styles.dateline}>{dateLabel}</span>
       </div>
       <p className={styles.subnote}>
-        Today&rsquo;s outbound emails from <strong>{SENDER_EMAIL}</strong> to non-SE recipients, plus any meetings on today&rsquo;s calendar. Company + BFO Opportunity columns are tagged from the HubSpot contacts cache and the BFO Activity tab&rsquo;s pasted export.
+        Today&rsquo;s outbound emails from <strong>{SENDER_EMAIL}</strong> to non-SE recipients, plus any meetings on today&rsquo;s calendar. BFO Opportunity tagging walks each recipient&rsquo;s email against the Opps tab&rsquo;s Contact field first, then falls back to fuzzy-matching the HubSpot company against the Opps tab&rsquo;s Account field. The Company column falls back to HubSpot&rsquo;s contact record when no Opp matches.
       </p>
 
       <div className={styles.tallies}>
@@ -270,9 +313,9 @@ export function AgentsView() {
           No HubSpot activity cached yet. Visit the Activity tab to fetch.
         </div>
       )}
-      {cache && !bfoLoaded && (
+      {cache && !oppsLoaded && (
         <div className={styles.staleBanner}>
-          No BFO Activity export pasted yet. Paste your BFO rows on the BFO Activity tab to populate the BFO Opportunity column.
+          No Opps cache loaded yet. Visit the Opps tab to populate the BFO Opportunity column.
         </div>
       )}
       {cache && fetchedLabel && (
