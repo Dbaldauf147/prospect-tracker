@@ -3720,6 +3720,435 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       }
     }
 
+    // ---- North America Overview sheet --------------------------
+    // Same map-and-summary treatment as the Portfolio Overview, but
+    // scoped to US + Canadian sites only. The projection is bounded
+    // to the NA bounding box so states / provinces fill the canvas
+    // instead of being a handful of pixels on a world map, and the
+    // bottom table breaks out per US state / Canadian province
+    // rather than rolling up to the country level.
+    {
+      const ws = wb.addWorksheet('North America Overview', {
+        properties: { tabColor: { argb: SE_GREEN_DARK } },
+        views: [{ showGridLines: false }],
+      });
+      const MAP_COLS = 14;
+      const LEGEND_COLS = 4;
+      const COLS = MAP_COLS + LEGEND_COLS;
+      const NUMERIC_WIDE_COLS = new Set([5, 6, 7, 8]);
+      ws.columns = [
+        ...Array.from({ length: MAP_COLS }, (_, i) => ({
+          width: NUMERIC_WIDE_COLS.has(i + 1) ? 17 : 12,
+        })),
+        { width: 4 },
+        { width: 6 },
+        { width: 6 },
+        { width: 28 },
+      ];
+
+      // Bucket NA sites by (state | province). Non-NA rows are
+      // skipped — they're already covered on the Portfolio Overview
+      // sheet, so dropping them here keeps this view focused.
+      const buckets = new Map();
+      let skippedCount = 0;
+      let naSiteCount = 0;
+      for (const r of rows) {
+        const rawCountry = String(r.__country__ || '').trim();
+        const country = normalizeCountryName(rawCountry) || rawCountry;
+        const stateCode = String(r.__state__ || '').trim().toUpperCase();
+        const isUS = /^(united states|usa|us)$/i.test(country);
+        const isCA = /^(canada|ca)$/i.test(country);
+        if (!isUS && !isCA) continue;
+        naSiteCount++;
+        let key, location, elecTier, gasTier, label;
+        if (isUS && US_STATE_CENTERS[stateCode]) {
+          key = `US/${stateCode}`;
+          location = US_STATE_CENTERS[stateCode];
+          label = `${stateCode}, USA`;
+          const e = ELECTRIC_DEREGULATION[stateCode];
+          const g = GAS_DEREGULATION[stateCode];
+          elecTier = e?.status === 'yes' ? 'dereg' : (e?.status === 'large' ? 'some' : 'reg');
+          gasTier  = g?.status === 'yes' ? 'dereg' : (g?.status === 'large' ? 'some' : 'reg');
+        } else if (isCA && CANADA_PROVINCE_CENTERS[stateCode]) {
+          key = `CA/${stateCode}`;
+          location = CANADA_PROVINCE_CENTERS[stateCode];
+          label = `${stateCode}, Canada`;
+          elecTier = 'dereg';
+          gasTier = 'dereg';
+        } else {
+          // NA row whose state code we don't have a centroid for
+          // (rare — usually a malformed state). Counts towards the
+          // total but doesn't get a dot.
+          skippedCount++;
+          continue;
+        }
+        if (!buckets.has(key)) {
+          buckets.set(key, { location, elecTier, gasTier, label, count: 0, stateCode, country: isUS ? 'United States' : 'Canada' });
+        }
+        buckets.get(key).count++;
+      }
+
+      // Tier roll-up — sites bucket by tier on the map, load + cost
+      // attribute per-row.
+      let elecDereg = 0, elecSome = 0, elecReg = 0, elecUnknown = 0;
+      let gasDereg = 0, gasSome = 0, gasReg = 0, gasUnknown = 0;
+      let mappedSites = 0;
+      for (const b of buckets.values()) {
+        mappedSites += b.count;
+        if (b.elecTier === 'dereg') elecDereg += b.count;
+        else if (b.elecTier === 'some') elecSome += b.count;
+        else if (b.elecTier === 'reg') elecReg += b.count;
+        else elecUnknown += b.count;
+        if (b.gasTier === 'dereg') gasDereg += b.count;
+        else if (b.gasTier === 'some') gasSome += b.count;
+        else if (b.gasTier === 'reg') gasReg += b.count;
+        else gasUnknown += b.count;
+      }
+      const blankTierAgg = () => ({ kwh: 0, therms: 0, cost: 0 });
+      const electricTierAgg = { dereg: blankTierAgg(), some: blankTierAgg(), reg: blankTierAgg(), mixed: blankTierAgg(), unknown: blankTierAgg() };
+      const gasTierAgg      = { dereg: blankTierAgg(), some: blankTierAgg(), reg: blankTierAgg(), mixed: blankTierAgg(), unknown: blankTierAgg() };
+      const rowTierFor = (commodity, country, stateCode, isUS, isCA) => {
+        if (isUS && US_STATE_CENTERS[stateCode]) {
+          const m = commodity === 'electric' ? ELECTRIC_DEREGULATION[stateCode] : GAS_DEREGULATION[stateCode];
+          return m?.status === 'yes' ? 'dereg' : (m?.status === 'large' ? 'some' : 'reg');
+        }
+        if (isCA && CANADA_PROVINCE_CENTERS[stateCode]) return 'dereg';
+        return 'unknown';
+      };
+      // Per-state aggregation for the breakdown table at the bottom.
+      const stateAggs = new Map();
+      for (const r of rows) {
+        const rawCountry = String(r.__country__ || '').trim();
+        const country = normalizeCountryName(rawCountry) || rawCountry;
+        const stateCode = String(r.__state__ || '').trim().toUpperCase();
+        const isUS = /^(united states|usa|us)$/i.test(country);
+        const isCA = /^(canada|ca)$/i.test(country);
+        if (!isUS && !isCA) continue;
+        const eTier = rowTierFor('electric', country, stateCode, isUS, isCA);
+        const gTier = rowTierFor('gas',      country, stateCode, isUS, isCA);
+        const kwh = (typeof r.__kwh__ === 'number' && Number.isFinite(r.__kwh__)) ? r.__kwh__ : 0;
+        const therms = (typeof r.__therms__ === 'number' && Number.isFinite(r.__therms__)) ? r.__therms__ : 0;
+        const eCost = (typeof r.__electricCostActual__ === 'number' && Number.isFinite(r.__electricCostActual__))
+          ? r.__electricCostActual__
+          : (typeof r.__electricCostEstimated__ === 'number' && Number.isFinite(r.__electricCostEstimated__) ? r.__electricCostEstimated__ : 0);
+        const gCost = (typeof r.__gasCostActual__ === 'number' && Number.isFinite(r.__gasCostActual__))
+          ? r.__gasCostActual__
+          : (typeof r.__gasCostEstimated__ === 'number' && Number.isFinite(r.__gasCostEstimated__) ? r.__gasCostEstimated__ : 0);
+        electricTierAgg[eTier].kwh += kwh;
+        gasTierAgg[gTier].therms += therms;
+        electricTierAgg[eTier].cost += eCost;
+        gasTierAgg[gTier].cost += gCost;
+        const key = `${isUS ? 'US' : 'CA'}/${stateCode || '—'}`;
+        let agg = stateAggs.get(key);
+        if (!agg) {
+          const eDereg = ELECTRIC_DEREGULATION[stateCode];
+          const gDereg = GAS_DEREGULATION[stateCode];
+          agg = {
+            label: stateCode || '—',
+            country: isUS ? 'United States' : 'Canada',
+            elecStatus: isCA ? 'Deregulated' : (eDereg?.status === 'yes' ? 'Deregulated' : (eDereg?.status === 'large' ? 'Some deregulation' : 'Regulated')),
+            gasStatus:  isCA ? 'Deregulated' : (gDereg?.status === 'yes' ? 'Deregulated' : (gDereg?.status === 'large' ? 'Some deregulation' : 'Regulated')),
+            sites: 0,
+            kwh: 0,
+            therms: 0,
+            cost: 0,
+          };
+          stateAggs.set(key, agg);
+        }
+        agg.sites++;
+        agg.kwh += kwh;
+        agg.therms += therms;
+        agg.cost += eCost + gCost;
+      }
+      const stateRows = [...stateAggs.values()].sort((a, b) => b.sites - a.sites);
+
+      // Canvas — NA-bounded equirectangular projection so the map
+      // fills the canvas with the US + Canada landmass. Lat range
+      // covers from northern Canada down to the southern US border;
+      // longitude covers Alaska through Newfoundland.
+      const W = 1200, H = 600;
+      const canvas = document.createElement('canvas');
+      canvas.width = W; canvas.height = H;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#F1F5F9';
+      ctx.fillRect(0, 0, W, H);
+
+      const NA_LNG_MIN = -170;
+      const NA_LNG_MAX = -52;
+      const NA_LAT_MIN = 18;
+      const NA_LAT_MAX = 75;
+      const project = (lng, lat) => [
+        ((lng - NA_LNG_MIN) / (NA_LNG_MAX - NA_LNG_MIN)) * W,
+        ((NA_LAT_MAX - lat) / (NA_LAT_MAX - NA_LAT_MIN)) * H,
+      ];
+
+      // Fill only NA country features. Mexico is kept on the map as
+      // a neutral landmass (no portfolio relevance) so the southern
+      // edge isn't a hard cutoff; everything else clips to the NA
+      // bounding box and effectively disappears.
+      const NO_SITES_FILL = '#E2E8F0';
+      const NA_COUNTRY_KEYS = new Set(['United States', 'Canada', 'Mexico']);
+      const countryFeatures = getCountryFeatures();
+      for (const feat of countryFeatures) {
+        const derGKey = TOPO_NAME_TO_DEREG_KEY[feat.name] || feat.name;
+        if (!NA_COUNTRY_KEYS.has(derGKey) && !NA_COUNTRY_KEYS.has(feat.name)) continue;
+        const c = COUNTRY_DEREGULATION[derGKey];
+        const tier = c ? statusTier(c.electric) : 'unknown';
+        // Mexico is included for context but never gets a tier fill
+        // — the user's analysis here is NA portfolio only.
+        const isMexico = derGKey === 'Mexico' || feat.name === 'Mexico';
+        ctx.fillStyle = isMexico ? NO_SITES_FILL : TIER_COLORS[tier];
+        ctx.strokeStyle = '#94A3B8';
+        ctx.lineWidth = 0.5;
+        for (const ring of feat.rings) {
+          const subRings = [];
+          let cur = [];
+          let prevLng = null;
+          for (const pt of ring) {
+            if (prevLng !== null && Math.abs(pt[0] - prevLng) > 180) {
+              if (cur.length > 2) subRings.push(cur);
+              cur = [];
+            }
+            cur.push(pt);
+            prevLng = pt[0];
+          }
+          if (cur.length > 2) subRings.push(cur);
+          for (const sr of subRings) {
+            ctx.beginPath();
+            for (let i = 0; i < sr.length; i++) {
+              const [px, py] = project(sr[i][0], sr[i][1]);
+              if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+            }
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+          }
+        }
+      }
+
+      // Site dots — same two-tone (electric left half / gas right
+      // half) treatment as the Portfolio Overview map.
+      const maxCount = Math.max(1, ...Array.from(buckets.values()).map(b => b.count));
+      const dots = Array.from(buckets.values()).sort((a, b) => b.count - a.count);
+      for (const b of dots) {
+        const [x, y] = project(b.location[0], b.location[1]);
+        const r = 6 + Math.sqrt(b.count / maxCount) * 18;
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(x, y, r, Math.PI / 2, (3 * Math.PI) / 2, false);
+        ctx.closePath();
+        ctx.fillStyle = TIER_COLORS[b.elecTier];
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(x, y, r, -Math.PI / 2, Math.PI / 2, false);
+        ctx.closePath();
+        ctx.fillStyle = TIER_COLORS[b.gasTier];
+        ctx.fill();
+        ctx.restore();
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.strokeStyle = '#0F172A';
+        ctx.lineWidth = 0.5;
+        ctx.stroke();
+        ctx.fillStyle = '#FFFFFF';
+        ctx.strokeStyle = '#0F172A';
+        ctx.font = `bold ${Math.max(10, Math.min(16, Math.round(r * 0.9)))}px Nunito Sans, Arial, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.lineWidth = 3;
+        ctx.strokeText(String(b.count), x, y + 4);
+        ctx.fillText(String(b.count), x, y + 4);
+      }
+
+      const dataUrl = canvas.toDataURL('image/png');
+      const imageId = wb.addImage({ base64: dataUrl, extension: 'png' });
+
+      ws.mergeCells(1, 1, 1, COLS);
+      const title = ws.getCell(1, 1);
+      title.value = 'North America Overview — US + Canada Site Distribution';
+      title.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
+      title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+      title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(1).height = 30;
+
+      ws.mergeCells(2, 1, 2, COLS);
+      const sub = ws.getCell(2, 1);
+      const skippedNote = skippedCount > 0 ? ` (${skippedCount} site${skippedCount === 1 ? '' : 's'} skipped — state / province code not in the geographic reference)` : '';
+      sub.value = `${naSiteCount} North America site${naSiteCount === 1 ? '' : 's'} plotted across ${buckets.size} state/province bucket${buckets.size === 1 ? '' : 's'}. Dots split vertically — left half is the Electric deregulation tier, right half is the Gas tier. Dot size scales with the site count.${skippedNote}`;
+      sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
+      sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+      ws.getRow(2).height = 36;
+
+      ws.addImage(imageId, {
+        tl: { col: 0, row: 3 },
+        ext: { width: W, height: H },
+      });
+
+      // Legend block — same shape as Portfolio Overview.
+      const legendStart = 4;
+      const swatchCol = MAP_COLS + 2;
+      const labelCol = MAP_COLS + 4;
+      ws.mergeCells(legendStart, swatchCol, legendStart, labelCol);
+      const legTitle = ws.getCell(legendStart, swatchCol);
+      legTitle.value = 'Legend';
+      legTitle.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
+      legTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+      legTitle.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(legendStart).height = 22;
+
+      ws.mergeCells(legendStart + 1, swatchCol, legendStart + 1, labelCol);
+      const legCap = ws.getCell(legendStart + 1, swatchCol);
+      legCap.value = 'Country fill = electric deregulation tier. Mexico is shown for geographic context and is not part of this NA-portfolio view.';
+      legCap.font = { name: 'Nunito Sans', italic: true, size: 9, color: { argb: SE_SLATE } };
+      legCap.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
+      ws.getRow(legendStart + 1).height = 36;
+
+      const hexToArgb = (hex) => 'FF' + String(hex).replace(/^#/, '').toUpperCase();
+      const swatchBorder = {
+        top:    { style: 'thin', color: { argb: 'FF94A3B8' } },
+        bottom: { style: 'thin', color: { argb: 'FF94A3B8' } },
+        left:   { style: 'thin', color: { argb: 'FF94A3B8' } },
+        right:  { style: 'thin', color: { argb: 'FF94A3B8' } },
+      };
+      const legendEntries = [
+        ['dereg',  TIER_COLORS.dereg, TIER_LABELS.dereg],
+        ['some',   TIER_COLORS.some,  TIER_LABELS.some],
+        ['reg',    TIER_COLORS.reg,   TIER_LABELS.reg],
+        ['nosite', NO_SITES_FILL,     'Out of scope'],
+      ];
+      legendEntries.forEach(([_t, color, label], i) => {
+        const rowIdx = legendStart + 2 + i;
+        const sw = ws.getCell(rowIdx, swatchCol);
+        sw.value = '';
+        sw.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: hexToArgb(color) } };
+        sw.border = swatchBorder;
+        const lbl = ws.getCell(rowIdx, labelCol);
+        lbl.value = label;
+        lbl.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+        lbl.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        ws.getRow(rowIdx).height = 18;
+      });
+
+      const dotsCapRow = legendStart + 2 + legendEntries.length + 1;
+      ws.mergeCells(dotsCapRow, swatchCol, dotsCapRow, labelCol);
+      const dotsCap = ws.getCell(dotsCapRow, swatchCol);
+      dotsCap.value = 'Each site dot — left half = Electric tier, right half = Gas tier. Dot size scales with the number of sites in that bucket.';
+      dotsCap.font = { name: 'Nunito Sans', italic: true, size: 9, color: { argb: SE_SLATE } };
+      dotsCap.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
+      ws.getRow(dotsCapRow).height = 42;
+
+      // Overview table — same tier rollup as Portfolio Overview but
+      // scoped to NA sites only.
+      const SUMMARY_START = 30;
+      ws.mergeCells(SUMMARY_START, 1, SUMMARY_START, COLS);
+      const sumHdr = ws.getCell(SUMMARY_START, 1);
+      sumHdr.value = 'NA Overview';
+      sumHdr.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
+      sumHdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+      sumHdr.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(SUMMARY_START).height = 22;
+
+      const tableHeaderRow = SUMMARY_START + 1;
+      const overviewHeaders = ['Tier', 'Electric Sites', 'Electric %', 'Gas Sites', 'Gas %', 'Load (kWh)', 'Load (Dth)', 'Total Cost ($)'];
+      const hdr = ws.getRow(tableHeaderRow);
+      overviewHeaders.forEach((label, i) => {
+        const cell = hdr.getCell(i + 1);
+        cell.value = label;
+        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+        cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      });
+      hdr.height = 22;
+      const tierRows = [
+        ['Deregulated',          'dereg',   elecDereg,   gasDereg],
+        ['Some deregulation',    'some',    elecSome,    gasSome],
+        ['Regulated / unlikely', 'reg',     elecReg,     gasReg],
+        ['No data',              'unknown', elecUnknown, gasUnknown],
+      ];
+      const pct = (n) => mappedSites > 0 ? n / mappedSites : 0;
+      tierRows.forEach((tr, i) => {
+        const r = ws.getRow(tableHeaderRow + 1 + i);
+        const [label, tierKey, eSites, gSites] = tr;
+        const kwh = electricTierAgg[tierKey]?.kwh || 0;
+        const therms = gasTierAgg[tierKey]?.therms || 0;
+        const cost = (electricTierAgg[tierKey]?.cost || 0) + (gasTierAgg[tierKey]?.cost || 0);
+        r.getCell(1).value = label;
+        r.getCell(2).value = eSites;
+        r.getCell(3).value = pct(eSites);
+        r.getCell(4).value = gSites;
+        r.getCell(5).value = pct(gSites);
+        r.getCell(6).value = Math.round(kwh);
+        r.getCell(7).value = Math.round(therms / 10);
+        r.getCell(8).value = Math.round(cost);
+        r.getCell(3).numFmt = '0.0%';
+        r.getCell(5).numFmt = '0.0%';
+        r.getCell(6).numFmt = '#,##0';
+        r.getCell(7).numFmt = '#,##0';
+        r.getCell(8).numFmt = '"$"#,##0';
+        for (let ci = 1; ci <= overviewHeaders.length; ci++) {
+          r.getCell(ci).font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+          r.getCell(ci).alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          r.getCell(ci).border = {
+            bottom: { style: 'hair', color: { argb: SE_BORDER } },
+            right:  { style: 'hair', color: { argb: SE_BORDER } },
+          };
+        }
+        r.height = 20;
+      });
+
+      // Per state / province breakdown — replaces the per-country
+      // table from the Portfolio Overview, which is too coarse when
+      // we're already filtered to US + Canada.
+      if (stateRows.length > 0) {
+        const stateHdrRow = tableHeaderRow + tierRows.length + 3;
+        ws.mergeCells(stateHdrRow, 1, stateHdrRow, COLS);
+        const sHdr = ws.getCell(stateHdrRow, 1);
+        sHdr.value = 'State / Province level view';
+        sHdr.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
+        sHdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+        sHdr.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        ws.getRow(stateHdrRow).height = 22;
+
+        const sTblHdrRow = stateHdrRow + 1;
+        const sCols = ['State / Province', 'Country', 'Electric', 'Gas', 'Sites', 'Load (kWh)', 'Load (Dth)', 'Annual Cost ($)'];
+        const sHdrCells = ws.getRow(sTblHdrRow);
+        sCols.forEach((label, i) => {
+          const cell = sHdrCells.getCell(i + 1);
+          cell.value = label;
+          cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+          cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        });
+        sHdrCells.height = 22;
+        stateRows.forEach((sr, i) => {
+          const rr = ws.getRow(sTblHdrRow + 1 + i);
+          rr.getCell(1).value = sr.label;
+          rr.getCell(2).value = sr.country;
+          rr.getCell(3).value = sr.elecStatus;
+          rr.getCell(4).value = sr.gasStatus;
+          rr.getCell(5).value = sr.sites;
+          rr.getCell(6).value = Math.round(sr.kwh);
+          rr.getCell(7).value = Math.round(sr.therms / 10);
+          rr.getCell(8).value = Math.round(sr.cost);
+          rr.getCell(5).numFmt = '#,##0';
+          rr.getCell(6).numFmt = '#,##0';
+          rr.getCell(7).numFmt = '#,##0';
+          rr.getCell(8).numFmt = '"$"#,##0';
+          for (let ci = 1; ci <= sCols.length; ci++) {
+            rr.getCell(ci).font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+            rr.getCell(ci).alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+            rr.getCell(ci).border = {
+              bottom: { style: 'hair', color: { argb: SE_BORDER } },
+              right:  { style: 'hair', color: { argb: SE_BORDER } },
+            };
+          }
+          rr.height = 20;
+        });
+      }
+    }
+
     // The second tab in the workbook is always named "Indicative
     // Savings" now — the old "Indicative Savings by State"
     // formulation was confusing when the portfolio happened to be
