@@ -220,9 +220,13 @@ export function OppsView({ settings, updateSettings } = {}) {
         defaultWidth: h === 'Notes' ? 250 : h === 'Account' ? 200 : h === 'BFO Link' ? 220 : h.length > 20 ? 160 : 120,
         sticky: h === 'Account',
         render: h === 'BFO Link' ? (row) => {
-          const url = row[h];
-          if (!url || url === '-' || url === '#N/A') return '—';
-          return <a href={url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--color-accent)', fontSize: 'var(--font-size-xs)' }}>Open</a>;
+          // Cell stores the BFO Opportunity Name (the column label was
+          // renamed but the data key is still "BFO Link"). Render the
+          // raw value as text — no hyperlink — so users can read /
+          // copy the opportunity name directly.
+          const value = row[h];
+          if (!value || value === '-' || value === '#N/A') return '—';
+          return <span style={{ fontSize: 'var(--font-size-xs)' }}>{value}</span>;
         } : undefined,
       }));
   }, [headers]);
