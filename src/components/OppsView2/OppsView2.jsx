@@ -584,17 +584,32 @@ function MultiSelectCell({ value, onChange, options }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const wrapRef = useRef(null);
+  const popRef = useRef(null);
+  // Popover is portaled to <body> so the cell's overflow:hidden can't
+  // clip it. Position recomputed from the wrapper's bounding rect each
+  // time the popover opens.
+  const [popPos, setPopPos] = useState({ top: 0, left: 0 });
   const selected = useMemo(() => parseMulti(value), [value]);
   const selectedSet = useMemo(() => new Set(selected.map(s => s.toLowerCase())), [selected]);
 
-  // Close on outside click while the popover is open.
+  // Close on outside click while the popover is open. Checks both the
+  // wrapper (anchor span) and the portaled popover so clicks inside the
+  // floating panel don't dismiss it.
   useEffect(() => {
     if (!open) return;
     const onDown = (e) => {
-      if (!wrapRef.current?.contains(e.target)) setOpen(false);
+      if (wrapRef.current?.contains(e.target)) return;
+      if (popRef.current?.contains(e.target)) return;
+      setOpen(false);
     };
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+
+  useLayoutEffect(() => {
+    if (!open || !wrapRef.current) return;
+    const rect = wrapRef.current.getBoundingClientRect();
+    setPopPos({ top: rect.bottom + 2, left: rect.left });
   }, [open]);
 
   const filteredOptions = useMemo(() => {
@@ -630,15 +645,16 @@ function MultiSelectCell({ value, onChange, options }) {
       >
         {isEmpty ? '—' : selected.join(', ')}
       </span>
-      {open && (
+      {open && createPortal(
         <div
+          ref={popRef}
           onMouseDown={(e) => e.stopPropagation()}
           style={{
             // Wider + taller than the original so 10+ services sit on
             // screen at once without scrolling, and longer service
             // names are not truncated.
-            position: 'absolute', top: '100%', left: 0, marginTop: 2,
-            zIndex: 50, width: 480, maxWidth: '92vw',
+            position: 'fixed', top: popPos.top, left: popPos.left,
+            zIndex: 9999, width: 480, maxWidth: '92vw',
             background: '#fff', border: '1px solid var(--color-border)',
             borderRadius: 4, boxShadow: '0 8px 20px rgba(15, 23, 42, 0.18)',
             fontSize: '0.9rem',
@@ -722,7 +738,8 @@ function MultiSelectCell({ value, onChange, options }) {
               >Done</button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
@@ -734,14 +751,26 @@ function MultiSelectCell({ value, onChange, options }) {
 function SelectCell({ value, onChange, options }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef(null);
+  const popRef = useRef(null);
+  // Popover is portaled to <body> so the cell's overflow:hidden can't
+  // clip it; position computed from the wrapper's bounding rect.
+  const [popPos, setPopPos] = useState({ top: 0, left: 0, width: 0 });
 
   useEffect(() => {
     if (!open) return;
     const onDown = (e) => {
-      if (!wrapRef.current?.contains(e.target)) setOpen(false);
+      if (wrapRef.current?.contains(e.target)) return;
+      if (popRef.current?.contains(e.target)) return;
+      setOpen(false);
     };
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+
+  useLayoutEffect(() => {
+    if (!open || !wrapRef.current) return;
+    const rect = wrapRef.current.getBoundingClientRect();
+    setPopPos({ top: rect.bottom + 2, left: rect.left, width: rect.width });
   }, [open]);
 
   const current = String(value || '').trim();
@@ -773,12 +802,13 @@ function SelectCell({ value, onChange, options }) {
       >
         {isEmpty ? '—' : current}
       </span>
-      {open && (
+      {open && createPortal(
         <div
+          ref={popRef}
           onMouseDown={(e) => e.stopPropagation()}
           style={{
-            position: 'absolute', top: '100%', left: 0, marginTop: 2,
-            zIndex: 50, minWidth: '100%', width: 240,
+            position: 'fixed', top: popPos.top, left: popPos.left,
+            zIndex: 9999, minWidth: Math.max(popPos.width, 240),
             background: '#fff', border: '1px solid var(--color-border)',
             borderRadius: 4, boxShadow: '0 8px 20px rgba(15, 23, 42, 0.18)',
             fontSize: '0.82rem',
@@ -820,7 +850,8 @@ function SelectCell({ value, onChange, options }) {
               >Clear</button>
             </div>
           )}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
