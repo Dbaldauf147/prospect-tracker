@@ -3869,10 +3869,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         { width: 4 },
         { width: 6 },
         { width: 6 },
-        // Wide enough to hold the longest category label
-        // ("Deregulated — NG; Heavy Energy Users Only (5-10 MW min.) — EP")
-        // on a single line.
-        { width: 70 },
+        // Last column — kept narrow so the worksheet's right edge sits
+        // close to the right edge of the two-panel map image instead of
+        // leaving a wide empty band of column R.
+        { width: 12 },
       ];
 
       // Bucket NA sites by (state | province). Non-NA rows are
@@ -4050,11 +4050,30 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       };
       const NO_SITES_FILL   = '#E5E7EB';
       const NO_SITES_STROKE = '#9CA3AF';
-      const SITE_STROKE     = '#0F172A';
       const MEXICO_FILL     = '#E5E7EB';
 
-      // Composite canvas — two panels side by side plus a shared
-      // legend strip underneath so the whole figure is one image.
+      // Site-count → fill shading. Sqrt scaling keeps a single-site
+      // state visibly tinted while the densest market hits the full
+      // status hue plus a 20 % darken, so density reads as background
+      // without needing a bold outline.
+      const maxSiteCount = Math.max(1, ...Array.from(buckets.values()).map(b => b.count));
+      const argbToRgb = (hex) => {
+        const h = String(hex).replace(/^#/, '').replace(/^FF/i, '');
+        return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+      };
+      const rgbToHex = (rgb) => '#' + rgb.map(v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('');
+      const shadeForCount = (statusHex, count) => {
+        if (count <= 0) return NO_SITES_FILL;
+        const [r, g, b] = argbToRgb(statusHex);
+        const t = Math.sqrt(count / maxSiteCount);
+        const sat  = 0.45 + 0.55 * t;
+        const dark = 0.20 * t;
+        const blend = (c) => (c * sat + 255 * (1 - sat)) * (1 - dark);
+        return rgbToHex([blend(r), blend(g), blend(b)]);
+      };
+
+      // Composite canvas — two panels side by side, each with its own
+      // legend strip underneath. One image keeps Excel layout simple.
       const MAP_W = 800;
       const MAP_H = 500;
       const PAD = 16;
@@ -4132,20 +4151,16 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           drawFeature(project, feat.rings);
         }
 
-        ctx.fillStyle = NO_SITES_FILL;
+        // Hairline borders for every state / province — the choropleth
+        // fill carries the information, the outline only defines the
+        // shape.
         ctx.strokeStyle = NO_SITES_STROKE;
         ctx.lineWidth = 0.5;
         for (const feat of naFeatures) {
-          if (hasSites(`${feat.admin}/${feat.postal}`)) continue;
-          drawFeature(project, feat.rings);
-        }
-        ctx.lineWidth = 2.5;
-        ctx.strokeStyle = SITE_STROKE;
-        for (const feat of naFeatures) {
           const key = `${feat.admin}/${feat.postal}`;
-          if (!hasSites(key)) continue;
           const tier = statusByKey.get(key) || 'reg';
-          ctx.fillStyle = STATUS_FILL[tier];
+          const count = buckets.get(key)?.count || 0;
+          ctx.fillStyle = shadeForCount(STATUS_FILL[tier], count);
           drawFeature(project, feat.rings);
         }
       };
@@ -4153,32 +4168,37 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       drawPanel(PAD,             TITLE_H, ngStatusByKey, 'Natural Gas Markets');
       drawPanel(PAD * 2 + MAP_W, TITLE_H, epStatusByKey, 'Electric Power Markets');
 
-      // Shared legend strip along the bottom — one key for both panels.
-      const legendY = TITLE_H + MAP_H + PAD;
-      const legendTiers = ['dereg', 'limited', 'direct_access', 'reg'];
-      const noSitesLabel = 'No portfolio sites';
-      ctx.font = '14px Nunito Sans, Arial, sans-serif';
+      // Per-panel legends along the bottom — each map gets its own key
+      // so the EP-only "Direct Access" chip doesn't show beneath the
+      // gas map.
       const SWATCH = 22;
       const GAP_SWATCH_LABEL = 8;
-      const GAP_ITEMS = 28;
-      const itemW = (label) => SWATCH + GAP_SWATCH_LABEL + ctx.measureText(label).width;
-      const totalW = legendTiers.reduce((a, t) => a + itemW(STATUS_LABEL[t]) + GAP_ITEMS, 0)
-                   + itemW(noSitesLabel);
-      let cursorX = (W - totalW) / 2;
+      const GAP_ITEMS = 22;
+      ctx.font = '13px Nunito Sans, Arial, sans-serif';
       ctx.textBaseline = 'middle';
       ctx.textAlign = 'left';
-      const drawLegendChip = (color, label, bold) => {
-        ctx.fillStyle = color;
-        ctx.fillRect(cursorX, legendY, SWATCH, SWATCH);
-        ctx.strokeStyle = bold ? SITE_STROKE : NO_SITES_STROKE;
-        ctx.lineWidth = bold ? 2.5 : 1;
-        ctx.strokeRect(cursorX, legendY, SWATCH, SWATCH);
-        ctx.fillStyle = '#0F172A';
-        ctx.fillText(label, cursorX + SWATCH + GAP_SWATCH_LABEL, legendY + SWATCH / 2);
-        cursorX += SWATCH + GAP_SWATCH_LABEL + ctx.measureText(label).width + GAP_ITEMS;
+      const itemW = (label) => SWATCH + GAP_SWATCH_LABEL + ctx.measureText(label).width;
+      const drawPanelLegend = (originX, tiers) => {
+        const labels = [
+          ...tiers.map(t => ({ color: STATUS_FILL[t], label: STATUS_LABEL[t] })),
+          { color: NO_SITES_FILL, label: 'No portfolio sites' },
+        ];
+        const totalW = labels.reduce((a, it) => a + itemW(it.label), 0) + GAP_ITEMS * (labels.length - 1);
+        let cursorX = originX + (MAP_W - totalW) / 2;
+        const legendY = TITLE_H + MAP_H + PAD;
+        for (const it of labels) {
+          ctx.fillStyle = it.color;
+          ctx.fillRect(cursorX, legendY, SWATCH, SWATCH);
+          ctx.strokeStyle = NO_SITES_STROKE;
+          ctx.lineWidth = 0.8;
+          ctx.strokeRect(cursorX, legendY, SWATCH, SWATCH);
+          ctx.fillStyle = '#0F172A';
+          ctx.fillText(it.label, cursorX + SWATCH + GAP_SWATCH_LABEL, legendY + SWATCH / 2);
+          cursorX += itemW(it.label) + GAP_ITEMS;
+        }
       };
-      for (const tier of legendTiers) drawLegendChip(STATUS_FILL[tier], STATUS_LABEL[tier], true);
-      drawLegendChip(NO_SITES_FILL, noSitesLabel, false);
+      drawPanelLegend(PAD,             ['dereg', 'limited', 'reg']);
+      drawPanelLegend(PAD * 2 + MAP_W, ['dereg', 'limited', 'direct_access', 'reg']);
 
       const dataUrl = canvas.toDataURL('image/png');
       const imageId = wb.addImage({ base64: dataUrl, extension: 'png' });
@@ -4194,7 +4214,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       ws.mergeCells(2, 1, 2, COLS);
       const sub = ws.getCell(2, 1);
       const skippedNote = skippedCount > 0 ? ` (${skippedCount} site${skippedCount === 1 ? '' : 's'} skipped — state / province code not in the geographic reference)` : '';
-      sub.value = `${naSiteCount} North America site${naSiteCount === 1 ? '' : 's'} across ${buckets.size} state/province bucket${buckets.size === 1 ? '' : 's'}. Each panel highlights every portfolio state / province with a bold outline and a status color from the legend below; states / provinces with no sites fade to light grey for context.${skippedNote}`;
+      sub.value = `${naSiteCount} North America site${naSiteCount === 1 ? '' : 's'} across ${buckets.size} state/province bucket${buckets.size === 1 ? '' : 's'}. Each portfolio state / province is shaded by its market status (hue) and portfolio site count (darker = more sites); states / provinces with no sites stay light grey.${skippedNote}`;
       sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
       sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
       ws.getRow(2).height = 36;
