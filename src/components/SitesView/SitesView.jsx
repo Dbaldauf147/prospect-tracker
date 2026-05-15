@@ -3341,7 +3341,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     // dot radius scales with site count. Map is rendered to a canvas
     // and embedded as a PNG because ExcelJS doesn't write charts.
     {
-      const ws = wb.addWorksheet('Portfolio Overview', {
+      const ws = wb.addWorksheet('Global View', {
         properties: { tabColor: { argb: SE_GREEN_DARK } },
         views: [{ showGridLines: false }],
       });
@@ -3631,7 +3631,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // Title band.
       ws.mergeCells(1, 1, 1, COLS);
       const title = ws.getCell(1, 1);
-      title.value = 'Portfolio Overview — Site Distribution by Market';
+      title.value = 'Global View — Site Distribution by Market';
       title.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
       title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
       title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
@@ -3854,7 +3854,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     // bottom table breaks out per US state / Canadian province
     // rather than rolling up to the country level.
     {
-      const ws = wb.addWorksheet('North America Overview', {
+      const ws = wb.addWorksheet('NAM View', {
         properties: { tabColor: { argb: SE_GREEN_DARK } },
         views: [{ showGridLines: false }],
       });
@@ -4116,7 +4116,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
 
       ws.mergeCells(1, 1, 1, COLS);
       const title = ws.getCell(1, 1);
-      title.value = 'North America Overview — US + Canada Site Distribution';
+      title.value = 'NAM View — US + Canada Site Distribution';
       title.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
       title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
       title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
@@ -5264,7 +5264,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         || a.commodity.localeCompare(b.commodity));
 
     if (allSiteRows.length > 0) {
-      const monthlySheet = wb.addWorksheet('Deregulated Monthly Savings', {
+      const monthlySheet = wb.addWorksheet('Monthly Savings', {
         properties: { tabColor: { argb: SE_GREEN } },
         views: [{ showGridLines: false, state: 'frozen', ySplit: 2, xSplit: 3 }],
       });
@@ -5313,7 +5313,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // Title row.
       monthlySheet.mergeCells(1, 1, 1, cols.length);
       const title = monthlySheet.getCell(1, 1);
-      title.value = 'Deregulated Monthly Savings Breakdown';
+      title.value = 'Monthly Savings Breakdown';
       title.font = { name: 'Nunito Sans', bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
       title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
       title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
@@ -5665,7 +5665,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     // row, and the Result block. Edit any yellow cell and Excel
     // recomputes the analysis live.
     {
-      const ws = wb.addWorksheet('Hedging Strategy Example', {
+      const ws = wb.addWorksheet('Hedging Analysis', {
         properties: { tabColor: { argb: SE_GREEN_DARK } },
         views: [{ showGridLines: false, state: 'frozen', ySplit: 6 }],
       });
@@ -5685,7 +5685,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
 
       ws.mergeCells(1, 1, 1, COLS);
       const title = ws.getCell(1, 1);
-      title.value = 'Layered Hedging Strategy — Interactive Example';
+      title.value = 'Hedging Analysis — Layered Strategy';
       title.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
       title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
       title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
@@ -6280,7 +6280,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         'Floating pays the spot / index price every month — when the curve averages below the hedge price, that gap compounds across the year into the Saving figure above. The 100 % hedge locks the price at H4 regardless of where the market actually settles.',
         'Edit column C to weight months by your real load shape — a winter-peaking gas portfolio pays more for the January and February spot cells than a flat MWh assumption, which can flip the answer.',
         'Edit column E to model curve scenarios: a low-summer / high-winter shape (heating-led demand), an industrial flat curve, or a stressed winter where spot blows past the hedge for two months. Green spot cells beat the hedge, red cells lag.',
-        'Reality is between the two extremes. Most portfolios use this comparison to decide a layered-hedge ratio (e.g. 60 / 40 hedged-to-float) — see the Hedging Strategy Example tab for the layered approach.',
+        'Reality is between the two extremes. Most portfolios use this comparison to decide a layered-hedge ratio (e.g. 60 / 40 hedged-to-float) — see the Hedging Analysis tab for the layered approach.',
       ];
       floatBullets.forEach((b, i) => {
         const rowIdx = 29 + i;
