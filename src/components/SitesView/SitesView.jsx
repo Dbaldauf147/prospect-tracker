@@ -4262,8 +4262,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     // SPAN so the headings stay aligned across both sections.
     const SPAN = 26;
     const widths = [
-      22, 14, 11, 13, 16, 18, 16,        // ST/Prov/Country..Range (7)
-      11,                                // Savings % (scenario, 1)
+      22, 14, 11, 13, 16, 18, 13,        // ST/Prov/Country..Low % (7)
+      13,                                // High % (1)
+      11,                                // Savings % (1)
       16, 14, 14, 14, 14, 14,            // Annual Savings + Year 1-5 (6)
       24, 24, 14, 14,                    // Utility/Supplier/Contract Start/End (4)
       4,                                 // spacer (1)
