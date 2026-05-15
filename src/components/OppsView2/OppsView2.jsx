@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { DataTable } from '../common/DataTable';
 import { dbGet } from '../../utils/db';
+import { SOLUTIONS_CATALOG } from '../../data/dropdownLists';
 import styles from './OppsView2.module.css';
 
 // Second Opps tab — sandbox copy of OppsView. Intentionally NOT wired up
@@ -361,6 +362,163 @@ function EditableCell({ value, onChange, suggestions }) {
   );
 }
 
+// Multi-select cell — for picklist columns where one opp can carry
+// several values (e.g. Scope, which lists every Solution / Service the
+// opp covers). Stores the chosen values as a comma-separated string so
+// the existing serviceBreakdown split('') logic keeps working.
+function parseMulti(value) {
+  if (Array.isArray(value)) return value.map(s => String(s).trim()).filter(Boolean);
+  return String(value || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+}
+
+function MultiSelectCell({ value, onChange, options }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const wrapRef = useRef(null);
+  const selected = useMemo(() => parseMulti(value), [value]);
+  const selectedSet = useMemo(() => new Set(selected.map(s => s.toLowerCase())), [selected]);
+
+  // Close on outside click while the popover is open.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => {
+      if (!wrapRef.current?.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+
+  const filteredOptions = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return options;
+    return options.filter(o => o.toLowerCase().includes(q));
+  }, [options, query]);
+
+  function toggle(opt) {
+    const key = opt.toLowerCase();
+    const next = selectedSet.has(key)
+      ? selected.filter(s => s.toLowerCase() !== key)
+      : [...selected, opt];
+    onChange(next.join(', '));
+  }
+
+  function clearAll() {
+    onChange('');
+  }
+
+  const isEmpty = selected.length === 0;
+  return (
+    <div ref={wrapRef} style={{ position: 'relative' }} onClick={(e) => e.stopPropagation()}>
+      <span
+        onClick={() => setOpen(o => !o)}
+        style={{
+          display: 'block', cursor: 'pointer', minHeight: '1em',
+          padding: '1px 2px',
+          color: isEmpty ? 'var(--color-text-muted)' : 'inherit',
+          whiteSpace: 'normal', wordBreak: 'break-word',
+        }}
+        title="Click to pick services"
+      >
+        {isEmpty ? '—' : selected.join(', ')}
+      </span>
+      {open && (
+        <div
+          onMouseDown={(e) => e.stopPropagation()}
+          style={{
+            position: 'absolute', top: '100%', left: 0, marginTop: 2,
+            zIndex: 50, width: 320, maxWidth: '90vw',
+            background: '#fff', border: '1px solid var(--color-border)',
+            borderRadius: 4, boxShadow: '0 8px 20px rgba(15, 23, 42, 0.18)',
+            fontSize: '0.82rem',
+          }}
+        >
+          <div style={{ padding: '0.4rem 0.5rem', borderBottom: '1px solid var(--color-border-light)' }}>
+            <input
+              autoFocus
+              type="text"
+              value={query}
+              placeholder="Filter services…"
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); setOpen(false); } }}
+              style={{
+                width: '100%', boxSizing: 'border-box',
+                border: '1px solid var(--color-border)', borderRadius: 3,
+                padding: '4px 6px', fontSize: 'inherit', fontFamily: 'inherit',
+                color: 'var(--color-text)', background: '#fff',
+              }}
+            />
+          </div>
+          <div style={{ maxHeight: 280, overflowY: 'auto' }}>
+            {filteredOptions.length === 0 ? (
+              <div style={{ padding: '0.5rem 0.6rem', color: 'var(--color-text-muted)' }}>
+                No matches
+              </div>
+            ) : filteredOptions.map(opt => {
+              const checked = selectedSet.has(opt.toLowerCase());
+              return (
+                <label
+                  key={opt}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '0.5rem',
+                    padding: '0.3rem 0.6rem', cursor: 'pointer',
+                    background: checked ? '#DCFCE7' : 'transparent',
+                    color: checked ? '#166534' : '#1E293B',
+                    fontWeight: checked ? 600 : 500,
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggle(opt)}
+                    style={{ margin: 0 }}
+                  />
+                  <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {opt}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+          <div style={{
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            padding: '0.35rem 0.5rem', borderTop: '1px solid var(--color-border-light)',
+            background: 'var(--color-bg)',
+          }}>
+            <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
+              {selected.length} selected
+            </span>
+            <div style={{ display: 'flex', gap: '0.35rem' }}>
+              <button
+                type="button"
+                onClick={clearAll}
+                style={{
+                  padding: '0.25rem 0.55rem', background: 'transparent',
+                  border: '1px solid var(--color-border)', borderRadius: 3,
+                  fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit',
+                  color: 'var(--color-text-muted)', cursor: 'pointer',
+                }}
+              >Clear</button>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                style={{
+                  padding: '0.25rem 0.55rem', background: 'var(--color-accent)',
+                  border: '1px solid var(--color-accent)', borderRadius: 3,
+                  fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit',
+                  color: '#fff', cursor: 'pointer',
+                }}
+              >Done</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function OppsView2({ settings, updateSettings, prospects = [] } = {}) {
   // Local-only state. No fetch, no cache, no sync.
   const [data, setData] = useState({ headers: DEFAULT_HEADERS, records: [] });
@@ -484,22 +642,34 @@ export function OppsView2({ settings, updateSettings, prospects = [] } = {}) {
       .map(h => ({
         key: h,
         label: h === 'BFO Link' ? 'BFO Opportunity Name' : h,
-        defaultWidth: h === 'Notes' ? 250 : h === 'Account' ? 200 : h === 'BFO Link' ? 220 : h.length > 20 ? 160 : 120,
+        defaultWidth: h === 'Notes' ? 250 : h === 'Account' ? 200 : h === 'BFO Link' ? 220 : h === 'Scope' ? 220 : h.length > 20 ? 160 : 120,
         sticky: h === 'Account',
         // Every cell is click-to-edit so a freshly created opp can be
         // filled in directly. getFilterValue exposes the raw text to
         // the per-column filter so search keeps working on the value
         // the user sees, not the rendered <input>.
         getFilterValue: (row) => row[h] ?? '',
-        render: (row) => (
-          DATE_COLUMNS.has(h)
-            ? <DateCell value={row[h]} onChange={(v) => updateOppField(row._id, h, v)} />
-            : <EditableCell
+        render: (row) => {
+          if (DATE_COLUMNS.has(h)) {
+            return <DateCell value={row[h]} onChange={(v) => updateOppField(row._id, h, v)} />;
+          }
+          if (h === 'Scope') {
+            return (
+              <MultiSelectCell
                 value={row[h]}
                 onChange={(v) => updateOppField(row._id, h, v)}
-                suggestions={h === 'Account' ? companySuggestions : undefined}
+                options={SOLUTIONS_CATALOG}
               />
-        ),
+            );
+          }
+          return (
+            <EditableCell
+              value={row[h]}
+              onChange={(v) => updateOppField(row._id, h, v)}
+              suggestions={h === 'Account' ? companySuggestions : undefined}
+            />
+          );
+        },
       }));
   }, [headers, updateOppField, companySuggestions]);
 
