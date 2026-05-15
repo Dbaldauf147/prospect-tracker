@@ -249,7 +249,7 @@ function DateCell({ value, onChange }) {
   );
 }
 
-function EditableCell({ value, onChange, suggestions }) {
+function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value ?? '');
   const [open, setOpen] = useState(false);
@@ -261,30 +261,59 @@ function EditableCell({ value, onChange, suggestions }) {
   const wrapRef = useRef(null);
   useEffect(() => { if (!editing) setDraft(value ?? ''); }, [value, editing]);
 
+  // Matches are a mix of plain strings (existing suggestions) and an
+  // optional `+ Add "X"` sentinel object at the end when `onAddNew` is
+  // wired up and the current draft isn't an exact match to any
+  // suggestion. Keeping both in one array means hover / keyboard nav
+  // works uniformly.
   const matches = useMemo(() => {
-    if (!suggestions?.length) return [];
+    const list = suggestions || [];
     const q = String(draft || '').trim().toLowerCase();
-    // No query yet — surface the first 8 suggestions alphabetically
-    // so the dropdown shows as soon as the cell is focused, instead
-    // of staying invisible until the user starts typing.
-    if (!q) return suggestions.slice(0, 8);
+    if (!q) {
+      // No query yet — surface the first 8 suggestions alphabetically
+      // so the dropdown shows as soon as the cell is focused. The add
+      // sentinel needs a non-empty draft, so it's not included here.
+      return list.slice(0, 8);
+    }
     const prefix = [];
     const sub = [];
-    for (const s of suggestions) {
+    for (const s of list) {
       const lower = String(s).toLowerCase();
       if (lower === q) continue;
       if (lower.startsWith(q)) prefix.push(s);
       else if (lower.includes(q)) sub.push(s);
       if (prefix.length + sub.length >= 25) break;
     }
-    return [...prefix, ...sub].slice(0, 8);
-  }, [draft, suggestions]);
+    const result = [...prefix, ...sub].slice(0, 8);
+    if (onAddNew) {
+      const exact = list.some(s => String(s).toLowerCase() === q);
+      if (!exact) {
+        const txt = draft.trim();
+        const label = typeof addNewLabel === 'function' ? addNewLabel(txt) : `+ Add "${txt}"`;
+        result.push({ __add: true, value: txt, label });
+      }
+    }
+    return result;
+  }, [draft, suggestions, onAddNew, addNewLabel]);
+
+  const dropdownAvailable = (suggestions?.length || 0) > 0 || !!onAddNew;
 
   function commit(next) {
     const v = next == null ? draft : next;
     setEditing(false);
     setOpen(false);
     if ((v ?? '') !== (value ?? '')) onChange(v);
+  }
+
+  function pickMatch(m) {
+    if (m && typeof m === 'object' && m.__add) {
+      if (typeof onAddNew === 'function') onAddNew(m.value);
+      setDraft(m.value);
+      commit(m.value);
+      return;
+    }
+    setDraft(m);
+    commit(m);
   }
 
   useLayoutEffect(() => {
@@ -297,7 +326,7 @@ function EditableCell({ value, onChange, suggestions }) {
     const isEmpty = value === '' || value == null;
     return (
       <span
-        onClick={(e) => { e.stopPropagation(); setEditing(true); setOpen(!!suggestions?.length); }}
+        onClick={(e) => { e.stopPropagation(); setEditing(true); setOpen(dropdownAvailable); }}
         style={{
           display: 'block', cursor: 'text', minHeight: '1em',
           padding: '1px 2px',
@@ -316,7 +345,7 @@ function EditableCell({ value, onChange, suggestions }) {
         type="text"
         value={draft}
         onChange={(e) => { setDraft(e.target.value); setOpen(true); setHoverIdx(0); }}
-        onFocus={() => { if (suggestions?.length) setOpen(true); }}
+        onFocus={() => { if (dropdownAvailable) setOpen(true); }}
         onBlur={() => {
           // Defer so a click on a suggestion lands first.
           requestAnimationFrame(() => {
@@ -327,8 +356,8 @@ function EditableCell({ value, onChange, suggestions }) {
           if (open && matches.length > 0) {
             if (e.key === 'ArrowDown') { e.preventDefault(); setHoverIdx(i => (i + 1) % matches.length); return; }
             if (e.key === 'ArrowUp')   { e.preventDefault(); setHoverIdx(i => (i - 1 + matches.length) % matches.length); return; }
-            if (e.key === 'Tab')       { e.preventDefault(); const pick = matches[hoverIdx] || matches[0]; setDraft(pick); commit(pick); return; }
-            if (e.key === 'Enter')     { e.preventDefault(); const pick = matches[hoverIdx] || matches[0]; setDraft(pick); commit(pick); return; }
+            if (e.key === 'Tab')       { e.preventDefault(); pickMatch(matches[hoverIdx] || matches[0]); return; }
+            if (e.key === 'Enter')     { e.preventDefault(); pickMatch(matches[hoverIdx] || matches[0]); return; }
             if (e.key === 'Escape')    { e.preventDefault(); setDraft(value ?? ''); setEditing(false); setOpen(false); return; }
           } else {
             if (e.key === 'Enter')  { e.preventDefault(); e.currentTarget.blur(); }
@@ -354,20 +383,26 @@ function EditableCell({ value, onChange, suggestions }) {
             maxHeight: 220, overflowY: 'auto', fontSize: '0.78rem',
           }}
         >
-          {matches.map((m, i) => (
-            <div
-              key={m + i}
-              onClick={() => { setDraft(m); commit(m); }}
-              onMouseEnter={() => setHoverIdx(i)}
-              style={{
-                padding: '0.3rem 0.55rem', cursor: 'pointer',
-                background: i === hoverIdx ? '#DCFCE7' : 'transparent',
-                color: i === hoverIdx ? '#166534' : '#1E293B',
-                fontWeight: i === hoverIdx ? 700 : 500,
-                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-              }}
-            >{m}</div>
-          ))}
+          {matches.map((m, i) => {
+            const isAdd = m && typeof m === 'object' && m.__add;
+            const label = isAdd ? m.label : m;
+            return (
+              <div
+                key={isAdd ? '__add' : String(m) + i}
+                onClick={() => pickMatch(m)}
+                onMouseEnter={() => setHoverIdx(i)}
+                style={{
+                  padding: '0.3rem 0.55rem', cursor: 'pointer',
+                  background: i === hoverIdx ? '#DCFCE7' : 'transparent',
+                  color: i === hoverIdx ? '#166534' : (isAdd ? '#7C3AED' : '#1E293B'),
+                  fontStyle: isAdd ? 'italic' : 'normal',
+                  fontWeight: i === hoverIdx ? 700 : 500,
+                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                  borderTop: isAdd && i > 0 ? '1px solid var(--color-border-light)' : 'none',
+                }}
+              >{label}</div>
+            );
+          })}
         </div>,
         document.body,
       )}
@@ -375,160 +410,65 @@ function EditableCell({ value, onChange, suggestions }) {
   );
 }
 
-// Multi-select cell — for picklist columns where one opp can carry
-// several values (e.g. Scope, which lists every Solution / Service the
-// opp covers). Stores the chosen values as a comma-separated string so
-// the existing serviceBreakdown split('') logic keeps working.
-function parseMulti(value) {
-  if (Array.isArray(value)) return value.map(s => String(s).trim()).filter(Boolean);
-  return String(value || '')
-    .split(',')
-    .map(s => s.trim())
-    .filter(Boolean);
-}
+// Contact-column cell — extends EditableCell with a per-row scoped
+// suggestion list pulled from the prospect whose `company` matches
+// this row's Account. Picking the synthetic "+ Add" entry appends a
+// new contact (firstname / lastname split from the typed text) to
+// that prospect via updateProspect so it persists for future opps.
+function ContactCell({ value, onChange, account, prospects, updateProspect }) {
+  const matched = useMemo(() => {
+    const target = String(account || '').trim().toLowerCase();
+    if (!target) return null;
+    return (prospects || []).find(p => String(p?.company || '').trim().toLowerCase() === target) || null;
+  }, [account, prospects]);
 
-function MultiSelectCell({ value, onChange, options }) {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState('');
-  const wrapRef = useRef(null);
-  const selected = useMemo(() => parseMulti(value), [value]);
-  const selectedSet = useMemo(() => new Set(selected.map(s => s.toLowerCase())), [selected]);
+  const contactSuggestions = useMemo(() => {
+    if (!matched?.contacts?.length) return [];
+    const seen = new Set();
+    const out = [];
+    for (const c of matched.contacts) {
+      const name = [c?.firstname, c?.lastname].filter(Boolean).join(' ').trim();
+      if (!name) continue;
+      const k = name.toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(name);
+    }
+    out.sort((a, b) => a.localeCompare(b));
+    return out;
+  }, [matched]);
 
-  // Close on outside click while the popover is open.
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e) => {
-      if (!wrapRef.current?.contains(e.target)) setOpen(false);
+  const onAddNew = useMemo(() => {
+    if (!matched || typeof updateProspect !== 'function') return undefined;
+    return (text) => {
+      const name = String(text || '').trim();
+      if (!name) return;
+      const parts = name.split(/\s+/);
+      const firstname = parts[0] || '';
+      const lastname = parts.slice(1).join(' ');
+      const newContact = {
+        id: `c_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        firstname,
+        lastname,
+        email: '',
+        phone: '',
+        mobilephone: '',
+        jobtitle: '',
+        company: matched.company || '',
+      };
+      const nextContacts = [...(matched.contacts || []), newContact];
+      Promise.resolve(updateProspect(matched.id, { contacts: nextContacts })).catch(() => {});
     };
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [open]);
+  }, [matched, updateProspect]);
 
-  const filteredOptions = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return options;
-    return options.filter(o => o.toLowerCase().includes(q));
-  }, [options, query]);
-
-  function toggle(opt) {
-    const key = opt.toLowerCase();
-    const next = selectedSet.has(key)
-      ? selected.filter(s => s.toLowerCase() !== key)
-      : [...selected, opt];
-    onChange(next.join(', '));
-  }
-
-  function clearAll() {
-    onChange('');
-  }
-
-  const isEmpty = selected.length === 0;
   return (
-    <div ref={wrapRef} style={{ position: 'relative' }} onClick={(e) => e.stopPropagation()}>
-      <span
-        onClick={() => setOpen(o => !o)}
-        style={{
-          display: 'block', cursor: 'pointer', minHeight: '1em',
-          padding: '1px 2px',
-          color: isEmpty ? 'var(--color-text-muted)' : 'inherit',
-          whiteSpace: 'normal', wordBreak: 'break-word',
-        }}
-        title="Click to pick services"
-      >
-        {isEmpty ? '—' : selected.join(', ')}
-      </span>
-      {open && (
-        <div
-          onMouseDown={(e) => e.stopPropagation()}
-          style={{
-            position: 'absolute', top: '100%', left: 0, marginTop: 2,
-            zIndex: 50, width: 320, maxWidth: '90vw',
-            background: '#fff', border: '1px solid var(--color-border)',
-            borderRadius: 4, boxShadow: '0 8px 20px rgba(15, 23, 42, 0.18)',
-            fontSize: '0.82rem',
-          }}
-        >
-          <div style={{ padding: '0.4rem 0.5rem', borderBottom: '1px solid var(--color-border-light)' }}>
-            <input
-              autoFocus
-              type="text"
-              value={query}
-              placeholder="Filter services…"
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); setOpen(false); } }}
-              style={{
-                width: '100%', boxSizing: 'border-box',
-                border: '1px solid var(--color-border)', borderRadius: 3,
-                padding: '4px 6px', fontSize: 'inherit', fontFamily: 'inherit',
-                color: 'var(--color-text)', background: '#fff',
-              }}
-            />
-          </div>
-          <div style={{ maxHeight: 280, overflowY: 'auto' }}>
-            {filteredOptions.length === 0 ? (
-              <div style={{ padding: '0.5rem 0.6rem', color: 'var(--color-text-muted)' }}>
-                No matches
-              </div>
-            ) : filteredOptions.map(opt => {
-              const checked = selectedSet.has(opt.toLowerCase());
-              return (
-                <label
-                  key={opt}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: '0.5rem',
-                    padding: '0.3rem 0.6rem', cursor: 'pointer',
-                    background: checked ? '#DCFCE7' : 'transparent',
-                    color: checked ? '#166534' : '#1E293B',
-                    fontWeight: checked ? 600 : 500,
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => toggle(opt)}
-                    style={{ margin: 0 }}
-                  />
-                  <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {opt}
-                  </span>
-                </label>
-              );
-            })}
-          </div>
-          <div style={{
-            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-            padding: '0.35rem 0.5rem', borderTop: '1px solid var(--color-border-light)',
-            background: 'var(--color-bg)',
-          }}>
-            <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
-              {selected.length} selected
-            </span>
-            <div style={{ display: 'flex', gap: '0.35rem' }}>
-              <button
-                type="button"
-                onClick={clearAll}
-                style={{
-                  padding: '0.25rem 0.55rem', background: 'transparent',
-                  border: '1px solid var(--color-border)', borderRadius: 3,
-                  fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit',
-                  color: 'var(--color-text-muted)', cursor: 'pointer',
-                }}
-              >Clear</button>
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                style={{
-                  padding: '0.25rem 0.55rem', background: 'var(--color-accent)',
-                  border: '1px solid var(--color-accent)', borderRadius: 3,
-                  fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit',
-                  color: '#fff', cursor: 'pointer',
-                }}
-              >Done</button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
+    <EditableCell
+      value={value}
+      onChange={onChange}
+      suggestions={contactSuggestions}
+      onAddNew={onAddNew}
+      addNewLabel={(txt) => `+ Add "${txt}" to ${matched?.company || 'this account'}`}
+    />
   );
 }
 
@@ -689,7 +629,7 @@ function MultiSelectCell({ value, onChange, options }) {
   );
 }
 
-export function OppsView2({ settings, updateSettings, prospects = [] } = {}) {
+export function OppsView2({ settings, updateSettings, prospects = [], updateProspect } = {}) {
   // Local-only state. No fetch, no cache, no sync.
   const [data, setData] = useState({ headers: DEFAULT_HEADERS, records: [] });
   const [loading] = useState(false);
@@ -832,6 +772,17 @@ export function OppsView2({ settings, updateSettings, prospects = [] } = {}) {
               />
             );
           }
+          if (h === 'Contact') {
+            return (
+              <ContactCell
+                value={row[h]}
+                onChange={(v) => updateOppField(row._id, h, v)}
+                account={row['Account']}
+                prospects={prospects}
+                updateProspect={updateProspect}
+              />
+            );
+          }
           return (
             <EditableCell
               value={row[h]}
@@ -841,7 +792,7 @@ export function OppsView2({ settings, updateSettings, prospects = [] } = {}) {
           );
         },
       }));
-  }, [headers, updateOppField, companySuggestions]);
+  }, [headers, updateOppField, companySuggestions, prospects, updateProspect]);
 
   const stageOrder = ['Lead', 'Not Started', 'Qualifying', 'Quoting', 'Quoted', 'Verbal', 'Sold', 'Not Sold'];
   const CLOSED_STAGES = useMemo(() => new Set(['Sold', 'Not Sold']), []);
