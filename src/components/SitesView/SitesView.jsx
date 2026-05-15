@@ -1943,11 +1943,12 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     TX: { status: 'yes',     range: '1 - 2%',  lowPct: 0.01, highPct: 0.02 },
     // Limited-deregulation markets — the underlying retail-choice
     // programs are narrow enough (Direct Access only in CA, heavy-load
-    // gating in VA, opt-in pilots in MI / WA) that the standard 2-4 %
-    // commodity savings doesn't apply. Surfaced as 0 - 0 % so the
-    // Indicative Savings tab still lists them (Status stays "Limited"
-    // so they aren't filtered out as regulated) but every savings
-    // column resolves to $0.
+    // gating in VA, opt-in pilots in MI / WA, prior-3rd-party gating
+    // in AZ) that the standard 2-4 % commodity savings doesn't apply.
+    // Surfaced as 0 - 0 % so the Indicative Savings tab still lists
+    // them (Status stays "Limited" so they aren't filtered out as
+    // regulated) but every savings column resolves to $0.
+    AZ: { status: 'Limited', range: '0 - 0%', lowPct: 0, highPct: 0 },
     CA: { status: 'Limited', range: '0 - 0%', lowPct: 0, highPct: 0 },
     MI: { status: 'Limited', range: '0 - 0%', lowPct: 0, highPct: 0 },
     VA: { status: 'Limited', range: '0 - 0%', lowPct: 0, highPct: 0 },
@@ -2958,10 +2959,24 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             // Computed in the post-loop map() once we know the state's
             // total electric / gas spend + consumption.
             hasMexicoSourcing: false,
+            // Aggregates that include regulated sites too — needed for
+            // VA / AZ / MI flags that fire on any electric load,
+            // independent of the dereg gate that filters g.consumption.
+            anyConsumption: 0,
+            maxSiteConsumption: 0,
           };
           states.set(bucketKey, g);
         }
         g.totalSites += 1;
+        // Track consumption across every site (including regulated ones)
+        // so flags that fire on "any electric load" or "single-site load
+        // above N" can see sites the dereg gate would otherwise skip.
+        const rawConsumption = r[consumptionKey];
+        if (typeof rawConsumption === 'number' && Number.isFinite(rawConsumption) && rawConsumption > 0) {
+          const normalized = commodity === 'gas' ? rawConsumption / 10 : rawConsumption;
+          g.anyConsumption += normalized;
+          if (normalized > g.maxSiteConsumption) g.maxSiteConsumption = normalized;
+        }
         const provider = r[providerKey];
         // Track the regulated utility for every site (not just the
         // deregulated ones) so the Utility column captures PG&E /
@@ -3180,6 +3195,21 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
               // the structured wholesale procurement product.
               if (consumptionMWh > 44_000) out.push('★ Wholesale Plus should be explored (>44,000 MWh)');
               if (g.hasMexicoSourcing) out.push('★ Potential Mexico sourcing opportunity');
+              // Virginia heavy-load gating: VA's retail-choice program
+              // only opens up for a single site above 45,000 MWh/yr —
+              // no aggregation across sites, so we compare against the
+              // largest individual site's kWh.
+              if (g.state === 'VA' && g.maxSiteConsumption / 1000 > 45_000) {
+                out.push('★ Virginia site exceeds 45,000 MWh/yr — large-load deregulation threshold met');
+              }
+              // Arizona / Michigan: limited retail-choice markets where
+              // we can only support a customer if they already have a
+              // third-party supply contract in place. Fires on any
+              // electric load — even regulated sites — so the seller
+              // sees the gating up front.
+              if ((g.state === 'AZ' || g.state === 'MI') && g.anyConsumption > 0) {
+                out.push('⚠ Limited market — can only help if 3rd-party supply is already in place');
+              }
             } else if (commodity === 'gas') {
               if (g.spend > 0 && g.spend < 30_000) out.push('⚠ Natural gas consumption might be too low for sourcing (<$30K)');
             }
@@ -4801,6 +4831,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     const smallElectricStates = collectStates(electricRows, 'Spend < $1M');
     const mexicoStates = collectStates(electricRows, 'Mexico sourcing');
     const smallGasStates = collectStates(gasRows, 'too low for sourcing');
+    // Limited-market gating flags surfaced in the summary band so the
+    // seller doesn't have to scan each row's Flags cell.
+    const vaHeavyLoadStates = collectStates(electricRows, 'Virginia site exceeds 45,000 MWh');
+    const limitedSupplyStates = collectStates(electricRows, 'can only help if 3rd-party supply');
     // Portfolio-wide VPPA opportunity flag. North America electric
     // load above 100,000 MWh/yr is the threshold where a Virtual PPA
     // typically pencils out. NA = US states + Canadian provinces
@@ -4818,6 +4852,12 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     }
     if (wholesalePlusStates.length) {
       summaryFindings.push(`Wholesale Plus should be explored (>44,000 MWh) — ${wholesalePlusStates.join(', ')}`);
+    }
+    if (vaHeavyLoadStates.length) {
+      summaryFindings.push('Virginia site exceeds 45,000 MWh/yr — large-load deregulation threshold met');
+    }
+    if (limitedSupplyStates.length) {
+      summaryFindings.push(`Limited market — can only help if 3rd-party supply is already in place — ${limitedSupplyStates.join(', ')}`);
     }
     if (smallElectricStates.length) {
       summaryFindings.push(`Small electric market — Deregulated spend < $1M — ${smallElectricStates.join(', ')}`);
