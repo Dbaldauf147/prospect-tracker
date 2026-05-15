@@ -3968,6 +3968,18 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const naMarketByPostal = new Map();
       for (const m of US_MARKETS) naMarketByPostal.set(`US/${m.code}`, m);
       for (const m of CA_MARKETS) naMarketByPostal.set(`CA/${m.code}`, m);
+      // Map-only color override for the three Canadian territories.
+      // CA_MARKETS classifies them as REG_NG_EP (which is accurate —
+      // no retail-choice gas or electric market), but rendering them
+      // gray makes the top of Canada look unfilled next to the colored
+      // southern provinces. Painting each territory with its southern
+      // neighbor's category color removes the sharp 60 °N break without
+      // touching the data the breakdown table reads from.
+      const CA_TERRITORY_MAP_FILL = {
+        YT: NA_CATEGORIES.CA_LIMITED_NG_DEREG_EP.fill,
+        NT: NA_CATEGORIES.CA_LIMITED_NG_REG_EP.fill,
+        NU: NA_CATEGORIES.DEREG_NG.fill,
+      };
       const naFeatures = getNAAdmin1Features();
       ctx.lineWidth = 0.6;
       ctx.strokeStyle = '#94A3B8';
@@ -3977,7 +3989,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         const marketKey = `${feat.admin}/${feat.postal}`;
         const m = naMarketByPostal.get(marketKey);
         const cat = m ? NA_CATEGORIES[m.category] : null;
-        if (!cat || cat.key === 'REG_NG_EP') {
+        const territoryOverride = feat.admin === 'CA' ? CA_TERRITORY_MAP_FILL[feat.postal] : null;
+        if (territoryOverride) {
+          ctx.fillStyle = hexToCanvas(territoryOverride);
+        } else if (!cat || cat.key === 'REG_NG_EP') {
           ctx.fillStyle = MAP_REG_FILL;
         } else {
           ctx.fillStyle = hexToCanvas(cat.fill);
