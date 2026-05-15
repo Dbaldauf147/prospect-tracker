@@ -634,14 +634,17 @@ function MultiSelectCell({ value, onChange, options }) {
         <div
           onMouseDown={(e) => e.stopPropagation()}
           style={{
+            // Wider + taller than the original so 10+ services sit on
+            // screen at once without scrolling, and longer service
+            // names are not truncated.
             position: 'absolute', top: '100%', left: 0, marginTop: 2,
-            zIndex: 50, width: 320, maxWidth: '90vw',
+            zIndex: 50, width: 480, maxWidth: '92vw',
             background: '#fff', border: '1px solid var(--color-border)',
             borderRadius: 4, boxShadow: '0 8px 20px rgba(15, 23, 42, 0.18)',
-            fontSize: '0.82rem',
+            fontSize: '0.9rem',
           }}
         >
-          <div style={{ padding: '0.4rem 0.5rem', borderBottom: '1px solid var(--color-border-light)' }}>
+          <div style={{ padding: '0.5rem 0.6rem', borderBottom: '1px solid var(--color-border-light)' }}>
             <input
               autoFocus
               type="text"
@@ -652,14 +655,14 @@ function MultiSelectCell({ value, onChange, options }) {
               style={{
                 width: '100%', boxSizing: 'border-box',
                 border: '1px solid var(--color-border)', borderRadius: 3,
-                padding: '4px 6px', fontSize: 'inherit', fontFamily: 'inherit',
+                padding: '6px 8px', fontSize: 'inherit', fontFamily: 'inherit',
                 color: 'var(--color-text)', background: '#fff',
               }}
             />
           </div>
-          <div style={{ maxHeight: 280, overflowY: 'auto' }}>
+          <div style={{ maxHeight: 440, overflowY: 'auto' }}>
             {filteredOptions.length === 0 ? (
-              <div style={{ padding: '0.5rem 0.6rem', color: 'var(--color-text-muted)' }}>
+              <div style={{ padding: '0.6rem 0.7rem', color: 'var(--color-text-muted)' }}>
                 No matches
               </div>
             ) : filteredOptions.map(opt => {
@@ -668,8 +671,8 @@ function MultiSelectCell({ value, onChange, options }) {
                 <label
                   key={opt}
                   style={{
-                    display: 'flex', alignItems: 'center', gap: '0.5rem',
-                    padding: '0.3rem 0.6rem', cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', gap: '0.55rem',
+                    padding: '0.4rem 0.7rem', cursor: 'pointer',
                     background: checked ? '#DCFCE7' : 'transparent',
                     color: checked ? '#166534' : '#1E293B',
                     fontWeight: checked ? 600 : 500,
@@ -690,20 +693,20 @@ function MultiSelectCell({ value, onChange, options }) {
           </div>
           <div style={{
             display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-            padding: '0.35rem 0.5rem', borderTop: '1px solid var(--color-border-light)',
+            padding: '0.4rem 0.6rem', borderTop: '1px solid var(--color-border-light)',
             background: 'var(--color-bg)',
           }}>
-            <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
+            <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
               {selected.length} selected
             </span>
-            <div style={{ display: 'flex', gap: '0.35rem' }}>
+            <div style={{ display: 'flex', gap: '0.4rem' }}>
               <button
                 type="button"
                 onClick={clearAll}
                 style={{
-                  padding: '0.25rem 0.55rem', background: 'transparent',
+                  padding: '0.3rem 0.65rem', background: 'transparent',
                   border: '1px solid var(--color-border)', borderRadius: 3,
-                  fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit',
+                  fontSize: '0.75rem', fontWeight: 600, fontFamily: 'inherit',
                   color: 'var(--color-text-muted)', cursor: 'pointer',
                 }}
               >Clear</button>
@@ -711,9 +714,9 @@ function MultiSelectCell({ value, onChange, options }) {
                 type="button"
                 onClick={() => setOpen(false)}
                 style={{
-                  padding: '0.25rem 0.55rem', background: 'var(--color-accent)',
+                  padding: '0.3rem 0.65rem', background: 'var(--color-accent)',
                   border: '1px solid var(--color-accent)', borderRadius: 3,
-                  fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit',
+                  fontSize: '0.75rem', fontWeight: 600, fontFamily: 'inherit',
                   color: '#fff', cursor: 'pointer',
                 }}
               >Done</button>
@@ -827,6 +830,7 @@ function SelectCell({ value, onChange, options }) {
 // menu stays in lock-step with the Dropdowns tab.
 const SOURCE_OPTIONS = (DROPDOWN_LISTS.find(l => l.key === 'source')?.options) || [];
 const STAGE_OPTIONS = (DROPDOWN_LISTS.find(l => l.key === 'status')?.options) || [];
+const WHO_IS_WAITING_OPTIONS = (DROPDOWN_LISTS.find(l => l.key === 'whoIsWaiting')?.options) || [];
 
 export function OppsView2({ settings, updateSettings, prospects = [], updateProspect } = {}) {
   const { user } = useAuth();
@@ -1070,6 +1074,15 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                 value={row[h]}
                 onChange={(v) => updateOppField(row._id, h, v)}
                 options={STAGE_OPTIONS}
+              />
+            );
+          }
+          if (h === 'Status') {
+            return (
+              <SelectCell
+                value={row[h]}
+                onChange={(v) => updateOppField(row._id, h, v)}
+                options={WHO_IS_WAITING_OPTIONS}
               />
             );
           }
