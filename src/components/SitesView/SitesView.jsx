@@ -4019,7 +4019,6 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         agg.therms += therms;
         agg.cost += eCost + gCost;
       }
-      const stateRows = [...stateAggs.values()].sort((a, b) => b.sites - a.sites);
 
       // Canvas — NA-bounded equirectangular projection so the map
       // fills the canvas with the US + Canada landmass. Lat range
@@ -4257,44 +4256,67 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         r.height = 20;
       });
 
-      // Per state / province breakdown — replaces the per-country
-      // table from the Portfolio Overview, which is too coarse when
-      // we're already filtered to US + Canada.
-      if (stateRows.length > 0) {
+      // Per state / per province deregulation reference. Sourced from
+      // the same US_MARKETS + CA_MARKETS dataset that drives the
+      // North America Markets sheet, so the two tabs stay in sync.
+      // Portfolio site counts + load + cost roll in from stateAggs;
+      // states / provinces with no sites still render with zeros so
+      // the user gets a full reference without flipping tabs. The
+      // Markets legend is appended directly below the table.
+      {
         const stateHdrRow = tableHeaderRow + tierRows.length + 3;
         ws.mergeCells(stateHdrRow, 1, stateHdrRow, COLS);
         const sHdr = ws.getCell(stateHdrRow, 1);
-        sHdr.value = 'State / Province level view';
+        sHdr.value = 'State / Province deregulation status';
         sHdr.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
         sHdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
         sHdr.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
         ws.getRow(stateHdrRow).height = 22;
 
         const sTblHdrRow = stateHdrRow + 1;
-        const sCols = ['State / Province', 'Country', 'Electric', 'Gas', 'Sites', 'Load (kWh)', 'Load (Dth)', 'Annual Cost ($)'];
+        const sCols = ['Code', 'Name', 'Country', 'Natural Gas', 'Electric Power', 'Market Category', 'Sites', 'Load (kWh)', 'Load (Dth)', 'Annual Cost ($)'];
         const sHdrCells = ws.getRow(sTblHdrRow);
         sCols.forEach((label, i) => {
           const cell = sHdrCells.getCell(i + 1);
           cell.value = label;
           cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
-          cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+          cell.border = {
+            top:    { style: 'thin', color: { argb: SE_BORDER } },
+            bottom: { style: 'thin', color: { argb: SE_BORDER } },
+            left:   { style: 'thin', color: { argb: SE_BORDER } },
+            right:  { style: 'thin', color: { argb: SE_BORDER } },
+          };
         });
-        sHdrCells.height = 22;
-        stateRows.forEach((sr, i) => {
+        sHdrCells.height = 26;
+
+        const marketRows = [
+          ...US_MARKETS.map(m => ({ ...m, country: 'United States', countryKey: 'US' })),
+          ...CA_MARKETS.map(m => ({ ...m, country: 'Canada',        countryKey: 'CA' })),
+        ];
+        marketRows.forEach((m, i) => {
+          const cat = NA_CATEGORIES[m.category];
+          const agg = stateAggs.get(`${m.countryKey}/${m.code}`);
+          const sites = agg ? agg.sites : 0;
+          const kwh = agg ? Math.round(agg.kwh) : 0;
+          const dth = agg ? Math.round(agg.therms / 10) : 0;
+          const cost = agg ? Math.round(agg.cost) : 0;
           const rr = ws.getRow(sTblHdrRow + 1 + i);
-          rr.getCell(1).value = sr.label;
-          rr.getCell(2).value = sr.country;
-          rr.getCell(3).value = sr.elecStatus;
-          rr.getCell(4).value = sr.gasStatus;
-          rr.getCell(5).value = sr.sites;
-          rr.getCell(6).value = Math.round(sr.kwh);
-          rr.getCell(7).value = Math.round(sr.therms / 10);
-          rr.getCell(8).value = Math.round(sr.cost);
-          rr.getCell(5).numFmt = '#,##0';
-          rr.getCell(6).numFmt = '#,##0';
+          rr.getCell(1).value = m.code;
+          rr.getCell(2).value = m.name;
+          rr.getCell(3).value = m.country;
+          rr.getCell(4).value = cat?.ng || 'Regulated';
+          rr.getCell(5).value = cat?.ep || 'Regulated';
+          rr.getCell(6).value = cat?.label || 'Regulated — NG & EP';
+          rr.getCell(7).value = sites;
+          rr.getCell(8).value = kwh;
+          rr.getCell(9).value = dth;
+          rr.getCell(10).value = cost;
           rr.getCell(7).numFmt = '#,##0';
-          rr.getCell(8).numFmt = '"$"#,##0';
+          rr.getCell(8).numFmt = '#,##0';
+          rr.getCell(9).numFmt = '#,##0';
+          rr.getCell(10).numFmt = '"$"#,##0';
           for (let ci = 1; ci <= sCols.length; ci++) {
             rr.getCell(ci).font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
             rr.getCell(ci).alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
@@ -4303,7 +4325,53 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
               right:  { style: 'hair', color: { argb: SE_BORDER } },
             };
           }
+          if (cat) {
+            const catCell = rr.getCell(6);
+            catCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: cat.fill } };
+            catCell.font = { name: 'Nunito Sans', size: 10, bold: true, color: { argb: cat.fg } };
+          }
+          if (sites > 0) {
+            rr.getCell(7).font = { name: 'Nunito Sans', size: 10, bold: true, color: { argb: SE_TEXT_DARK } };
+          }
           rr.height = 20;
+        });
+
+        // Markets legend — one row per distinct category in the same
+        // display order as the standalone North America Markets sheet,
+        // so the two tabs read the same legend top-to-bottom.
+        const legendOrder = [
+          'REG_NG_EP', 'DEREG_NG', 'DEREG_NG_EP',
+          'DEREG_NG_LIMITED_EP', 'DEREG_NG_HEAVY_EP',
+          'LIMITED_EP', 'DIRECT_ACCESS_EP', 'HEAVY_EP',
+          'CA_LIMITED_NG_DEREG_EP', 'CA_LIMITED_NG_REG_EP',
+        ];
+        const legendHdrRow = sTblHdrRow + 1 + marketRows.length + 1;
+        ws.mergeCells(legendHdrRow, 1, legendHdrRow, COLS);
+        const lHdr = ws.getCell(legendHdrRow, 1);
+        lHdr.value = 'North America Markets Legend';
+        lHdr.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
+        lHdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+        lHdr.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        ws.getRow(legendHdrRow).height = 22;
+        legendOrder.forEach((key, idx) => {
+          const cat = NA_CATEGORIES[key];
+          if (!cat) return;
+          const lr = ws.getRow(legendHdrRow + 1 + idx);
+          const swatch = lr.getCell(1);
+          swatch.value = '';
+          swatch.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: cat.fill } };
+          swatch.border = {
+            top:    { style: 'thin', color: { argb: SE_BORDER } },
+            bottom: { style: 'thin', color: { argb: SE_BORDER } },
+            left:   { style: 'thin', color: { argb: SE_BORDER } },
+            right:  { style: 'thin', color: { argb: SE_BORDER } },
+          };
+          ws.mergeCells(legendHdrRow + 1 + idx, 2, legendHdrRow + 1 + idx, COLS);
+          const lbl = lr.getCell(2);
+          lbl.value = cat.label;
+          lbl.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+          lbl.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          lr.height = 20;
         });
       }
     }
