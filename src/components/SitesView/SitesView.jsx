@@ -3412,7 +3412,17 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         if (typeof r.__gasCostActual__ === 'number' && Number.isFinite(r.__gasCostActual__)) agg.costActual += r.__gasCostActual__;
         else if (typeof r.__gasCostEstimated__ === 'number' && Number.isFinite(r.__gasCostEstimated__)) agg.costEstimated += r.__gasCostEstimated__;
       }
-      const countryRows = [...countryAggs.values()].sort((a, b) => b.sites - a.sites);
+      // Rank by Annual Cost descending — the largest markets bubble
+      // to the top so the country table reads as "where the spend
+      // is" rather than "where the sites are." Ties fall back to
+      // site count and then country name for stable ordering.
+      const countryRows = [...countryAggs.values()].sort((a, b) => {
+        const aCost = (a.costActual || 0) + (a.costEstimated || 0);
+        const bCost = (b.costActual || 0) + (b.costEstimated || 0);
+        if (bCost !== aCost) return bCost - aCost;
+        if (b.sites !== a.sites) return b.sites - a.sites;
+        return String(a.country).localeCompare(String(b.country));
+      });
 
       // Canvas render — equirectangular projection. The map itself
       // is now drawn from the bundled world-atlas TopoJSON
@@ -4171,10 +4181,18 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         });
         sHdrCells.height = 26;
 
+        // Rank by Annual Cost descending — largest portfolio markets
+        // at the top, states / provinces with no sites (cost = 0)
+        // fall to the bottom sorted alphabetically by code.
         const marketRows = [
           ...US_MARKETS.map(m => ({ ...m, country: 'United States', countryKey: 'US' })),
           ...CA_MARKETS.map(m => ({ ...m, country: 'Canada',        countryKey: 'CA' })),
-        ];
+        ].sort((a, b) => {
+          const aCost = stateAggs.get(`${a.countryKey}/${a.code}`)?.cost || 0;
+          const bCost = stateAggs.get(`${b.countryKey}/${b.code}`)?.cost || 0;
+          if (bCost !== aCost) return bCost - aCost;
+          return String(a.code).localeCompare(String(b.code));
+        });
         marketRows.forEach((m, i) => {
           const cat = NA_CATEGORIES[m.category];
           const agg = stateAggs.get(`${m.countryKey}/${m.code}`);
