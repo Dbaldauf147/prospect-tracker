@@ -2512,17 +2512,17 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
           return <FilterDrop key={key} label={col?.label || key} options={options} selected={filters[key] || []} onToggle={v => toggleFilter(key, v)} />;
         })}
         {(() => {
-          // Surface any prospect that matches the current search term
-          // but isn't in the visible accounts list. The accounts list
-          // filters prospects out for several reasons (dismissed via
-          // the × button; inactive status; assigned to a different
-          // CDM; no tier / no opps), and a user searching for one of
-          // those companies would otherwise see nothing and have no
-          // hint that the company is in the database at all.
+          // Surface inactive-hidden matches only — the accounts list
+          // also hides prospects assigned to other CDMs / no-tier
+          // rows, but those don't read as "hidden" to the user. The
+          // ones they care about are companies in their territory
+          // that are being hidden by the inactiveMode=hide filter
+          // (Old Client / Hold Off / Lost - Not Sold). Skip the
+          // banner entirely when inactiveMode is already showing
+          // them.
           const term = search.trim().toLowerCase();
           if (!term) return null;
-          const visibleNames = new Set(allAccounts.map(a => (a.company || '').toLowerCase().trim()));
-          const dismissedLower = new Set((dismissedCompanies || []).map(d => (d || '').toLowerCase().trim()));
+          if (inactiveMode !== 'hide') return null;
           const inactiveStatuses = new Set(['Old Client', 'Hold Off', 'Lost - Not Sold']);
           const seen = new Set();
           const hidden = [];
@@ -2531,24 +2531,11 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
             if (!name) continue;
             const lower = name.toLowerCase();
             if (!lower.includes(term)) continue;
-            if (visibleNames.has(lower)) continue;
             if (seen.has(lower)) continue;
+            if (!inactiveStatuses.has(p.status)) continue;
+            if (!matchesCdm(p.cdm, cdmName)) continue;
             seen.add(lower);
-            let reason;
-            let restore = null;
-            if (dismissedLower.has(lower)) {
-              reason = 'dismissed';
-              // Restore via the *original-cased* name in dismissedCompanies.
-              const original = (dismissedCompanies || []).find(d => (d || '').toLowerCase().trim() === lower) || name;
-              restore = () => undismissCompany(original);
-            } else if (inactiveStatuses.has(p.status)) {
-              reason = `inactive · ${p.status}`;
-            } else if (!matchesCdm(p.cdm, cdmName)) {
-              reason = `other CDM${p.cdm ? ` · ${p.cdm}` : ''}`;
-            } else {
-              reason = 'no tier / no opps';
-            }
-            hidden.push({ name, reason, restore });
+            hidden.push({ name, status: p.status });
             if (hidden.length >= 10) break;
           }
           if (hidden.length === 0) return null;
@@ -2568,21 +2555,13 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
                 color: '#92400E',
                 fontWeight: 600,
               }}
-              title="These companies are in your database but hidden from the visible accounts list."
+              title="These accounts match your search but are hidden by the Inactive filter. Click the Inactive summary card to reveal them."
             >
-              ⚠ Hidden match{hidden.length === 1 ? '' : 'es'}:
+              ⚠ Inactive hidden:
               {hidden.map(h => (
                 <span key={h.name} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', padding: '0.05rem 0.45rem', background: '#fff', border: '1px solid #FDE68A', borderRadius: '999px' }}>
                   <span style={{ color: '#92400E' }}>{h.name}</span>
-                  <span style={{ color: '#B45309', fontWeight: 500, fontSize: '0.62rem' }}>· {h.reason}</span>
-                  {h.restore && (
-                    <button
-                      type="button"
-                      onClick={h.restore}
-                      title={`Restore "${h.name}"`}
-                      style={{ background: 'none', border: 'none', color: '#92400E', fontSize: '0.78rem', cursor: 'pointer', padding: '0 2px', lineHeight: 1, fontWeight: 700 }}
-                    >↺</button>
-                  )}
+                  <span style={{ color: '#B45309', fontWeight: 500, fontSize: '0.62rem' }}>· {h.status}</span>
                 </span>
               ))}
             </div>
