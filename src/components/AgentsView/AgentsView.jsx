@@ -84,13 +84,13 @@ export function AgentsView() {
     };
   }, []);
 
-  const todaysOutbound = useMemo(() => {
+  const { todaysOutbound, todaysMeetings } = useMemo(() => {
     const bounds = todayBounds();
     const inToday = (ts) => {
       const t = new Date(ts || 0).getTime();
       return Number.isFinite(t) && t >= bounds.start && t < bounds.end;
     };
-    return (cache?.emails || [])
+    const outbound = (cache?.emails || [])
       .filter(e => !(e.hs_email_subject || '').toLowerCase().includes('(sample email)'))
       .filter(e => inToday(e.hs_timestamp))
       .filter(e => isOutbound(e.hs_email_from_email))
@@ -105,6 +105,20 @@ export function AgentsView() {
         status: e.hs_email_status || '',
       }))
       .sort((a, b) => new Date(b.ts) - new Date(a.ts));
+
+    const meetings = (cache?.meetings || [])
+      .filter(m => inToday(m.hs_meeting_start_time || m.hs_timestamp))
+      .map(m => ({
+        id: m.id || m.hs_object_id,
+        ts: m.hs_meeting_start_time || m.hs_timestamp,
+        endTs: m.hs_meeting_end_time,
+        title: m.hs_meeting_title || 'Meeting',
+        outcome: m.hs_meeting_outcome || '',
+        location: m.hs_meeting_location || '',
+      }))
+      .sort((a, b) => new Date(a.ts) - new Date(b.ts));
+
+    return { todaysOutbound: outbound, todaysMeetings: meetings };
   }, [cache]);
 
   const dateLabel = useMemo(() => new Date().toLocaleDateString('en-US', {
@@ -120,11 +134,14 @@ export function AgentsView() {
         <span className={styles.dateline}>{dateLabel}</span>
       </div>
       <p className={styles.subnote}>
-        Today&rsquo;s outbound emails to non-SE recipients (mixed lists with an internal CC alongside an external recipient still count). Sourced from the Activity tab&rsquo;s cache &mdash; open Activity at least once per session to refresh.
+        Today&rsquo;s outbound emails to non-SE recipients (mixed lists with an internal CC alongside an external recipient still count), plus any meetings on today&rsquo;s calendar. Sourced from the Activity tab&rsquo;s cache &mdash; open Activity at least once per session to refresh.
       </p>
 
       <div className={styles.tallies}>
         <div className={styles.tally}><strong>{todaysOutbound.length}</strong>outbound emails today</div>
+        {todaysMeetings.length > 0 && (
+          <div className={styles.tally}><strong>{todaysMeetings.length}</strong>meeting{todaysMeetings.length === 1 ? '' : 's'} today</div>
+        )}
       </div>
 
       {!cache && (
@@ -137,6 +154,9 @@ export function AgentsView() {
       )}
 
       <section className={styles.section}>
+        <h2 className={styles.sectionHeader}>
+          Sent emails <span className={styles.sectionCount}>{todaysOutbound.length}</span>
+        </h2>
         {todaysOutbound.length === 0 ? (
           <div className={styles.empty}>No outbound emails to external recipients today.</div>
         ) : (
@@ -162,6 +182,34 @@ export function AgentsView() {
           </table>
         )}
       </section>
+
+      {todaysMeetings.length > 0 && (
+        <section className={styles.section}>
+          <h2 className={styles.sectionHeader}>
+            Meetings <span className={styles.sectionCount}>{todaysMeetings.length}</span>
+          </h2>
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                <th style={{ width: 130 }}>Time</th>
+                <th>Title</th>
+                <th style={{ width: 160 }}>Outcome</th>
+                <th>Location</th>
+              </tr>
+            </thead>
+            <tbody>
+              {todaysMeetings.map(m => (
+                <tr key={m.id}>
+                  <td>{fmtTime(m.ts)}{m.endTs ? ` – ${fmtTime(m.endTs)}` : ''}</td>
+                  <td>{m.title}</td>
+                  <td className={m.outcome ? '' : styles.muted}>{m.outcome || '—'}</td>
+                  <td className={m.location ? '' : styles.muted}>{m.location || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
     </div>
   );
 }
