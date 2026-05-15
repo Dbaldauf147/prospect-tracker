@@ -56,6 +56,12 @@ service cloud.firestore {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
 
+    // Opps 2 data: user-entered opps from the Opps 2 tab. Same per-user
+    // scoping as oppsData.
+    match /opps2Data/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
     // Email campaigns: users can only read/write their own data
     match /emailCampaigns/{userId} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
