@@ -5,6 +5,7 @@ import styles from './PricingView.module.css';
 import { parsePricingWorkbook, priceFromCostAndGm } from '../../utils/pricingParse';
 import { dbGet, dbPut, dbDelete } from '../../utils/db';
 import { OptionsTab } from './OptionsTab';
+import { PricingConversions } from './PricingConversions';
 
 // Local-draft text input keyed off the upstream value. The parent
 // remounts the input (via React's `key` prop on the wrapping cell)
@@ -1360,6 +1361,8 @@ export function PricingView() {
       {error && (
         <div style={{ margin: '0 1.25rem 0.5rem', color: '#b91c1c' }}>{error}</div>
       )}
+
+      <PricingConversions />
 
       <div className={styles.subtabStrip}>
         <button
