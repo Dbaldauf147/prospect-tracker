@@ -1940,10 +1940,17 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     PA: { status: 'yes',     range: '2 - 4%',  lowPct: 0.02, highPct: 0.04 },
     RI: { status: 'yes',     range: '2 - 4%',  lowPct: 0.02, highPct: 0.04 },
     TX: { status: 'yes',     range: '1 - 2%',  lowPct: 0.01, highPct: 0.02 },
-    CA: { status: 'Limited', range: '0 - 4%',  lowPct: 0,    highPct: 0.04 },
-    MI: { status: 'Limited', range: '',        lowPct: null, highPct: null },
-    VA: { status: 'Limited', range: '',        lowPct: null, highPct: null },
-    WA: { status: 'Limited', range: '',        lowPct: null, highPct: null },
+    // Limited-deregulation markets — the underlying retail-choice
+    // programs are narrow enough (Direct Access only in CA, heavy-load
+    // gating in VA, opt-in pilots in MI / WA) that the standard 2-4 %
+    // commodity savings doesn't apply. Surfaced as 0 - 0 % so the
+    // Indicative Savings tab still lists them (Status stays "Limited"
+    // so they aren't filtered out as regulated) but every savings
+    // column resolves to $0.
+    CA: { status: 'Limited', range: '0 - 0%', lowPct: 0, highPct: 0 },
+    MI: { status: 'Limited', range: '0 - 0%', lowPct: 0, highPct: 0 },
+    VA: { status: 'Limited', range: '0 - 0%', lowPct: 0, highPct: 0 },
+    WA: { status: 'Limited', range: '0 - 0%', lowPct: 0, highPct: 0 },
   };
   // Flat savings range applied to any deregulated natural-gas site.
   const GAS_SAVINGS = { range: '2 - 4%', lowPct: 0.02, highPct: 0.04 };
@@ -3079,7 +3086,15 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           monthlyHigh: siteHigh,
         });
       }
-      const out = [...states.values()].sort((a, b) => a.state.localeCompare(b.state));
+      // Markets ranked by deregulated spend, largest first — so the
+      // by-state Indicative Savings tables open with the biggest
+      // commodity-savings opportunities at the top. Ties fall back to
+      // state-code alphabetical so the order is stable.
+      const out = [...states.values()].sort((a, b) => {
+        const ds = (Number(b.spend) || 0) - (Number(a.spend) || 0);
+        if (ds !== 0) return ds;
+        return String(a.state).localeCompare(String(b.state));
+      });
       const stateRows = out.map(g => {
         // Each bucket already resolved its savings band at creation —
         // US/CA from ELECTRIC_DEREGULATION / GAS_DEREGULATION, countries
@@ -5010,11 +5025,18 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         else if (CANADA_PROVINCE_CENTERS[String(g.state).toUpperCase()]) caProvinces.push(g);
         else usStates.push(g);
       }
-      // Sort each group alphabetically by display label.
-      const byState = (a, b) => String(a.state).localeCompare(String(b.state));
-      countries.sort(byState);
-      usStates.sort(byState);
-      caProvinces.sort(byState);
+      // Rank each group by deregulated spend descending so the
+      // biggest commodity-savings opportunities sit at the top of
+      // each block. Ties fall back to state-code alphabetical for
+      // stable ordering.
+      const bySpend = (a, b) => {
+        const ds = (Number(b.spend) || 0) - (Number(a.spend) || 0);
+        if (ds !== 0) return ds;
+        return String(a.state).localeCompare(String(b.state));
+      };
+      countries.sort(bySpend);
+      usStates.sort(bySpend);
+      caProvinces.sort(bySpend);
 
       // Build a synthetic parent row that aggregates the child rows
       // for a country group. Numeric scalars sum; per-scenario triples
