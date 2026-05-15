@@ -4062,53 +4062,70 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       }
 
       // Pass 2 — choropleth at the state / province level. Each US
-      // state + DC and each Canadian province is filled with its
-      // NA_CATEGORIES color (matching the Markets Legend in the
-      // sidebar). States / provinces without an explicit category
-      // default to the regulated (NG & EP) bucket so every polygon
-      // carries a fill that matches the legend swatch.
+      // state + DC and each Canadian province is tinted by its
+      // NA_CATEGORIES color (matching the Markets Legend) and then
+      // darkened proportional to its portfolio site count, so the
+      // map reads "where are our sites" at a glance without needing
+      // labelled bubbles on top. States / provinces without an
+      // explicit category default to the regulated (NG & EP) swatch.
+      //
+      // Canadian territories (YT / NT / NU) are accurately REG_NG_EP
+      // in CA_MARKETS, but rendering them with the regulated gray
+      // makes the top of Canada look like ocean next to the colored
+      // southern provinces. We paint each territory with its southern
+      // neighbor's category color so the colors flow continuously
+      // across 60 °N. The breakdown table below still classifies them
+      // from CA_MARKETS, so this override is rendering-only.
       const naMarketByPostal = new Map();
       for (const m of US_MARKETS) naMarketByPostal.set(`US/${m.code}`, m);
       for (const m of CA_MARKETS) naMarketByPostal.set(`CA/${m.code}`, m);
+      const CA_TERRITORY_MAP_FILL = {
+        YT: NA_CATEGORIES.CA_LIMITED_NG_DEREG_EP.fill,
+        NT: NA_CATEGORIES.CA_LIMITED_NG_REG_EP.fill,
+        NU: NA_CATEGORIES.DEREG_NG.fill,
+      };
       const naFeatures = getNAAdmin1Features();
       ctx.lineWidth = 0.6;
       ctx.strokeStyle = '#94A3B8';
       const hexToCanvas = (argb) => '#' + String(argb).replace(/^FF/i, '');
       const REG_NG_EP_FILL = hexToCanvas(NA_CATEGORIES.REG_NG_EP.fill);
+
+      // Site-count → darkness mapping. Sqrt scaling keeps mid-count
+      // states from collapsing into the no-site tier; 0-count states
+      // stay at a 25 % tint so the deregulation category is still
+      // readable but the state clearly reads "empty".
+      const naMaxCount = Math.max(1, ...Array.from(buckets.values()).map(b => b.count));
+      const naCountByKey = new Map();
+      for (const [k, v] of buckets.entries()) naCountByKey.set(k, v.count);
+      const argbToRgb = (hex) => {
+        const h = String(hex).replace(/^#/, '').replace(/^FF/i, '');
+        return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+      };
+      const rgbToHex = (rgb) => '#' + rgb.map(v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('');
+      const shadeByCount = (baseHex, count) => {
+        const [r, g, b] = argbToRgb(baseHex);
+        const t = count > 0 ? Math.sqrt(count / naMaxCount) : 0;
+        const sat = count > 0 ? 0.45 + 0.55 * t : 0.25;
+        const dark = 0.20 * t;
+        const blend = (c) => (c * sat + 255 * (1 - sat)) * (1 - dark);
+        return rgbToHex([blend(r), blend(g), blend(b)]);
+      };
+
       for (const feat of naFeatures) {
         const marketKey = `${feat.admin}/${feat.postal}`;
         const m = naMarketByPostal.get(marketKey);
         const cat = m ? NA_CATEGORIES[m.category] : null;
-        ctx.fillStyle = cat ? hexToCanvas(cat.fill) : REG_NG_EP_FILL;
+        const territoryOverride = feat.admin === 'CA' ? CA_TERRITORY_MAP_FILL[feat.postal] : null;
+        let baseFill;
+        if (territoryOverride) {
+          baseFill = hexToCanvas(territoryOverride);
+        } else if (cat) {
+          baseFill = hexToCanvas(cat.fill);
+        } else {
+          baseFill = REG_NG_EP_FILL;
+        }
+        ctx.fillStyle = shadeByCount(baseFill, naCountByKey.get(marketKey) || 0);
         drawFeature(feat.rings);
-      }
-
-      // Site dots — same two-tone (electric left half / gas right
-      // half) treatment as the Portfolio Overview map.
-      const maxCount = Math.max(1, ...Array.from(buckets.values()).map(b => b.count));
-      const dots = Array.from(buckets.values()).sort((a, b) => b.count - a.count);
-      for (const b of dots) {
-        const [x, y] = project(b.location[0], b.location[1]);
-        const r = 6 + Math.sqrt(b.count / maxCount) * 18;
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(x, y, r, Math.PI / 2, (3 * Math.PI) / 2, false);
-        ctx.closePath();
-        ctx.fillStyle = TIER_COLORS[b.elecTier];
-        ctx.fill();
-        ctx.beginPath();
-        ctx.arc(x, y, r, -Math.PI / 2, Math.PI / 2, false);
-        ctx.closePath();
-        ctx.fillStyle = TIER_COLORS[b.gasTier];
-        ctx.fill();
-        ctx.restore();
-        ctx.fillStyle = '#FFFFFF';
-        ctx.strokeStyle = '#0F172A';
-        ctx.font = `bold ${Math.max(10, Math.min(16, Math.round(r * 0.9)))}px Nunito Sans, Arial, sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.lineWidth = 3;
-        ctx.strokeText(String(b.count), x, y + 4);
-        ctx.fillText(String(b.count), x, y + 4);
       }
 
       const dataUrl = canvas.toDataURL('image/png');
@@ -4125,7 +4142,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       ws.mergeCells(2, 1, 2, COLS);
       const sub = ws.getCell(2, 1);
       const skippedNote = skippedCount > 0 ? ` (${skippedCount} site${skippedCount === 1 ? '' : 's'} skipped — state / province code not in the geographic reference)` : '';
-      sub.value = `${naSiteCount} North America site${naSiteCount === 1 ? '' : 's'} plotted across ${buckets.size} state/province bucket${buckets.size === 1 ? '' : 's'}. Dots split vertically — left half is the Electric deregulation tier, right half is the Gas tier. Dot size scales with the site count.${skippedNote}`;
+      sub.value = `${naSiteCount} North America site${naSiteCount === 1 ? '' : 's'} across ${buckets.size} state/province bucket${buckets.size === 1 ? '' : 's'}. Each state / province is tinted by its deregulation category (legend at right) and darkened proportional to its portfolio site count — darker means more sites.${skippedNote}`;
       sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
       sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
       ws.getRow(2).height = 36;
@@ -4180,7 +4197,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const dotsCapRow = legendStart + 1 + legendOrder.length + 1;
       ws.mergeCells(dotsCapRow, swatchCol, dotsCapRow, labelCol);
       const dotsCap = ws.getCell(dotsCapRow, swatchCol);
-      dotsCap.value = 'Site dots — left half = Electric tier, right half = Gas tier. Dot size scales with the number of sites. Mexico is gray for geographic context only.';
+      dotsCap.value = 'Each state / province is tinted by its deregulation category (above) and darkened proportional to its portfolio site count. Mexico is gray for geographic context only.';
       dotsCap.font = { name: 'Nunito Sans', italic: true, size: 9, color: { argb: SE_SLATE } };
       dotsCap.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
       ws.getRow(dotsCapRow).height = 56;
