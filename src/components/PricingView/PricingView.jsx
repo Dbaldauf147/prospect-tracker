@@ -1354,7 +1354,6 @@ export function PricingView() {
           <strong>{workbook.fileName}</strong>
           {' · '}
           {workbook.options.length} option sheet{workbook.options.length === 1 ? '' : 's'} found
-          {workbook.sheetNames?.length ? ` · sheets: ${workbook.sheetNames.join(', ')}` : ''}
         </div>
       )}
 
