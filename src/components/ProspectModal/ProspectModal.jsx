@@ -30,6 +30,54 @@ async function loadClientsFromIndexedDB() {
   catch { return null; }
 }
 
+// Inline editable input rendered in place of a form tab's title span
+// while the tab is in rename mode. Keeps its own draft so React renders
+// from the parent state don't clobber what the user is typing; commits
+// on Enter / blur and cancels on Escape. autoFocus + selecting the
+// existing text means a fresh "+ Option" tab opens straight into a
+// ready-to-type input.
+function InlineRenameInput({ initial, onSubmit, onCancel }) {
+  const [draft, setDraft] = useState(initial ?? '');
+  const inputRef = useRef(null);
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.focus();
+    el.select();
+  }, []);
+  return (
+    <input
+      ref={inputRef}
+      type="text"
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onClick={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          onSubmit(draft);
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          onCancel();
+        }
+      }}
+      onBlur={() => onSubmit(draft)}
+      style={{
+        flex: 1,
+        minWidth: 0,
+        border: '1px solid #94A3B8',
+        borderRadius: 4,
+        padding: '0.15rem 0.35rem',
+        fontSize: '0.78rem',
+        fontFamily: 'inherit',
+        color: '#1E293B',
+        background: '#fff',
+      }}
+    />
+  );
+}
+
 function buildDefaultOpportunityTemplate(dateLine, timeLine) {
   return [
     `<p><em>${dateLine} · ${timeLine}</em></p>`,
@@ -2794,6 +2842,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const companyOppsData = (settings.companyOpportunities || {})[companySlug] || { buckets: [], opportunities: [] };
   const [opportunitiesOpen, setOpportunitiesOpen] = useState(false);
   const [selectedOppId, setSelectedOppId] = useState(null);
+  // ID of the form tab currently in inline-rename mode. The tab strip
+  // swaps the title span out for an <input> when this matches.
+  const [renamingOppId, setRenamingOppId] = useState(null);
   const [oppNoteDraft, setOppNoteDraft] = useState('');
   const oppSaveTimerRef = useRef(null);
   const oppSlugRef = useRef(companySlug);
@@ -3007,6 +3058,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     });
     setSelectedOppId(opp.id);
     setOpportunitiesOpen(true);
+    // Immediately drop the user into the inline rename input on the
+    // freshly-created tab — saves them an extra click.
+    setRenamingOppId(opp.id);
   }, [companyOppsData, writeCompanyOpps]);
 
   const updateOpportunityFormData = useCallback((oppId, formData) => {
@@ -3019,21 +3073,30 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   }, [companyOppsData, writeCompanyOpps]);
 
 
+  // Switch the given form tab into inline-rename mode. The actual
+  // commit happens in commitOppRename when the user blurs / hits Enter
+  // on the in-place input.
   const renameOpportunity = useCallback((oppId) => {
+    setRenamingOppId(oppId);
+  }, []);
+
+  // Write the new title typed into the inline input. Skip the write
+  // when the title is unchanged or blank — that lets the user cancel a
+  // rename by clearing the field and pressing Enter without ending up
+  // with an empty tab.
+  const commitOppRename = useCallback((oppId, rawTitle) => {
+    setRenamingOppId(null);
+    const next = String(rawTitle ?? '').trim();
+    if (!next) return;
     const current = (companyOppsData.opportunities || []).find(o => o.id === oppId);
-    if (!current) return;
-    const title = window.prompt('Rename opportunity:', current.title);
-    if (!title || !title.trim() || title.trim() === current.title) return;
+    if (!current || current.title === next) return;
     writeCompanyOpps({
       buckets: companyOppsData.buckets || [],
-      opportunities: (companyOppsData.opportunities || []).map(o => o.id === oppId ? { ...o, title: title.trim(), titleAuto: false, updatedAt: Date.now() } : o),
+      opportunities: (companyOppsData.opportunities || []).map(o => o.id === oppId ? { ...o, title: next, titleAuto: false, updatedAt: Date.now() } : o),
     });
   }, [companyOppsData, writeCompanyOpps]);
 
-  // Inline-rename plumbing was swapped out for window.prompt via
-  // renameOpportunity — see the tab strip below. Focus/blur races between
-  // the double-click and the mounted input were silently committing the
-  // empty draft before the user could type.
+  const cancelOppRename = useCallback(() => setRenamingOppId(null), []);
 
   const deleteOpportunity = useCallback((oppId) => {
     const opp = (companyOppsData.opportunities || []).find(o => o.id === oppId);
@@ -4059,9 +4122,17 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                           }}
                           title={(note.title || 'New form') + ' · double-click or ✎ to rename'}
                         >
-                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {note.title || 'New form'}
-                          </span>
+                          {renamingOppId === note.id ? (
+                            <InlineRenameInput
+                              initial={note.title || ''}
+                              onSubmit={(v) => commitOppRename(note.id, v)}
+                              onCancel={cancelOppRename}
+                            />
+                          ) : (
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {note.title || 'New form'}
+                            </span>
+                          )}
                           <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); renameOpportunity(note.id); }}
