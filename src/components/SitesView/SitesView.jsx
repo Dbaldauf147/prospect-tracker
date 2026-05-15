@@ -4738,11 +4738,13 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const hiddenRegulatedRows = sectionRows.filter(row =>
         !row.isParent && REGULATED_STATUSES.has(row.status)
       );
+      const sumOf = (key) => hiddenRegulatedRows.reduce((s, x) => s + (Number(x[key]) || 0), 0);
+      // Lifted above the if-block so the Total-row roll-up below can
+      // fold the regulated count into the headline Total Sites figure.
+      const aggTotalSites  = sumOf('totalSites');
+      const aggConsumption = sumOf('consumption');
+      const aggSpend       = sumOf('spend');
       if (hiddenRegulatedRows.length > 0) {
-        const sumOf = (key) => hiddenRegulatedRows.reduce((s, x) => s + (Number(x[key]) || 0), 0);
-        const aggTotalSites = sumOf('totalSites');
-        const aggConsumption = sumOf('consumption');
-        const aggSpend = sumOf('spend');
         const REG_ROW_FILL = 'FFE5E7EB';
         const REG_ROW_TEXT = SE_SLATE;
         const aggRow = ws.getRow(r);
@@ -4807,6 +4809,15 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           for (const row of summable) s += Number(c.get(row)) || 0;
           scalarTotals[c.sumKey] = s;
         }
+      }
+      // Fold the regulated-markets summary into the headline Total
+      // Sites count so the Total row reflects the entire portfolio,
+      // not just the deregulated motion. Spend / consumption / savings
+      // columns stay dereg-only — the summary row's spend is real but
+      // doesn't roll into the deregulated rate motion, so summing it
+      // into the Total Spend / Savings would muddy the savings story.
+      if (hiddenRegulatedRows.length > 0 && scalarTotals.totalSites != null) {
+        scalarTotals.totalSites += aggTotalSites;
       }
       const colRange = (tag) => {
         const col = colByTag[tag];
