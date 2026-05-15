@@ -588,6 +588,67 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     }
   }
 
+  // Re-open the column mapping modal against the data the user has
+  // already imported. Lets the user re-target which column drives
+  // each Utility Lookup field without re-uploading. Only columns that
+  // survived the previous import are available (unmapped columns
+  // were dropped on import) — to bring back a dropped column, the
+  // user has to re-upload the original file.
+  function openUpdateColumnMapping() {
+    if (!sitesData.length) return;
+    const headers = Object.keys(sitesData[0]);
+    const noneToEmpty = (v) => (v === '__none__' || v == null) ? '' : v;
+    // Build the mapping object from the per-target *Override states so
+    // the modal opens reflecting the user's last applied mapping. Any
+    // override pointing at a column that's no longer present (rare —
+    // would only happen after a partial state migration) is dropped.
+    const headerSet = new Set(headers);
+    const safe = (v) => (v && headerSet.has(v)) ? v : '';
+    const mapping = {
+      siteName:              safe(noneToEmpty(siteNameOverride)),
+      address:               safe(noneToEmpty(addressOverride)),
+      city:                  safe(noneToEmpty(cityOverride)),
+      state:                 safe(noneToEmpty(stateColumnOverride)),
+      zip:                   safe(noneToEmpty(zipColOverride)),
+      country:               safe(noneToEmpty(countryOverride)),
+      propertyType:          safe(noneToEmpty(propertyTypeOverride)),
+      siteDescription:       safe(noneToEmpty(siteDescriptionOverride)),
+      propertySize:          safe(noneToEmpty(propertySizeOverride)),
+      electric:              safe(noneToEmpty(electricColOverride)),
+      electricUom:           safe(noneToEmpty(electricUomOverride)),
+      gas:                   safe(noneToEmpty(gasColOverride)),
+      gasUom:                safe(noneToEmpty(gasUomOverride)),
+      electricCost:          safe(noneToEmpty(electricCostOverride)),
+      gasCost:               safe(noneToEmpty(gasCostOverride)),
+      electricSupplier:      safe(noneToEmpty(electricSupplierOverride)),
+      gasSupplier:           safe(noneToEmpty(gasSupplierOverride)),
+      electricStart:         safe(noneToEmpty(electricStartOverride)),
+      electricEnd:           safe(noneToEmpty(electricEndOverride)),
+      electricContractPrice: safe(noneToEmpty(electricContractPriceOverride)),
+      electricContractName:  safe(noneToEmpty(electricContractNameOverride)),
+      electricProductType:   safe(noneToEmpty(electricProductTypeOverride)),
+      gasStart:              safe(noneToEmpty(gasStartOverride)),
+      gasEnd:                safe(noneToEmpty(gasEndOverride)),
+      gasContractPrice:      safe(noneToEmpty(gasContractPriceOverride)),
+      gasContractName:       safe(noneToEmpty(gasContractNameOverride)),
+      gasProductType:        safe(noneToEmpty(gasProductTypeOverride)),
+    };
+    setUploadError('');
+    setSitesMappingModal({
+      fileName: '(currently loaded sites)',
+      mode: 'update',
+      sheets: [{
+        sheetName: 'Loaded sites',
+        rows: sitesData,
+        headers,
+        mapping,
+        isMerged: false,
+      }],
+      selectedIdx: 0,
+      roundTripState: null,
+    });
+  }
+
   // Commit the popup's chosen mapping, persist the data + override
   // settings, and close the modal. If the user blanks out the site
   // name or zip column we fall back to auto-detection so the lookup
@@ -596,6 +657,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     if (!sitesMappingModal) return;
     const active = sitesMappingModal.sheets[sitesMappingModal.selectedIdx];
     if (!active) return;
+    const isUpdate = sitesMappingModal.mode === 'update';
     const { rows, mapping } = active;
     setUploadError('');
     try {
@@ -628,9 +690,13 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // They're keyed by row index (e.g. `5_gas` -> "NRG Energy"), so
       // they bleed straight onto row 5 of the new list when row counts
       // overlap. Vendor-name decisions stay — those are brand-keyed and
-      // still meaningful across uploads.
-      setSupplierOverrides({});
-      try { localStorage.removeItem('utility-lookup:supplier-overrides'); } catch {}
+      // still meaningful across uploads. Skipped on the update-mapping
+      // flow: row indexes are identical to what they were before, so
+      // the existing per-row overrides still point at the right rows.
+      if (!isUpdate) {
+        setSupplierOverrides({});
+        try { localStorage.removeItem('utility-lookup:supplier-overrides'); } catch {}
+      }
       setSiteNameOverride(mapping.siteName || null);
       setZipColOverride(mapping.zip || null);
       setElectricColOverride(mapping.electric || '__none__');
@@ -662,11 +728,14 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // hidden sheet (vendor accept/reject decisions). Replaces — not
       // merges — to match the supplierOverrides "fresh slate" model:
       // an export-then-import flow is a session restore, not a merge
-      // of two different sessions.
-      const rt = sitesMappingModal.roundTripState;
-      if (rt && rt.vendorDecisions && typeof rt.vendorDecisions === 'object') {
-        setVendorDecisions(rt.vendorDecisions);
-        try { localStorage.setItem('utility-lookup:vendor-decisions', JSON.stringify(rt.vendorDecisions)); } catch {}
+      // of two different sessions. Skipped on update-mapping — the
+      // user's existing vendor decisions stay put.
+      if (!isUpdate) {
+        const rt = sitesMappingModal.roundTripState;
+        if (rt && rt.vendorDecisions && typeof rt.vendorDecisions === 'object') {
+          setVendorDecisions(rt.vendorDecisions);
+          try { localStorage.setItem('utility-lookup:vendor-decisions', JSON.stringify(rt.vendorDecisions)); } catch {}
+        }
       }
     } catch (err) {
       setUploadError(err?.message || 'Failed to save the sites file');
@@ -6915,6 +6984,16 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           {sitesData.length > 0 && (
             <button
               type="button"
+              onClick={openUpdateColumnMapping}
+              title="Re-open the column mapping modal against the currently loaded sites. Adjust which file column drives each Utility Lookup field without re-uploading. (Columns dropped on the original import aren't recoverable — re-upload the source file to bring them back.)"
+              style={{ padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: '#fff', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit' }}
+            >
+              Update Column Mapping
+            </button>
+          )}
+          {sitesData.length > 0 && (
+            <button
+              type="button"
               onClick={() => exportIndicativeSavings()}
               title="Download an Indicative Savings by State workbook (Schneider-branded). Aggregates the loaded sites by state with 2 % – 4 % savings on the deregulated spend, plus supplier name + contract dates."
               style={{ padding: '0.4rem 0.8rem', border: '1px solid #009530', background: '#009530', color: '#fff', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}
@@ -7296,7 +7375,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             <div className={styles.modalBackdrop} onClick={() => setSitesMappingModal(null)}>
               <div className={styles.modalCard} onClick={e => e.stopPropagation()} style={{ maxWidth: 1000, width: '95vw' }}>
                 <div className={styles.modalHeader}>
-                  <h3 className={styles.modalTitle}>Sites File — Column Mapping</h3>
+                  <h3 className={styles.modalTitle}>{sitesMappingModal.mode === 'update' ? 'Update Column Mapping' : 'Sites File — Column Mapping'}</h3>
                   <button className={styles.modalClose} onClick={() => setSitesMappingModal(null)}>×</button>
                 </div>
                 {sitesMappingModal.sheets.length > 1 && (
@@ -7393,7 +7472,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
                     onClick={executeSitesImport}
                     disabled={missingRequired.length > 0}
                   >
-                    Import {active.rows.length.toLocaleString()} sites
+                    {sitesMappingModal.mode === 'update'
+                      ? 'Update mapping'
+                      : `Import ${active.rows.length.toLocaleString()} sites`}
                   </button>
                 </div>
               </div>
