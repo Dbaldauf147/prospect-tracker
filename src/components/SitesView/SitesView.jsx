@@ -5662,16 +5662,20 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     // Spot Reference on H4) plus per-tranche allocation (column C)
     // and locked price (column E) drive Excel formulas through the
     // Volume / Locked Cost / Spot Cost / Saving columns, the totals
-    // row, and the Result block. Edit any yellow cell and Excel
-    // recomputes the analysis live.
+    // row, and the Result block. The Result block sits to the right
+    // of the tranche table (col L+) so the analysis and its summary
+    // read side-by-side without scrolling.
     {
       const ws = wb.addWorksheet('Hedging Analysis', {
         properties: { tabColor: { argb: SE_GREEN_DARK } },
         views: [{ showGridLines: false, state: 'frozen', ySplit: 6 }],
       });
 
-      const COLS = 10;
-      const widths = [6, 16, 11, 14, 19, 19, 14, 16, 16, 18];
+      const TABLE_COLS = 10;
+      const RESULT_LABEL_COL = 12;
+      const RESULT_VALUE_COL = 13;
+      const COLS = RESULT_VALUE_COL;
+      const widths = [6, 16, 11, 14, 19, 19, 14, 16, 16, 18, 3, 30, 24];
       ws.columns = widths.map(w => ({ width: w }));
 
       const INPUT_FILL = 'FFFFF9C3';
@@ -5698,7 +5702,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
       ws.getRow(2).height = 46;
 
-      ws.mergeCells(3, 1, 3, COLS);
+      ws.mergeCells(3, 1, 3, TABLE_COLS);
       const sh0 = ws.getCell(3, 1);
       sh0.value = 'Inputs (edit yellow cells)';
       sh0.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
@@ -5732,9 +5736,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       spotInput.border = inputBorder;
       ws.getRow(4).height = 22;
 
-      ws.mergeCells(5, 1, 5, COLS);
+      ws.mergeCells(5, 1, 5, TABLE_COLS);
       const sh1 = ws.getCell(5, 1);
-      sh1.value = '10 Hedge Layers Executed Across the Year';
+      sh1.value = '24 Hedge Layers Executed Across 24 Months';
       sh1.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
       sh1.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
       sh1.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
@@ -5756,9 +5760,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       });
       hr.height = 32;
 
-      // Default tranche inputs — prices follow a plausible 2026
-      // forward-curve shape; allocations default to 10 % each so the
-      // user sees a clean 100 % baseline.
+      // Default tranche inputs — 24 monthly layers across 2026 + 2027.
+      // Prices follow a plausible forward-curve shape with seasonal
+      // cycling; allocations default to 1/24 each so the user sees a
+      // clean 100 % baseline.
       const hedges = [
         { date: '2026-01-14', price: 74.50 },
         { date: '2026-02-11', price: 71.25 },
@@ -5770,7 +5775,23 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         { date: '2026-08-19', price: 78.40 },
         { date: '2026-09-16', price: 74.60 },
         { date: '2026-10-14', price: 73.20 },
+        { date: '2026-11-11', price: 71.50 },
+        { date: '2026-12-09', price: 70.40 },
+        { date: '2027-01-13', price: 69.80 },
+        { date: '2027-02-10', price: 68.50 },
+        { date: '2027-03-17', price: 67.20 },
+        { date: '2027-04-14', price: 66.90 },
+        { date: '2027-05-12', price: 68.40 },
+        { date: '2027-06-09', price: 71.50 },
+        { date: '2027-07-14', price: 75.60 },
+        { date: '2027-08-11', price: 77.20 },
+        { date: '2027-09-15', price: 73.80 },
+        { date: '2027-10-13', price: 72.40 },
+        { date: '2027-11-10', price: 70.80 },
+        { date: '2027-12-08', price: 69.50 },
       ];
+      const TRANCHE_ALLOC = 1 / hedges.length;
+      const TRANCHE_VOL = 100000 * TRANCHE_ALLOC;
 
       hedges.forEach((h, i) => {
         const rowNum = 7 + i;
@@ -5779,16 +5800,16 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         // Write the execution date as a real Date so Excel applies
         // the m/d/yyyy short-date format on column B.
         r.getCell(2).value = new Date(h.date + 'T00:00:00Z');
-        r.getCell(3).value = 0.10;
+        r.getCell(3).value = TRANCHE_ALLOC;
         r.getCell(4).value = i === 0
-          ? { formula: `C${rowNum}`, result: 0.10 }
-          : { formula: `D${rowNum - 1}+C${rowNum}`, result: (i + 1) * 0.10 };
+          ? { formula: `C${rowNum}`, result: TRANCHE_ALLOC }
+          : { formula: `D${rowNum - 1}+C${rowNum}`, result: (i + 1) * TRANCHE_ALLOC };
         r.getCell(5).value = h.price;
         r.getCell(6).value = { formula: '$H$4', result: 75 };
-        r.getCell(7).value = { formula: `$E$4*C${rowNum}`, result: 100000 * 0.10 };
-        r.getCell(8).value = { formula: `E${rowNum}*G${rowNum}`, result: h.price * 10000 };
-        r.getCell(9).value = { formula: `F${rowNum}*G${rowNum}`, result: 75 * 10000 };
-        r.getCell(10).value = { formula: `I${rowNum}-H${rowNum}`, result: (75 - h.price) * 10000 };
+        r.getCell(7).value = { formula: `$E$4*C${rowNum}`, result: TRANCHE_VOL };
+        r.getCell(8).value = { formula: `E${rowNum}*G${rowNum}`, result: h.price * TRANCHE_VOL };
+        r.getCell(9).value = { formula: `F${rowNum}*G${rowNum}`, result: 75 * TRANCHE_VOL };
+        r.getCell(10).value = { formula: `I${rowNum}-H${rowNum}`, result: (75 - h.price) * TRANCHE_VOL };
 
         for (let ci = 1; ci <= 10; ci++) {
           const c = r.getCell(ci);
@@ -5820,17 +5841,26 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         r.height = 20;
       });
 
-      // Row 17 — totals via SUM formulas. The blended price is the
+      // Row 31 — totals via SUM formulas. The blended price is the
       // weighted average (total locked cost / total volume).
-      const tr = ws.getRow(17);
+      const TOTAL_ROW = 7 + hedges.length;
+      const FIRST_DATA_ROW = 7;
+      const LAST_DATA_ROW = TOTAL_ROW - 1;
+      const dataRange = (col) => `${col}${FIRST_DATA_ROW}:${col}${LAST_DATA_ROW}`;
+      // Plausible defaults that Excel will recompute on open.
+      const sumPrices = hedges.reduce((a, h) => a + h.price, 0);
+      const blendedPriceDefault = sumPrices / hedges.length;
+      const totalLockedCostDefault = blendedPriceDefault * 100000;
+      const totalSpotCostDefault = 75 * 100000;
+      const tr = ws.getRow(TOTAL_ROW);
       tr.getCell(2).value = 'TOTAL';
-      tr.getCell(4).value = { formula: 'SUM(C7:C16)', result: 1.0 };
-      tr.getCell(5).value = { formula: 'H17/G17', result: 72.635 };
+      tr.getCell(4).value = { formula: `SUM(${dataRange('C')})`, result: 1.0 };
+      tr.getCell(5).value = { formula: `H${TOTAL_ROW}/G${TOTAL_ROW}`, result: blendedPriceDefault };
       tr.getCell(6).value = { formula: '$H$4', result: 75 };
-      tr.getCell(7).value = { formula: 'SUM(G7:G16)', result: 100000 };
-      tr.getCell(8).value = { formula: 'SUM(H7:H16)', result: 7263500 };
-      tr.getCell(9).value = { formula: 'SUM(I7:I16)', result: 7500000 };
-      tr.getCell(10).value = { formula: 'SUM(J7:J16)', result: 236500 };
+      tr.getCell(7).value = { formula: `SUM(${dataRange('G')})`, result: 100000 };
+      tr.getCell(8).value = { formula: `SUM(${dataRange('H')})`, result: totalLockedCostDefault };
+      tr.getCell(9).value = { formula: `SUM(${dataRange('I')})`, result: totalSpotCostDefault };
+      tr.getCell(10).value = { formula: `SUM(${dataRange('J')})`, result: totalSpotCostDefault - totalLockedCostDefault };
       for (let ci = 1; ci <= 10; ci++) {
         const c = tr.getCell(ci);
         c.font = { name: 'Nunito Sans', size: 11, bold: true, color: { argb: SE_TEXT_DARK } };
@@ -5853,17 +5883,17 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // Locked-Price color flips live via conditional formatting that
       // compares column E to column F (the per-row spot ref formula).
       ws.addConditionalFormatting({
-        ref: 'E7:E16',
+        ref: `E${FIRST_DATA_ROW}:E${LAST_DATA_ROW}`,
         rules: [
           {
-            type: 'cellIs', operator: 'lessThan', formulae: ['F7'], priority: 1,
+            type: 'cellIs', operator: 'lessThan', formulae: [`F${FIRST_DATA_ROW}`], priority: 1,
             style: {
               fill: { type: 'pattern', pattern: 'solid', bgColor: { argb: 'FFDCFCE7' } },
               font: { color: { argb: 'FF166534' }, bold: true },
             },
           },
           {
-            type: 'cellIs', operator: 'greaterThanOrEqual', formulae: ['F7'], priority: 2,
+            type: 'cellIs', operator: 'greaterThanOrEqual', formulae: [`F${FIRST_DATA_ROW}`], priority: 2,
             style: {
               fill: { type: 'pattern', pattern: 'solid', bgColor: { argb: 'FFFEE2E2' } },
               font: { color: { argb: 'FF991B1B' }, bold: true },
@@ -5873,7 +5903,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       });
 
       ws.addConditionalFormatting({
-        ref: 'J7:J16',
+        ref: `J${FIRST_DATA_ROW}:J${LAST_DATA_ROW}`,
         rules: [{
           type: 'dataBar',
           cfvo: [{ type: 'num', value: -50000 }, { type: 'num', value: 100000 }],
@@ -5883,31 +5913,33 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         }],
       });
 
-      ws.mergeCells(19, 1, 19, COLS);
-      const rh = ws.getCell(19, 1);
+      // Result block — sits to the RIGHT of the analysis table (cols
+      // L-M) so the summary reads side-by-side with the tranche
+      // detail. Header lines up with the tranche subheader (row 5);
+      // five stat rows follow below. Each value is a live formula
+      // referencing the inputs / totals so the user sees the result
+      // update when they tweak any yellow cell.
+      const RESULT_HEADER_ROW = 5;
+      ws.mergeCells(RESULT_HEADER_ROW, RESULT_LABEL_COL, RESULT_HEADER_ROW, RESULT_VALUE_COL);
+      const rh = ws.getCell(RESULT_HEADER_ROW, RESULT_LABEL_COL);
       rh.value = 'Result';
       rh.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
       rh.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
       rh.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-      ws.getRow(19).height = 22;
+      ws.getRow(RESULT_HEADER_ROW).height = 22;
 
-      // Rows 20-24 — label / value pairs. Each value is a live
-      // formula referencing the inputs / totals so the user sees the
-      // result update when they tweak any yellow cell.
       const stats = [
-        { label: 'Blended Hedged Price', formula: 'H17/G17', result: 72.635, fmt: '"$"0.00" / MWh"' },
+        { label: 'Blended Hedged Price', formula: `H${TOTAL_ROW}/G${TOTAL_ROW}`, result: blendedPriceDefault, fmt: '"$"0.00" / MWh"' },
         { label: 'Spot-Only Reference Price', formula: '$H$4', result: 75, fmt: '"$"0.00" / MWh"' },
-        { labelFormula: '"Total Hedged Cost ("&TEXT(G17,"#,##0")&" MWh)"', labelFallback: 'Total Hedged Cost', formula: 'H17', result: 7263500, fmt: '"$"#,##0' },
-        { labelFormula: '"Total Spot Cost ("&TEXT(G17,"#,##0")&" MWh)"', labelFallback: 'Total Spot Cost', formula: 'I17', result: 7500000, fmt: '"$"#,##0' },
-        { label: 'Savings vs Spot', valueFormula: 'TEXT(J17,"$#,##0")&"   ("&TEXT(J17/I17,"0.00%")&")"', result: '$236,500   (3.15%)' },
+        { labelFormula: `"Total Hedged Cost ("&TEXT(G${TOTAL_ROW},"#,##0")&" MWh)"`, labelFallback: 'Total Hedged Cost', formula: `H${TOTAL_ROW}`, result: totalLockedCostDefault, fmt: '"$"#,##0' },
+        { labelFormula: `"Total Spot Cost ("&TEXT(G${TOTAL_ROW},"#,##0")&" MWh)"`, labelFallback: 'Total Spot Cost', formula: `I${TOTAL_ROW}`, result: totalSpotCostDefault, fmt: '"$"#,##0' },
+        { label: 'Savings vs Spot', valueFormula: `TEXT(J${TOTAL_ROW},"$#,##0")&"   ("&TEXT(J${TOTAL_ROW}/I${TOTAL_ROW},"0.00%")&")"`, result: '$236,500   (3.15%)' },
       ];
       stats.forEach((s, i) => {
-        const rowIdx = 20 + i;
-        ws.mergeCells(rowIdx, 1, rowIdx, 4);
-        ws.mergeCells(rowIdx, 5, rowIdx, COLS);
+        const rowIdx = RESULT_HEADER_ROW + 1 + i;
         const row = ws.getRow(rowIdx);
-        const labelCell = row.getCell(1);
-        const valCell = row.getCell(5);
+        const labelCell = row.getCell(RESULT_LABEL_COL);
+        const valCell = row.getCell(RESULT_VALUE_COL);
         if (s.labelFormula) {
           labelCell.value = { formula: s.labelFormula, result: s.labelFallback };
         } else {
@@ -5943,13 +5975,17 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         row.height = isHighlight ? 30 : 20;
       });
 
-      ws.mergeCells(26, 1, 26, COLS);
-      const wh = ws.getCell(26, 1);
+      // "Why layering works" lives below the tranche table. Anchored
+      // two rows below the totals row so the totals and the
+      // explanation don't crowd each other.
+      const WHY_ROW = TOTAL_ROW + 2;
+      ws.mergeCells(WHY_ROW, 1, WHY_ROW, TABLE_COLS);
+      const wh = ws.getCell(WHY_ROW, 1);
       wh.value = 'Why layering works';
       wh.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
       wh.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
       wh.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-      ws.getRow(26).height = 22;
+      ws.getRow(WHY_ROW).height = 22;
 
       const bullets = [
         'Splitting the buy into tranches catches multiple points on the forward curve instead of betting on a single execution date.',
@@ -5957,8 +5993,8 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         'Adjust the Annual Volume input on E4 to size the analysis to a specific customer (industrial, multi-site portfolio, etc.). The same approach applies to natural gas — swap MWh for MMBtu / Dth and the variance-reduction benefit is identical.',
       ];
       bullets.forEach((b, i) => {
-        const rowIdx = 27 + i;
-        ws.mergeCells(rowIdx, 1, rowIdx, COLS);
+        const rowIdx = WHY_ROW + 1 + i;
+        ws.mergeCells(rowIdx, 1, rowIdx, TABLE_COLS);
         const cell = ws.getCell(rowIdx, 1);
         cell.value = `•  ${b}`;
         cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
