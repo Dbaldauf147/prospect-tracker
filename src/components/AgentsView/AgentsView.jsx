@@ -35,20 +35,39 @@ function fmtFetchedAt(iso) {
   return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
-function fmtDuration(ms) {
-  if (!ms) return '—';
-  const sec = Math.round(parseInt(ms) / 1000);
-  if (sec < 60) return `${sec}s`;
-  const min = Math.floor(sec / 60);
-  const rem = sec % 60;
-  return rem > 0 ? `${min}m ${rem}s` : `${min}m`;
+// Tightened outbound check — the email is something I sent if the from
+// address is on @se.com. Matches the rest of the app (ActivityView's
+// pickDirection uses the same rule).
+function isOutbound(fromEmail) {
+  const f = String(fromEmail || '').toLowerCase();
+  return f.includes('@se.com') || f.includes('daniel.baldauf');
 }
 
-function pickDirection(raw, fromEmail) {
-  const f = String(fromEmail || '').toLowerCase();
-  if (f.includes('@se.com') || f.includes('daniel.baldauf')) return 'Outbound';
-  if (f) return 'Inbound';
-  return String(raw || '').trim();
+// Split a raw to/cc string into individual addresses. HubSpot delivers
+// these as a single semicolon- or comma-joined string.
+function splitAddresses(raw) {
+  if (!raw) return [];
+  return String(raw)
+    .split(/[;,]/)
+    .map(s => s.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+// At least one recipient is outside @se.com. A mixed list (e.g. a
+// customer + an internal CC) still counts — the user explicitly
+// asked to keep those rows.
+function hasExternalRecipient(toRaw) {
+  return splitAddresses(toRaw).some(addr => !addr.endsWith('@se.com'));
+}
+
+// Drop the @se.com addresses from the visible recipient list so the
+// row reads as "who outside SE did I email" without manual scanning.
+// Falls back to the raw value when no external addresses survive
+// (shouldn't happen for visible rows, but be defensive).
+function externalRecipientLabel(toRaw) {
+  const ext = splitAddresses(toRaw).filter(addr => !addr.endsWith('@se.com'));
+  if (ext.length === 0) return toRaw || '';
+  return ext.join(', ');
 }
 
 export function AgentsView() {
@@ -65,53 +84,27 @@ export function AgentsView() {
     };
   }, []);
 
-  const today = useMemo(() => {
+  const todaysOutbound = useMemo(() => {
     const bounds = todayBounds();
     const inToday = (ts) => {
       const t = new Date(ts || 0).getTime();
       return Number.isFinite(t) && t >= bounds.start && t < bounds.end;
     };
-    const emails = (cache?.emails || [])
+    return (cache?.emails || [])
       .filter(e => !(e.hs_email_subject || '').toLowerCase().includes('(sample email)'))
       .filter(e => inToday(e.hs_timestamp))
+      .filter(e => isOutbound(e.hs_email_from_email))
+      .filter(e => hasExternalRecipient(e.hs_email_to_email))
       .map(e => ({
         id: e.id || e.hs_object_id,
         ts: e.hs_timestamp,
         subject: e.hs_email_subject || '(no subject)',
-        direction: pickDirection(e.hs_email_direction, e.hs_email_from_email),
-        to: e.hs_email_to_email || '',
+        to: externalRecipientLabel(e.hs_email_to_email),
+        rawTo: e.hs_email_to_email || '',
         from: e.hs_email_from_email || '',
         status: e.hs_email_status || '',
       }))
       .sort((a, b) => new Date(b.ts) - new Date(a.ts));
-
-    const calls = (cache?.calls || [])
-      .filter(c => inToday(c.hs_timestamp))
-      .map(c => ({
-        id: c.id || c.hs_object_id,
-        ts: c.hs_timestamp,
-        title: c.hs_call_title || 'Call',
-        direction: c.hs_call_direction || '',
-        to: c.hs_call_to_number || '',
-        from: c.hs_call_from_number || '',
-        duration: c.hs_call_duration,
-        status: c.hs_call_disposition || c.hs_call_status || '',
-      }))
-      .sort((a, b) => new Date(b.ts) - new Date(a.ts));
-
-    const meetings = (cache?.meetings || [])
-      .filter(m => inToday(m.hs_meeting_start_time || m.hs_timestamp))
-      .map(m => ({
-        id: m.id || m.hs_object_id,
-        ts: m.hs_meeting_start_time || m.hs_timestamp,
-        endTs: m.hs_meeting_end_time,
-        title: m.hs_meeting_title || 'Meeting',
-        outcome: m.hs_meeting_outcome || '',
-        location: m.hs_meeting_location || '',
-      }))
-      .sort((a, b) => new Date(a.ts) - new Date(b.ts));
-
-    return { emails, calls, meetings };
   }, [cache]);
 
   const dateLabel = useMemo(() => new Date().toLocaleDateString('en-US', {
@@ -119,7 +112,6 @@ export function AgentsView() {
   }), []);
 
   const fetchedLabel = fmtFetchedAt(cache?.fetchedAt);
-  const total = today.emails.length + today.calls.length + today.meetings.length;
 
   return (
     <div className={styles.wrap}>
@@ -128,14 +120,11 @@ export function AgentsView() {
         <span className={styles.dateline}>{dateLabel}</span>
       </div>
       <p className={styles.subnote}>
-        Today&rsquo;s HubSpot activity (emails, calls, meetings) for the signed-in agent. Mirrors the Activity tab&rsquo;s cache &mdash; open Activity at least once per session to refresh.
+        Today&rsquo;s outbound emails to non-SE recipients (mixed lists with an internal CC alongside an external recipient still count). Sourced from the Activity tab&rsquo;s cache &mdash; open Activity at least once per session to refresh.
       </p>
 
       <div className={styles.tallies}>
-        <div className={styles.tally}><strong>{total}</strong>total today</div>
-        <div className={styles.tally}><strong>{today.emails.length}</strong>emails</div>
-        <div className={styles.tally}><strong>{today.calls.length}</strong>calls</div>
-        <div className={styles.tally}><strong>{today.meetings.length}</strong>meetings</div>
+        <div className={styles.tally}><strong>{todaysOutbound.length}</strong>outbound emails today</div>
       </div>
 
       {!cache && (
@@ -148,113 +137,27 @@ export function AgentsView() {
       )}
 
       <section className={styles.section}>
-        <h2 className={styles.sectionHeader}>
-          Meetings <span className={styles.sectionCount}>{today.meetings.length}</span>
-        </h2>
-        {today.meetings.length === 0 ? (
-          <div className={styles.empty}>No meetings logged today.</div>
+        {todaysOutbound.length === 0 ? (
+          <div className={styles.empty}>No outbound emails to external recipients today.</div>
         ) : (
           <table className={styles.table}>
             <thead>
               <tr>
-                <th style={{ width: 110 }}>Time</th>
-                <th>Title</th>
-                <th style={{ width: 160 }}>Outcome</th>
-                <th>Location</th>
-              </tr>
-            </thead>
-            <tbody>
-              {today.meetings.map(m => (
-                <tr key={m.id}>
-                  <td>{fmtTime(m.ts)}{m.endTs ? ` – ${fmtTime(m.endTs)}` : ''}</td>
-                  <td>{m.title}</td>
-                  <td className={m.outcome ? '' : styles.muted}>{m.outcome || '—'}</td>
-                  <td className={m.location ? '' : styles.muted}>{m.location || '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
-
-      <section className={styles.section}>
-        <h2 className={styles.sectionHeader}>
-          Calls <span className={styles.sectionCount}>{today.calls.length}</span>
-        </h2>
-        {today.calls.length === 0 ? (
-          <div className={styles.empty}>No calls logged today.</div>
-        ) : (
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th style={{ width: 100 }}>Time</th>
-                <th>Title</th>
-                <th style={{ width: 130 }}>Direction</th>
-                <th>To / From</th>
-                <th style={{ width: 90 }}>Duration</th>
-                <th style={{ width: 140 }}>Disposition</th>
-              </tr>
-            </thead>
-            <tbody>
-              {today.calls.map(c => {
-                const dirLower = String(c.direction).toLowerCase();
-                const pill = dirLower.includes('out')
-                  ? `${styles.pill} ${styles.pillOutbound}`
-                  : dirLower.includes('in')
-                    ? `${styles.pill} ${styles.pillInbound}`
-                    : '';
-                return (
-                  <tr key={c.id}>
-                    <td>{fmtTime(c.ts)}</td>
-                    <td>{c.title}</td>
-                    <td>{c.direction ? <span className={pill}>{c.direction}</span> : <span className={styles.muted}>—</span>}</td>
-                    <td className={!c.to && !c.from ? styles.muted : ''}>{c.to || c.from || '—'}</td>
-                    <td>{fmtDuration(c.duration)}</td>
-                    <td className={c.status ? '' : styles.muted}>{c.status || '—'}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-      </section>
-
-      <section className={styles.section}>
-        <h2 className={styles.sectionHeader}>
-          Emails <span className={styles.sectionCount}>{today.emails.length}</span>
-        </h2>
-        {today.emails.length === 0 ? (
-          <div className={styles.empty}>No emails logged today.</div>
-        ) : (
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th style={{ width: 100 }}>Time</th>
+                <th style={{ width: 90 }}>Time</th>
                 <th>Subject</th>
-                <th style={{ width: 110 }}>Direction</th>
-                <th>To</th>
-                <th>From</th>
+                <th>To (external)</th>
                 <th style={{ width: 130 }}>Status</th>
               </tr>
             </thead>
             <tbody>
-              {today.emails.map(e => {
-                const pill = e.direction === 'Outbound'
-                  ? `${styles.pill} ${styles.pillOutbound}`
-                  : e.direction === 'Inbound'
-                    ? `${styles.pill} ${styles.pillInbound}`
-                    : '';
-                return (
-                  <tr key={e.id}>
-                    <td>{fmtTime(e.ts)}</td>
-                    <td>{e.subject}</td>
-                    <td>{e.direction ? <span className={pill}>{e.direction}</span> : <span className={styles.muted}>—</span>}</td>
-                    <td className={e.to ? '' : styles.muted}>{e.to || '—'}</td>
-                    <td className={e.from ? '' : styles.muted}>{e.from || '—'}</td>
-                    <td className={e.status ? '' : styles.muted}>{e.status || '—'}</td>
-                  </tr>
-                );
-              })}
+              {todaysOutbound.map(e => (
+                <tr key={e.id}>
+                  <td>{fmtTime(e.ts)}</td>
+                  <td>{e.subject}</td>
+                  <td title={e.rawTo}>{e.to || <span className={styles.muted}>—</span>}</td>
+                  <td className={e.status ? '' : styles.muted}>{e.status || '—'}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         )}
