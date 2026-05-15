@@ -10,6 +10,33 @@ const EMPTY_ROW = () => ({
   feeNg: '',      // $ / Dth
 });
 
+// Historical broker-fee benchmarks pulled from the deal log. Loaded
+// as the default seed when no broker-fee data has been entered yet
+// (and re-loaded by the "Load historical defaults" button below). The
+// "SE PE pricing" rows are reference floors/ceilings and get bolded
+// by the benchmark-row check in the render.
+const SEED_ROWS = () => ([
+  { company: 'Brixmor',                        loadEp: '',          feeEp: '0.00190', rfps: '', loadNg: '',       feeNg: ''       },
+  { company: 'CBRE IM',                        loadEp: '65444610',  feeEp: '0.00235', rfps: '', loadNg: '11857',  feeNg: '0.11'   },
+  { company: 'Group RMC',                      loadEp: '6500000',   feeEp: '0.00300', rfps: '', loadNg: '',       feeNg: ''       },
+  { company: 'Guy',                            loadEp: '10000000',  feeEp: '0.00300', rfps: '', loadNg: '',       feeNg: ''       },
+  { company: 'High end SS - SE PE pricing',    loadEp: '10000000',  feeEp: '0.00350', rfps: '', loadNg: '50000',  feeNg: '0.21'   },
+  { company: 'High end RFP - SE PE pricing',   loadEp: '10000000',  feeEp: '0.00075', rfps: '', loadNg: '50000',  feeNg: ''       },
+  { company: 'Intown Suites',                  loadEp: '',          feeEp: '0.00275', rfps: '', loadNg: '',       feeNg: '0.20'   },
+  { company: 'IRG',                            loadEp: '',          feeEp: '0.00206', rfps: '', loadNg: '',       feeNg: '0.05'   },
+  { company: 'IRG',                            loadEp: '118090000', feeEp: '0.00090', rfps: '', loadNg: '',       feeNg: '0.07'   },
+  { company: 'Jamestown',                      loadEp: '26616828',  feeEp: '0.00075', rfps: '4', loadNg: '25032', feeNg: '0.18'   },
+  { company: 'Low end SS - SE PE pricing',     loadEp: '25000000',  feeEp: '0.00120', rfps: '', loadNg: '75000',  feeNg: '0.11'   },
+  { company: 'Low end RFP - SE PE pricing',    loadEp: '25000000',  feeEp: '0.00025', rfps: '', loadNg: '75000',  feeNg: '0.06'   },
+  { company: 'Luxema',                         loadEp: '26534377',  feeEp: '0.00120', rfps: '', loadNg: '',       feeNg: ''       },
+  { company: 'Piedmont',                       loadEp: '103772520', feeEp: '0.00080', rfps: '', loadNg: '',       feeNg: ''       },
+  { company: 'Starwood',                       loadEp: '',          feeEp: '0.00275', rfps: '', loadNg: '',       feeNg: ''       },
+  { company: 'WeWork',                         loadEp: '',          feeEp: '0.01249', rfps: '', loadNg: '',       feeNg: ''       },
+  { company: 'Willco',                         loadEp: '17563824',  feeEp: '0.00275', rfps: '', loadNg: '',       feeNg: ''       },
+  { company: 'Criterion',                      loadEp: '385000',    feeEp: '0.03600', rfps: '', loadNg: '',       feeNg: ''       },
+  { company: '',                               loadEp: '12215073',  feeEp: '0.002',   rfps: '', loadNg: '',       feeNg: ''       },
+]);
+
 const fmtMoney = (n, dp = 0) => {
   if (typeof n !== 'number' || !Number.isFinite(n)) return '';
   return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: dp, maximumFractionDigits: dp });
@@ -108,7 +135,10 @@ function CellInput({ value, onCommit, align, placeholder }) {
 }
 
 export function BrokerFeesTab({ rows, setRows }) {
-  const safeRows = (Array.isArray(rows) && rows.length) ? rows : Array.from({ length: 12 }, EMPTY_ROW);
+  // First-time visit (rows === null/undefined) → show the historical
+  // seed. An explicitly-saved empty array still wins, so a user who
+  // hits Clear doesn't get the seed re-shoved back in.
+  const safeRows = Array.isArray(rows) ? (rows.length ? rows : Array.from({ length: 12 }, EMPTY_ROW)) : SEED_ROWS();
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState('');
   const [flash, setFlash] = useState('');
@@ -232,6 +262,18 @@ export function BrokerFeesTab({ rows, setRows }) {
           {pasteOpen ? 'Close paste' : 'Paste from Excel'}
         </button>
         <button type="button" className={styles.btn} onClick={addRow}>+ Row</button>
+        <button
+          type="button"
+          className={styles.btn}
+          title="Replace current rows with the historical benchmark data."
+          onClick={() => {
+            const hasData = safeRows.some(r => r.company || r.loadEp || r.feeEp || r.rfps || r.loadNg || r.feeNg);
+            if (hasData && !window.confirm('Replace current rows with the historical benchmark data?')) return;
+            setRows(SEED_ROWS());
+            setFlash('Loaded historical defaults.');
+            window.setTimeout(() => setFlash(''), 2500);
+          }}
+        >Load historical defaults</button>
         <button type="button" className={styles.btnDanger} onClick={clearAll}>Clear</button>
         {flash && <span className={styles.flash}>{flash}</span>}
       </div>
