@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { dbGet } from '../../utils/db';
 import styles from './AgentsView.module.css';
@@ -10,6 +9,11 @@ import styles from './AgentsView.module.css';
 const ACTIVITY_CACHE_KEY = 'hubspot-activity-cache';
 const BFO_STORE = 'bfo-activity';
 const BFO_KEY = 'current';
+
+// "Did I send this?" is keyed off the work email on HubSpot, not the
+// Google auth address — the user signs in as baldaufdan@gmail.com but
+// HubSpot threads always carry the @se.com from-address.
+const SENDER_EMAIL = 'daniel.baldauf@se.com';
 
 function readActivityCache() {
   try {
@@ -81,16 +85,9 @@ function companiesMatch(a, b) {
 }
 
 export function AgentsView() {
-  const { user } = useAuth();
   const [cache, setCache] = useState(() => readActivityCache());
   const [hubspotCache, setHubspotCache] = useState(null);
   const [bfoData, setBfoData] = useState({ headers: [], rows: [] });
-
-  // The signed-in user's email is the source of truth for "did I send
-  // this email." daniel.baldauf@se.com gets the special case that the
-  // rest of the app uses (a couple of HubSpot threads come through as
-  // daniel.baldauf without the @se.com suffix on the from line).
-  const myEmail = String(user?.email || '').toLowerCase();
 
   // Pick up new HubSpot activity pulls from the Activity tab.
   useEffect(() => {
@@ -170,9 +167,8 @@ export function AgentsView() {
       return Number.isFinite(t) && t >= bounds.start && t < bounds.end;
     };
     const sentByMe = (e) => {
-      if (!myEmail) return false;
       const from = String(e.hs_email_from_email || '').toLowerCase().trim();
-      return from === myEmail;
+      return from === SENDER_EMAIL;
     };
     const outbound = (cache?.emails || [])
       .filter(e => !(e.hs_email_subject || '').toLowerCase().includes('(sample email)'))
@@ -243,7 +239,7 @@ export function AgentsView() {
     // dependency set as cache + hubspotCache + bfoOppByCompany, so they
     // don't need their own entries here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cache, hubspotCache, bfoOppByCompany, myEmail]);
+  }, [cache, hubspotCache, bfoOppByCompany]);
 
   const dateLabel = useMemo(() => new Date().toLocaleDateString('en-US', {
     weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
@@ -259,7 +255,7 @@ export function AgentsView() {
         <span className={styles.dateline}>{dateLabel}</span>
       </div>
       <p className={styles.subnote}>
-        Today&rsquo;s outbound emails from <strong>{myEmail || '(no signed-in user)'}</strong> to non-SE recipients, plus any meetings on today&rsquo;s calendar. Company + BFO Opportunity columns are tagged from the HubSpot contacts cache and the BFO Activity tab&rsquo;s pasted export.
+        Today&rsquo;s outbound emails from <strong>{SENDER_EMAIL}</strong> to non-SE recipients, plus any meetings on today&rsquo;s calendar. Company + BFO Opportunity columns are tagged from the HubSpot contacts cache and the BFO Activity tab&rsquo;s pasted export.
       </p>
 
       <div className={styles.tallies}>
