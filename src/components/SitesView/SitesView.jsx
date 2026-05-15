@@ -5986,11 +5986,13 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
 
       // Result block — sits to the RIGHT of the analysis table (cols
       // L-M) so the summary reads side-by-side with the tranche
-      // detail. Header lines up with the tranche subheader (row 5);
-      // five stat rows follow below. Each value is a live formula
-      // referencing the inputs / totals so the user sees the result
-      // update when they tweak any yellow cell.
-      const RESULT_HEADER_ROW = 5;
+      // detail. Header anchored at row 6 (one row below the tranche
+      // subheader) so the Result band has a row of breathing space
+      // above it instead of butting against the section header. Each
+      // value is a live formula referencing the inputs / totals so
+      // the user sees the result update when they tweak any yellow
+      // cell.
+      const RESULT_HEADER_ROW = 6;
       ws.mergeCells(RESULT_HEADER_ROW, RESULT_LABEL_COL, RESULT_HEADER_ROW, RESULT_VALUE_COL);
       const rh = ws.getCell(RESULT_HEADER_ROW, RESULT_LABEL_COL);
       rh.value = 'Result';
