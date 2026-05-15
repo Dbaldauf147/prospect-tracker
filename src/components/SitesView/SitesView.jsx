@@ -47,6 +47,11 @@ import {
   COUNTRY_DEREGULATION,
 } from '../../data/countryDeregulation';
 import {
+  NA_CATEGORIES,
+  US_MARKETS,
+  CA_MARKETS,
+} from '../../data/naMarkets';
+import {
   COUNTRY_CENTERS,
   US_STATE_CENTERS,
   CANADA_PROVINCE_CENTERS,
@@ -3209,6 +3214,160 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     const wb = new Workbook();
     wb.creator = 'Schneider Electric · Prospect Tracker';
     wb.created = new Date();
+
+    // Shared styling constants — also used by the North America
+    // Markets renderer that runs just below.
+    const NA_BORDER = { style: 'thin', color: { argb: 'FFD4DDE1' } };
+
+    // Tally the portfolio's site count + electric kWh per US state
+    // and Canadian province so the North America Markets sheet can
+    // surface "your" load against each market category.
+    const naByState = new Map();
+    for (const r of rows) {
+      const rawCountry = String(r.__country__ || '').trim();
+      const country = normalizeCountryName(rawCountry) || rawCountry;
+      const stateCode = String(r.__state__ || '').trim().toUpperCase();
+      const isUS = /^(united states|usa|us)$/i.test(country);
+      const isCA = /^(canada|ca)$/i.test(country);
+      if (!stateCode || !(isUS || isCA)) continue;
+      const key = `${isUS ? 'US' : 'CA'}/${stateCode}`;
+      let ent = naByState.get(key);
+      if (!ent) {
+        ent = { sites: 0, kwh: 0, therms: 0 };
+        naByState.set(key, ent);
+      }
+      ent.sites += 1;
+      if (typeof r.__kwh__ === 'number' && Number.isFinite(r.__kwh__)) ent.kwh += r.__kwh__;
+      if (typeof r.__therms__ === 'number' && Number.isFinite(r.__therms__)) ent.therms += r.__therms__;
+    }
+
+    // ---- North America Markets sheet --------------------------------
+    // Per-state / per-province breakdown using the rich legend
+    // categories from the Schneider Electric NA deregulation map
+    // (Regulated, Deregulated NG, Deregulated NG & EP, Limited
+    // Deregulation EP, Heavy Energy Users Only, Direct Access only,
+    // etc.). Cells in the Category column carry the legend colour.
+    {
+      const ws = wb.addWorksheet('North America Markets', {
+        properties: { tabColor: { argb: SE_GREEN_DARK } },
+        views: [{ state: 'frozen', ySplit: 3 }],
+      });
+      const COLS = ['Code', 'Name', 'Natural Gas', 'Electric Power', 'Market Category', 'Sites', 'kWh'];
+      const COL_WIDTHS = [8, 28, 22, 32, 56, 8, 14];
+      ws.columns = COL_WIDTHS.map(w => ({ width: w }));
+
+      // Title band.
+      ws.mergeCells(1, 1, 1, COLS.length);
+      const title = ws.getCell(1, 1);
+      title.value = 'North America Markets — Deregulation Breakdown';
+      title.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
+      title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+      title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(1).height = 30;
+
+      ws.mergeCells(2, 1, 2, COLS.length);
+      const sub = ws.getCell(2, 1);
+      sub.value = 'Each US state and Canadian province mapped to the legend categories on the Schneider Electric Natural Gas & Electric Power Deregulation reference maps. Category cell colour matches the legend swatch.';
+      sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
+      sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+      ws.getRow(2).height = 36;
+
+      function writeHeaderRow(rowIdx) {
+        const r = ws.getRow(rowIdx);
+        COLS.forEach((h, i) => {
+          const cell = r.getCell(i + 1);
+          cell.value = h;
+          cell.font = { name: 'Nunito Sans', bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+          cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+          cell.border = { top: NA_BORDER, bottom: NA_BORDER, left: NA_BORDER, right: NA_BORDER };
+        });
+        r.height = 26;
+      }
+
+      function writeMarketsBlock(startRow, sectionLabel, markets, countryKey) {
+        const labelRow = ws.getRow(startRow);
+        ws.mergeCells(startRow, 1, startRow, COLS.length);
+        const lc = labelRow.getCell(1);
+        lc.value = sectionLabel;
+        lc.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
+        lc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFECFDF5' } };
+        lc.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        labelRow.height = 22;
+        writeHeaderRow(startRow + 1);
+
+        markets.forEach((m, idx) => {
+          const cat = NA_CATEGORIES[m.category];
+          const naKey = `${countryKey}/${m.code}`;
+          const tally = naByState.get(naKey);
+          const sites = tally ? tally.sites : 0;
+          const kwh = tally ? Math.round(tally.kwh) : 0;
+          const dataRow = ws.getRow(startRow + 2 + idx);
+          const values = [m.code, m.name, cat?.ng || '', cat?.ep || '', cat?.label || '', sites, kwh];
+          values.forEach((v, i) => {
+            const cell = dataRow.getCell(i + 1);
+            cell.value = v === '' || v == null ? null : v;
+            cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+            cell.alignment = { vertical: 'middle', horizontal: typeof v === 'number' ? 'right' : 'left', wrapText: false, indent: 1 };
+            cell.border = { bottom: NA_BORDER, left: NA_BORDER, right: NA_BORDER };
+            if (i === 4 && cat) {
+              // Category cell carries the legend colour fill.
+              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: cat.fill } };
+              cell.font = { ...cell.font, color: { argb: cat.fg }, bold: true };
+            } else if (i === 5 && typeof v === 'number') {
+              cell.numFmt = '#,##0';
+              if (v > 0) cell.font = { ...cell.font, bold: true };
+            } else if (i === 6 && typeof v === 'number') {
+              cell.numFmt = '#,##0';
+            }
+          });
+          dataRow.height = 18;
+        });
+        return startRow + 2 + markets.length;
+      }
+
+      // US block → Canada block → Legend block.
+      let next = 4;
+      next = writeMarketsBlock(next, 'United States', US_MARKETS, 'US');
+      next += 1;
+      next = writeMarketsBlock(next, 'Canada', CA_MARKETS, 'CA');
+      next += 1;
+
+      // Legend: one row per distinct category, in display order so it
+      // matches how the SE map legend reads top-to-bottom.
+      const legendOrder = [
+        'REG_NG_EP', 'DEREG_NG', 'DEREG_NG_EP',
+        'DEREG_NG_LIMITED_EP', 'DEREG_NG_HEAVY_EP',
+        'LIMITED_EP', 'DIRECT_ACCESS_EP', 'HEAVY_EP',
+        'CA_LIMITED_NG_DEREG_EP', 'CA_LIMITED_NG_REG_EP',
+      ];
+      const legendLabelRow = ws.getRow(next);
+      ws.mergeCells(next, 1, next, COLS.length);
+      const ll = legendLabelRow.getCell(1);
+      ll.value = 'Legend';
+      ll.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
+      ll.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFECFDF5' } };
+      ll.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      legendLabelRow.height = 22;
+      next += 1;
+      legendOrder.forEach((key, idx) => {
+        const cat = NA_CATEGORIES[key];
+        if (!cat) return;
+        const r = ws.getRow(next + idx);
+        const swatch = r.getCell(1);
+        swatch.value = '';
+        swatch.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: cat.fill } };
+        swatch.border = { top: NA_BORDER, bottom: NA_BORDER, left: NA_BORDER, right: NA_BORDER };
+        ws.mergeCells(next + idx, 2, next + idx, COLS.length);
+        const lbl = r.getCell(2);
+        lbl.value = cat.label;
+        lbl.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+        lbl.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        r.height = 20;
+      });
+
+      ws.autoFilter = { from: { row: 5, column: 1 }, to: { row: 5 + US_MARKETS.length, column: COLS.length } };
+    }
 
     // ---- Portfolio Overview sheet -----------------------------------
     // World map + per-bucket dot rendering. Each dot is split
