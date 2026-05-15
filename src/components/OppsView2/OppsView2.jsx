@@ -48,7 +48,7 @@ function makeBlankOpp(id, headers, accountOverride) {
   // clear a placeholder string.
   row['Account'] = typeof accountOverride === 'string' && accountOverride.trim() ? accountOverride.trim() : '';
   row['Open Year'] = String(new Date().getFullYear());
-  row['Stage'] = 'Lead';
+  row['Stage'] = 'Not Started';
   // Default the three date columns the user tracks day-to-day to
   // today's date. Stored as ISO (YYYY-MM-DD) so the HTML5 date input
   // accepts it directly; DateCell displays a localized format.
@@ -74,7 +74,10 @@ function AddCompanyCombobox({ suggestions, onCommit, placeholder = 'Add company�
   const matches = useMemo(() => {
     if (!suggestions?.length) return [];
     const q = String(draft || '').trim().toLowerCase();
-    if (!q) return [];
+    // No query yet — show the first 8 suggestions alphabetically so
+    // the dropdown signals "predictive text is available" as soon as
+    // the user clicks into the field.
+    if (!q) return suggestions.slice(0, 8);
     const prefix = [];
     const sub = [];
     for (const s of suggestions) {
@@ -255,7 +258,10 @@ function EditableCell({ value, onChange, suggestions }) {
   const matches = useMemo(() => {
     if (!suggestions?.length) return [];
     const q = String(draft || '').trim().toLowerCase();
-    if (!q) return [];
+    // No query yet — surface the first 8 suggestions alphabetically
+    // so the dropdown shows as soon as the cell is focused, instead
+    // of staying invisible until the user starts typing.
+    if (!q) return suggestions.slice(0, 8);
     const prefix = [];
     const sub = [];
     for (const s of suggestions) {
@@ -444,23 +450,28 @@ export function OppsView2({ settings, updateSettings, prospects = [] } = {}) {
     });
   }, [data]);
 
-  // Sorted, deduped list of Table View company names — fed into the
-  // Account column's autocomplete so typing a partial name surfaces
-  // matching prospects from the live Table View.
+  // Sorted, deduped list of company names — fed into the Account
+  // column's autocomplete. Pulls from Table View prospects first
+  // (the user's authoritative customer list); also folds in any
+  // Account names already present in this tab's opps so adding a
+  // follow-up opp for an existing account still autocompletes even
+  // when the Table View hasn't loaded.
   const companySuggestions = useMemo(() => {
     const seen = new Set();
     const out = [];
-    for (const p of (prospects || [])) {
-      const c = String(p?.company || '').trim();
-      if (!c) continue;
+    const push = (name) => {
+      const c = String(name || '').trim();
+      if (!c) return;
       const k = c.toLowerCase();
-      if (seen.has(k)) continue;
+      if (seen.has(k)) return;
       seen.add(k);
       out.push(c);
-    }
+    };
+    for (const p of (prospects || [])) push(p?.company);
+    for (const r of (data?.records || [])) push(r?.Account);
     out.sort((a, b) => a.localeCompare(b));
     return out;
-  }, [prospects]);
+  }, [prospects, data?.records]);
 
   const columns = useMemo(() => {
     const seen = new Set();
