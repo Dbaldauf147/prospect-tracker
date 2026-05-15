@@ -4723,6 +4723,59 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         dataRow.height = anyWrap ? 32 : 16;
         r += 1;
       }
+      // Capture the last deregulated data row BEFORE we append the
+      // regulated-summary line below — the Total row's SUM / SUMPRODUCT
+      // formulas need to skip the summary so the weighted savings %
+      // doesn't get diluted by zero-savings regulated spend.
+      const dataEndRow = r - 1;
+
+      // Regulated-markets summary row — single greyed-out line that
+      // surfaces the sites we filtered out of the leaf rows above (any
+      // state / province whose status is 'no' / 'Regulated' / etc.).
+      // The user still sees the count + the underlying spend / load but
+      // every savings column reads $0 / 0 %, signalling that those
+      // markets carry no deregulated motion.
+      const hiddenRegulatedRows = sectionRows.filter(row =>
+        !row.isParent && REGULATED_STATUSES.has(row.status)
+      );
+      if (hiddenRegulatedRows.length > 0) {
+        const sumOf = (key) => hiddenRegulatedRows.reduce((s, x) => s + (Number(x[key]) || 0), 0);
+        const aggTotalSites = sumOf('totalSites');
+        const aggConsumption = sumOf('consumption');
+        const aggSpend = sumOf('spend');
+        const REG_ROW_FILL = 'FFE5E7EB';
+        const REG_ROW_TEXT = SE_SLATE;
+        const aggRow = ws.getRow(r);
+        columnDefs.forEach((c, i) => {
+          const cell = aggRow.getCell(i + 1);
+          if (c.spacer) return;
+          if (i === 0) {
+            cell.value = `Remaining sites in regulated markets (${hiddenRegulatedRows.length} state${hiddenRegulatedRows.length === 1 ? '' : 's'} / province${hiddenRegulatedRows.length === 1 ? '' : 's'})`;
+          } else if (c.label === 'Deregulated Status') {
+            cell.value = 'Regulated';
+          } else if (c.sumKey === 'totalSites') {
+            cell.value = aggTotalSites;
+          } else if (c.sumKey === 'consumption') {
+            cell.value = aggConsumption;
+          } else if (c.tag === 'spend' || c.sumKey === 'spend') {
+            cell.value = aggSpend;
+          } else if (c.numFmt && c.numFmt.includes('"$"')) {
+            cell.value = 0;
+          } else if (c.numFmt && c.numFmt.includes('%')) {
+            cell.value = 0;
+          } else {
+            writeBlank(cell, !!c.numFmt);
+          }
+          cell.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: REG_ROW_TEXT } };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: REG_ROW_FILL } };
+          cell.alignment = { vertical: 'bottom', horizontal: 'left', indent: 1 };
+          if (c.numFmt) cell.numFmt = c.numFmt;
+          cell.border = { bottom: { style: 'hair', color: { argb: SE_BORDER } } };
+        });
+        aggRow.height = 18;
+        r += 1;
+      }
+
       // Total row — green double rule above and below. Scenario
       // columns sum each scenario branch independently then write
       // the same toggle-driven formula so the totals follow the
@@ -4755,7 +4808,6 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           scalarTotals[c.sumKey] = s;
         }
       }
-      const dataEndRow = r - 1;
       const colRange = (tag) => {
         const col = colByTag[tag];
         if (!col || dataEndRow < dataStartRow) return null;
