@@ -108,7 +108,7 @@ function CellInput({ value, onCommit, align, placeholder }) {
   );
 }
 
-function CostTable({ title, rows, onChange, onAddRow, onRemoveRow, onReplaceRows, withCombine, tone }) {
+function CostTable({ title, rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onClear, withCombine, tone }) {
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState('');
   const [flash, setFlash] = useState('');
@@ -143,6 +143,17 @@ function CostTable({ title, rows, onChange, onAddRow, onRemoveRow, onReplaceRows
           {pasteOpen ? 'Close paste' : 'Paste from Excel'}
         </button>
         <button type="button" className={styles.btn} onClick={onAddRow}>+ Row</button>
+        <button
+          type="button"
+          className={styles.btnDanger}
+          onClick={() => {
+            if (rows.every(r => !r.feeBucket && !r.category && !r.type && !r.cts && !r.startMonth && !r.combine)) {
+              onClear();
+              return;
+            }
+            if (window.confirm(`Clear all rows from "${title}"? This cannot be undone.`)) onClear();
+          }}
+        >Clear</button>
         {flash && <span className={styles.flash}>{flash}</span>}
       </div>
 
@@ -288,6 +299,9 @@ export function CompareTab({ state, setState }) {
     update({ ...safe, [side]: rows.length ? rows : [EMPTY_ROW()] });
   };
   const replaceRows = (side) => (rows) => update({ ...safe, [side]: rows });
+  // Reset a side back to the empty 10-row template (mirrors the
+  // initial state so totals + the per-category compare also reset).
+  const clearSide = (side) => () => update({ ...safe, [side]: Array.from({ length: 10 }, EMPTY_ROW) });
 
   const currentTotals = summarize(safe.current);
   const nextTotals = summarize(safe.next);
@@ -414,6 +428,7 @@ export function CompareTab({ state, setState }) {
           onAddRow={addRow('current')}
           onRemoveRow={removeRow('current')}
           onReplaceRows={replaceRows('current')}
+          onClear={clearSide('current')}
           withCombine={false}
         />
         <CostTable
@@ -424,6 +439,7 @@ export function CompareTab({ state, setState }) {
           onAddRow={addRow('next')}
           onRemoveRow={removeRow('next')}
           onReplaceRows={replaceRows('next')}
+          onClear={clearSide('next')}
           withCombine
         />
       </div>
