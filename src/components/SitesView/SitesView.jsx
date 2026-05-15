@@ -4358,18 +4358,17 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         const flags = String(row?.flags || '');
         return flags.includes('small electric market') || flags.includes('too low for sourcing');
       };
-      // Hide fully-regulated leaf rows that don't carry a reg-rate
-      // motion — they were dead lines on the table. Rows with status
-      // 'no' (US/CA per-state regulated), 'Regulated', 'Unlikely', or
-      // 'No opportunity' (country reference) are dropped unless they
-      // still report a reg-rate savings number. Parent aggregate rows
-      // (United States, Canada) are always kept; they roll up the
-      // surviving children below.
+      // Hide regulated leaf rows outright. Statuses 'no' (US/CA per-
+      // state regulated), 'Regulated', 'Unlikely', and 'No opportunity'
+      // all mean the market has no deregulated savings motion — they
+      // don't belong on the Indicative Savings tab even if they carry
+      // a reg-rate (utility tariff) opportunity. Parent aggregate rows
+      // (United States, Canada) are always kept and roll up surviving
+      // children.
       const REGULATED_STATUSES = new Set(['no', 'Regulated', 'Unlikely', 'No opportunity']);
       const visibleRows = sectionRows.filter((row) => {
         if (row.isParent) return true;
-        if (!REGULATED_STATUSES.has(row.status)) return true;
-        return Number(row.regRateSavings) > 0;
+        return !REGULATED_STATUSES.has(row.status);
       });
       const dataStartRow = r;
 
