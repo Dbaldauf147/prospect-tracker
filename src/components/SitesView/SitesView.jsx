@@ -1958,8 +1958,11 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
   // Per-state natural-gas deregulation status + savings range. States
   // marked "Large load only" mean retail choice is restricted to
   // industrial / large-volume customers, so the standard 2-4 %
-  // doesn't apply — the range stays blank and lowPct/highPct are
-  // null. Anything not in this map falls through to status 'no'.
+  // doesn't apply — they carry a 0 - 0 % savings range so the row
+  // still surfaces on the Indicative Savings tab (status keeps it
+  // out of the regulated-hide filter) but every savings column
+  // resolves to $0. Anything not in this map falls through to
+  // status 'no'.
   const GAS_DEREGULATION = {
     AK: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
     AL: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
@@ -2000,23 +2003,23 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     UT: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
     VA: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
     WA: { status: 'yes', range: '2 - 4%', lowPct: 0.02, highPct: 0.04 },
-    AB: { status: 'Large load only', range: '', lowPct: null, highPct: null },
-    AR: { status: 'Large load only', range: '', lowPct: null, highPct: null },
-    AZ: { status: 'Large load only', range: '', lowPct: null, highPct: null },
-    BC: { status: 'Large load only', range: '', lowPct: null, highPct: null },
-    IA: { status: 'Large load only', range: '', lowPct: null, highPct: null },
-    MB: { status: 'Large load only', range: '', lowPct: null, highPct: null },
-    MN: { status: 'Large load only', range: '', lowPct: null, highPct: null },
-    MO: { status: 'Large load only', range: '', lowPct: null, highPct: null },
-    MT: { status: 'Large load only', range: '', lowPct: null, highPct: null },
-    NC: { status: 'Large load only', range: '', lowPct: null, highPct: null },
-    NM: { status: 'Large load only', range: '', lowPct: null, highPct: null },
-    NV: { status: 'Large load only', range: '', lowPct: null, highPct: null },
-    OK: { status: 'Large load only', range: '', lowPct: null, highPct: null },
-    TN: { status: 'Large load only', range: '', lowPct: null, highPct: null },
-    WI: { status: 'Large load only', range: '', lowPct: null, highPct: null },
-    WV: { status: 'Large load only', range: '', lowPct: null, highPct: null },
-    WY: { status: 'Large load only', range: '', lowPct: null, highPct: null },
+    AB: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
+    AR: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
+    AZ: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
+    BC: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
+    IA: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
+    MB: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
+    MN: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
+    MO: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
+    MT: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
+    NC: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
+    NM: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
+    NV: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
+    OK: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
+    TN: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
+    WI: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
+    WV: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
+    WY: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
   };
 
   // Detect a company column on the uploaded sites sheet so we can
