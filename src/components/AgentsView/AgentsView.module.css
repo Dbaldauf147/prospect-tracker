@@ -157,3 +157,110 @@
   color: #1E40AF;
   border: 1px solid #93C5FD;
 }
+
+.pickerWrap {
+  position: relative;
+  display: inline-block;
+  width: 100%;
+}
+
+.pickerTrigger {
+  font-size: 0.7rem;
+  color: #2563EB;
+  border: 1px dashed #93C5FD;
+  background: #EFF6FF;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.pickerTrigger:hover {
+  background: #DBEAFE;
+}
+
+.pickerInput {
+  width: 100%;
+  font-size: 0.78rem;
+  border: 1px solid #93C5FD;
+  border-radius: 5px;
+  padding: 0.25rem 0.45rem;
+  font-family: inherit;
+  background: #fff;
+  color: #0F172A;
+}
+
+.pickerInput:focus {
+  outline: none;
+  border-color: #2563EB;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+
+.pickerMenu {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  z-index: 50;
+  background: #fff;
+  border: 1px solid #CBD5E1;
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.12);
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 0.2rem 0;
+}
+
+.pickerOption {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.76rem;
+  color: #1E293B;
+  cursor: pointer;
+  font-family: inherit;
+  line-height: 1.3;
+}
+
+.pickerOption:hover,
+.pickerOption:focus {
+  background: #EFF6FF;
+  outline: none;
+}
+
+.pickerOptionAccount {
+  display: block;
+  font-size: 0.66rem;
+  color: #64748B;
+  margin-top: 1px;
+}
+
+.pickerEmpty {
+  padding: 0.5rem 0.6rem;
+  font-size: 0.72rem;
+  color: #94A3B8;
+  font-style: italic;
+}
+
+.overrideValue {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.overrideClear {
+  font-size: 0.65rem;
+  color: #94A3B8;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 0 0.2rem;
+  font-family: inherit;
+}
+
+.overrideClear:hover {
+  color: #DC2626;
+}
