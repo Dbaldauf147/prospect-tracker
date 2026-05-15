@@ -368,29 +368,54 @@ export function AgentsView() {
     const meetings = (cache?.meetings || [])
       .filter(m => inToday(m.hs_meeting_start_time || m.hs_timestamp))
       .map(m => {
-        // Walk associated HubSpot contact IDs for the first contact
-        // with an email or company, then try the same Opps-tab
-        // lookup the email path uses.
+        // Resolve associated HubSpot contacts up front. We walk each
+        // one looking for an Opps-tab match (by email → Contact, then
+        // by company → Account) instead of taking the first contact
+        // and stopping — meetings frequently include internal SE
+        // attendees first, which would block a match if we short-
+        // circuited on the first email / company we saw.
         const ids = m._contactIds || [];
-        let firstEmail = '';
-        let hubspotCompany = '';
-        for (const id of ids) {
-          const ct = (hubspotCache?.contacts || []).find(c => c.id === id);
-          if (!ct) continue;
-          if (!firstEmail && ct.email) firstEmail = String(ct.email).toLowerCase();
-          if (!hubspotCompany && ct.company) hubspotCompany = ct.company;
-          if (firstEmail && hubspotCompany) break;
+        const contacts = ids
+          .map(id => (hubspotCache?.contacts || []).find(c => c.id === id))
+          .filter(Boolean);
+
+        // Strongest match keys: an external recipient email and the
+        // first non-empty company. Used as the override key + as the
+        // last-chance fuzzy match.
+        let primaryEmail = '';
+        let primaryCompany = '';
+        for (const ct of contacts) {
+          const e = String(ct.email || '').toLowerCase();
+          if (e && !e.endsWith('@se.com') && !primaryEmail) primaryEmail = e;
+          if (ct.company && !primaryCompany) primaryCompany = ct.company;
         }
-        const matchedOpp = findOppForRecipient(firstEmail, hubspotCompany);
+
+        // Walk every external contact + their company against the
+        // Opps tab. First opp that resolves wins.
+        let matchedOpp = null;
+        for (const ct of contacts) {
+          const e = String(ct.email || '').toLowerCase();
+          if (e && e.endsWith('@se.com')) continue;
+          matchedOpp = findOppForRecipient(e, ct.company || '');
+          if (matchedOpp) break;
+        }
+        // Final fuzzy fallback: the meeting title or location often
+        // carries the customer's company name. Match that against
+        // every opp's Account field.
+        if (!matchedOpp) {
+          const haystack = `${m.hs_meeting_title || ''} ${m.hs_meeting_location || ''}`.trim();
+          if (haystack) matchedOpp = findOppForRecipient('', haystack);
+        }
+
         // Meetings rarely have a stable contact email — fall back to
         // the meeting id so the override survives. Same shape as the
         // email rows so the picker code stays one path.
         const meetingId = m.id || m.hs_object_id || '';
-        const overrideKey = firstEmail || (meetingId ? `meeting:${meetingId}` : '');
+        const overrideKey = primaryEmail || (meetingId ? `meeting:${meetingId}` : '');
         const override = overrideKey ? overrides[overrideKey] : null;
         const account = override?.account || matchedOpp?.account || '';
         const bfoOpp = override?.bfoOpp || matchedOpp?.bfoOpp || '';
-        const company = account || hubspotCompany;
+        const company = account || primaryCompany;
         return {
           id: meetingId,
           ts: m.hs_meeting_start_time || m.hs_timestamp,
