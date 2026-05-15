@@ -2129,6 +2129,33 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
   // detail stays on the per-commodity overview tabs; this view is
   // the executive roll-up.
   const summaryRows = useMemo(() => {
+    // States we count toward the PJM-territory consumption flag. Sums
+    // every site's electric kWh in these states (regardless of
+    // deregulation status); companies above the threshold get flagged
+    // in the export's Summary tab.
+    const PJM_STATES = new Set([
+      'DE', 'IL', 'IN', 'KY', 'MD', 'MI', 'NJ', 'NC', 'OH', 'PA', 'TN', 'VA', 'WV',
+    ]);
+    const PJM_MWH_THRESHOLD = 40000;
+    const pjmByCompany = new Map();
+    if (rows.length && siteCompanyColumn) {
+      for (const r of rows) {
+        const state = r.__state__ || '';
+        if (!PJM_STATES.has(state)) continue;
+        const company = String(r[siteCompanyColumn] ?? '').trim();
+        if (!company) continue;
+        const kwh = (typeof r.__kwh__ === 'number' && Number.isFinite(r.__kwh__)) ? r.__kwh__ : 0;
+        let ent = pjmByCompany.get(company);
+        if (!ent) {
+          ent = { kwh: 0, sites: 0, states: new Set() };
+          pjmByCompany.set(company, ent);
+        }
+        ent.kwh += kwh;
+        ent.sites += 1;
+        ent.states.add(state);
+      }
+    }
+
     const byKey = new Map();
     const toNum = (v) => (typeof v === 'number' && Number.isFinite(v)) ? v : 0;
     function ensureRow(company) {
@@ -2204,11 +2231,23 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       row['Total Annual Spend']    = Math.round((row['Electric Annual Spend'] + row['Gas Annual Spend']) * 100) / 100;
       row['Total Savings Low']     = Math.round((row['Electric Savings Low']  + row['Gas Savings Low'])  * 100) / 100;
       row['Total Savings High']    = Math.round((row['Electric Savings High'] + row['Gas Savings High']) * 100) / 100;
+
+      // PJM territory rollup: every site (regulated or not) in the
+      // listed states contributes to the company's PJM total. Above
+      // 40,000 MWh annual gets flagged.
+      const pjm = pjmByCompany.get(row.Company);
+      const pjmMwh = pjm ? pjm.kwh / 1000 : 0;
+      row['PJM Sites'] = pjm ? pjm.sites : 0;
+      row['PJM States'] = pjm && pjm.states.size
+        ? [...pjm.states].sort().join(', ')
+        : '';
+      row['PJM Electric MWh'] = Math.round(pjmMwh);
+      row['PJM >40k MWh'] = pjmMwh > PJM_MWH_THRESHOLD ? 'Yes' : '';
       out.push(row);
     }
     out.sort((a, b) => a.Company.localeCompare(b.Company));
     return out;
-  }, [overviewByCommodity]);
+  }, [overviewByCommodity, rows, siteCompanyColumn]);
 
   // Contract Overview — one row per (site, commodity) where there's
   // any contract data filled in (supplier, contract name, dates, or
@@ -5987,19 +6026,24 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const totalsCols    = ['Company', 'Total Sites', 'States Covered', 'Total Annual Spend', 'Total Savings Low', 'Total Savings High'];
       const electricCols  = ['Company', 'Total Sites', 'States Covered', 'Electric Deregulated Sites', 'Electric Annual Spend', 'Electric Savings Low', 'Electric Savings High'];
       const gasCols       = ['Company', 'Total Sites', 'States Covered', 'Gas Deregulated Sites', 'Gas Annual Spend', 'Gas Savings Low', 'Gas Savings High'];
-      const maxCols = Math.max(totalsCols.length, electricCols.length, gasCols.length);
+      // PJM block: flags any company with > 40,000 MWh of electric
+      // consumption in the PJM territory (DE/IL/IN/KY/MD/MI/NJ/NC/OH/PA/TN/VA/WV).
+      const pjmCols       = ['Company', 'PJM Sites', 'PJM States', 'PJM Electric MWh', 'PJM >40k MWh'];
+      const maxCols = Math.max(totalsCols.length, electricCols.length, gasCols.length, pjmCols.length);
 
       // Column widths: first few wider, rest consistent.
       const widthFor = (colName) => {
         const name = String(colName || '');
         if (/company/i.test(name)) return 26;
-        if (/states covered/i.test(name)) return 28;
+        if (/states covered|pjm states/i.test(name)) return 28;
         if (/spend|savings/i.test(name)) return 18;
-        if (/total sites|deregulated sites/i.test(name)) return 14;
+        if (/total sites|deregulated sites|pjm sites/i.test(name)) return 14;
+        if (/pjm electric mwh/i.test(name)) return 18;
+        if (/pjm >40k mwh/i.test(name)) return 14;
         return 18;
       };
       // Use the widest header set as the column-width reference.
-      const widthRef = [...new Set([...totalsCols, ...electricCols, ...gasCols])];
+      const widthRef = [...new Set([...totalsCols, ...electricCols, ...gasCols, ...pjmCols])];
       const baseWidths = new Array(maxCols).fill(0);
       // Set per-position widths based on the widest table at that
       // position; matters less since the three tables share the first
@@ -6070,6 +6114,13 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
                 cell.numFmt = '#,##0';
               }
             }
+            // Highlight a "Yes" flag in the PJM >40k MWh column so it
+            // jumps out in the Summary tab.
+            if (/pjm >40k mwh/i.test(label) && typeof v === 'string' && v.trim().toLowerCase() === 'yes') {
+              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEE2E2' } };
+              cell.font = { ...cell.font, bold: true, color: { argb: 'FF991B1B' } };
+              cell.alignment = { ...cell.alignment, horizontal: 'center' };
+            }
           }
           row.height = 18;
         });
@@ -6102,14 +6153,29 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         r['Gas Savings Low'],
         r['Gas Savings High'],
       ]);
+      // PJM block: only include companies whose Sites count > 0 in the
+      // PJM footprint, so the table stays focused on potential targets.
+      const pjmRows = summaryRows
+        .filter(r => (r['PJM Sites'] || 0) > 0)
+        .map(r => [
+          r.Company,
+          r['PJM Sites'],
+          r['PJM States'],
+          r['PJM Electric MWh'],
+          r['PJM >40k MWh'],
+        ]);
 
-      // Totals block at row 3 → Electric → Gas, each separated by 2
-      // blank rows (one-cell gap + visual breathing room).
+      // Totals block at row 3 → Electric → Gas → PJM, each separated
+      // by 2 blank rows (one-cell gap + visual breathing room).
       let next = renderBlock(3, totalsCols, totalsRows);
       next += 2; // blank gutter
       next = renderBlock(next, electricCols, electricRows);
       next += 2;
-      renderBlock(next, gasCols, gasRows);
+      next = renderBlock(next, gasCols, gasRows);
+      if (pjmRows.length) {
+        next += 2;
+        renderBlock(next, pjmCols, pjmRows);
+      }
 
       // Apply column widths authoritatively after all cells written.
       baseWidths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
