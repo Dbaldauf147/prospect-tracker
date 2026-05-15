@@ -25,13 +25,37 @@ const KEY_COLS = [
   'Competition', 'Waiting On', 'Close Date',
 ];
 
+// Columns the user wants treated as dates — rendered with a calendar
+// popup cell (HTML5 date input) and pre-populated with today on new
+// opps so a fresh entry shows useful defaults instead of blanks.
+const DATE_COLUMNS = new Set(['Start Date', 'Last Client Heard From Us', 'Follow Up']);
+
+function todayISO() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 function makeBlankOpp(id, headers, accountOverride) {
   const row = { _id: id, id }; // id mirrored so DataTable's row key stays stable across edits
   const cols = (Array.isArray(headers) && headers.length) ? headers : DEFAULT_HEADERS;
   for (const h of cols) row[h] = '';
-  row['Account'] = typeof accountOverride === 'string' && accountOverride.trim() ? accountOverride.trim() : 'New Opp';
+  // Leave Account blank when there's no override so the inline cell
+  // autocomplete (fed from Table View companies) starts surfacing
+  // matches the moment the user types — instead of having to first
+  // clear a placeholder string.
+  row['Account'] = typeof accountOverride === 'string' && accountOverride.trim() ? accountOverride.trim() : '';
   row['Open Year'] = String(new Date().getFullYear());
   row['Stage'] = 'Lead';
+  // Default the three date columns the user tracks day-to-day to
+  // today's date. Stored as ISO (YYYY-MM-DD) so the HTML5 date input
+  // accepts it directly; DateCell displays a localized format.
+  const today = todayISO();
+  for (const dateCol of DATE_COLUMNS) {
+    if (cols.includes(dateCol)) row[dateCol] = today;
+  }
   return row;
 }
 
@@ -149,6 +173,77 @@ function AddCompanyCombobox({ suggestions, onCommit, placeholder = 'Add company�
 // `suggestions` is provided, the input also shows a prefix-then-
 // substring autocomplete dropdown so the user can pick an existing
 // company name (used for the Account column on Opps 2).
+// Date cell — renders the value as M/D/YYYY for display, and pops a
+// native HTML5 date input (calendar) on click so the user can pick a
+// new value. Stores the chosen date as ISO (YYYY-MM-DD) so it round-
+// trips cleanly through the same `<input type="date">` later.
+function toISODate(raw) {
+  if (!raw) return '';
+  const s = String(raw).trim();
+  // Already ISO?
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const t = Date.parse(s);
+  if (isNaN(t)) return '';
+  const d = new Date(t);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function formatDateDisplay(raw) {
+  const iso = toISODate(raw);
+  if (!iso) return String(raw || '');
+  // Render as M/D/YYYY without time-zone offset surprises (parse the
+  // ISO string in local time, not UTC).
+  const [y, m, d] = iso.split('-').map(n => parseInt(n, 10));
+  return `${m}/${d}/${y}`;
+}
+
+function DateCell({ value, onChange }) {
+  const [editing, setEditing] = useState(false);
+  const iso = toISODate(value);
+  if (!editing) {
+    const isEmpty = !value;
+    return (
+      <span
+        onClick={(e) => { e.stopPropagation(); setEditing(true); }}
+        style={{
+          display: 'block', cursor: 'pointer', minHeight: '1em',
+          padding: '1px 2px',
+          color: isEmpty ? 'var(--color-text-muted)' : 'inherit',
+        }}
+        title="Click to pick a date"
+      >
+        {isEmpty ? '—' : formatDateDisplay(value)}
+      </span>
+    );
+  }
+  return (
+    <input
+      autoFocus
+      type="date"
+      value={iso}
+      onChange={(e) => onChange(e.target.value)}
+      onBlur={() => setEditing(false)}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape' || e.key === 'Enter') {
+          e.preventDefault();
+          setEditing(false);
+        }
+      }}
+      onClick={(e) => e.stopPropagation()}
+      style={{
+        width: '100%', boxSizing: 'border-box',
+        border: '1px solid var(--color-accent)', borderRadius: 3,
+        padding: '1px 4px',
+        fontSize: 'inherit', fontFamily: 'inherit', color: 'var(--color-text)',
+        background: '#fff',
+      }}
+    />
+  );
+}
+
 function EditableCell({ value, onChange, suggestions }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value ?? '');
@@ -386,11 +481,13 @@ export function OppsView2({ settings, updateSettings, prospects = [] } = {}) {
         // the user sees, not the rendered <input>.
         getFilterValue: (row) => row[h] ?? '',
         render: (row) => (
-          <EditableCell
-            value={row[h]}
-            onChange={(v) => updateOppField(row._id, h, v)}
-            suggestions={h === 'Account' ? companySuggestions : undefined}
-          />
+          DATE_COLUMNS.has(h)
+            ? <DateCell value={row[h]} onChange={(v) => updateOppField(row._id, h, v)} />
+            : <EditableCell
+                value={row[h]}
+                onChange={(v) => updateOppField(row._id, h, v)}
+                suggestions={h === 'Account' ? companySuggestions : undefined}
+              />
         ),
       }));
   }, [headers, updateOppField, companySuggestions]);
