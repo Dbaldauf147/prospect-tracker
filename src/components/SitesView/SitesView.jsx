@@ -3501,15 +3501,8 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         ctx.fillStyle = TIER_COLORS[b.gasTier];
         ctx.fill();
         ctx.restore();
-        // White outline + count number for buckets with >1 site.
-        ctx.strokeStyle = '#FFFFFF';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.arc(x, y, r, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.strokeStyle = '#0F172A';
-        ctx.lineWidth = 0.5;
-        ctx.stroke();
+        // Site-count number — no ring outline so each dot reads as a
+        // clean two-tone fill against the choropleth.
         ctx.fillStyle = '#FFFFFF';
         ctx.strokeStyle = '#0F172A';
         ctx.font = `bold ${Math.max(10, Math.min(16, Math.round(r * 0.9)))}px Nunito Sans, Arial, sans-serif`;
@@ -3955,22 +3948,30 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
 
       // Pass 2 — choropleth at the state / province level. Each US
       // state + DC and each Canadian province is filled with its
-      // NA_CATEGORIES color (matching the Markets Legend below the
-      // state/province table on this same tab). States / provinces
-      // without an explicit category default to the regulated
-      // (NG & EP) bucket so every polygon carries a fill.
+      // NA_CATEGORIES color (matching the Markets Legend in the
+      // sidebar). States / provinces without an explicit category
+      // default to the regulated (NG & EP) bucket so every polygon
+      // carries a fill. The map uses a darker tone for the
+      // regulated bucket than the table cells do — without that,
+      // the northern Canadian territories (mostly REG_NG_EP) blend
+      // into the pale-blue ocean instead of reading as land.
       const naMarketByPostal = new Map();
       for (const m of US_MARKETS) naMarketByPostal.set(`US/${m.code}`, m);
       for (const m of CA_MARKETS) naMarketByPostal.set(`CA/${m.code}`, m);
       const naFeatures = getNAAdmin1Features();
-      ctx.lineWidth = 0.5;
-      ctx.strokeStyle = '#FFFFFF';
+      ctx.lineWidth = 0.6;
+      ctx.strokeStyle = '#94A3B8';
       const hexToCanvas = (argb) => '#' + String(argb).replace(/^FF/i, '');
+      const MAP_REG_FILL = '#9CA3AF';
       for (const feat of naFeatures) {
         const marketKey = `${feat.admin}/${feat.postal}`;
         const m = naMarketByPostal.get(marketKey);
         const cat = m ? NA_CATEGORIES[m.category] : null;
-        ctx.fillStyle = cat ? hexToCanvas(cat.fill) : hexToCanvas(NA_CATEGORIES.REG_NG_EP.fill);
+        if (!cat || cat.key === 'REG_NG_EP') {
+          ctx.fillStyle = MAP_REG_FILL;
+        } else {
+          ctx.fillStyle = hexToCanvas(cat.fill);
+        }
         drawFeature(feat.rings);
       }
 
@@ -3993,14 +3994,6 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         ctx.fillStyle = TIER_COLORS[b.gasTier];
         ctx.fill();
         ctx.restore();
-        ctx.strokeStyle = '#FFFFFF';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.arc(x, y, r, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.strokeStyle = '#0F172A';
-        ctx.lineWidth = 0.5;
-        ctx.stroke();
         ctx.fillStyle = '#FFFFFF';
         ctx.strokeStyle = '#0F172A';
         ctx.font = `bold ${Math.max(10, Math.min(16, Math.round(r * 0.9)))}px Nunito Sans, Arial, sans-serif`;
@@ -4034,29 +4027,52 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         ext: { width: W, height: H },
       });
 
-      // Legend block — same shape as Portfolio Overview.
+      // Markets Legend — top-right of the map. Lists every NA market
+      // category with its swatch + label so the user reads the map
+      // and the legend side-by-side without scrolling. Same display
+      // order the SE deregulation reference uses top-to-bottom.
       const legendStart = 4;
       const swatchCol = MAP_COLS + 2;
       const labelCol = MAP_COLS + 4;
       ws.mergeCells(legendStart, swatchCol, legendStart, labelCol);
       const legTitle = ws.getCell(legendStart, swatchCol);
-      legTitle.value = 'Legend';
+      legTitle.value = 'North America Markets Legend';
       legTitle.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
       legTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
       legTitle.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
       ws.getRow(legendStart).height = 22;
 
-      ws.mergeCells(legendStart + 1, swatchCol, legendStart + 1, labelCol);
-      const legCap = ws.getCell(legendStart + 1, swatchCol);
-      legCap.value = 'Each US state and Canadian province is shaded with its market-category color. Full color key is the "North America Markets Legend" below the state / province table. Mexico is gray for geographic context only.';
-      legCap.font = { name: 'Nunito Sans', italic: true, size: 9, color: { argb: SE_SLATE } };
-      legCap.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
-      ws.getRow(legendStart + 1).height = 72;
+      const legendOrder = [
+        'REG_NG_EP', 'DEREG_NG', 'DEREG_NG_EP',
+        'DEREG_NG_LIMITED_EP', 'DEREG_NG_HEAVY_EP',
+        'LIMITED_EP', 'DIRECT_ACCESS_EP', 'HEAVY_EP',
+        'CA_LIMITED_NG_DEREG_EP', 'CA_LIMITED_NG_REG_EP',
+      ];
+      const swatchBorder = {
+        top:    { style: 'thin', color: { argb: SE_BORDER } },
+        bottom: { style: 'thin', color: { argb: SE_BORDER } },
+        left:   { style: 'thin', color: { argb: SE_BORDER } },
+        right:  { style: 'thin', color: { argb: SE_BORDER } },
+      };
+      legendOrder.forEach((key, idx) => {
+        const cat = NA_CATEGORIES[key];
+        if (!cat) return;
+        const rowIdx = legendStart + 1 + idx;
+        const sw = ws.getCell(rowIdx, swatchCol);
+        sw.value = '';
+        sw.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: cat.fill } };
+        sw.border = swatchBorder;
+        const lbl = ws.getCell(rowIdx, labelCol);
+        lbl.value = cat.label;
+        lbl.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+        lbl.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+        ws.getRow(rowIdx).height = 28;
+      });
 
-      const dotsCapRow = legendStart + 3;
+      const dotsCapRow = legendStart + 1 + legendOrder.length + 1;
       ws.mergeCells(dotsCapRow, swatchCol, dotsCapRow, labelCol);
       const dotsCap = ws.getCell(dotsCapRow, swatchCol);
-      dotsCap.value = 'Each site dot — left half = Electric tier, right half = Gas tier. Dot size scales with the number of sites in that bucket.';
+      dotsCap.value = 'Site dots — left half = Electric tier, right half = Gas tier. Dot size scales with the number of sites. Mexico is gray for geographic context only.';
       dotsCap.font = { name: 'Nunito Sans', italic: true, size: 9, color: { argb: SE_SLATE } };
       dotsCap.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
       ws.getRow(dotsCapRow).height = 56;
@@ -4198,44 +4214,6 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             rr.getCell(7).font = { name: 'Nunito Sans', size: 10, bold: true, color: { argb: SE_TEXT_DARK } };
           }
           rr.height = 20;
-        });
-
-        // Markets legend — one row per distinct category in the same
-        // display order as the standalone North America Markets sheet,
-        // so the two tabs read the same legend top-to-bottom.
-        const legendOrder = [
-          'REG_NG_EP', 'DEREG_NG', 'DEREG_NG_EP',
-          'DEREG_NG_LIMITED_EP', 'DEREG_NG_HEAVY_EP',
-          'LIMITED_EP', 'DIRECT_ACCESS_EP', 'HEAVY_EP',
-          'CA_LIMITED_NG_DEREG_EP', 'CA_LIMITED_NG_REG_EP',
-        ];
-        const legendHdrRow = sTblHdrRow + 1 + marketRows.length + 1;
-        ws.mergeCells(legendHdrRow, 1, legendHdrRow, COLS);
-        const lHdr = ws.getCell(legendHdrRow, 1);
-        lHdr.value = 'North America Markets Legend';
-        lHdr.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
-        lHdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
-        lHdr.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-        ws.getRow(legendHdrRow).height = 22;
-        legendOrder.forEach((key, idx) => {
-          const cat = NA_CATEGORIES[key];
-          if (!cat) return;
-          const lr = ws.getRow(legendHdrRow + 1 + idx);
-          const swatch = lr.getCell(1);
-          swatch.value = '';
-          swatch.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: cat.fill } };
-          swatch.border = {
-            top:    { style: 'thin', color: { argb: SE_BORDER } },
-            bottom: { style: 'thin', color: { argb: SE_BORDER } },
-            left:   { style: 'thin', color: { argb: SE_BORDER } },
-            right:  { style: 'thin', color: { argb: SE_BORDER } },
-          };
-          ws.mergeCells(legendHdrRow + 1 + idx, 2, legendHdrRow + 1 + idx, COLS);
-          const lbl = lr.getCell(2);
-          lbl.value = cat.label;
-          lbl.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-          lbl.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-          lr.height = 20;
         });
       }
     }
