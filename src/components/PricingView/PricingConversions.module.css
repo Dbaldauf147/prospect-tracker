@@ -1,0 +1,130 @@
+.wrap {
+  padding: 0 1.25rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.toggle {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: transparent;
+  border: none;
+  padding: 0.2rem 0.3rem;
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.toggle:hover {
+  color: var(--color-text);
+}
+
+.caret {
+  font-size: 10px;
+  display: inline-block;
+  width: 12px;
+  text-align: center;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.55rem;
+}
+
+.card {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.cardTitle {
+  background: #f1f5f9;
+  padding: 0.35rem 0.6rem;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-text);
+  border-bottom: 1px solid var(--color-border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cardBody {
+  padding: 0.4rem 0.6rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: var(--font-size-xs);
+}
+
+.rowLabel {
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.rowValue {
+  display: inline-flex;
+  align-items: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.numInputWrap {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: #fdf6e3;
+  padding: 0 0.25rem;
+  height: 22px;
+  overflow: hidden;
+}
+
+.numInputWrap:focus-within {
+  border-color: var(--color-accent);
+  background: #fff;
+}
+
+.affix {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  user-select: none;
+}
+
+.numInput {
+  width: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  color: var(--color-text);
+  text-align: right;
+  padding: 0 0.2rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.output {
+  font-size: var(--font-size-xs);
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.outputStrong {
+  font-weight: 700;
+  color: #0f172a;
+}
