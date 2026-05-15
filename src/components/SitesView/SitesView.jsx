@@ -3800,7 +3800,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         { width: 4 },
         { width: 6 },
         { width: 6 },
-        { width: 28 },
+        // Wide enough to hold the longest category label
+        // ("Deregulated — NG; Heavy Energy Users Only (5-10 MW min.) — EP")
+        // on a single line.
+        { width: 70 },
       ];
 
       // Bucket NA sites by (state | province). Non-NA rows are
@@ -3932,7 +3935,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const NA_LNG_MIN = -170;
       const NA_LNG_MAX = -52;
       const NA_LAT_MIN = 18;
-      const NA_LAT_MAX = 75;
+      // 84 °N keeps the Canadian Arctic archipelago (Ellesmere reaches
+      // ~83 °N) inside the canvas so the territories fill with their
+      // category colors instead of being clipped at the top edge.
+      const NA_LAT_MAX = 84;
       const project = (lng, lat) => [
         ((lng - NA_LNG_MIN) / (NA_LNG_MAX - NA_LNG_MIN)) * W,
         ((NA_LAT_MAX - lat) / (NA_LAT_MAX - NA_LAT_MIN)) * H,
@@ -4105,7 +4111,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         const lbl = ws.getCell(rowIdx, labelCol);
         lbl.value = cat.label;
         lbl.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-        lbl.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+        lbl.alignment = { vertical: 'middle', horizontal: 'left', wrapText: false, indent: 1 };
         ws.getRow(rowIdx).height = 28;
       });
 
