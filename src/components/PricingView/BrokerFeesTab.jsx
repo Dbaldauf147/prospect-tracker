@@ -1,0 +1,388 @@
+import { useState } from 'react';
+import styles from './BrokerFeesTab.module.css';
+
+const EMPTY_ROW = () => ({
+  company: '',
+  loadEp: '',     // kWh
+  feeEp: '',      // $ / kWh
+  rfps: '',
+  loadNg: '',     // Dth
+  feeNg: '',      // $ / Dth
+});
+
+const fmtMoney = (n, dp = 0) => {
+  if (typeof n !== 'number' || !Number.isFinite(n)) return '';
+  return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: dp, maximumFractionDigits: dp });
+};
+
+const fmtRate = (n, dp = 5) => {
+  if (typeof n !== 'number' || !Number.isFinite(n)) return '';
+  return `$${n.toFixed(dp)}`;
+};
+
+const fmtNum = (n) => {
+  if (typeof n !== 'number' || !Number.isFinite(n)) return '';
+  return n.toLocaleString('en-US', { maximumFractionDigits: 0 });
+};
+
+const toNum = (v) => {
+  if (v === '' || v === null || v === undefined) return null;
+  const n = Number(String(v).replace(/[$,\s]/g, ''));
+  return Number.isFinite(n) ? n : null;
+};
+
+function totalFee(load, rate) {
+  const l = toNum(load);
+  const r = toNum(rate);
+  if (l == null || r == null) return null;
+  return l * r;
+}
+
+// Heatmap interpolator. Returns an HSL background for a numeric value
+// scaled across the [min, max] range. `direction = 'highGood'` puts
+// green at the high end (loads — bigger is better for us); 'lowGood'
+// puts green at the low end (broker fees — lower is cheaper).
+function heatmapBg(value, min, max, direction) {
+  if (value == null || !Number.isFinite(value) || min == null || max == null || max === min) return null;
+  let t = (value - min) / (max - min);
+  if (t < 0) t = 0; else if (t > 1) t = 1;
+  if (direction === 'lowGood') t = 1 - t;
+  // Interpolate hue red(0) → yellow(60) → green(120). Keep saturation
+  // and lightness gentle so text stays readable.
+  const hue = Math.round(t * 120);
+  return `hsl(${hue} 70% 82%)`;
+}
+
+// SE PE pricing reference rows ("High end SS - SE PE pricing", etc.)
+// aren't real deals; they're floor/ceiling benchmarks. Bold them so
+// they read as reference lines.
+function isBenchmarkRow(company) {
+  if (!company) return false;
+  return /\bse pe pricing\b/i.test(company);
+}
+
+// Parse tab- or comma-separated text from Excel. Expected order:
+// Company / Annual Load EP / Fee EP / RFPs / (Total Fee EP — ignored) /
+// Annual Load NG / Fee NG / (Total Fee NG — ignored).
+function parseRowsFromText(text) {
+  if (!text) return [];
+  const lines = text.replace(/\r\n?/g, '\n').split('\n');
+  const out = [];
+  for (const raw of lines) {
+    const line = raw.replace(/\s+$/, '');
+    if (!line.trim()) continue;
+    const cols = line.includes('\t') ? line.split('\t') : line.split(/\s*,\s*/);
+    const cell = (i) => (cols[i] ?? '').trim();
+    out.push({
+      company: cell(0),
+      loadEp: cell(1),
+      feeEp: cell(2),
+      rfps: cell(3),
+      // cell(4) is the source workbook's Total Fee EP — recomputed below
+      loadNg: cell(5),
+      feeNg: cell(6),
+      // cell(7) is the source workbook's Total Fee NG — recomputed below
+    });
+  }
+  return out;
+}
+
+function CellInput({ value, onCommit, align, placeholder }) {
+  const initial = value == null ? '' : String(value);
+  const [draft, setDraft] = useState(initial);
+  return (
+    <input
+      type="text"
+      className={styles.input}
+      style={align === 'right' ? { textAlign: 'right' } : undefined}
+      value={draft}
+      placeholder={placeholder || ''}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => { if (draft !== initial) onCommit(draft); }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.currentTarget.blur();
+        if (e.key === 'Escape') { setDraft(initial); e.currentTarget.blur(); }
+      }}
+    />
+  );
+}
+
+export function BrokerFeesTab({ rows, setRows }) {
+  const safeRows = (Array.isArray(rows) && rows.length) ? rows : Array.from({ length: 12 }, EMPTY_ROW);
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasteText, setPasteText] = useState('');
+  const [flash, setFlash] = useState('');
+
+  const updateRow = (idx, key, value) => {
+    const next = safeRows.slice();
+    next[idx] = { ...next[idx], [key]: value };
+    setRows(next);
+  };
+  const addRow = () => setRows([...safeRows, EMPTY_ROW()]);
+  const removeRow = (idx) => {
+    const next = safeRows.slice();
+    next.splice(idx, 1);
+    setRows(next.length ? next : [EMPTY_ROW()]);
+  };
+  const replaceRows = (newRows) => {
+    const padded = newRows.length < 12
+      ? newRows.concat(Array.from({ length: 12 - newRows.length }, EMPTY_ROW))
+      : newRows;
+    setRows(padded);
+  };
+  const clearAll = () => {
+    const hasData = safeRows.some(r => r.company || r.loadEp || r.feeEp || r.rfps || r.loadNg || r.feeNg);
+    if (!hasData) {
+      setRows(Array.from({ length: 12 }, EMPTY_ROW));
+      return;
+    }
+    if (window.confirm('Clear all broker-fee rows? This cannot be undone.')) {
+      setRows(Array.from({ length: 12 }, EMPTY_ROW));
+    }
+  };
+
+  function handleTablePaste(e) {
+    const cd = e.clipboardData;
+    if (!cd) return;
+    const text = cd.getData('text/plain');
+    if (!text) return;
+    const looksTabular = text.includes('\t') || text.includes('\n');
+    if (!looksTabular) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const parsed = parseRowsFromText(text);
+    if (!parsed.length) return;
+    replaceRows(parsed);
+    setFlash(`Pasted ${parsed.length} row${parsed.length === 1 ? '' : 's'}.`);
+    window.setTimeout(() => setFlash(''), 2500);
+  }
+
+  // Aggregates across non-empty rows. Per-commodity totals power the
+  // summary cards; the weighted-average fee divides total revenue by
+  // total load so a small high-rate row can't skew it.
+  let epLoadSum = 0;
+  let epFeeRevSum = 0;
+  let epRowCount = 0;
+  let ngLoadSum = 0;
+  let ngFeeRevSum = 0;
+  let ngRowCount = 0;
+  let totalRfps = 0;
+  for (const r of safeRows) {
+    const tEp = totalFee(r.loadEp, r.feeEp);
+    if (tEp != null) { epFeeRevSum += tEp; epLoadSum += toNum(r.loadEp) || 0; epRowCount += 1; }
+    const tNg = totalFee(r.loadNg, r.feeNg);
+    if (tNg != null) { ngFeeRevSum += tNg; ngLoadSum += toNum(r.loadNg) || 0; ngRowCount += 1; }
+    const rfps = toNum(r.rfps);
+    if (rfps != null) totalRfps += rfps;
+  }
+  const epWeightedRate = epLoadSum > 0 ? epFeeRevSum / epLoadSum : null;
+  const ngWeightedRate = ngLoadSum > 0 ? ngFeeRevSum / ngLoadSum : null;
+
+  // Per-column min/max for the heatmap shading. Only numeric values
+  // contribute, so blanks stay neutral.
+  function rangeOf(values) {
+    const nums = values.map(toNum).filter(v => v != null);
+    if (!nums.length) return { min: null, max: null };
+    return { min: Math.min(...nums), max: Math.max(...nums) };
+  }
+  const loadEpRange = rangeOf(safeRows.map(r => r.loadEp));
+  const feeEpRange  = rangeOf(safeRows.map(r => r.feeEp));
+  const loadNgRange = rangeOf(safeRows.map(r => r.loadNg));
+  const feeNgRange  = rangeOf(safeRows.map(r => r.feeNg));
+
+  return (
+    <div className={styles.wrapper} onPaste={handleTablePaste}>
+      <div className={styles.intro}>
+        Historical broker-fee benchmarks per company. Paste a block from Excel — Total Fee
+        columns recompute as Load × Fee on each side. Separate roll-ups for Electric Power
+        (EP, ¢/kWh basis) and Natural Gas (NG, $/Dth basis).
+      </div>
+
+      <div className={styles.summaryStrip}>
+        <div className={styles.summaryCard}>
+          <div className={styles.summaryHeader}>Electric Power</div>
+          <div className={styles.summaryGrid}>
+            <div>Companies w/ EP fee</div><div className={styles.numCell}>{epRowCount}</div>
+            <div>Total annual load</div><div className={styles.numCell}>{fmtNum(epLoadSum)} kWh</div>
+            <div>Weighted avg fee</div><div className={styles.numCell}>{epWeightedRate != null ? `${fmtRate(epWeightedRate, 5)} / kWh` : '—'}</div>
+            <div>Total fee revenue</div><div className={`${styles.numCell} ${styles.strong}`}>{fmtMoney(epFeeRevSum)}</div>
+          </div>
+        </div>
+        <div className={styles.summaryCard}>
+          <div className={styles.summaryHeader}>Natural Gas</div>
+          <div className={styles.summaryGrid}>
+            <div>Companies w/ NG fee</div><div className={styles.numCell}>{ngRowCount}</div>
+            <div>Total annual load</div><div className={styles.numCell}>{fmtNum(ngLoadSum)} Dth</div>
+            <div>Weighted avg fee</div><div className={styles.numCell}>{ngWeightedRate != null ? `${fmtRate(ngWeightedRate, 4)} / Dth` : '—'}</div>
+            <div>Total fee revenue</div><div className={`${styles.numCell} ${styles.strong}`}>{fmtMoney(ngFeeRevSum)}</div>
+          </div>
+        </div>
+        <div className={styles.summaryCard}>
+          <div className={styles.summaryHeader}>Activity</div>
+          <div className={styles.summaryGrid}>
+            <div>Companies tracked</div><div className={styles.numCell}>{safeRows.filter(r => r.company && r.company.trim()).length}</div>
+            <div>RFPs recorded</div><div className={styles.numCell}>{fmtNum(totalRfps)}</div>
+            <div>Combined revenue</div><div className={`${styles.numCell} ${styles.strong}`}>{fmtMoney(epFeeRevSum + ngFeeRevSum)}</div>
+          </div>
+        </div>
+      </div>
+
+      <div className={styles.toolbar}>
+        <button type="button" className={styles.btn} onClick={() => setPasteOpen(o => !o)}>
+          {pasteOpen ? 'Close paste' : 'Paste from Excel'}
+        </button>
+        <button type="button" className={styles.btn} onClick={addRow}>+ Row</button>
+        <button type="button" className={styles.btnDanger} onClick={clearAll}>Clear</button>
+        {flash && <span className={styles.flash}>{flash}</span>}
+      </div>
+
+      {pasteOpen && (
+        <div className={styles.pasteBox}>
+          <div className={styles.pasteHint}>
+            Tab-separated rows: Company · Annual Load EP (kWh) · Fee EP ($/kWh) · RFPs ·
+            (Total Fee EP — ignored, recomputed) · Annual Load NG (Dth) · Fee NG ($/Dth) ·
+            (Total Fee NG — ignored).
+          </div>
+          <textarea
+            className={styles.pasteArea}
+            value={pasteText}
+            onChange={(e) => setPasteText(e.target.value)}
+            placeholder={'Jamestown\t26,616,828\t$0.00075\t4\t\t25,032\t$0.18\t'}
+            rows={5}
+          />
+          <div className={styles.pasteActions}>
+            <button
+              type="button"
+              className={styles.btn}
+              onClick={() => {
+                const parsed = parseRowsFromText(pasteText);
+                if (!parsed.length) return;
+                replaceRows(parsed);
+                setPasteText('');
+                setPasteOpen(false);
+                setFlash(`Pasted ${parsed.length} row${parsed.length === 1 ? '' : 's'}.`);
+                window.setTimeout(() => setFlash(''), 2500);
+              }}
+            >Replace rows</button>
+            <button type="button" className={styles.btn} onClick={() => { setPasteText(''); setPasteOpen(false); }}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className={styles.gridWrap}>
+        <table className={styles.grid}>
+          <thead>
+            <tr>
+              <th rowSpan={2} className={styles.colCompany}>Company</th>
+              <th colSpan={4} className={styles.epGroup}>Electric Power</th>
+              <th colSpan={3} className={styles.ngGroup}>Natural Gas</th>
+              <th rowSpan={2} className={styles.actionCol} />
+            </tr>
+            <tr>
+              <th className={`${styles.colLoad} ${styles.numCell} ${styles.epGroup}`}>Annual Deregulated Load (kWh)</th>
+              <th className={`${styles.colFee} ${styles.numCell} ${styles.epGroup}`}>Broker Fee /kWh</th>
+              <th className={`${styles.colRfps} ${styles.numCell} ${styles.epGroup}`}>RFPs</th>
+              <th className={`${styles.colTotal} ${styles.numCell} ${styles.epGroup}`}>Total Fee</th>
+              <th className={`${styles.colLoad} ${styles.numCell} ${styles.ngGroup}`}>Annual Load (Dth)</th>
+              <th className={`${styles.colFee} ${styles.numCell} ${styles.ngGroup}`}>Broker Fee /Dth</th>
+              <th className={`${styles.colTotal} ${styles.numCell} ${styles.ngGroup}`}>Total Fee</th>
+            </tr>
+          </thead>
+          <tbody>
+            {safeRows.map((row, idx) => {
+              const tEp = totalFee(row.loadEp, row.feeEp);
+              const tNg = totalFee(row.loadNg, row.feeNg);
+              const k = `${idx}-${row.company}-${row.loadEp}-${row.feeEp}-${row.rfps}-${row.loadNg}-${row.feeNg}`;
+              const feeEpDisplay = row.feeEp !== '' && row.feeEp != null && toNum(row.feeEp) != null
+                ? `$${(toNum(row.feeEp) || 0).toFixed(5)}`
+                : (row.feeEp ?? '');
+              const feeNgDisplay = row.feeNg !== '' && row.feeNg != null && toNum(row.feeNg) != null
+                ? `$${(toNum(row.feeNg) || 0).toFixed(4)}`
+                : (row.feeNg ?? '');
+              const loadEpNum = toNum(row.loadEp);
+              const loadNgNum = toNum(row.loadNg);
+              const feeEpNum  = toNum(row.feeEp);
+              const feeNgNum  = toNum(row.feeNg);
+              // Heatmap shading: larger loads green, smaller red;
+              // lower fees green, higher red.
+              const loadEpBg = heatmapBg(loadEpNum, loadEpRange.min, loadEpRange.max, 'highGood');
+              const feeEpBg  = heatmapBg(feeEpNum,  feeEpRange.min,  feeEpRange.max,  'lowGood');
+              const loadNgBg = heatmapBg(loadNgNum, loadNgRange.min, loadNgRange.max, 'highGood');
+              const feeNgBg  = heatmapBg(feeNgNum,  feeNgRange.min,  feeNgRange.max,  'lowGood');
+              const benchmark = isBenchmarkRow(row.company);
+              return (
+                <tr key={idx} className={benchmark ? styles.benchmarkRow : ''}>
+                  <td className={styles.tan}>
+                    <CellInput key={`co-${k}`} value={row.company} onCommit={(v) => updateRow(idx, 'company', v)} />
+                  </td>
+                  <td className={`${styles.tan} ${styles.numCell}`} style={loadEpBg ? { background: loadEpBg } : undefined}>
+                    <CellInput
+                      key={`le-${k}`}
+                      value={loadEpNum != null ? loadEpNum.toLocaleString('en-US') : (row.loadEp ?? '')}
+                      align="right"
+                      onCommit={(v) => updateRow(idx, 'loadEp', v)}
+                    />
+                  </td>
+                  <td className={`${styles.tan} ${styles.numCell}`} style={feeEpBg ? { background: feeEpBg } : undefined}>
+                    <CellInput
+                      key={`fe-${k}`}
+                      value={feeEpDisplay}
+                      align="right"
+                      onCommit={(v) => updateRow(idx, 'feeEp', v)}
+                    />
+                  </td>
+                  <td className={`${styles.tan} ${styles.numCell}`}>
+                    <CellInput key={`rf-${k}`} value={row.rfps} align="right" onCommit={(v) => updateRow(idx, 'rfps', v)} />
+                  </td>
+                  <td className={`${styles.calc} ${styles.numCell}`}>
+                    {tEp != null ? fmtMoney(tEp) : ''}
+                  </td>
+                  <td className={`${styles.tan} ${styles.numCell}`} style={loadNgBg ? { background: loadNgBg } : undefined}>
+                    <CellInput
+                      key={`ln-${k}`}
+                      value={loadNgNum != null ? loadNgNum.toLocaleString('en-US') : (row.loadNg ?? '')}
+                      align="right"
+                      onCommit={(v) => updateRow(idx, 'loadNg', v)}
+                    />
+                  </td>
+                  <td className={`${styles.tan} ${styles.numCell}`} style={feeNgBg ? { background: feeNgBg } : undefined}>
+                    <CellInput
+                      key={`fn-${k}`}
+                      value={feeNgDisplay}
+                      align="right"
+                      onCommit={(v) => updateRow(idx, 'feeNg', v)}
+                    />
+                  </td>
+                  <td className={`${styles.calc} ${styles.numCell}`}>
+                    {tNg != null ? fmtMoney(tNg, 2) : ''}
+                  </td>
+                  <td className={styles.actionCell}>
+                    <button
+                      type="button"
+                      className={styles.removeBtn}
+                      onClick={() => removeRow(idx)}
+                      title="Remove row"
+                    >×</button>
+                  </td>
+                </tr>
+              );
+            })}
+            <tr className={styles.totalsRow}>
+              <td style={{ textAlign: 'right' }}>Totals</td>
+              <td className={styles.numCell}>{fmtNum(epLoadSum)}</td>
+              <td className={styles.numCell}>{epWeightedRate != null ? fmtRate(epWeightedRate, 5) : ''}</td>
+              <td className={styles.numCell}>{fmtNum(totalRfps)}</td>
+              <td className={styles.numCell}>{fmtMoney(epFeeRevSum)}</td>
+              <td className={styles.numCell}>{fmtNum(ngLoadSum)}</td>
+              <td className={styles.numCell}>{ngWeightedRate != null ? fmtRate(ngWeightedRate, 4) : ''}</td>
+              <td className={styles.numCell}>{fmtMoney(ngFeeRevSum, 2)}</td>
+              <td />
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
