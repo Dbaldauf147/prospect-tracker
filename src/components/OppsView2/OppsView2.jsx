@@ -25,14 +25,123 @@ const KEY_COLS = [
   'Competition', 'Waiting On', 'Close Date',
 ];
 
-function makeBlankOpp(id, headers) {
+function makeBlankOpp(id, headers, accountOverride) {
   const row = { _id: id, id }; // id mirrored so DataTable's row key stays stable across edits
   const cols = (Array.isArray(headers) && headers.length) ? headers : DEFAULT_HEADERS;
   for (const h of cols) row[h] = '';
-  row['Account'] = 'New Opp';
+  row['Account'] = typeof accountOverride === 'string' && accountOverride.trim() ? accountOverride.trim() : 'New Opp';
   row['Open Year'] = String(new Date().getFullYear());
   row['Stage'] = 'Lead';
   return row;
+}
+
+// Header combobox — same prefix-then-substring autocomplete as the
+// Account-column EditableCell, but committing a value creates a brand
+// new opp pre-filled with that company name instead of mutating a
+// single cell. Lets the user surface an existing company by typing a
+// few letters; typing something brand-new and pressing Enter still
+// works and creates an opp with that new account name.
+function AddCompanyCombobox({ suggestions, onCommit, placeholder = 'Add company…' }) {
+  const [draft, setDraft] = useState('');
+  const [open, setOpen] = useState(false);
+  const [hoverIdx, setHoverIdx] = useState(0);
+  const wrapRef = useRef(null);
+
+  const matches = useMemo(() => {
+    if (!suggestions?.length) return [];
+    const q = String(draft || '').trim().toLowerCase();
+    if (!q) return [];
+    const prefix = [];
+    const sub = [];
+    for (const s of suggestions) {
+      const lower = String(s).toLowerCase();
+      if (lower === q) continue;
+      if (lower.startsWith(q)) prefix.push(s);
+      else if (lower.includes(q)) sub.push(s);
+      if (prefix.length + sub.length >= 25) break;
+    }
+    return [...prefix, ...sub].slice(0, 8);
+  }, [draft, suggestions]);
+
+  function commit(picked) {
+    const v = (picked == null ? draft : picked).trim();
+    if (!v) return;
+    onCommit(v);
+    setDraft('');
+    setOpen(false);
+    setHoverIdx(0);
+  }
+
+  return (
+    <div ref={wrapRef} style={{ position: 'relative' }}>
+      <input
+        type="text"
+        value={draft}
+        placeholder={placeholder}
+        onChange={(e) => { setDraft(e.target.value); setOpen(true); setHoverIdx(0); }}
+        onFocus={() => { if (draft) setOpen(true); }}
+        onBlur={() => {
+          requestAnimationFrame(() => {
+            if (!wrapRef.current?.contains(document.activeElement)) setOpen(false);
+          });
+        }}
+        onKeyDown={(e) => {
+          if (open && matches.length > 0) {
+            if (e.key === 'ArrowDown') { e.preventDefault(); setHoverIdx(i => (i + 1) % matches.length); return; }
+            if (e.key === 'ArrowUp')   { e.preventDefault(); setHoverIdx(i => (i - 1 + matches.length) % matches.length); return; }
+            if (e.key === 'Enter' || e.key === 'Tab') {
+              e.preventDefault();
+              commit(matches[hoverIdx] || matches[0]);
+              return;
+            }
+            if (e.key === 'Escape') { e.preventDefault(); setOpen(false); return; }
+          } else if (e.key === 'Enter') {
+            e.preventDefault();
+            commit();
+          } else if (e.key === 'Escape') {
+            setDraft('');
+            setOpen(false);
+          }
+        }}
+        style={{
+          width: 240,
+          padding: '0.4rem 0.6rem',
+          border: '1px solid var(--color-border)',
+          borderRadius: 'var(--radius-md)',
+          fontSize: 'var(--font-size-sm)',
+          fontFamily: 'inherit',
+          color: 'var(--color-text)',
+          background: 'var(--color-bg)',
+        }}
+      />
+      {open && matches.length > 0 && (
+        <div
+          onMouseDown={(e) => e.preventDefault()}
+          style={{
+            position: 'absolute', top: '100%', left: 0, minWidth: '100%',
+            zIndex: 50, background: '#fff', border: '1px solid var(--color-border)',
+            borderRadius: 4, boxShadow: '0 8px 20px rgba(15, 23, 42, 0.12)',
+            maxHeight: 240, overflowY: 'auto', fontSize: '0.82rem', marginTop: 2,
+          }}
+        >
+          {matches.map((m, i) => (
+            <div
+              key={m + i}
+              onClick={() => commit(m)}
+              onMouseEnter={() => setHoverIdx(i)}
+              style={{
+                padding: '0.35rem 0.6rem', cursor: 'pointer',
+                background: i === hoverIdx ? '#DCFCE7' : 'transparent',
+                color: i === hoverIdx ? '#166534' : '#1E293B',
+                fontWeight: i === hoverIdx ? 700 : 500,
+                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+              }}
+            >{m}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // Click-to-edit cell. Plain text by default; on click flips into an
@@ -204,12 +313,12 @@ export function OppsView2({ settings, updateSettings, prospects = [] } = {}) {
     return () => { cancelled = true; };
   }, []);
 
-  const addNewOpp = useCallback(() => {
+  const addNewOpp = useCallback((accountName) => {
     setData(prev => {
       const records = prev?.records || [];
       const headers = prev?.headers?.length ? prev.headers : DEFAULT_HEADERS;
       const nextId = records.reduce((m, r) => Math.max(m, r._id || 0), 0) + 1;
-      return { ...prev, headers, records: [makeBlankOpp(nextId, headers), ...records] };
+      return { ...prev, headers, records: [makeBlankOpp(nextId, headers, accountName), ...records] };
     });
   }, []);
 
@@ -438,7 +547,13 @@ export function OppsView2({ settings, updateSettings, prospects = [] } = {}) {
           <h2 className={styles.title}>Opps 2</h2>
           <span className={styles.lastSync}>Sandbox copy — not connected to any data source</span>
         </div>
-        <button className={styles.syncBtn} onClick={addNewOpp}>+ New Opp</button>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <AddCompanyCombobox
+            suggestions={companySuggestions}
+            onCommit={(name) => addNewOpp(name)}
+          />
+          <button className={styles.syncBtn} onClick={() => addNewOpp()}>+ New Opp</button>
+        </div>
       </div>
 
       {error && <div className={styles.error}>{error}</div>}
