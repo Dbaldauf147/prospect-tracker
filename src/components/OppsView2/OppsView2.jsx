@@ -52,7 +52,7 @@ async function saveOpps2ToFirestore(userId, data) {
 const DEFAULT_HEADERS = [
   'Account', 'Open Year', 'Contact', 'Stage', 'Scope', 'Source', 'Type',
   'Start Date', 'Status', 'Quoted Amount', 'Sites', 'Age',
-  'Last Client Heard From Us', 'Follow Up', 'Notes',
+  'Last Client Heard From Us', 'Last Spoke', 'Follow Up', 'Call In', 'Notes',
   'Competition', 'Waiting On', 'Close Date', 'BFO Link',
 ];
 
@@ -60,7 +60,7 @@ const DEFAULT_HEADERS = [
 const KEY_COLS = [
   'Account', 'Contact', 'Stage', 'Scope', 'Source', 'Type',
   'Start Date', 'Status', 'Quoted Amount', 'Sites', 'Age',
-  'Last Client Heard From Us', 'Follow Up', 'Notes',
+  'Last Client Heard From Us', 'Last Spoke', 'Follow Up', 'Call In', 'Notes',
   'Competition', 'Waiting On', 'Close Date',
 ];
 
@@ -68,6 +68,13 @@ const KEY_COLS = [
 // popup cell (HTML5 date input) and pre-populated with today on new
 // opps so a fresh entry shows useful defaults instead of blanks.
 const DATE_COLUMNS = new Set(['Start Date', 'Last Client Heard From Us', 'Follow Up']);
+
+// Read-only columns whose value is derived from other cells.
+//   Call In    = calendar days from today to the Follow Up date
+//   Last Spoke = business days from Last Client Heard From Us to today
+// Always append these to header sets loaded from the legacy Opps cache
+// so they show up even when the cached headers predate the columns.
+const COMPUTED_COLUMNS = ['Last Spoke', 'Call In'];
 
 function todayISO() {
   const d = new Date();
@@ -88,6 +95,7 @@ function makeBlankOpp(id, headers, accountOverride) {
   row['Account'] = typeof accountOverride === 'string' && accountOverride.trim() ? accountOverride.trim() : '';
   row['Open Year'] = String(new Date().getFullYear());
   row['Stage'] = 'Not Started';
+  row['Status'] = 'Client waiting on ESS team member';
   // Default the three date columns the user tracks day-to-day to
   // today's date. Stored as ISO (YYYY-MM-DD) so the HTML5 date input
   // accepts it directly; DateCell displays a localized format.
@@ -283,6 +291,57 @@ function DateCell({ value, onChange }) {
         background: '#fff',
       }}
     />
+  );
+}
+
+// Calendar days from today to the given ISO date. Positive = future,
+// negative = past. Returns null for blank / unparseable dates.
+function daysFromToday(rawISO) {
+  const iso = toISODate(rawISO);
+  if (!iso) return null;
+  const [y, m, d] = iso.split('-').map(n => parseInt(n, 10));
+  const target = new Date(y, m - 1, d);
+  target.setHours(0, 0, 0, 0);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Math.round((target - today) / 86400000);
+}
+
+// Whole business days (Mon–Fri) elapsed from the given ISO date to
+// today. 0 when the date is today or in the future; null when blank.
+function businessDaysSince(rawISO) {
+  const iso = toISODate(rawISO);
+  if (!iso) return null;
+  const [y, m, d] = iso.split('-').map(n => parseInt(n, 10));
+  const start = new Date(y, m - 1, d);
+  start.setHours(0, 0, 0, 0);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  if (today <= start) return 0;
+  let count = 0;
+  const cur = new Date(start);
+  while (cur < today) {
+    cur.setDate(cur.getDate() + 1);
+    const dow = cur.getDay();
+    if (dow !== 0 && dow !== 6) count++;
+  }
+  return count;
+}
+
+// Read-only cell for a column whose value is derived from another cell.
+function ComputedCell({ value }) {
+  const isEmpty = value == null || value === '';
+  return (
+    <span
+      style={{
+        display: 'block', minHeight: '1em',
+        padding: '1px 2px',
+        color: isEmpty ? 'var(--color-text-muted)' : 'inherit',
+      }}
+      title="Computed value"
+    >
+      {isEmpty ? '—' : String(value)}
+    </span>
   );
 }
 
@@ -610,6 +669,7 @@ function SelectCell({ value, onChange, options }) {
 // Pull the Source picklist out of the shared DROPDOWN_LISTS so the cell
 // menu stays in lock-step with the Dropdowns tab.
 const SOURCE_OPTIONS = (DROPDOWN_LISTS.find(l => l.key === 'source')?.options) || [];
+const STAGE_OPTIONS = (DROPDOWN_LISTS.find(l => l.key === 'status')?.options) || [];
 
 export function OppsView2({ settings, updateSettings, prospects = [], updateProspect } = {}) {
   const { user } = useAuth();
@@ -692,7 +752,15 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         } catch {}
       }
       if (cancelled) return;
-      if (next) setData(next);
+      if (next) {
+        // Ensure the computed columns (Call In, Last Spoke) are present
+        // on any header set we hydrate from — Firestore, IndexedDB, or
+        // the legacy Opps cache may all predate them.
+        const headerSet = new Set((next.headers || []).map(h => String(h || '').trim()).filter(Boolean));
+        const extra = COMPUTED_COLUMNS.filter(c => !headerSet.has(c));
+        if (extra.length) next = { ...next, headers: [...(next.headers || []), ...extra] };
+        setData(next);
+      }
       setLoading(false);
       hydratedRef.current = true;
     })();
@@ -808,6 +876,16 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         // the user sees, not the rendered <input>.
         getFilterValue: (row) => row[h] ?? '',
         render: (row) => {
+          if (h === 'Call In') {
+            // Days until the Follow Up date (negative = overdue).
+            const n = daysFromToday(row['Follow Up']);
+            return <ComputedCell value={n == null ? '' : n} />;
+          }
+          if (h === 'Last Spoke') {
+            // Business days since the Last Client Heard From Us date.
+            const n = businessDaysSince(row['Last Client Heard From Us']);
+            return <ComputedCell value={n == null ? '' : n} />;
+          }
           if (DATE_COLUMNS.has(h)) {
             return <DateCell value={row[h]} onChange={(v) => updateOppField(row._id, h, v)} />;
           }
@@ -826,6 +904,15 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                 value={row[h]}
                 onChange={(v) => updateOppField(row._id, h, v)}
                 options={SOURCE_OPTIONS}
+              />
+            );
+          }
+          if (h === 'Stage') {
+            return (
+              <SelectCell
+                value={row[h]}
+                onChange={(v) => updateOppField(row._id, h, v)}
+                options={STAGE_OPTIONS}
               />
             );
           }
