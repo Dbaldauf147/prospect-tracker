@@ -758,13 +758,6 @@ export function DataTable({
             const expandedSet = expandable
               ? (expandedRowIds instanceof Set ? expandedRowIds : new Set(expandedRowIds || []))
               : null;
-            // Diagnostic strip — temporary, gated on ?debug-table=1 in
-            // the URL. Surfaces the render-time state we need to see
-            // when the body looks empty in production.
-            const debugTable = typeof window !== 'undefined' && /(?:^|[?&])debug-table=1(?:&|$)/.test(window.location.search);
-            const firstRow = sortedRows[0];
-            const firstRowKeys = firstRow ? Object.keys(firstRow).filter(k => k !== 'id').slice(0, 6) : [];
-            const firstColKeys = visibleColumns.slice(0, 6).map(c => c.key);
             // Expansion rows have variable height and would corrupt the
             // fixed-rowHeight virtualization math; render every row when
             // expansion is enabled.
@@ -790,16 +783,6 @@ export function DataTable({
             }
             return (
               <div className={styles.scrollWrap} ref={bodyRef} onScroll={handleBodyScroll}>
-                {debugTable && (
-                  <div style={{ position: 'sticky', top: 0, zIndex: 10, padding: '4px 8px', background: '#FEF3C7', border: '1px solid #F59E0B', fontSize: '11px', fontFamily: 'ui-monospace, monospace', color: '#92400E', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                    {`tableId=${tableId}\n`}
-                    {`columns=${columns.length} visibleColumns=${visibleColumns.length} visibleCols.size=${visibleCols.size}\n`}
-                    {`sortedRows=${total} visibleRows=${visibleRows.length} startIdx=${startIdx} endIdx=${endIdx}\n`}
-                    {`rowHeight=${rowHeight} viewportHeight=${viewportHeight} scrollTop=${scrollTop} topPad=${topPad} bottomPad=${bottomPad}\n`}
-                    {`virtualize=${String(virtualize)} firstRowKeys=${JSON.stringify(firstRowKeys)}\n`}
-                    {`firstColKeys=${JSON.stringify(firstColKeys)}`}
-                  </div>
-                )}
                 <table className={styles.table} style={{ tableLayout: 'fixed', width: visibleColumns.reduce((s, c) => s + getWidth(c), 0) }}>
                   <colgroup>
                     {visibleColumns.map(col => (
