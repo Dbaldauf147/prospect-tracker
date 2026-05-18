@@ -5800,7 +5800,8 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     // Interactive example. Two editable inputs (Annual Volume on E4,
     // Spot Reference on H4) plus per-tranche allocation (column C)
     // and locked price (column E) drive Excel formulas through the
-    // Volume / Locked Cost / Spot Cost / Saving columns, the totals
+    // Volume / Proposed Hedge Position Cost / Current Position Cost /
+    // Saving columns, the totals
     // row, and the Result block. The Result block sits to the right
     // of the tranche table (col L+) so the analysis and its summary
     // read side-by-side without scrolling.
@@ -5841,7 +5842,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
 
       ws.mergeCells(2, 1, 2, COLS);
       const sub = ws.getCell(2, 1);
-      sub.value = 'Edit the yellow cells (Annual Volume on E4, Current Fixed Price on H4, plus per-tranche Hedge % in columns C/D, Index Price in column G, and Adders & Noncommodity Components in column H). Adders ride on top of the Index Price for Locked Cost AND on the Fixed Position for Spot Cost, so the same non-commodity charge hits both scenarios. Volume / Locked Cost / Spot Cost / Saving columns track the Current scenario; the Result block on the right compares Current vs Proposed side-by-side.';
+      sub.value = 'Edit the yellow cells (Annual Volume on E4, Current Fixed Price on H4, plus per-tranche Hedge % in columns C/D, Index Price in column G, and Adders & Noncommodity Components in column H). Adders ride on top of both the Proposed Hedge Position Cost and the Current Position Cost, so the same non-commodity charge hits both scenarios. The Proposed Hedge Position Cost blends Index pricing on the Current-only slice (C − D) with Fixed pricing on the Proposed-hedged slice (D); the Result block on the right compares Current vs Proposed side-by-side.';
       sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
       sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
       ws.getRow(2).height = 60;
@@ -5893,7 +5894,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         'Month', 'Execution Date', 'Hedge % (Current)', 'Hedge % (Proposed)',
         'Volume (MWh)', 'Fixed Position ($/MWh)', 'Index Price ($/MWh)',
         'Adders & Noncommodity Components ($/MWh)',
-        'Locked Cost', 'Spot Cost', 'Saving vs Spot',
+        'Proposed Hedge Position Cost', 'Current Position Cost', 'Saving vs Spot',
       ];
       const hr = ws.getRow(HEADER_ROW);
       headers.forEach((h, i) => {
@@ -6002,30 +6003,23 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         r.getCell(6).value = { formula: '$H$4', result: 75 };
         r.getCell(7).value = h.price;
         // Adders & Noncommodity Components ($/MWh) — user input, layered
-        // on top of the Index Price for Locked Cost AND on top of the
-        // Fixed Position for Spot Cost so the same non-commodity charge
-        // hits both scenarios. Default 0 so the column reads as opt-in.
+        // on top of the per-row pricing for both the Proposed Hedge
+        // Position Cost AND the Current Position Cost so the same
+        // non-commodity charge hits both scenarios. Default 0 so the
+        // column reads as opt-in.
         r.getCell(8).value = 0;
-        // Locked Cost — split into three pieces plus the standalone
-        // adder per the user's spec:
-        //   (Current − Proposed) × Volume × Fixed   (the slice that's
-        //                                            hedged in Current
-        //                                            but not Proposed,
-        //                                            priced at the
-        //                                            fixed reference)
-        // + Proposed × Index × Volume               (the slice covered
-        //                                            in Proposed,
-        //                                            priced at this
-        //                                            tranche's Index)
-        // + Adder × Volume                          (non-commodity
-        //                                            cost on the
-        //                                            tranche volume)
-        // + Adder                                   (standalone, per
-        //                                            the user's
-        //                                            request).
+        // Proposed Hedge Position Cost — for each tranche, the slice
+        // hedged only in Current (C − D) takes the Index Price (G), and
+        // the slice hedged in Proposed (D) takes the Fixed Position (F).
+        // Adders ride on top of both legs so the non-commodity charge
+        // hits whichever side carries the volume:
+        //   ((C − D) × E) × (G + Adder)   (Current-only slice priced
+        //                                  at Index + Adder)
+        // + (D × E × (F + Adder))         (Proposed-hedged slice
+        //                                  priced at Fixed + Adder)
         r.getCell(9).value = {
-          formula: `(((C${rowNum}-D${rowNum})*E${rowNum}*F${rowNum})+(D${rowNum}*G${rowNum}*E${rowNum})+(H${rowNum}*E${rowNum})+H${rowNum})`,
-          result: h.price * TRANCHE_VOL,
+          formula: `((C${rowNum}-D${rowNum})*E${rowNum})*(G${rowNum}+H${rowNum})+(D${rowNum}*E${rowNum}*(F${rowNum}+H${rowNum}))`,
+          result: ((CURRENT_STEP - PROPOSED_STEP) * TRANCHE_VOL) * h.price + (PROPOSED_STEP * TRANCHE_VOL * 75),
         };
         r.getCell(10).value = { formula: `(F${rowNum}+H${rowNum})*E${rowNum}`, result: 75 * TRANCHE_VOL };
         r.getCell(11).value = { formula: `J${rowNum}-I${rowNum}`, result: (75 - h.price) * TRANCHE_VOL };
@@ -6164,9 +6158,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // Each tranche's allocation is the row-to-row delta in column D
       // (except the first row where it's just D{FIRST_DATA_ROW}).
       // We split Index (G) and Adders (H) so the totals row can show
-      // each piece independently. Locked Cost = (Index + Adder) per
-      // unit annual volume × annual volume; Spot Cost = (Fixed +
-      // Adder) × volume; Savings cancels the adder by construction.
+      // each piece independently. Proposed-scenario locked cost =
+      // (Index + Adder) per unit annual volume × annual volume;
+      // Current Position Cost reference = (Fixed + Adder) × volume.
       const propAlloc0 = `D${FIRST_DATA_ROW}`;
       const propAllocDeltas =
         `D${FIRST_DATA_ROW + 1}:D${LAST_DATA_ROW}-D${FIRST_DATA_ROW}:D${LAST_DATA_ROW - 1}`;
