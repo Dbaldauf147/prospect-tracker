@@ -5787,7 +5787,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const RESULT_LABEL_COL = 12;
       const RESULT_VALUE_COL = 13;
       const COLS = RESULT_VALUE_COL;
-      const widths = [6, 16, 11, 14, 19, 19, 14, 16, 16, 18, 3, 30, 24];
+      const widths = [6, 16, 12, 14.5, 19, 19, 14, 16, 16, 18, 3, 30, 24];
       ws.columns = widths.map(w => ({ width: w }));
 
       const INPUT_FILL = 'FFFFF9C3';
@@ -5801,7 +5801,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
 
       ws.mergeCells(1, 1, 1, COLS);
       const title = ws.getCell(1, 1);
-      title.value = 'Hedging Analysis — Layered Strategy';
+      title.value = 'Hedging Analysis';
       title.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
       title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
       title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
@@ -5870,7 +5870,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         c.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
         c.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
       });
-      hr.height = 44;
+      hr.height = 31;
 
       // Default tranche inputs — 60 monthly layers across 2026-2030.
       // Prices follow a plausible forward-curve shape with seasonal
