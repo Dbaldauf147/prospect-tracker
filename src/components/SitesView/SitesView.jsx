@@ -5890,7 +5890,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // above it.
       const HEADER_ROW = 6;
       const headers = [
-        '#', 'Execution Date', 'Hedge % (Current)', 'Hedge % (Proposed)',
+        'Month', 'Execution Date', 'Hedge % (Current)', 'Hedge % (Proposed)',
         'Volume (MWh)', 'Fixed Position ($/MWh)', 'Index Price ($/MWh)',
         'Adders & Noncommodity Components ($/MWh)',
         'Locked Cost', 'Spot Cost', 'Saving vs Spot',
@@ -5904,7 +5904,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         c.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
         c.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
       });
-      hr.height = 30;
+      hr.height = 45;
 
       // Default tranche inputs — 60 monthly layers across 2026-2030.
       // Prices follow a plausible forward-curve shape with seasonal
@@ -6006,7 +6006,27 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         // Fixed Position for Spot Cost so the same non-commodity charge
         // hits both scenarios. Default 0 so the column reads as opt-in.
         r.getCell(8).value = 0;
-        r.getCell(9).value  = { formula: `(G${rowNum}+H${rowNum})*E${rowNum}`, result: h.price * TRANCHE_VOL };
+        // Locked Cost — split into three pieces plus the standalone
+        // adder per the user's spec:
+        //   (Current − Proposed) × Volume × Fixed   (the slice that's
+        //                                            hedged in Current
+        //                                            but not Proposed,
+        //                                            priced at the
+        //                                            fixed reference)
+        // + Proposed × Index × Volume               (the slice covered
+        //                                            in Proposed,
+        //                                            priced at this
+        //                                            tranche's Index)
+        // + Adder × Volume                          (non-commodity
+        //                                            cost on the
+        //                                            tranche volume)
+        // + Adder                                   (standalone, per
+        //                                            the user's
+        //                                            request).
+        r.getCell(9).value = {
+          formula: `(((C${rowNum}-D${rowNum})*E${rowNum}*F${rowNum})+(D${rowNum}*G${rowNum}*E${rowNum})+(H${rowNum}*E${rowNum})+H${rowNum})`,
+          result: h.price * TRANCHE_VOL,
+        };
         r.getCell(10).value = { formula: `(F${rowNum}+H${rowNum})*E${rowNum}`, result: 75 * TRANCHE_VOL };
         r.getCell(11).value = { formula: `J${rowNum}-I${rowNum}`, result: (75 - h.price) * TRANCHE_VOL };
 
