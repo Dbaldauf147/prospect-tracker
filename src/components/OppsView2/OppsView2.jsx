@@ -97,7 +97,13 @@ function makeBlankOpp(id, headers, accountOverride) {
   row['Open Year'] = String(new Date().getFullYear());
   row['Stage'] = 'Not Started';
   row['Status'] = 'Client waiting on ESS team member';
-  if (cols.includes('Notes')) row['Notes'] = 'Find out the story';
+  // Default Scope to AEM (the most common service the user tags on a
+  // new opp) and seed the Notes column with the prompt the user
+  // always types first. Set unconditionally — even if a column was
+  // hidden via the columns toggle the value sticks around for when
+  // it's unhidden later.
+  row['Scope'] = 'AEM';
+  row['Notes'] = 'Find out the story';
   // Default the three date columns the user tracks day-to-day to
   // today's date. Stored as ISO (YYYY-MM-DD) so the HTML5 date input
   // accepts it directly; DateCell displays a localized format.
@@ -1652,6 +1658,13 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     });
   }, []);
 
+  const deleteOpp = useCallback((id) => {
+    setData(prev => {
+      const records = prev?.records || [];
+      return { ...prev, records: records.filter(r => r._id !== id) };
+    });
+  }, []);
+
   const updateColumnLinks = useCallback((nextLinks) => {
     setData(prev => ({ ...(prev || {}), columnLinks: nextLinks || {} }));
   }, []);
@@ -1699,7 +1712,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
 
   const columns = useMemo(() => {
     const seen = new Set();
-    return headers
+    const mapped = headers
       .filter(h => {
         if (!h || seen.has(h)) return false;
         seen.add(h);
@@ -1770,7 +1783,39 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           );
         },
       }));
-  }, [headers, columnLinks, updateOppField, companySuggestions, prospects, updateProspect, hubspotContacts]);
+    // Trailing actions column — × button per row for delete. Lives
+    // outside the headers loop so it can't be hidden via the columns
+    // toggle (you always need a way to delete a row).
+    const actions = {
+      key: '_actions',
+      label: '',
+      defaultWidth: 44,
+      getFilterValue: () => '',
+      render: (row) => (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            const label = String(row['Account'] || '').trim() || 'this opp';
+            if (window.confirm(`Delete ${label}? This can't be undone.`)) {
+              deleteOpp(row._id);
+            }
+          }}
+          title="Delete this opp"
+          style={{
+            padding: '0', width: 22, height: 22, lineHeight: 1,
+            fontSize: '0.95rem', fontWeight: 600, fontFamily: 'inherit',
+            color: '#94A3B8', background: 'transparent',
+            border: '1px solid var(--color-border)', borderRadius: 4,
+            cursor: 'pointer',
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = '#B91C1C'; e.currentTarget.style.borderColor = '#B91C1C'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = '#94A3B8'; e.currentTarget.style.borderColor = 'var(--color-border)'; }}
+        >×</button>
+      ),
+    };
+    return [...mapped, actions];
+  }, [headers, columnLinks, updateOppField, deleteOpp, companySuggestions, prospects, updateProspect, hubspotContacts]);
 
   const stageOrder = ['Lead', 'Not Started', 'Qualifying', 'Quoting', 'Quoted', 'Verbal', 'Sold', 'Not Sold'];
   const CLOSED_STAGES = useMemo(() => new Set(['Sold', 'Not Sold']), []);
