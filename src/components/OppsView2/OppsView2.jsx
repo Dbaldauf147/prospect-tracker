@@ -97,6 +97,7 @@ function makeBlankOpp(id, headers, accountOverride) {
   row['Open Year'] = String(new Date().getFullYear());
   row['Stage'] = 'Not Started';
   row['Status'] = 'Client waiting on ESS team member';
+  if (cols.includes('Notes')) row['Notes'] = 'Find out the story';
   // Default the three date columns the user tracks day-to-day to
   // today's date. Stored as ISO (YYYY-MM-DD) so the HTML5 date input
   // accepts it directly; DateCell displays a localized format.
