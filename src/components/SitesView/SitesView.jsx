@@ -6195,7 +6195,12 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         { label: 'Hedge Ratio — Proposed', formula: `D${LAST_DATA_ROW}`, result: propFinal, fmt: '0%' },
         { label: 'Blended Price — Current',  formula: `I${TOTAL_ROW}/E${TOTAL_ROW}`, result: blendedPriceDefault, fmt: '"$"0.00" / MWh"' },
         { label: 'Blended Price — Proposed', formula: PROP_BLENDED,                  result: propBlendedDefault,  fmt: '"$"0.00" / MWh"' },
-        { label: 'Spot-Only Reference Price', formula: '$H$4', result: 75, fmt: '"$"0.00" / MWh"' },
+        // Spot-Only Reference = Current Fixed Price + the volume-weighted
+        // average Adder. H{TOTAL_ROW} holds that blended adder (see the
+        // totals row above), so the reference price reads as the all-in
+        // $/MWh a spot-only path would actually cost — commodity + the
+        // non-commodity charges that ride with it.
+        { label: 'Spot-Only Reference Price', formula: `$H$4+H${TOTAL_ROW}`, result: 75, fmt: '"$"0.00" / MWh"' },
         { labelFormula: `"Total Hedged Cost — Current ("&TEXT(E${TOTAL_ROW},"#,##0")&" MWh)"`,  labelFallback: 'Total Hedged Cost — Current',  formula: `I${TOTAL_ROW}`, result: totalLockedCostDefault, fmt: '"$"#,##0' },
         { labelFormula: `"Total Hedged Cost — Proposed ("&TEXT(${PROP_VOL},"#,##0")&" MWh)"`,   labelFallback: 'Total Hedged Cost — Proposed', formula: PROP_LOCKED_COST, result: propLockedCostDefault, fmt: '"$"#,##0' },
         { label: 'Savings vs Spot — Current',  valueFormula: `TEXT(K${TOTAL_ROW},"$#,##0")&"   ("&IFERROR(TEXT(K${TOTAL_ROW}/J${TOTAL_ROW},"0.00%"),"-")&")"`, result: '$236,500   (3.15%)' },
