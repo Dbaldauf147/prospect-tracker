@@ -968,7 +968,7 @@ function LinkColumnsModal({ headers, columnLinks, onChange, onClose }) {
                           type="radio"
                           name={`mode-${h}`}
                           disabled={!effective}
-                          checked={mode === 'single'}
+                          checked={!!effective && mode === 'single'}
                           onChange={() => setBinding(h, {
                             listKey: selectedListKey === 'default' ? (defaultBinding?.listKey || 'none') : selectedListKey,
                             mode: 'single',
@@ -976,18 +976,27 @@ function LinkColumnsModal({ headers, columnLinks, onChange, onClose }) {
                           style={{ marginRight: 4 }}
                         />Single
                       </label>
-                      <label style={{ cursor: effective ? 'pointer' : 'not-allowed', opacity: effective ? 1 : 0.4 }}>
+                      <label style={{ marginRight: '0.6rem', cursor: effective ? 'pointer' : 'not-allowed', opacity: effective ? 1 : 0.4 }}>
                         <input
                           type="radio"
                           name={`mode-${h}`}
                           disabled={!effective}
-                          checked={mode === 'multi'}
+                          checked={!!effective && mode === 'multi'}
                           onChange={() => setBinding(h, {
                             listKey: selectedListKey === 'default' ? (defaultBinding?.listKey || 'none') : selectedListKey,
                             mode: 'multi',
                           })}
                           style={{ marginRight: 4 }}
                         />Multi
+                      </label>
+                      <label style={{ cursor: 'pointer' }}>
+                        <input
+                          type="radio"
+                          name={`mode-${h}`}
+                          checked={!effective}
+                          onChange={() => setBinding(h, { listKey: 'none', mode: 'single' })}
+                          style={{ marginRight: 4 }}
+                        />None
                       </label>
                     </td>
                   </tr>
