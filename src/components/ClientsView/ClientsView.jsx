@@ -238,6 +238,7 @@ export function ClientsView({ prospects = [], onSelectProspect, cdmName, setting
             alwaysVisible={['company']}
             onRowClick={(row) => onSelectProspect?.(row)}
             emptyMessage={q ? `No clients match "${query}"` : 'No clients to display'}
+            enableColumnFilters
             settings={settings}
             updateSettings={updateSettings}
           />
