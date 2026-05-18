@@ -2,12 +2,27 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { DataTable } from '../common/DataTable';
 import { loadDealsList, saveDealsOverride, clearDealsOverride } from '../../utils/dealsStore';
+import {
+  asNumber, fmtCurrency, fmtPercent, fmtDate, isTruthy,
+  DEAL_CURRENCY_KEYS, DEAL_DATE_KEYS, DEAL_PERCENT_KEYS, DEAL_CHECK_KEYS,
+} from '../../utils/dealsFormat';
 
 // Canonical ordered column list — these are the headers the Deals
 // sub-tab is expected to surface from the user's client-tracker
 // workbook. The first column ("Client Name") is sticky.
+// Headers in incoming workbooks that should fold into a canonical column
+// name. Lets older "Paperwork completed" exports and newer "Paperwork"
+// exports both land in the same field, and surfaces the shorter labels
+// the user uses on the Clients tab's contract drill-down.
+const HEADER_ALIASES = {
+  'paperwork': 'Paperwork completed',
+  'billing letter': 'Billing information collected',
+  'combined bfo': 'Combined',
+};
+
 const COLUMN_ORDER = [
   'Client Name',
+  'Commission Sheet Sent to Kathy',
   'Paperwork completed',
   'Billing information collected',
   'Closed Won',
@@ -48,61 +63,6 @@ const COLUMN_ORDER = [
   'Follow Up On Sale',
 ];
 
-const CURRENCY_KEYS = new Set([
-  'Setup', 'Recurring Revenue', 'Commission', 'Revenue Recorded',
-  'Paid to Date', 'Delta', 'GM', 'Current Value',
-]);
-const DATE_KEYS = new Set([
-  'Current Term Start Date', 'Original Contract Start', 'Due Date',
-  'End Date', 'Follow Up On Sale',
-]);
-const PERCENT_KEYS = new Set(['Commission Rate', 'Esc']);
-const CHECK_KEYS = new Set([
-  'Paperwork completed', 'Billing information collected', 'Closed Won',
-  'On Client Tracker?', 'BFO - Close after contract execution email has been sent',
-  'Currently being paid', 'Auto renewal?', 'SUCON?', 'Combined',
-  'Comm Tracker?', 'Comm Tracker?2', 'Comm Tracker?3',
-  'Comm Tracker?4', 'Comm Tracker?5', 'Comm Tracker?6',
-]);
-
-const NUMERIC_PROBE = /^-?\$?\s*-?[\d,]+(?:\.\d+)?\s*%?$/;
-function asNumber(v) {
-  if (v == null || v === '') return null;
-  if (typeof v === 'number' && Number.isFinite(v)) return v;
-  const cleaned = String(v).replace(/[\s,$]/g, '').replace(/%$/, '');
-  const n = Number(cleaned);
-  return Number.isFinite(n) ? n : null;
-}
-function fmtCurrency(v) {
-  const n = asNumber(v);
-  if (n == null) return v ?? '';
-  return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
-}
-function fmtPercent(v) {
-  const n = asNumber(v);
-  if (n == null) return v ?? '';
-  // Excel often gives 0.10 for 10%; treat anything ≤1 as already a fraction.
-  const pct = Math.abs(n) <= 1 ? n * 100 : n;
-  return `${pct.toFixed(2)}%`;
-}
-function fmtDate(v) {
-  if (v == null || v === '') return '';
-  // Excel serial date numbers (days since 1899-12-30).
-  if (typeof v === 'number' && Number.isFinite(v)) {
-    const ms = (v - 25569) * 86400 * 1000;
-    const d = new Date(ms);
-    if (!isNaN(d)) return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  }
-  const d = new Date(v);
-  if (!isNaN(d) && String(v).length >= 6) return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  return String(v);
-}
-function isTruthy(v) {
-  if (v == null || v === '') return false;
-  const s = String(v).trim().toLowerCase();
-  return s === 'yes' || s === 'y' || s === 'true' || s === 'x' || s === '✓' || s === 'done' || s === '1';
-}
-
 function buildColumns(rows) {
   if (!rows.length) return [];
   const keys = new Set();
@@ -116,10 +76,10 @@ function buildColumns(rows) {
 
   return ordered.map((k, i) => {
     const sticky = i === 0;
-    const isCurrency = CURRENCY_KEYS.has(k);
-    const isPercent = PERCENT_KEYS.has(k);
-    const isDate = DATE_KEYS.has(k);
-    const isCheck = CHECK_KEYS.has(k);
+    const isCurrency = DEAL_CURRENCY_KEYS.has(k);
+    const isPercent = DEAL_PERCENT_KEYS.has(k);
+    const isDate = DEAL_DATE_KEYS.has(k);
+    const isCheck = DEAL_CHECK_KEYS.has(k);
     return {
       key: k,
       label: k,
@@ -200,10 +160,16 @@ export function DealsView({ settings, updateSettings }) {
       const parsed = XLSX.utils.sheet_to_json(sheet, { defval: '' });
       if (!Array.isArray(parsed) || parsed.length === 0) throw new Error('No rows parsed');
 
-      // Normalize headers: trim whitespace and strip stray trailing
+      // Normalize headers: trim whitespace, strip stray trailing
       // periods so 'Client Name ' or 'Client Name.' still lands under
-      // the canonical column.
-      const normalizeHeader = (h) => String(h || '').trim().replace(/\.+$/, '');
+      // the canonical column, then fold aliases (e.g. 'Paperwork' ->
+      // 'Paperwork completed') so old and new tracker exports share
+      // the same underlying column.
+      const normalizeHeader = (h) => {
+        const cleaned = String(h || '').trim().replace(/\.+$/, '');
+        const aliased = HEADER_ALIASES[cleaned.toLowerCase()];
+        return aliased || cleaned;
+      };
       const cleaned = parsed
         .map(r => {
           const out = {};

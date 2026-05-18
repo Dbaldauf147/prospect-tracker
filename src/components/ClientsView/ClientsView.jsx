@@ -1,7 +1,103 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { DataTable } from '../common/DataTable';
 import { matchesCdm } from '../../utils/cdmMatch';
 import { DealsView } from '../DealsView/DealsView';
+import { loadDealsList } from '../../utils/dealsStore';
+import {
+  fmtCurrency, fmtPercent, fmtDate, isTruthy,
+  DEAL_CURRENCY_KEYS, DEAL_DATE_KEYS, DEAL_PERCENT_KEYS, DEAL_CHECK_KEYS,
+} from '../../utils/dealsFormat';
+
+// Column layout for the per-client contract drill-down. Each entry's
+// `key` is the canonical field name stored on the deal row; `label` is
+// the heading shown on the Clients tab. Several labels are shorter
+// aliases of the Deals-subtab headers — the upload normalizer in
+// DealsView already folds them onto the same key.
+const CONTRACT_COLUMNS = [
+  { key: 'Commission Sheet Sent to Kathy',                           label: 'Commission Sheet Sent to Kathy' },
+  { key: 'Paperwork completed',                                      label: 'Paperwork' },
+  { key: 'Billing information collected',                            label: 'Billing Letter' },
+  { key: 'Closed Won',                                               label: 'Closed Won' },
+  { key: 'BFO - Close after contract execution email has been sent', label: 'BFO - Close after contract execution email has been sent' },
+  { key: 'Agreement Name',                                           label: 'Agreement Name' },
+  { key: 'Current Term Start Date',                                  label: 'Current Term Start Date' },
+  { key: 'Original Contract Start',                                  label: 'Original Contract Start' },
+  { key: 'Setup',                                                    label: 'Setup' },
+  { key: 'Recurring Revenue',                                        label: 'Recurring Revenue' },
+  { key: 'Commission',                                               label: 'Commission' },
+  { key: 'Revenue Recorded',                                         label: 'Revenue Recorded' },
+  { key: 'Paid to Date',                                             label: 'Paid to Date' },
+  { key: 'Delta',                                                    label: 'Delta' },
+  { key: 'Currently being paid',                                     label: 'Currently being paid' },
+  { key: 'Ticket',                                                   label: 'Ticket' },
+  { key: 'Comm Status',                                              label: 'Comm Status' },
+  { key: 'Due Date',                                                 label: 'Due Date' },
+  { key: 'Days/Paid on',                                             label: 'Days/Paid on' },
+  { key: 'GM',                                                       label: 'GM' },
+  { key: 'Payment Terms',                                            label: 'Payment Terms' },
+  { key: 'End Date',                                                 label: 'End Date' },
+  { key: 'Auto renewal?',                                            label: 'Auto renewal?' },
+  { key: 'Esc',                                                      label: 'Esc' },
+  { key: 'Combined',                                                 label: 'Combined BFO' },
+  { key: 'Combine Project Name',                                     label: 'Combine Project Name' },
+  { key: 'Follow Up On Sale',                                        label: 'Follow Up On Sale' },
+];
+
+function normClientName(s) {
+  return String(s || '').trim().toLowerCase();
+}
+
+function renderContractCell(key, value) {
+  if (value == null || value === '') return <span style={{ color: '#94A3B8' }}>—</span>;
+  if (DEAL_CHECK_KEYS.has(key)) {
+    const yes = isTruthy(value);
+    return (
+      <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, background: yes ? '#DCFCE7' : '#F1F5F9', color: yes ? '#166534' : '#64748B' }}>
+        {yes ? 'Yes' : (typeof value === 'string' && value.trim() ? value : 'No')}
+      </span>
+    );
+  }
+  if (DEAL_CURRENCY_KEYS.has(key)) return <span style={{ fontVariantNumeric: 'tabular-nums', color: '#0F172A' }}>{fmtCurrency(value)}</span>;
+  if (DEAL_PERCENT_KEYS.has(key)) return <span style={{ fontVariantNumeric: 'tabular-nums', color: '#0F172A' }}>{fmtPercent(value)}</span>;
+  if (DEAL_DATE_KEYS.has(key)) return <span style={{ color: '#334155' }}>{fmtDate(value)}</span>;
+  return <span style={{ color: '#1E293B' }}>{String(value)}</span>;
+}
+
+function ContractTable({ deals }) {
+  if (!deals || deals.length === 0) {
+    return (
+      <div style={{ padding: '0.75rem 1.25rem', color: '#64748B', fontSize: '0.75rem', fontStyle: 'italic' }}>
+        No contracts found for this client. Upload contract data on the Deals subtab — the Client Name column must match this client.
+      </div>
+    );
+  }
+  return (
+    <div style={{ overflowX: 'auto', padding: '0.5rem 0.75rem 0.75rem' }}>
+      <table style={{ borderCollapse: 'collapse', fontSize: '0.7rem', width: 'max-content', minWidth: '100%' }}>
+        <thead>
+          <tr style={{ background: '#F1F5F9' }}>
+            {CONTRACT_COLUMNS.map(col => (
+              <th key={col.key} style={{ padding: '0.35rem 0.5rem', textAlign: 'left', color: '#475569', fontWeight: 700, fontSize: '0.65rem', whiteSpace: 'nowrap', borderBottom: '1px solid #CBD5E1' }}>
+                {col.label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {deals.map((d, i) => (
+            <tr key={i} style={{ background: i % 2 === 0 ? '#FFFFFF' : '#F8FAFC' }}>
+              {CONTRACT_COLUMNS.map(col => (
+                <td key={col.key} style={{ padding: '0.3rem 0.5rem', whiteSpace: 'nowrap', borderBottom: '1px solid #E2E8F0' }}>
+                  {renderContractCell(col.key, d[col.key])}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 const SUBTAB_STORAGE_KEY = 'clients-view:active-subtab';
 function readSavedSubtab() {
@@ -32,6 +128,43 @@ export function ClientsView({ prospects = [], onSelectProspect, cdmName, setting
   }
   const [showOld, setShowOld] = useState(false);
   const [query, setQuery] = useState('');
+  const [expandedIds, setExpandedIds] = useState(() => new Set());
+
+  // Load uploaded deals so each client row can drill down into its
+  // own contracts. Re-read on the cross-tab storage event so an
+  // upload from the Deals subtab in another window shows up here.
+  const [dealsList, setDealsList] = useState(() => loadDealsList().data);
+  useEffect(() => {
+    function onStorage(e) {
+      if (e.key === 'deals-list-override') setDealsList(loadDealsList().data);
+    }
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+  // Refresh deals whenever we switch back to the Clients subtab — the
+  // same-window upload path on the Deals subtab doesn't fire storage.
+  useEffect(() => {
+    if (subtab === 'clients') setDealsList(loadDealsList().data);
+  }, [subtab]);
+
+  const dealsByClient = useMemo(() => {
+    const map = new Map();
+    for (const d of dealsList) {
+      const k = normClientName(d['Client Name']);
+      if (!k) continue;
+      if (!map.has(k)) map.set(k, []);
+      map.get(k).push(d);
+    }
+    return map;
+  }, [dealsList]);
+
+  function toggleExpand(id) {
+    setExpandedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
 
   // Only the configured user's clients. Additionally filter to active
   // Client by default, or include Old Client too when the toggle is on.
@@ -72,12 +205,37 @@ export function ClientsView({ prospects = [], onSelectProspect, cdmName, setting
     ...c,
     id: c.id,
     services: getServicesCount(c),
-  })), [filtered]);
+    contractCount: (dealsByClient.get(normClientName(c.company)) || []).length,
+  })), [filtered, dealsByClient]);
 
   const columns = useMemo(() => [
     {
-      key: 'company', label: 'Company', defaultWidth: 240, sticky: true,
-      render: (row) => <span style={{ fontWeight: 600, color: '#1E293B' }}>{row.company || '—'}</span>,
+      key: 'company', label: 'Company', defaultWidth: 260, sticky: true,
+      render: (row) => {
+        const isOpen = expandedIds.has(row.id);
+        const count = row.contractCount;
+        return (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); toggleExpand(row.id); }}
+              title={count > 0 ? `${isOpen ? 'Hide' : 'Show'} ${count} contract${count === 1 ? '' : 's'}` : 'No contracts uploaded for this client'}
+              style={{
+                width: 18, height: 18, padding: 0, border: '1px solid #CBD5E1', borderRadius: 4,
+                background: isOpen ? '#1E293B' : '#FFFFFF', color: isOpen ? '#FFFFFF' : '#475569',
+                fontSize: '0.65rem', lineHeight: 1, cursor: 'pointer', fontFamily: 'inherit',
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              }}
+            >{isOpen ? '▾' : '▸'}</button>
+            <span style={{ fontWeight: 600, color: '#1E293B' }}>{row.company || '—'}</span>
+            {count > 0 && (
+              <span title={`${count} contract${count === 1 ? '' : 's'} on file`} style={{ display: 'inline-block', padding: '0 6px', borderRadius: 999, fontSize: '0.6rem', fontWeight: 700, background: '#E0E7FF', color: '#3730A3' }}>
+                {count}
+              </span>
+            )}
+          </span>
+        );
+      },
     },
     {
       key: 'status', label: 'Status', defaultWidth: 120,
@@ -123,7 +281,7 @@ export function ClientsView({ prospects = [], onSelectProspect, cdmName, setting
         );
       },
     },
-  ], []);
+  ], [expandedIds]);
 
   const subtabBar = (
     <div style={{ display: 'flex', gap: '0.25rem', padding: '0.5rem 1.25rem 0', borderBottom: '1px solid #E2E8F0', flexShrink: 0 }}>
@@ -174,7 +332,7 @@ export function ClientsView({ prospects = [], onSelectProspect, cdmName, setting
           <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#1E293B', margin: 0 }}>Clients</h2>
           <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2 }}>
             {cdmName ? `${cdmName}'s clients` : 'Your clients'} — every prospect with CDM = {cdmName || 'your CDM'} and <strong>Status = Client</strong>
-            {showOld ? ' or Old Client' : ''}. Click a row to open the company popup.
+            {showOld ? ' or Old Client' : ''}. Click ▸ to expand a client&apos;s contracts; click the row body to open the company popup.
           </div>
         </div>
         <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.72rem', color: '#475569', cursor: 'pointer' }}>
@@ -237,6 +395,10 @@ export function ClientsView({ prospects = [], onSelectProspect, cdmName, setting
             rows={rows}
             alwaysVisible={['company']}
             onRowClick={(row) => onSelectProspect?.(row)}
+            expandedRowIds={expandedIds}
+            renderExpansion={(row) => (
+              <ContractTable deals={dealsByClient.get(normClientName(row.company)) || []} />
+            )}
             emptyMessage={q ? `No clients match "${query}"` : 'No clients to display'}
             enableColumnFilters
             settings={settings}
