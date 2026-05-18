@@ -56,8 +56,6 @@ import {
   US_STATE_CENTERS,
   CANADA_PROVINCE_CENTERS,
   statusTier,
-  TIER_COLORS,
-  TIER_LABELS,
   getCountryFeatures,
   getNAAdmin1Features,
   TOPO_NAME_TO_DEREG_KEY,
@@ -3345,26 +3343,20 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         properties: { tabColor: { argb: SE_GREEN_DARK } },
         views: [{ showGridLines: false }],
       });
-      // COLS covers the map image (≈ cols 1-14) plus a few extra
-      // columns to the right that host the legend block.
+      // The legend now lives on the map canvas itself (matching the
+      // NAM View treatment), so the worksheet only needs MAP_COLS
+      // for the title band, summary tables, and image area.
       const MAP_COLS = 14;
-      const LEGEND_COLS = 4;
-      const COLS = MAP_COLS + LEGEND_COLS;
+      const COLS = MAP_COLS;
       // Widen the columns the summary tables use for large numbers
       // — Load (kWh / Dth) and Cost — so a comma-formatted figure
       // like "12,345,678" or "$1,234,567" doesn't get truncated.
       // Columns E (5) and G (7) are the user-visible big-number
       // columns on the Country level view; F and H benefit too.
       const NUMERIC_WIDE_COLS = new Set([5, 6, 7, 8]);
-      ws.columns = [
-        ...Array.from({ length: MAP_COLS }, (_, i) => ({
-          width: NUMERIC_WIDE_COLS.has(i + 1) ? 17 : 12,
-        })),
-        { width: 4 },  // gutter between map and legend
-        { width: 6 },  // saturated swatch
-        { width: 6 },  // (kept for legacy header alignment)
-        { width: 28 }, // tier label
-      ];
+      ws.columns = Array.from({ length: MAP_COLS }, (_, i) => ({
+        width: NUMERIC_WIDE_COLS.has(i + 1) ? 17 : 12,
+      }));
 
       // Bucket sites by (country, state-or-province) and look up the
       // dereg tier + map coordinates. The lookup chain is:
@@ -3523,36 +3515,82 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         return String(a.country).localeCompare(String(b.country));
       });
 
-      // Canvas render — equirectangular projection. The map itself
-      // is now drawn from the bundled world-atlas TopoJSON
-      // (src/data/countries-110m.json) so each country can be filled
-      // independently by its deregulation tier. Lat/lng → pixel uses
-      // the same linear projection the dots use.
-      const W = 1200, H = 600;
+      // Canvas render — equirectangular projection. Formatting and
+      // legend mirror the NAM View: NAM-style STATUS_FILL palette,
+      // density-shaded choropleth (sqrt scaling on per-country site
+      // count), and an on-canvas legend strip at the bottom.
+      const MAP_W = 1200;
+      const MAP_H = 600;
+      const LEGEND_H = 80;
+      const W = MAP_W;
+      const H = MAP_H + LEGEND_H;
       const canvas = document.createElement('canvas');
       canvas.width = W; canvas.height = H;
       const ctx = canvas.getContext('2d');
-      // Ocean background.
-      ctx.fillStyle = '#F1F5F9';
+      // White canvas background — matches NAM (the legend strip lives
+      // on this background) and keeps the no-sites grey distinct.
+      ctx.fillStyle = '#FFFFFF';
       ctx.fillRect(0, 0, W, H);
+      // Ocean tint inside the map area only.
+      ctx.fillStyle = '#F1F5F9';
+      ctx.fillRect(0, 0, MAP_W, MAP_H);
 
-      const project = (lng, lat) => [((lng + 180) / 360) * W, ((90 - lat) / 180) * H];
+      const project = (lng, lat) => [((lng + 180) / 360) * MAP_W, ((90 - lat) / 180) * MAP_H];
 
-      // Choropleth fills — every country's color comes from its
-      // COUNTRY_DEREGULATION entry so the map matches the Country
-      // level view table below. Portfolio has sites → saturated
-      // tier color; no sites → uniform light gray so the sites-
-      // having countries dominate visually. No more "Mixed" tier;
-      // US and Canada read their country reference directly.
-      const NO_SITES_FILL = '#E2E8F0';
+      // NAM-style palette + helpers. statusTier returns
+      // dereg/some/reg/unknown for a country; map to the NAM
+      // categories (dereg/limited/reg) so the chips read the same
+      // way across both sheets.
+      const STATUS_FILL = {
+        reg:     '#94A3B8', // slate
+        dereg:   '#10B981', // emerald
+        limited: '#F59E0B', // amber
+      };
+      const STATUS_LABEL = {
+        reg:     'Regulated',
+        dereg:   'Deregulated',
+        limited: 'Limited Deregulation',
+      };
+      const NO_SITES_FILL   = '#E5E7EB';
+      const NO_SITES_STROKE = '#9CA3AF';
+      const tierToStatus = (tier) => {
+        if (tier === 'dereg') return 'dereg';
+        if (tier === 'some')  return 'limited';
+        return 'reg'; // 'reg' or 'unknown' both fall through
+      };
+
+      // Per-country site count → choropleth density. Sqrt scaling
+      // keeps a single-site country visibly tinted while the densest
+      // market hits the full status hue plus a 20 % darken.
+      const maxCountrySites = Math.max(1, ...Array.from(countryAggs.values()).map(a => a.sites));
+      const argbToRgb = (hex) => {
+        const h = String(hex).replace(/^#/, '').replace(/^FF/i, '');
+        return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+      };
+      const rgbToHex = (rgb) => '#' + rgb.map(v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('');
+      const shadeForCount = (statusHex, count) => {
+        if (count <= 0) return NO_SITES_FILL;
+        const [r, g, b] = argbToRgb(statusHex);
+        const t = Math.sqrt(count / maxCountrySites);
+        const sat  = 0.45 + 0.55 * t;
+        const dark = 0.20 * t;
+        const blend = (c) => (c * sat + 255 * (1 - sat)) * (1 - dark);
+        return rgbToHex([blend(r), blend(g), blend(b)]);
+      };
+
+      // Country choropleth — every country's color comes from its
+      // COUNTRY_DEREGULATION entry. Portfolio has sites → status hue
+      // shaded by density; no sites → uniform light grey so the
+      // sites-having countries dominate visually.
       const countryFeatures = getCountryFeatures();
       for (const feat of countryFeatures) {
         const derGKey = TOPO_NAME_TO_DEREG_KEY[feat.name] || feat.name;
         const c = COUNTRY_DEREGULATION[derGKey];
         const tier = c ? statusTier(c.electric) : 'unknown';
-        const hasSites = countryAggs.has(derGKey);
-        ctx.fillStyle = hasSites ? TIER_COLORS[tier] : NO_SITES_FILL;
-        ctx.strokeStyle = '#94A3B8';
+        const status = tierToStatus(tier);
+        const sites = countryAggs.get(derGKey)?.sites || 0;
+        ctx.fillStyle = sites > 0 ? shadeForCount(STATUS_FILL[status], sites) : NO_SITES_FILL;
+        ctx.strokeStyle = NO_SITES_STROKE;
         ctx.lineWidth = 0.5;
         // Antimeridian-aware sub-ring splitting: countries that
         // cross the date line (Russia, Fiji, the Aleutians) have
@@ -3589,7 +3627,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       }
 
       // Plot dots — radius scales with sqrt(count) so a 100-site
-      // bucket isn't 100× the area of a 1-site bucket.
+      // bucket isn't 100× the area of a 1-site bucket. Halves now
+      // pull from the NAM-style palette via tierToStatus so dot
+      // colors stay in lock-step with the legend chips below.
       const maxCount = Math.max(1, ...Array.from(buckets.values()).map(b => b.count));
       const dots = Array.from(buckets.values());
       // Larger dots first so smaller dots don't get hidden underneath.
@@ -3602,12 +3642,12 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         ctx.beginPath();
         ctx.arc(x, y, r, Math.PI / 2, (3 * Math.PI) / 2, false);
         ctx.closePath();
-        ctx.fillStyle = TIER_COLORS[b.elecTier];
+        ctx.fillStyle = STATUS_FILL[tierToStatus(b.elecTier)];
         ctx.fill();
         ctx.beginPath();
         ctx.arc(x, y, r, -Math.PI / 2, Math.PI / 2, false);
         ctx.closePath();
-        ctx.fillStyle = TIER_COLORS[b.gasTier];
+        ctx.fillStyle = STATUS_FILL[tierToStatus(b.gasTier)];
         ctx.fill();
         ctx.restore();
         // Site-count number — no ring outline so each dot reads as a
@@ -3621,9 +3661,47 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         ctx.fillText(String(b.count), x, y + 4);
       }
 
-      // Legend is rendered as Excel cells to the RIGHT of the map
-      // image (further down) so the user gets searchable, copyable,
-      // resizable swatches instead of pixels burned into the PNG.
+      // On-canvas legend strip — chips for each status hue plus a
+      // "No portfolio sites" swatch, centered along the bottom edge.
+      // Caption below explains the dot encoding so the in-map dots
+      // still read without a separate Excel-cell legend.
+      {
+        const SWATCH = 22;
+        const GAP_SWATCH_LABEL = 8;
+        const GAP_ITEMS = 22;
+        ctx.font = '13px Nunito Sans, Arial, sans-serif';
+        ctx.textBaseline = 'middle';
+        ctx.textAlign = 'left';
+        const labels = [
+          { color: STATUS_FILL.dereg,   label: STATUS_LABEL.dereg },
+          { color: STATUS_FILL.limited, label: STATUS_LABEL.limited },
+          { color: STATUS_FILL.reg,     label: STATUS_LABEL.reg },
+          { color: NO_SITES_FILL,       label: 'No portfolio sites' },
+        ];
+        const itemW = (label) => SWATCH + GAP_SWATCH_LABEL + ctx.measureText(label).width;
+        const totalW = labels.reduce((a, it) => a + itemW(it.label), 0) + GAP_ITEMS * (labels.length - 1);
+        let cursorX = (W - totalW) / 2;
+        const legendY = MAP_H + 18;
+        for (const it of labels) {
+          ctx.fillStyle = it.color;
+          ctx.fillRect(cursorX, legendY, SWATCH, SWATCH);
+          ctx.strokeStyle = NO_SITES_STROKE;
+          ctx.lineWidth = 0.8;
+          ctx.strokeRect(cursorX, legendY, SWATCH, SWATCH);
+          ctx.fillStyle = '#0F172A';
+          ctx.fillText(it.label, cursorX + SWATCH + GAP_SWATCH_LABEL, legendY + SWATCH / 2);
+          cursorX += itemW(it.label) + GAP_ITEMS;
+        }
+        // Caption for the dots — italic gray, centered.
+        ctx.font = 'italic 11px Nunito Sans, Arial, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#64748B';
+        ctx.fillText(
+          'Site dots — left half = Electric tier, right half = Gas tier. Dot size scales with the site count in that bucket.',
+          W / 2,
+          MAP_H + 18 + SWATCH + 14,
+        );
+      }
 
       const dataUrl = canvas.toDataURL('image/png');
       const imageId = wb.addImage({ base64: dataUrl, extension: 'png' });
@@ -3647,72 +3725,13 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       ws.getRow(2).height = 36;
 
       // Anchor the image starting at row 4. Image dimensions are in
-      // pixels; cell-grid sizing scales it visually.
+      // pixels; cell-grid sizing scales it visually. The legend now
+      // lives on the canvas itself (matching NAM View), so there's no
+      // separate Excel-cell legend block to the right of the image.
       ws.addImage(imageId, {
         tl: { col: 0, row: 3 },
         ext: { width: W, height: H },
       });
-
-      // Legend block — rendered as Excel cells to the right of the
-      // map image. The swatch sits in the swatch column; the tier
-      // label sits in the label column. Single swatch per tier
-      // (countries with sites only); a final gray row marks the
-      // no-sites fill.
-      const legendStart = 4; // 1-indexed row
-      const swatchCol = MAP_COLS + 2;
-      const labelCol = MAP_COLS + 4;
-
-      ws.mergeCells(legendStart, swatchCol, legendStart, labelCol);
-      const legTitle = ws.getCell(legendStart, swatchCol);
-      legTitle.value = 'Legend';
-      legTitle.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
-      legTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
-      legTitle.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-      ws.getRow(legendStart).height = 22;
-
-      ws.mergeCells(legendStart + 1, swatchCol, legendStart + 1, labelCol);
-      const legCap = ws.getCell(legendStart + 1, swatchCol);
-      legCap.value = 'Country fill = deregulation tier. Countries with no portfolio sites are grayed out.';
-      legCap.font = { name: 'Nunito Sans', italic: true, size: 9, color: { argb: SE_SLATE } };
-      legCap.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
-      ws.getRow(legendStart + 1).height = 36;
-
-      // One row per tier: tier-color swatch + tier label. Plus a
-      // final gray "No sites" row that matches the no-sites fill.
-      const hexToArgb = (hex) => 'FF' + String(hex).replace(/^#/, '').toUpperCase();
-      const swatchBorder = {
-        top:    { style: 'thin', color: { argb: 'FF94A3B8' } },
-        bottom: { style: 'thin', color: { argb: 'FF94A3B8' } },
-        left:   { style: 'thin', color: { argb: 'FF94A3B8' } },
-        right:  { style: 'thin', color: { argb: 'FF94A3B8' } },
-      };
-      const legendEntries = [
-        ['dereg',  TIER_COLORS.dereg, TIER_LABELS.dereg],
-        ['some',   TIER_COLORS.some,  TIER_LABELS.some],
-        ['reg',    TIER_COLORS.reg,   TIER_LABELS.reg],
-        ['nosite', NO_SITES_FILL,     'No sites'],
-      ];
-      legendEntries.forEach(([_t, color, label], i) => {
-        const rowIdx = legendStart + 2 + i;
-        const sw = ws.getCell(rowIdx, swatchCol);
-        sw.value = '';
-        sw.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: hexToArgb(color) } };
-        sw.border = swatchBorder;
-        const lbl = ws.getCell(rowIdx, labelCol);
-        lbl.value = label;
-        lbl.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-        lbl.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-        ws.getRow(rowIdx).height = 18;
-      });
-
-      // Caption explaining the dot encoding sits below the tier list.
-      const dotsCapRow = legendStart + 2 + legendEntries.length + 1;
-      ws.mergeCells(dotsCapRow, swatchCol, dotsCapRow, labelCol);
-      const dotsCap = ws.getCell(dotsCapRow, swatchCol);
-      dotsCap.value = 'Each site dot — left half = Electric tier, right half = Gas tier. Dot size scales with the number of sites in that bucket.';
-      dotsCap.font = { name: 'Nunito Sans', italic: true, size: 9, color: { argb: SE_SLATE } };
-      dotsCap.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
-      ws.getRow(dotsCapRow).height = 42;
 
       // Overview table sits just below the map image. Anchored at
       // row 30 so the table starts before the image bleeds into
