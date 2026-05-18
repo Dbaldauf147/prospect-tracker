@@ -5780,7 +5780,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     {
       const ws = wb.addWorksheet('Hedging Analysis', {
         properties: { tabColor: { argb: SE_GREEN_DARK } },
-        views: [{ showGridLines: false, state: 'frozen', ySplit: 6 }],
+        views: [{ showGridLines: false, state: 'frozen', ySplit: 5 }],
       });
 
       const TABLE_COLS = 10;
@@ -5809,7 +5809,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
 
       ws.mergeCells(2, 1, 2, COLS);
       const sub = ws.getCell(2, 1);
-      sub.value = 'Edit the yellow cells (Annual Volume on E4, Spot Reference on H4, plus per-tranche Hedge % in columns C/D and Index Price in column E). Volume / Locked Cost / Spot Cost / Saving columns track the Current scenario; the Result block on the right compares Current vs Proposed side-by-side.';
+      sub.value = 'Edit the yellow cells (Annual Volume on E4, Current Fixed Price on H4, plus per-tranche Hedge % in columns C/D and Index Price in column G). Volume / Locked Cost / Spot Cost / Saving columns track the Current scenario; the Result block on the right compares Current vs Proposed side-by-side.';
       sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
       sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
       ws.getRow(2).height = 46;
@@ -5836,7 +5836,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       volInput.border = inputBorder;
 
       ws.mergeCells(4, 6, 4, 7);
-      ws.getCell(4, 6).value = 'Spot Reference ($/MWh)';
+      ws.getCell(4, 6).value = 'Current Fixed Price ($/MWh)';
       ws.getCell(4, 6).font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: SE_SLATE } };
       ws.getCell(4, 6).alignment = { vertical: 'middle', horizontal: 'right', indent: 1 };
       const spotInput = ws.getCell('H4');
@@ -5848,20 +5848,16 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       spotInput.border = inputBorder;
       ws.getRow(4).height = 22;
 
-      ws.mergeCells(5, 1, 5, TABLE_COLS);
-      const sh1 = ws.getCell(5, 1);
-      sh1.value = '60 Hedge Layers Executed Across 60 Months';
-      sh1.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
-      sh1.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
-      sh1.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-      ws.getRow(5).height = 22;
-
+      // Tranche-table headers sit on row 5 (the old "60 Hedge Layers"
+      // section header was dropped so the table starts immediately
+      // below the Inputs row).
+      const HEADER_ROW = 5;
       const headers = [
         '#', 'Execution Date', 'Hedge % (Current)', 'Hedge % (Proposed)',
-        'Index Price ($/MWh)', 'Fixed Position ($/MWh)', 'Volume (MWh)',
+        'Volume (MWh)', 'Fixed Position ($/MWh)', 'Index Price ($/MWh)',
         'Locked Cost', 'Spot Cost', 'Saving vs Spot',
       ];
-      const hr = ws.getRow(6);
+      const hr = ws.getRow(HEADER_ROW);
       headers.forEach((h, i) => {
         const c = hr.getCell(i + 1);
         c.value = h;
@@ -5947,7 +5943,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const TRANCHE_VOL = 100000 * CURRENT_STEP;
 
       hedges.forEach((h, i) => {
-        const rowNum = 7 + i;
+        const rowNum = HEADER_ROW + 1 + i;
         const r = ws.getRow(rowNum);
         r.getCell(1).value = i + 1;
         // Write the execution date as a real Date so Excel applies
@@ -5960,15 +5956,15 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         // shaped however the user wants.
         r.getCell(3).value = (i + 1) * CURRENT_STEP;
         r.getCell(4).value = (i + 1) * PROPOSED_STEP;
-        r.getCell(5).value = h.price;
-        r.getCell(6).value = { formula: '$H$4', result: 75 };
-        // Per-tranche volume falls out of the Current cumulative
-        // delta — for row 7 (first), that delta is just C7.
-        r.getCell(7).value = i === 0
+        // Per-tranche volume (E) falls out of the Current cumulative
+        // delta — for the first data row that delta is just C{row}.
+        r.getCell(5).value = i === 0
           ? { formula: `$E$4*C${rowNum}`, result: TRANCHE_VOL }
           : { formula: `$E$4*(C${rowNum}-C${rowNum - 1})`, result: TRANCHE_VOL };
-        r.getCell(8).value = { formula: `E${rowNum}*G${rowNum}`, result: h.price * TRANCHE_VOL };
-        r.getCell(9).value = { formula: `F${rowNum}*G${rowNum}`, result: 75 * TRANCHE_VOL };
+        r.getCell(6).value = { formula: '$H$4', result: 75 };
+        r.getCell(7).value = h.price;
+        r.getCell(8).value = { formula: `G${rowNum}*E${rowNum}`, result: h.price * TRANCHE_VOL };
+        r.getCell(9).value = { formula: `F${rowNum}*E${rowNum}`, result: 75 * TRANCHE_VOL };
         r.getCell(10).value = { formula: `I${rowNum}-H${rowNum}`, result: (75 - h.price) * TRANCHE_VOL };
 
         for (let ci = 1; ci <= 10; ci++) {
@@ -5983,9 +5979,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         r.getCell(2).numFmt = 'm/d/yyyy';
         r.getCell(3).numFmt = '0%';
         r.getCell(4).numFmt = '0%';
-        r.getCell(5).numFmt = '"$"0.00';
+        r.getCell(5).numFmt = '#,##0';
         r.getCell(6).numFmt = '"$"0.00';
-        r.getCell(7).numFmt = '#,##0';
+        r.getCell(7).numFmt = '"$"0.00';
         r.getCell(8).numFmt = '"$"#,##0';
         r.getCell(9).numFmt = '"$"#,##0';
         r.getCell(10).numFmt = '"$"#,##0;[Red]("$"#,##0)';
@@ -5994,17 +5990,17 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         // Price) yellow. Conditional formatting takes over Index
         // Price's color (green when it beats Fixed Position, red
         // when it lags).
-        for (const col of [3, 4, 5]) {
+        for (const col of [3, 4, 7]) {
           const c = r.getCell(col);
           c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: INPUT_FILL } };
         }
         r.height = 20;
       });
 
-      // Row 31 — totals via SUM formulas. The blended price is the
+      // Totals via SUM formulas. The blended index price is the
       // weighted average (total locked cost / total volume).
-      const TOTAL_ROW = 7 + hedges.length;
-      const FIRST_DATA_ROW = 7;
+      const FIRST_DATA_ROW = HEADER_ROW + 1;
+      const TOTAL_ROW = FIRST_DATA_ROW + hedges.length;
       const LAST_DATA_ROW = TOTAL_ROW - 1;
       const dataRange = (col) => `${col}${FIRST_DATA_ROW}:${col}${LAST_DATA_ROW}`;
       // Plausible defaults that Excel will recompute on open.
@@ -6018,9 +6014,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // row's value, not a SUM.
       tr.getCell(3).value = { formula: `C${LAST_DATA_ROW}`, result: 1.0 };
       tr.getCell(4).value = { formula: `D${LAST_DATA_ROW}`, result: 0.5 };
-      tr.getCell(5).value = { formula: `H${TOTAL_ROW}/G${TOTAL_ROW}`, result: blendedPriceDefault };
+      tr.getCell(5).value = { formula: `SUM(${dataRange('E')})`, result: 100000 };
       tr.getCell(6).value = { formula: '$H$4', result: 75 };
-      tr.getCell(7).value = { formula: `SUM(${dataRange('G')})`, result: 100000 };
+      tr.getCell(7).value = { formula: `H${TOTAL_ROW}/E${TOTAL_ROW}`, result: blendedPriceDefault };
       tr.getCell(8).value = { formula: `SUM(${dataRange('H')})`, result: totalLockedCostDefault };
       tr.getCell(9).value = { formula: `SUM(${dataRange('I')})`, result: totalSpotCostDefault };
       tr.getCell(10).value = { formula: `SUM(${dataRange('J')})`, result: totalSpotCostDefault - totalLockedCostDefault };
@@ -6036,18 +6032,20 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       }
       tr.getCell(3).numFmt = '0%';
       tr.getCell(4).numFmt = '0%';
-      tr.getCell(5).numFmt = '"$"0.00';
+      tr.getCell(5).numFmt = '#,##0';
       tr.getCell(6).numFmt = '"$"0.00';
-      tr.getCell(7).numFmt = '#,##0';
+      tr.getCell(7).numFmt = '"$"0.00';
       tr.getCell(8).numFmt = '"$"#,##0';
       tr.getCell(9).numFmt = '"$"#,##0';
       tr.getCell(10).numFmt = '"$"#,##0;[Red]("$"#,##0)';
       tr.height = 26;
 
-      // Locked-Price color flips live via conditional formatting that
-      // compares column E to column F (the per-row spot ref formula).
+      // Index-Price color flips live via conditional formatting that
+      // compares column G (Index Price) to column F (the per-row Fixed
+      // Position formula). Green when the index beats the fixed
+      // price, red when it lags.
       ws.addConditionalFormatting({
-        ref: `E${FIRST_DATA_ROW}:E${LAST_DATA_ROW}`,
+        ref: `G${FIRST_DATA_ROW}:G${LAST_DATA_ROW}`,
         rules: [
           {
             type: 'cellIs', operator: 'lessThan', formulae: [`F${FIRST_DATA_ROW}`], priority: 1,
@@ -6079,13 +6077,11 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
 
       // Result block — sits to the RIGHT of the analysis table (cols
       // L-M) so the summary reads side-by-side with the tranche
-      // detail. Header anchored at row 6 (one row below the tranche
-      // subheader) so the Result band has a row of breathing space
-      // above it instead of butting against the section header. Each
-      // value is a live formula referencing the inputs / totals so
-      // the user sees the result update when they tweak any yellow
-      // cell.
-      const RESULT_HEADER_ROW = 6;
+      // detail. Header anchored at the same row as the tranche table
+      // headers (row 5) so the two bands line up. Each value is a
+      // live formula referencing the inputs / totals so the user sees
+      // the result update when they tweak any yellow cell.
+      const RESULT_HEADER_ROW = HEADER_ROW;
       ws.mergeCells(RESULT_HEADER_ROW, RESULT_LABEL_COL, RESULT_HEADER_ROW, RESULT_VALUE_COL);
       const rh = ws.getCell(RESULT_HEADER_ROW, RESULT_LABEL_COL);
       rh.value = 'Result';
@@ -6097,14 +6093,14 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // SUMPRODUCT-based weighted average price for the Proposed
       // scenario: each tranche's allocation is the row-to-row delta
       // in column D, except the first row where the allocation is
-      // just D7 itself. Multiply per-tranche allocation by the row's
-      // Index Price and divide by the final cumulative to get the
-      // proposed blended price; multiply by Annual Volume for the
-      // total locked cost.
+      // just D{FIRST_DATA_ROW} itself. Multiply per-tranche
+      // allocation by the row's Index Price (column G) and divide by
+      // the final cumulative to get the proposed blended price;
+      // multiply by Annual Volume for the total locked cost.
       const PROP_COST_PER_UNIT =
-        `(D${FIRST_DATA_ROW}*E${FIRST_DATA_ROW}+SUMPRODUCT(` +
+        `(D${FIRST_DATA_ROW}*G${FIRST_DATA_ROW}+SUMPRODUCT(` +
         `D${FIRST_DATA_ROW + 1}:D${LAST_DATA_ROW}-D${FIRST_DATA_ROW}:D${LAST_DATA_ROW - 1},` +
-        `E${FIRST_DATA_ROW + 1}:E${LAST_DATA_ROW}))`;
+        `G${FIRST_DATA_ROW + 1}:G${LAST_DATA_ROW}))`;
       const PROP_VOL = `$E$4*D${LAST_DATA_ROW}`;
       const PROP_LOCKED_COST = `${PROP_COST_PER_UNIT}*$E$4`;
       const PROP_SPOT_COST = `$H$4*${PROP_VOL}`;
@@ -6123,10 +6119,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const stats = [
         { label: 'Hedge Ratio — Current',  formula: `C${LAST_DATA_ROW}`, result: 1.0,       fmt: '0%' },
         { label: 'Hedge Ratio — Proposed', formula: `D${LAST_DATA_ROW}`, result: propFinal, fmt: '0%' },
-        { label: 'Blended Price — Current',  formula: `H${TOTAL_ROW}/G${TOTAL_ROW}`, result: blendedPriceDefault, fmt: '"$"0.00" / MWh"' },
+        { label: 'Blended Price — Current',  formula: `H${TOTAL_ROW}/E${TOTAL_ROW}`, result: blendedPriceDefault, fmt: '"$"0.00" / MWh"' },
         { label: 'Blended Price — Proposed', formula: PROP_BLENDED,                  result: propBlendedDefault,  fmt: '"$"0.00" / MWh"' },
         { label: 'Spot-Only Reference Price', formula: '$H$4', result: 75, fmt: '"$"0.00" / MWh"' },
-        { labelFormula: `"Total Hedged Cost — Current ("&TEXT(G${TOTAL_ROW},"#,##0")&" MWh)"`,  labelFallback: 'Total Hedged Cost — Current',  formula: `H${TOTAL_ROW}`, result: totalLockedCostDefault, fmt: '"$"#,##0' },
+        { labelFormula: `"Total Hedged Cost — Current ("&TEXT(E${TOTAL_ROW},"#,##0")&" MWh)"`,  labelFallback: 'Total Hedged Cost — Current',  formula: `H${TOTAL_ROW}`, result: totalLockedCostDefault, fmt: '"$"#,##0' },
         { labelFormula: `"Total Hedged Cost — Proposed ("&TEXT(${PROP_VOL},"#,##0")&" MWh)"`,   labelFallback: 'Total Hedged Cost — Proposed', formula: PROP_LOCKED_COST, result: propLockedCostDefault, fmt: '"$"#,##0' },
         { label: 'Savings vs Spot — Current',  valueFormula: `TEXT(J${TOTAL_ROW},"$#,##0")&"   ("&IFERROR(TEXT(J${TOTAL_ROW}/I${TOTAL_ROW},"0.00%"),"-")&")"`, result: '$236,500   (3.15%)' },
         { label: 'Savings vs Spot — Proposed', valueFormula: `TEXT(${PROP_SAVINGS},"$#,##0")&"   ("&IFERROR(TEXT((${PROP_SAVINGS})/(${PROP_SPOT_COST}),"0.00%"),"-")&")"`, result: `$${Math.round(propSavingsDefault).toLocaleString()}   (${(propSavingsDefault / propSpotCostDefault * 100).toFixed(2)}%)` },
@@ -6185,7 +6181,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
 
       const bullets = [
         'Splitting the buy into tranches catches multiple points on the forward curve instead of betting on a single execution date.',
-        'Edit the Index Prices in column E to model different curve scenarios. Green cells beat the Fixed Position, red cells lag — each tranche\'s drag or gain is weighted by the row-to-row delta in the Current Hedge % column.',
+        'Edit the Index Prices in column G to model different curve scenarios. Green cells beat the Fixed Position, red cells lag — each tranche\'s drag or gain is weighted by the row-to-row delta in the Current Hedge % column.',
         'Edit the Proposed Hedge % column to test a different cumulative buildup (e.g. partial 50 % hedge, faster front-loaded ramp, deferred back-half hedge). The Result block reports both scenarios side-by-side so the trade-off vs Current is one glance.',
         'Adjust the Annual Volume input on E4 to size the analysis to a specific customer (industrial, multi-site portfolio, etc.). The same approach applies to natural gas — swap MWh for MMBtu / Dth and the variance-reduction benefit is identical.',
       ];
