@@ -194,13 +194,16 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
     };
   }, []);
 
-  // Active client roster the helper-column dropdown picks from. Falls
-  // back to every CDM-matching prospect when no clients are flagged yet,
-  // so the picker still has something useful to offer.
+  // Active + Old Client roster the helper-column dropdown picks from.
+  // Falls back to every CDM-matching prospect when no clients are
+  // flagged yet, so the picker still has something useful to offer.
+  // Status comparison collapses internal whitespace so "Old  Client",
+  // "old\tclient", etc. still match.
   const clientOptions = useMemo(() => {
     const list = prospects.filter(p => matchesCdm(p.cdm, cdmName));
+    const normStatus = (s) => String(s || '').toLowerCase().trim().replace(/\s+/g, ' ');
     const onlyClients = list.filter(p => {
-      const s = normClient(p.status);
+      const s = normStatus(p.status);
       return s === 'client' || s === 'old client';
     });
     const pool = onlyClients.length > 0 ? onlyClients : list;
