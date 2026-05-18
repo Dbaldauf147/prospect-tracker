@@ -8,7 +8,10 @@ import {
 } from '../../utils/dealsFormat';
 import { matchesCdm } from '../../utils/cdmMatch';
 import {
-  loadDealClientMap, setDealClientMapping, DEALS_CLIENT_MAP_EVENT,
+  loadDealClientMap, setDealClientMapping,
+  loadDealClientIgnore, setDealClientIgnore,
+  bulkSetDealClientIgnore, bulkSetDealClientMapping,
+  DEALS_CLIENT_MAP_EVENT,
 } from '../../utils/dealClientMap';
 import { PasteImportModal } from './PasteImportModal';
 
@@ -24,25 +27,50 @@ function normClient(s) { return String(s || '').toLowerCase().trim(); }
 // leaves the table looking blank while the browser catches up. The
 // button form keeps the cell DOM tiny; the <select> only mounts when
 // the user clicks the cell to assign a client.
-function MappedClientCell({ raw, manual, clientOptions, onChange }) {
+function MappedClientCell({ raw, manual, ignored, clientOptions, onChange, onToggleIgnore }) {
   const [editing, setEditing] = useState(false);
+  if (ignored) {
+    return (
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, width: '100%' }}>
+        <span style={{ flex: 1, padding: '1px 8px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, background: '#F1F5F9', color: '#64748B', textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title="This source name is marked as ignored and won't count against the unmapped tally">
+          ✕ Ignored
+        </span>
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onToggleIgnore(raw, false); }}
+          title="Restore this row to the unmapped list"
+          style={{ padding: '0 6px', border: '1px solid #CBD5E1', borderRadius: 4, background: '#fff', color: '#475569', fontSize: '0.62rem', cursor: 'pointer', fontFamily: 'inherit' }}
+        >↺</button>
+      </span>
+    );
+  }
   if (!editing) {
     const label = manual || 'Map to client…';
     return (
-      <button
-        type="button"
-        onClick={(e) => { e.stopPropagation(); setEditing(true); }}
-        title={manual ? `Currently mapped to ${manual}. Click to change.` : 'Click to pick the matching client'}
-        style={{
-          width: '100%', padding: '0.2rem 0.4rem',
-          border: '1px solid', borderColor: manual ? '#86EFAC' : '#FCD34D',
-          borderRadius: 4, fontSize: '0.7rem', fontFamily: 'inherit',
-          background: manual ? '#F0FDF4' : '#FFFBEB',
-          color: manual ? '#166534' : '#92400E',
-          textAlign: 'left', cursor: 'pointer',
-          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-        }}
-      >{label}</button>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, width: '100%' }}>
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); setEditing(true); }}
+          title={manual ? `Currently mapped to ${manual}. Click to change.` : 'Click to pick the matching client'}
+          style={{
+            flex: 1, minWidth: 0, padding: '0.2rem 0.4rem',
+            border: '1px solid', borderColor: manual ? '#86EFAC' : '#FCD34D',
+            borderRadius: 4, fontSize: '0.7rem', fontFamily: 'inherit',
+            background: manual ? '#F0FDF4' : '#FFFBEB',
+            color: manual ? '#166534' : '#92400E',
+            textAlign: 'left', cursor: 'pointer',
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}
+        >{label}</button>
+        {!manual && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onToggleIgnore(raw, true); }}
+            title="Ignore this row — it won't count against the unmapped tally"
+            style={{ padding: '0 6px', border: '1px solid #CBD5E1', borderRadius: 4, background: '#fff', color: '#475569', fontSize: '0.7rem', cursor: 'pointer', fontFamily: 'inherit' }}
+          >✕</button>
+        )}
+      </span>
     );
   }
   return (
@@ -178,14 +206,21 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
   const [uploadError, setUploadError] = useState(null);
   const [showPaste, setShowPaste] = useState(false);
   const [clientMap, setClientMap] = useState(() => loadDealClientMap());
+  const [ignoreSet, setIgnoreSet] = useState(() => loadDealClientIgnore());
+  const [onlyUnmapped, setOnlyUnmapped] = useState(false);
+  const [bulkPick, setBulkPick] = useState('');
   const fileInputRef = useRef(null);
 
   useEffect(() => {
     function onStorage(e) {
       if (e.key === 'deals-list-override') setStore(loadDealsList());
       if (e.key === 'deals-client-map') setClientMap(loadDealClientMap());
+      if (e.key === 'deals-client-ignore') setIgnoreSet(loadDealClientIgnore());
     }
-    function onClientMap() { setClientMap(loadDealClientMap()); }
+    function onClientMap() {
+      setClientMap(loadDealClientMap());
+      setIgnoreSet(loadDealClientIgnore());
+    }
     window.addEventListener('storage', onStorage);
     window.addEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
     return () => {
@@ -243,8 +278,10 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
       render: (row) => {
         const raw = String(row['Client Name'] || '').trim();
         if (!raw) return <span style={{ color: '#94A3B8' }}>—</span>;
-        const auto = clientNameSet.has(normClient(raw));
-        const manual = clientMap[normClient(raw)];
+        const norm = normClient(raw);
+        const auto = clientNameSet.has(norm);
+        const manual = clientMap[norm];
+        const ignored = ignoreSet.has(norm);
         if (auto) {
           return (
             <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, background: '#DCFCE7', color: '#166534' }} title="Client Name matches an active client">
@@ -256,21 +293,25 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
           <MappedClientCell
             raw={raw}
             manual={manual}
+            ignored={ignored}
             clientOptions={clientOptions}
             onChange={setDealClientMapping}
+            onToggleIgnore={setDealClientIgnore}
           />
         );
       },
       exportValue: (row) => {
         const raw = String(row['Client Name'] || '').trim();
         if (!raw) return '';
-        if (clientNameSet.has(normClient(raw))) return raw;
-        return clientMap[normClient(raw)] || '';
+        const norm = normClient(raw);
+        if (clientNameSet.has(norm)) return raw;
+        if (ignoreSet.has(norm)) return '(ignored)';
+        return clientMap[norm] || '';
       },
     };
     // Insert immediately after the sticky Client Name column.
     return [baseColumns[0], helperCol, ...baseColumns.slice(1)];
-  }, [baseColumns, clientOptions, clientNameSet, clientMap]);
+  }, [baseColumns, clientOptions, clientNameSet, clientMap, ignoreSet]);
   const tableId = useMemo(
     () => 'deals:' + columns.map(c => c.key).sort().join('|'),
     [columns]
@@ -280,13 +321,28 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
     [columns]
   );
 
+  function isRowUnmapped(row) {
+    if (clientOptions.length === 0) return false;
+    const raw = String(row['Client Name'] || '').trim();
+    if (!raw) return false;
+    const norm = normClient(raw);
+    if (clientNameSet.has(norm)) return false;
+    if (clientMap[norm]) return false;
+    if (ignoreSet.has(norm)) return false;
+    return true;
+  }
+
   const filtered = useMemo(() => {
-    if (!search.trim()) return rows;
-    const term = search.toLowerCase();
-    return rows.filter(r =>
-      Object.values(r).some(v => String(v).toLowerCase().includes(term))
-    );
-  }, [search, rows]);
+    let out = rows;
+    if (search.trim()) {
+      const term = search.toLowerCase();
+      out = out.filter(r =>
+        Object.values(r).some(v => String(v).toLowerCase().includes(term))
+      );
+    }
+    if (onlyUnmapped) out = out.filter(isRowUnmapped);
+    return out;
+  }, [search, rows, onlyUnmapped, clientNameSet, clientMap, ignoreSet, clientOptions]);
 
   async function handleUpload(e) {
     const file = e.target.files?.[0];
@@ -342,9 +398,9 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
     setShowPaste(false);
   }
 
-  // Count rows whose Client Name doesn't match any active client and
-  // hasn't been hand-mapped yet — surfaces the work the user still has
-  // to do after a paste import.
+  // Count rows whose Client Name doesn't match any active client,
+  // hasn't been hand-mapped, and hasn't been explicitly ignored.
+  // Surfaces the work the user still has to do after a paste import.
   const unmappedCount = useMemo(() => {
     if (clientOptions.length === 0) return 0;
     let n = 0;
@@ -354,10 +410,41 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
       const norm = normClient(raw);
       if (clientNameSet.has(norm)) continue;
       if (clientMap[norm]) continue;
+      if (ignoreSet.has(norm)) continue;
       n++;
     }
     return n;
-  }, [rows, clientNameSet, clientMap, clientOptions]);
+  }, [rows, clientNameSet, clientMap, ignoreSet, clientOptions]);
+
+  // Distinct unmapped source-name strings drive bulk actions: ignoring
+  // or assigning happens per source name, so each "Brookfield (BPREP
+  // US fund)" only needs one decision regardless of how many deal
+  // rows share it.
+  const distinctUnmappedNames = useMemo(() => {
+    const out = new Map();
+    for (const r of rows) {
+      if (!isRowUnmapped(r)) continue;
+      const raw = String(r['Client Name'] || '').trim();
+      if (!raw) continue;
+      const norm = normClient(raw);
+      if (!out.has(norm)) out.set(norm, raw);
+    }
+    return out;
+  }, [rows, clientNameSet, clientMap, ignoreSet, clientOptions]);
+
+  function handleBulkIgnore() {
+    if (distinctUnmappedNames.size === 0) return;
+    if (!window.confirm(`Ignore all ${distinctUnmappedNames.size} unmapped Client Name${distinctUnmappedNames.size === 1 ? '' : 's'}? You can undo per row with the ↺ button.`)) return;
+    bulkSetDealClientIgnore([...distinctUnmappedNames.values()], true);
+  }
+
+  function handleBulkMap() {
+    if (!bulkPick) return;
+    if (distinctUnmappedNames.size === 0) return;
+    if (!window.confirm(`Map all ${distinctUnmappedNames.size} unmapped Client Name${distinctUnmappedNames.size === 1 ? '' : 's'} to "${bulkPick}"?`)) return;
+    bulkSetDealClientMapping([...distinctUnmappedNames.values()], bulkPick);
+    setBulkPick('');
+  }
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
@@ -367,7 +454,10 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
           <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2 }}>
             {rows.length} deals{source === 'override' ? ' · uploaded' : ''}. Upload an Excel export or paste from Google Sheets.
             {unmappedCount > 0 && (
-              <> · <span style={{ color: '#92400E', fontWeight: 700 }}>{unmappedCount} row{unmappedCount === 1 ? '' : 's'} with unmatched Client Names</span> — use the <em>Mapped to Client</em> column to assign.</>
+              <> · <span style={{ color: '#92400E', fontWeight: 700 }}>{unmappedCount} row{unmappedCount === 1 ? '' : 's'} with unmatched Client Names</span> — use the <em>Mapped to Client</em> column to assign or ignore.</>
+            )}
+            {ignoreSet.size > 0 && (
+              <> · <span style={{ color: '#64748B' }}>{ignoreSet.size} ignored</span></>
             )}
           </div>
         </div>
@@ -408,7 +498,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
         </div>
       )}
 
-      <div style={{ padding: '0 1.25rem 0.5rem', display: 'flex', gap: '0.5rem', alignItems: 'center', flexShrink: 0 }}>
+      <div style={{ padding: '0 1.25rem 0.5rem', display: 'flex', gap: '0.5rem', alignItems: 'center', flexShrink: 0, flexWrap: 'wrap' }}>
         <input
           type="text"
           value={search}
@@ -419,7 +509,55 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
         <span style={{ fontSize: '0.72rem', color: '#64748B' }}>
           {filtered.length} of {rows.length}
         </span>
+        {clientOptions.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setOnlyUnmapped(v => !v)}
+            disabled={unmappedCount === 0 && !onlyUnmapped}
+            title={unmappedCount === 0 ? 'No unmapped rows remain' : (onlyUnmapped ? 'Show all rows' : 'Show only rows whose Client Name is not yet mapped or matched')}
+            style={{
+              padding: '0.35rem 0.7rem',
+              border: '1px solid',
+              borderColor: onlyUnmapped ? '#92400E' : '#FCD34D',
+              borderRadius: 6,
+              background: onlyUnmapped ? '#92400E' : '#FFFBEB',
+              color: onlyUnmapped ? '#fff' : '#92400E',
+              fontSize: '0.72rem', fontWeight: 700, fontFamily: 'inherit',
+              cursor: (unmappedCount === 0 && !onlyUnmapped) ? 'not-allowed' : 'pointer',
+              opacity: (unmappedCount === 0 && !onlyUnmapped) ? 0.5 : 1,
+            }}
+          >{onlyUnmapped ? `✓ Showing unmapped (${unmappedCount})` : `Show only unmapped (${unmappedCount})`}</button>
+        )}
       </div>
+
+      {onlyUnmapped && distinctUnmappedNames.size > 0 && (
+        <div style={{ margin: '0 1.25rem 0.5rem', padding: '0.5rem 0.75rem', background: '#FFFBEB', border: '1px solid #FCD34D', borderRadius: 6, display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', flexShrink: 0 }}>
+          <strong style={{ fontSize: '0.72rem', color: '#92400E' }}>
+            {distinctUnmappedNames.size} distinct unmapped Client Name{distinctUnmappedNames.size === 1 ? '' : 's'}
+          </strong>
+          <span style={{ fontSize: '0.7rem', color: '#92400E' }}>· apply to all:</span>
+          <select
+            value={bulkPick}
+            onChange={(e) => setBulkPick(e.target.value)}
+            style={{ padding: '0.25rem 0.4rem', border: '1px solid #FCD34D', borderRadius: 4, fontSize: '0.72rem', fontFamily: 'inherit', background: '#fff', color: '#1E293B', maxWidth: 280 }}
+          >
+            <option value="">— Map all to client… —</option>
+            {clientOptions.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+          <button
+            type="button"
+            onClick={handleBulkMap}
+            disabled={!bulkPick}
+            style={{ padding: '0.3rem 0.7rem', border: 'none', borderRadius: 4, background: bulkPick ? '#16A34A' : '#94A3B8', color: '#fff', fontSize: '0.7rem', fontWeight: 700, fontFamily: 'inherit', cursor: bulkPick ? 'pointer' : 'not-allowed' }}
+          >Map all</button>
+          <span style={{ fontSize: '0.7rem', color: '#92400E' }}>or</span>
+          <button
+            type="button"
+            onClick={handleBulkIgnore}
+            style={{ padding: '0.3rem 0.7rem', border: '1px solid #CBD5E1', borderRadius: 4, background: '#fff', color: '#475569', fontSize: '0.7rem', fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer' }}
+          >✕ Ignore all unmapped</button>
+        </div>
+      )}
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {rows.length === 0 ? (
@@ -443,6 +581,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
               const norm = normClient(raw);
               if (clientNameSet.has(norm)) return undefined;
               if (clientMap[norm]) return undefined;
+              if (ignoreSet.has(norm)) return undefined;
               return { background: '#FFFBEB' };
             }}
             emptyMessage={search ? `No deals match "${search}"` : 'No deals to display'}
