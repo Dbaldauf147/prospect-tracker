@@ -54,7 +54,7 @@ const DEFAULT_HEADERS = [
   'Account', 'Open Year', 'Contact', 'Stage', 'Scope', 'Source', 'Type',
   'Start Date', 'Status', 'Quoted Amount', 'Sites', 'Age',
   'Last Client Heard From Us', 'Last Spoke', 'Follow Up', 'Call In', 'Notes',
-  'Competition', 'Waiting On', 'Close Date', 'BFO Link',
+  'Next Steps', 'Competition', 'Waiting On', 'Close Date', 'BFO Link',
 ];
 
 // Key columns to show by default (the rest are available via Columns toggle)
@@ -62,7 +62,7 @@ const KEY_COLS = [
   'Account', 'Contact', 'Stage', 'Scope', 'Source', 'Type',
   'Start Date', 'Status', 'Quoted Amount', 'Sites', 'Age',
   'Last Client Heard From Us', 'Last Spoke', 'Follow Up', 'Call In', 'Notes',
-  'Competition', 'Waiting On', 'Close Date',
+  'Next Steps', 'Competition', 'Waiting On', 'Close Date',
 ];
 
 // Columns the user wants treated as dates — rendered with a calendar
@@ -76,6 +76,14 @@ const DATE_COLUMNS = new Set(['Start Date', 'Last Client Heard From Us', 'Follow
 // Always append these to header sets loaded from the legacy Opps cache
 // so they show up even when the cached headers predate the columns.
 const COMPUTED_COLUMNS = ['Last Spoke', 'Call In'];
+
+// Columns that should always be present on hydration even when the
+// saved header set predates them. Includes the computed columns
+// plus Next Steps (introduced after the original layout shipped) so
+// users who saved their layout before this column existed still pick
+// it up — and its "Find out the Story" default lands somewhere
+// visible on the next new opp.
+const ENSURED_COLUMNS = [...COMPUTED_COLUMNS, 'Next Steps'];
 
 function todayISO() {
   const d = new Date();
@@ -98,12 +106,12 @@ function makeBlankOpp(id, headers, accountOverride) {
   row['Stage'] = 'Not Started';
   row['Status'] = 'Client waiting on ESS team member';
   // Default Scope to AEM (the most common service the user tags on a
-  // new opp) and seed the Notes column with the prompt the user
+  // new opp) and seed the Next Steps column with the prompt the user
   // always types first. Set unconditionally — even if a column was
   // hidden via the columns toggle the value sticks around for when
   // it's unhidden later.
   row['Scope'] = 'AEM';
-  row['Notes'] = 'Find out the story';
+  row['Next Steps'] = 'Find out the Story';
   // Default the three date columns the user tracks day-to-day to
   // today's date. Stored as ISO (YYYY-MM-DD) so the HTML5 date input
   // accepts it directly; DateCell displays a localized format.
@@ -1598,7 +1606,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         // on any header set we hydrate from — Firestore, IndexedDB, or
         // the legacy Opps cache may all predate them.
         const headerSet = new Set((next.headers || []).map(h => String(h || '').trim()).filter(Boolean));
-        const extra = COMPUTED_COLUMNS.filter(c => !headerSet.has(c));
+        const extra = ENSURED_COLUMNS.filter(c => !headerSet.has(c));
         if (extra.length) next = { ...next, headers: [...(next.headers || []), ...extra] };
         setData(next);
       }
@@ -1721,7 +1729,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       .map(h => ({
         key: h,
         label: h === 'BFO Link' ? 'BFO Opportunity Name' : h,
-        defaultWidth: h === 'Notes' ? 250 : h === 'Account' ? 200 : h === 'BFO Link' ? 220 : h === 'Scope' ? 220 : h.length > 20 ? 160 : 120,
+        defaultWidth: h === 'Notes' ? 250 : h === 'Next Steps' ? 240 : h === 'Account' ? 200 : h === 'BFO Link' ? 220 : h === 'Scope' ? 220 : h.length > 20 ? 160 : 120,
         sticky: h === 'Account',
         // Every cell is click-to-edit so a freshly created opp can be
         // filled in directly. getFilterValue exposes the raw text to
