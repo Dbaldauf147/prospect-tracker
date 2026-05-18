@@ -93,7 +93,7 @@ function todayISO() {
   return `${y}-${m}-${day}`;
 }
 
-function makeBlankOpp(id, headers, accountOverride) {
+function makeBlankOpp(id, headers, accountOverride, sourceOverride) {
   const row = { _id: id, id }; // id mirrored so DataTable's row key stays stable across edits
   const cols = (Array.isArray(headers) && headers.length) ? headers : DEFAULT_HEADERS;
   for (const h of cols) row[h] = '';
@@ -112,6 +112,12 @@ function makeBlankOpp(id, headers, accountOverride) {
   // it's unhidden later.
   row['Scope'] = 'AEM';
   row['Next Steps'] = 'Find out the Story';
+  // Source comes from the New Opp prompt — leave blank when the user
+  // skipped the picker so the cell still surfaces its dropdown on
+  // click.
+  if (typeof sourceOverride === 'string' && sourceOverride.trim()) {
+    row['Source'] = sourceOverride.trim();
+  }
   // Default the three date columns the user tracks day-to-day to
   // today's date. Stored as ISO (YYYY-MM-DD) so the HTML5 date input
   // accepts it directly; DateCell displays a localized format.
@@ -1330,6 +1336,114 @@ function resolveColumnLink(columnName, userLinks) {
 // source list + single/multi mode. "Default" leaves the binding to
 // whatever DEFAULT_COLUMN_LINKS says (so the built-in Scope / Source /
 // Stage / Status bindings stay in place unless explicitly overridden).
+// Tiny modal that fires right before a new opp is committed. Asks
+// the user to pick a Source from the same picklist the Source cell
+// uses. The user can skip (creates the opp with Source left blank),
+// pick one and commit, or cancel (no opp gets created). Account is
+// passed through so the prompt can display "for <company>" when the
+// flow came from the Add Company combobox.
+function NewOppSourceModal({ account, options, onCreate, onCancel }) {
+  const [source, setSource] = useState('');
+  return createPortal(
+    <div
+      onClick={onCancel}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)',
+        zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: 420, maxWidth: '92vw',
+          background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)',
+          display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        }}
+      >
+        <div style={{
+          padding: '0.85rem 1rem', borderBottom: '1px solid var(--color-border-light)',
+        }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)' }}>
+            What's the Source for this opp?
+          </div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
+            {account
+              ? <>Adding <strong>{account}</strong>. Pick a Source so the new row is tagged correctly.</>
+              : 'Pick a Source so the new row is tagged correctly. You can skip and fill it in later.'}
+          </div>
+        </div>
+
+        <div style={{ padding: '0.85rem 1rem' }}>
+          <select
+            autoFocus
+            value={source}
+            onChange={(e) => setSource(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && source) { e.preventDefault(); onCreate(source); }
+              if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
+            }}
+            style={{
+              width: '100%', boxSizing: 'border-box',
+              padding: '0.45rem 0.55rem',
+              border: '1px solid var(--color-border)', borderRadius: 4,
+              fontSize: '0.85rem', fontFamily: 'inherit',
+              background: '#fff', color: 'var(--color-text)',
+            }}
+          >
+            <option value="">— Select a Source —</option>
+            {options.map(o => (
+              <option key={o} value={o}>{o}</option>
+            ))}
+          </select>
+        </div>
+
+        <div style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          padding: '0.6rem 1rem',
+          borderTop: '1px solid var(--color-border-light)', background: 'var(--color-bg)',
+        }}>
+          <button
+            type="button"
+            onClick={onCancel}
+            style={{
+              padding: '0.35rem 0.7rem', background: 'transparent',
+              border: '1px solid var(--color-border)', borderRadius: 4,
+              fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+              color: 'var(--color-text-muted)', cursor: 'pointer',
+            }}
+          >Cancel</button>
+          <div style={{ display: 'flex', gap: '0.4rem' }}>
+            <button
+              type="button"
+              onClick={() => onCreate('')}
+              style={{
+                padding: '0.35rem 0.7rem', background: 'transparent',
+                border: '1px solid var(--color-border)', borderRadius: 4,
+                fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+                color: 'var(--color-text-muted)', cursor: 'pointer',
+              }}
+            >Skip</button>
+            <button
+              type="button"
+              onClick={() => onCreate(source)}
+              disabled={!source}
+              style={{
+                padding: '0.35rem 0.85rem', background: 'var(--color-accent)',
+                border: '1px solid var(--color-accent)', borderRadius: 4,
+                fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+                color: '#fff',
+                cursor: source ? 'pointer' : 'not-allowed',
+                opacity: source ? 1 : 0.5,
+              }}
+            >Create opp</button>
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 function LinkColumnsModal({ headers, columnLinks, onChange, onClose }) {
   const setBinding = (column, patch) => {
     const next = { ...(columnLinks || {}) };
@@ -1549,6 +1663,11 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   const [hiddenServices, setHiddenServices] = useState(() => new Set());
   const [showHidden, setShowHidden] = useState(false);
   const [linkModalOpen, setLinkModalOpen] = useState(false);
+  // null when idle; { account } when the user clicked + New Opp (or
+  // committed the Add Company combobox) and the Source-picker modal
+  // is open. Account flows through so the modal can show "Adding
+  // <company>" when the company is already known.
+  const [pendingNewOpp, setPendingNewOpp] = useState(null);
 
   // Hydration — load the user's saved opps. Prefer Firestore (cross-
   // device truth), fall back to the IndexedDB cache (last-known on
@@ -1647,12 +1766,12 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     return () => window.removeEventListener('beforeunload', flush);
   }, [data, user?.uid]);
 
-  const addNewOpp = useCallback((accountName) => {
+  const addNewOpp = useCallback((accountName, source) => {
     setData(prev => {
       const records = prev?.records || [];
       const headers = prev?.headers?.length ? prev.headers : DEFAULT_HEADERS;
       const nextId = records.reduce((m, r) => Math.max(m, r._id || 0), 0) + 1;
-      return { ...prev, headers, records: [makeBlankOpp(nextId, headers, accountName), ...records] };
+      return { ...prev, headers, records: [makeBlankOpp(nextId, headers, accountName, source), ...records] };
     });
   }, []);
 
@@ -1980,7 +2099,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
           <AddCompanyCombobox
             suggestions={companySuggestions}
-            onCommit={(name) => addNewOpp(name)}
+            onCommit={(name) => setPendingNewOpp({ account: name })}
           />
           <button
             type="button"
@@ -1993,7 +2112,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             }}
             title="Bind columns to Dropdowns-tab lists"
           >Link columns</button>
-          <button className={styles.syncBtn} onClick={() => addNewOpp()}>+ New Opp</button>
+          <button className={styles.syncBtn} onClick={() => setPendingNewOpp({})}>+ New Opp</button>
         </div>
       </div>
 
@@ -2005,6 +2124,18 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           columnLinks={columnLinks}
           onChange={updateColumnLinks}
           onClose={() => setLinkModalOpen(false)}
+        />
+      )}
+
+      {pendingNewOpp && (
+        <NewOppSourceModal
+          account={pendingNewOpp.account}
+          options={LIST_REGISTRY.get('source')?.options || []}
+          onCreate={(source) => {
+            addNewOpp(pendingNewOpp.account, source);
+            setPendingNewOpp(null);
+          }}
+          onCancel={() => setPendingNewOpp(null)}
         />
       )}
 
