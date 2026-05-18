@@ -17,8 +17,22 @@ import { PasteImportModal } from './PasteImportModal';
 
 const MAPPED_COL_KEY = '__mappedToClient__';
 const MAPPED_COL_LABEL = 'Mapped to Client';
+const STATUS_COL_KEY = '__clientStatus__';
+const STATUS_COL_LABEL = 'Client Status';
 
 function normClient(s) { return String(s || '').toLowerCase().trim(); }
+
+// Color scheme for the per-deal Client Status pill. Matches the style
+// used in ClientsView so the same status reads the same across views.
+function statusPillStyle(status) {
+  const s = normClient(status);
+  if (s === 'client') return { background: '#DCFCE7', color: '#166534' };
+  if (s === 'old client') return { background: '#F1F5F9', color: '#64748B' };
+  if (s === 'prospect') return { background: '#DBEAFE', color: '#1E40AF' };
+  if (s === 'lost - not sold' || s === 'lost') return { background: '#FEE2E2', color: '#991B1B' };
+  if (s === 'hold off') return { background: '#FEF3C7', color: '#92400E' };
+  return { background: '#F1F5F9', color: '#475569' };
+}
 
 // Render the helper column as a lazy editor. We were previously
 // mounting a full <select> with every client option (often 100+) for
@@ -261,6 +275,22 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
     [clientOptions]
   );
 
+  // Lookup from normalized company name to prospect, so the Client
+  // Status column can resolve each deal row to its prospect record.
+  // Picks the first prospect with a non-empty status when more than
+  // one shares a name, so we surface the "real" status instead of a
+  // blank duplicate.
+  const prospectByName = useMemo(() => {
+    const out = new Map();
+    for (const p of prospects) {
+      const key = normClient(p.company);
+      if (!key) continue;
+      const existing = out.get(key);
+      if (!existing || (!existing.status && p.status)) out.set(key, p);
+    }
+    return out;
+  }, [prospects]);
+
   const rows = useMemo(() => data.map((r, i) => ({ ...r, id: i })), [data]);
   const baseColumns = useMemo(() => buildColumns(rows), [rows]);
   // Inject a helper "Mapped to Client" column right after the sticky
@@ -309,9 +339,51 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
         return clientMap[norm] || '';
       },
     };
-    // Insert immediately after the sticky Client Name column.
-    return [baseColumns[0], helperCol, ...baseColumns.slice(1)];
-  }, [baseColumns, clientOptions, clientNameSet, clientMap, ignoreSet]);
+    // Looks up the prospect status for each deal row. Uses the
+    // mapped target when the user has hand-mapped this source name,
+    // otherwise the raw Client Name. Both sides are normalized.
+    const statusCol = {
+      key: STATUS_COL_KEY,
+      label: STATUS_COL_LABEL,
+      defaultWidth: 130,
+      render: (row) => {
+        const raw = String(row['Client Name'] || '').trim();
+        if (!raw) return <span style={{ color: '#94A3B8' }}>—</span>;
+        const norm = normClient(raw);
+        const mapped = clientMap[norm];
+        const lookupKey = mapped ? normClient(mapped) : norm;
+        const prospect = prospectByName.get(lookupKey);
+        const status = prospect?.status;
+        if (!status) return <span style={{ color: '#94A3B8' }}>—</span>;
+        const pill = statusPillStyle(status);
+        return (
+          <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, ...pill }}>
+            {status}
+          </span>
+        );
+      },
+      exportValue: (row) => {
+        const raw = String(row['Client Name'] || '').trim();
+        if (!raw) return '';
+        const norm = normClient(raw);
+        const mapped = clientMap[norm];
+        const lookupKey = mapped ? normClient(mapped) : norm;
+        return prospectByName.get(lookupKey)?.status || '';
+      },
+      getFilterValue: (row) => {
+        const raw = String(row['Client Name'] || '').trim();
+        if (!raw) return '';
+        const norm = normClient(raw);
+        const mapped = clientMap[norm];
+        const lookupKey = mapped ? normClient(mapped) : norm;
+        return prospectByName.get(lookupKey)?.status || '';
+      },
+    };
+    // Insert immediately after the sticky Client Name column,
+    // followed by the status column so the user can read mapping +
+    // status side by side.
+    return [baseColumns[0], helperCol, statusCol, ...baseColumns.slice(1)];
+  }, [baseColumns, clientOptions, clientNameSet, clientMap, ignoreSet, prospectByName]);
   const tableId = useMemo(
     () => 'deals:' + columns.map(c => c.key).sort().join('|'),
     [columns]
