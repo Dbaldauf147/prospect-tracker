@@ -5850,7 +5850,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
 
       ws.mergeCells(5, 1, 5, TABLE_COLS);
       const sh1 = ws.getCell(5, 1);
-      sh1.value = '24 Hedge Layers Executed Across 24 Months';
+      sh1.value = '60 Hedge Layers Executed Across 60 Months';
       sh1.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
       sh1.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
       sh1.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
@@ -5872,9 +5872,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       });
       hr.height = 44;
 
-      // Default tranche inputs — 24 monthly layers across 2026 + 2027.
+      // Default tranche inputs — 60 monthly layers across 2026-2030.
       // Prices follow a plausible forward-curve shape with seasonal
-      // cycling; allocations default to 1/24 each so the user sees a
+      // cycling; allocations default to 1/60 each so the user sees a
       // clean 100 % baseline.
       const hedges = [
         { date: '2026-01-14', price: 74.50 },
@@ -5901,6 +5901,42 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         { date: '2027-10-13', price: 72.40 },
         { date: '2027-11-10', price: 70.80 },
         { date: '2027-12-08', price: 69.50 },
+        { date: '2028-01-12', price: 68.90 },
+        { date: '2028-02-09', price: 67.30 },
+        { date: '2028-03-15', price: 66.10 },
+        { date: '2028-04-12', price: 65.80 },
+        { date: '2028-05-10', price: 67.20 },
+        { date: '2028-06-14', price: 70.40 },
+        { date: '2028-07-12', price: 74.30 },
+        { date: '2028-08-09', price: 75.90 },
+        { date: '2028-09-13', price: 72.60 },
+        { date: '2028-10-11', price: 71.30 },
+        { date: '2028-11-08', price: 69.70 },
+        { date: '2028-12-13', price: 68.40 },
+        { date: '2029-01-10', price: 67.80 },
+        { date: '2029-02-14', price: 66.20 },
+        { date: '2029-03-14', price: 65.00 },
+        { date: '2029-04-11', price: 64.70 },
+        { date: '2029-05-09', price: 66.10 },
+        { date: '2029-06-13', price: 69.30 },
+        { date: '2029-07-11', price: 73.20 },
+        { date: '2029-08-08', price: 74.80 },
+        { date: '2029-09-12', price: 71.50 },
+        { date: '2029-10-10', price: 70.20 },
+        { date: '2029-11-14', price: 68.60 },
+        { date: '2029-12-12', price: 67.30 },
+        { date: '2030-01-09', price: 66.70 },
+        { date: '2030-02-13', price: 65.10 },
+        { date: '2030-03-13', price: 63.90 },
+        { date: '2030-04-10', price: 63.60 },
+        { date: '2030-05-08', price: 65.00 },
+        { date: '2030-06-12', price: 68.20 },
+        { date: '2030-07-10', price: 72.10 },
+        { date: '2030-08-14', price: 73.70 },
+        { date: '2030-09-11', price: 70.40 },
+        { date: '2030-10-09', price: 69.10 },
+        { date: '2030-11-13', price: 67.50 },
+        { date: '2030-12-11', price: 66.20 },
       ];
       const TRANCHE_ALLOC = 1 / hedges.length;
       const TRANCHE_VOL = 100000 * TRANCHE_ALLOC;
