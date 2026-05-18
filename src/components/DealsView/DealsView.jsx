@@ -195,18 +195,24 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
   }, []);
 
   // Active + Old Client roster the helper-column dropdown picks from.
-  // Falls back to every CDM-matching prospect when no clients are
-  // flagged yet, so the picker still has something useful to offer.
-  // Status comparison collapses internal whitespace so "Old  Client",
+  // CDM-matching Client / Old Client prospects come first, but any
+  // Old Client in the pool — even ones whose CDM has drifted to
+  // another rep — is included too, since a deal row often points at
+  // an account that's been reassigned over time. Falls back to every
+  // CDM-matching prospect when no clients are flagged yet. Status
+  // comparison collapses internal whitespace so "Old  Client",
   // "old\tclient", etc. still match.
   const clientOptions = useMemo(() => {
-    const list = prospects.filter(p => matchesCdm(p.cdm, cdmName));
     const normStatus = (s) => String(s || '').toLowerCase().trim().replace(/\s+/g, ' ');
-    const onlyClients = list.filter(p => {
+    const cdmList = prospects.filter(p => matchesCdm(p.cdm, cdmName));
+    const myClients = cdmList.filter(p => {
       const s = normStatus(p.status);
       return s === 'client' || s === 'old client';
     });
-    const pool = onlyClients.length > 0 ? onlyClients : list;
+    const allOldClients = prospects.filter(p => normStatus(p.status) === 'old client');
+    const pool = (myClients.length > 0 || allOldClients.length > 0)
+      ? [...myClients, ...allOldClients]
+      : cdmList;
     const names = new Set();
     for (const p of pool) {
       const name = String(p.company || '').trim();
