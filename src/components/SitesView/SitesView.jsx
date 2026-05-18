@@ -5858,7 +5858,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
 
       const headers = [
         '#', 'Execution Date', 'Tranche %', 'Cumulative %',
-        'Locked Price ($/MWh)', 'Spot Ref. ($/MWh)', 'Volume (MWh)',
+        'Index Price ($/MWh)', 'Fixed Position ($/MWh)', 'Volume (MWh)',
         'Locked Cost', 'Spot Cost', 'Saving vs Spot',
       ];
       const hr = ws.getRow(6);
@@ -5870,7 +5870,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         c.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
         c.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
       });
-      hr.height = 32;
+      hr.height = 44;
 
       // Default tranche inputs — 24 monthly layers across 2026 + 2027.
       // Prices follow a plausible forward-curve shape with seasonal
@@ -6070,14 +6070,14 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         const isHighlight = i === stats.length - 1;
         labelCell.font = {
           name: 'Nunito Sans',
-          size: isHighlight ? 12 : 11,
+          size: 10,
           bold: isHighlight,
           color: { argb: isHighlight ? SE_GREEN_DARK : SE_SLATE },
         };
         labelCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
         valCell.font = {
           name: 'Nunito Sans',
-          size: isHighlight ? 14 : 11,
+          size: 10,
           bold: isHighlight,
           color: { argb: isHighlight ? SE_GREEN_DARK : SE_TEXT_DARK },
         };
