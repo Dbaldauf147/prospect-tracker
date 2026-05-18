@@ -1823,22 +1823,34 @@ export function PricingView() {
                               })}
                             </tr>
                           );
-                          const totalDeprAll = (setup.cost + recurring.cost + oneTime.cost) * techDeprPct;
+                          // Year-1 annualized basis for the per-period
+                          // columns (Cost / Tech Depr / Total cost /
+                          // Marked-up). Setup and One Time hit Y1 in
+                          // full; Recurring multiplies the monthly
+                          // figure by 12 so the bucket reads as the
+                          // year's run-rate instead of a single month.
+                          // "Term value (marked-up)" stays projected
+                          // over the full term.
+                          const recAnnualCost  = recurring.cost  * 12;
+                          const recAnnualPrice = recurring.price * 12;
+                          const summaryY1Cost  = setup.cost  + recAnnualCost  + oneTime.cost;
+                          const summaryY1Price = setup.price + recAnnualPrice + oneTime.price;
+                          const summaryY1Depr  = summaryY1Cost * techDeprPct;
                           return (
                             <table className={styles.summaryTable}>
                               <thead><tr>{renderHeaders()}</tr></thead>
                               <tbody>
                                 {renderRow('Setup', { cost: setup.cost, techDepr: setup.cost * techDeprPct, totalCost: setup.cost * (1 + techDeprPct), price: setup.price, termPrice: setup.termPrice })}
-                                {renderRow('Recurring (monthly)', { cost: recurring.cost, techDepr: recurring.cost * techDeprPct, totalCost: recurring.cost * (1 + techDeprPct), price: recurring.price, termPrice: recurring.termPrice })}
+                                {renderRow('Recurring (annual)', { cost: recAnnualCost, techDepr: recAnnualCost * techDeprPct, totalCost: recAnnualCost * (1 + techDeprPct), price: recAnnualPrice, termPrice: recurring.termPrice })}
                                 {(oneTime.cost > 0 || oneTime.price > 0) && renderRow('One Time', { cost: oneTime.cost, techDepr: oneTime.cost * techDeprPct, totalCost: oneTime.cost * (1 + techDeprPct), price: oneTime.price, termPrice: oneTime.termPrice })}
                                 <tr className={styles.summaryGrandRow}>
                                   {SUMMARY_COLS.filter(c => !summaryColHidden(c.key)).map(col => {
                                     if (col.key === 'bucket') return <td key={col.key}>Total contract value</td>;
                                     const map = {
-                                      cost: grandTermCost,
-                                      techDepr: totalDeprAll,
-                                      totalCost: grandTermCost + totalDeprAll,
-                                      price: totalPrice,
+                                      cost: summaryY1Cost,
+                                      techDepr: summaryY1Depr,
+                                      totalCost: summaryY1Cost + summaryY1Depr,
+                                      price: summaryY1Price,
                                       termPrice: grandTermPrice,
                                     };
                                     return <td key={col.key} className={cellClassFor(col.key)}>{fmtMoneyWhole(map[col.key])}</td>;
