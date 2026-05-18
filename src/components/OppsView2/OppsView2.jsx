@@ -5,6 +5,7 @@ import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { DataTable } from '../common/DataTable';
 import { dbGet, dbPut } from '../../utils/db';
+import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { SOLUTIONS_CATALOG, DROPDOWN_LISTS } from '../../data/dropdownLists';
 import styles from './OppsView2.module.css';
 
@@ -535,7 +536,7 @@ function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel }) {
 // name on top and email muted underneath. Stores the chosen names
 // as a comma-separated string so the same parseMulti round-trip
 // works as for Scope.
-function ContactCell({ value, onChange, account, prospects, updateProspect }) {
+function ContactCell({ value, onChange, account, prospects, updateProspect, hubspotContacts }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [popPos, setPopPos] = useState({ top: 0, left: 0 });
@@ -548,21 +549,40 @@ function ContactCell({ value, onChange, account, prospects, updateProspect }) {
     return (prospects || []).find(p => String(p?.company || '').trim().toLowerCase() === target) || null;
   }, [account, prospects]);
 
+  // Build the contact roster for this opp's company. Pull from two
+  // sources and dedupe by name (case-insensitive):
+  //   1. The HubSpot contacts cache, filtered by company === Account
+  //   2. Any contacts attached directly to the matched prospect record
+  // The HubSpot cache is the primary source (most of the user's
+  // contacts live there); prospect.contacts is a fallback for
+  // accounts that were curated manually.
   const contactOptions = useMemo(() => {
-    if (!matched?.contacts?.length) return [];
+    const target = String(account || '').trim().toLowerCase();
+    if (!target) return [];
     const seen = new Set();
     const out = [];
-    for (const c of matched.contacts) {
-      const name = [c?.firstname, c?.lastname].filter(Boolean).join(' ').trim();
-      if (!name) continue;
+    const pushContact = (raw) => {
+      if (!raw) return;
+      const name = [raw.firstname, raw.lastname].filter(Boolean).join(' ').trim()
+        || String(raw.email || '').trim();
+      if (!name) return;
       const k = name.toLowerCase();
-      if (seen.has(k)) continue;
+      if (seen.has(k)) return;
       seen.add(k);
-      out.push({ name, email: String(c?.email || '').trim() });
+      out.push({
+        name,
+        email: String(raw.email || '').trim(),
+        jobtitle: String(raw.jobtitle || '').trim(),
+      });
+    };
+    for (const c of (hubspotContacts || [])) {
+      if (String(c?.company || '').trim().toLowerCase() !== target) continue;
+      pushContact(c);
     }
+    for (const c of (matched?.contacts || [])) pushContact(c);
     out.sort((a, b) => a.name.localeCompare(b.name));
     return out;
-  }, [matched]);
+  }, [account, hubspotContacts, matched]);
 
   const selected = useMemo(() => parseMulti(value), [value]);
   const selectedSet = useMemo(() => new Set(selected.map(s => s.toLowerCase())), [selected]);
@@ -1317,6 +1337,26 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   const [data, setData] = useState({ headers: DEFAULT_HEADERS, records: [] });
   const [loading, setLoading] = useState(true);
   const [error] = useState(null);
+
+  // HubSpot contacts cache feeds the Contact column's per-row picker.
+  // Most contact rosters live here (not on the prospect record), so
+  // pull from this cache and re-pull whenever the HubSpot view emits
+  // a refresh event.
+  const [hubspotContacts, setHubspotContacts] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      getHubspotContacts()
+        .then(list => { if (!cancelled) setHubspotContacts(Array.isArray(list) ? list : []); })
+        .catch(() => { if (!cancelled) setHubspotContacts([]); });
+    };
+    refresh();
+    window.addEventListener('hubspot-cache-updated', refresh);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('hubspot-cache-updated', refresh);
+    };
+  }, []);
   // Persisting only kicks in after the initial hydration finishes —
   // otherwise the seed value would be written back, wiping the saved
   // state for any user who happens to refresh before the load
@@ -1561,6 +1601,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                 account={row['Account']}
                 prospects={prospects}
                 updateProspect={updateProspect}
+                hubspotContacts={hubspotContacts}
               />
             );
           }
@@ -1573,7 +1614,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           );
         },
       }));
-  }, [headers, columnLinks, updateOppField, companySuggestions, prospects, updateProspect]);
+  }, [headers, columnLinks, updateOppField, companySuggestions, prospects, updateProspect, hubspotContacts]);
 
   const stageOrder = ['Lead', 'Not Started', 'Qualifying', 'Quoting', 'Quoted', 'Verbal', 'Sold', 'Not Sold'];
   const CLOSED_STAGES = useMemo(() => new Set(['Sold', 'Not Sold']), []);
