@@ -1,4 +1,4 @@
-import { Fragment, useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import styles from './DataTable.module.css';
 
@@ -779,30 +779,38 @@ export function DataTable({
                     )}
                     {visibleRows.map((row, ri) => {
                       const absoluteIdx = startIdx + ri;
-                      const isExpanded = expandable && expandedSet.has(row.id);
-                      return (
-                        <Fragment key={row.id || absoluteIdx}>
-                          <tr
-                            ref={ri === 0 ? firstRowRef : undefined}
-                            className={rowClassName ? rowClassName(row) : undefined}
-                            onClick={onRowClick ? () => onRowClick(row) : undefined}
-                            style={{ ...(onRowClick ? { cursor: 'pointer' } : undefined), ...(rowStyle ? rowStyle(row) : undefined) }}
-                          >
-                            {visibleColumns.map(col => (
-                              <td key={col.key} className={col.sticky ? styles.stickyCol : undefined}>
-                                {col.render ? col.render(row) : (row[col.key] ?? '—')}
-                              </td>
-                            ))}
-                          </tr>
-                          {isExpanded && (
-                            <tr>
-                              <td colSpan={visibleColumns.length} style={{ padding: 0, background: '#F8FAFC', borderTop: '1px solid #E2E8F0' }}>
-                                {renderExpansion(row)}
-                              </td>
-                            </tr>
-                          )}
-                        </Fragment>
+                      const rowKey = row.id ?? absoluteIdx;
+                      const rowTr = (
+                        <tr
+                          key={expandable ? `r:${rowKey}` : rowKey}
+                          ref={ri === 0 ? firstRowRef : undefined}
+                          className={rowClassName ? rowClassName(row) : undefined}
+                          onClick={onRowClick ? () => onRowClick(row) : undefined}
+                          style={{ ...(onRowClick ? { cursor: 'pointer' } : undefined), ...(rowStyle ? rowStyle(row) : undefined) }}
+                        >
+                          {visibleColumns.map(col => (
+                            <td key={col.key} className={col.sticky ? styles.stickyCol : undefined}>
+                              {col.render ? col.render(row) : (row[col.key] ?? '—')}
+                            </td>
+                          ))}
+                        </tr>
                       );
+                      if (!expandable) return rowTr;
+                      const isExpanded = expandedSet.has(row.id);
+                      // Two adjacent <tr>s when expanded; React handles
+                      // a returned array directly inside tbody.
+                      return isExpanded
+                        ? [
+                            rowTr,
+                            (
+                              <tr key={`x:${rowKey}`}>
+                                <td colSpan={visibleColumns.length} style={{ padding: 0, background: '#F8FAFC', borderTop: '1px solid #E2E8F0' }}>
+                                  {renderExpansion(row)}
+                                </td>
+                              </tr>
+                            ),
+                          ]
+                        : rowTr;
                     })}
                     {bottomPad > 0 && (
                       <tr aria-hidden="true" style={{ height: bottomPad }}>
