@@ -3572,7 +3572,18 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
               </div>
               {f.type === 'textarea' ? (
                 f.key === 'summary' ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                  // Wrap the General Notes editor in a visible box so
+                  // its nested Scoping Details Notes can sit inside it
+                  // as a second, lighter sub-box — the user wanted the
+                  // hierarchy to be obvious at a glance instead of two
+                  // textareas stacked with only a label between them.
+                  <div style={{
+                    display: 'flex', flexDirection: 'column', gap: '0.6rem',
+                    padding: '0.6rem',
+                    border: '1px solid var(--color-border)',
+                    borderRadius: 6,
+                    background: '#fff',
+                  }}>
                     <ScopingNotesEditor
                       value={formData.fieldValues[f.key] || ''}
                       onCommit={v => updateField(f.key, v)}
@@ -3582,8 +3593,13 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                       placeholder="General notes. Type @ for services or competitors (Services / Competitors are grouped in the dropdown). Bullet list: type - or * at the start of a line."
                       style={{ minHeight: '120px' }}
                     />
-                    <div>
-                      <div style={{ ...sx.fieldLabel, marginBottom: '0.2rem' }}>Scoping Details Notes</div>
+                    <div style={{
+                      padding: '0.5rem 0.6rem',
+                      border: '1px solid var(--color-border-light)',
+                      borderRadius: 6,
+                      background: 'var(--color-bg)',
+                    }}>
+                      <div style={{ ...sx.fieldLabel, marginBottom: '0.3rem' }}>Scoping Details Notes</div>
                       <ScopingNotesEditor
                         value={formData.fieldValues.scopingNotes || ''}
                         onCommit={v => updateField('scopingNotes', v)}
