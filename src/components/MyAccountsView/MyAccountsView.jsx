@@ -1865,7 +1865,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         }
         if (found) break;
       }
-      const statusMismatch = !p.hideStatusSuggestion && !!suggestedStatus && suggestedStatus !== p.status && p.status && p.dismissedSuggestedStatus !== suggestedStatus;
+      const statusMismatch = !!(!p.hideStatusSuggestion && suggestedStatus && suggestedStatus !== p.status && p.status && p.dismissedSuggestedStatus !== suggestedStatus);
       // Any opp sourced from a "PE Partner" nudges Type → Portfolio
       // Company. Fuzzy-match against the row's company + divisions to
       // catch e.g. 'Acme Holdings' vs 'Acme Holdings LLC'.

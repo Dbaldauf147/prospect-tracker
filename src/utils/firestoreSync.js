@@ -50,8 +50,14 @@ export async function addProspect(prospect) {
 }
 
 export async function updateProspect(id, updates) {
+  // Firestore rejects undefined values outright (the whole write fails).
+  // Strip them so a stray undefined on one field can't block the rest of the save.
+  const clean = {};
+  for (const [k, v] of Object.entries(updates || {})) {
+    if (v !== undefined) clean[k] = v;
+  }
   await updateDoc(getDoc(id), {
-    ...updates,
+    ...clean,
     updatedAt: serverTimestamp(),
   });
 }
