@@ -17,6 +17,54 @@ const MAPPED_COL_LABEL = 'Mapped to Client';
 
 function normClient(s) { return String(s || '').toLowerCase().trim(); }
 
+// Render the helper column as a lazy editor. We were previously
+// mounting a full <select> with every client option (often 100+) for
+// every unmapped row — 250 rows × 130 options = 30k+ DOM nodes just
+// for the dropdowns, which can balloon paint cost on large lists and
+// leaves the table looking blank while the browser catches up. The
+// button form keeps the cell DOM tiny; the <select> only mounts when
+// the user clicks the cell to assign a client.
+function MappedClientCell({ raw, manual, clientOptions, onChange }) {
+  const [editing, setEditing] = useState(false);
+  if (!editing) {
+    const label = manual || 'Map to client…';
+    return (
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setEditing(true); }}
+        title={manual ? `Currently mapped to ${manual}. Click to change.` : 'Click to pick the matching client'}
+        style={{
+          width: '100%', padding: '0.2rem 0.4rem',
+          border: '1px solid', borderColor: manual ? '#86EFAC' : '#FCD34D',
+          borderRadius: 4, fontSize: '0.7rem', fontFamily: 'inherit',
+          background: manual ? '#F0FDF4' : '#FFFBEB',
+          color: manual ? '#166534' : '#92400E',
+          textAlign: 'left', cursor: 'pointer',
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }}
+      >{label}</button>
+    );
+  }
+  return (
+    <select
+      autoFocus
+      value={manual || ''}
+      onChange={(e) => { onChange(raw, e.target.value); setEditing(false); }}
+      onBlur={() => setEditing(false)}
+      onClick={(e) => e.stopPropagation()}
+      style={{
+        width: '100%', padding: '0.2rem 0.3rem',
+        border: '1px solid #3B82F6', borderRadius: 4,
+        fontSize: '0.7rem', fontFamily: 'inherit', background: '#fff',
+        color: '#1E293B',
+      }}
+    >
+      <option value="">— Unmap —</option>
+      {clientOptions.map(c => <option key={c} value={c}>{c}</option>)}
+    </select>
+  );
+}
+
 // Canonical ordered column list — these are the headers the Deals
 // sub-tab is expected to surface from the user's client-tracker
 // workbook. The first column ("Client Name") is sticky.
@@ -196,24 +244,12 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
           );
         }
         return (
-          <select
-            value={manual || ''}
-            onChange={(e) => {
-              const next = e.target.value;
-              setDealClientMapping(raw, next);
-            }}
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              width: '100%', padding: '0.2rem 0.3rem', border: '1px solid',
-              borderColor: manual ? '#86EFAC' : '#FCD34D',
-              borderRadius: 4, fontSize: '0.7rem', fontFamily: 'inherit',
-              background: manual ? '#F0FDF4' : '#FFFBEB',
-              color: '#1E293B',
-            }}
-          >
-            <option value="">— Map to client… —</option>
-            {clientOptions.map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
+          <MappedClientCell
+            raw={raw}
+            manual={manual}
+            clientOptions={clientOptions}
+            onChange={setDealClientMapping}
+          />
         );
       },
       exportValue: (row) => {
