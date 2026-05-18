@@ -1841,6 +1841,7 @@ export function PricingView() {
                               <thead><tr>{renderHeaders()}</tr></thead>
                               <tbody>
                                 {renderRow('Setup', { cost: setup.cost, techDepr: setup.cost * techDeprPct, totalCost: setup.cost * (1 + techDeprPct), price: setup.price, termPrice: setup.termPrice })}
+                                {renderRow('Recurring (monthly)', { cost: recurring.cost, techDepr: recurring.cost * techDeprPct, totalCost: recurring.cost * (1 + techDeprPct), price: recurring.price })}
                                 {renderRow('Recurring (annual)', { cost: recAnnualCost, techDepr: recAnnualCost * techDeprPct, totalCost: recAnnualCost * (1 + techDeprPct), price: recAnnualPrice, termPrice: recurring.termPrice })}
                                 {(oneTime.cost > 0 || oneTime.price > 0) && renderRow('One Time', { cost: oneTime.cost, techDepr: oneTime.cost * techDeprPct, totalCost: oneTime.cost * (1 + techDeprPct), price: oneTime.price, termPrice: oneTime.termPrice })}
                                 <tr className={styles.summaryGrandRow}>
