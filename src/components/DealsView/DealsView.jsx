@@ -180,11 +180,30 @@ function buildColumns(rows) {
     const isPercent = DEAL_PERCENT_KEYS.has(k);
     const isDate = DEAL_DATE_KEYS.has(k);
     const isCheck = DEAL_CHECK_KEYS.has(k);
+    // Closed Won gets a clickable column header that opens the
+    // Schneider Electric ServiceDesk "Close after contract execution"
+    // ticket form in a new tab — the operational handoff the user
+    // wants to do the moment a deal flips to Closed Won.
+    const closedWonHeaderUrl = k === 'Closed Won'
+      ? 'https://servicedesk.ems.schneider-electric.com/servicedesk/customer/portal/35/create/3562'
+      : null;
     return {
       key: k,
       label: k,
       defaultWidth: sticky ? 220 : isCheck ? 110 : isCurrency || isPercent ? 130 : isDate ? 130 : 150,
       ...(sticky ? { sticky: true } : {}),
+      ...(closedWonHeaderUrl ? {
+        renderHeader: (label) => (
+          <a
+            href={closedWonHeaderUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            title="Open the Schneider Electric ServiceDesk close-after-contract form in a new tab"
+            style={{ color: 'var(--color-accent, #3B82F6)', textDecoration: 'underline' }}
+          >{label}</a>
+        ),
+      } : {}),
       render: (row) => {
         const v = row[k];
         if (v == null || v === '') return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;

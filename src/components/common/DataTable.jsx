@@ -703,7 +703,9 @@ export function DataTable({
                       onClick={() => handleSort(col.key)}
                       className={col.sticky ? styles.stickyCol : undefined}
                     >
-                      {colNames[col.key] || col.label}
+                      {col.renderHeader
+                        ? col.renderHeader(colNames[col.key] || col.label)
+                        : (colNames[col.key] || col.label)}
                       {sortConfig?.key === col.key && (
                         <span className={styles.sortArrow}>
                           {sortConfig.direction === 'asc' ? '\u25B2' : '\u25BC'}
