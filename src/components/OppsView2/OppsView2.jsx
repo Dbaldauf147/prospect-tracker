@@ -826,11 +826,208 @@ function SelectCell({ value, onChange, options }) {
   );
 }
 
-// Pull the Source picklist out of the shared DROPDOWN_LISTS so the cell
-// menu stays in lock-step with the Dropdowns tab.
-const SOURCE_OPTIONS = (DROPDOWN_LISTS.find(l => l.key === 'source')?.options) || [];
-const STAGE_OPTIONS = (DROPDOWN_LISTS.find(l => l.key === 'status')?.options) || [];
-const WHO_IS_WAITING_OPTIONS = (DROPDOWN_LISTS.find(l => l.key === 'whoIsWaiting')?.options) || [];
+// Registry of every list a column can be bound to — the Dropdowns
+// page's named picklists plus the long Solutions / Service catalog
+// (exposed under a synthetic `solutions` key). Used by the "Link
+// columns" modal and by the cell renderer to look up the option list
+// for a given binding.
+const LIST_REGISTRY = (() => {
+  const map = new Map();
+  for (const list of DROPDOWN_LISTS) {
+    map.set(list.key, { key: list.key, label: list.label, options: list.options });
+  }
+  map.set('solutions', { key: 'solutions', label: 'Solutions / Service Catalog', options: SOLUTIONS_CATALOG });
+  return map;
+})();
+const AVAILABLE_LISTS = Array.from(LIST_REGISTRY.values())
+  .sort((a, b) => a.label.localeCompare(b.label));
+
+// Default column → list bindings — preserve the original hard-coded
+// behavior for new users. The user can override or extend these per
+// column from the "Link columns" modal; user picks (including an
+// explicit `none`) win over these defaults.
+const DEFAULT_COLUMN_LINKS = {
+  Scope:  { listKey: 'solutions',    mode: 'multi'  },
+  Source: { listKey: 'source',       mode: 'single' },
+  Stage:  { listKey: 'status',       mode: 'single' },
+  Status: { listKey: 'whoIsWaiting', mode: 'single' },
+};
+
+function resolveColumnLink(columnName, userLinks) {
+  const user = userLinks?.[columnName];
+  if (user) {
+    if (user.listKey === 'none') return null;
+    if (LIST_REGISTRY.has(user.listKey)) {
+      return { listKey: user.listKey, mode: user.mode === 'multi' ? 'multi' : 'single' };
+    }
+  }
+  return DEFAULT_COLUMN_LINKS[columnName] || null;
+}
+
+// Modal for binding columns to Dropdowns-tab lists. Each row in the
+// modal mirrors one Opps 2 column header and lets the user pick a
+// source list + single/multi mode. "Default" leaves the binding to
+// whatever DEFAULT_COLUMN_LINKS says (so the built-in Scope / Source /
+// Stage / Status bindings stay in place unless explicitly overridden).
+function LinkColumnsModal({ headers, columnLinks, onChange, onClose }) {
+  const setBinding = (column, patch) => {
+    const next = { ...(columnLinks || {}) };
+    const current = next[column] || { listKey: 'default', mode: 'single' };
+    const merged = { ...current, ...patch };
+    if (merged.listKey === 'default') delete next[column];
+    else next[column] = merged;
+    onChange(next);
+  };
+
+  return createPortal(
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)',
+        zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: 680, maxWidth: '94vw', maxHeight: '86vh',
+          background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)',
+          display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        }}
+      >
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '0.85rem 1rem', borderBottom: '1px solid var(--color-border-light)',
+        }}>
+          <div>
+            <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)' }}>
+              Link columns to Dropdowns lists
+            </div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
+              Pick a list for any column. Single = one value per cell, Multi = checkbox list.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              padding: '0.3rem 0.65rem', background: 'transparent',
+              border: '1px solid var(--color-border)', borderRadius: 4,
+              fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+              color: 'var(--color-text-muted)', cursor: 'pointer',
+            }}
+          >Close</button>
+        </div>
+
+        <div style={{ overflowY: 'auto', padding: '0.5rem 1rem 1rem' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+            <thead>
+              <tr style={{ textAlign: 'left', color: 'var(--color-text-muted)' }}>
+                <th style={{ padding: '0.45rem 0.4rem', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.03em' }}>Column</th>
+                <th style={{ padding: '0.45rem 0.4rem', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.03em' }}>Dropdown list</th>
+                <th style={{ padding: '0.45rem 0.4rem', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.03em' }}>Mode</th>
+              </tr>
+            </thead>
+            <tbody>
+              {headers.map(h => {
+                const userBinding = columnLinks?.[h];
+                const defaultBinding = DEFAULT_COLUMN_LINKS[h];
+                const effective = resolveColumnLink(h, columnLinks);
+                const selectedListKey = userBinding ? userBinding.listKey : 'default';
+                const mode = userBinding?.mode || effective?.mode || 'single';
+                return (
+                  <tr key={h} style={{ borderTop: '1px solid var(--color-border-light)' }}>
+                    <td style={{ padding: '0.5rem 0.4rem', fontWeight: 600, color: 'var(--color-text)' }}>{h}</td>
+                    <td style={{ padding: '0.5rem 0.4rem' }}>
+                      <select
+                        value={selectedListKey}
+                        onChange={(e) => setBinding(h, { listKey: e.target.value })}
+                        style={{
+                          width: '100%', padding: '0.35rem 0.45rem',
+                          border: '1px solid var(--color-border)', borderRadius: 4,
+                          fontSize: '0.82rem', fontFamily: 'inherit',
+                          background: '#fff', color: 'var(--color-text)',
+                        }}
+                      >
+                        <option value="default">
+                          {defaultBinding
+                            ? `Default (${LIST_REGISTRY.get(defaultBinding.listKey)?.label || defaultBinding.listKey})`
+                            : 'Default (free text)'}
+                        </option>
+                        <option value="none">— No list (free text) —</option>
+                        <optgroup label="Dropdowns">
+                          {AVAILABLE_LISTS.map(l => (
+                            <option key={l.key} value={l.key}>{l.label}</option>
+                          ))}
+                        </optgroup>
+                      </select>
+                    </td>
+                    <td style={{ padding: '0.5rem 0.4rem', whiteSpace: 'nowrap' }}>
+                      <label style={{ marginRight: '0.6rem', cursor: effective ? 'pointer' : 'not-allowed', opacity: effective ? 1 : 0.4 }}>
+                        <input
+                          type="radio"
+                          name={`mode-${h}`}
+                          disabled={!effective}
+                          checked={mode === 'single'}
+                          onChange={() => setBinding(h, {
+                            listKey: selectedListKey === 'default' ? (defaultBinding?.listKey || 'none') : selectedListKey,
+                            mode: 'single',
+                          })}
+                          style={{ marginRight: 4 }}
+                        />Single
+                      </label>
+                      <label style={{ cursor: effective ? 'pointer' : 'not-allowed', opacity: effective ? 1 : 0.4 }}>
+                        <input
+                          type="radio"
+                          name={`mode-${h}`}
+                          disabled={!effective}
+                          checked={mode === 'multi'}
+                          onChange={() => setBinding(h, {
+                            listKey: selectedListKey === 'default' ? (defaultBinding?.listKey || 'none') : selectedListKey,
+                            mode: 'multi',
+                          })}
+                          style={{ marginRight: 4 }}
+                        />Multi
+                      </label>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        <div style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          padding: '0.6rem 1rem', borderTop: '1px solid var(--color-border-light)',
+          background: 'var(--color-bg)',
+        }}>
+          <button
+            type="button"
+            onClick={() => onChange({})}
+            style={{
+              padding: '0.35rem 0.7rem', background: 'transparent',
+              border: '1px solid var(--color-border)', borderRadius: 4,
+              fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+              color: 'var(--color-text-muted)', cursor: 'pointer',
+            }}
+          >Reset to defaults</button>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              padding: '0.35rem 0.85rem', background: 'var(--color-accent)',
+              border: '1px solid var(--color-accent)', borderRadius: 4,
+              fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+              color: '#fff', cursor: 'pointer',
+            }}
+          >Done</button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
 
 export function OppsView2({ settings, updateSettings, prospects = [], updateProspect } = {}) {
   const { user } = useAuth();
@@ -861,6 +1058,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   }, [activeTab]);
   const [hiddenServices, setHiddenServices] = useState(() => new Set());
   const [showHidden, setShowHidden] = useState(false);
+  const [linkModalOpen, setLinkModalOpen] = useState(false);
 
   // Hydration — load the user's saved opps. Prefer Firestore (cross-
   // device truth), fall back to the IndexedDB cache (last-known on
@@ -978,6 +1176,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     });
   }, []);
 
+  const updateColumnLinks = useCallback((nextLinks) => {
+    setData(prev => ({ ...(prev || {}), columnLinks: nextLinks || {} }));
+  }, []);
+
   const toggleHideService = useCallback((scope) => {
     setHiddenServices(prev => {
       const next = new Set(prev);
@@ -987,6 +1189,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   }, []);
 
   const headers = data?.headers || [];
+  const columnLinks = data?.columnLinks || {};
   const records = useMemo(() => {
     const raw = data?.records || [];
     return raw.filter(r => {
@@ -1050,39 +1253,23 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           if (DATE_COLUMNS.has(h)) {
             return <DateCell value={row[h]} onChange={(v) => updateOppField(row._id, h, v)} />;
           }
-          if (h === 'Scope') {
-            return (
-              <MultiSelectCell
-                value={row[h]}
-                onChange={(v) => updateOppField(row._id, h, v)}
-                options={SOLUTIONS_CATALOG}
-              />
-            );
-          }
-          if (h === 'Source') {
-            return (
-              <SelectCell
-                value={row[h]}
-                onChange={(v) => updateOppField(row._id, h, v)}
-                options={SOURCE_OPTIONS}
-              />
-            );
-          }
-          if (h === 'Stage') {
+          const link = resolveColumnLink(h, columnLinks);
+          if (link) {
+            const opts = LIST_REGISTRY.get(link.listKey)?.options || [];
+            if (link.mode === 'multi') {
+              return (
+                <MultiSelectCell
+                  value={row[h]}
+                  onChange={(v) => updateOppField(row._id, h, v)}
+                  options={opts}
+                />
+              );
+            }
             return (
               <SelectCell
                 value={row[h]}
                 onChange={(v) => updateOppField(row._id, h, v)}
-                options={STAGE_OPTIONS}
-              />
-            );
-          }
-          if (h === 'Status') {
-            return (
-              <SelectCell
-                value={row[h]}
-                onChange={(v) => updateOppField(row._id, h, v)}
-                options={WHO_IS_WAITING_OPTIONS}
+                options={opts}
               />
             );
           }
@@ -1106,7 +1293,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           );
         },
       }));
-  }, [headers, updateOppField, companySuggestions, prospects, updateProspect]);
+  }, [headers, columnLinks, updateOppField, companySuggestions, prospects, updateProspect]);
 
   const stageOrder = ['Lead', 'Not Started', 'Qualifying', 'Quoting', 'Quoted', 'Verbal', 'Sold', 'Not Sold'];
   const CLOSED_STAGES = useMemo(() => new Set(['Sold', 'Not Sold']), []);
@@ -1265,11 +1452,31 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             suggestions={companySuggestions}
             onCommit={(name) => addNewOpp(name)}
           />
+          <button
+            type="button"
+            onClick={() => setLinkModalOpen(true)}
+            style={{
+              padding: '0.45rem 0.85rem', background: 'transparent',
+              border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)',
+              fontSize: 'var(--font-size-sm)', fontWeight: 600, fontFamily: 'inherit',
+              color: 'var(--color-text)', cursor: 'pointer',
+            }}
+            title="Bind columns to Dropdowns-tab lists"
+          >Link columns</button>
           <button className={styles.syncBtn} onClick={() => addNewOpp()}>+ New Opp</button>
         </div>
       </div>
 
       {error && <div className={styles.error}>{error}</div>}
+
+      {linkModalOpen && (
+        <LinkColumnsModal
+          headers={headers}
+          columnLinks={columnLinks}
+          onChange={updateColumnLinks}
+          onClose={() => setLinkModalOpen(false)}
+        />
+      )}
 
       <div className={styles.tabs}>
         <button
