@@ -3,6 +3,7 @@ import { DataTable } from '../common/DataTable';
 import { matchesCdm } from '../../utils/cdmMatch';
 import { DealsView } from '../DealsView/DealsView';
 import { loadDealsList } from '../../utils/dealsStore';
+import { loadDealClientMap, DEALS_CLIENT_MAP_EVENT } from '../../utils/dealClientMap';
 import {
   fmtCurrency, fmtPercent, fmtDate, isTruthy,
   DEAL_CURRENCY_KEYS, DEAL_DATE_KEYS, DEAL_PERCENT_KEYS, DEAL_CHECK_KEYS,
@@ -134,29 +135,46 @@ export function ClientsView({ prospects = [], onSelectProspect, cdmName, setting
   // own contracts. Re-read on the cross-tab storage event so an
   // upload from the Deals subtab in another window shows up here.
   const [dealsList, setDealsList] = useState(() => loadDealsList().data);
+  const [clientMap, setClientMap] = useState(() => loadDealClientMap());
   useEffect(() => {
     function onStorage(e) {
       if (e.key === 'deals-list-override') setDealsList(loadDealsList().data);
+      if (e.key === 'deals-client-map') setClientMap(loadDealClientMap());
     }
+    function onClientMap() { setClientMap(loadDealClientMap()); }
     window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
+    window.addEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
+    };
   }, []);
-  // Refresh deals whenever we switch back to the Clients subtab — the
-  // same-window upload path on the Deals subtab doesn't fire storage.
+  // Refresh deals + client map whenever we switch back to the Clients
+  // subtab — same-window upload / mapping changes on the Deals subtab
+  // don't fire storage.
   useEffect(() => {
-    if (subtab === 'clients') setDealsList(loadDealsList().data);
+    if (subtab === 'clients') {
+      setDealsList(loadDealsList().data);
+      setClientMap(loadDealClientMap());
+    }
   }, [subtab]);
 
+  // Group deals by client. A row's raw Client Name is preferred, but
+  // when the user has explicitly mapped that source name to a different
+  // client via the helper column on the Deals subtab, we group it
+  // under the mapped name instead.
   const dealsByClient = useMemo(() => {
     const map = new Map();
     for (const d of dealsList) {
-      const k = normClientName(d['Client Name']);
-      if (!k) continue;
+      const raw = normClientName(d['Client Name']);
+      if (!raw) continue;
+      const mapped = clientMap[raw];
+      const k = mapped ? normClientName(mapped) : raw;
       if (!map.has(k)) map.set(k, []);
       map.get(k).push(d);
     }
     return map;
-  }, [dealsList]);
+  }, [dealsList, clientMap]);
 
   function toggleExpand(id) {
     setExpandedIds(prev => {
@@ -319,7 +337,7 @@ export function ClientsView({ prospects = [], onSelectProspect, cdmName, setting
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
         {subtabBar}
-        <DealsView settings={settings} updateSettings={updateSettings} />
+        <DealsView settings={settings} updateSettings={updateSettings} prospects={prospects} cdmName={cdmName} />
       </div>
     );
   }

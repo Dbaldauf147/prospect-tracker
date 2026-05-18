@@ -6,6 +6,16 @@ import {
   asNumber, fmtCurrency, fmtPercent, fmtDate, isTruthy,
   DEAL_CURRENCY_KEYS, DEAL_DATE_KEYS, DEAL_PERCENT_KEYS, DEAL_CHECK_KEYS,
 } from '../../utils/dealsFormat';
+import { matchesCdm } from '../../utils/cdmMatch';
+import {
+  loadDealClientMap, setDealClientMapping, DEALS_CLIENT_MAP_EVENT,
+} from '../../utils/dealClientMap';
+import { PasteImportModal } from './PasteImportModal';
+
+const MAPPED_COL_KEY = '__mappedToClient__';
+const MAPPED_COL_LABEL = 'Mapped to Client';
+
+function normClient(s) { return String(s || '').toLowerCase().trim(); }
 
 // Canonical ordered column list — these are the headers the Deals
 // sub-tab is expected to surface from the user's client-tracker
@@ -114,22 +124,108 @@ function buildColumns(rows) {
   });
 }
 
-export function DealsView({ settings, updateSettings }) {
+export function DealsView({ settings, updateSettings, prospects = [], cdmName }) {
   const [{ data, source }, setStore] = useState(() => loadDealsList());
   const [search, setSearch] = useState('');
   const [uploadError, setUploadError] = useState(null);
+  const [showPaste, setShowPaste] = useState(false);
+  const [clientMap, setClientMap] = useState(() => loadDealClientMap());
   const fileInputRef = useRef(null);
 
   useEffect(() => {
     function onStorage(e) {
       if (e.key === 'deals-list-override') setStore(loadDealsList());
+      if (e.key === 'deals-client-map') setClientMap(loadDealClientMap());
     }
+    function onClientMap() { setClientMap(loadDealClientMap()); }
     window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
+    window.addEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
+    };
   }, []);
 
+  // Active client roster the helper-column dropdown picks from. Falls
+  // back to every CDM-matching prospect when no clients are flagged yet,
+  // so the picker still has something useful to offer.
+  const clientOptions = useMemo(() => {
+    const list = prospects.filter(p => matchesCdm(p.cdm, cdmName));
+    const onlyClients = list.filter(p => {
+      const s = normClient(p.status);
+      return s === 'client' || s === 'old client';
+    });
+    const pool = onlyClients.length > 0 ? onlyClients : list;
+    const names = new Set();
+    for (const p of pool) {
+      const name = String(p.company || '').trim();
+      if (name) names.add(name);
+    }
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [prospects, cdmName]);
+
+  const clientNameSet = useMemo(
+    () => new Set(clientOptions.map(n => normClient(n))),
+    [clientOptions]
+  );
+
   const rows = useMemo(() => data.map((r, i) => ({ ...r, id: i })), [data]);
-  const columns = useMemo(() => buildColumns(rows), [rows]);
+  const baseColumns = useMemo(() => buildColumns(rows), [rows]);
+  // Inject a helper "Mapped to Client" column right after the sticky
+  // Client Name. The column is read-only when the row's Client Name
+  // already matches an active client, and otherwise renders a small
+  // dropdown that persists the user's pick via dealClientMap. Only
+  // surfaces when prospects are passed in.
+  const columns = useMemo(() => {
+    if (clientOptions.length === 0) return baseColumns;
+    if (baseColumns.length === 0) return baseColumns;
+    const helperCol = {
+      key: MAPPED_COL_KEY,
+      label: MAPPED_COL_LABEL,
+      defaultWidth: 220,
+      render: (row) => {
+        const raw = String(row['Client Name'] || '').trim();
+        if (!raw) return <span style={{ color: '#94A3B8' }}>—</span>;
+        const auto = clientNameSet.has(normClient(raw));
+        const manual = clientMap[normClient(raw)];
+        if (auto) {
+          return (
+            <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, background: '#DCFCE7', color: '#166534' }} title="Client Name matches an active client">
+              ✓ Matches
+            </span>
+          );
+        }
+        return (
+          <select
+            value={manual || ''}
+            onChange={(e) => {
+              const next = e.target.value;
+              setDealClientMapping(raw, next);
+            }}
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: '100%', padding: '0.2rem 0.3rem', border: '1px solid',
+              borderColor: manual ? '#86EFAC' : '#FCD34D',
+              borderRadius: 4, fontSize: '0.7rem', fontFamily: 'inherit',
+              background: manual ? '#F0FDF4' : '#FFFBEB',
+              color: '#1E293B',
+            }}
+          >
+            <option value="">— Map to client… —</option>
+            {clientOptions.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        );
+      },
+      exportValue: (row) => {
+        const raw = String(row['Client Name'] || '').trim();
+        if (!raw) return '';
+        if (clientNameSet.has(normClient(raw))) return raw;
+        return clientMap[normClient(raw)] || '';
+      },
+    };
+    // Insert immediately after the sticky Client Name column.
+    return [baseColumns[0], helperCol, ...baseColumns.slice(1)];
+  }, [baseColumns, clientOptions, clientNameSet, clientMap]);
   const tableId = useMemo(
     () => 'deals:' + columns.map(c => c.key).sort().join('|'),
     [columns]
@@ -195,13 +291,39 @@ export function DealsView({ settings, updateSettings }) {
     setStore(loadDealsList());
   }
 
+  function handlePasteImport(records) {
+    saveDealsOverride(records);
+    setStore(loadDealsList());
+    setShowPaste(false);
+  }
+
+  // Count rows whose Client Name doesn't match any active client and
+  // hasn't been hand-mapped yet — surfaces the work the user still has
+  // to do after a paste import.
+  const unmappedCount = useMemo(() => {
+    if (clientOptions.length === 0) return 0;
+    let n = 0;
+    for (const r of rows) {
+      const raw = String(r['Client Name'] || '').trim();
+      if (!raw) continue;
+      const norm = normClient(raw);
+      if (clientNameSet.has(norm)) continue;
+      if (clientMap[norm]) continue;
+      n++;
+    }
+    return n;
+  }, [rows, clientNameSet, clientMap, clientOptions]);
+
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
       <div style={{ padding: '1rem 1.25rem 0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexShrink: 0, flexWrap: 'wrap' }}>
         <div>
           <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#1E293B', margin: 0 }}>Deals</h2>
           <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2 }}>
-            {rows.length} deals{source === 'override' ? ' · uploaded' : ''}. Upload an Excel export of the client tracker to populate.
+            {rows.length} deals{source === 'override' ? ' · uploaded' : ''}. Upload an Excel export or paste from Google Sheets.
+            {unmappedCount > 0 && (
+              <> · <span style={{ color: '#92400E', fontWeight: 700 }}>{unmappedCount} row{unmappedCount === 1 ? '' : 's'} with unmatched Client Names</span> — use the <em>Mapped to Client</em> column to assign.</>
+            )}
           </div>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
@@ -212,6 +334,12 @@ export function DealsView({ settings, updateSettings }) {
             onChange={handleUpload}
             style={{ display: 'none' }}
           />
+          <button
+            type="button"
+            onClick={() => setShowPaste(true)}
+            title="Paste tab-separated rows copied from Google Sheets. The next step lets you confirm which pasted column maps to each deal field."
+            style={{ padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit' }}
+          >Paste from Sheets</button>
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
@@ -253,7 +381,7 @@ export function DealsView({ settings, updateSettings }) {
           <div style={{ margin: '0 1.25rem', padding: '1.25rem', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569', textAlign: 'center' }}>
             <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>No deals yet</div>
             <div style={{ fontSize: '0.78rem' }}>
-              Click <strong>Upload Excel</strong> to import your client tracker. Expected headers include Client Name, Agreement Name, Setup, Recurring Revenue, Commission, Due Date, and the rest of the tracker columns.
+              Click <strong>Paste from Sheets</strong> to drop in copied Google Sheets rows, or <strong>Upload Excel</strong> for a workbook. Expected headers include Client Name, Agreement Name, Setup, Recurring Revenue, Commission, Due Date, and the rest of the tracker columns.
             </div>
           </div>
         ) : (
@@ -263,6 +391,15 @@ export function DealsView({ settings, updateSettings }) {
             columns={columns}
             rows={filtered}
             alwaysVisible={alwaysVisible}
+            rowStyle={(row) => {
+              if (clientOptions.length === 0) return undefined;
+              const raw = String(row['Client Name'] || '').trim();
+              if (!raw) return undefined;
+              const norm = normClient(raw);
+              if (clientNameSet.has(norm)) return undefined;
+              if (clientMap[norm]) return undefined;
+              return { background: '#FFFBEB' };
+            }}
             emptyMessage={search ? `No deals match "${search}"` : 'No deals to display'}
             enableColumnFilters
             settings={settings}
@@ -270,6 +407,12 @@ export function DealsView({ settings, updateSettings }) {
           />
         )}
       </div>
+      {showPaste && (
+        <PasteImportModal
+          onClose={() => setShowPaste(false)}
+          onImport={handlePasteImport}
+        />
+      )}
     </div>
   );
 }
