@@ -4,6 +4,7 @@
 // doesn't fragment the map across imports of the same tracker.
 
 const KEY = 'deals-client-map';
+const IGNORE_KEY = 'deals-client-ignore';
 export const DEALS_CLIENT_MAP_EVENT = 'deals-client-map-changed';
 
 export function loadDealClientMap() {
@@ -13,12 +14,33 @@ export function loadDealClientMap() {
   } catch { return {}; }
 }
 
-function persist(map) {
+// Returns the lowercased+trimmed source names the user has marked as
+// "ignore" — those rows aren't expected to map to any client (admin
+// fees, internal placeholders, etc.) and shouldn't count against the
+// unmapped tally.
+export function loadDealClientIgnore() {
+  try {
+    const raw = localStorage.getItem(IGNORE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(parsed) ? parsed.map(s => String(s || '').toLowerCase().trim()).filter(Boolean) : []);
+  } catch { return new Set(); }
+}
+
+function persistMap(map) {
   try {
     localStorage.setItem(KEY, JSON.stringify(map || {}));
     window.dispatchEvent(new Event(DEALS_CLIENT_MAP_EVENT));
   } catch (err) {
     console.warn('Failed to persist deal client map', err);
+  }
+}
+
+function persistIgnore(set) {
+  try {
+    localStorage.setItem(IGNORE_KEY, JSON.stringify([...set]));
+    window.dispatchEvent(new Event(DEALS_CLIENT_MAP_EVENT));
+  } catch (err) {
+    console.warn('Failed to persist deal client ignore set', err);
   }
 }
 
@@ -28,7 +50,39 @@ export function setDealClientMapping(sourceName, target) {
   const map = loadDealClientMap();
   if (target == null || target === '') delete map[key];
   else map[key] = String(target);
-  persist(map);
+  persistMap(map);
+}
+
+export function setDealClientIgnore(sourceName, ignored) {
+  const key = String(sourceName || '').toLowerCase().trim();
+  if (!key) return;
+  const set = loadDealClientIgnore();
+  if (ignored) set.add(key);
+  else set.delete(key);
+  persistIgnore(set);
+}
+
+export function bulkSetDealClientIgnore(sourceNames, ignored) {
+  const set = loadDealClientIgnore();
+  for (const n of sourceNames) {
+    const key = String(n || '').toLowerCase().trim();
+    if (!key) continue;
+    if (ignored) set.add(key);
+    else set.delete(key);
+  }
+  persistIgnore(set);
+}
+
+export function bulkSetDealClientMapping(sourceNames, target) {
+  const map = loadDealClientMap();
+  const next = String(target || '').trim();
+  for (const n of sourceNames) {
+    const key = String(n || '').toLowerCase().trim();
+    if (!key) continue;
+    if (!next) delete map[key];
+    else map[key] = next;
+  }
+  persistMap(map);
 }
 
 // Resolves a deal row's Client Name to its canonical client name. When
