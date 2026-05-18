@@ -361,7 +361,14 @@ function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel }) {
   // optional `+ Add "X"` sentinel object at the end when `onAddNew` is
   // wired up and the current draft isn't an exact match to any
   // suggestion. Keeping both in one array means hover / keyboard nav
-  // works uniformly.
+  // works uniformly. A suggestion item can also be `{ value, label,
+  // secondary }` to render a richer two-line option (e.g. name +
+  // email for the Contact column); `value` is what's stored and
+  // matched against the query.
+  const matchValue = (s) => {
+    if (s && typeof s === 'object' && !s.__add) return String(s.value ?? '');
+    return String(s ?? '');
+  };
   const matches = useMemo(() => {
     const list = suggestions || [];
     const q = String(draft || '').trim().toLowerCase();
@@ -374,7 +381,7 @@ function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel }) {
     const prefix = [];
     const sub = [];
     for (const s of list) {
-      const lower = String(s).toLowerCase();
+      const lower = matchValue(s).toLowerCase();
       if (lower === q) continue;
       if (lower.startsWith(q)) prefix.push(s);
       else if (lower.includes(q)) sub.push(s);
@@ -382,7 +389,7 @@ function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel }) {
     }
     const result = [...prefix, ...sub].slice(0, 8);
     if (onAddNew) {
-      const exact = list.some(s => String(s).toLowerCase() === q);
+      const exact = list.some(s => matchValue(s).toLowerCase() === q);
       if (!exact) {
         const txt = draft.trim();
         const label = typeof addNewLabel === 'function' ? addNewLabel(txt) : `+ Add "${txt}"`;
@@ -408,8 +415,9 @@ function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel }) {
       commit(m.value);
       return;
     }
-    setDraft(m);
-    commit(m);
+    const v = m && typeof m === 'object' ? String(m.value ?? '') : m;
+    setDraft(v);
+    commit(v);
   }
 
   useLayoutEffect(() => {
@@ -481,22 +489,36 @@ function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel }) {
         >
           {matches.map((m, i) => {
             const isAdd = m && typeof m === 'object' && m.__add;
-            const label = isAdd ? m.label : m;
+            const isRich = m && typeof m === 'object' && !m.__add;
+            const label = isAdd ? m.label : (isRich ? (m.label ?? m.value) : m);
+            const secondary = isRich ? m.secondary : null;
+            const keyVal = isAdd ? '__add' : (isRich ? `${m.value}-${i}` : String(m) + i);
+            const hovered = i === hoverIdx;
             return (
               <div
-                key={isAdd ? '__add' : String(m) + i}
+                key={keyVal}
                 onClick={() => pickMatch(m)}
                 onMouseEnter={() => setHoverIdx(i)}
                 style={{
                   padding: '0.3rem 0.55rem', cursor: 'pointer',
-                  background: i === hoverIdx ? '#DCFCE7' : 'transparent',
-                  color: i === hoverIdx ? '#166534' : (isAdd ? '#7C3AED' : '#1E293B'),
+                  background: hovered ? '#DCFCE7' : 'transparent',
+                  color: hovered ? '#166534' : (isAdd ? '#7C3AED' : '#1E293B'),
                   fontStyle: isAdd ? 'italic' : 'normal',
-                  fontWeight: i === hoverIdx ? 700 : 500,
+                  fontWeight: hovered ? 700 : 500,
                   whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                   borderTop: isAdd && i > 0 ? '1px solid var(--color-border-light)' : 'none',
                 }}
-              >{label}</div>
+              >
+                <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</div>
+                {secondary && (
+                  <div style={{
+                    fontSize: '0.7rem',
+                    color: hovered ? '#15803D' : 'var(--color-text-muted)',
+                    fontWeight: 400,
+                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                  }}>{secondary}</div>
+                )}
+              </div>
             );
           })}
         </div>,
@@ -528,9 +550,10 @@ function ContactCell({ value, onChange, account, prospects, updateProspect }) {
       const k = name.toLowerCase();
       if (seen.has(k)) continue;
       seen.add(k);
-      out.push(name);
+      const email = String(c?.email || '').trim();
+      out.push({ value: name, label: name, secondary: email || null });
     }
-    out.sort((a, b) => a.localeCompare(b));
+    out.sort((a, b) => a.label.localeCompare(b.label));
     return out;
   }, [matched]);
 
