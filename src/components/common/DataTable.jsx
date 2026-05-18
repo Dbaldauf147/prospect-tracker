@@ -562,7 +562,16 @@ export function DataTable({
   });
 
   const getWidth = (col) => colWidths[col.key] || col.defaultWidth || 120;
-  const visibleColumns = columns.filter(c => visibleCols.has(c.key) || alwaysVisible.includes(c.key));
+  // Filter to user-visible columns. Safety net: when the persisted
+  // visibility set was saved against a different column lineup (e.g.
+  // an older Firestore-synced list whose keys don't match the current
+  // tableId), the filter can shrink to empty — at which point the
+  // table renders as a blank panel even though `visibleCols.size`
+  // looks healthy. Fall back to showing every column so the data is
+  // never invisible. The user's toggle still works on the next
+  // interaction; this just refuses to render an unusable empty state.
+  let visibleColumns = columns.filter(c => visibleCols.has(c.key) || alwaysVisible.includes(c.key));
+  if (visibleColumns.length === 0 && columns.length > 0) visibleColumns = columns;
 
   function toggleCol(key) {
     if (alwaysVisible.includes(key)) return;
@@ -760,9 +769,18 @@ export function DataTable({
               startIdx = Math.max(0, Math.floor(scrollTop / rowHeight) - ROW_BUFFER);
               endIdx = Math.min(total, startIdx + visibleCount + ROW_BUFFER * 2);
             }
-            const topPad = virtualize ? startIdx * rowHeight : 0;
-            const bottomPad = virtualize ? Math.max(0, (total - endIdx) * rowHeight) : 0;
-            const visibleRows = virtualize ? sortedRows.slice(startIdx, endIdx) : sortedRows;
+            let topPad = virtualize ? startIdx * rowHeight : 0;
+            let bottomPad = virtualize ? Math.max(0, (total - endIdx) * rowHeight) : 0;
+            let visibleRows = virtualize ? sortedRows.slice(startIdx, endIdx) : sortedRows;
+            // Belt-and-braces: if the virtualization math ever produces
+            // an empty slice while data exists (stale scrollTop after
+            // a dataset shrinks, weird rowHeight measurement, etc.),
+            // render everything rather than show a blank body.
+            if (visibleRows.length === 0 && total > 0) {
+              visibleRows = sortedRows;
+              topPad = 0;
+              bottomPad = 0;
+            }
             return (
               <div className={styles.scrollWrap} ref={bodyRef} onScroll={handleBodyScroll}>
                 <table className={styles.table} style={{ tableLayout: 'fixed', width: visibleColumns.reduce((s, c) => s + getWidth(c), 0) }}>
