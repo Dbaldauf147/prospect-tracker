@@ -1,6 +1,28 @@
 // Research a private equity firm's portfolio companies using Claude.
 // Returns a structured array of { companyName, sector, hqCity, hqCountry, energyGwh, siteCount, pcDescription, acquisitionYear }.
 
+function formatAnthropicError(status, body) {
+  let parsed;
+  try { parsed = JSON.parse(body); } catch { parsed = null; }
+  const inner = parsed && parsed.error;
+  const message = inner && typeof inner.message === 'string' ? inner.message : '';
+  const type = inner && typeof inner.type === 'string' ? inner.type : '';
+  if (/credit balance is too low/i.test(message)) {
+    return 'Anthropic API credits are exhausted. Add credits at console.anthropic.com → Plans & Billing, then retry.';
+  }
+  if (status === 401 || type === 'authentication_error') {
+    return 'Anthropic API key is invalid or missing. Check the ANTHROPIC_API_KEY environment variable.';
+  }
+  if (status === 429 || type === 'rate_limit_error') {
+    return 'Anthropic rate limit hit. Wait a moment and retry.';
+  }
+  if (status === 529 || type === 'overloaded_error') {
+    return 'Anthropic API is temporarily overloaded. Retry in a few seconds.';
+  }
+  if (message) return `Claude API error: ${message}`;
+  return `Claude API error (${status}): ${body}`;
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -59,7 +81,7 @@ Return up to 100 companies. If unsure about a field, use your best estimate. Do 
 
     if (!resp.ok) {
       const errText = await resp.text();
-      return res.status(resp.status).json({ error: `Claude API error: ${errText}` });
+      return res.status(resp.status).json({ error: formatAnthropicError(resp.status, errText) });
     }
 
     const data = await resp.json();
