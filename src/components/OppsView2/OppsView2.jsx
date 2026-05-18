@@ -537,11 +537,19 @@ function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel }) {
 // as a comma-separated string so the same parseMulti round-trip
 // works as for Scope.
 function ContactCell({ value, onChange, account, prospects, updateProspect, hubspotContacts }) {
-  const [open, setOpen] = useState(false);
+  // `mode` is the single source of truth for popover state:
+  //   null   — cell is idle
+  //   'pick' — the + Contacts picker is open (multi-select)
+  //   'view' — the view-and-copy popup is open (read-only roster of
+  //            currently tagged contacts with copy buttons)
+  // Splitting these into separate booleans makes outside-click
+  // handling messy; one state keeps it tractable.
+  const [mode, setMode] = useState(null);
   const [query, setQuery] = useState('');
   const [popPos, setPopPos] = useState({ top: 0, left: 0 });
   const wrapRef = useRef(null);
   const popRef = useRef(null);
+  const [copied, setCopied] = useState(null); // key of the last button that flashed "Copied!"
 
   const matched = useMemo(() => {
     const target = String(account || '').trim().toLowerCase();
@@ -596,21 +604,21 @@ function ContactCell({ value, onChange, account, prospects, updateProspect, hubs
   }, [contactOptions, query]);
 
   useLayoutEffect(() => {
-    if (!open || !wrapRef.current) return;
+    if (!mode || !wrapRef.current) return;
     const rect = wrapRef.current.getBoundingClientRect();
     setPopPos({ top: rect.bottom + 2, left: rect.left });
-  }, [open]);
+  }, [mode]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!mode) return;
     const onDown = (e) => {
       if (wrapRef.current?.contains(e.target)) return;
       if (popRef.current?.contains(e.target)) return;
-      setOpen(false);
+      setMode(null);
     };
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
-  }, [open]);
+  }, [mode]);
 
   function toggle(name) {
     const key = name.toLowerCase();
@@ -652,39 +660,201 @@ function ContactCell({ value, onChange, account, prospects, updateProspect, hubs
   const isEmpty = selected.length === 0;
   const exactMatch = contactOptions.some(o => o.name.toLowerCase() === query.trim().toLowerCase());
 
+  // Map tagged names back to their roster entry so the cell can show
+  // emails (preferred) instead of names. Falls back to the raw tag
+  // text when a tag doesn't resolve to a known contact.
+  const contactByName = useMemo(() => {
+    const map = new Map();
+    for (const c of contactOptions) map.set(c.name.toLowerCase(), c);
+    return map;
+  }, [contactOptions]);
+
+  const taggedDetails = useMemo(() => selected.map(name => {
+    const found = contactByName.get(name.toLowerCase());
+    return { name, email: found?.email || '' };
+  }), [selected, contactByName]);
+
+  const displayString = useMemo(() => taggedDetails
+    .map(t => t.email || t.name)
+    .filter(Boolean)
+    .join(', '), [taggedDetails]);
+
+  function copyToClipboard(text, key) {
+    if (!text) return;
+    const writer = navigator?.clipboard?.writeText
+      ? navigator.clipboard.writeText(text)
+      : Promise.reject(new Error('clipboard unavailable'));
+    Promise.resolve(writer)
+      .then(() => {
+        setCopied(key);
+        setTimeout(() => setCopied((cur) => (cur === key ? null : cur)), 1100);
+      })
+      .catch(() => { /* clipboard blocked — user can still highlight manually */ });
+  }
+
+  const emailsOnly = taggedDetails.map(t => t.email).filter(Boolean).join(', ');
+  const namesAndEmails = taggedDetails
+    .map(t => t.email ? `${t.name} <${t.email}>` : t.name)
+    .join('\n');
+
   return (
     <div
       ref={wrapRef}
-      style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 6, minHeight: '1em' }}
+      style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 6, minHeight: '1em', minWidth: 0 }}
       onClick={(e) => e.stopPropagation()}
     >
       <span
-        onClick={() => accountSelected && setOpen(o => !o)}
+        onClick={() => {
+          if (!isEmpty) setMode(m => m === 'view' ? null : 'view');
+          else if (accountSelected) setMode(m => m === 'pick' ? null : 'pick');
+        }}
         style={{
-          flex: 1, cursor: accountSelected ? 'pointer' : 'default',
+          flex: 1, minWidth: 0,
+          cursor: (isEmpty && !accountSelected) ? 'default' : 'pointer',
           padding: '1px 2px',
           color: isEmpty ? 'var(--color-text-muted)' : 'inherit',
-          whiteSpace: 'normal', wordBreak: 'break-word', overflow: 'hidden',
-          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          display: 'block',
         }}
-        title={accountSelected ? 'Click to tag contacts' : 'Pick an Account first'}
+        title={isEmpty
+          ? (accountSelected ? 'Click to tag contacts' : 'Pick an Account first')
+          : 'Click to view / copy contact details'}
       >
-        {isEmpty ? '—' : selected.join(', ')}
+        {isEmpty ? '—' : displayString}
       </span>
       {accountSelected && (
         <button
           type="button"
-          onClick={() => setOpen(o => !o)}
+          onClick={() => setMode(m => m === 'pick' ? null : 'pick')}
           style={{
             padding: '1px 6px', fontSize: '0.7rem', fontFamily: 'inherit',
             fontWeight: 600, color: '#166534', background: '#DCFCE7',
             border: '1px solid #86EFAC', borderRadius: 999, cursor: 'pointer',
-            whiteSpace: 'nowrap', lineHeight: 1.4,
+            whiteSpace: 'nowrap', lineHeight: 1.4, flex: '0 0 auto',
           }}
           title="Tag contacts from this company"
         >+ Contacts</button>
       )}
-      {open && createPortal(
+      {mode === 'view' && createPortal(
+        <div
+          ref={popRef}
+          onMouseDown={(e) => e.stopPropagation()}
+          style={{
+            position: 'fixed', top: popPos.top, left: popPos.left,
+            zIndex: 9999, width: 360, maxWidth: '92vw',
+            background: '#fff', border: '1px solid var(--color-border)',
+            borderRadius: 4, boxShadow: '0 8px 20px rgba(15, 23, 42, 0.18)',
+            fontSize: '0.85rem',
+          }}
+        >
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            padding: '0.5rem 0.6rem',
+            borderBottom: '1px solid var(--color-border-light)',
+          }}>
+            <div>
+              <div style={{
+                fontSize: '0.72rem', color: 'var(--color-text-muted)',
+                textTransform: 'uppercase', letterSpacing: '0.03em', fontWeight: 600,
+              }}>
+                Tagged Contacts ({selected.length})
+              </div>
+              <div style={{ fontSize: '0.78rem', color: 'var(--color-text)', marginTop: 1 }}>
+                {matched?.company || account}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setMode('pick')}
+              style={{
+                padding: '0.25rem 0.55rem', fontSize: '0.7rem', fontWeight: 600,
+                fontFamily: 'inherit', color: 'var(--color-text-muted)',
+                background: 'transparent', border: '1px solid var(--color-border)',
+                borderRadius: 3, cursor: 'pointer',
+              }}
+              title="Edit tagged contacts"
+            >Edit</button>
+          </div>
+          <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+            {taggedDetails.map((t, idx) => {
+              const key = `row-${idx}`;
+              return (
+                <div
+                  key={`${t.name}-${idx}`}
+                  style={{
+                    display: 'flex', alignItems: 'flex-start', gap: '0.5rem',
+                    padding: '0.45rem 0.7rem',
+                    borderBottom: '1px solid var(--color-border-light)',
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{
+                      fontWeight: 600, color: '#1E293B',
+                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                    }}>{t.name}</div>
+                    <div style={{
+                      fontSize: '0.75rem',
+                      color: t.email ? 'var(--color-text-muted)' : '#94A3B8',
+                      fontStyle: t.email ? 'normal' : 'italic',
+                      userSelect: 'text',
+                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                    }}>{t.email || '(no email)'}</div>
+                  </div>
+                  {t.email && (
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(t.email, key)}
+                      style={{
+                        flex: '0 0 auto',
+                        padding: '0.2rem 0.55rem', fontSize: '0.7rem', fontWeight: 600,
+                        fontFamily: 'inherit',
+                        color: copied === key ? '#166534' : 'var(--color-text-muted)',
+                        background: copied === key ? '#DCFCE7' : 'transparent',
+                        border: '1px solid var(--color-border)', borderRadius: 3,
+                        cursor: 'pointer',
+                      }}
+                    >{copied === key ? 'Copied' : 'Copy'}</button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <div style={{
+            display: 'flex', justifyContent: 'flex-end', gap: '0.4rem',
+            padding: '0.4rem 0.6rem',
+            background: 'var(--color-bg)',
+          }}>
+            <button
+              type="button"
+              onClick={() => copyToClipboard(emailsOnly, 'all-emails')}
+              disabled={!emailsOnly}
+              style={{
+                padding: '0.25rem 0.6rem', fontSize: '0.72rem', fontWeight: 600,
+                fontFamily: 'inherit',
+                color: copied === 'all-emails' ? '#166534' : 'var(--color-text-muted)',
+                background: copied === 'all-emails' ? '#DCFCE7' : 'transparent',
+                border: '1px solid var(--color-border)', borderRadius: 3,
+                cursor: emailsOnly ? 'pointer' : 'not-allowed',
+                opacity: emailsOnly ? 1 : 0.5,
+              }}
+            >{copied === 'all-emails' ? 'Copied' : 'Copy emails'}</button>
+            <button
+              type="button"
+              onClick={() => copyToClipboard(namesAndEmails, 'all-pairs')}
+              style={{
+                padding: '0.25rem 0.6rem', fontSize: '0.72rem', fontWeight: 600,
+                fontFamily: 'inherit',
+                color: copied === 'all-pairs' ? '#166534' : 'var(--color-text-muted)',
+                background: copied === 'all-pairs' ? '#DCFCE7' : 'transparent',
+                border: '1px solid var(--color-border)', borderRadius: 3,
+                cursor: 'pointer',
+              }}
+            >{copied === 'all-pairs' ? 'Copied' : 'Copy names + emails'}</button>
+          </div>
+        </div>,
+        document.body,
+      )}
+      {mode === 'pick' && createPortal(
         <div
           ref={popRef}
           onMouseDown={(e) => e.stopPropagation()}
@@ -714,7 +884,7 @@ function ContactCell({ value, onChange, account, prospects, updateProspect, hubs
               placeholder="Filter or add a contact…"
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Escape') { e.preventDefault(); setOpen(false); }
+                if (e.key === 'Escape') { e.preventDefault(); setMode(null); }
                 if (e.key === 'Enter' && query.trim() && !exactMatch) {
                   e.preventDefault();
                   addAndTagNew();
@@ -810,7 +980,7 @@ function ContactCell({ value, onChange, account, prospects, updateProspect, hubs
               >Clear</button>
               <button
                 type="button"
-                onClick={() => setOpen(false)}
+                onClick={() => setMode(null)}
                 style={{
                   padding: '0.25rem 0.6rem', background: 'var(--color-accent)',
                   border: '1px solid var(--color-accent)', borderRadius: 3,
