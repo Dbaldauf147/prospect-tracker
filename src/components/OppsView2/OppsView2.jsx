@@ -528,19 +528,27 @@ function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel }) {
   );
 }
 
-// Contact-column cell — extends EditableCell with a per-row scoped
-// suggestion list pulled from the prospect whose `company` matches
-// this row's Account. Picking the synthetic "+ Add" entry appends a
-// new contact (firstname / lastname split from the typed text) to
-// that prospect via updateProspect so it persists for future opps.
+// Contact-column cell — tag-style multi-pick scoped to the prospect
+// whose `company` matches this row's Account. Shows current tags
+// inline + a "+ Contacts" button (only when an Account is set) that
+// opens a checkbox picker of every contact on that prospect with
+// name on top and email muted underneath. Stores the chosen names
+// as a comma-separated string so the same parseMulti round-trip
+// works as for Scope.
 function ContactCell({ value, onChange, account, prospects, updateProspect }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [popPos, setPopPos] = useState({ top: 0, left: 0 });
+  const wrapRef = useRef(null);
+  const popRef = useRef(null);
+
   const matched = useMemo(() => {
     const target = String(account || '').trim().toLowerCase();
     if (!target) return null;
     return (prospects || []).find(p => String(p?.company || '').trim().toLowerCase() === target) || null;
   }, [account, prospects]);
 
-  const contactSuggestions = useMemo(() => {
+  const contactOptions = useMemo(() => {
     if (!matched?.contacts?.length) return [];
     const seen = new Set();
     const out = [];
@@ -550,44 +558,252 @@ function ContactCell({ value, onChange, account, prospects, updateProspect }) {
       const k = name.toLowerCase();
       if (seen.has(k)) continue;
       seen.add(k);
-      const email = String(c?.email || '').trim();
-      out.push({ value: name, label: name, secondary: email || null });
+      out.push({ name, email: String(c?.email || '').trim() });
     }
-    out.sort((a, b) => a.label.localeCompare(b.label));
+    out.sort((a, b) => a.name.localeCompare(b.name));
     return out;
   }, [matched]);
 
-  const onAddNew = useMemo(() => {
-    if (!matched || typeof updateProspect !== 'function') return undefined;
-    return (text) => {
-      const name = String(text || '').trim();
-      if (!name) return;
-      const parts = name.split(/\s+/);
-      const firstname = parts[0] || '';
-      const lastname = parts.slice(1).join(' ');
-      const newContact = {
-        id: `c_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        firstname,
-        lastname,
-        email: '',
-        phone: '',
-        mobilephone: '',
-        jobtitle: '',
-        company: matched.company || '',
-      };
-      const nextContacts = [...(matched.contacts || []), newContact];
-      Promise.resolve(updateProspect(matched.id, { contacts: nextContacts })).catch(() => {});
+  const selected = useMemo(() => parseMulti(value), [value]);
+  const selectedSet = useMemo(() => new Set(selected.map(s => s.toLowerCase())), [selected]);
+
+  const filteredOptions = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return contactOptions;
+    return contactOptions.filter(o =>
+      o.name.toLowerCase().includes(q) || o.email.toLowerCase().includes(q)
+    );
+  }, [contactOptions, query]);
+
+  useLayoutEffect(() => {
+    if (!open || !wrapRef.current) return;
+    const rect = wrapRef.current.getBoundingClientRect();
+    setPopPos({ top: rect.bottom + 2, left: rect.left });
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => {
+      if (wrapRef.current?.contains(e.target)) return;
+      if (popRef.current?.contains(e.target)) return;
+      setOpen(false);
     };
-  }, [matched, updateProspect]);
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+
+  function toggle(name) {
+    const key = name.toLowerCase();
+    const next = selectedSet.has(key)
+      ? selected.filter(s => s.toLowerCase() !== key)
+      : [...selected, name];
+    onChange(next.join(', '));
+  }
+
+  function addAndTagNew() {
+    const name = query.trim();
+    if (!name) return;
+    if (!matched || typeof updateProspect !== 'function') {
+      // No prospect to attach to — just tag the typed name on this opp.
+      if (!selectedSet.has(name.toLowerCase())) onChange([...selected, name].join(', '));
+      setQuery('');
+      return;
+    }
+    const parts = name.split(/\s+/);
+    const firstname = parts[0] || '';
+    const lastname = parts.slice(1).join(' ');
+    const newContact = {
+      id: `c_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      firstname,
+      lastname,
+      email: '',
+      phone: '',
+      mobilephone: '',
+      jobtitle: '',
+      company: matched.company || '',
+    };
+    const nextContacts = [...(matched.contacts || []), newContact];
+    Promise.resolve(updateProspect(matched.id, { contacts: nextContacts })).catch(() => {});
+    if (!selectedSet.has(name.toLowerCase())) onChange([...selected, name].join(', '));
+    setQuery('');
+  }
+
+  const accountSelected = !!String(account || '').trim();
+  const isEmpty = selected.length === 0;
+  const exactMatch = contactOptions.some(o => o.name.toLowerCase() === query.trim().toLowerCase());
 
   return (
-    <EditableCell
-      value={value}
-      onChange={onChange}
-      suggestions={contactSuggestions}
-      onAddNew={onAddNew}
-      addNewLabel={(txt) => `+ Add "${txt}" to ${matched?.company || 'this account'}`}
-    />
+    <div
+      ref={wrapRef}
+      style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 6, minHeight: '1em' }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <span
+        onClick={() => accountSelected && setOpen(o => !o)}
+        style={{
+          flex: 1, cursor: accountSelected ? 'pointer' : 'default',
+          padding: '1px 2px',
+          color: isEmpty ? 'var(--color-text-muted)' : 'inherit',
+          whiteSpace: 'normal', wordBreak: 'break-word', overflow: 'hidden',
+          textOverflow: 'ellipsis',
+        }}
+        title={accountSelected ? 'Click to tag contacts' : 'Pick an Account first'}
+      >
+        {isEmpty ? '—' : selected.join(', ')}
+      </span>
+      {accountSelected && (
+        <button
+          type="button"
+          onClick={() => setOpen(o => !o)}
+          style={{
+            padding: '1px 6px', fontSize: '0.7rem', fontFamily: 'inherit',
+            fontWeight: 600, color: '#166534', background: '#DCFCE7',
+            border: '1px solid #86EFAC', borderRadius: 999, cursor: 'pointer',
+            whiteSpace: 'nowrap', lineHeight: 1.4,
+          }}
+          title="Tag contacts from this company"
+        >+ Contacts</button>
+      )}
+      {open && createPortal(
+        <div
+          ref={popRef}
+          onMouseDown={(e) => e.stopPropagation()}
+          style={{
+            position: 'fixed', top: popPos.top, left: popPos.left,
+            zIndex: 9999, width: 360, maxWidth: '92vw',
+            background: '#fff', border: '1px solid var(--color-border)',
+            borderRadius: 4, boxShadow: '0 8px 20px rgba(15, 23, 42, 0.18)',
+            fontSize: '0.85rem',
+          }}
+        >
+          <div style={{
+            padding: '0.5rem 0.6rem',
+            borderBottom: '1px solid var(--color-border-light)',
+          }}>
+            <div style={{
+              fontSize: '0.72rem', color: 'var(--color-text-muted)',
+              marginBottom: '0.3rem', textTransform: 'uppercase', letterSpacing: '0.03em',
+              fontWeight: 600,
+            }}>
+              Contacts at {matched?.company || account}
+            </div>
+            <input
+              autoFocus
+              type="text"
+              value={query}
+              placeholder="Filter or add a contact…"
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') { e.preventDefault(); setOpen(false); }
+                if (e.key === 'Enter' && query.trim() && !exactMatch) {
+                  e.preventDefault();
+                  addAndTagNew();
+                }
+              }}
+              style={{
+                width: '100%', boxSizing: 'border-box',
+                border: '1px solid var(--color-border)', borderRadius: 3,
+                padding: '5px 8px', fontSize: 'inherit', fontFamily: 'inherit',
+                color: 'var(--color-text)', background: '#fff',
+              }}
+            />
+          </div>
+          <div style={{ maxHeight: 280, overflowY: 'auto' }}>
+            {filteredOptions.length === 0 ? (
+              <div style={{ padding: '0.6rem 0.7rem', color: 'var(--color-text-muted)' }}>
+                {contactOptions.length === 0
+                  ? 'No contacts on file for this company yet.'
+                  : 'No contacts match the filter.'}
+              </div>
+            ) : filteredOptions.map(opt => {
+              const checked = selectedSet.has(opt.name.toLowerCase());
+              return (
+                <label
+                  key={opt.name}
+                  style={{
+                    display: 'flex', alignItems: 'flex-start', gap: '0.55rem',
+                    padding: '0.4rem 0.7rem', cursor: 'pointer',
+                    background: checked ? '#DCFCE7' : 'transparent',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggle(opt.name)}
+                    style={{ margin: '3px 0 0' }}
+                  />
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{
+                      color: checked ? '#166534' : '#1E293B',
+                      fontWeight: checked ? 600 : 500,
+                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                    }}>{opt.name}</div>
+                    {opt.email && (
+                      <div style={{
+                        fontSize: '0.72rem',
+                        color: checked ? '#15803D' : 'var(--color-text-muted)',
+                        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                      }}>{opt.email}</div>
+                    )}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+          {query.trim() && !exactMatch && (
+            <div style={{
+              padding: '0.4rem 0.7rem', borderTop: '1px solid var(--color-border-light)',
+              background: 'var(--color-bg)',
+            }}>
+              <button
+                type="button"
+                onClick={addAndTagNew}
+                style={{
+                  padding: '0.3rem 0.6rem', background: 'transparent',
+                  border: '1px solid var(--color-border)', borderRadius: 3,
+                  fontSize: '0.75rem', fontWeight: 600, fontFamily: 'inherit',
+                  color: '#7C3AED', cursor: 'pointer', fontStyle: 'italic',
+                }}
+              >+ Add &quot;{query.trim()}&quot; to {matched?.company || 'this account'}</button>
+            </div>
+          )}
+          <div style={{
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            padding: '0.4rem 0.6rem', borderTop: '1px solid var(--color-border-light)',
+            background: 'var(--color-bg)',
+          }}>
+            <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
+              {selected.length} tagged
+            </span>
+            <div style={{ display: 'flex', gap: '0.4rem' }}>
+              <button
+                type="button"
+                onClick={() => onChange('')}
+                disabled={isEmpty}
+                style={{
+                  padding: '0.25rem 0.6rem', background: 'transparent',
+                  border: '1px solid var(--color-border)', borderRadius: 3,
+                  fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit',
+                  color: 'var(--color-text-muted)',
+                  cursor: isEmpty ? 'not-allowed' : 'pointer', opacity: isEmpty ? 0.5 : 1,
+                }}
+              >Clear</button>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                style={{
+                  padding: '0.25rem 0.6rem', background: 'var(--color-accent)',
+                  border: '1px solid var(--color-accent)', borderRadius: 3,
+                  fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit',
+                  color: '#fff', cursor: 'pointer',
+                }}
+              >Done</button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+    </div>
   );
 }
 
