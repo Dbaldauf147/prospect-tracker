@@ -37,10 +37,11 @@ function normClient(s) { return String(s || '').toLowerCase().trim(); }
 
 // Editable cell wrapper. Renders the column's normal display until the
 // user double-clicks, then swaps to an input typed to match the
-// column kind: checkbox for Yes/No fields, date for date fields,
-// number for currency / percent / numeric, plain text otherwise.
-// Saves on Enter / blur, cancels on Escape. New rows (id starts with
-// "new:") auto-focus the first editable cell so the user can start
+// column kind: date picker for date fields, number for currency /
+// percent / numeric, plain text otherwise (including Yes/No fields,
+// which often need free-text values like "N/A" or "Pending" beyond
+// the boolean default). Saves on Enter / blur, cancels on Escape.
+// New rows auto-focus the first editable cell so the user can start
 // typing immediately.
 function EditableCell({ value, kind, render, onSave, autoFocus }) {
   const [editing, setEditing] = useState(!!autoFocus);
@@ -55,23 +56,6 @@ function EditableCell({ value, kind, render, onSave, autoFocus }) {
   function cancel() {
     setDraft(value == null ? '' : String(value));
     setEditing(false);
-  }
-
-  if (kind === 'check') {
-    // Yes/No fields are single-click toggles — no edit mode at all.
-    const yes = isTruthy(value);
-    return (
-      <span
-        role="button"
-        tabIndex={0}
-        onClick={(e) => { e.stopPropagation(); onSave(yes ? '' : 'Yes'); }}
-        onKeyDown={(e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); onSave(yes ? '' : 'Yes'); } }}
-        title="Click to toggle"
-        style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, background: yes ? '#DCFCE7' : '#F1F5F9', color: yes ? '#166534' : '#64748B', cursor: 'pointer', userSelect: 'none' }}
-      >
-        {yes ? 'Yes' : (typeof value === 'string' && value.trim() ? value : 'No')}
-      </span>
-    );
   }
 
   if (!editing) {
