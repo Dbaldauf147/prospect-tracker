@@ -5810,11 +5810,16 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         views: [{ showGridLines: false, state: 'frozen', ySplit: 6 }],
       });
 
-      const TABLE_COLS = 10;
-      const RESULT_LABEL_COL = 12;
-      const RESULT_VALUE_COL = 13;
+      const TABLE_COLS = 11;
+      const RESULT_LABEL_COL = 13;
+      const RESULT_VALUE_COL = 14;
       const COLS = RESULT_VALUE_COL;
-      const widths = [6, 16, 12, 14.5, 19, 19, 14, 16, 16, 18, 3, 30, 24];
+      // Column widths — width index matches column position 1..14.
+      //   A #          | B Date     | C Hedge%(Cur) | D Hedge%(Prop)
+      //   E Volume     | F Fixed    | G Index       | H Adders
+      //   I Locked     | J Spot     | K Saving
+      //   L gutter     | M Result label | N Result value
+      const widths = [6, 16, 12, 14.5, 19, 19, 14, 20, 16, 16, 18, 3, 30, 24];
       ws.columns = widths.map(w => ({ width: w }));
 
       const INPUT_FILL = 'FFFFF9C3';
@@ -5836,10 +5841,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
 
       ws.mergeCells(2, 1, 2, COLS);
       const sub = ws.getCell(2, 1);
-      sub.value = 'Edit the yellow cells (Annual Volume on E4, Current Fixed Price on H4, plus per-tranche Hedge % in columns C/D and Index Price in column G). Volume / Locked Cost / Spot Cost / Saving columns track the Current scenario; the Result block on the right compares Current vs Proposed side-by-side.';
+      sub.value = 'Edit the yellow cells (Annual Volume on E4, Current Fixed Price on H4, plus per-tranche Hedge % in columns C/D, Index Price in column G, and Adders & Noncommodity Components in column H). Adders ride on top of the Index Price for Locked Cost AND on the Fixed Position for Spot Cost, so the same non-commodity charge hits both scenarios. Volume / Locked Cost / Spot Cost / Saving columns track the Current scenario; the Result block on the right compares Current vs Proposed side-by-side.';
       sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
       sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
-      ws.getRow(2).height = 46;
+      ws.getRow(2).height = 60;
 
       ws.mergeCells(3, 1, 3, TABLE_COLS);
       const sh0 = ws.getCell(3, 1);
@@ -5887,6 +5892,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const headers = [
         '#', 'Execution Date', 'Hedge % (Current)', 'Hedge % (Proposed)',
         'Volume (MWh)', 'Fixed Position ($/MWh)', 'Index Price ($/MWh)',
+        'Adders & Noncommodity Components ($/MWh)',
         'Locked Cost', 'Spot Cost', 'Saving vs Spot',
       ];
       const hr = ws.getRow(HEADER_ROW);
@@ -5995,11 +6001,16 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           : { formula: `$E$4*(C${rowNum}-C${rowNum - 1})`, result: TRANCHE_VOL };
         r.getCell(6).value = { formula: '$H$4', result: 75 };
         r.getCell(7).value = h.price;
-        r.getCell(8).value = { formula: `G${rowNum}*E${rowNum}`, result: h.price * TRANCHE_VOL };
-        r.getCell(9).value = { formula: `F${rowNum}*E${rowNum}`, result: 75 * TRANCHE_VOL };
-        r.getCell(10).value = { formula: `I${rowNum}-H${rowNum}`, result: (75 - h.price) * TRANCHE_VOL };
+        // Adders & Noncommodity Components ($/MWh) — user input, layered
+        // on top of the Index Price for Locked Cost AND on top of the
+        // Fixed Position for Spot Cost so the same non-commodity charge
+        // hits both scenarios. Default 0 so the column reads as opt-in.
+        r.getCell(8).value = 0;
+        r.getCell(9).value  = { formula: `(G${rowNum}+H${rowNum})*E${rowNum}`, result: h.price * TRANCHE_VOL };
+        r.getCell(10).value = { formula: `(F${rowNum}+H${rowNum})*E${rowNum}`, result: 75 * TRANCHE_VOL };
+        r.getCell(11).value = { formula: `J${rowNum}-I${rowNum}`, result: (75 - h.price) * TRANCHE_VOL };
 
-        for (let ci = 1; ci <= 10; ci++) {
+        for (let ci = 1; ci <= 11; ci++) {
           const c = r.getCell(ci);
           c.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
           c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
@@ -6014,15 +6025,16 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         r.getCell(5).numFmt = '#,##0';
         r.getCell(6).numFmt = '"$"0.00';
         r.getCell(7).numFmt = '"$"0.00';
-        r.getCell(8).numFmt = '"$"#,##0';
+        r.getCell(8).numFmt = '"$"0.00';
         r.getCell(9).numFmt = '"$"#,##0';
-        r.getCell(10).numFmt = '"$"#,##0;[Red]("$"#,##0)';
+        r.getCell(10).numFmt = '"$"#,##0';
+        r.getCell(11).numFmt = '"$"#,##0;[Red]("$"#,##0)';
 
-        // Mark the editable cells (both Hedge % columns + Index
-        // Price) yellow. Conditional formatting takes over Index
+        // Mark the editable cells (both Hedge % columns + Index Price
+        // + Adders) yellow. Conditional formatting takes over Index
         // Price's color (green when it beats Fixed Position, red
         // when it lags).
-        for (const col of [3, 4, 7]) {
+        for (const col of [3, 4, 7, 8]) {
           const c = r.getCell(col);
           c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: INPUT_FILL } };
         }
@@ -6048,11 +6060,16 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       tr.getCell(4).value = { formula: `D${LAST_DATA_ROW}`, result: 0.5 };
       tr.getCell(5).value = { formula: `SUM(${dataRange('E')})`, result: 100000 };
       tr.getCell(6).value = { formula: '$H$4', result: 75 };
-      tr.getCell(7).value = { formula: `H${TOTAL_ROW}/E${TOTAL_ROW}`, result: blendedPriceDefault };
-      tr.getCell(8).value = { formula: `SUM(${dataRange('H')})`, result: totalLockedCostDefault };
-      tr.getCell(9).value = { formula: `SUM(${dataRange('I')})`, result: totalSpotCostDefault };
-      tr.getCell(10).value = { formula: `SUM(${dataRange('J')})`, result: totalSpotCostDefault - totalLockedCostDefault };
-      for (let ci = 1; ci <= 10; ci++) {
+      // Volume-weighted average Index Price and Adder for the totals
+      // row. Locked / Spot now include Adder, so I/E would mix
+      // commodity + non-commodity into the "Index Price" cell — use
+      // SUMPRODUCT to keep the totals row honest about each piece.
+      tr.getCell(7).value  = { formula: `SUMPRODUCT(${dataRange('G')},${dataRange('E')})/${`E${TOTAL_ROW}`}`, result: blendedPriceDefault };
+      tr.getCell(8).value  = { formula: `SUMPRODUCT(${dataRange('H')},${dataRange('E')})/${`E${TOTAL_ROW}`}`, result: 0 };
+      tr.getCell(9).value  = { formula: `SUM(${dataRange('I')})`, result: totalLockedCostDefault };
+      tr.getCell(10).value = { formula: `SUM(${dataRange('J')})`, result: totalSpotCostDefault };
+      tr.getCell(11).value = { formula: `SUM(${dataRange('K')})`, result: totalSpotCostDefault - totalLockedCostDefault };
+      for (let ci = 1; ci <= 11; ci++) {
         const c = tr.getCell(ci);
         c.font = { name: 'Nunito Sans', size: 11, bold: true, color: { argb: SE_TEXT_DARK } };
         c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
@@ -6067,9 +6084,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       tr.getCell(5).numFmt = '#,##0';
       tr.getCell(6).numFmt = '"$"0.00';
       tr.getCell(7).numFmt = '"$"0.00';
-      tr.getCell(8).numFmt = '"$"#,##0';
+      tr.getCell(8).numFmt = '"$"0.00';
       tr.getCell(9).numFmt = '"$"#,##0';
-      tr.getCell(10).numFmt = '"$"#,##0;[Red]("$"#,##0)';
+      tr.getCell(10).numFmt = '"$"#,##0';
+      tr.getCell(11).numFmt = '"$"#,##0;[Red]("$"#,##0)';
       tr.height = 26;
 
       // Index-Price color flips live via conditional formatting that
@@ -6097,7 +6115,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       });
 
       ws.addConditionalFormatting({
-        ref: `J${FIRST_DATA_ROW}:J${LAST_DATA_ROW}`,
+        ref: `K${FIRST_DATA_ROW}:K${LAST_DATA_ROW}`,
         rules: [{
           type: 'dataBar',
           cfvo: [{ type: 'num', value: -50000 }, { type: 'num', value: 100000 }],
@@ -6122,20 +6140,24 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       rh.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
       ws.getRow(RESULT_HEADER_ROW).height = 22;
 
-      // SUMPRODUCT-based weighted average price for the Proposed
-      // scenario: each tranche's allocation is the row-to-row delta
-      // in column D, except the first row where the allocation is
-      // just D{FIRST_DATA_ROW} itself. Multiply per-tranche
-      // allocation by the row's Index Price (column G) and divide by
-      // the final cumulative to get the proposed blended price;
-      // multiply by Annual Volume for the total locked cost.
-      const PROP_COST_PER_UNIT =
-        `(D${FIRST_DATA_ROW}*G${FIRST_DATA_ROW}+SUMPRODUCT(` +
-        `D${FIRST_DATA_ROW + 1}:D${LAST_DATA_ROW}-D${FIRST_DATA_ROW}:D${LAST_DATA_ROW - 1},` +
-        `G${FIRST_DATA_ROW + 1}:G${LAST_DATA_ROW}))`;
+      // SUMPRODUCT-based weighted averages for the Proposed scenario.
+      // Each tranche's allocation is the row-to-row delta in column D
+      // (except the first row where it's just D{FIRST_DATA_ROW}).
+      // We split Index (G) and Adders (H) so the totals row can show
+      // each piece independently. Locked Cost = (Index + Adder) per
+      // unit annual volume × annual volume; Spot Cost = (Fixed +
+      // Adder) × volume; Savings cancels the adder by construction.
+      const propAlloc0 = `D${FIRST_DATA_ROW}`;
+      const propAllocDeltas =
+        `D${FIRST_DATA_ROW + 1}:D${LAST_DATA_ROW}-D${FIRST_DATA_ROW}:D${LAST_DATA_ROW - 1}`;
+      const PROP_INDEX_PER_UNIT =
+        `(${propAlloc0}*G${FIRST_DATA_ROW}+SUMPRODUCT(${propAllocDeltas},G${FIRST_DATA_ROW + 1}:G${LAST_DATA_ROW}))`;
+      const PROP_ADDER_PER_UNIT =
+        `(${propAlloc0}*H${FIRST_DATA_ROW}+SUMPRODUCT(${propAllocDeltas},H${FIRST_DATA_ROW + 1}:H${LAST_DATA_ROW}))`;
+      const PROP_COST_PER_UNIT = `(${PROP_INDEX_PER_UNIT}+${PROP_ADDER_PER_UNIT})`;
       const PROP_VOL = `$E$4*D${LAST_DATA_ROW}`;
       const PROP_LOCKED_COST = `${PROP_COST_PER_UNIT}*$E$4`;
-      const PROP_SPOT_COST = `$H$4*${PROP_VOL}`;
+      const PROP_SPOT_COST = `$H$4*${PROP_VOL}+${PROP_ADDER_PER_UNIT}*$E$4`;
       const PROP_SAVINGS = `(${PROP_SPOT_COST})-(${PROP_LOCKED_COST})`;
       const PROP_BLENDED = `IFERROR(${PROP_COST_PER_UNIT}/D${LAST_DATA_ROW},0)`;
 
@@ -6151,12 +6173,12 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const stats = [
         { label: 'Hedge Ratio — Current',  formula: `C${LAST_DATA_ROW}`, result: 1.0,       fmt: '0%' },
         { label: 'Hedge Ratio — Proposed', formula: `D${LAST_DATA_ROW}`, result: propFinal, fmt: '0%' },
-        { label: 'Blended Price — Current',  formula: `H${TOTAL_ROW}/E${TOTAL_ROW}`, result: blendedPriceDefault, fmt: '"$"0.00" / MWh"' },
+        { label: 'Blended Price — Current',  formula: `I${TOTAL_ROW}/E${TOTAL_ROW}`, result: blendedPriceDefault, fmt: '"$"0.00" / MWh"' },
         { label: 'Blended Price — Proposed', formula: PROP_BLENDED,                  result: propBlendedDefault,  fmt: '"$"0.00" / MWh"' },
         { label: 'Spot-Only Reference Price', formula: '$H$4', result: 75, fmt: '"$"0.00" / MWh"' },
-        { labelFormula: `"Total Hedged Cost — Current ("&TEXT(E${TOTAL_ROW},"#,##0")&" MWh)"`,  labelFallback: 'Total Hedged Cost — Current',  formula: `H${TOTAL_ROW}`, result: totalLockedCostDefault, fmt: '"$"#,##0' },
+        { labelFormula: `"Total Hedged Cost — Current ("&TEXT(E${TOTAL_ROW},"#,##0")&" MWh)"`,  labelFallback: 'Total Hedged Cost — Current',  formula: `I${TOTAL_ROW}`, result: totalLockedCostDefault, fmt: '"$"#,##0' },
         { labelFormula: `"Total Hedged Cost — Proposed ("&TEXT(${PROP_VOL},"#,##0")&" MWh)"`,   labelFallback: 'Total Hedged Cost — Proposed', formula: PROP_LOCKED_COST, result: propLockedCostDefault, fmt: '"$"#,##0' },
-        { label: 'Savings vs Spot — Current',  valueFormula: `TEXT(J${TOTAL_ROW},"$#,##0")&"   ("&IFERROR(TEXT(J${TOTAL_ROW}/I${TOTAL_ROW},"0.00%"),"-")&")"`, result: '$236,500   (3.15%)' },
+        { label: 'Savings vs Spot — Current',  valueFormula: `TEXT(K${TOTAL_ROW},"$#,##0")&"   ("&IFERROR(TEXT(K${TOTAL_ROW}/J${TOTAL_ROW},"0.00%"),"-")&")"`, result: '$236,500   (3.15%)' },
         { label: 'Savings vs Spot — Proposed', valueFormula: `TEXT(${PROP_SAVINGS},"$#,##0")&"   ("&IFERROR(TEXT((${PROP_SAVINGS})/(${PROP_SPOT_COST}),"0.00%"),"-")&")"`, result: `$${Math.round(propSavingsDefault).toLocaleString()}   (${(propSavingsDefault / propSpotCostDefault * 100).toFixed(2)}%)` },
       ];
       stats.forEach((s, i) => {
