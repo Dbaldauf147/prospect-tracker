@@ -5780,7 +5780,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     {
       const ws = wb.addWorksheet('Hedging Analysis', {
         properties: { tabColor: { argb: SE_GREEN_DARK } },
-        views: [{ showGridLines: false, state: 'frozen', ySplit: 5 }],
+        views: [{ showGridLines: false, state: 'frozen', ySplit: 6 }],
       });
 
       const TABLE_COLS = 10;
@@ -5848,10 +5848,15 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       spotInput.border = inputBorder;
       ws.getRow(4).height = 22;
 
-      // Tranche-table headers sit on row 5 (the old "60 Hedge Layers"
-      // section header was dropped so the table starts immediately
-      // below the Inputs row).
-      const HEADER_ROW = 5;
+      // Row 5 is a blank white spacer between the Inputs block and
+      // the tranche table — gives the eye a visual break instead of
+      // having the green header band butt straight against the
+      // yellow input cells.
+      ws.getRow(5).height = 30;
+
+      // Tranche-table headers sit on row 6, with the blank spacer
+      // above it.
+      const HEADER_ROW = 6;
       const headers = [
         '#', 'Execution Date', 'Hedge % (Current)', 'Hedge % (Proposed)',
         'Volume (MWh)', 'Fixed Position ($/MWh)', 'Index Price ($/MWh)',
