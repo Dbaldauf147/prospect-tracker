@@ -175,9 +175,14 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
   useEffect(() => {
     const bump = () => setCoverageVersion(v => v + 1);
     window.addEventListener('my-accounts-coverage-changed', bump);
+    // Global Target-Accounts block toggles change the My-Accounts set
+    // we count against; the storage event only fires cross-tab, so the
+    // custom event is what keeps the same window in sync.
+    window.addEventListener('target-accounts:blocked-changed', bump);
     window.addEventListener('storage', bump);
     return () => {
       window.removeEventListener('my-accounts-coverage-changed', bump);
+      window.removeEventListener('target-accounts:blocked-changed', bump);
       window.removeEventListener('storage', bump);
     };
   }, []);
@@ -198,17 +203,32 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
         const raw = localStorage.getItem('my-accounts:active-names');
         myAccountNames = raw ? JSON.parse(raw) : null;
       } catch {}
+      // Globally-blocked Target Accounts are excluded from
+      // UploadedListView's suggestion pool, so counting them here would
+      // pin the tab below 100% with phantom suggestions the user
+      // can't see or resolve.
+      const blockedAccountNames = new Set();
+      try {
+        const raw = localStorage.getItem('target-accounts:blocked-names');
+        const arr = raw ? JSON.parse(raw) : [];
+        if (Array.isArray(arr)) {
+          for (const s of arr) {
+            const k = String(s || '').toLowerCase().trim();
+            if (k) blockedAccountNames.add(k);
+          }
+        }
+      } catch {}
       const accountSet = new Set();
       if (Array.isArray(myAccountNames) && myAccountNames.length > 0) {
         for (const n of myAccountNames) {
           const k = String(n || '').toLowerCase().trim();
-          if (k) accountSet.add(k);
+          if (k && !blockedAccountNames.has(k)) accountSet.add(k);
         }
       } else {
         for (const p of prospects) {
           if (!matchesCdm(p.cdm, cdmName)) continue;
           const k = (p.company || '').toLowerCase().trim();
-          if (k) accountSet.add(k);
+          if (k && !blockedAccountNames.has(k)) accountSet.add(k);
         }
       }
 
@@ -256,15 +276,19 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             if (!blocked[norm]) suggested.add(exact);
             continue;
           }
+          // Pick the shortest matching target norm ignoring the block;
+          // if that best candidate is blocked, drop the suggestion
+          // entirely rather than falling through to a longer match —
+          // this mirrors UploadedListView's suggestFrom + filterBlocked
+          // chain so the two coverage counts stay in lockstep.
           let best = null;
           for (const a of targetNorms) {
             if (a.norm.length < 3) continue;
-            if (blocked[a.norm]) continue;
             if (norm.includes(a.norm) || a.norm.includes(norm)) {
               if (!best || a.norm.length < best.norm.length) best = a;
             }
           }
-          if (best) suggested.add(best.key);
+          if (best && !blocked[best.norm]) suggested.add(best.key);
         }
         const pending = [...suggested].filter(k => !confirmed.has(k)).length;
         const touched = confirmed.size + pending;
