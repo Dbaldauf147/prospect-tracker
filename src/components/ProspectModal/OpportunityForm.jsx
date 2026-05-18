@@ -623,7 +623,7 @@ function CallContextImportPicker({ candidates, onImport }) {
   };
 
   return (
-    <div ref={wrapRef} style={{ position: 'relative', marginLeft: 'auto' }}>
+    <div ref={wrapRef} style={{ position: 'relative' }}>
       <button
         type="button"
         onClick={() => setOpen(o => !o)}
