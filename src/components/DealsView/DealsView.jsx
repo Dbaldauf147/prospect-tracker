@@ -22,6 +22,83 @@ const STATUS_COL_LABEL = 'Client Status';
 
 function normClient(s) { return String(s || '').toLowerCase().trim(); }
 
+// Editable cell wrapper. Renders the column's normal display until the
+// user double-clicks, then swaps to an input typed to match the
+// column kind: checkbox for Yes/No fields, date for date fields,
+// number for currency / percent / numeric, plain text otherwise.
+// Saves on Enter / blur, cancels on Escape. New rows (id starts with
+// "new:") auto-focus the first editable cell so the user can start
+// typing immediately.
+function EditableCell({ value, kind, render, onSave, autoFocus }) {
+  const [editing, setEditing] = useState(!!autoFocus);
+  const [draft, setDraft] = useState(value == null ? '' : String(value));
+  useEffect(() => { if (!editing) setDraft(value == null ? '' : String(value)); }, [value, editing]);
+
+  function commit(next) {
+    const v = next == null ? '' : String(next);
+    onSave(v);
+    setEditing(false);
+  }
+  function cancel() {
+    setDraft(value == null ? '' : String(value));
+    setEditing(false);
+  }
+
+  if (kind === 'check') {
+    // Yes/No fields are single-click toggles — no edit mode at all.
+    const yes = isTruthy(value);
+    return (
+      <span
+        role="button"
+        tabIndex={0}
+        onClick={(e) => { e.stopPropagation(); onSave(yes ? '' : 'Yes'); }}
+        onKeyDown={(e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); onSave(yes ? '' : 'Yes'); } }}
+        title="Click to toggle"
+        style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, background: yes ? '#DCFCE7' : '#F1F5F9', color: yes ? '#166534' : '#64748B', cursor: 'pointer', userSelect: 'none' }}
+      >
+        {yes ? 'Yes' : (typeof value === 'string' && value.trim() ? value : 'No')}
+      </span>
+    );
+  }
+
+  if (!editing) {
+    return (
+      <span
+        onDoubleClick={(e) => { e.stopPropagation(); setEditing(true); }}
+        title="Double-click to edit"
+        style={{ display: 'inline-block', width: '100%', cursor: 'text' }}
+      >
+        {render(value)}
+      </span>
+    );
+  }
+
+  const inputType = (kind === 'currency' || kind === 'percent' || kind === 'number') ? 'number'
+    : kind === 'date' ? 'date'
+    : 'text';
+  return (
+    <input
+      autoFocus
+      type={inputType}
+      value={draft}
+      step={inputType === 'number' ? 'any' : undefined}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => commit(draft)}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') { e.preventDefault(); commit(draft); }
+        else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+      }}
+      style={{
+        width: '100%', padding: '0.15rem 0.3rem',
+        border: '1px solid #3B82F6', borderRadius: 4,
+        fontSize: '0.7rem', fontFamily: 'inherit', background: '#fff', color: '#1E293B',
+        boxSizing: 'border-box',
+      }}
+    />
+  );
+}
+
 // Color scheme for the per-deal Client Status pill. Matches the style
 // used in ClientsView so the same status reads the same across views.
 function statusPillStyle(status) {
@@ -166,7 +243,17 @@ const COLUMN_ORDER = [
 function buildColumns(rows) {
   if (!rows.length) return [];
   const keys = new Set();
-  for (const r of rows) for (const k of Object.keys(r)) if (k !== 'id') keys.add(k);
+  // Skip 'id' and any double-underscore internal field (__onUpdate,
+  // __newRow, etc.) — those are render-time scaffolding, not data.
+  for (const r of rows) for (const k of Object.keys(r)) {
+    if (k === 'id' || k.startsWith('__')) continue;
+    keys.add(k);
+  }
+  // Empty new-row case: nothing in the data has populated keys yet
+  // (the user just clicked New Deal on a clean slate). Seed with the
+  // canonical lineup so they have somewhere to type instead of staring
+  // at a zero-column table.
+  if (keys.size === 0) for (const k of COLUMN_ORDER) keys.add(k);
 
   // Lay out canonical columns first, then any extras the workbook
   // brought along, so unexpected headers still render at the end.
@@ -180,6 +267,18 @@ function buildColumns(rows) {
     const isPercent = DEAL_PERCENT_KEYS.has(k);
     const isDate = DEAL_DATE_KEYS.has(k);
     const isCheck = DEAL_CHECK_KEYS.has(k);
+    const kind = isCheck ? 'check'
+      : isCurrency ? 'currency'
+      : isPercent ? 'percent'
+      : isDate ? 'date'
+      : 'text';
+    function renderValue(v) {
+      if (v == null || v === '') return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
+      if (isCurrency) return <span style={{ display: 'block', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: '#0F172A' }}>{fmtCurrency(v)}</span>;
+      if (isPercent) return <span style={{ display: 'block', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: '#0F172A' }}>{fmtPercent(v)}</span>;
+      if (isDate) return <span style={{ color: '#334155' }}>{fmtDate(v)}</span>;
+      return <span>{String(v)}</span>;
+    }
     // Closed Won gets a clickable column header that opens the
     // Schneider Electric ServiceDesk "Close after contract execution"
     // ticket form in a new tab — the operational handoff the user
@@ -190,6 +289,8 @@ function buildColumns(rows) {
     return {
       key: k,
       label: k,
+      kind,
+      renderValue,
       defaultWidth: sticky ? 220 : isCheck ? 110 : isCurrency || isPercent ? 130 : isDate ? 130 : 150,
       ...(sticky ? { sticky: true } : {}),
       ...(closedWonHeaderUrl ? {
@@ -204,22 +305,15 @@ function buildColumns(rows) {
           >{label}</a>
         ),
       } : {}),
-      render: (row) => {
-        const v = row[k];
-        if (v == null || v === '') return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
-        if (isCheck) {
-          const yes = isTruthy(v);
-          return (
-            <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999, fontSize: '0.62rem', fontWeight: 700, background: yes ? '#DCFCE7' : '#F1F5F9', color: yes ? '#166534' : '#64748B' }}>
-              {yes ? 'Yes' : (typeof v === 'string' && v.trim() ? v : 'No')}
-            </span>
-          );
-        }
-        if (isCurrency) return <span style={{ display: 'block', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: '#0F172A' }}>{fmtCurrency(v)}</span>;
-        if (isPercent) return <span style={{ display: 'block', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: '#0F172A' }}>{fmtPercent(v)}</span>;
-        if (isDate) return <span style={{ color: '#334155' }}>{fmtDate(v)}</span>;
-        return <span>{String(v)}</span>;
-      },
+      render: (row) => (
+        <EditableCell
+          value={row[k]}
+          kind={kind}
+          render={renderValue}
+          onSave={(v) => row.__onUpdate?.(row.id, k, v)}
+          autoFocus={!!row.__newRow && sticky}
+        />
+      ),
       exportValue: (row) => {
         const v = row[k];
         if (v == null) return '';
@@ -310,7 +404,36 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
     return out;
   }, [prospects]);
 
-  const rows = useMemo(() => data.map((r, i) => ({ ...r, id: i })), [data]);
+  // Per-cell saves write the new value into the stored deal and
+  // persist through dealsStore (localStorage + Firestore mirror).
+  // Falsy / empty saves drop the key entirely so empty cells render
+  // the muted "—" placeholder consistently.
+  function updateCell(rowId, key, value) {
+    const idx = Number(rowId);
+    if (!Number.isFinite(idx)) return;
+    setStore(prev => {
+      const next = [...prev.data];
+      const current = { ...(next[idx] || {}) };
+      if (value === '' || value == null) delete current[key];
+      else current[key] = value;
+      next[idx] = current;
+      try { saveDealsOverride(next); } catch (err) { console.warn('Save deal failed', err); }
+      return { data: next, source: 'override' };
+    });
+  }
+
+  function addNewDeal() {
+    setStore(prev => {
+      const next = [{}, ...prev.data];
+      try { saveDealsOverride(next); } catch (err) { console.warn('Save deal failed', err); }
+      return { data: next, source: 'override' };
+    });
+  }
+
+  const rows = useMemo(
+    () => data.map((r, i) => ({ ...r, id: i, __onUpdate: updateCell, __newRow: i === 0 && Object.keys(r).length === 0 })),
+    [data]
+  );
   const baseColumns = useMemo(() => buildColumns(rows), [rows]);
   // Inject a helper "Mapped to Client" column right after the sticky
   // Client Name. The column is read-only when the row's Client Name
@@ -562,6 +685,12 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
           />
           <button
             type="button"
+            onClick={addNewDeal}
+            title="Add a blank deal row at the top of the table — start typing into any cell to populate it."
+            style={{ padding: '0.4rem 0.8rem', border: '1px solid #16A34A', background: '#16A34A', color: '#fff', borderRadius: 6, fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+          >+ New Deal</button>
+          <button
+            type="button"
             onClick={() => setShowPaste(true)}
             title="Paste tab-separated rows copied from Google Sheets. The next step lets you confirm which pasted column maps to each deal field."
             style={{ padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit' }}
@@ -655,7 +784,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
           <div style={{ margin: '0 1.25rem', padding: '1.25rem', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569', textAlign: 'center' }}>
             <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>No deals yet</div>
             <div style={{ fontSize: '0.78rem' }}>
-              Click <strong>Paste from Sheets</strong> to drop in copied Google Sheets rows, or <strong>Upload Excel</strong> for a workbook. Expected headers include Client Name, Agreement Name, Setup, Recurring Revenue, Commission, Due Date, and the rest of the tracker columns.
+              Click <strong>+ New Deal</strong> to add a blank row and type into the cells, <strong>Paste from Sheets</strong> to drop in copied Google Sheets rows, or <strong>Upload Excel</strong> for a workbook.
             </div>
           </div>
         ) : (
