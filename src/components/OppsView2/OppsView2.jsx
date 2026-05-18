@@ -537,15 +537,13 @@ function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel }) {
 // as a comma-separated string so the same parseMulti round-trip
 // works as for Scope.
 function ContactCell({ value, onChange, account, prospects, updateProspect, hubspotContacts }) {
-  // `mode` is the single source of truth for popover state:
-  //   null   — cell is idle
-  //   'pick' — the + Contacts picker is open (multi-select)
-  //   'view' — the view-and-copy popup is open (read-only roster of
-  //            currently tagged contacts with copy buttons)
-  // Splitting these into separate booleans makes outside-click
-  // handling messy; one state keeps it tractable.
-  const [mode, setMode] = useState(null);
+  // Single boolean for popover state — the popover handles both
+  // viewing currently tagged contacts and adding new ones (from the
+  // company roster or as a custom one-off tag), so the picker/view
+  // split is gone.
+  const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const [customDraft, setCustomDraft] = useState('');
   const [popPos, setPopPos] = useState({ top: 0, left: 0 });
   const wrapRef = useRef(null);
   const popRef = useRef(null);
@@ -604,61 +602,47 @@ function ContactCell({ value, onChange, account, prospects, updateProspect, hubs
   }, [contactOptions, query]);
 
   useLayoutEffect(() => {
-    if (!mode || !wrapRef.current) return;
+    if (!open || !wrapRef.current) return;
     const rect = wrapRef.current.getBoundingClientRect();
     setPopPos({ top: rect.bottom + 2, left: rect.left });
-  }, [mode]);
+  }, [open]);
 
   useEffect(() => {
-    if (!mode) return;
+    if (!open) return;
     const onDown = (e) => {
       if (wrapRef.current?.contains(e.target)) return;
       if (popRef.current?.contains(e.target)) return;
-      setMode(null);
+      setOpen(false);
     };
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
-  }, [mode]);
+  }, [open]);
 
-  function toggle(name) {
-    const key = name.toLowerCase();
-    const next = selectedSet.has(key)
-      ? selected.filter(s => s.toLowerCase() !== key)
-      : [...selected, name];
-    onChange(next.join(', '));
+  function tagName(name) {
+    const trimmed = String(name || '').trim();
+    if (!trimmed) return;
+    if (selectedSet.has(trimmed.toLowerCase())) return;
+    onChange([...selected, trimmed].join(', '));
   }
 
-  function addAndTagNew() {
-    const name = query.trim();
+  function untag(name) {
+    const key = String(name || '').toLowerCase();
+    onChange(selected.filter(s => s.toLowerCase() !== key).join(', '));
+  }
+
+  // Custom tag — used by the "not from this company" path. Just adds
+  // the typed name to this opp's tag list without touching the
+  // prospect roster, so a one-off contact (consultant, broker,
+  // someone at a different account) can ride along on this opp.
+  function tagCustom() {
+    const name = customDraft.trim();
     if (!name) return;
-    if (!matched || typeof updateProspect !== 'function') {
-      // No prospect to attach to — just tag the typed name on this opp.
-      if (!selectedSet.has(name.toLowerCase())) onChange([...selected, name].join(', '));
-      setQuery('');
-      return;
-    }
-    const parts = name.split(/\s+/);
-    const firstname = parts[0] || '';
-    const lastname = parts.slice(1).join(' ');
-    const newContact = {
-      id: `c_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      firstname,
-      lastname,
-      email: '',
-      phone: '',
-      mobilephone: '',
-      jobtitle: '',
-      company: matched.company || '',
-    };
-    const nextContacts = [...(matched.contacts || []), newContact];
-    Promise.resolve(updateProspect(matched.id, { contacts: nextContacts })).catch(() => {});
-    if (!selectedSet.has(name.toLowerCase())) onChange([...selected, name].join(', '));
-    setQuery('');
+    tagName(name);
+    setCustomDraft('');
   }
 
   const accountSelected = !!String(account || '').trim();
   const isEmpty = selected.length === 0;
-  const exactMatch = contactOptions.some(o => o.name.toLowerCase() === query.trim().toLowerCase());
 
   // Map tagged names back to their roster entry so the cell can show
   // emails (preferred) instead of names. Falls back to the raw tag
@@ -705,8 +689,8 @@ function ContactCell({ value, onChange, account, prospects, updateProspect, hubs
     >
       <span
         onClick={() => {
-          if (!isEmpty) setMode(m => m === 'view' ? null : 'view');
-          else if (accountSelected) setMode(m => m === 'pick' ? null : 'pick');
+          if (isEmpty && !accountSelected) return;
+          setOpen(o => !o);
         }}
         style={{
           flex: 1, minWidth: 0,
@@ -722,10 +706,13 @@ function ContactCell({ value, onChange, account, prospects, updateProspect, hubs
       >
         {isEmpty ? '—' : displayString}
       </span>
-      {accountSelected && (
+      {/* The + Contacts pill only shows when the column is empty — once
+          contacts are tagged, the user clicks the email list itself to
+          open the same popover and the pill would just be noise. */}
+      {accountSelected && isEmpty && (
         <button
           type="button"
-          onClick={() => setMode(m => m === 'pick' ? null : 'pick')}
+          onClick={() => setOpen(o => !o)}
           style={{
             padding: '1px 6px', fontSize: '0.7rem', fontFamily: 'inherit',
             fontWeight: 600, color: '#166534', background: '#DCFCE7',
@@ -735,13 +722,13 @@ function ContactCell({ value, onChange, account, prospects, updateProspect, hubs
           title="Tag contacts from this company"
         >+ Contacts</button>
       )}
-      {mode === 'view' && createPortal(
+      {open && createPortal(
         <div
           ref={popRef}
           onMouseDown={(e) => e.stopPropagation()}
           style={{
             position: 'fixed', top: popPos.top, left: popPos.left,
-            zIndex: 9999, width: 360, maxWidth: '92vw',
+            zIndex: 9999, width: 380, maxWidth: '92vw',
             background: '#fff', border: '1px solid var(--color-border)',
             borderRadius: 4, boxShadow: '0 8px 20px rgba(15, 23, 42, 0.18)',
             fontSize: '0.85rem',
@@ -760,135 +747,137 @@ function ContactCell({ value, onChange, account, prospects, updateProspect, hubs
                 Tagged Contacts ({selected.length})
               </div>
               <div style={{ fontSize: '0.78rem', color: 'var(--color-text)', marginTop: 1 }}>
-                {matched?.company || account}
+                {matched?.company || account || '—'}
               </div>
             </div>
-            <button
-              type="button"
-              onClick={() => setMode('pick')}
-              style={{
-                padding: '0.25rem 0.55rem', fontSize: '0.7rem', fontWeight: 600,
-                fontFamily: 'inherit', color: 'var(--color-text-muted)',
-                background: 'transparent', border: '1px solid var(--color-border)',
-                borderRadius: 3, cursor: 'pointer',
-              }}
-              title="Edit tagged contacts"
-            >Edit</button>
+            {!isEmpty && (
+              <button
+                type="button"
+                onClick={() => onChange('')}
+                style={{
+                  padding: '0.25rem 0.55rem', fontSize: '0.7rem', fontWeight: 600,
+                  fontFamily: 'inherit', color: 'var(--color-text-muted)',
+                  background: 'transparent', border: '1px solid var(--color-border)',
+                  borderRadius: 3, cursor: 'pointer',
+                }}
+                title="Remove all tagged contacts"
+              >Clear all</button>
+            )}
           </div>
-          <div style={{ maxHeight: 320, overflowY: 'auto' }}>
-            {taggedDetails.map((t, idx) => {
-              const key = `row-${idx}`;
-              return (
-                <div
-                  key={`${t.name}-${idx}`}
-                  style={{
-                    display: 'flex', alignItems: 'flex-start', gap: '0.5rem',
-                    padding: '0.45rem 0.7rem',
-                    borderBottom: '1px solid var(--color-border-light)',
-                  }}
-                >
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{
-                      fontWeight: 600, color: '#1E293B',
-                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                    }}>{t.name}</div>
-                    <div style={{
-                      fontSize: '0.75rem',
-                      color: t.email ? 'var(--color-text-muted)' : '#94A3B8',
-                      fontStyle: t.email ? 'normal' : 'italic',
-                      userSelect: 'text',
-                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                    }}>{t.email || '(no email)'}</div>
-                  </div>
-                  {t.email && (
-                    <button
-                      type="button"
-                      onClick={() => copyToClipboard(t.email, key)}
+
+          {!isEmpty && (
+            <>
+              <div style={{ maxHeight: 240, overflowY: 'auto' }}>
+                {taggedDetails.map((t, idx) => {
+                  const key = `row-${idx}`;
+                  return (
+                    <div
+                      key={`${t.name}-${idx}`}
                       style={{
-                        flex: '0 0 auto',
-                        padding: '0.2rem 0.55rem', fontSize: '0.7rem', fontWeight: 600,
-                        fontFamily: 'inherit',
-                        color: copied === key ? '#166534' : 'var(--color-text-muted)',
-                        background: copied === key ? '#DCFCE7' : 'transparent',
-                        border: '1px solid var(--color-border)', borderRadius: 3,
-                        cursor: 'pointer',
+                        display: 'flex', alignItems: 'flex-start', gap: '0.5rem',
+                        padding: '0.45rem 0.7rem',
+                        borderBottom: '1px solid var(--color-border-light)',
                       }}
-                    >{copied === key ? 'Copied' : 'Copy'}</button>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-          <div style={{
-            display: 'flex', justifyContent: 'flex-end', gap: '0.4rem',
-            padding: '0.4rem 0.6rem',
-            background: 'var(--color-bg)',
-          }}>
-            <button
-              type="button"
-              onClick={() => copyToClipboard(emailsOnly, 'all-emails')}
-              disabled={!emailsOnly}
-              style={{
-                padding: '0.25rem 0.6rem', fontSize: '0.72rem', fontWeight: 600,
-                fontFamily: 'inherit',
-                color: copied === 'all-emails' ? '#166534' : 'var(--color-text-muted)',
-                background: copied === 'all-emails' ? '#DCFCE7' : 'transparent',
-                border: '1px solid var(--color-border)', borderRadius: 3,
-                cursor: emailsOnly ? 'pointer' : 'not-allowed',
-                opacity: emailsOnly ? 1 : 0.5,
-              }}
-            >{copied === 'all-emails' ? 'Copied' : 'Copy emails'}</button>
-            <button
-              type="button"
-              onClick={() => copyToClipboard(namesAndEmails, 'all-pairs')}
-              style={{
-                padding: '0.25rem 0.6rem', fontSize: '0.72rem', fontWeight: 600,
-                fontFamily: 'inherit',
-                color: copied === 'all-pairs' ? '#166534' : 'var(--color-text-muted)',
-                background: copied === 'all-pairs' ? '#DCFCE7' : 'transparent',
-                border: '1px solid var(--color-border)', borderRadius: 3,
-                cursor: 'pointer',
-              }}
-            >{copied === 'all-pairs' ? 'Copied' : 'Copy names + emails'}</button>
-          </div>
-        </div>,
-        document.body,
-      )}
-      {mode === 'pick' && createPortal(
-        <div
-          ref={popRef}
-          onMouseDown={(e) => e.stopPropagation()}
-          style={{
-            position: 'fixed', top: popPos.top, left: popPos.left,
-            zIndex: 9999, width: 360, maxWidth: '92vw',
-            background: '#fff', border: '1px solid var(--color-border)',
-            borderRadius: 4, boxShadow: '0 8px 20px rgba(15, 23, 42, 0.18)',
-            fontSize: '0.85rem',
-          }}
-        >
-          <div style={{
-            padding: '0.5rem 0.6rem',
-            borderBottom: '1px solid var(--color-border-light)',
-          }}>
+                    >
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{
+                          fontWeight: 600, color: '#1E293B',
+                          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                        }}>{t.name}</div>
+                        <div style={{
+                          fontSize: '0.75rem',
+                          color: t.email ? 'var(--color-text-muted)' : '#94A3B8',
+                          fontStyle: t.email ? 'normal' : 'italic',
+                          userSelect: 'text',
+                          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                        }}>{t.email || '(no email)'}</div>
+                      </div>
+                      {t.email && (
+                        <button
+                          type="button"
+                          onClick={() => copyToClipboard(t.email, key)}
+                          style={{
+                            flex: '0 0 auto',
+                            padding: '0.2rem 0.55rem', fontSize: '0.7rem', fontWeight: 600,
+                            fontFamily: 'inherit',
+                            color: copied === key ? '#166534' : 'var(--color-text-muted)',
+                            background: copied === key ? '#DCFCE7' : 'transparent',
+                            border: '1px solid var(--color-border)', borderRadius: 3,
+                            cursor: 'pointer',
+                          }}
+                        >{copied === key ? 'Copied' : 'Copy'}</button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => untag(t.name)}
+                        title="Remove this tag"
+                        style={{
+                          flex: '0 0 auto',
+                          width: 22, height: 22, padding: 0,
+                          fontSize: '0.9rem', fontWeight: 600,
+                          fontFamily: 'inherit', lineHeight: 1,
+                          color: 'var(--color-text-muted)',
+                          background: 'transparent',
+                          border: '1px solid var(--color-border)', borderRadius: 3,
+                          cursor: 'pointer',
+                        }}
+                      >×</button>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{
+                display: 'flex', justifyContent: 'flex-end', gap: '0.4rem',
+                padding: '0.4rem 0.6rem',
+                borderBottom: '1px solid var(--color-border-light)',
+                background: 'var(--color-bg)',
+              }}>
+                <button
+                  type="button"
+                  onClick={() => copyToClipboard(emailsOnly, 'all-emails')}
+                  disabled={!emailsOnly}
+                  style={{
+                    padding: '0.25rem 0.6rem', fontSize: '0.72rem', fontWeight: 600,
+                    fontFamily: 'inherit',
+                    color: copied === 'all-emails' ? '#166534' : 'var(--color-text-muted)',
+                    background: copied === 'all-emails' ? '#DCFCE7' : 'transparent',
+                    border: '1px solid var(--color-border)', borderRadius: 3,
+                    cursor: emailsOnly ? 'pointer' : 'not-allowed',
+                    opacity: emailsOnly ? 1 : 0.5,
+                  }}
+                >{copied === 'all-emails' ? 'Copied' : 'Copy emails'}</button>
+                <button
+                  type="button"
+                  onClick={() => copyToClipboard(namesAndEmails, 'all-pairs')}
+                  style={{
+                    padding: '0.25rem 0.6rem', fontSize: '0.72rem', fontWeight: 600,
+                    fontFamily: 'inherit',
+                    color: copied === 'all-pairs' ? '#166534' : 'var(--color-text-muted)',
+                    background: copied === 'all-pairs' ? '#DCFCE7' : 'transparent',
+                    border: '1px solid var(--color-border)', borderRadius: 3,
+                    cursor: 'pointer',
+                  }}
+                >{copied === 'all-pairs' ? 'Copied' : 'Copy names + emails'}</button>
+              </div>
+            </>
+          )}
+
+          {/* Add from the company's existing roster. */}
+          <div style={{ padding: '0.5rem 0.6rem' }}>
             <div style={{
-              fontSize: '0.72rem', color: 'var(--color-text-muted)',
-              marginBottom: '0.3rem', textTransform: 'uppercase', letterSpacing: '0.03em',
-              fontWeight: 600,
+              fontSize: '0.7rem', color: 'var(--color-text-muted)',
+              textTransform: 'uppercase', letterSpacing: '0.03em', fontWeight: 600,
+              marginBottom: '0.3rem',
             }}>
-              Contacts at {matched?.company || account}
+              + Add from {matched?.company || account || 'this company'}
             </div>
             <input
-              autoFocus
               type="text"
               value={query}
-              placeholder="Filter or add a contact…"
+              placeholder="Filter contacts…"
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Escape') { e.preventDefault(); setMode(null); }
-                if (e.key === 'Enter' && query.trim() && !exactMatch) {
-                  e.preventDefault();
-                  addAndTagNew();
-                }
+                if (e.key === 'Escape') { e.preventDefault(); setOpen(false); }
               }}
               style={{
                 width: '100%', boxSizing: 'border-box',
@@ -898,96 +887,92 @@ function ContactCell({ value, onChange, account, prospects, updateProspect, hubs
               }}
             />
           </div>
-          <div style={{ maxHeight: 280, overflowY: 'auto' }}>
+          <div style={{ maxHeight: 200, overflowY: 'auto', borderTop: '1px solid var(--color-border-light)' }}>
             {filteredOptions.length === 0 ? (
-              <div style={{ padding: '0.6rem 0.7rem', color: 'var(--color-text-muted)' }}>
+              <div style={{ padding: '0.6rem 0.7rem', color: 'var(--color-text-muted)', fontSize: '0.78rem' }}>
                 {contactOptions.length === 0
                   ? 'No contacts on file for this company yet.'
                   : 'No contacts match the filter.'}
               </div>
             ) : filteredOptions.map(opt => {
-              const checked = selectedSet.has(opt.name.toLowerCase());
+              const isTagged = selectedSet.has(opt.name.toLowerCase());
               return (
-                <label
+                <div
                   key={opt.name}
+                  onClick={() => isTagged ? untag(opt.name) : tagName(opt.name)}
                   style={{
-                    display: 'flex', alignItems: 'flex-start', gap: '0.55rem',
+                    display: 'flex', alignItems: 'center', gap: '0.55rem',
                     padding: '0.4rem 0.7rem', cursor: 'pointer',
-                    background: checked ? '#DCFCE7' : 'transparent',
+                    background: isTagged ? '#DCFCE7' : 'transparent',
                   }}
                 >
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => toggle(opt.name)}
-                    style={{ margin: '3px 0 0' }}
-                  />
                   <span style={{ flex: 1, minWidth: 0 }}>
                     <div style={{
-                      color: checked ? '#166534' : '#1E293B',
-                      fontWeight: checked ? 600 : 500,
+                      color: isTagged ? '#166534' : '#1E293B',
+                      fontWeight: isTagged ? 600 : 500,
                       whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                     }}>{opt.name}</div>
                     {opt.email && (
                       <div style={{
                         fontSize: '0.72rem',
-                        color: checked ? '#15803D' : 'var(--color-text-muted)',
+                        color: isTagged ? '#15803D' : 'var(--color-text-muted)',
                         whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                       }}>{opt.email}</div>
                     )}
                   </span>
-                </label>
+                  <span style={{
+                    flex: '0 0 auto', fontSize: '0.7rem', fontWeight: 600,
+                    color: isTagged ? '#15803D' : 'var(--color-text-muted)',
+                  }}>{isTagged ? '✓ Tagged' : '+ Add'}</span>
+                </div>
               );
             })}
           </div>
-          {query.trim() && !exactMatch && (
-            <div style={{
-              padding: '0.4rem 0.7rem', borderTop: '1px solid var(--color-border-light)',
-              background: 'var(--color-bg)',
-            }}>
-              <button
-                type="button"
-                onClick={addAndTagNew}
-                style={{
-                  padding: '0.3rem 0.6rem', background: 'transparent',
-                  border: '1px solid var(--color-border)', borderRadius: 3,
-                  fontSize: '0.75rem', fontWeight: 600, fontFamily: 'inherit',
-                  color: '#7C3AED', cursor: 'pointer', fontStyle: 'italic',
-                }}
-              >+ Add &quot;{query.trim()}&quot; to {matched?.company || 'this account'}</button>
-            </div>
-          )}
+
+          {/* Custom contact — someone NOT from this company. Just tags
+              the name on this opp; doesn't touch the prospect roster. */}
           <div style={{
-            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-            padding: '0.4rem 0.6rem', borderTop: '1px solid var(--color-border-light)',
+            padding: '0.5rem 0.6rem',
+            borderTop: '1px solid var(--color-border-light)',
             background: 'var(--color-bg)',
           }}>
-            <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
-              {selected.length} tagged
-            </span>
+            <div style={{
+              fontSize: '0.7rem', color: 'var(--color-text-muted)',
+              textTransform: 'uppercase', letterSpacing: '0.03em', fontWeight: 600,
+              marginBottom: '0.3rem',
+            }}>
+              + Add custom contact (not from this company)
+            </div>
             <div style={{ display: 'flex', gap: '0.4rem' }}>
-              <button
-                type="button"
-                onClick={() => onChange('')}
-                disabled={isEmpty}
-                style={{
-                  padding: '0.25rem 0.6rem', background: 'transparent',
-                  border: '1px solid var(--color-border)', borderRadius: 3,
-                  fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit',
-                  color: 'var(--color-text-muted)',
-                  cursor: isEmpty ? 'not-allowed' : 'pointer', opacity: isEmpty ? 0.5 : 1,
+              <input
+                type="text"
+                value={customDraft}
+                placeholder="Name…"
+                onChange={(e) => setCustomDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') { e.preventDefault(); setOpen(false); }
+                  if (e.key === 'Enter') { e.preventDefault(); tagCustom(); }
                 }}
-              >Clear</button>
+                style={{
+                  flex: 1, minWidth: 0, boxSizing: 'border-box',
+                  border: '1px solid var(--color-border)', borderRadius: 3,
+                  padding: '5px 8px', fontSize: 'inherit', fontFamily: 'inherit',
+                  color: 'var(--color-text)', background: '#fff',
+                }}
+              />
               <button
                 type="button"
-                onClick={() => setMode(null)}
+                onClick={tagCustom}
+                disabled={!customDraft.trim()}
                 style={{
-                  padding: '0.25rem 0.6rem', background: 'var(--color-accent)',
+                  padding: '0.25rem 0.7rem', background: 'var(--color-accent)',
                   border: '1px solid var(--color-accent)', borderRadius: 3,
                   fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit',
-                  color: '#fff', cursor: 'pointer',
+                  color: '#fff',
+                  cursor: customDraft.trim() ? 'pointer' : 'not-allowed',
+                  opacity: customDraft.trim() ? 1 : 0.5,
                 }}
-              >Done</button>
+              >Add</button>
             </div>
           </div>
         </div>,
