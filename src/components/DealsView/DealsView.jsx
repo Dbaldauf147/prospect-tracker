@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import * as XLSX from 'xlsx';
 import { DataTable } from '../common/DataTable';
 import { loadDealsList, saveDealsOverride, clearDealsOverride } from '../../utils/dealsStore';
@@ -19,6 +20,18 @@ const MAPPED_COL_KEY = '__mappedToClient__';
 const MAPPED_COL_LABEL = 'Mapped to Client';
 const STATUS_COL_KEY = '__clientStatus__';
 const STATUS_COL_LABEL = 'Client Status';
+const PROGRESS_COL_KEY = '__progress__';
+const PROGRESS_COL_LABEL = 'Progress';
+
+// The four "ready to invoice" handoff fields the user wants to see
+// at a glance on every deal. `label` is what shows up in the popover;
+// `key` is the canonical field name on the deal row.
+const PROGRESS_FIELDS = [
+  { key: 'Commission Sheet Sent to Kathy', label: 'Commission Sheet Sent to Kathy' },
+  { key: 'Paperwork completed', label: 'Paperwork' },
+  { key: 'Billing information collected', label: 'Billing Letter' },
+  { key: 'Closed Won', label: 'Closed Won' },
+];
 
 function normClient(s) { return String(s || '').toLowerCase().trim(); }
 
@@ -96,6 +109,97 @@ function EditableCell({ value, kind, render, onSave, autoFocus }) {
         boxSizing: 'border-box',
       }}
     />
+  );
+}
+
+// Cell renderer for the leading "Progress" column. Shows a compact
+// X/4 pill colored by completion; click opens a popover anchored to
+// the pill listing the four handoff fields with their Yes/No state.
+// Clicking a row in the popover toggles that field on the deal and
+// writes through to dealsStore.
+function ProgressCell({ row, onToggle }) {
+  const [open, setOpen] = useState(false);
+  const [anchor, setAnchor] = useState(null);
+  const btnRef = useRef(null);
+
+  const done = PROGRESS_FIELDS.filter(f => isTruthy(row[f.key])).length;
+  const total = PROGRESS_FIELDS.length;
+  const pct = total === 0 ? 0 : done / total;
+  const bg = pct === 1 ? '#DCFCE7' : pct === 0 ? '#FEE2E2' : '#FEF3C7';
+  const fg = pct === 1 ? '#166534' : pct === 0 ? '#991B1B' : '#92400E';
+
+  function openPopover(e) {
+    e.stopPropagation();
+    const rect = btnRef.current?.getBoundingClientRect();
+    if (rect) setAnchor({ left: rect.left, top: rect.bottom + 4, width: Math.max(rect.width, 260) });
+    setOpen(true);
+  }
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={openPopover}
+        title={`${done} of ${total} handoff fields complete — click for details`}
+        style={{ padding: '2px 10px', border: '1px solid', borderColor: fg, borderRadius: 999, background: bg, color: fg, fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', minWidth: 56 }}
+      >
+        {done}/{total}{pct === 1 ? ' ✓' : ''}
+      </button>
+      {open && createPortal(
+        <>
+          <div
+            onClick={() => setOpen(false)}
+            style={{ position: 'fixed', inset: 0, zIndex: 4999, background: 'transparent' }}
+          />
+          <div
+            style={{ position: 'fixed', left: anchor?.left ?? 0, top: anchor?.top ?? 0, width: anchor?.width ?? 260, maxWidth: 'calc(100vw - 16px)', zIndex: 5000, background: '#fff', border: '1px solid #CBD5E1', borderRadius: 8, boxShadow: '0 10px 30px rgba(15, 23, 42, 0.18)', overflow: 'hidden' }}
+          >
+            <div style={{ padding: '0.5rem 0.75rem', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#F8FAFC' }}>
+              <strong style={{ fontSize: '0.75rem', color: '#1E293B' }}>
+                Handoff progress · {done}/{total}
+              </strong>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                style={{ background: 'transparent', border: 'none', color: '#64748B', cursor: 'pointer', fontSize: '1rem', lineHeight: 1, padding: '0 4px' }}
+                aria-label="Close"
+              >×</button>
+            </div>
+            <div style={{ padding: '0.25rem 0' }}>
+              {PROGRESS_FIELDS.map(f => {
+                const yes = isTruthy(row[f.key]);
+                return (
+                  <button
+                    key={f.key}
+                    type="button"
+                    onClick={() => onToggle?.(row.id, f.key, yes ? '' : 'Yes')}
+                    title="Click to toggle"
+                    style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', width: '100%', padding: '0.4rem 0.75rem', border: 'none', background: 'transparent', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = '#F1F5F9'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                  >
+                    <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, borderRadius: 4, border: '1px solid', borderColor: yes ? '#16A34A' : '#CBD5E1', background: yes ? '#16A34A' : '#fff', color: '#fff', fontSize: '0.7rem', fontWeight: 700, flexShrink: 0 }}>
+                      {yes ? '✓' : ''}
+                    </span>
+                    <span style={{ flex: 1, fontSize: '0.75rem', color: yes ? '#1E293B' : '#475569' }}>{f.label}</span>
+                    <span style={{ fontSize: '0.62rem', fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: yes ? '#DCFCE7' : '#F1F5F9', color: yes ? '#166534' : '#64748B' }}>
+                      {yes ? 'Yes' : 'No'}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            {!onToggle && (
+              <div style={{ padding: '0.4rem 0.75rem', borderTop: '1px solid #E2E8F0', fontSize: '0.65rem', color: '#94A3B8', fontStyle: 'italic' }}>
+                Read-only — toggling requires the inline-edit deploy.
+              </div>
+            )}
+          </div>
+        </>,
+        document.body
+      )}
+    </>
   );
 }
 
@@ -406,8 +510,9 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
 
   // Per-cell saves write the new value into the stored deal and
   // persist through dealsStore (localStorage + Firestore mirror).
-  // Falsy / empty saves drop the key entirely so empty cells render
-  // the muted "—" placeholder consistently.
+  // Used by inline cell editing (double-click) and the progress
+  // popover's checkbox toggles. Falsy / empty saves drop the key
+  // entirely so empty cells render the muted "—" placeholder.
   function updateCell(rowId, key, value) {
     const idx = Number(rowId);
     if (!Number.isFinite(idx)) return;
@@ -441,8 +546,29 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
   // dropdown that persists the user's pick via dealClientMap. Only
   // surfaces when prospects are passed in.
   const columns = useMemo(() => {
-    if (clientOptions.length === 0) return baseColumns;
     if (baseColumns.length === 0) return baseColumns;
+    // Leading column shows a compact handoff-progress pill for each
+    // deal (e.g. "2/4") and opens a popover with the four fields.
+    // Always added — independent of the Mapped to Client / Status
+    // helpers below, which depend on the prospect roster.
+    const progressCol = {
+      key: PROGRESS_COL_KEY,
+      label: PROGRESS_COL_LABEL,
+      defaultWidth: 90,
+      sticky: true,
+      render: (row) => <ProgressCell row={row} onToggle={updateCell} />,
+      exportValue: (row) => {
+        const done = PROGRESS_FIELDS.filter(f => isTruthy(row[f.key])).length;
+        return `${done}/${PROGRESS_FIELDS.length}`;
+      },
+      getFilterValue: () => '',
+    };
+    // Drop sticky from the original first column (Client Name) — only
+    // one column can be left-anchored at a time.
+    const clientNameCol = { ...baseColumns[0], sticky: false };
+    if (clientOptions.length === 0) {
+      return [progressCol, clientNameCol, ...baseColumns.slice(1)];
+    }
     const helperCol = {
       key: MAPPED_COL_KEY,
       label: MAPPED_COL_LABEL,
@@ -521,10 +647,8 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
         return prospectByName.get(lookupKey)?.status || '';
       },
     };
-    // Insert immediately after the sticky Client Name column,
-    // followed by the status column so the user can read mapping +
-    // status side by side.
-    return [baseColumns[0], helperCol, statusCol, ...baseColumns.slice(1)];
+    // Order: progress · client name · mapped-to-client · status · rest.
+    return [progressCol, clientNameCol, helperCol, statusCol, ...baseColumns.slice(1)];
   }, [baseColumns, clientOptions, clientNameSet, clientMap, ignoreSet, prospectByName]);
   const tableId = useMemo(
     () => 'deals:' + columns.map(c => c.key).sort().join('|'),
