@@ -1162,6 +1162,19 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
   // value so matches don't need to be a 1:1 enum hit.
   const [colFilterDrafts, setColFilterDrafts] = useState({});
   const [dansTagOptions, setDansTagOptions] = useState([]);
+  // Per-contact family info (partner name, kids names) stored in user
+  // settings under contactFamilies, keyed by HubSpot contact id. Click
+  // the 👪 button in the first column to open the editor.
+  const contactFamilies = settings?.contactFamilies || {};
+  const [familyForContact, setFamilyForContact] = useState(null);
+  function saveFamily(contactId, info) {
+    const next = { ...(settings?.contactFamilies || {}) };
+    const partner = String(info.partner || '').trim();
+    const kids = String(info.kids || '').trim();
+    if (!partner && !kids) delete next[contactId];
+    else next[contactId] = { partner, kids };
+    updateSettings({ contactFamilies: next });
+  }
   const dismissedGuesses = settings?.dismissedGuesses || {};
   function dismissGuess(contactId, field) {
     updateSettings({ dismissedGuesses: { ...dismissedGuesses, [`${contactId}_${field}`]: true } });
@@ -2587,6 +2600,32 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
             tableId="hubspot-contacts"
             columns={[
               {
+                key: '_family',
+                label: 'Family',
+                defaultWidth: 60,
+                render: (c) => {
+                  const fam = contactFamilies[c.id];
+                  const has = !!(fam && (fam.partner || fam.kids));
+                  return (
+                    <button
+                      type="button"
+                      title={has ? `Partner: ${fam.partner || '—'} · Kids: ${fam.kids || '—'}` : 'Add partner / kids names'}
+                      onClick={(e) => { e.stopPropagation(); setFamilyForContact(c); }}
+                      style={{
+                        background: has ? '#ECFDF5' : '#F8FAFC',
+                        border: `1px solid ${has ? '#A7F3D0' : 'var(--color-border)'}`,
+                        borderRadius: 6,
+                        color: has ? '#065F46' : '#475569',
+                        cursor: 'pointer',
+                        fontSize: '0.95rem',
+                        padding: '2px 8px',
+                        lineHeight: 1,
+                      }}
+                    >👪</button>
+                  );
+                },
+              },
+              {
                 key: '_deleteRow',
                 label: 'Delete',
                 defaultWidth: 60,
@@ -2912,6 +2951,59 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
           ))
         )
       )}
+      {familyForContact && (
+        <FamilyModal
+          contact={familyForContact}
+          initial={contactFamilies[familyForContact.id] || { partner: '', kids: '' }}
+          onSave={(info) => { saveFamily(familyForContact.id, info); setFamilyForContact(null); }}
+          onClose={() => setFamilyForContact(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function FamilyModal({ contact, initial, onSave, onClose }) {
+  const [partner, setPartner] = useState(initial.partner || '');
+  const [kids, setKids] = useState(initial.kids || '');
+  const name = [contact.firstname, contact.lastname].filter(Boolean).join(' ') || contact.email || 'this contact';
+  return (
+    <div className={styles.modalOverlay} onClick={onClose}>
+      <div className={styles.modal} style={{ width: 460 }} onClick={e => e.stopPropagation()}>
+        <div className={styles.modalHeader}>
+          <h3 className={styles.modalTitle}>Family — {name}</h3>
+          <button type="button" className={styles.modalClose} onClick={onClose}>×</button>
+        </div>
+        <div className={styles.modalBody}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            <div>
+              <label className={styles.modalLabel}>Partner&apos;s name</label>
+              <input
+                className={styles.modalInput}
+                value={partner}
+                onChange={e => setPartner(e.target.value)}
+                placeholder="e.g. Jane"
+                autoFocus
+              />
+            </div>
+            <div>
+              <label className={styles.modalLabel}>Kids&apos; names</label>
+              <textarea
+                className={styles.modalInput}
+                value={kids}
+                onChange={e => setKids(e.target.value)}
+                placeholder="e.g. Sam (12), Riley (9)"
+                rows={3}
+                style={{ resize: 'vertical', minHeight: 60 }}
+              />
+            </div>
+          </div>
+        </div>
+        <div className={styles.modalFooter}>
+          <button type="button" className={styles.modalCancelBtn} onClick={onClose}>Cancel</button>
+          <button type="button" className={styles.modalSaveBtn} onClick={() => onSave({ partner, kids })}>Save</button>
+        </div>
+      </div>
     </div>
   );
 }
