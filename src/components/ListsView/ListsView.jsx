@@ -20,10 +20,8 @@ const SUBTABS = [
   { key: 'cdp', label: 'CDP', storageKey: 'cdp-list-override' },
   { key: 'gresb', label: 'GRESB', storageKey: 'gresb-list-override' },
   { key: 'sbt', label: 'SBT', storageKey: 'sbt-list-override' },
-  { key: 'ecovadis', label: 'Ecovadis', storageKey: 'ecovadis-list-override' },
   { key: 'unpri', label: 'UN PRI', storageKey: 'unpri-list-override' },
   { key: 'casb', label: 'CA SB', storageKey: 'casb-list-override' },
-  { key: 'nzam', label: 'NZAM', storageKey: 'nzam-list-override' },
 ];
 
 const LIST_CORP_SUFFIXES = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|oy|ab|spa|kk|pty|holdings|group|grp)\b\.?/g;
@@ -432,21 +430,6 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             updateSettingsPath={updateSettingsPath}
           />
         )}
-        {subtab === 'ecovadis' && (
-          <UploadedListView
-            storageKey="ecovadis-list-override"
-            tableIdPrefix="ecovadis-list"
-            title="Ecovadis"
-            singular="company"
-            plural="companies"
-            prospects={prospects}
-            onSelectProspect={onSelectProspect}
-            cdmName={cdmName}
-            settings={settings}
-            updateSettings={updateSettings}
-            updateSettingsPath={updateSettingsPath}
-          />
-        )}
         {subtab === 'unpri' && (
           <UploadedListView
             storageKey="unpri-list-override"
@@ -469,21 +452,6 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             title="CA SB"
             singular="company"
             plural="companies"
-            prospects={prospects}
-            onSelectProspect={onSelectProspect}
-            cdmName={cdmName}
-            settings={settings}
-            updateSettings={updateSettings}
-            updateSettingsPath={updateSettingsPath}
-          />
-        )}
-        {subtab === 'nzam' && (
-          <UploadedListView
-            storageKey="nzam-list-override"
-            tableIdPrefix="nzam-list"
-            title="NZAM"
-            singular="signatory"
-            plural="signatories"
             prospects={prospects}
             onSelectProspect={onSelectProspect}
             cdmName={cdmName}
