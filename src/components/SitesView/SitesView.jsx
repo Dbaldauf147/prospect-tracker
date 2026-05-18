@@ -2756,7 +2756,15 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
   }
 
   async function exportIndicativeSavings({ returnBuffer = false } = {}) {
-    if (!rows.length) return null;
+    // The button is gated on sitesData.length, but the export reads
+    // from `rows` — which strips entries without a Site Name when a
+    // mapping is set. If every uploaded row is blank at the site-
+    // name column, the export silently returned null and the click
+    // looked like it did nothing. Throw so the caller's catch shows
+    // the user what to fix.
+    if (!rows.length) {
+      throw new Error('No sites available to export — re-check the uploaded file or the Site Name column mapping.');
+    }
     const { Workbook } = await import('exceljs');
     const SE_GREEN_DARK = 'FF009530';
     const SE_GREEN_LIGHT = 'FFE6F7EC';
@@ -7240,7 +7248,21 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           {sitesData.length > 0 && (
             <button
               type="button"
-              onClick={() => exportIndicativeSavings()}
+              onClick={async () => {
+                // Surface failures: the export is a big async pipeline
+                // (60+ tranches, multiple worksheets, a live chart
+                // injection) and any thrown error inside it would
+                // otherwise vanish into an unhandled promise rejection,
+                // leaving the user staring at a button that "does
+                // nothing." Console.error keeps the stack trace for
+                // diagnosis; alert tells the user the export tripped.
+                try {
+                  await exportIndicativeSavings();
+                } catch (err) {
+                  console.error('Indicative Savings export failed:', err);
+                  alert(`Indicative Savings export failed:\n\n${err?.message || err}`);
+                }
+              }}
               title="Download an Indicative Savings by State workbook (Schneider-branded). Aggregates the loaded sites by state with 2 % – 4 % savings on the deregulated spend, plus supplier name + contract dates."
               style={{ padding: '0.4rem 0.8rem', border: '1px solid #009530', background: '#009530', color: '#fff', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}
             >
