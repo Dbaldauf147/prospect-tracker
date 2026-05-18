@@ -591,6 +591,129 @@ const SERVICE_THEIR_QUESTIONS = {
   ],
 };
 
+// Prominent picker for importing a previous Notes page's Call Context
+// into the active one. Replaces the original tiny inline <select> next
+// to the field label — that picker was easy to miss, this one shows a
+// labeled button with the candidate count and a click-to-import panel
+// of each source note (title + last-edited + preview).
+function CallContextImportPicker({ candidates, onImport }) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => {
+      if (wrapRef.current?.contains(e.target)) return;
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+
+  const formatWhen = (ts) => {
+    if (!ts) return '';
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return '';
+    const now = Date.now();
+    const diff = Math.max(0, now - ts);
+    const day = 86400000;
+    if (diff < day) return 'today';
+    if (diff < 2 * day) return 'yesterday';
+    if (diff < 7 * day) return `${Math.floor(diff / day)}d ago`;
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: d.getFullYear() === new Date().getFullYear() ? undefined : 'numeric' });
+  };
+
+  return (
+    <div ref={wrapRef} style={{ position: 'relative', marginLeft: 'auto' }}>
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        title="Pull the Call Context from a previous Notes page on this company"
+        style={{
+          fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+          padding: '0.3rem 0.65rem',
+          color: '#fff', background: '#0078D4',
+          border: '1px solid #0078D4', borderRadius: 4,
+          cursor: 'pointer',
+          display: 'inline-flex', alignItems: 'center', gap: '0.35rem',
+        }}
+      >
+        <span aria-hidden="true">⤓</span>
+        <span>Import Call Context</span>
+        <span style={{
+          fontSize: '0.7rem', fontWeight: 700,
+          padding: '0 0.4rem', borderRadius: 999,
+          background: 'rgba(255,255,255,0.25)',
+        }}>{candidates.length}</span>
+      </button>
+      {open && (
+        <div
+          style={{
+            position: 'absolute', top: 'calc(100% + 4px)', right: 0,
+            zIndex: 50, width: 380, maxWidth: '92vw',
+            background: '#fff', border: '1px solid var(--color-border)',
+            borderRadius: 6, boxShadow: '0 8px 24px rgba(15, 23, 42, 0.18)',
+            overflow: 'hidden',
+          }}
+        >
+          <div style={{
+            padding: '0.5rem 0.7rem',
+            borderBottom: '1px solid var(--color-border-light)',
+            background: 'var(--color-bg)',
+            fontSize: '0.7rem', fontWeight: 600, color: 'var(--color-text-muted)',
+            textTransform: 'uppercase', letterSpacing: '0.03em',
+          }}>
+            Pick a previous Notes page
+          </div>
+          <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+            {candidates.map(n => {
+              const ctx = (n.context || '').trim();
+              const preview = ctx.length > 160 ? `${ctx.slice(0, 160).trimEnd()}…` : ctx;
+              return (
+                <button
+                  key={n.id}
+                  type="button"
+                  onClick={() => { onImport(n); setOpen(false); }}
+                  style={{
+                    display: 'block', width: '100%', textAlign: 'left',
+                    padding: '0.55rem 0.7rem',
+                    border: 'none', borderBottom: '1px solid var(--color-border-light)',
+                    background: '#fff', cursor: 'pointer', fontFamily: 'inherit',
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = '#F1F5F9'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = '#fff'; }}
+                >
+                  <div style={{
+                    display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+                    gap: '0.5rem',
+                  }}>
+                    <span style={{
+                      fontWeight: 600, color: 'var(--color-text)', fontSize: '0.82rem',
+                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                    }}>{n.title || 'Untitled'}</span>
+                    <span style={{
+                      flex: '0 0 auto',
+                      fontSize: '0.68rem', color: 'var(--color-text-muted)',
+                    }}>{formatWhen(n.updatedAt)} · {ctx.length} chars</span>
+                  </div>
+                  {preview && (
+                    <div style={{
+                      marginTop: '0.2rem',
+                      fontSize: '0.75rem', color: 'var(--color-text-muted)',
+                      whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                      display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+                      overflow: 'hidden',
+                    }}>{preview}</div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function OpportunityForm({ value, onChange, onLinkOpp, companyName, companyContacts = [], allHubspotContacts = [], contactNotes = {}, contactReportsTo = {}, contactNicknames = {}, prospects = [], onCreateContact, importableNotes = [], cdmName, competitorOptions = [], onMentionCompetitor }) {
   const template = DEFAULT_FORM_TEMPLATE;
 
@@ -3426,37 +3549,27 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       </div>
 
       <div>
-        <div style={{ ...sx.fieldLabel, display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
+        <div style={{ ...sx.fieldLabel, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <span>Call Context</span>
-          {importableNotes.some(n => (n.context || '').trim()) && (
-            <select
-              defaultValue=""
-              onChange={(e) => {
-                const sourceId = e.target.value;
-                e.target.value = '';
-                if (!sourceId) return;
-                const source = importableNotes.find(n => n.id === sourceId);
-                const incoming = (source?.context || '').trim();
-                if (!incoming) return;
-                // Append the source's Call Context, with a blank-line separator
-                // when the current field already has text. Replaces in place
-                // when the current field is empty.
-                const current = (formData.fieldValues.context || '').replace(/\s+$/, '');
-                const merged = current ? `${current}\n\n${incoming}` : incoming;
-                updateField('context', merged);
-              }}
-              title="Append the Call Context from another note for this company"
-              style={{ fontSize: '0.68rem', padding: '0.15rem 0.35rem', border: '1px solid var(--color-border)', borderRadius: 4, marginLeft: 'auto', cursor: 'pointer', background: '#fff' }}
-            >
-              <option value="">⤓ Import Call Context from…</option>
-              {importableNotes
-                .filter(n => (n.context || '').trim())
-                .map(n => {
-                  const len = (n.context || '').trim().length;
-                  return <option key={n.id} value={n.id}>{n.title} ({len} chars)</option>;
-                })}
-            </select>
-          )}
+          {(() => {
+            const candidates = importableNotes.filter(n => (n.context || '').trim());
+            if (candidates.length === 0) return null;
+            return (
+              <CallContextImportPicker
+                candidates={candidates}
+                onImport={(source) => {
+                  const incoming = (source?.context || '').trim();
+                  if (!incoming) return;
+                  // Append the source's Call Context, with a blank-line
+                  // separator when the current field already has text.
+                  // Replaces in place when the current field is empty.
+                  const current = (formData.fieldValues.context || '').replace(/\s+$/, '');
+                  const merged = current ? `${current}\n\n${incoming}` : incoming;
+                  updateField('context', merged);
+                }}
+              />
+            );
+          })()}
         </div>
         <CommitOnBlurInput
           multiline
