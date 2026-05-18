@@ -17,6 +17,13 @@ function getServicesCount(p) {
   return Object.values(svc).filter(v => v && v !== '-').length;
 }
 
+// Loose status check — tolerate trailing whitespace and casing drift in the data.
+function normStatus(s) {
+  return String(s || '').trim().toLowerCase();
+}
+function isClient(p) { return normStatus(p.status) === 'client'; }
+function isOldClient(p) { return normStatus(p.status) === 'old client'; }
+
 export function ClientsView({ prospects = [], onSelectProspect, cdmName, settings, updateSettings }) {
   const [subtab, setSubtab] = useState(readSavedSubtab);
   function selectSubtab(key) {
@@ -31,7 +38,7 @@ export function ClientsView({ prospects = [], onSelectProspect, cdmName, setting
   const clients = useMemo(() => (
     prospects
       .filter(p => matchesCdm(p.cdm, cdmName))
-      .filter(p => p.status === 'Client' || (showOld && p.status === 'Old Client'))
+      .filter(p => isClient(p) || (showOld && isOldClient(p)))
       .sort((a, b) => (a.company || '').localeCompare(b.company || ''))
   ), [prospects, showOld, cdmName]);
 
@@ -46,12 +53,12 @@ export function ClientsView({ prospects = [], onSelectProspect, cdmName, setting
     : clients;
 
   const myProspects = useMemo(() => prospects.filter(p => matchesCdm(p.cdm, cdmName)), [prospects, cdmName]);
-  const activeCount = myProspects.filter(p => p.status === 'Client').length;
-  const oldCount = myProspects.filter(p => p.status === 'Old Client').length;
+  const activeCount = myProspects.filter(isClient).length;
+  const oldCount = myProspects.filter(isOldClient).length;
 
   // Diagnostic counts for the empty state.
   const totalProspects = prospects.length;
-  const allClients = useMemo(() => prospects.filter(p => p.status === 'Client').length, [prospects]);
+  const allClients = useMemo(() => prospects.filter(isClient).length, [prospects]);
   const uniqueCdms = useMemo(() => {
     const s = new Set();
     for (const p of prospects) {
@@ -75,7 +82,7 @@ export function ClientsView({ prospects = [], onSelectProspect, cdmName, setting
     {
       key: 'status', label: 'Status', defaultWidth: 120,
       render: (row) => {
-        const isOld = row.status === 'Old Client';
+        const isOld = isOldClient(row);
         return (
           <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: isOld ? '#F1F5F9' : '#DCFCE7', color: isOld ? '#64748B' : '#166534' }}>
             {row.status || '—'}
