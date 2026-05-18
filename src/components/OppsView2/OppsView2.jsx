@@ -1444,6 +1444,283 @@ function NewOppSourceModal({ account, options, onCreate, onCancel }) {
   );
 }
 
+// Popup that shows the basic info for one opp + a Delete button. Opened
+// from the row-level info button so the user can eyeball the full record
+// without having to hunt through the (often horizontally scrolled) row.
+function OppInfoModal({ opp, headers, onClose, onDelete }) {
+  if (!opp) return null;
+  // Show every header column the row has a value for, in the same order
+  // the table presents them, so the popup matches the user's mental
+  // model of the row. Computed columns are pulled from the live row
+  // (the parent computes them into the opp before passing it in).
+  const orderedFields = (headers || []).filter(h => h && h !== '_select' && h !== '_info' && h !== '_actions');
+  const formatValue = (key, raw) => {
+    if (raw == null || raw === '') return '—';
+    if (DATE_COLUMNS.has(key)) return formatDateDisplay(raw);
+    return String(raw);
+  };
+  return createPortal(
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)',
+        zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: 540, maxWidth: '94vw', maxHeight: '86vh',
+          background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)',
+          display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        }}
+      >
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '0.85rem 1rem', borderBottom: '1px solid var(--color-border-light)',
+        }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{
+              fontSize: '0.7rem', color: 'var(--color-text-muted)',
+              textTransform: 'uppercase', letterSpacing: '0.03em', fontWeight: 600,
+            }}>Opp details</div>
+            <div style={{
+              fontSize: '1rem', fontWeight: 700, color: 'var(--color-text)',
+              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            }}>
+              {String(opp['Account'] || '').trim() || '(no account)'}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              padding: '0.3rem 0.65rem', background: 'transparent',
+              border: '1px solid var(--color-border)', borderRadius: 4,
+              fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+              color: 'var(--color-text-muted)', cursor: 'pointer',
+            }}
+          >Close</button>
+        </div>
+
+        <div style={{ overflowY: 'auto', padding: '0.5rem 1rem 0.75rem' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+            <tbody>
+              {orderedFields.map(h => (
+                <tr key={h} style={{ borderTop: '1px solid var(--color-border-light)' }}>
+                  <td style={{
+                    padding: '0.45rem 0.5rem 0.45rem 0',
+                    fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.03em',
+                    color: 'var(--color-text-muted)', fontWeight: 600,
+                    width: 170, verticalAlign: 'top',
+                  }}>{h === 'BFO Link' ? 'BFO Opportunity Name' : h}</td>
+                  <td style={{
+                    padding: '0.45rem 0',
+                    color: 'var(--color-text)',
+                    whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                  }}>{formatValue(h, opp[h])}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          padding: '0.6rem 1rem', borderTop: '1px solid var(--color-border-light)',
+          background: 'var(--color-bg)',
+        }}>
+          <button
+            type="button"
+            onClick={() => {
+              const label = String(opp['Account'] || '').trim() || 'this opp';
+              if (window.confirm(`Delete ${label}? This can't be undone.`)) {
+                onDelete(opp._id);
+                onClose();
+              }
+            }}
+            style={{
+              padding: '0.4rem 0.85rem', background: '#FEE2E2',
+              border: '1px solid #FCA5A5', borderRadius: 4,
+              fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+              color: '#B91C1C', cursor: 'pointer',
+            }}
+          >Delete opp</button>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              padding: '0.4rem 0.95rem', background: 'var(--color-accent)',
+              border: '1px solid var(--color-accent)', borderRadius: 4,
+              fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+              color: '#fff', cursor: 'pointer',
+            }}
+          >Done</button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+// Toolbar that pops in above the table once 1+ rows are checked. Lets
+// the user push a single value into every selected opp at once (Stage,
+// Status, Source, Scope, etc.) or bulk-delete them. The field list is
+// driven by the column header set so it tracks whatever columns the
+// user currently has + any list bindings they've set up.
+function MassEditBar({ selectedCount, headers, columnLinks, onApply, onDelete, onClear }) {
+  const editableFields = useMemo(() => {
+    const out = [];
+    for (const h of headers || []) {
+      if (!h || h === '_select' || h === '_info' || h === '_actions') continue;
+      if (COMPUTED_COLUMNS.includes(h)) continue;
+      out.push(h);
+    }
+    return out;
+  }, [headers]);
+  const [field, setField] = useState('Stage');
+  const [textValue, setTextValue] = useState('');
+  const [multiValue, setMultiValue] = useState('');
+  // Whichever field is picked, reset both value buffers so a stale
+  // value from the previous field doesn't get applied by accident.
+  useEffect(() => { setTextValue(''); setMultiValue(''); }, [field]);
+
+  const link = resolveColumnLink(field, columnLinks);
+  const isDate = DATE_COLUMNS.has(field);
+  const listOptions = link ? (LIST_REGISTRY.get(link.listKey)?.options || []) : null;
+  const valueToApply = link && link.mode === 'multi' ? multiValue : textValue;
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap',
+      margin: '0 1.25rem 0.5rem',
+      padding: '0.5rem 0.75rem',
+      background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 6,
+      fontSize: '0.82rem',
+    }}>
+      <span style={{ fontWeight: 700, color: '#1E3A8A' }}>
+        {selectedCount} selected
+      </span>
+      <span style={{ color: 'var(--color-text-muted)' }}>·</span>
+      <label style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+        <span style={{ color: 'var(--color-text-muted)' }}>Set</span>
+        <select
+          value={field}
+          onChange={(e) => setField(e.target.value)}
+          style={{
+            padding: '0.3rem 0.45rem',
+            border: '1px solid var(--color-border)', borderRadius: 4,
+            fontSize: '0.82rem', fontFamily: 'inherit',
+            background: '#fff', color: 'var(--color-text)',
+          }}
+        >
+          {editableFields.map(h => (
+            <option key={h} value={h}>{h === 'BFO Link' ? 'BFO Opportunity Name' : h}</option>
+          ))}
+        </select>
+      </label>
+      <span style={{ color: 'var(--color-text-muted)' }}>to</span>
+      {link && link.mode === 'multi' ? (
+        <select
+          multiple
+          value={parseMulti(multiValue)}
+          onChange={(e) => {
+            const picked = Array.from(e.target.selectedOptions).map(o => o.value);
+            setMultiValue(picked.join(', '));
+          }}
+          size={Math.min(6, Math.max(3, (listOptions || []).length))}
+          style={{
+            minWidth: 200, padding: '0.25rem 0.4rem',
+            border: '1px solid var(--color-border)', borderRadius: 4,
+            fontSize: '0.82rem', fontFamily: 'inherit',
+            background: '#fff', color: 'var(--color-text)',
+          }}
+        >
+          {(listOptions || []).map(o => (
+            <option key={o} value={o}>{o}</option>
+          ))}
+        </select>
+      ) : link ? (
+        <select
+          value={textValue}
+          onChange={(e) => setTextValue(e.target.value)}
+          style={{
+            minWidth: 180, padding: '0.3rem 0.45rem',
+            border: '1px solid var(--color-border)', borderRadius: 4,
+            fontSize: '0.82rem', fontFamily: 'inherit',
+            background: '#fff', color: 'var(--color-text)',
+          }}
+        >
+          <option value="">— pick a value —</option>
+          {(listOptions || []).map(o => (
+            <option key={o} value={o}>{o}</option>
+          ))}
+        </select>
+      ) : isDate ? (
+        <input
+          type="date"
+          value={textValue}
+          onChange={(e) => setTextValue(e.target.value)}
+          style={{
+            padding: '0.25rem 0.4rem',
+            border: '1px solid var(--color-border)', borderRadius: 4,
+            fontSize: '0.82rem', fontFamily: 'inherit',
+            background: '#fff', color: 'var(--color-text)',
+          }}
+        />
+      ) : (
+        <input
+          type="text"
+          value={textValue}
+          onChange={(e) => setTextValue(e.target.value)}
+          placeholder="New value (blank to clear)"
+          style={{
+            minWidth: 200, padding: '0.3rem 0.45rem',
+            border: '1px solid var(--color-border)', borderRadius: 4,
+            fontSize: '0.82rem', fontFamily: 'inherit',
+            background: '#fff', color: 'var(--color-text)',
+          }}
+        />
+      )}
+      <button
+        type="button"
+        onClick={() => onApply(field, valueToApply)}
+        style={{
+          padding: '0.35rem 0.85rem', background: 'var(--color-accent)',
+          border: '1px solid var(--color-accent)', borderRadius: 4,
+          fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+          color: '#fff', cursor: 'pointer',
+        }}
+      >Apply to {selectedCount}</button>
+      <div style={{ flex: 1 }} />
+      <button
+        type="button"
+        onClick={() => {
+          if (window.confirm(`Delete ${selectedCount} selected opp${selectedCount === 1 ? '' : 's'}? This can't be undone.`)) {
+            onDelete();
+          }
+        }}
+        style={{
+          padding: '0.35rem 0.7rem', background: '#FEE2E2',
+          border: '1px solid #FCA5A5', borderRadius: 4,
+          fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+          color: '#B91C1C', cursor: 'pointer',
+        }}
+      >Delete selected</button>
+      <button
+        type="button"
+        onClick={onClear}
+        style={{
+          padding: '0.35rem 0.7rem', background: 'transparent',
+          border: '1px solid var(--color-border)', borderRadius: 4,
+          fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+          color: 'var(--color-text-muted)', cursor: 'pointer',
+        }}
+      >Clear selection</button>
+    </div>
+  );
+}
+
 function LinkColumnsModal({ headers, columnLinks, onChange, onClose }) {
   const setBinding = (column, patch) => {
     const next = { ...(columnLinks || {}) };
@@ -1668,6 +1945,13 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // is open. Account flows through so the modal can show "Adding
   // <company>" when the company is already known.
   const [pendingNewOpp, setPendingNewOpp] = useState(null);
+  // _id of the opp whose info popup is open, or null when no popup
+  // is showing. Resolved against the live records list on render so
+  // the popup always reflects the latest cell edits.
+  const [infoOppId, setInfoOppId] = useState(null);
+  // Mass-edit selection — set of row _id's the user has checked. The
+  // mass-edit toolbar shows whenever this is non-empty.
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
 
   // Hydration — load the user's saved opps. Prefer Firestore (cross-
   // device truth), fall back to the IndexedDB cache (last-known on
@@ -1790,6 +2074,34 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       const records = prev?.records || [];
       return { ...prev, records: records.filter(r => r._id !== id) };
     });
+    setSelectedIds(prev => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  }, []);
+
+  const updateManyOppFields = useCallback((ids, field, value) => {
+    const idSet = ids instanceof Set ? ids : new Set(ids);
+    if (!idSet.size || !field) return;
+    setData(prev => {
+      const records = prev?.records || [];
+      return {
+        ...prev,
+        records: records.map(r => idSet.has(r._id) ? { ...r, [field]: value } : r),
+      };
+    });
+  }, []);
+
+  const deleteManyOpps = useCallback((ids) => {
+    const idSet = ids instanceof Set ? ids : new Set(ids);
+    if (!idSet.size) return;
+    setData(prev => {
+      const records = prev?.records || [];
+      return { ...prev, records: records.filter(r => !idSet.has(r._id)) };
+    });
+    setSelectedIds(new Set());
   }, []);
 
   const updateColumnLinks = useCallback((nextLinks) => {
@@ -1813,6 +2125,23 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       return v && v !== '-' && v !== '#N/A';
     });
   }, [data]);
+
+  // Drop any selection ids that no longer match a live record (e.g.
+  // after a hydration that replaced records, or a delete that came in
+  // through another path). Keeps the mass-edit count honest.
+  useEffect(() => {
+    setSelectedIds(prev => {
+      if (prev.size === 0) return prev;
+      const alive = new Set(records.map(r => r._id));
+      let changed = false;
+      const next = new Set();
+      for (const id of prev) {
+        if (alive.has(id)) next.add(id);
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [records]);
 
   // Sorted, deduped list of company names — fed into the Account
   // column's autocomplete. Pulls from Table View prospects first
@@ -1941,8 +2270,65 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         >×</button>
       ),
     };
-    return [...mapped, actions];
-  }, [headers, columnLinks, updateOppField, deleteOpp, companySuggestions, prospects, updateProspect, hubspotContacts]);
+    // Selection checkbox — prepended so the user can flip rows on/off
+    // for mass-edit. Header label is the count of selected so it
+    // signals state at a glance.
+    const selectCol = {
+      key: '_select',
+      label: '',
+      defaultWidth: 36,
+      getFilterValue: () => '',
+      render: (row) => (
+        <input
+          type="checkbox"
+          checked={selectedIds.has(row._id)}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => {
+            const checked = e.target.checked;
+            setSelectedIds(prev => {
+              const next = new Set(prev);
+              if (checked) next.add(row._id);
+              else next.delete(row._id);
+              return next;
+            });
+          }}
+          style={{ margin: 0, cursor: 'pointer' }}
+          title="Select for mass edit"
+        />
+      ),
+    };
+    // Info button — opens a modal showing the row's basic info and a
+    // delete button. Inserted right before Next Steps so the user
+    // doesn't have to scroll the row to get a summary.
+    const infoCol = {
+      key: '_info',
+      label: '',
+      defaultWidth: 40,
+      getFilterValue: () => '',
+      render: (row) => (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); setInfoOppId(row._id); }}
+          title="Show opp info"
+          style={{
+            padding: '0', width: 22, height: 22, lineHeight: 1,
+            fontSize: '0.85rem', fontWeight: 700, fontFamily: 'inherit',
+            color: 'var(--color-accent)', background: '#fff',
+            border: '1px solid var(--color-accent)', borderRadius: '50%',
+            cursor: 'pointer',
+          }}
+        >i</button>
+      ),
+    };
+    // Splice the info column in just before Next Steps when it's
+    // present in the visible header set. Falls back to appending so
+    // a user who hid Next Steps still gets the button.
+    const nextStepsIdx = mapped.findIndex(c => c.key === 'Next Steps');
+    const withInfo = nextStepsIdx >= 0
+      ? [...mapped.slice(0, nextStepsIdx), infoCol, ...mapped.slice(nextStepsIdx)]
+      : [...mapped, infoCol];
+    return [selectCol, ...withInfo, actions];
+  }, [headers, columnLinks, updateOppField, deleteOpp, companySuggestions, prospects, updateProspect, hubspotContacts, selectedIds]);
 
   const stageOrder = ['Lead', 'Not Started', 'Qualifying', 'Quoting', 'Quoted', 'Verbal', 'Sold', 'Not Sold'];
   const CLOSED_STAGES = useMemo(() => new Set(['Sold', 'Not Sold']), []);
@@ -2139,6 +2525,27 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         />
       )}
 
+      {infoOppId != null && (() => {
+        const opp = records.find(r => r._id === infoOppId);
+        if (!opp) return null;
+        // Splat in the computed values so the popup shows the same
+        // numbers the table cells do without re-deriving them inside
+        // the modal.
+        const augmented = {
+          ...opp,
+          'Call In': (() => { const n = daysFromToday(opp['Follow Up']); return n == null ? '' : n; })(),
+          'Last Spoke': (() => { const n = businessDaysSince(opp['Last Client Heard From Us']); return n == null ? '' : n; })(),
+        };
+        return (
+          <OppInfoModal
+            opp={augmented}
+            headers={headers}
+            onClose={() => setInfoOppId(null)}
+            onDelete={deleteOpp}
+          />
+        );
+      })()}
+
       <div className={styles.tabs}>
         <button
           className={activeTab === 'opps' ? styles.tabActive : styles.tab}
@@ -2227,6 +2634,17 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             <span className={styles.resultCount}>{filtered.length} of {prefiltered.length}{filtersActive && prefiltered.length !== records.length ? ` (filtered from ${records.length})` : ''}</span>
           </div>
 
+          {selectedIds.size > 0 && (
+            <MassEditBar
+              selectedCount={selectedIds.size}
+              headers={headers}
+              columnLinks={columnLinks}
+              onApply={(field, value) => updateManyOppFields(selectedIds, field, value)}
+              onDelete={() => deleteManyOpps(selectedIds)}
+              onClear={() => setSelectedIds(new Set())}
+            />
+          )}
+
           {loading && !data ? (
             <div className={styles.loading}>Loading...</div>
           ) : (
@@ -2234,7 +2652,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               tableId="opps2"
               columns={columns}
               rows={filtered}
-              alwaysVisible={['Account']}
+              alwaysVisible={['Account', '_select', '_info']}
               enableColumnFilters
               emptyMessage="No opps yet — click + New Opp to create one."
               settings={settings}
