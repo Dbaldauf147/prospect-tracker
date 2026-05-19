@@ -19,10 +19,12 @@ function isInactiveAgreement(deal) {
   return INACTIVE_STATUSES.has(status);
 }
 
-// Earliest upcoming contract End Date across the client's deals, plus
-// integer days from today. Past end dates and Cancelled / Expired
-// agreements are ignored — the column answers "what expires next?",
-// so a deal already off the books shouldn't pull focus.
+// Earliest contract End Date across the client's active deals, plus
+// integer days from today (negative when the date is already past).
+// Cancelled / Expired agreements are skipped; everything else counts
+// regardless of whether the date is in the future — a Fully Executed
+// row with a date that already slipped past is exactly the kind of
+// thing this column needs to surface.
 const MS_PER_DAY = 86400000;
 function soonestExpiration(deals) {
   if (!deals || deals.length === 0) return { date: null, days: null };
@@ -37,7 +39,6 @@ function soonestExpiration(deals) {
     const dayStart = new Date(parsed);
     dayStart.setHours(0, 0, 0, 0);
     const ms = dayStart.getTime();
-    if (ms < todayMs) continue;
     if (bestMs == null || ms < bestMs) bestMs = ms;
   }
   if (bestMs == null) return { date: null, days: null };
@@ -54,7 +55,7 @@ const CONTRACT_COLUMNS = [
   { key: 'Paperwork completed',     label: 'Paperwork' },
   { key: 'Current Term Start Date', label: 'Current Term Start Date' },
   { key: 'Payment Terms',           label: 'Payment Terms' },
-  { key: 'End Date',                label: 'End Date' },
+  { key: 'End Date',                label: 'End Date', minWidth: 130 },
   { key: 'Auto renewal?',           label: 'Auto renewal?' },
   { key: 'Esc',                     label: 'Esc', minWidth: 140 },
 ];
