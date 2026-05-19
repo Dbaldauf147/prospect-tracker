@@ -166,7 +166,7 @@ function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onRepla
   const fmtFeeInput = (n) => `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const fmtMoneyCell = (n) => {
     if (typeof n !== 'number' || !Number.isFinite(n)) return '';
-    return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+    return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
   };
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState('');
@@ -368,7 +368,7 @@ function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onRepla
                 const placeholder = computed
                   ? `${(computed.marginPct * 100).toFixed(1)}%`
                   : (typeof globalGmPct === 'number' ? `${Math.round(globalGmPct * 100)}%` : '');
-                const fmt = (n) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
+                const fmt = (n) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
                 const title = computed
                   ? `Auto-margin for "${row.altItem}":
   • Total fee revenue: ${fmt(computed.totalFee)} (${computed.altRowCount} alt-fee row${computed.altRowCount === 1 ? '' : 's'} × unit count, recurring projected over term; total units = ${computed.totalUnits})
@@ -830,12 +830,14 @@ const LEGACY_STATE_SHEET_NAMES = ['__pricing_state__'];
 
 const fmtMoney = (n) => {
   if (n === null || n === undefined || Number.isNaN(n)) return '';
-  return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
+  return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
+// Pricing page-wide convention: always show two decimal places on
+// every currency cell, including aggregated totals.
 const fmtMoneyWhole = (n) => {
   if (n === null || n === undefined || Number.isNaN(n)) return '';
-  return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+  return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
 const fmtPct = (n) => {
@@ -2285,7 +2287,7 @@ export function PricingView() {
                           .reduce((s, r) => s + altFeeYearRevenue(r, 1), 0);
                         const y1CashFlow = y1Revenue - y1Cost;
                         if (y1CashFlow >= 0) return null;
-                        const fmtAbs = (n) => Math.abs(Math.round(n)).toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+                        const fmtAbs = (n) => Math.abs(n).toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
                         return (
                           <div className={styles.year1Warning} role="alert">
                             ⚠ Negative cash flow in Year 1 — projected revenue {fmtAbs(y1Revenue)} vs cost {fmtAbs(y1Cost)} (shortfall {fmtAbs(y1CashFlow)}). Consider restructuring fees or shifting Setup costs.
@@ -2474,7 +2476,7 @@ export function PricingView() {
                                       <CartesianGrid strokeDasharray="3 3" />
                                       <XAxis dataKey="year" />
                                       <YAxis tickFormatter={(v) => v >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${v}`} />
-                                      <Tooltip formatter={(v) => v.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })} />
+                                      <Tooltip formatter={(v) => v.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 })} />
                                       <Legend />
                                       <Bar dataKey="Cost" fill="#ef4444" />
                                       <Bar dataKey="Fee" fill="#2563eb" />
