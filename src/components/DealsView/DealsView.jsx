@@ -71,7 +71,7 @@ function isFilled(v) {
 // the boolean default). Saves on Enter / blur, cancels on Escape.
 // New rows auto-focus the first editable cell so the user can start
 // typing immediately.
-function EditableCell({ value, kind, render, onSave, autoFocus }) {
+function EditableCell({ value, kind, render, onSave, autoFocus, listId }) {
   const [editing, setEditing] = useState(!!autoFocus);
   const [draft, setDraft] = useState(value == null ? '' : String(value));
   useEffect(() => { if (!editing) setDraft(value == null ? '' : String(value)); }, [value, editing]);
@@ -107,6 +107,7 @@ function EditableCell({ value, kind, render, onSave, autoFocus }) {
       type={inputType}
       value={draft}
       step={inputType === 'number' ? 'any' : undefined}
+      list={listId}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={() => commit(draft)}
       onClick={(e) => e.stopPropagation()}
@@ -200,6 +201,11 @@ function ProgressPopoverRow({ row, field, columnLinks, listRegistry, onSave }) {
     </div>
   );
 }
+
+// Browser-native <datalist> ID for the Client Name autocomplete on
+// the Deals tab. The datalist itself is rendered once at DealsView
+// scope and shared by every Client Name cell that's in edit mode.
+const CLIENT_NAME_LIST_ID = 'deals-client-name-suggestions';
 
 // Cell renderer for the leading "Progress" column. Shows a compact
 // X/4 pill colored by completion; click opens a popover with a small
@@ -534,6 +540,7 @@ function buildColumns(rows, columnLinks, listRegistry) {
             render={renderValue}
             onSave={(v) => row.__onUpdate?.(row.id, k, v)}
             autoFocus={!!row.__newRow && sticky}
+            listId={k === 'Client Name' ? CLIENT_NAME_LIST_ID : undefined}
           />
         );
       },
@@ -624,6 +631,26 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
     }
     return [...names].sort((a, b) => a.localeCompare(b));
   }, [prospects, cdmName]);
+
+  // Every company name in the Table View prospect roster — feeds the
+  // <datalist> the Client Name cell uses for predictive text. Broader
+  // than clientOptions on purpose: the user wants autocomplete to
+  // match any company they've already added to Table View, not just
+  // those currently tagged as a client.
+  const companySuggestions = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    for (const p of (prospects || [])) {
+      const c = String(p?.company || '').trim();
+      if (!c) continue;
+      const k = c.toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(c);
+    }
+    out.sort((a, b) => a.localeCompare(b));
+    return out;
+  }, [prospects]);
 
   const clientNameSet = useMemo(
     () => new Set(clientOptions.map(n => normClient(n))),
@@ -943,6 +970,14 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+      {/* Predictive-text source for every Client Name cell. Rendered
+          once at the view level so each EditableCell input just
+          points at it via the list="..." attribute. */}
+      <datalist id={CLIENT_NAME_LIST_ID}>
+        {companySuggestions.map(name => (
+          <option key={name} value={name} />
+        ))}
+      </datalist>
       <div style={{ padding: '1rem 1.25rem 0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexShrink: 0, flexWrap: 'wrap' }}>
         <div>
           <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#1E293B', margin: 0 }}>Deals</h2>
