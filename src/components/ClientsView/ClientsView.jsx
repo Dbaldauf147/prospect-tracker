@@ -5,9 +5,33 @@ import { DealsView } from '../DealsView/DealsView';
 import { loadDealsList } from '../../utils/dealsStore';
 import { loadDealClientMap, DEALS_CLIENT_MAP_EVENT } from '../../utils/dealClientMap';
 import {
-  fmtCurrency, fmtPercent, fmtDate, isTruthy,
+  asDate, fmtCurrency, fmtPercent, fmtDate, isTruthy,
   DEAL_CURRENCY_KEYS, DEAL_DATE_KEYS, DEAL_PERCENT_KEYS, DEAL_CHECK_KEYS,
 } from '../../utils/dealsFormat';
+
+// Earliest upcoming contract End Date across the client's deals, plus
+// integer days from today. Past end dates are ignored — the column
+// answers "what expires next?", so a client whose agreements are all
+// already expired shows nothing.
+const MS_PER_DAY = 86400000;
+function soonestExpiration(deals) {
+  if (!deals || deals.length === 0) return { date: null, days: null };
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayMs = today.getTime();
+  let bestMs = null;
+  for (const d of deals) {
+    const parsed = asDate(d['End Date']);
+    if (!parsed) continue;
+    const dayStart = new Date(parsed);
+    dayStart.setHours(0, 0, 0, 0);
+    const ms = dayStart.getTime();
+    if (ms < todayMs) continue;
+    if (bestMs == null || ms < bestMs) bestMs = ms;
+  }
+  if (bestMs == null) return { date: null, days: null };
+  return { date: new Date(bestMs), days: Math.round((bestMs - todayMs) / MS_PER_DAY) };
+}
 
 // Column layout for the per-client contract drill-down. Each entry's
 // `key` is the canonical field name stored on the deal row; `label` is
@@ -199,12 +223,18 @@ export function ClientsView({ prospects = [], onSelectProspect, cdmName, setting
     return Array.from(s).sort();
   }, [prospects]);
 
-  const rows = useMemo(() => filtered.map(c => ({
-    ...c,
-    id: c.id,
-    services: getServicesCount(c),
-    contractCount: (dealsByClient.get(normClientName(c.company)) || []).length,
-  })), [filtered, dealsByClient]);
+  const rows = useMemo(() => filtered.map(c => {
+    const clientDeals = dealsByClient.get(normClientName(c.company)) || [];
+    const next = soonestExpiration(clientDeals);
+    return {
+      ...c,
+      id: c.id,
+      services: getServicesCount(c),
+      contractCount: clientDeals.length,
+      soonestExpiration: next.date,
+      daysUntilExpiration: next.days,
+    };
+  }), [filtered, dealsByClient]);
 
   const columns = useMemo(() => [
     {
@@ -261,6 +291,31 @@ export function ClientsView({ prospects = [], onSelectProspect, cdmName, setting
       render: (row) => (
         <span style={{ display: 'block', textAlign: 'right', color: '#475569' }}>{row.numberOfSites || '—'}</span>
       ),
+    },
+    {
+      key: 'soonestExpiration', label: 'Soonest Expiration', defaultWidth: 150,
+      getSortValue: (row) => row.soonestExpiration ? row.soonestExpiration.getTime() : null,
+      render: (row) => (
+        <span style={{ color: row.soonestExpiration ? '#334155' : '#94A3B8', fontVariantNumeric: 'tabular-nums' }}>
+          {row.soonestExpiration ? fmtDate(row.soonestExpiration) : '—'}
+        </span>
+      ),
+    },
+    {
+      key: 'daysUntilExpiration', label: 'Days Until', defaultWidth: 110,
+      getSortValue: (row) => row.daysUntilExpiration == null ? null : row.daysUntilExpiration,
+      render: (row) => {
+        if (row.daysUntilExpiration == null) return <span style={{ color: '#94A3B8' }}>—</span>;
+        const d = row.daysUntilExpiration;
+        // Highlight contracts that are inside the typical 90-day renewal window
+        // so they pop without the user having to sort the column manually.
+        const color = d <= 30 ? '#B91C1C' : d <= 90 ? '#B45309' : '#475569';
+        return (
+          <span style={{ display: 'block', textAlign: 'right', color, fontWeight: d <= 90 ? 600 : 400, fontVariantNumeric: 'tabular-nums' }}>
+            {d}
+          </span>
+        );
+      },
     },
     {
       key: 'website', label: 'Website', defaultWidth: 240,
