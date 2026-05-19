@@ -118,8 +118,37 @@ function parseAltFeePaste(text) {
   return out;
 }
 
-function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onAppendRows, globalGmPct, marginFor, yearRevenue, autoFeeFor, siteCount, accountCount, altItemSuggestions = [], costByYear, numYears = 1 }) {
+function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onReplaceRows, onAppendRows, globalGmPct, marginFor, yearRevenue, autoFeeFor, siteCount, accountCount, altItemSuggestions = [], costByYear, numYears = 1 }) {
   const altItemListId = useId();
+  const [dragFrom, setDragFrom] = useState(null); // row currently being dragged
+  const [dragOverIdx, setDragOverIdx] = useState(null); // insertion point (0..rows.length)
+  function rowDragStart(idx, e) {
+    setDragFrom(idx);
+    e.dataTransfer.effectAllowed = 'move';
+    // Setting payload so Firefox actually fires drag events.
+    try { e.dataTransfer.setData('text/plain', String(idx)); } catch { /* ignore */ }
+  }
+  function rowDragOver(idx, e) {
+    if (dragFrom === null) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const rect = e.currentTarget.getBoundingClientRect();
+    const before = e.clientY < rect.top + rect.height / 2;
+    const next = before ? idx : idx + 1;
+    if (next !== dragOverIdx) setDragOverIdx(next);
+  }
+  function rowDrop(idx, e) {
+    e.preventDefault();
+    if (dragFrom === null || !onMoveRow) { setDragFrom(null); setDragOverIdx(null); return; }
+    const target = dragOverIdx ?? idx;
+    onMoveRow(dragFrom, target);
+    setDragFrom(null);
+    setDragOverIdx(null);
+  }
+  function rowDragEnd() {
+    setDragFrom(null);
+    setDragOverIdx(null);
+  }
   // When the user picks Per Site / Per Account, fill Unit Count from
   // the SIA metadata if the cell is still the default placeholder
   // (blank or the seed value of 1).
@@ -216,6 +245,7 @@ function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onA
       <table className={styles.altTable}>
         <thead>
           <tr>
+            <th style={{ width: 22 }} title="Drag a row by this handle to reorder." />
             <th style={{ width: 260, whiteSpace: 'nowrap' }}>Alternative Fee Structure/Schedule</th>
             <th style={{ width: 110, whiteSpace: 'nowrap' }}>Type</th>
             <th className={styles.numCell} style={{ width: 95, whiteSpace: 'nowrap' }}>Fee</th>
@@ -230,8 +260,26 @@ function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onA
           </tr>
         </thead>
         <tbody>
-          {rows.map((row, idx) => (
-            <tr key={idx}>
+          {rows.map((row, idx) => {
+            const isDragging = dragFrom === idx;
+            const showInsertBefore = dragFrom !== null && dragOverIdx === idx;
+            const showInsertAfter = dragFrom !== null && dragOverIdx === idx + 1;
+            return (
+            <tr
+              key={idx}
+              className={`${isDragging ? styles.dragRowGhost : ''} ${showInsertBefore ? styles.dragInsertBefore : ''} ${showInsertAfter ? styles.dragInsertAfter : ''}`.trim() || undefined}
+              onDragOver={(e) => rowDragOver(idx, e)}
+              onDrop={(e) => rowDrop(idx, e)}
+              onDragEnd={rowDragEnd}
+            >
+              <td className={styles.dragHandleCell}>
+                <span
+                  className={styles.dragHandle}
+                  draggable={!!onMoveRow}
+                  onDragStart={(e) => rowDragStart(idx, e)}
+                  title="Drag to reorder this row"
+                >⋮⋮</span>
+              </td>
               <td>
                 <CellTextInput
                   key={`alt-${idx}-altItem-${row.altItem ?? ''}`}
@@ -355,7 +403,8 @@ Type a value to override.`
                 >×</button>
               </td>
             </tr>
-          ))}
+            );
+          })}
           {(() => {
             // Per-year totals split into Setup + One Time vs Recurring (monthly).
             const isRecurring = (t) => /recurring/i.test(t || '');
@@ -369,7 +418,7 @@ Type a value to override.`
             const costs = Array.isArray(costByYear) ? costByYear : Array.from({ length: numYears }, () => 0);
             const renderTotalsRow = (label, values, fmt = fmtMoneyCell, showZero = false) => (
               <tr className={styles.totalsRow}>
-                <td colSpan={6} style={{ textAlign: 'right', fontWeight: 600 }}>{label}</td>
+                <td colSpan={7} style={{ textAlign: 'right', fontWeight: 600 }}>{label}</td>
                 {values.map((v, i) => (
                   <td key={`tot-${label}-${i}`} className={styles.numCell}>
                     {(showZero || v > 0) ? fmt(v) : ''}
@@ -1254,6 +1303,22 @@ export function PricingView() {
     setAltFees(prev => {
       const list = (prev[optionNumber] || []).slice();
       list.splice(idx, 1);
+      return { ...prev, [optionNumber]: list };
+    });
+  }
+
+  // Drag-and-drop reordering. `from` and `to` are indices into the
+  // current row array; the row at `from` is removed and reinserted at
+  // the position that `to` represents after the removal. Out-of-range
+  // or no-op moves are skipped.
+  function moveAltFeeRow(optionNumber, from, to) {
+    if (from === to || from < 0 || to < 0) return;
+    setAltFees(prev => {
+      const list = (prev[optionNumber] || []).slice();
+      if (from >= list.length || to > list.length) return prev;
+      const [row] = list.splice(from, 1);
+      const insertAt = to > from ? to - 1 : to;
+      list.splice(insertAt, 0, row);
       return { ...prev, [optionNumber]: list };
     });
   }
@@ -2242,6 +2307,7 @@ export function PricingView() {
                             numYears={numYearsLocal}
                             onChange={(idx, field, value) => updateAltFeeCell(opt.optionNumber, idx, field, value)}
                             onAddRow={() => addAltFeeRow(opt.optionNumber)}
+                            onMoveRow={(from, to) => moveAltFeeRow(opt.optionNumber, from, to)}
                             onRemoveRow={(idx) => removeAltFeeRow(opt.optionNumber, idx)}
                             onReplaceRows={(rows) => replaceAltFeeRows(opt.optionNumber, rows)}
                             onAppendRows={(rows) => appendAltFeeRows(opt.optionNumber, rows)}
