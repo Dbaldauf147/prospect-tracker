@@ -6139,12 +6139,11 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
 
       // Result block — sits to the RIGHT of the tranche table and
       // rolls the per-tranche Current / Example / Saving columns up
-      // into a Year × {Current, Example, Delta} grid so the user can
-      // see where the savings concentrate across the 5-year buildup.
-      // Each value cell is a live SUMPRODUCT keyed on YEAR(B), so the
-      // grid updates whenever the user edits the tranche inputs.
+      // into rolling 12-month buckets (Year 1 = first 12 tranches,
+      // Year 2 = next 12, …). Each value cell is a live SUM over the
+      // bucket's I / J / K slice so the grid updates whenever the
+      // user edits the tranche inputs.
       const RESULT_HEADER_ROW = HEADER_ROW;
-      const dataRangeB = `$B$${FIRST_DATA_ROW}:$B$${LAST_DATA_ROW}`;
       const dataRangeI = `$I$${FIRST_DATA_ROW}:$I$${LAST_DATA_ROW}`;
       const dataRangeJ = `$J$${FIRST_DATA_ROW}:$J$${LAST_DATA_ROW}`;
       const resultHeaders = ['Year', 'Current', 'Example', 'Delta'];
@@ -6158,55 +6157,47 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         c.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
       });
 
-      // Per-year defaults — match the per-tranche formula so the rows
-      // show plausible numbers before Excel recomputes on open.
-      const yearTotals = new Map();
-      hedges.forEach((h) => {
-        const y = new Date(h.date).getUTCFullYear();
-        const slot = yearTotals.get(y) || { current: 0, example: 0 };
-        // Current: (Fixed $75 + Adder $0) × per-tranche volume
-        slot.current += 75 * TRANCHE_VOL;
-        // Example: ((C-D) × vol × (G + H)) + (D × vol × (F + H))
-        slot.example += ((CURRENT_STEP - PROPOSED_STEP) * TRANCHE_VOL) * h.price
-          + (PROPOSED_STEP * TRANCHE_VOL * 75);
-        yearTotals.set(y, slot);
-      });
-      const years = [...yearTotals.keys()].sort((a, b) => a - b);
-      // Year column is itself a live formula: the first row pulls the
-      // earliest execution date's year via MIN(YEAR(...)), and each
-      // subsequent row adds 1. That way if the user shifts execution
-      // dates into a different 5-year window, the year labels follow
-      // and the SUMPRODUCT totals stay correct.
-      const yearAnchorFormula = `MIN(YEAR(${dataRangeB}))`;
+      // Bucket the tranches into rolling 12-month groups: rows 1-12
+      // → Year 1, rows 13-24 → Year 2, etc. The labels are sequential
+      // ("Year 1", "Year 2" …) instead of calendar years so the
+      // breakdown stays meaningful even if the user shifts execution
+      // dates around or runs the analysis off-calendar.
+      const MONTHS_PER_YEAR = 12;
+      const buckets = [];
+      for (let start = 0; start < hedges.length; start += MONTHS_PER_YEAR) {
+        const slice = hedges.slice(start, start + MONTHS_PER_YEAR);
+        let current = 0;
+        let example = 0;
+        for (const h of slice) {
+          // Current: (Fixed $75 + Adder $0) × per-tranche volume
+          current += 75 * TRANCHE_VOL;
+          // Example: ((C-D) × vol × (G + H)) + (D × vol × (F + H))
+          example += ((CURRENT_STEP - PROPOSED_STEP) * TRANCHE_VOL) * h.price
+            + (PROPOSED_STEP * TRANCHE_VOL * 75);
+        }
+        buckets.push({
+          label: `Year ${buckets.length + 1}`,
+          firstRow: FIRST_DATA_ROW + start,
+          lastRow: FIRST_DATA_ROW + start + slice.length - 1,
+          current,
+          example,
+        });
+      }
 
-      years.forEach((y, i) => {
+      buckets.forEach((bucket, i) => {
         const rowIdx = RESULT_HEADER_ROW + 1 + i;
         const row = ws.getRow(rowIdx);
-        const { current, example } = yearTotals.get(y);
+        const rangeI = `$I$${bucket.firstRow}:$I$${bucket.lastRow}`;
+        const rangeJ = `$J$${bucket.firstRow}:$J$${bucket.lastRow}`;
+        const rangeK = `$K$${bucket.firstRow}:$K$${bucket.lastRow}`;
         const yearCell = row.getCell(RESULT_FIRST_COL);
-        yearCell.value = i === 0
-          ? { formula: yearAnchorFormula, result: y }
-          : { formula: `${ws.getCell(RESULT_HEADER_ROW + 1, RESULT_FIRST_COL).address}+${i}`, result: y };
-        yearCell.numFmt = '0';
-        // Year reference for the SUMPRODUCT lives in the same row's
-        // year cell, so the column header always tracks the date
-        // column even when the user changes execution dates.
-        const yearRef = `${ws.getCell(rowIdx, RESULT_FIRST_COL).address}`;
+        yearCell.value = bucket.label;
         const currentCell = row.getCell(RESULT_FIRST_COL + 1);
-        currentCell.value = {
-          formula: `SUMPRODUCT((YEAR(${dataRangeB})=${yearRef})*${dataRangeI})`,
-          result: current,
-        };
+        currentCell.value = { formula: `SUM(${rangeI})`, result: bucket.current };
         const exampleCell = row.getCell(RESULT_FIRST_COL + 2);
-        exampleCell.value = {
-          formula: `SUMPRODUCT((YEAR(${dataRangeB})=${yearRef})*${dataRangeJ})`,
-          result: example,
-        };
+        exampleCell.value = { formula: `SUM(${rangeJ})`, result: bucket.example };
         const deltaCell = row.getCell(RESULT_FIRST_COL + 3);
-        deltaCell.value = {
-          formula: `SUMPRODUCT((YEAR(${dataRangeB})=${yearRef})*(${dataRangeI}-${dataRangeJ}))`,
-          result: current - example,
-        };
+        deltaCell.value = { formula: `SUM(${rangeK})`, result: bucket.current - bucket.example };
         for (let ci = 0; ci < 4; ci++) {
           const c = row.getCell(RESULT_FIRST_COL + ci);
           c.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
@@ -6222,12 +6213,12 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       });
 
       // TOTAL row at the bottom of the year grid — sums each column
-      // across the 5-year buildup. Highlighted band so the headline
-      // savings number reads at a glance.
-      const yearTotalRowIdx = RESULT_HEADER_ROW + 1 + years.length;
+      // across the buildup. Highlighted band so the headline savings
+      // number reads at a glance.
+      const yearTotalRowIdx = RESULT_HEADER_ROW + 1 + buckets.length;
       const yearTotalRow = ws.getRow(yearTotalRowIdx);
-      const totalCurrentDefault = years.reduce((s, y) => s + yearTotals.get(y).current, 0);
-      const totalExampleDefault = years.reduce((s, y) => s + yearTotals.get(y).example, 0);
+      const totalCurrentDefault = buckets.reduce((s, b) => s + b.current, 0);
+      const totalExampleDefault = buckets.reduce((s, b) => s + b.example, 0);
       const totLabel = yearTotalRow.getCell(RESULT_FIRST_COL);
       totLabel.value = 'TOTAL';
       const totCurrent = yearTotalRow.getCell(RESULT_FIRST_COL + 1);
