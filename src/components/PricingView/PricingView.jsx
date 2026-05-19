@@ -1895,7 +1895,6 @@ export function PricingView() {
               <div className={styles.tabStrip}>
                 {workbook.options.map(o => {
                   const isActive = o.optionNumber === opt.optionNumber;
-                  const tt = totals?.[o.optionNumber];
                   return (
                     <button
                       key={o.sheetName}
@@ -1906,9 +1905,6 @@ export function PricingView() {
                     >
                       <span className={styles.tabLabel}>{o.sheetName}</span>
                       {o.hidden && <span className={styles.tabHidden} title="Hidden in source workbook">·</span>}
-                      {tt && typeof tt.price === 'number' && tt.price > 0 && (
-                        <span className={styles.tabPrice}>{fmtMoney(tt.price)}</span>
-                      )}
                     </button>
                   );
                 })}
