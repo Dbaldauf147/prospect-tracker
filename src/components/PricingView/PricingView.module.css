@@ -876,6 +876,9 @@ select.altCellInput::-ms-expand {
 
 /* Linked To subtab body. */
 .linkedPanel {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
   padding: 1rem 1.25rem 2rem;
   display: flex;
   flex-direction: column;
