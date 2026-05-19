@@ -1641,6 +1641,106 @@ export function PricingView() {
     XLSX.writeFile(wb, `pricing-markup-${new Date().toISOString().slice(0, 10)}.xlsx`);
   }
 
+  // Per-month CTS cost for a single line item, 1-based monthIndex.
+  // Mirrors ctsItemYearCost but resolves the cost down to a single
+  // month so the monthly-cost export can lay everything out across
+  // the term. Setup / One Time lands in startMonth; Recurring bills
+  // each month from startMonth through termMonths; Rolled amortizes
+  // cts/termMonths every month from month 1. costEscalator compounds
+  // annually (year 1 = months 1..12, year 2 = months 13..24, …).
+  function ctsItemMonthlyCost(item, monthIndex) {
+    if (typeof item.cts !== 'number') return 0;
+    if (monthIndex < 1 || monthIndex > termMonths) return 0;
+    const t = effectiveType(item);
+    const isRecurring = /recurring.*monthly|monthly.*recurring|^recurring/i.test(t);
+    const isRolled = /\brolled\b/i.test(t);
+    const startMonth = Math.max(1, Math.round(Number(item.startMonth) || 1));
+    const yearIdx = Math.ceil(monthIndex / 12);
+    const esc = Math.pow(1 + costEscalator, yearIdx - 1);
+    if (isRecurring) {
+      if (monthIndex < startMonth) return 0;
+      return item.cts * esc;
+    }
+    if (isRolled && termMonths > 0) {
+      return (item.cts / termMonths) * esc;
+    }
+    // Setup / One Time: lands in the row's startMonth.
+    return monthIndex === startMonth ? item.cts : 0;
+  }
+
+  // Excel export: monthly CTS cost for every line item on the active
+  // Option, across the full term, with a totals row. Each line item
+  // is one row; columns are Section · Line Item · Type · Start Month
+  // · Term Total · M1 … MN. The bottom row sums every month + the
+  // grand total. Filename: Monthly-Costs-<option>-<date>.xlsx.
+  function exportMonthlyCosts() {
+    if (!workbook) return;
+    const opt = workbook.options.find(o => o.optionNumber === activeOption) || workbook.options[0];
+    if (!opt) return;
+    const term = Math.max(1, Math.min(360, termMonths || 36));
+    const monthHeaders = Array.from({ length: term }, (_, i) => `M${i + 1}`);
+    const rows = [];
+    rows.push([`Monthly Costs — ${opt.sheetName}`]);
+    rows.push([`Term: ${term} months · Cost escalator: ${(costEscalator * 100).toFixed(2)}% / yr`]);
+    rows.push([]);
+    rows.push(['Section', 'Line Item', 'Type', 'Start Month', 'Term Total', ...monthHeaders]);
+
+    const monthTotals = Array.from({ length: term }, () => 0);
+    let grandTotal = 0;
+    for (const sec of opt.sections) {
+      for (const item of sec.items) {
+        if (typeof item.cts !== 'number') continue;
+        const monthly = Array.from({ length: term }, (_, i) => ctsItemMonthlyCost(item, i + 1));
+        const rowTotal = monthly.reduce((s, v) => s + v, 0);
+        for (let i = 0; i < term; i++) monthTotals[i] += monthly[i];
+        grandTotal += rowTotal;
+        rows.push([
+          sec.title || '',
+          item.description || '',
+          effectiveType(item),
+          item.startMonth || 1,
+          rowTotal,
+          ...monthly,
+        ]);
+      }
+    }
+    rows.push([
+      '',
+      'TOTAL',
+      '',
+      '',
+      grandTotal,
+      ...monthTotals,
+    ]);
+
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    // Apply $#,##0.00 to every numeric cell from col E (Term Total)
+    // onward — that's columns 4..(4 + term).
+    const headerRowIdx = 3; // 0-based
+    for (let r = headerRowIdx + 1; r < rows.length; r++) {
+      for (let c = 4; c <= 4 + term; c++) {
+        const v = rows[r][c];
+        if (typeof v !== 'number') continue;
+        const addr = XLSX.utils.encode_cell({ c, r });
+        if (ws[addr]) ws[addr].z = '"$"#,##0.00';
+      }
+    }
+    // Column widths: A 18, B 32, C 18, D 12, E 14, monthly cols 12 each.
+    ws['!cols'] = [
+      { wch: 18 }, { wch: 32 }, { wch: 18 }, { wch: 12 }, { wch: 14 },
+      ...monthHeaders.map(() => ({ wch: 12 })),
+    ];
+    // Freeze the header row and the first 4 label columns so the
+    // monthly grid scrolls cleanly.
+    ws['!freeze'] = { xSplit: 4, ySplit: headerRowIdx + 1 };
+
+    const wb = XLSX.utils.book_new();
+    const sheetName = (`Monthly Costs ${opt.sheetName || `Option ${opt.optionNumber}`}`).slice(0, 31);
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    const slug = (opt.sheetName || `Option-${opt.optionNumber}`).replace(/[^a-zA-Z0-9-]+/g, '-');
+    XLSX.writeFile(wb, `Monthly-Costs-${slug}-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  }
+
   const totals = useMemo(() => {
     if (!workbook) return null;
     const perOption = {};
@@ -1785,6 +1885,13 @@ export function PricingView() {
           {workbook && (
             <>
               <button className={styles.actionBtn} onClick={exportCsv}>Export</button>
+              <button
+                className={styles.actionBtn}
+                onClick={exportMonthlyCosts}
+                title="Excel export of monthly CTS cost for every line item on the active Option, across the full term, with a totals row at the bottom."
+              >
+                Monthly costs ⇩
+              </button>
               <button className={styles.actionBtnDanger} onClick={clearAll}>Clear</button>
             </>
           )}
