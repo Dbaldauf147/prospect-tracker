@@ -65,13 +65,13 @@ export function isTruthy(v) {
 
 export const DEAL_CURRENCY_KEYS = new Set([
   'Setup', 'Recurring Revenue', 'Commission', 'Revenue Recorded',
-  'Paid to Date', 'Delta', 'GM', 'Current Value',
+  'Paid to Date', 'Delta', 'Current Value',
 ]);
 export const DEAL_DATE_KEYS = new Set([
   'Current Term Start Date', 'Original Contract Start', 'Due Date',
   'End Date', 'Follow Up On Sale',
 ]);
-export const DEAL_PERCENT_KEYS = new Set(['Commission Rate', 'Esc']);
+export const DEAL_PERCENT_KEYS = new Set(['Commission Rate', 'Esc', 'GM']);
 export const DEAL_CHECK_KEYS = new Set([
   'Paperwork completed', 'Billing information collected', 'Closed Won',
   'On Client Tracker?', 'BFO - Close after contract execution email has been sent',
