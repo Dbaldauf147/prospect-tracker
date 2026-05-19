@@ -1860,9 +1860,17 @@ export function PricingView() {
                     return acc;
                   }, { cost: 0, price: 0, termCost: 0, termPrice: 0 });
                   // Setup and One Time (and their Rolled variants) share
-                  // a single bucket — they're treated as the same kind of
-                  // charge for totals and margin math.
-                  const setupOneTime = sumByType(/^(setup|one\s*time)(\s+rolled)?$/i, false);
+                  // a single bucket for fee/margin math, but the Totals
+                  // by Type table below still breaks them out so the
+                  // user can see what each contributes.
+                  const setup = sumByType(/^setup(\s+rolled)?$/i, false);
+                  const oneTime = sumByType(/^one\s*time(\s+rolled)?$/i, false);
+                  const setupOneTime = {
+                    cost: setup.cost + oneTime.cost,
+                    price: setup.price + oneTime.price,
+                    termCost: setup.termCost + oneTime.termCost,
+                    termPrice: setup.termPrice + oneTime.termPrice,
+                  };
                   const recurring = sumByType(/recurring.*monthly|monthly.*recurring|^recurring/i, true);
                   const grandTermCost = setupOneTime.termCost + recurring.termCost;
                   const grandTermPrice = setupOneTime.termPrice + recurring.termPrice;
@@ -2130,7 +2138,8 @@ export function PricingView() {
                             <table className={styles.summaryTable}>
                               <thead><tr>{renderHeaders()}</tr></thead>
                               <tbody>
-                                {renderRow('Setup / One Time', { cost: setupOneTime.cost, techDepr: setupOneTime.cost * techDeprPct, totalCost: setupOneTime.cost * (1 + techDeprPct), price: setupOneTime.price, termPrice: setupOneTime.termPrice })}
+                                {renderRow('Setup', { cost: setup.cost, techDepr: setup.cost * techDeprPct, totalCost: setup.cost * (1 + techDeprPct), price: setup.price, termPrice: setup.termPrice })}
+                                {(oneTime.cost > 0 || oneTime.price > 0) && renderRow('One Time', { cost: oneTime.cost, techDepr: oneTime.cost * techDeprPct, totalCost: oneTime.cost * (1 + techDeprPct), price: oneTime.price, termPrice: oneTime.termPrice })}
                                 {renderRow('Recurring (monthly)', { cost: recurring.cost, techDepr: recurring.cost * techDeprPct, totalCost: recurring.cost * (1 + techDeprPct), price: recurring.price })}
                                 {renderRow('Recurring (annual)', { cost: recAnnualCost, techDepr: recAnnualCost * techDeprPct, totalCost: recAnnualCost * (1 + techDeprPct), price: recAnnualPrice, termPrice: recurring.termPrice })}
                                 <tr className={styles.summaryGrandRow}>
