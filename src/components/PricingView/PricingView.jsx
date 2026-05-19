@@ -1058,7 +1058,11 @@ export function PricingView() {
       }
     }
     if (totalMarkup <= 0) return null;
-    return totalMarkup / uc;
+    // Round to two decimals so the value the user sees in the Fee
+    // column is exactly the same number used by every downstream
+    // calculation (year revenue, margin, totals). Without rounding,
+    // a displayed $1.93 can multiply out from an underlying $1.9263.
+    return Math.round((totalMarkup / uc) * 100) / 100;
   }
 
   // For an Alt Fee tag, compute the total margin across ALL alt-fee
