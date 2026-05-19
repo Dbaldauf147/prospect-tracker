@@ -965,8 +965,11 @@ export function PricingView() {
     const rowType = (row.type || '').trim();
     if (!rowType) return null;
     const isRecurringRow = /recurring/i.test(rowType);
-    const isSetupRow = /^setup$/i.test(rowType);
-    const isOneTimeRow = /^one\s*time$/i.test(rowType);
+    // Setup and One Time are treated as the same bucket — both alt-fee
+    // types pull face value from CTS rows of either Setup or One Time
+    // (plain, not Rolled). Rolled variants flow into the Recurring
+    // bucket and are amortized over the term.
+    const isSetupOrOneTimeRow = /^(setup|one\s*time)$/i.test(rowType);
 
     let totalMarkup = 0;
     for (const sec of opt.sections) {
@@ -977,15 +980,12 @@ export function PricingView() {
         const t = effectiveType(item);
         const itemIsRecurring = /recurring/i.test(t);
         const itemIsRolled = /\brolled\b/i.test(t);
-        const itemIsSetup = /^setup$/i.test(t);
-        const itemIsOneTime = /^one\s*time$/i.test(t);
+        const itemIsSetupOrOneTime = /^(setup|one\s*time)$/i.test(t);
 
         if (isRecurringRow) {
           if (itemIsRecurring) totalMarkup += price;
           else if (itemIsRolled && termMonths > 0) totalMarkup += price / termMonths;
-        } else if (isSetupRow && itemIsSetup) {
-          totalMarkup += price;
-        } else if (isOneTimeRow && itemIsOneTime) {
+        } else if (isSetupOrOneTimeRow && itemIsSetupOrOneTime) {
           totalMarkup += price;
         }
       }
@@ -1861,11 +1861,13 @@ export function PricingView() {
                     }
                     return acc;
                   }, { cost: 0, price: 0, termCost: 0, termPrice: 0 });
-                  const setup = sumByType(/^setup(\s+rolled)?$/i, false);
+                  // Setup and One Time (and their Rolled variants) share
+                  // a single bucket — they're treated as the same kind of
+                  // charge for totals and margin math.
+                  const setupOneTime = sumByType(/^(setup|one\s*time)(\s+rolled)?$/i, false);
                   const recurring = sumByType(/recurring.*monthly|monthly.*recurring|^recurring/i, true);
-                  const oneTime = sumByType(/^one\s*time(\s+rolled)?$/i, false);
-                  const grandTermCost = setup.termCost + oneTime.termCost + recurring.termCost;
-                  const grandTermPrice = setup.termPrice + oneTime.termPrice + recurring.termPrice;
+                  const grandTermCost = setupOneTime.termCost + recurring.termCost;
+                  const grandTermPrice = setupOneTime.termPrice + recurring.termPrice;
                   return (
                     <div className={styles.section}>
                       <table className={styles.table}>
@@ -2123,17 +2125,16 @@ export function PricingView() {
                           // over the full term.
                           const recAnnualCost  = recurring.cost  * 12;
                           const recAnnualPrice = recurring.price * 12;
-                          const summaryY1Cost  = setup.cost  + recAnnualCost  + oneTime.cost;
-                          const summaryY1Price = setup.price + recAnnualPrice + oneTime.price;
+                          const summaryY1Cost  = setupOneTime.cost + recAnnualCost;
+                          const summaryY1Price = setupOneTime.price + recAnnualPrice;
                           const summaryY1Depr  = summaryY1Cost * techDeprPct;
                           return (
                             <table className={styles.summaryTable}>
                               <thead><tr>{renderHeaders()}</tr></thead>
                               <tbody>
-                                {renderRow('Setup', { cost: setup.cost, techDepr: setup.cost * techDeprPct, totalCost: setup.cost * (1 + techDeprPct), price: setup.price, termPrice: setup.termPrice })}
+                                {renderRow('Setup / One Time', { cost: setupOneTime.cost, techDepr: setupOneTime.cost * techDeprPct, totalCost: setupOneTime.cost * (1 + techDeprPct), price: setupOneTime.price, termPrice: setupOneTime.termPrice })}
                                 {renderRow('Recurring (monthly)', { cost: recurring.cost, techDepr: recurring.cost * techDeprPct, totalCost: recurring.cost * (1 + techDeprPct), price: recurring.price })}
                                 {renderRow('Recurring (annual)', { cost: recAnnualCost, techDepr: recAnnualCost * techDeprPct, totalCost: recAnnualCost * (1 + techDeprPct), price: recAnnualPrice, termPrice: recurring.termPrice })}
-                                {(oneTime.cost > 0 || oneTime.price > 0) && renderRow('One Time', { cost: oneTime.cost, techDepr: oneTime.cost * techDeprPct, totalCost: oneTime.cost * (1 + techDeprPct), price: oneTime.price, termPrice: oneTime.termPrice })}
                                 <tr className={styles.summaryGrandRow}>
                                   {SUMMARY_COLS.filter(c => !summaryColHidden(c.key)).map(col => {
                                     if (col.key === 'bucket') return <td key={col.key}>Total contract value</td>;
