@@ -118,7 +118,7 @@ function parseAltFeePaste(text) {
   return out;
 }
 
-function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onReplaceRows, onAppendRows, globalGmPct, marginFor, yearRevenue, autoFeeFor, siteCount, accountCount, altItemSuggestions = [], costByYear, numYears = 1 }) {
+function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onReplaceRows, onAppendRows, globalGmPct, marginFor, yearRevenue, autoFeeFor, siteCount, accountCount, altItemSuggestions = [], costByYear, passThroughByYear, numYears = 1 }) {
   const altItemListId = useId();
   const [dragFrom, setDragFrom] = useState(null); // row currently being dragged
   const [dragOverIdx, setDragOverIdx] = useState(null); // insertion point (0..rows.length)
@@ -416,6 +416,7 @@ Type a value to override.`
             const recurring = sums(isRecurring);
             const grand = setupOneTime.map((v, i) => v + recurring[i]);
             const costs = Array.isArray(costByYear) ? costByYear : Array.from({ length: numYears }, () => 0);
+            const passes = Array.isArray(passThroughByYear) ? passThroughByYear : Array.from({ length: numYears }, () => 0);
             const renderTotalsRow = (label, values, fmt = fmtMoneyCell, showZero = false) => (
               <tr className={styles.totalsRow}>
                 <td colSpan={7} style={{ textAlign: 'right', fontWeight: 600 }}>{label}</td>
@@ -427,10 +428,17 @@ Type a value to override.`
                 <td colSpan={2} />
               </tr>
             );
+            // Deal margin excludes pass-through cost and the matching
+            // pass-through revenue. Pass-through bills at face cost, so
+            // revenue and cost cancel — netting them out of both sides
+            // leaves margin = (fee - cost) / (fee - passthrough).
             const margins = grand.map((fee, i) => {
               const cost = costs[i] || 0;
-              if (fee <= 0) return null;
-              return (fee - cost) / fee;
+              const pass = passes[i] || 0;
+              const adjFee = fee - pass;
+              if (adjFee <= 0) return null;
+              const adjCost = cost - pass;
+              return (adjFee - adjCost) / adjFee;
             });
             const fmtPctCell = (n) => n == null ? '' : `${(n * 100).toFixed(1)}%`;
             // Running sum of fee revenue year-over-year, so the last
@@ -440,6 +448,7 @@ Type a value to override.`
               acc.push(prev + (v || 0));
               return acc;
             }, []);
+            const anyPassThrough = passes.some(v => v > 0);
             return (
               <>
                 {renderTotalsRow('Setup + One Time', setupOneTime)}
@@ -447,6 +456,7 @@ Type a value to override.`
                 {renderTotalsRow('Total fee', grand)}
                 {renderTotalsRow('Cumulative deal', cumulative, fmtMoneyCell, true)}
                 {Array.isArray(costByYear) && renderTotalsRow('Linked CTS cost', costs, fmtMoneyCell, true)}
+                {anyPassThrough && renderTotalsRow('Pass-through (excluded from margin)', passes, fmtMoneyCell, true)}
                 {Array.isArray(costByYear) && renderTotalsRow('Deal margin', margins, fmtPctCell, true)}
               </>
             );
@@ -2314,13 +2324,21 @@ export function PricingView() {
                             .filter(Boolean)
                         );
                         const numYearsLocal = Math.max(1, Math.ceil(termMonths / 12));
+                        // Per-year cost split into all linked CTS cost
+                        // vs the pass-through subset. Pass-through cost
+                        // is also the matching revenue (pass-through
+                        // bills at face), so the Deal-margin row can
+                        // subtract it from both sides of the ratio.
+                        const passThroughByYear = Array.from({ length: numYearsLocal }, () => 0);
                         const costByYear = Array.from({ length: numYearsLocal }, (_, yi) => {
                           let sum = 0;
                           for (const sec of opt.sections) {
                             for (const it of sec.items) {
                               const tag = resolvedLinkedTo(it).trim().toLowerCase();
                               if (!tag || !altTagSet.has(tag)) continue;
-                              sum += ctsItemYearCost(it, yi + 1);
+                              const c = ctsItemYearCost(it, yi + 1);
+                              sum += c;
+                              if (isPassThrough(it)) passThroughByYear[yi] += c;
                             }
                           }
                           return sum;
@@ -2337,6 +2355,7 @@ export function PricingView() {
                             accountCount={opt.accountCount}
                             altItemSuggestions={altItemSuggestions}
                             costByYear={costByYear}
+                            passThroughByYear={passThroughByYear}
                             numYears={numYearsLocal}
                             onChange={(idx, field, value) => updateAltFeeCell(opt.optionNumber, idx, field, value)}
                             onAddRow={() => addAltFeeRow(opt.optionNumber)}
