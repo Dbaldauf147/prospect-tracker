@@ -37,10 +37,11 @@ const PROGRESS_COL_LABEL = 'Progress';
 // generated column list (buildColumns filters those out).
 const PROGRESS_IGNORED_KEY = '__progressIgnored';
 
-// The four "ready to invoice" handoff fields the user wants to see
+// The "ready to invoice" handoff fields the user wants to see
 // at a glance on every deal. `label` is what shows up in the popover;
 // `key` is the canonical field name on the deal row.
 const PROGRESS_FIELDS = [
+  { key: 'BFO - Close after contract execution email has been sent', label: 'BFO opp name' },
   { key: 'Commission Sheet Sent to Kathy', label: 'Commission Sheet Sent to Kathy' },
   { key: 'Paperwork completed', label: 'Paperwork' },
   { key: 'Billing information collected', label: 'Billing Letter' },
@@ -52,7 +53,7 @@ function normClient(s) { return String(s || '').toLowerCase().trim(); }
 // A handoff field counts as "done" when the user has put a real
 // value in it — a date, a note, a "Yes", whatever. We treat empty
 // strings and bare dash placeholders ("-", "—", "–") as not filled
-// so a workbook that uses a dash for "blank" doesn't bump the X/4
+// so a workbook that uses a dash for "blank" doesn't bump the X/N
 // progress count.
 const DASH_PLACEHOLDERS = new Set(['-', '–', '—']);
 function isFilled(v) {
@@ -288,7 +289,7 @@ function ProgressCell({ row, columnLinks, listRegistry, onSave, onDelete }) {
               <div style={{ padding: '0.4rem 0.75rem', borderTop: '1px solid #E2E8F0', background: '#F8FAFC', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
                 <label
                   style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', cursor: 'pointer', fontSize: '0.7rem', color: '#475569' }}
-                  title="Don't count this deal in the X/4 tally — its pill shows greyed-out."
+                  title="Don't count this deal in the X/N tally — its pill shows greyed-out."
                 >
                   <input
                     type="checkbox"
@@ -296,7 +297,7 @@ function ProgressCell({ row, columnLinks, listRegistry, onSave, onDelete }) {
                     onChange={toggleIgnore}
                     style={{ margin: 0, cursor: 'pointer' }}
                   />
-                  <span>Ignore this deal{ignored ? '' : ' — grey out the X/4'}</span>
+                  <span>Ignore this deal{ignored ? '' : ` — grey out the X/${PROGRESS_FIELDS.length}`}</span>
                 </label>
                 {onDelete && (
                   <button
