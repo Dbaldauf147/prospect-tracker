@@ -91,7 +91,8 @@ function parseAltFeePaste(text) {
   for (const line of lines) {
     const cols = line.includes('\t') ? line.split('\t') : line.split(/\s*,\s*/);
     const cell = (i) => (cols[i] ?? '').trim();
-    const feeNum = Number(cell(2).replace(/[$,\s]/g, ''));
+    const feeRaw = cell(2).replace(/[$,\s]/g, '');
+    const feeNum = feeRaw === '' ? null : Number(feeRaw);
     const ucNum = Number(cell(4));
     const smNum = Number(cell(5));
     const gmRaw = cell(6).replace('%', '').trim();
@@ -99,7 +100,7 @@ function parseAltFeePaste(text) {
     out.push({
       altItem: cell(0),
       type: cell(1),
-      fee: Number.isFinite(feeNum) ? feeNum : 0,
+      fee: Number.isFinite(feeNum) ? feeNum : null,
       unit: cell(3),
       unitCount: Number.isFinite(ucNum) ? ucNum : cell(4),
       startMonth: Number.isFinite(smNum) ? smNum : cell(5) || 1,
@@ -109,7 +110,20 @@ function parseAltFeePaste(text) {
   return out;
 }
 
-function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onAppendRows, globalGmPct, marginFor, yearRevenue, numYears = 1 }) {
+function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onAppendRows, globalGmPct, marginFor, yearRevenue, autoFeeFor, siteCount, accountCount, numYears = 1 }) {
+  // When the user picks Per Site / Per Account, fill Unit Count from
+  // the SIA metadata if the cell is still empty.
+  function handleUnitChange(idx, row, unit) {
+    onChange(idx, 'unit', unit);
+    const blank = row.unitCount === '' || row.unitCount === null || row.unitCount === undefined;
+    if (!blank) return;
+    if (unit === 'Per Site' && typeof siteCount === 'number' && siteCount > 0) {
+      onChange(idx, 'unitCount', siteCount);
+    } else if (unit === 'Per Account' && typeof accountCount === 'number' && accountCount > 0) {
+      onChange(idx, 'unitCount', accountCount);
+    }
+  }
+  const fmtFeeInput = (n) => `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const fmtMoneyCell = (n) => {
     if (typeof n !== 'number' || !Number.isFinite(n)) return '';
     return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
@@ -182,24 +196,37 @@ function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onA
                   <option value="Recurring (monthly)">Recurring (monthly)</option>
                 </select>
               </td>
-              <td className={styles.numCell}>
-                <CellTextInput
-                  key={`alt-${idx}-fee-${row.fee ?? ''}`}
-                  initial={typeof row.fee === 'number'
-                    ? `$${row.fee.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                    : (row.fee ? `$${row.fee}` : '')}
-                  align="right"
-                  onCommit={(v) => {
-                    const n = Number(String(v).replace(/[$,\s]/g, ''));
-                    onChange(idx, 'fee', Number.isFinite(n) ? n : 0);
-                  }}
-                />
-              </td>
+              {(() => {
+                const auto = autoFeeFor ? autoFeeFor(row) : null;
+                const hasManualFee = typeof row.fee === 'number' && row.fee > 0;
+                const initial = hasManualFee ? fmtFeeInput(row.fee) : '';
+                const placeholder = typeof auto === 'number' ? fmtFeeInput(auto) : '';
+                const title = typeof auto === 'number'
+                  ? `Auto-calculated from marked-up linked CTS (${fmtFeeInput(auto)} per unit). Type a value to override.`
+                  : 'Tie this row to CTS rows via the Linked To column, then pick Type / Unit Count to auto-calculate the fee.';
+                return (
+                  <td className={styles.numCell} title={title}>
+                    <CellTextInput
+                      key={`alt-${idx}-fee-${row.fee ?? ''}-${typeof auto === 'number' ? auto.toFixed(2) : 'n'}`}
+                      initial={initial}
+                      placeholder={placeholder}
+                      align="right"
+                      onCommit={(v) => {
+                        const trimmed = String(v ?? '').trim();
+                        if (!trimmed) { onChange(idx, 'fee', null); return; }
+                        const n = Number(trimmed.replace(/[$,\s]/g, ''));
+                        if (!Number.isFinite(n)) return;
+                        onChange(idx, 'fee', n);
+                      }}
+                    />
+                  </td>
+                );
+              })()}
               <td>
                 <select
                   className={styles.altCellInput}
                   value={row.unit || ''}
-                  onChange={(e) => onChange(idx, 'unit', e.target.value)}
+                  onChange={(e) => handleUnitChange(idx, row, e.target.value)}
                 >
                   <option value="">—</option>
                   <option value="Fixed">Fixed</option>
@@ -621,7 +648,7 @@ const KEY = 'current';
 // Bump this whenever the parser output shape changes — older cached
 // parses are silently discarded on hydration so the user re-uploads
 // against the current parser.
-const PARSER_VERSION = 8;
+const PARSER_VERSION = 9;
 // Sheet inside Pricing-page exports carrying a JSON snapshot of
 // the full page state. Presence of this sheet on a dropped file
 // switches the import path from fee-workbook parsing to state
@@ -769,9 +796,12 @@ export function PricingView() {
   // their start month. Recurring (monthly) bills every month from
   // startMonth through termMonths, escalated each year.
   function altFeeYearRevenue(row, yearIndex) {
-    const fee = Number(row.fee);
+    const manualFee = Number(row.fee);
+    const fee = Number.isFinite(manualFee) && manualFee > 0
+      ? manualFee
+      : (autoFeePerUnitFor(row) ?? 0);
     const uc = Number(row.unitCount);
-    if (!Number.isFinite(fee) || !Number.isFinite(uc) || uc <= 0) return 0;
+    if (!Number.isFinite(fee) || fee <= 0 || !Number.isFinite(uc) || uc <= 0) return 0;
     const startMonth = Math.max(1, Math.round(Number(row.startMonth) || 1));
     const yearStart = (yearIndex - 1) * 12 + 1;
     const yearEnd = yearIndex * 12;
@@ -788,6 +818,55 @@ export function PricingView() {
     const monthCount = billEnd - billStart + 1;
     const escMult = Math.pow(1 + annualEscalator, yearIndex - 1);
     return fee * uc * monthCount * escMult;
+  }
+
+  // Per-unit fee auto-computed from the marked-up prices of CTS rows
+  // linked to this alt-fee row. Type matching:
+  //   alt-fee Setup              ← CTS Setup           (face value)
+  //   alt-fee One Time           ← CTS One Time        (face value)
+  //   alt-fee Recurring (monthly)← CTS Recurring (monthly)            (face monthly)
+  //                                + CTS Setup Rolled / One Time Rolled
+  //                                  (markup amortized over the term)
+  // Returns null if there is no linked + type-matched markup yet, or
+  // the row has no usable unit count.
+  function autoFeePerUnitFor(row) {
+    if (!workbook) return null;
+    const target = (row.altItem || '').trim().toLowerCase();
+    if (!target) return null;
+    const opt = workbook.options.find(o => o.optionNumber === activeOption);
+    if (!opt) return null;
+    const uc = Number(row.unitCount);
+    if (!Number.isFinite(uc) || uc <= 0) return null;
+    const rowType = (row.type || '').trim();
+    if (!rowType) return null;
+    const isRecurringRow = /recurring/i.test(rowType);
+    const isSetupRow = /^setup$/i.test(rowType);
+    const isOneTimeRow = /^one\s*time$/i.test(rowType);
+
+    let totalMarkup = 0;
+    for (const sec of opt.sections) {
+      for (const item of sec.items) {
+        if (resolvedLinkedTo(item).trim().toLowerCase() !== target) continue;
+        const { price } = priceFor(item);
+        if (typeof price !== 'number' || !Number.isFinite(price)) continue;
+        const t = effectiveType(item);
+        const itemIsRecurring = /recurring/i.test(t);
+        const itemIsRolled = /\brolled\b/i.test(t);
+        const itemIsSetup = /^setup$/i.test(t);
+        const itemIsOneTime = /^one\s*time$/i.test(t);
+
+        if (isRecurringRow) {
+          if (itemIsRecurring) totalMarkup += price;
+          else if (itemIsRolled && termMonths > 0) totalMarkup += price / termMonths;
+        } else if (isSetupRow && itemIsSetup) {
+          totalMarkup += price;
+        } else if (isOneTimeRow && itemIsOneTime) {
+          totalMarkup += price;
+        }
+      }
+    }
+    if (totalMarkup <= 0) return null;
+    return totalMarkup / uc;
   }
 
   // For an Alt Fee tag, compute the total margin across ALL alt-fee
@@ -827,9 +906,12 @@ export function PricingView() {
     }, 0);
 
     const totalFee = altRows.reduce((s, r) => {
-      const fee = Number(r.fee);
+      const manualFee = Number(r.fee);
+      const fee = Number.isFinite(manualFee) && manualFee > 0
+        ? manualFee
+        : (autoFeePerUnitFor(r) ?? 0);
       const uc = Number(r.unitCount);
-      if (!Number.isFinite(fee) || !Number.isFinite(uc) || uc <= 0) return s;
+      if (!Number.isFinite(fee) || fee <= 0 || !Number.isFinite(uc) || uc <= 0) return s;
       const isRecurring = /recurring/i.test(r.type || '');
       if (isRecurring) return s + projectMonthlyOverTerm(fee, annualEscalator, termMonths) * uc;
       return s + fee * uc;
@@ -1018,7 +1100,7 @@ export function PricingView() {
   // 9 empty starter rows that match the Excel template — used when
   // an option's alt-fee table hasn't been edited yet.
   const altFeeStarter = () => Array.from({ length: 9 }, () => ({
-    altItem: '', type: '', fee: 0, unit: '', unitCount: '', startMonth: 1,
+    altItem: '', type: '', fee: null, unit: '', unitCount: '', startMonth: 1,
   }));
 
   function updateAltFeeCell(optionNumber, idx, field, value) {
@@ -1363,6 +1445,19 @@ export function PricingView() {
           <strong>{workbook.fileName}</strong>
           {' · '}
           {workbook.options.length} option sheet{workbook.options.length === 1 ? '' : 's'} found
+          {(() => {
+            const sites = workbook.options.find(o => typeof o.siteCount === 'number')?.siteCount;
+            const accounts = workbook.options.find(o => typeof o.accountCount === 'number')?.accountCount;
+            if (sites == null && accounts == null) return null;
+            return (
+              <>
+                {' · '}
+                {sites != null && <span title="Pulled from the SIA metadata block">{sites.toLocaleString()} site{sites === 1 ? '' : 's'}</span>}
+                {sites != null && accounts != null && ' · '}
+                {accounts != null && <span title="Pulled from the SIA metadata block">{accounts.toLocaleString()} account{accounts === 1 ? '' : 's'}</span>}
+              </>
+            );
+          })()}
         </div>
       )}
 
@@ -1901,6 +1996,9 @@ export function PricingView() {
                         globalGmPct={globalGmPct}
                         marginFor={altFeeMarginFor}
                         yearRevenue={altFeeYearRevenue}
+                        autoFeeFor={autoFeePerUnitFor}
+                        siteCount={opt.siteCount}
+                        accountCount={opt.accountCount}
                         numYears={Math.max(1, Math.ceil(termMonths / 12))}
                         onChange={(idx, field, value) => updateAltFeeCell(opt.optionNumber, idx, field, value)}
                         onAddRow={() => addAltFeeRow(opt.optionNumber)}
