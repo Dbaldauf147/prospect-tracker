@@ -5850,37 +5850,14 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
       ws.getRow(1).height = 30;
 
-      // Row 4 — two label / value pairs on one row.
-      ws.mergeCells(4, 1, 4, 4);
-      ws.getCell(4, 1).value = 'Annual Volume (MWh)';
-      ws.getCell(4, 1).font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: SE_SLATE } };
-      ws.getCell(4, 1).alignment = { vertical: 'middle', horizontal: 'right', indent: 1 };
-      const volInput = ws.getCell('E4');
-      volInput.value = 100000;
-      volInput.numFmt = '#,##0';
-      volInput.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: INPUT_FILL } };
-      volInput.font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: SE_TEXT_DARK } };
-      volInput.alignment = { vertical: 'middle', horizontal: 'right', indent: 1 };
-      volInput.border = inputBorder;
-
-      ws.mergeCells(4, 6, 4, 7);
-      ws.getCell(4, 6).value = 'Current Fixed Price ($/MWh)';
-      ws.getCell(4, 6).font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: SE_SLATE } };
-      ws.getCell(4, 6).alignment = { vertical: 'middle', horizontal: 'right', indent: 1 };
-      const spotInput = ws.getCell('H4');
-      spotInput.value = 75.00;
-      spotInput.numFmt = '"$"0.00';
-      spotInput.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: INPUT_FILL } };
-      spotInput.font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: SE_TEXT_DARK } };
-      spotInput.alignment = { vertical: 'middle', horizontal: 'right', indent: 1 };
-      spotInput.border = inputBorder;
-      ws.getRow(4).height = 22;
-
-      // Row 5 is a blank white spacer between the Inputs block and
-      // the tranche table — gives the eye a visual break instead of
-      // having the green header band butt straight against the
-      // yellow input cells.
-      ws.getRow(5).height = 30;
+      // Rows 4-5 are intentionally blank — gives the eye a visual
+      // break between the green title band and the tranche-table
+      // header. The Annual Volume + Current Fixed Price inputs that
+      // used to live here have been inlined into the tranche formulas
+      // (volume = 100,000 / 60 per tranche, fixed price = $75) so
+      // the sheet stays slim.
+      ws.getRow(4).height = 6;
+      ws.getRow(5).height = 16;
 
       // Tranche-table headers sit on row 6, with the blank spacer
       // above it.
@@ -5993,9 +5970,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         // Per-tranche volume (E) falls out of the Current cumulative
         // delta — for the first data row that delta is just C{row}.
         r.getCell(5).value = i === 0
-          ? { formula: `$E$4*C${rowNum}`, result: TRANCHE_VOL }
-          : { formula: `$E$4*(C${rowNum}-C${rowNum - 1})`, result: TRANCHE_VOL };
-        r.getCell(6).value = { formula: '$H$4', result: 75 };
+          ? { formula: `100000*C${rowNum}`, result: TRANCHE_VOL }
+          : { formula: `100000*(C${rowNum}-C${rowNum - 1})`, result: TRANCHE_VOL };
+        r.getCell(6).value = 75;
         r.getCell(7).value = h.price;
         // Adders & Noncommodity Components ($/MWh) — user input, layered
         // on top of the per-row pricing for both the Current Position
@@ -6087,7 +6064,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       tr.getCell(3).value = { formula: `C${LAST_DATA_ROW}`, result: 1.0 };
       tr.getCell(4).value = { formula: `D${LAST_DATA_ROW}`, result: 0.5 };
       tr.getCell(5).value = { formula: `SUM(${dataRange('E')})`, result: 100000 };
-      tr.getCell(6).value = { formula: '$H$4', result: 75 };
+      tr.getCell(6).value = 75;
       // Volume-weighted average Index Price and Adder for the totals
       // row. Locked / Spot now include Adder, so I/E would mix
       // commodity + non-commodity into the "Index Price" cell — use
