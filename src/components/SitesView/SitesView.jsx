@@ -5823,7 +5823,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       //   I Current    | J Example  | K Saving
       //   L gutter
       //   M Year       | N Current  | O Example     | P Delta
-      const widths = [6, 16, 12, 14.5, 19, 19, 14, 20, 18, 22, 18, 3, 10, 16, 18, 16];
+      const widths = [10, 16, 12, 14.5, 19, 19, 14, 20, 18, 22, 18, 3, 10, 16, 18, 16];
       ws.columns = widths.map(w => ({ width: w }));
 
       const INPUT_FILL = 'FFFFF9C3';
@@ -5842,14 +5842,6 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
       title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
       ws.getRow(1).height = 30;
-
-      ws.mergeCells(3, 1, 3, TABLE_COLS);
-      const sh0 = ws.getCell(3, 1);
-      sh0.value = 'Inputs (edit yellow cells)';
-      sh0.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
-      sh0.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
-      sh0.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-      ws.getRow(3).height = 22;
 
       // Row 4 — two label / value pairs on one row.
       ws.mergeCells(4, 1, 4, 4);
@@ -6180,27 +6172,39 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         yearTotals.set(y, slot);
       });
       const years = [...yearTotals.keys()].sort((a, b) => a - b);
+      // Year column is itself a live formula: the first row pulls the
+      // earliest execution date's year via MIN(YEAR(...)), and each
+      // subsequent row adds 1. That way if the user shifts execution
+      // dates into a different 5-year window, the year labels follow
+      // and the SUMPRODUCT totals stay correct.
+      const yearAnchorFormula = `MIN(YEAR(${dataRangeB}))`;
 
       years.forEach((y, i) => {
         const rowIdx = RESULT_HEADER_ROW + 1 + i;
         const row = ws.getRow(rowIdx);
         const { current, example } = yearTotals.get(y);
         const yearCell = row.getCell(RESULT_FIRST_COL);
-        yearCell.value = y;
+        yearCell.value = i === 0
+          ? { formula: yearAnchorFormula, result: y }
+          : { formula: `${ws.getCell(RESULT_HEADER_ROW + 1, RESULT_FIRST_COL).address}+${i}`, result: y };
         yearCell.numFmt = '0';
+        // Year reference for the SUMPRODUCT lives in the same row's
+        // year cell, so the column header always tracks the date
+        // column even when the user changes execution dates.
+        const yearRef = `${ws.getCell(rowIdx, RESULT_FIRST_COL).address}`;
         const currentCell = row.getCell(RESULT_FIRST_COL + 1);
         currentCell.value = {
-          formula: `SUMPRODUCT((YEAR(${dataRangeB})=${y})*${dataRangeI})`,
+          formula: `SUMPRODUCT((YEAR(${dataRangeB})=${yearRef})*${dataRangeI})`,
           result: current,
         };
         const exampleCell = row.getCell(RESULT_FIRST_COL + 2);
         exampleCell.value = {
-          formula: `SUMPRODUCT((YEAR(${dataRangeB})=${y})*${dataRangeJ})`,
+          formula: `SUMPRODUCT((YEAR(${dataRangeB})=${yearRef})*${dataRangeJ})`,
           result: example,
         };
         const deltaCell = row.getCell(RESULT_FIRST_COL + 3);
         deltaCell.value = {
-          formula: `SUMPRODUCT((YEAR(${dataRangeB})=${y})*(${dataRangeI}-${dataRangeJ}))`,
+          formula: `SUMPRODUCT((YEAR(${dataRangeB})=${yearRef})*(${dataRangeI}-${dataRangeJ}))`,
           result: current - example,
         };
         for (let ci = 0; ci < 4; ci++) {
@@ -6246,34 +6250,6 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       totExample.numFmt = '"$"#,##0';
       totDelta.numFmt = '"$"#,##0;[Red]("$"#,##0)';
       yearTotalRow.height = 26;
-
-      // "Why layering works" lives below the tranche table. Anchored
-      // two rows below the totals row so the totals and the
-      // explanation don't crowd each other.
-      const WHY_ROW = TOTAL_ROW + 2;
-      ws.mergeCells(WHY_ROW, 1, WHY_ROW, TABLE_COLS);
-      const wh = ws.getCell(WHY_ROW, 1);
-      wh.value = 'Why layering works';
-      wh.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
-      wh.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
-      wh.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-      ws.getRow(WHY_ROW).height = 22;
-
-      const bullets = [
-        'Splitting the buy into tranches catches multiple points on the forward curve instead of betting on a single execution date.',
-        'Edit the Index Prices in column G to model different curve scenarios. Green cells beat the Fixed Position, red cells lag — each tranche\'s drag or gain is weighted by the row-to-row delta in the Current Hedge % column.',
-        'Edit the Example Hedge % column to test a different cumulative buildup (e.g. partial 50 % hedge, faster front-loaded ramp, deferred back-half hedge). The Result block on the right rolls each year up into Current / Example / Delta so the trade-off shows up year-by-year.',
-        'Adjust the Annual Volume input on E4 to size the analysis to a specific customer (industrial, multi-site portfolio, etc.). The same approach applies to natural gas — swap MWh for MMBtu / Dth and the variance-reduction benefit is identical.',
-      ];
-      bullets.forEach((b, i) => {
-        const rowIdx = WHY_ROW + 1 + i;
-        ws.mergeCells(rowIdx, 1, rowIdx, TABLE_COLS);
-        const cell = ws.getCell(rowIdx, 1);
-        cell.value = `•  ${b}`;
-        cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-        cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
-        ws.getRow(rowIdx).height = 32;
-      });
     }
 
     // ---- Floating vs Hedging Example sheet --------------------------
