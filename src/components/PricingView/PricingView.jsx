@@ -654,7 +654,7 @@ const LINKED_TO_DEFAULTS_KEY = 'linkedToDefaults';
 // Bump this whenever the parser output shape changes — older cached
 // parses are silently discarded on hydration so the user re-uploads
 // against the current parser.
-const PARSER_VERSION = 9;
+const PARSER_VERSION = 10;
 // Sheet inside Pricing-page exports carrying a JSON snapshot of
 // the full page state. Presence of this sheet on a dropped file
 // switches the import path from fee-workbook parsing to state
