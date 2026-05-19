@@ -114,13 +114,89 @@ function EditableCell({ value, kind, render, onSave, autoFocus }) {
   );
 }
 
+// Inline free-text editor used in the Progress popover for fields
+// that aren't bound to a Dropdowns list. Holds a local draft so
+// typing is instant; the parent learns about the change only when
+// the user blurs or hits Enter (Escape reverts).
+function ProgressTextEditor({ value, onCommit }) {
+  const [draft, setDraft] = useState(value == null ? '' : String(value));
+  useEffect(() => { setDraft(value == null ? '' : String(value)); }, [value]);
+
+  function commit() {
+    const trimmed = draft.trim();
+    const prev = String(value ?? '').trim();
+    if (trimmed === prev) return;
+    onCommit(trimmed);
+  }
+
+  return (
+    <input
+      type="text"
+      value={draft}
+      placeholder="—"
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+        else if (e.key === 'Escape') {
+          e.preventDefault();
+          setDraft(value == null ? '' : String(value));
+          e.currentTarget.blur();
+        }
+      }}
+      style={{
+        width: '100%', boxSizing: 'border-box',
+        padding: '3px 6px',
+        border: '1px solid var(--color-border)', borderRadius: 4,
+        fontSize: '0.72rem', fontFamily: 'inherit',
+        color: 'var(--color-text)', background: '#fff',
+      }}
+    />
+  );
+}
+
+// One row inside the Progress popover. Picks the right editor based
+// on whether the user has linked this column to a Dropdowns list
+// (Single / Multi select) or left it as free text.
+function ProgressPopoverRow({ row, field, columnLinks, listRegistry, onSave }) {
+  const raw = row[field.key];
+  const filled = isFilled(raw);
+  const link = resolveColumnLink(field.key, columnLinks);
+  const onChange = (v) => onSave?.(row.id, field.key, v);
+
+  let editor;
+  if (link) {
+    const opts = listRegistry?.get(link.listKey)?.options || [];
+    editor = link.mode === 'multi'
+      ? <MultiSelectCell value={raw} onChange={onChange} options={opts} />
+      : <SelectCell value={raw} onChange={onChange} options={opts} />;
+  } else {
+    editor = <ProgressTextEditor value={raw} onCommit={onChange} />;
+  }
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.35rem 0.75rem' }}>
+      <span
+        title={filled ? 'Has a value' : 'Empty'}
+        style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16, borderRadius: 4, border: '1px solid', borderColor: filled ? '#16A34A' : '#CBD5E1', background: filled ? '#16A34A' : '#fff', color: '#fff', fontSize: '0.65rem', fontWeight: 700, flexShrink: 0 }}
+      >
+        {filled ? '✓' : ''}
+      </span>
+      <span style={{ flex: 1, fontSize: '0.72rem', color: filled ? '#1E293B' : '#475569', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={field.label}>{field.label}</span>
+      <div style={{ flex: '0 0 130px', minWidth: 0 }}>
+        {editor}
+      </div>
+    </div>
+  );
+}
+
 // Cell renderer for the leading "Progress" column. Shows a compact
-// X/4 pill colored by completion; click opens a popover anchored to
-// the pill listing the four handoff fields with the actual value the
-// user has typed into each cell. Clicking a row in the popover
-// toggles that field — empty becomes "Yes" as a quick mark-done, any
-// existing value gets cleared.
-function ProgressCell({ row, onToggle }) {
+// X/4 pill colored by completion; click opens a popover with a small
+// editor per handoff field — a Dropdowns-list picker when the column
+// is linked, free-text otherwise. Saves go through the same updateCell
+// path as the regular table cells.
+function ProgressCell({ row, columnLinks, listRegistry, onSave }) {
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState(null);
   const btnRef = useRef(null);
@@ -134,7 +210,7 @@ function ProgressCell({ row, onToggle }) {
   function openPopover(e) {
     e.stopPropagation();
     const rect = btnRef.current?.getBoundingClientRect();
-    if (rect) setAnchor({ left: rect.left, top: rect.bottom + 4, width: Math.max(rect.width, 260) });
+    if (rect) setAnchor({ left: rect.left, top: rect.bottom + 4, width: Math.max(rect.width, 320) });
     setOpen(true);
   }
 
@@ -144,7 +220,7 @@ function ProgressCell({ row, onToggle }) {
         ref={btnRef}
         type="button"
         onClick={openPopover}
-        title={`${done} of ${total} handoff fields complete — click for details`}
+        title={`${done} of ${total} handoff fields complete — click to edit`}
         style={{ padding: '2px 10px', border: '1px solid', borderColor: fg, borderRadius: 999, background: bg, color: fg, fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', minWidth: 56 }}
       >
         {done}/{total}{pct === 1 ? ' ✓' : ''}
@@ -156,7 +232,8 @@ function ProgressCell({ row, onToggle }) {
             style={{ position: 'fixed', inset: 0, zIndex: 4999, background: 'transparent' }}
           />
           <div
-            style={{ position: 'fixed', left: anchor?.left ?? 0, top: anchor?.top ?? 0, width: anchor?.width ?? 260, maxWidth: 'calc(100vw - 16px)', zIndex: 5000, background: '#fff', border: '1px solid #CBD5E1', borderRadius: 8, boxShadow: '0 10px 30px rgba(15, 23, 42, 0.18)', overflow: 'hidden' }}
+            onClick={(e) => e.stopPropagation()}
+            style={{ position: 'fixed', left: anchor?.left ?? 0, top: anchor?.top ?? 0, width: anchor?.width ?? 320, maxWidth: 'calc(100vw - 16px)', zIndex: 5000, background: '#fff', border: '1px solid #CBD5E1', borderRadius: 8, boxShadow: '0 10px 30px rgba(15, 23, 42, 0.18)', overflow: 'hidden' }}
           >
             <div style={{ padding: '0.5rem 0.75rem', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#F8FAFC' }}>
               <strong style={{ fontSize: '0.75rem', color: '#1E293B' }}>
@@ -170,37 +247,20 @@ function ProgressCell({ row, onToggle }) {
               >×</button>
             </div>
             <div style={{ padding: '0.25rem 0' }}>
-              {PROGRESS_FIELDS.map(f => {
-                const raw = row[f.key];
-                const filled = isFilled(raw);
-                const display = filled ? String(raw).trim() : '—';
-                return (
-                  <button
-                    key={f.key}
-                    type="button"
-                    onClick={() => onToggle?.(row.id, f.key, filled ? '' : 'Yes')}
-                    title={filled ? 'Click to clear' : 'Click to mark Yes'}
-                    style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', width: '100%', padding: '0.4rem 0.75rem', border: 'none', background: 'transparent', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}
-                    onMouseEnter={(e) => e.currentTarget.style.background = '#F1F5F9'}
-                    onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-                  >
-                    <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, borderRadius: 4, border: '1px solid', borderColor: filled ? '#16A34A' : '#CBD5E1', background: filled ? '#16A34A' : '#fff', color: '#fff', fontSize: '0.7rem', fontWeight: 700, flexShrink: 0 }}>
-                      {filled ? '✓' : ''}
-                    </span>
-                    <span style={{ flex: 1, fontSize: '0.75rem', color: filled ? '#1E293B' : '#475569' }}>{f.label}</span>
-                    <span
-                      title={display}
-                      style={{ maxWidth: 110, fontSize: '0.62rem', fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: filled ? '#DCFCE7' : '#F1F5F9', color: filled ? '#166534' : '#64748B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                    >
-                      {display}
-                    </span>
-                  </button>
-                );
-              })}
+              {PROGRESS_FIELDS.map(f => (
+                <ProgressPopoverRow
+                  key={f.key}
+                  row={row}
+                  field={f}
+                  columnLinks={columnLinks}
+                  listRegistry={listRegistry}
+                  onSave={onSave}
+                />
+              ))}
             </div>
-            {!onToggle && (
+            {!onSave && (
               <div style={{ padding: '0.4rem 0.75rem', borderTop: '1px solid #E2E8F0', fontSize: '0.65rem', color: '#94A3B8', fontStyle: 'italic' }}>
-                Read-only — toggling requires the inline-edit deploy.
+                Read-only — editing requires the inline-edit deploy.
               </div>
             )}
           </div>
@@ -601,7 +661,14 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
       label: PROGRESS_COL_LABEL,
       defaultWidth: 90,
       sticky: true,
-      render: (row) => <ProgressCell row={row} onToggle={updateCell} />,
+      render: (row) => (
+        <ProgressCell
+          row={row}
+          columnLinks={columnLinks}
+          listRegistry={listRegistry}
+          onSave={updateCell}
+        />
+      ),
       exportValue: (row) => {
         const done = PROGRESS_FIELDS.filter(f => isFilled(row[f.key])).length;
         return `${done}/${PROGRESS_FIELDS.length}`;
@@ -694,7 +761,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
     };
     // Order: progress · client name · mapped-to-client · status · rest.
     return [progressCol, clientNameCol, helperCol, statusCol, ...baseColumns.slice(1)];
-  }, [baseColumns, clientOptions, clientNameSet, clientMap, ignoreSet, prospectByName]);
+  }, [baseColumns, clientOptions, clientNameSet, clientMap, ignoreSet, prospectByName, columnLinks, listRegistry]);
   const tableId = useMemo(
     () => 'deals:' + columns.map(c => c.key).sort().join('|'),
     [columns]
