@@ -489,11 +489,16 @@ Type a value to override.`
               return acc;
             }, []);
             const anyPassThrough = passes.some(v => v > 0);
+            // Revenue less the pass-through portion — what's left of
+            // the fee after stripping out the bill-at-cost rows on
+            // both the CTS and alt-fee sides.
+            const revLessPass = grand.map((v, i) => v - (passes[i] || 0));
             return (
               <>
                 {renderTotalsRow('Setup + One Time', setupOneTime)}
                 {renderTotalsRow('Recurring (monthly)', recurring)}
                 {renderTotalsRow('Total fee', grand)}
+                {anyPassThrough && renderTotalsRow('Revenue less pass-through', revLessPass, fmtMoneyCell, true)}
                 {renderTotalsRow('Cumulative deal', cumulative, fmtMoneyCell, true)}
                 {Array.isArray(costByYear) && renderTotalsRow('Linked CTS cost', costs, fmtMoneyCell, true)}
                 {anyPassThrough && renderTotalsRow('Pass-through (excluded from margin)', passes, fmtMoneyCell, true)}
@@ -902,6 +907,10 @@ export function PricingView() {
   const [linkedToDefaults, setLinkedToDefaults] = useState({}); // { [`${lineItem}::${type}`]: 'value' }
   const [termMonths, setTermMonths] = useState(36);
   const [annualEscalator, setAnnualEscalator] = useState(0.03);
+  // Separate escalator for CTS costs — defaults to 3.85% so margin
+  // compression year-over-year reflects supplier cost creep, while
+  // revenue still escalates at the annual contract rate above.
+  const [costEscalator, setCostEscalator] = useState(0.0385);
   const [chartTag, setChartTag] = useState(''); // selected line-item / tag for the breakdown chart
   const [chartView, setChartView] = useState('chart'); // 'chart' | 'table'
   const [techDeprPct, setTechDeprPct] = useState(0.04);
@@ -953,6 +962,7 @@ export function PricingView() {
         if (!savedDefaults && saved.linkedToDefaults) setLinkedToDefaults(saved.linkedToDefaults);
         if (typeof saved.termMonths === 'number') setTermMonths(saved.termMonths);
         if (typeof saved.annualEscalator === 'number') setAnnualEscalator(saved.annualEscalator);
+        if (typeof saved.costEscalator === 'number') setCostEscalator(saved.costEscalator);
         if (typeof saved.chartTag === 'string') setChartTag(saved.chartTag);
         if (saved.chartView === 'chart' || saved.chartView === 'table') setChartView(saved.chartView);
         if (typeof saved.techDeprPct === 'number') setTechDeprPct(saved.techDeprPct);
@@ -976,9 +986,9 @@ export function PricingView() {
   // Persist on changes (skip the first render until hydration finishes).
   useEffect(() => {
     if (!hydratedRef.current) return;
-    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, termMonths, annualEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData };
+    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, termMonths, annualEscalator, costEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData };
     dbPut(STORE, payload, KEY).catch(err => console.warn('Failed to save pricing cache:', err));
-  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, termMonths, annualEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData]);
+  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, termMonths, annualEscalator, costEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData]);
 
   // Mirror Linked-To defaults under their dedicated key so they
   // outlive the main cache (parser-version bumps, Clear button,
@@ -1005,7 +1015,7 @@ export function PricingView() {
       const billEnd = Math.min(yearEnd, termMonths);
       if (billEnd < billStart) return 0;
       const months = billEnd - billStart + 1;
-      const esc = Math.pow(1 + annualEscalator, yearIndex - 1);
+      const esc = Math.pow(1 + costEscalator, yearIndex - 1);
       return item.cts * months * esc;
     }
     if (isRolled && termMonths > 0) {
@@ -1016,7 +1026,7 @@ export function PricingView() {
       const billEnd = Math.min(yearEnd, termMonths);
       if (billEnd < billStart) return 0;
       const months = billEnd - billStart + 1;
-      const esc = Math.pow(1 + annualEscalator, yearIndex - 1);
+      const esc = Math.pow(1 + costEscalator, yearIndex - 1);
       return monthlyAmt * months * esc;
     }
     // Setup / One Time: lands entirely in Y1.
@@ -1166,8 +1176,8 @@ export function PricingView() {
       const t = effectiveType(item);
       const isRecurring = /recurring.*monthly|monthly.*recurring|^recurring/i.test(t);
       const isRolled = /\brolled\b/i.test(t);
-      if (isRecurring) return s + projectMonthlyOverTerm(item.cts, annualEscalator, termMonths);
-      if (isRolled && termMonths > 0) return s + projectMonthlyOverTerm(item.cts / termMonths, annualEscalator, termMonths);
+      if (isRecurring) return s + projectMonthlyOverTerm(item.cts, costEscalator, termMonths);
+      if (isRolled && termMonths > 0) return s + projectMonthlyOverTerm(item.cts / termMonths, costEscalator, termMonths);
       return s + item.cts;
     }, 0);
 
@@ -1279,6 +1289,7 @@ export function PricingView() {
     }
     if (typeof s.termMonths === 'number') setTermMonths(s.termMonths);
     if (typeof s.annualEscalator === 'number') setAnnualEscalator(s.annualEscalator);
+    if (typeof s.costEscalator === 'number') setCostEscalator(s.costEscalator);
     if (typeof s.chartTag === 'string') setChartTag(s.chartTag);
     if (s.chartView === 'chart' || s.chartView === 'table') setChartView(s.chartView);
     if (typeof s.techDeprPct === 'number') setTechDeprPct(s.techDeprPct);
@@ -1587,7 +1598,7 @@ export function PricingView() {
     const snapshot = {
       parserVersion: PARSER_VERSION,
       workbook, globalGmPct, overrides, activeOption, colWidths,
-      altFees, linkedToDefaults, termMonths, annualEscalator,
+      altFees, linkedToDefaults, termMonths, annualEscalator, costEscalator,
       chartTag, chartView, techDeprPct, colVisibility,
       summaryColWidths, summaryColVisibility,
     };
@@ -1686,6 +1697,24 @@ export function PricingView() {
                 const n = Number(e.target.value);
                 if (!Number.isFinite(n)) return;
                 setAnnualEscalator(Math.max(0, Math.min(0.5, n / 100)));
+              }}
+            />
+            <span>%/yr</span>
+          </label>
+
+          <label className={styles.gmField} title="Cost escalator applied to recurring (monthly) and rolled CTS costs year-over-year. Separate from the revenue escalator so margin can compress over time.">
+            Cost Esc.
+            <input
+              className={styles.gmInput}
+              type="number"
+              step="0.05"
+              min="0"
+              max="50"
+              value={Math.round(costEscalator * 10000) / 100}
+              onChange={(e) => {
+                const n = Number(e.target.value);
+                if (!Number.isFinite(n)) return;
+                setCostEscalator(Math.max(0, Math.min(0.5, n / 100)));
               }}
             />
             <span>%/yr</span>
@@ -1982,12 +2011,12 @@ export function PricingView() {
                     if (typeof price === 'number') acc.price += price;
 
                     if (isRecurring) {
-                      acc.termCost += projectMonthlyOverTerm(i.cts ?? null, annualEscalator, termMonths);
+                      acc.termCost += projectMonthlyOverTerm(i.cts ?? null, costEscalator, termMonths);
                       acc.termPrice += projectMonthlyOverTerm(price ?? null, annualEscalator, termMonths);
                     } else if (isRolled && termMonths > 0) {
                       const monthlyCost = typeof i.cts === 'number' ? i.cts / termMonths : null;
                       const monthlyPrice = typeof price === 'number' ? price / termMonths : null;
-                      acc.termCost += projectMonthlyOverTerm(monthlyCost, annualEscalator, termMonths);
+                      acc.termCost += projectMonthlyOverTerm(monthlyCost, costEscalator, termMonths);
                       acc.termPrice += projectMonthlyOverTerm(monthlyPrice, annualEscalator, termMonths);
                     } else {
                       if (typeof i.cts === 'number') acc.termCost += i.cts;
@@ -2217,6 +2246,20 @@ export function PricingView() {
                               const n = Number(e.target.value);
                               if (!Number.isFinite(n)) return;
                               setAnnualEscalator(Math.max(0, Math.min(0.5, n / 100)));
+                            }}
+                          />
+                          % · Cost escalator:{' '}
+                          <input
+                            className={styles.metaInput}
+                            type="number"
+                            step="0.05"
+                            min="0"
+                            max="50"
+                            value={Math.round(costEscalator * 10000) / 100}
+                            onChange={(e) => {
+                              const n = Number(e.target.value);
+                              if (!Number.isFinite(n)) return;
+                              setCostEscalator(Math.max(0, Math.min(0.5, n / 100)));
                             }}
                           />
                           % · Tech depr:{' '}
