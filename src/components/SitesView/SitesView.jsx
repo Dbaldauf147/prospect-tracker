@@ -3338,6 +3338,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     const wb = new Workbook();
     wb.creator = 'Schneider Electric · Prospect Tracker';
     wb.created = new Date();
+    // Captured inside the Hedging Analysis sheet builder so the chart
+    // injection at the end of the export knows which rows to plot.
+    let hedgingChartRange = null;
 
     // ---- Portfolio Overview sheet -----------------------------------
     // World map + per-bucket dot rendering. Each dot is split
@@ -5823,7 +5826,11 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       //   I Current    | J Example  | K Saving
       //   L gutter
       //   M Year       | N Current  | O Example     | P Delta
-      const widths = [10, 16, 12, 14.5, 19, 19, 14, 20, 18, 22, 18, 3, 10, 16, 18, 16];
+      // Cols Q-T (17-20) are chart-area padding so the Spot Price
+      // Savings vs Current Hedging chart (anchored below the year-
+      // result block at col M) renders over right-sized cells instead
+      // of Excel's default-narrow columns.
+      const widths = [10, 16, 12, 14.5, 19, 19, 14, 20, 18, 22, 18, 3, 10, 16, 18, 16, 12, 12, 12, 12];
       ws.columns = widths.map(w => ({ width: w }));
 
       const INPUT_FILL = 'FFFFF9C3';
@@ -6018,6 +6025,18 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         // scenario beats Current (Index pricing comes in below Fixed
         // on the un-hedged slice).
         r.getCell(11).value = { formula: `I${rowNum}-J${rowNum}`, result: (75 - h.price) * (CURRENT_STEP - PROPOSED_STEP) * TRANCHE_VOL };
+        // Helper columns U (21) and V (22) feed the chart's
+        // stacked-area "savings shading" between the Index Price and
+        // the Current Fixed Price:
+        //   U = MIN(index, fixed)    — invisible base of the stack
+        //   V = MAX(fixed - index, 0) — the green band, only present
+        //                               when index sits below fixed
+        // Columns are hidden below; the chart references them and
+        // renders the area via plotVisOnly=0 in the chart XML.
+        r.getCell(21).value = { formula: `MIN(G${rowNum},F${rowNum})`, result: Math.min(h.price, 75) };
+        r.getCell(22).value = { formula: `MAX(F${rowNum}-G${rowNum},0)`, result: Math.max(75 - h.price, 0) };
+        r.getCell(21).numFmt = '"$"0.00';
+        r.getCell(22).numFmt = '"$"0.00';
 
         for (let ci = 1; ci <= 11; ci++) {
           const c = r.getCell(ci);
@@ -6241,6 +6260,18 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       totExample.numFmt = '"$"#,##0';
       totDelta.numFmt = '"$"#,##0;[Red]("$"#,##0)';
       yearTotalRow.height = 26;
+
+      // Hide the chart-helper columns U + V so they don't clutter the
+      // sheet but stay live for the chart (plotVisOnly=0 in the chart
+      // XML lets Excel keep plotting hidden ranges).
+      ws.getColumn(21).hidden = true;
+      ws.getColumn(22).hidden = true;
+
+      // Stash the row range so the chart injection at the end of the
+      // export knows which cells to plot. The chart is injected after
+      // wb.xlsx.writeBuffer() (ExcelJS has no chart API), so we ferry
+      // these bounds out via closure.
+      hedgingChartRange = { firstRow: FIRST_DATA_ROW, lastRow: LAST_DATA_ROW };
     }
 
     // ---- Floating vs Hedging Example sheet --------------------------
@@ -6742,20 +6773,13 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     // sheet. Combo chart: a stacked area chart underneath supplies the
     // green "savings" band wherever spot sits below hedge (driven by
     // hidden helper columns U + V), and a line chart on top draws the
-    // Spot and Hedge series. Helper data, axis bounds, and all series
-    // resolve from live cell ranges so the chart recomputes as the
-    // user edits the yellow inputs.
+    // Spot and Hedge series. Helper data and all series resolve from
+    // live cell ranges so the chart recomputes as the user edits the
+    // yellow inputs. Y-axis bounds are omitted so Excel autoscales
+    // — if the user types a spot price beyond the default range, the
+    // chart range expands to fit instead of clipping.
     const SHEET = 'Floating vs Hedging Example';
-    // Y axis bounds derived from the *default* dataset so the axis
-    // stays tight (≤30 % padding above/below the data range) without
-    // depending on Excel's autoscale.
-    const _spotDefaults = [84,82,68,63,60,65,78,80,72,66,74,80];
-    const _hedgeDefault = 75;
-    const _dataMin = Math.min(_hedgeDefault, ..._spotDefaults);
-    const _dataMax = Math.max(_hedgeDefault, ..._spotDefaults);
-    const yMin = Math.floor(_dataMin * 0.7);
-    const yMax = Math.ceil(_dataMax * 1.3);
-    const buf = await injectLiveLineChart(rawBuf, {
+    let buf = await injectLiveLineChart(rawBuf, {
       sheetName: SHEET,
       title: 'Spot Price Savings vs. Current Hedging Scenario',
       catRef: `'${SHEET}'!$B$7:$B$18`,
@@ -6774,14 +6798,43 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // The invisible base series would otherwise show up as a blank
       // chip in the legend — strip it.
       hideLegendIndices: [0],
-      yMin,
-      yMax,
       // ~640 × 340 px (1 px ≈ 9525 EMU), anchored just right of the
       // 9-column data table with a 0.2-col gutter so the chart sits
       // beside the inputs instead of overlapping them. Row index is
       // 0-based, so row: 5 = Excel row 6.
       anchor: { col: 9, colOff: 190500, row: 5, rowOff: 0, cx: 6096000, cy: 3238500 },
     });
+
+    // Mirror the same Spot Price Savings vs Current Hedging Scenario
+    // chart onto the Hedging Analysis tab so the tranche table has the
+    // same visual comparison. Spot = Index Price (col G), Hedge =
+    // Current Fixed Price (col F, locked to $H$4), Savings band feeds
+    // off hidden helper columns U + V on rows 7..LAST_DATA_ROW. No
+    // explicit yMin/yMax → Excel autoscales the Y axis, so any tranche
+    // value driven above or below the default range expands the chart
+    // range automatically.
+    if (hedgingChartRange) {
+      const HSHEET = 'Hedging Analysis';
+      const { firstRow, lastRow } = hedgingChartRange;
+      buf = await injectLiveLineChart(buf, {
+        sheetName: HSHEET,
+        title: 'Spot Price Savings vs. Current Hedging Scenario',
+        catRef: `'${HSHEET}'!$B$${firstRow}:$B$${lastRow}`,
+        areaSeries: [
+          { name: '',        valRef: `'${HSHEET}'!$U$${firstRow}:$U$${lastRow}`, noFill: true },
+          { name: 'Savings', valRef: `'${HSHEET}'!$V$${firstRow}:$V$${lastRow}`, color: '22C55E', alpha: 40000 },
+        ],
+        lineSeries: [
+          { name: 'Index Price',          color: 'F97316', marker: 'circle', markerSize: 4, valRef: `'${HSHEET}'!$G$${firstRow}:$G$${lastRow}` },
+          { name: 'Current Fixed Price',  color: '1E40AF', dash: 'dash',                    valRef: `'${HSHEET}'!$F$${firstRow}:$F$${lastRow}` },
+        ],
+        hideLegendIndices: [0],
+        // Anchored at Excel col M (0-indexed 12), row 14 (0-indexed
+        // 13) — sits below the Year-by-Year result block (rows 6–12)
+        // and to the right of the 60-row tranche table. ~720 × 360 px.
+        anchor: { col: 12, colOff: 0, row: 13, rowOff: 0, cx: 6858000, cy: 3429000 },
+      });
+    }
     const fileName = `Indicative Savings by State - ${new Date().toISOString().slice(0, 10)}.xlsx`;
     if (returnBuffer) return { buffer: buf, fileName };
     const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
