@@ -1709,6 +1709,18 @@ export function PricingView() {
                   </div>
                 </div>
 
+                {(typeof opt.siteCount === 'number' || typeof opt.accountCount === 'number') && (
+                  <div className={styles.optionMeta} title="Pulled from the SIA metadata block on this Option sheet">
+                    {typeof opt.siteCount === 'number' && (
+                      <>{opt.siteCount.toLocaleString()} site{opt.siteCount === 1 ? '' : 's'}</>
+                    )}
+                    {typeof opt.siteCount === 'number' && typeof opt.accountCount === 'number' && ' · '}
+                    {typeof opt.accountCount === 'number' && (
+                      <>{opt.accountCount.toLocaleString()} account{opt.accountCount === 1 ? '' : 's'}</>
+                    )}
+                  </div>
+                )}
+
                 {opt.solutionDescription && (
                   <div className={styles.solutionDesc}>{opt.solutionDescription}</div>
                 )}
