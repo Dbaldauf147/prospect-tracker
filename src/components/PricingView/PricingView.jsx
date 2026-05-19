@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, CartesianGrid, ResponsiveContainer } from 'recharts';
 import styles from './PricingView.module.css';
@@ -61,8 +61,9 @@ function ColumnsMenu({ open, onToggle, columns, hiddenFn, onItemToggle }) {
 }
 
 // Local-draft text cell — commits on blur/Enter so re-renders don't
-// fight typing.
-function CellTextInput({ initial, placeholder, type, align, onCommit }) {
+// fight typing. Pass `listId` to bind the input to a <datalist> for
+// dropdown suggestions while still allowing free-text entry.
+function CellTextInput({ initial, placeholder, type, align, listId, onCommit }) {
   const [draft, setDraft] = useState(initial == null ? '' : String(initial));
   return (
     <input
@@ -71,6 +72,7 @@ function CellTextInput({ initial, placeholder, type, align, onCommit }) {
       style={align === 'right' ? { textAlign: 'right' } : undefined}
       value={draft}
       placeholder={placeholder || ''}
+      list={listId}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={() => onCommit(draft)}
       onKeyDown={(e) => {
@@ -111,7 +113,8 @@ function parseAltFeePaste(text) {
   return out;
 }
 
-function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onAppendRows, globalGmPct, marginFor, yearRevenue, autoFeeFor, siteCount, accountCount, numYears = 1 }) {
+function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onAppendRows, globalGmPct, marginFor, yearRevenue, autoFeeFor, siteCount, accountCount, altItemSuggestions = [], numYears = 1 }) {
+  const altItemListId = useId();
   // When the user picks Per Site / Per Account, fill Unit Count from
   // the SIA metadata if the cell is still the default placeholder
   // (blank or the seed value of 1).
@@ -161,6 +164,9 @@ function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onA
     <div className={styles.altFeeWrap} onPaste={handleTablePaste}>
       <h3 className={styles.summaryTitle}>Alternative Fee Structure / Schedule</h3>
       {flash && <div className={styles.pasteFlash}>{flash}</div>}
+      <datalist id={altItemListId}>
+        {altItemSuggestions.map(opt => <option key={opt} value={opt} />)}
+      </datalist>
       <table className={styles.altTable}>
         <thead>
           <tr>
@@ -184,6 +190,7 @@ function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onA
                 <CellTextInput
                   key={`alt-${idx}-altItem-${row.altItem ?? ''}`}
                   initial={row.altItem}
+                  listId={altItemListId}
                   onCommit={(v) => onChange(idx, 'altItem', v)}
                 />
               </td>
@@ -2102,21 +2109,43 @@ export function PricingView() {
                         );
                       })()}
 
-                      <AltFeeTable
-                        rows={altFees[opt.optionNumber] || altFeeStarter()}
-                        globalGmPct={globalGmPct}
-                        marginFor={altFeeMarginFor}
-                        yearRevenue={altFeeYearRevenue}
-                        autoFeeFor={autoFeePerUnitFor}
-                        siteCount={opt.siteCount}
-                        accountCount={opt.accountCount}
-                        numYears={Math.max(1, Math.ceil(termMonths / 12))}
-                        onChange={(idx, field, value) => updateAltFeeCell(opt.optionNumber, idx, field, value)}
-                        onAddRow={() => addAltFeeRow(opt.optionNumber)}
-                        onRemoveRow={(idx) => removeAltFeeRow(opt.optionNumber, idx)}
-                        onReplaceRows={(rows) => replaceAltFeeRows(opt.optionNumber, rows)}
-                        onAppendRows={(rows) => appendAltFeeRows(opt.optionNumber, rows)}
-                      />
+                      {(() => {
+                        // Suggestion list for the altItem combobox:
+                        // every distinct Linked To tag used by a CTS
+                        // row on this option (override or saved default),
+                        // plus tags already typed on alt-fee rows.
+                        // Free-text entry is still allowed.
+                        const seen = new Map();
+                        const add = (name) => {
+                          const trimmed = (name || '').trim();
+                          if (!trimmed) return;
+                          const k = trimmed.toLowerCase();
+                          if (!seen.has(k)) seen.set(k, trimmed);
+                        };
+                        for (const sec of opt.sections) {
+                          for (const it of sec.items) add(resolvedLinkedTo(it));
+                        }
+                        for (const r of (altFees[opt.optionNumber] || [])) add(r.altItem);
+                        const altItemSuggestions = [...seen.values()].sort((a, b) => a.localeCompare(b));
+                        return (
+                          <AltFeeTable
+                            rows={altFees[opt.optionNumber] || altFeeStarter()}
+                            globalGmPct={globalGmPct}
+                            marginFor={altFeeMarginFor}
+                            yearRevenue={altFeeYearRevenue}
+                            autoFeeFor={autoFeePerUnitFor}
+                            siteCount={opt.siteCount}
+                            accountCount={opt.accountCount}
+                            altItemSuggestions={altItemSuggestions}
+                            numYears={Math.max(1, Math.ceil(termMonths / 12))}
+                            onChange={(idx, field, value) => updateAltFeeCell(opt.optionNumber, idx, field, value)}
+                            onAddRow={() => addAltFeeRow(opt.optionNumber)}
+                            onRemoveRow={(idx) => removeAltFeeRow(opt.optionNumber, idx)}
+                            onReplaceRows={(rows) => replaceAltFeeRows(opt.optionNumber, rows)}
+                            onAppendRows={(rows) => appendAltFeeRows(opt.optionNumber, rows)}
+                          />
+                        );
+                      })()}
                       </div>
 
                       {(() => {
