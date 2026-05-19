@@ -1915,7 +1915,14 @@ export function PricingView() {
                     if (!typeRe.test(t)) return acc;
                     const { price } = priceFor(i);
                     const isRolled = /\brolled\b/i.test(t);
-                    if (typeof i.cts === 'number') acc.cost += i.cts;
+                    const itemPassThrough = isPassThrough(i);
+                    if (typeof i.cts === 'number') {
+                      acc.cost += i.cts;
+                      // Tech depreciation is applied only to non-pass-through
+                      // cost — pass-through rows are billed at face cost so
+                      // we don't book any depreciation against them.
+                      if (!itemPassThrough) acc.depreciableCost += i.cts;
+                    }
                     if (typeof price === 'number') acc.price += price;
 
                     if (isRecurring) {
@@ -1931,7 +1938,7 @@ export function PricingView() {
                       if (typeof price === 'number') acc.termPrice += price;
                     }
                     return acc;
-                  }, { cost: 0, price: 0, termCost: 0, termPrice: 0 });
+                  }, { cost: 0, depreciableCost: 0, price: 0, termCost: 0, termPrice: 0 });
                   // Setup and One Time (and their Rolled variants) share
                   // a single bucket for fee/margin math, but the Totals
                   // by Type table below still breaks them out so the
@@ -1940,6 +1947,7 @@ export function PricingView() {
                   const oneTime = sumByType(/^one\s*time(\s+rolled)?$/i, false);
                   const setupOneTime = {
                     cost: setup.cost + oneTime.cost,
+                    depreciableCost: setup.depreciableCost + oneTime.depreciableCost,
                     price: setup.price + oneTime.price,
                     termCost: setup.termCost + oneTime.termCost,
                     termPrice: setup.termPrice + oneTime.termPrice,
@@ -1973,8 +1981,8 @@ export function PricingView() {
                           {flatItems.map(item => {
                             const { gm, source, price } = priceFor(item);
                             const overrideVal = overrides[item.id]?.gmPct;
-                            const techDepr = typeof item.cts === 'number' ? item.cts * techDeprPct : null;
                             const passThrough = isPassThrough(item);
+                            const techDepr = (typeof item.cts === 'number' && !passThrough) ? item.cts * techDeprPct : (passThrough ? 0 : null);
                             return (
                               <tr key={item.id} className={passThrough ? styles.passThroughRow : undefined}>
                                 {!colHidden('lineItem') && <td>{item.description}</td>}
@@ -2089,7 +2097,7 @@ export function PricingView() {
                             );
                           })}
                           {(() => {
-                            const totalDepr = flatItems.reduce((s, i) => s + (typeof i.cts === 'number' ? i.cts * techDeprPct : 0), 0);
+                            const totalDepr = flatItems.reduce((s, i) => s + ((typeof i.cts === 'number' && !isPassThrough(i)) ? i.cts * techDeprPct : 0), 0);
                             const cells = [];
                             COLS.filter(c => !colHidden(c.key)).forEach(col => {
                               switch (col.key) {
@@ -2204,17 +2212,25 @@ export function PricingView() {
                           // over the full term.
                           const recAnnualCost  = recurring.cost  * 12;
                           const recAnnualPrice = recurring.price * 12;
+                          const recAnnualDeprCost = recurring.depreciableCost * 12;
                           const summaryY1Cost  = setupOneTime.cost + recAnnualCost;
                           const summaryY1Price = setupOneTime.price + recAnnualPrice;
-                          const summaryY1Depr  = summaryY1Cost * techDeprPct;
+                          // Tech depreciation excludes pass-through rows
+                          // — their cost is billed straight through and
+                          // doesn't accrue a depreciation charge.
+                          const summaryY1Depr  = (setupOneTime.depreciableCost + recAnnualDeprCost) * techDeprPct;
+                          const setupDepr = setup.depreciableCost * techDeprPct;
+                          const oneTimeDepr = oneTime.depreciableCost * techDeprPct;
+                          const recurringDepr = recurring.depreciableCost * techDeprPct;
+                          const recurringAnnualDepr = recAnnualDeprCost * techDeprPct;
                           return (
                             <table className={styles.summaryTable}>
                               <thead><tr>{renderHeaders()}</tr></thead>
                               <tbody>
-                                {renderRow('Setup', { cost: setup.cost, techDepr: setup.cost * techDeprPct, totalCost: setup.cost * (1 + techDeprPct), price: setup.price, termPrice: setup.termPrice })}
-                                {(oneTime.cost > 0 || oneTime.price > 0) && renderRow('One Time', { cost: oneTime.cost, techDepr: oneTime.cost * techDeprPct, totalCost: oneTime.cost * (1 + techDeprPct), price: oneTime.price, termPrice: oneTime.termPrice })}
-                                {renderRow('Recurring (monthly)', { cost: recurring.cost, techDepr: recurring.cost * techDeprPct, totalCost: recurring.cost * (1 + techDeprPct), price: recurring.price })}
-                                {renderRow('Recurring (annual)', { cost: recAnnualCost, techDepr: recAnnualCost * techDeprPct, totalCost: recAnnualCost * (1 + techDeprPct), price: recAnnualPrice, termPrice: recurring.termPrice })}
+                                {renderRow('Setup', { cost: setup.cost, techDepr: setupDepr, totalCost: setup.cost + setupDepr, price: setup.price, termPrice: setup.termPrice })}
+                                {(oneTime.cost > 0 || oneTime.price > 0) && renderRow('One Time', { cost: oneTime.cost, techDepr: oneTimeDepr, totalCost: oneTime.cost + oneTimeDepr, price: oneTime.price, termPrice: oneTime.termPrice })}
+                                {renderRow('Recurring (monthly)', { cost: recurring.cost, techDepr: recurringDepr, totalCost: recurring.cost + recurringDepr, price: recurring.price })}
+                                {renderRow('Recurring (annual)', { cost: recAnnualCost, techDepr: recurringAnnualDepr, totalCost: recAnnualCost + recurringAnnualDepr, price: recAnnualPrice, termPrice: recurring.termPrice })}
                                 <tr className={styles.summaryGrandRow}>
                                   {SUMMARY_COLS.filter(c => !summaryColHidden(c.key)).map(col => {
                                     if (col.key === 'bucket') return <td key={col.key}>Total contract value</td>;
