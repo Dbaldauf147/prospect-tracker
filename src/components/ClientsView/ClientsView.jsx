@@ -15,13 +15,13 @@ import {
 // aliases of the Deals-subtab headers — the upload normalizer in
 // DealsView already folds them onto the same key.
 const CONTRACT_COLUMNS = [
-  { key: 'Agreement Name',          label: 'Agreement Name' },
+  { key: 'Agreement Name',          label: 'Agreement Name', minWidth: 260 },
   { key: 'Paperwork completed',     label: 'Paperwork' },
   { key: 'Current Term Start Date', label: 'Current Term Start Date' },
   { key: 'Payment Terms',           label: 'Payment Terms' },
   { key: 'End Date',                label: 'End Date' },
   { key: 'Auto renewal?',           label: 'Auto renewal?' },
-  { key: 'Esc',                     label: 'Esc' },
+  { key: 'Esc',                     label: 'Esc', minWidth: 140 },
 ];
 
 function normClientName(s) {
@@ -58,7 +58,7 @@ function ContractTable({ deals }) {
         <thead>
           <tr style={{ background: '#F1F5F9' }}>
             {CONTRACT_COLUMNS.map(col => (
-              <th key={col.key} style={{ padding: '0.35rem 0.5rem', textAlign: 'left', color: '#475569', fontWeight: 700, fontSize: '0.65rem', whiteSpace: 'nowrap', borderBottom: '1px solid #CBD5E1' }}>
+              <th key={col.key} style={{ padding: '0.35rem 0.5rem', textAlign: 'left', color: '#475569', fontWeight: 700, fontSize: '0.65rem', whiteSpace: 'nowrap', borderBottom: '1px solid #CBD5E1', minWidth: col.minWidth }}>
                 {col.label}
               </th>
             ))}
@@ -68,7 +68,7 @@ function ContractTable({ deals }) {
           {deals.map((d, i) => (
             <tr key={i} style={{ background: i % 2 === 0 ? '#FFFFFF' : '#F8FAFC' }}>
               {CONTRACT_COLUMNS.map(col => (
-                <td key={col.key} style={{ padding: '0.3rem 0.5rem', whiteSpace: 'nowrap', borderBottom: '1px solid #E2E8F0' }}>
+                <td key={col.key} style={{ padding: '0.3rem 0.5rem', whiteSpace: 'nowrap', borderBottom: '1px solid #E2E8F0', minWidth: col.minWidth }}>
                   {renderContractCell(col.key, d[col.key])}
                 </td>
               ))}
