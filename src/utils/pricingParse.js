@@ -25,10 +25,10 @@ const OPTION_RE = /^\s*Option\s*([1-5])\b/i;
 const SOLUTION_DESC_RE = /^solution\s*description$/i;
 const END_ANCHOR_RE = /^\s*cost\s*summary\b/i;
 // Labels in the SIA metadata block that carry # of sites / # of accounts.
-// Both "# of Sites" and "Number of Sites" are accepted; the value can sit
-// in column B or be the only other populated cell on the row.
-const SITES_LABEL_RE = /^\s*(#\s*of\s*sites?|number\s*of\s*sites?|sites?\s*count|total\s*sites?|sites?)\s*[:-]?\s*$/i;
-const ACCOUNTS_LABEL_RE = /^\s*(#\s*of\s*accounts?|number\s*of\s*accounts?|accounts?\s*count|total\s*accounts?|accounts?)\s*[:-]?\s*$/i;
+// "# Sites", "# of Sites", and "Number of Sites" are all accepted; the
+// value can sit in any cell to the right of the label on the same row.
+const SITES_LABEL_RE = /^\s*(#\s*(of\s+)?sites?|number\s*of\s*sites?|sites?\s*count|total\s*sites?|sites?)\s*[:-]?\s*$/i;
+const ACCOUNTS_LABEL_RE = /^\s*(#\s*(of\s+)?accounts?|number\s*of\s*accounts?|accounts?\s*count|total\s*accounts?|accounts?)\s*[:-]?\s*$/i;
 // Per the SIA template, the first 18 rows are sheet metadata (Date,
 // Salesperson, Currency Conversion, Solution description, Target
 // GM%, Use Target). The line-item tables always begin below row 18.
