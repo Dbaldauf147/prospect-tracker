@@ -11,7 +11,7 @@ import {
 } from '../common/columnLinks';
 import { loadDealsList, saveDealsOverride, clearDealsOverride } from '../../utils/dealsStore';
 import {
-  asNumber, fmtCurrency, fmtPercent, fmtDate, isTruthy,
+  asNumber, fmtCurrency, fmtPercent, fmtDate,
   DEAL_CURRENCY_KEYS, DEAL_DATE_KEYS, DEAL_PERCENT_KEYS, DEAL_CHECK_KEYS,
 } from '../../utils/dealsFormat';
 import { matchesCdm } from '../../utils/cdmMatch';
@@ -41,6 +41,15 @@ const PROGRESS_FIELDS = [
 ];
 
 function normClient(s) { return String(s || '').toLowerCase().trim(); }
+
+// A handoff field counts as "done" when the user has put *anything*
+// in it — a date, a note, a "Yes", whatever. The Progress pill /
+// popover used to only count strict truthy tokens (Yes / TRUE / ✓),
+// which under-counted users who type a date or a custom marker into
+// the cell.
+function isFilled(v) {
+  return v != null && String(v).trim() !== '';
+}
 
 // Editable cell wrapper. Renders the column's normal display until the
 // user double-clicks, then swaps to an input typed to match the
@@ -105,15 +114,16 @@ function EditableCell({ value, kind, render, onSave, autoFocus }) {
 
 // Cell renderer for the leading "Progress" column. Shows a compact
 // X/4 pill colored by completion; click opens a popover anchored to
-// the pill listing the four handoff fields with their Yes/No state.
-// Clicking a row in the popover toggles that field on the deal and
-// writes through to dealsStore.
+// the pill listing the four handoff fields with the actual value the
+// user has typed into each cell. Clicking a row in the popover
+// toggles that field — empty becomes "Yes" as a quick mark-done, any
+// existing value gets cleared.
 function ProgressCell({ row, onToggle }) {
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState(null);
   const btnRef = useRef(null);
 
-  const done = PROGRESS_FIELDS.filter(f => isTruthy(row[f.key])).length;
+  const done = PROGRESS_FIELDS.filter(f => isFilled(row[f.key])).length;
   const total = PROGRESS_FIELDS.length;
   const pct = total === 0 ? 0 : done / total;
   const bg = pct === 1 ? '#DCFCE7' : pct === 0 ? '#FEE2E2' : '#FEF3C7';
@@ -159,23 +169,28 @@ function ProgressCell({ row, onToggle }) {
             </div>
             <div style={{ padding: '0.25rem 0' }}>
               {PROGRESS_FIELDS.map(f => {
-                const yes = isTruthy(row[f.key]);
+                const raw = row[f.key];
+                const filled = isFilled(raw);
+                const display = filled ? String(raw).trim() : '—';
                 return (
                   <button
                     key={f.key}
                     type="button"
-                    onClick={() => onToggle?.(row.id, f.key, yes ? '' : 'Yes')}
-                    title="Click to toggle"
+                    onClick={() => onToggle?.(row.id, f.key, filled ? '' : 'Yes')}
+                    title={filled ? 'Click to clear' : 'Click to mark Yes'}
                     style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', width: '100%', padding: '0.4rem 0.75rem', border: 'none', background: 'transparent', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}
                     onMouseEnter={(e) => e.currentTarget.style.background = '#F1F5F9'}
                     onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
                   >
-                    <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, borderRadius: 4, border: '1px solid', borderColor: yes ? '#16A34A' : '#CBD5E1', background: yes ? '#16A34A' : '#fff', color: '#fff', fontSize: '0.7rem', fontWeight: 700, flexShrink: 0 }}>
-                      {yes ? '✓' : ''}
+                    <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, borderRadius: 4, border: '1px solid', borderColor: filled ? '#16A34A' : '#CBD5E1', background: filled ? '#16A34A' : '#fff', color: '#fff', fontSize: '0.7rem', fontWeight: 700, flexShrink: 0 }}>
+                      {filled ? '✓' : ''}
                     </span>
-                    <span style={{ flex: 1, fontSize: '0.75rem', color: yes ? '#1E293B' : '#475569' }}>{f.label}</span>
-                    <span style={{ fontSize: '0.62rem', fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: yes ? '#DCFCE7' : '#F1F5F9', color: yes ? '#166534' : '#64748B' }}>
-                      {yes ? 'Yes' : 'No'}
+                    <span style={{ flex: 1, fontSize: '0.75rem', color: filled ? '#1E293B' : '#475569' }}>{f.label}</span>
+                    <span
+                      title={display}
+                      style={{ maxWidth: 110, fontSize: '0.62rem', fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: filled ? '#DCFCE7' : '#F1F5F9', color: filled ? '#166534' : '#64748B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                    >
+                      {display}
                     </span>
                   </button>
                 );
@@ -574,7 +589,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
       sticky: true,
       render: (row) => <ProgressCell row={row} onToggle={updateCell} />,
       exportValue: (row) => {
-        const done = PROGRESS_FIELDS.filter(f => isTruthy(row[f.key])).length;
+        const done = PROGRESS_FIELDS.filter(f => isFilled(row[f.key])).length;
         return `${done}/${PROGRESS_FIELDS.length}`;
       },
       getFilterValue: () => '',
