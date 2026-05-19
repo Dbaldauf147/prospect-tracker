@@ -5843,13 +5843,6 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
       ws.getRow(1).height = 30;
 
-      ws.mergeCells(2, 1, 2, COLS);
-      const sub = ws.getCell(2, 1);
-      sub.value = 'Edit the yellow cells (Annual Volume on E4, Current Fixed Price on H4, plus per-tranche Hedge % in columns C/D, Index Price in column G, and Adders & Noncommodity Components in column H). Adders ride on top of both the Current Position Cost and the Example Hedge Position Cost, so the same non-commodity charge hits both scenarios. The Example Hedge Position Cost blends Index pricing on the Current-only slice (C − D) with Fixed pricing on the Example-hedged slice (D); the Result block on the right rolls each year up into Current / Example / Delta so the savings concentrate where you can see them.';
-      sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
-      sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
-      ws.getRow(2).height = 60;
-
       ws.mergeCells(3, 1, 3, TABLE_COLS);
       const sh0 = ws.getCell(3, 1);
       sh0.value = 'Inputs (edit yellow cells)';
