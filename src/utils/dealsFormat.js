@@ -13,7 +13,14 @@ export function asNumber(v) {
 export function fmtCurrency(v) {
   const n = asNumber(v);
   if (n == null) return v ?? '';
-  return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
+  // Round to the nearest dollar — the trailing .00 on every cell was
+  // noisy in the Deals tab where amounts are reviewed at a glance.
+  return n.toLocaleString('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 0,
+    minimumFractionDigits: 0,
+  });
 }
 
 export function fmtPercent(v) {
