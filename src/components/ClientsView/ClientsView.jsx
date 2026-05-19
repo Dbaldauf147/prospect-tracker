@@ -729,6 +729,17 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
             rows={rows}
             alwaysVisible={['company']}
             defaultSort={{ key: 'daysUntilExpiration', direction: 'asc' }}
+            rowStyle={(row) => {
+              // Tint the row light red when a renewal is closing in
+              // (<270 days) and the Status column is unset — those are
+              // the clients that need a status set before they slip.
+              const s = String(row.Status || '').trim();
+              const noStatus = s === '' || s === '-' || s === '—' || s === '–';
+              if (row.daysUntilExpiration != null && row.daysUntilExpiration < 270 && noStatus) {
+                return { background: '#FEE2E2' };
+              }
+              return undefined;
+            }}
             expandedRowIds={expandedIds}
             renderExpansion={(row) => (
               <ContractTable deals={dealsByClient.get(normClientName(row.company)) || []} />
