@@ -2,6 +2,13 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import * as XLSX from 'xlsx';
 import { DataTable } from '../common/DataTable';
+import {
+  LIST_REGISTRY,
+  resolveColumnLink,
+  SelectCell,
+  MultiSelectCell,
+  LinkColumnsModal,
+} from '../common/columnLinks';
 import { loadDealsList, saveDealsOverride, clearDealsOverride } from '../../utils/dealsStore';
 import {
   asNumber, fmtCurrency, fmtPercent, fmtDate, isTruthy,
@@ -328,7 +335,7 @@ const COLUMN_ORDER = [
   'Follow Up On Sale',
 ];
 
-function buildColumns(rows) {
+function buildColumns(rows, columnLinks) {
   if (!rows.length) return [];
   const keys = new Set();
   // Skip 'id' and any double-underscore internal field (__onUpdate,
@@ -393,15 +400,30 @@ function buildColumns(rows) {
           >{label}</a>
         ),
       } : {}),
-      render: (row) => (
-        <EditableCell
-          value={row[k]}
-          kind={kind}
-          render={renderValue}
-          onSave={(v) => row.__onUpdate?.(row.id, k, v)}
-          autoFocus={!!row.__newRow && sticky}
-        />
-      ),
+      render: (row) => {
+        // User-configured dropdown binding from the Link Columns modal
+        // wins over the default text/number/date editor. The shared
+        // Select/MultiSelect cells store the value as a string so the
+        // existing dealsStore persistence round-trips it cleanly.
+        const link = resolveColumnLink(k, columnLinks);
+        if (link) {
+          const opts = LIST_REGISTRY.get(link.listKey)?.options || [];
+          const onChange = (v) => row.__onUpdate?.(row.id, k, v);
+          if (link.mode === 'multi') {
+            return <MultiSelectCell value={row[k]} onChange={onChange} options={opts} />;
+          }
+          return <SelectCell value={row[k]} onChange={onChange} options={opts} />;
+        }
+        return (
+          <EditableCell
+            value={row[k]}
+            kind={kind}
+            render={renderValue}
+            onSave={(v) => row.__onUpdate?.(row.id, k, v)}
+            autoFocus={!!row.__newRow && sticky}
+          />
+        );
+      },
       exportValue: (row) => {
         const v = row[k];
         if (v == null) return '';
@@ -424,7 +446,17 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
   const [ignoreSet, setIgnoreSet] = useState(() => loadDealClientIgnore());
   const [onlyUnmapped, setOnlyUnmapped] = useState(false);
   const [bulkPick, setBulkPick] = useState('');
+  const [linkModalOpen, setLinkModalOpen] = useState(false);
   const fileInputRef = useRef(null);
+
+  // User-configurable column-to-Dropdowns-list bindings. Mirrors the
+  // Opps 2 "Link columns" feature so a deal column can pull picks
+  // straight from the Dropdowns reference lists. Stored on the user's
+  // synced settings so it follows them across devices.
+  const columnLinks = settings?.dealsColumnLinks || {};
+  const updateColumnLinks = (next) => {
+    updateSettings?.({ dealsColumnLinks: next || {} });
+  };
 
   useEffect(() => {
     function onStorage(e) {
@@ -523,7 +555,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
     () => data.map((r, i) => ({ ...r, id: i, __onUpdate: updateCell, __newRow: i === 0 && Object.keys(r).length === 0 })),
     [data]
   );
-  const baseColumns = useMemo(() => buildColumns(rows), [rows]);
+  const baseColumns = useMemo(() => buildColumns(rows, columnLinks), [rows, columnLinks]);
   // Inject a helper "Mapped to Client" column right after the sticky
   // Client Name. The column is read-only when the row's Client Name
   // already matches an active client, and otherwise renders a small
@@ -640,6 +672,14 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
   );
   const alwaysVisible = useMemo(
     () => (columns[0] ? [columns[0].key] : []),
+    [columns]
+  );
+  // Headers that the Link Columns modal lets the user bind to a
+  // Dropdowns list. Helper / computed columns (progress pill, Mapped
+  // to Client, Client Status) carry an `__` prefix and never get a
+  // free-text editor, so a dropdown binding wouldn't apply.
+  const linkableHeaders = useMemo(
+    () => columns.map(c => c.key).filter(k => !String(k).startsWith('__')),
     [columns]
   );
 
@@ -809,6 +849,12 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
             title="Replace the Deals table by uploading a new Excel file."
             style={{ padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit' }}
           >Upload Excel</button>
+          <button
+            type="button"
+            onClick={() => setLinkModalOpen(true)}
+            title="Bind deal columns to Dropdowns-tab lists so cells pick from a fixed option list."
+            style={{ padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: 'white', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit' }}
+          >Link columns</button>
           {source === 'override' && (
             <button
               type="button"
@@ -923,6 +969,14 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
         <PasteImportModal
           onClose={() => setShowPaste(false)}
           onImport={handlePasteImport}
+        />
+      )}
+      {linkModalOpen && (
+        <LinkColumnsModal
+          headers={linkableHeaders}
+          columnLinks={columnLinks}
+          onChange={updateColumnLinks}
+          onClose={() => setLinkModalOpen(false)}
         />
       )}
     </div>
