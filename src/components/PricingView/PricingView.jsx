@@ -144,15 +144,13 @@ function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onA
   const [flash, setFlash] = useState('');
   const parsed = pasteOpen ? parseAltFeePaste(pasteText) : [];
 
-  // TSV (tab-separated) snapshot of the table — header row plus one
-  // row per alt-fee entry. The Fee column uses the effective fee
-  // (manual if present, otherwise the auto-computed marked-up fee
-  // from linked CTS rows) so the export reflects what the user sees.
-  // Pastes cleanly into Excel and round-trips through the paste box
-  // since parseAltFeePaste skips the header row.
+  // TSV (tab-separated) snapshot of the table — data rows only, no
+  // header. The Fee column uses the effective fee (manual if present,
+  // otherwise the auto-computed marked-up fee from linked CTS rows)
+  // so the export reflects what the user sees. Pastes cleanly into
+  // Excel and round-trips through the paste box.
   function buildTsv() {
-    const header = ['Alternative Fee Structure/Schedule', 'Type', 'Fee', 'Unit', 'Unit Count', 'Fee Start Month'].join('\t');
-    const lines = [header];
+    const lines = [];
     for (const r of rows) {
       const manualFee = Number(r.fee);
       const hasManual = Number.isFinite(manualFee) && manualFee > 0;
