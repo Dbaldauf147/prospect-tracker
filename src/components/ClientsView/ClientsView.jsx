@@ -8,6 +8,7 @@ import {
   loadClientManagerMap, setClientManager, CLIENT_MANAGER_EVENT,
   loadClientInPersonMap, setClientInPerson, CLIENT_IN_PERSON_EVENT,
   loadClientStatusMap, setClientStatus, CLIENT_STATUS_EVENT,
+  loadClientNotesMap, setClientNotes, CLIENT_NOTES_EVENT,
 } from '../../utils/clientManagerStore';
 import {
   asDate, fmtCurrency, fmtPercent, fmtDate, isTruthy,
@@ -150,6 +151,44 @@ function ClientStatusTextCell({ company, value, onCommit }) {
   );
 }
 
+// Multi-line free-form notes cell. Uses a textarea so the user can
+// hit Enter for a new line; commits on blur. The cell grows up to a
+// max height and scrolls — keeps long notes from blowing out the row.
+function NotesCell({ company, value, onCommit }) {
+  const [draft, setDraft] = useState(value || '');
+  const [focused, setFocused] = useState(false);
+  useEffect(() => { setDraft(value || ''); }, [value]);
+  function commit() {
+    if (draft === (value || '')) return;
+    onCommit(company, draft);
+  }
+  return (
+    <textarea
+      value={draft}
+      placeholder="—"
+      rows={focused ? 3 : 1}
+      onChange={(e) => setDraft(e.target.value)}
+      onFocus={() => setFocused(true)}
+      onBlur={() => { setFocused(false); commit(); }}
+      onClick={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === 'Escape') { e.preventDefault(); setDraft(value || ''); e.currentTarget.blur(); }
+      }}
+      style={{
+        width: '100%', boxSizing: 'border-box',
+        padding: '3px 6px',
+        border: `1px solid ${focused ? '#3B82F6' : 'transparent'}`, borderRadius: 4,
+        background: focused ? '#fff' : 'transparent', color: '#1E293B',
+        fontSize: '0.72rem', fontFamily: 'inherit',
+        resize: 'vertical', minHeight: 24, maxHeight: 160,
+        whiteSpace: 'pre-wrap',
+      }}
+    />
+  );
+}
+
 // Per-client In Person Meeting flag. Centered checkbox; the table
 // row already has no onRowClick so a click on the box only toggles
 // the flag, but stop propagation anyway to be safe.
@@ -272,6 +311,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
   const [managerMap, setManagerMap] = useState(() => loadClientManagerMap());
   const [inPersonMap, setInPersonMap] = useState(() => loadClientInPersonMap());
   const [statusMap, setStatusMap] = useState(() => loadClientStatusMap());
+  const [notesMap, setNotesMap] = useState(() => loadClientNotesMap());
   useEffect(() => {
     function onStorage(e) {
       if (e.key === 'deals-list-override') setDealsList(loadDealsList().data);
@@ -279,22 +319,26 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
       if (e.key === 'clients-manager-map') setManagerMap(loadClientManagerMap());
       if (e.key === 'clients-inperson-map') setInPersonMap(loadClientInPersonMap());
       if (e.key === 'clients-status-map') setStatusMap(loadClientStatusMap());
+      if (e.key === 'clients-notes-map') setNotesMap(loadClientNotesMap());
     }
     function onClientMap() { setClientMap(loadDealClientMap()); }
     function onManagerMap() { setManagerMap(loadClientManagerMap()); }
     function onInPersonMap() { setInPersonMap(loadClientInPersonMap()); }
     function onStatusMap() { setStatusMap(loadClientStatusMap()); }
+    function onNotesMap() { setNotesMap(loadClientNotesMap()); }
     window.addEventListener('storage', onStorage);
     window.addEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
     window.addEventListener(CLIENT_MANAGER_EVENT, onManagerMap);
     window.addEventListener(CLIENT_IN_PERSON_EVENT, onInPersonMap);
     window.addEventListener(CLIENT_STATUS_EVENT, onStatusMap);
+    window.addEventListener(CLIENT_NOTES_EVENT, onNotesMap);
     return () => {
       window.removeEventListener('storage', onStorage);
       window.removeEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
       window.removeEventListener(CLIENT_MANAGER_EVENT, onManagerMap);
       window.removeEventListener(CLIENT_IN_PERSON_EVENT, onInPersonMap);
       window.removeEventListener(CLIENT_STATUS_EVENT, onStatusMap);
+      window.removeEventListener(CLIENT_NOTES_EVENT, onNotesMap);
     };
   }, []);
   // Refresh deals + client map whenever we switch back to the Clients
@@ -307,6 +351,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
       setManagerMap(loadClientManagerMap());
       setInPersonMap(loadClientInPersonMap());
       setStatusMap(loadClientStatusMap());
+      setNotesMap(loadClientNotesMap());
     }
   }, [subtab]);
 
@@ -404,8 +449,9 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
       clientManager: managerMap[ck] || '',
       inPersonMeeting: !!inPersonMap[ck],
       Status: statusMap[ck] || '',
+      notes: notesMap[ck] || '',
     };
-  }), [filtered, dealsByClient, managerMap, inPersonMap, statusMap]);
+  }), [filtered, dealsByClient, managerMap, inPersonMap, statusMap, notesMap]);
 
   const columns = useMemo(() => [
     {
@@ -551,6 +597,18 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
         );
       },
     },
+    {
+      key: 'notes', label: 'Notes', defaultWidth: 320,
+      getSortValue: (row) => (row.notes || '').toLowerCase(),
+      getFilterValue: (row) => row.notes || '',
+      render: (row) => (
+        <NotesCell
+          company={row.company}
+          value={row.notes}
+          onCommit={setClientNotes}
+        />
+      ),
+    },
   ], [expandedIds, columnLinks, listRegistry]);
 
   const subtabBar = (
@@ -670,6 +728,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
             columns={columns}
             rows={rows}
             alwaysVisible={['company']}
+            defaultSort={{ key: 'daysUntilExpiration', direction: 'asc' }}
             expandedRowIds={expandedIds}
             renderExpansion={(row) => (
               <ContractTable deals={dealsByClient.get(normClientName(row.company)) || []} />
