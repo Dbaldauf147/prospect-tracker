@@ -5850,18 +5850,16 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
       ws.getRow(1).height = 30;
 
-      // Rows 4-5 are intentionally blank — gives the eye a visual
-      // break between the green title band and the tranche-table
-      // header. The Annual Volume + Current Fixed Price inputs that
-      // used to live here have been inlined into the tranche formulas
-      // (volume = 100,000 / 60 per tranche, fixed price = $75) so
-      // the sheet stays slim.
-      ws.getRow(4).height = 6;
-      ws.getRow(5).height = 16;
+      // Row 2 is the single white spacer between the green title
+      // band (row 1) and the tranche-table header (row 3). The
+      // Annual Volume + Current Fixed Price inputs that used to sit
+      // here have been inlined into the tranche formulas (volume =
+      // 100,000 / 60 per tranche, fixed price = $75) so the sheet
+      // stays slim.
 
-      // Tranche-table headers sit on row 6, with the blank spacer
-      // above it.
-      const HEADER_ROW = 6;
+      // Tranche-table headers sit on row 3, with one blank spacer
+      // (row 2) above it.
+      const HEADER_ROW = 3;
       const headers = [
         'Month', 'Execution Date', 'Hedge % (Current)', 'Hedge % (Example)',
         'Volume (MWh)', 'Fixed Position ($/MWh)', 'Index Price ($/MWh)',
@@ -6808,17 +6806,17 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
               { name: 'Current Fixed Price',  color: '1E40AF', dash: 'dash',                    valRef: `'${HSHEET}'!$F$${firstRow}:$F$${lastRow}` },
             ],
             hideLegendIndices: [0],
-            // Anchored at Excel col M (0-indexed 12), row 14 (0-indexed
-            // 13) — sits below the Year-by-Year result block (rows 6–12)
+            // Anchored at Excel col M (0-indexed 12), row 11 (0-indexed
+            // 10) — sits below the Year-by-Year result block (rows 3–9)
             // and to the right of the 60-row tranche table. ~720 × 360 px.
-            anchor: { col: 12, colOff: 0, row: 13, rowOff: 0, cx: 6858000, cy: 3429000 },
+            anchor: { col: 12, colOff: 0, row: 10, rowOff: 0, cx: 6858000, cy: 3429000 },
           },
           {
             // % of portfolio hedged over time — cumulative hedge ratio
             // from columns C (Current) and D (Example). Y axis stays
             // 0%-100% so the two ladder lines read as ratios. Anchored
-            // immediately below the Spot Price chart (row 13 + ~18
-            // default-height rows ≈ row 32).
+            // immediately below the Spot Price chart (row 11 + ~18
+            // default-height rows ≈ row 29).
             title: '% of Portfolio Hedged Over Time',
             catRef: `'${HSHEET}'!$B$${firstRow}:$B$${lastRow}`,
             lineSeries: [
@@ -6828,7 +6826,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             yMin: 0,
             yMax: 1,
             numFmt: '0%',
-            anchor: { col: 12, colOff: 0, row: 31, rowOff: 0, cx: 6858000, cy: 3429000 },
+            anchor: { col: 12, colOff: 0, row: 28, rowOff: 0, cx: 6858000, cy: 3429000 },
           },
         ],
       });
