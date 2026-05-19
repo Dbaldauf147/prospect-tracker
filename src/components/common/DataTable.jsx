@@ -612,7 +612,7 @@ export function DataTable({
     document.addEventListener('mouseup', onMouseUp);
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
-  }, [colWidths, columns, tableId]);
+  }, [colWidths, columns, tableId, settings, updateSettings]);
 
   return (
     <div className={styles.outerWrap}>
