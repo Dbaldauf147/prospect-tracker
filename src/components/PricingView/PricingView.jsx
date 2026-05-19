@@ -497,15 +497,34 @@ Type a value to override.`
             // subtraction matches the revenue that came in.
             const ctsPassRev = Array.isArray(passThroughRevenueByYear) ? passThroughRevenueByYear : ctsPasses;
             const revLessPass = grand.map((v, i) => v - (ctsPassRev[i] || 0) - (altPasses[i] || 0));
+            // Cumulative margin year-over-year — the same (adjFee −
+            // adjCost) / adjFee ratio as the per-year Deal margin row,
+            // but each year's adjFee and adjCost are the running sums
+            // through that year. Mirrors the Cumulative deal row so
+            // the reader can see "what's the deal-to-date margin if we
+            // signed today and lived with it through year N."
+            const cumulativeMargins = (() => {
+              let cumFee = 0, cumAdjCost = 0;
+              return grand.map((fee, i) => {
+                const cost = costs[i] || 0;
+                const ctsPass = ctsPasses[i] || 0;
+                const altPass = altPasses[i] || 0;
+                cumFee += (fee - ctsPass - altPass);
+                cumAdjCost += (cost - ctsPass);
+                if (cumFee <= 0) return null;
+                return (cumFee - cumAdjCost) / cumFee;
+              });
+            })();
             return (
               <>
                 {renderTotalsRow('Setup + One Time', setupOneTime)}
                 {renderTotalsRow('Recurring (monthly)', recurring)}
                 {renderTotalsRow('Total fee', grand)}
                 {anyPassThrough && renderTotalsRow('Revenue less pass-through', revLessPass, fmtMoneyCell, true)}
-                {renderTotalsRow('Cumulative deal', cumulative, fmtMoneyCell, true)}
-                {Array.isArray(costByYear) && renderTotalsRow('Linked CTS cost', costs, fmtMoneyCell, true)}
                 {Array.isArray(costByYear) && renderTotalsRow('Deal margin', margins, fmtPctCell, true)}
+                {renderTotalsRow('Cumulative deal', cumulative, fmtMoneyCell, true)}
+                {Array.isArray(costByYear) && renderTotalsRow('Cumulative margin', cumulativeMargins, fmtPctCell, true)}
+                {Array.isArray(costByYear) && renderTotalsRow('Linked CTS cost', costs, fmtMoneyCell, true)}
               </>
             );
           })()}
