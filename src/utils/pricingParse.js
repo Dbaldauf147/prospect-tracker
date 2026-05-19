@@ -24,6 +24,11 @@ import * as XLSX from 'xlsx';
 const OPTION_RE = /^\s*Option\s*([1-5])\b/i;
 const SOLUTION_DESC_RE = /^solution\s*description$/i;
 const END_ANCHOR_RE = /^\s*cost\s*summary\b/i;
+// Labels in the SIA metadata block that carry # of sites / # of accounts.
+// Both "# of Sites" and "Number of Sites" are accepted; the value can sit
+// in column B or be the only other populated cell on the row.
+const SITES_LABEL_RE = /^\s*(#\s*of\s*sites?|number\s*of\s*sites?|sites?\s*count|total\s*sites?|sites?)\s*[:-]?\s*$/i;
+const ACCOUNTS_LABEL_RE = /^\s*(#\s*of\s*accounts?|number\s*of\s*accounts?|accounts?\s*count|total\s*accounts?|accounts?)\s*[:-]?\s*$/i;
 // Per the SIA template, the first 18 rows are sheet metadata (Date,
 // Salesperson, Currency Conversion, Solution description, Target
 // GM%, Use Target). The line-item tables always begin below row 18.
@@ -121,6 +126,30 @@ function parseOptionSheet(sheet, sheetName) {
     const a = cellStr((rows[i] || [])[0]);
     if (!a) continue;
     if (END_ANCHOR_RE.test(a)) { endIdx = i; break; }
+  }
+
+  // # of Sites / # of Accounts live in the SIA metadata block above
+  // the line-item tables. Scan rows 0..startIdx for a label match and
+  // pull the first numeric cell to the right of it on the same row.
+  let siteCount = null;
+  let accountCount = null;
+  for (let i = 0; i < Math.min(rows.length, startIdx + 4); i++) {
+    const row = rows[i] || [];
+    for (let c = 0; c < row.length; c++) {
+      const label = cellStr(row[c]);
+      if (!label) continue;
+      const isSiteLabel = siteCount === null && SITES_LABEL_RE.test(label);
+      const isAccountLabel = accountCount === null && ACCOUNTS_LABEL_RE.test(label);
+      if (!isSiteLabel && !isAccountLabel) continue;
+      let value = null;
+      for (let j = c + 1; j < row.length; j++) {
+        const n = toNumber(row[j]);
+        if (n !== null && Number.isFinite(n) && n > 0) { value = n; break; }
+      }
+      if (value === null) continue;
+      if (isSiteLabel) siteCount = value;
+      else accountCount = value;
+    }
   }
 
   // Solution description — captured from anywhere on the sheet, even
@@ -240,6 +269,8 @@ function parseOptionSheet(sheet, sheetName) {
     sheetName,
     hidden: false, // overwritten by caller
     solutionDescription,
+    siteCount,
+    accountCount,
     sections,
     rawSample,
     rawSampleOffset,
