@@ -10,10 +10,19 @@ import {
   DEAL_CURRENCY_KEYS, DEAL_DATE_KEYS, DEAL_PERCENT_KEYS, DEAL_CHECK_KEYS,
 } from '../../utils/dealsFormat';
 
+// The Paperwork column doubles as a status field in this dataset —
+// values like "Cancelled" and "Expired" mark agreements that no
+// longer count, regardless of their End Date.
+const INACTIVE_STATUSES = new Set(['cancelled', 'canceled', 'expired']);
+function isInactiveAgreement(deal) {
+  const status = String(deal?.['Paperwork completed'] || '').trim().toLowerCase();
+  return INACTIVE_STATUSES.has(status);
+}
+
 // Earliest upcoming contract End Date across the client's deals, plus
-// integer days from today. Past end dates are ignored — the column
-// answers "what expires next?", so a client whose agreements are all
-// already expired shows nothing.
+// integer days from today. Past end dates and Cancelled / Expired
+// agreements are ignored — the column answers "what expires next?",
+// so a deal already off the books shouldn't pull focus.
 const MS_PER_DAY = 86400000;
 function soonestExpiration(deals) {
   if (!deals || deals.length === 0) return { date: null, days: null };
@@ -22,6 +31,7 @@ function soonestExpiration(deals) {
   const todayMs = today.getTime();
   let bestMs = null;
   for (const d of deals) {
+    if (isInactiveAgreement(d)) continue;
     const parsed = asDate(d['End Date']);
     if (!parsed) continue;
     const dayStart = new Date(parsed);
@@ -116,6 +126,13 @@ function ContractTable({ deals }) {
       </div>
     );
   }
+  // Cancelled / Expired agreements sink to the bottom — they're still
+  // worth seeing as history but shouldn't crowd the active rows.
+  const sorted = [...deals].sort((a, b) => {
+    const ai = isInactiveAgreement(a) ? 1 : 0;
+    const bi = isInactiveAgreement(b) ? 1 : 0;
+    return ai - bi;
+  });
   return (
     <div style={{ overflowX: 'auto', padding: '0.5rem 0.75rem 0.75rem' }}>
       <table style={{ borderCollapse: 'collapse', fontSize: '0.7rem', width: 'max-content', minWidth: '100%' }}>
@@ -129,15 +146,19 @@ function ContractTable({ deals }) {
           </tr>
         </thead>
         <tbody>
-          {deals.map((d, i) => (
-            <tr key={i} style={{ background: i % 2 === 0 ? '#FFFFFF' : '#F8FAFC' }}>
+          {sorted.map((d, i) => {
+            const inactive = isInactiveAgreement(d);
+            const baseBg = i % 2 === 0 ? '#FFFFFF' : '#F8FAFC';
+            return (
+            <tr key={i} style={{ background: inactive ? '#F1F5F9' : baseBg, color: inactive ? '#94A3B8' : undefined, opacity: inactive ? 0.7 : 1 }}>
               {CONTRACT_COLUMNS.map(col => (
                 <td key={col.key} style={{ padding: '0.3rem 0.5rem', whiteSpace: 'nowrap', borderBottom: '1px solid #E2E8F0', minWidth: col.minWidth }}>
                   {renderContractCell(col.key, d[col.key])}
                 </td>
               ))}
             </tr>
-          ))}
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -165,7 +186,7 @@ function normStatus(s) {
 function isClient(p) { return normStatus(p.status) === 'client'; }
 function isOldClient(p) { return normStatus(p.status) === 'old client'; }
 
-export function ClientsView({ prospects = [], onSelectProspect, cdmName, settings, updateSettings }) {
+export function ClientsView({ prospects = [], cdmName, settings, updateSettings }) {
   const [subtab, setSubtab] = useState(readSavedSubtab);
   function selectSubtab(key) {
     setSubtab(key);
@@ -444,7 +465,7 @@ export function ClientsView({ prospects = [], onSelectProspect, cdmName, setting
           <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#1E293B', margin: 0 }}>Clients</h2>
           <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2 }}>
             {cdmName ? `${cdmName}'s clients` : 'Your clients'} — every prospect with CDM = {cdmName || 'your CDM'} and <strong>Status = Client</strong>
-            {showOld ? ' or Old Client' : ''}. Click ▸ to expand a client&apos;s contracts; click the row body to open the company popup.
+            {showOld ? ' or Old Client' : ''}. Click ▸ to expand a client&apos;s contracts.
           </div>
         </div>
         <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.72rem', color: '#475569', cursor: 'pointer' }}>
@@ -506,7 +527,6 @@ export function ClientsView({ prospects = [], onSelectProspect, cdmName, setting
             columns={columns}
             rows={rows}
             alwaysVisible={['company']}
-            onRowClick={(row) => onSelectProspect?.(row)}
             expandedRowIds={expandedIds}
             renderExpansion={(row) => (
               <ContractTable deals={dealsByClient.get(normClientName(row.company)) || []} />
