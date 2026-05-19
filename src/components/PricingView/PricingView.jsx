@@ -1029,7 +1029,6 @@ export function PricingView() {
     if (typeof item.cts !== 'number') return 0;
     const t = effectiveType(item);
     const isRecurring = /recurring.*monthly|monthly.*recurring|^recurring/i.test(t);
-    const isRolled = /\brolled\b/i.test(t);
     const yearStart = (yearIndex - 1) * 12 + 1;
     const yearEnd = yearIndex * 12;
     // CTS row's Start Month (column on the pricing table) — defaults
@@ -1045,18 +1044,12 @@ export function PricingView() {
       const esc = Math.pow(1 + costEscalator, yearIndex - 1);
       return item.cts * months * esc;
     }
-    if (isRolled && termMonths > 0) {
-      // Amortize CTS across the term, then bill each year's months at
-      // an escalated monthly rate.
-      const monthlyAmt = item.cts / termMonths;
-      const billStart = Math.max(yearStart, startMonth);
-      const billEnd = Math.min(yearEnd, termMonths);
-      if (billEnd < billStart) return 0;
-      const months = billEnd - billStart + 1;
-      const esc = Math.pow(1 + costEscalator, yearIndex - 1);
-      return monthlyAmt * months * esc;
-    }
-    // Setup / One Time: lands in the year containing startMonth.
+    // Setup / One Time + Setup-Rolled / One-Time-Rolled: cost lands
+    // upfront in the year containing startMonth. Rolled variants still
+    // amortize their *billing* over the term on the revenue side
+    // (autoFee / altFeeYearRevenue handle that), but the cost has
+    // already been incurred — so margin should book it in Y1 instead
+    // of spreading it monthly.
     if (startMonth > termMonths) return 0;
     if (startMonth >= yearStart && startMonth <= yearEnd) return item.cts;
     return 0;
@@ -1204,9 +1197,10 @@ export function PricingView() {
       if (typeof item.cts !== 'number') return s;
       const t = effectiveType(item);
       const isRecurring = /recurring.*monthly|monthly.*recurring|^recurring/i.test(t);
-      const isRolled = /\brolled\b/i.test(t);
       if (isRecurring) return s + projectMonthlyOverTerm(item.cts, costEscalator, termMonths);
-      if (isRolled && termMonths > 0) return s + projectMonthlyOverTerm(item.cts / termMonths, costEscalator, termMonths);
+      // Setup / One Time + Setup-Rolled / One-Time-Rolled: cost is
+      // booked upfront, not amortized — the customer is billed on a
+      // rolled schedule but our cost has already been incurred.
       return s + item.cts;
     }, 0);
 
@@ -1653,7 +1647,6 @@ export function PricingView() {
     if (monthIndex < 1 || monthIndex > termMonths) return 0;
     const t = effectiveType(item);
     const isRecurring = /recurring.*monthly|monthly.*recurring|^recurring/i.test(t);
-    const isRolled = /\brolled\b/i.test(t);
     const startMonth = Math.max(1, Math.round(Number(item.startMonth) || 1));
     const yearIdx = Math.ceil(monthIndex / 12);
     const esc = Math.pow(1 + costEscalator, yearIdx - 1);
@@ -1661,10 +1654,9 @@ export function PricingView() {
       if (monthIndex < startMonth) return 0;
       return item.cts * esc;
     }
-    if (isRolled && termMonths > 0) {
-      return (item.cts / termMonths) * esc;
-    }
-    // Setup / One Time: lands in the row's startMonth.
+    // Setup / One Time + Setup-Rolled / One-Time-Rolled: cost lands
+    // upfront in the row's startMonth (Rolled bills the customer over
+    // the term but we've already paid the supplier).
     return monthIndex === startMonth ? item.cts : 0;
   }
 
@@ -2146,9 +2138,13 @@ export function PricingView() {
                       acc.termCost += projectMonthlyOverTerm(i.cts ?? null, costEscalator, termMonths);
                       acc.termPrice += projectMonthlyOverTerm(price ?? null, annualEscalator, termMonths);
                     } else if (isRolled && termMonths > 0) {
-                      const monthlyCost = typeof i.cts === 'number' ? i.cts / termMonths : null;
+                      // Rolled: revenue is amortized over the term so
+                      // termPrice still projects with the escalator,
+                      // but the cost is booked upfront (full face
+                      // value, no projection) so margin math reflects
+                      // when we actually pay.
                       const monthlyPrice = typeof price === 'number' ? price / termMonths : null;
-                      acc.termCost += projectMonthlyOverTerm(monthlyCost, costEscalator, termMonths);
+                      if (typeof i.cts === 'number') acc.termCost += i.cts;
                       acc.termPrice += projectMonthlyOverTerm(monthlyPrice, annualEscalator, termMonths);
                     } else {
                       if (typeof i.cts === 'number') acc.termCost += i.cts;
@@ -2485,21 +2481,20 @@ export function PricingView() {
                         // Year 1 cash-flow check. Revenue: sum
                         // altFeeYearRevenue(row, 1) over this option's
                         // alt-fee rows. Cost: per item, Setup / One
-                        // Time hit Y1 in full; Rolled variants
-                        // amortize across the term so Y1 gets 12
-                        // months' worth; Recurring (monthly) charges
-                        // 12 months of cost in Y1 at face value
-                        // (escalator only kicks in from Y2). If
-                        // revenue − cost is negative, flag it.
+                        // Time hit Y1 in full; Rolled variants also
+                        // book the full cost upfront (billing is
+                        // amortized but the cost has already been
+                        // incurred); Recurring (monthly) charges 12
+                        // months of cost in Y1 at face value (escalator
+                        // only kicks in from Y2). If revenue − cost is
+                        // negative, flag it.
                         const flatItems = opt.sections.flatMap(s => s.items);
                         const y1Cost = flatItems.reduce((acc, i) => {
                           const c = typeof i.cts === 'number' ? i.cts : 0;
                           if (!c) return acc;
                           const t = effectiveType(i);
                           const isRecurring = /recurring.*monthly|monthly.*recurring|^recurring/i.test(t);
-                          const isRolled = /\brolled\b/i.test(t);
                           if (isRecurring) return acc + c * 12;
-                          if (isRolled && termMonths > 0) return acc + (c / termMonths) * 12;
                           return acc + c;
                         }, 0);
                         const y1Revenue = (altFees[opt.optionNumber] || [])
