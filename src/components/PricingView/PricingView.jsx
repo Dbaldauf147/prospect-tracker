@@ -1464,7 +1464,7 @@ export function PricingView() {
           <div className={styles.empty}>
             <div>No workbook loaded.</div>
             <div style={{ fontSize: 'var(--font-size-xs)' }}>
-              Click <strong>Upload workbook</strong> above. We'll read every sheet named "Option 1" through "Option 4" — including hidden ones — and pull line items from the section bounded by <strong>Delivery Team Inputs</strong> at the top and <strong>Cost Summary</strong> at the bottom. Set a global GM% (gross margin) to apply across all rows, or override individual line items.
+              Click <strong>Upload workbook</strong> above. We'll read every sheet named "Option 1" through "Option 5" — including hidden ones — and pull line items from the section bounded by <strong>Delivery Team Inputs</strong> at the top and <strong>Cost Summary</strong> at the bottom. Set a global GM% (gross margin) to apply across all rows, or override individual line items.
             </div>
           </div>
         )}
