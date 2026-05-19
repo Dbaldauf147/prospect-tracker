@@ -3,12 +3,14 @@ import { createPortal } from 'react-dom';
 import * as XLSX from 'xlsx';
 import { DataTable } from '../common/DataTable';
 import {
-  LIST_REGISTRY,
+  buildListRegistry,
+  buildAvailableLists,
   resolveColumnLink,
   SelectCell,
   MultiSelectCell,
   LinkColumnsModal,
 } from '../common/columnLinks';
+import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { loadDealsList, saveDealsOverride, clearDealsOverride } from '../../utils/dealsStore';
 import {
   asNumber, fmtCurrency, fmtPercent, fmtDate,
@@ -350,7 +352,7 @@ const COLUMN_ORDER = [
   'Follow Up On Sale',
 ];
 
-function buildColumns(rows, columnLinks) {
+function buildColumns(rows, columnLinks, listRegistry) {
   if (!rows.length) return [];
   const keys = new Set();
   // Skip 'id' and any double-underscore internal field (__onUpdate,
@@ -422,7 +424,7 @@ function buildColumns(rows, columnLinks) {
         // existing dealsStore persistence round-trips it cleanly.
         const link = resolveColumnLink(k, columnLinks);
         if (link) {
-          const opts = LIST_REGISTRY.get(link.listKey)?.options || [];
+          const opts = listRegistry?.get(link.listKey)?.options || [];
           const onChange = (v) => row.__onUpdate?.(row.id, k, v);
           if (link.mode === 'multi') {
             return <MultiSelectCell value={row[k]} onChange={onChange} options={opts} />;
@@ -472,6 +474,15 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
   const updateColumnLinks = (next) => {
     updateSettings?.({ dealsColumnLinks: next || {} });
   };
+  // Effective dropdown vocabulary for cell renderers / Link Columns
+  // modal. Mirrors OppsView2 — picks up user edits made on the
+  // Dropdowns tab through settings.dropdownLists.
+  const dropdownLists = useMemo(
+    () => getEffectiveDropdownLists(settings),
+    [settings?.dropdownLists]
+  );
+  const listRegistry = useMemo(() => buildListRegistry(dropdownLists), [dropdownLists]);
+  const availableLists = useMemo(() => buildAvailableLists(dropdownLists), [dropdownLists]);
 
   useEffect(() => {
     function onStorage(e) {
@@ -570,7 +581,10 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
     () => data.map((r, i) => ({ ...r, id: i, __onUpdate: updateCell, __newRow: i === 0 && Object.keys(r).length === 0 })),
     [data]
   );
-  const baseColumns = useMemo(() => buildColumns(rows, columnLinks), [rows, columnLinks]);
+  const baseColumns = useMemo(
+    () => buildColumns(rows, columnLinks, listRegistry),
+    [rows, columnLinks, listRegistry]
+  );
   // Inject a helper "Mapped to Client" column right after the sticky
   // Client Name. The column is read-only when the row's Client Name
   // already matches an active client, and otherwise renders a small
@@ -990,6 +1004,8 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
         <LinkColumnsModal
           headers={linkableHeaders}
           columnLinks={columnLinks}
+          listRegistry={listRegistry}
+          availableLists={availableLists}
           onChange={updateColumnLinks}
           onClose={() => setLinkModalOpen(false)}
         />
