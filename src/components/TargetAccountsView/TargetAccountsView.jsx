@@ -5,6 +5,7 @@ import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { DataTable } from '../common/DataTable';
 import { dbGet, dbPut } from '../../utils/db';
+import { CompareTab } from './CompareTab';
 import styles from './TargetAccountsView.module.css';
 
 function FilterDrop({ label, options, selected, onToggle }) {
@@ -142,7 +143,7 @@ function InlineEditCell({ value, rowIndex, colKey, onSave }) {
   return <span style={{ cursor: 'default', padding: '1px 3px', borderRadius: '4px' }} onDoubleClick={startEdit}>{value || '—'}</span>;
 }
 
-export function TargetAccountsView({ onDataLoaded, settings, updateSettings }) {
+export function TargetAccountsView({ onDataLoaded, settings, updateSettings, cdmName }) {
   const { user } = useAuth();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -154,6 +155,10 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings }) {
   const [filters, setFilters] = useState({});
   const [blockedAccountNames, setBlockedAccountNamesState] = useState(loadBlockedAccountNames);
   const [hideBlockedRows, setHideBlockedRows] = useState(false);
+  // Sub-section within Target Accounts: the canonical list or a
+  // diff view that compares an ad-hoc upload against the current list
+  // filtered to the configured CDM.
+  const [innerTab, setInnerTab] = useState('list');
   const fileRef = useRef(null);
   function toggleBlockedAccount(rawName) {
     const key = String(rawName || '').toLowerCase().trim();
@@ -481,6 +486,63 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings }) {
         </div>
       </div>
 
+      <div className={styles.sheetTabs} style={{ marginBottom: 0 }}>
+        <button
+          className={innerTab === 'list' ? styles.sheetTabActive : styles.sheetTab}
+          onClick={() => setInnerTab('list')}
+        >Current List</button>
+        <button
+          className={innerTab === 'compare' ? styles.sheetTabActive : styles.sheetTab}
+          onClick={() => setInnerTab('compare')}
+          title={cdmName ? `Upload a list and diff it against the current Target Accounts filtered to ${cdmName}` : 'Upload a list and diff it against the current Target Accounts'}
+        >Compare upload</button>
+      </div>
+
+      {innerTab === 'compare' ? (
+        <CompareTab currentData={data} cdmName={cdmName} />
+      ) : (
+        <ListSection
+          error={error}
+          status={status}
+          data={data}
+          loading={loading}
+          dragOver={dragOver}
+          setDragOver={setDragOver}
+          handleDrop={handleDrop}
+          fileRef={fileRef}
+          activeSheet={activeSheet}
+          setActiveSheet={setActiveSheet}
+          search={search}
+          setSearch={setSearch}
+          filterableColumns={filterableColumns}
+          filters={filters}
+          toggleFilter={toggleFilter}
+          hideBlockedRows={hideBlockedRows}
+          setHideBlockedRows={setHideBlockedRows}
+          blockedCount={blockedCount}
+          activeFilterCount={activeFilterCount}
+          setFilters={setFilters}
+          filtered={filtered}
+          records={records}
+          handleFileChange={handleFileChange}
+          columns={columns}
+          settings={settings}
+          updateSettings={updateSettings}
+        />
+      )}
+    </div>
+  );
+}
+
+function ListSection({
+  error, status, data, loading, dragOver, setDragOver, handleDrop, fileRef,
+  activeSheet, setActiveSheet, search, setSearch, filterableColumns, filters,
+  toggleFilter, hideBlockedRows, setHideBlockedRows, blockedCount,
+  activeFilterCount, setFilters, filtered, records, handleFileChange, columns,
+  settings, updateSettings,
+}) {
+  return (
+    <>
       {error && <div className={styles.error}>{error}</div>}
       {status && <div className={styles.success}>{status}</div>}
 
@@ -623,6 +685,6 @@ export function TargetAccountsView({ onDataLoaded, settings, updateSettings }) {
           />
         </>
       )}
-    </div>
+    </>
   );
 }
