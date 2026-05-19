@@ -14,7 +14,7 @@ import { S2CTab } from './S2CTab';
 // remounts the input (via React's `key` prop on the wrapping cell)
 // whenever it wants to reset the draft — so this component never has
 // to sync internal state to props at runtime.
-function GmInput({ initialPct, placeholder, title, isOverride, onCommit }) {
+function GmInput({ initialPct, placeholder, title, isOverride, disabled, onCommit }) {
   const initial = initialPct === null || initialPct === undefined ? '' : String(+initialPct.toFixed(2));
   const [draft, setDraft] = useState(initial);
   return (
@@ -22,10 +22,11 @@ function GmInput({ initialPct, placeholder, title, isOverride, onCommit }) {
       className={`${styles.cellInput} ${isOverride ? styles.overridden : ''}`}
       type="text"
       placeholder={placeholder}
-      value={draft}
+      value={disabled ? '' : draft}
       title={title}
+      disabled={disabled}
       onChange={(e) => setDraft(e.target.value)}
-      onBlur={() => onCommit(draft)}
+      onBlur={() => { if (!disabled) onCommit(draft); }}
       onKeyDown={(e) => {
         if (e.key === 'Enter') e.currentTarget.blur();
         if (e.key === 'Escape') { setDraft(initial); e.currentTarget.blur(); }
@@ -625,15 +626,16 @@ function LinkedToInput({ initial, isDefault, onCommit }) {
 }
 
 const COLS = [
-  { key: 'lineItem',  label: 'Line Item',         defaultWidth: 280 },
-  { key: 'type',      label: 'Type',              defaultWidth: 140 },
-  { key: 'cts',       label: 'CTS',               defaultWidth: 110 },
-  { key: 'techDepr',  label: 'Tech Depr.',        defaultWidth: 110 },
-  { key: 'start',     label: 'Start Month',       defaultWidth: 100 },
-  { key: 'comments',  label: 'Comments',          defaultWidth: 280 },
-  { key: 'gm',        label: 'GM%',               defaultWidth: 90 },
-  { key: 'price',     label: 'Marked-up Price',   defaultWidth: 140 },
-  { key: 'linkedTo',  label: 'Linked To',         defaultWidth: 200 },
+  { key: 'lineItem',    label: 'Line Item',         defaultWidth: 280 },
+  { key: 'type',        label: 'Type',              defaultWidth: 140 },
+  { key: 'cts',         label: 'CTS',               defaultWidth: 110 },
+  { key: 'techDepr',    label: 'Tech Depr.',        defaultWidth: 110 },
+  { key: 'start',       label: 'Start Month',       defaultWidth: 100 },
+  { key: 'comments',    label: 'Comments',          defaultWidth: 280 },
+  { key: 'gm',          label: 'GM%',               defaultWidth: 90 },
+  { key: 'price',       label: 'Marked-up Price',   defaultWidth: 140 },
+  { key: 'passThrough', label: 'Pass-through',      defaultWidth: 100 },
+  { key: 'linkedTo',    label: 'Linked To',         defaultWidth: 200 },
 ];
 
 const SUMMARY_COLS = [
@@ -1257,7 +1259,28 @@ export function PricingView() {
     });
   }
 
+  function isPassThrough(item) {
+    return overrides[item.id]?.passThrough === true;
+  }
+
+  function setItemPassThrough(itemId, on) {
+    setOverrides(prev => {
+      const next = { ...prev };
+      if (!on) {
+        if (next[itemId]) {
+          const { passThrough: _drop, ...rest } = next[itemId];
+          if (Object.keys(rest).length === 0) delete next[itemId];
+          else next[itemId] = rest;
+        }
+      } else {
+        next[itemId] = { ...next[itemId], passThrough: true };
+      }
+      return next;
+    });
+  }
+
   function effectiveGm(item) {
+    if (isPassThrough(item)) return { gm: 0, source: 'passThrough' };
     const ov = overrides[item.id];
     if (ov && typeof ov.gmPct === 'number') return { gm: ov.gmPct, source: 'override' };
     if (typeof globalGmPct === 'number') return { gm: globalGmPct, source: 'global' };
@@ -1267,6 +1290,9 @@ export function PricingView() {
 
   function priceFor(item) {
     const { gm, source } = effectiveGm(item);
+    if (source === 'passThrough') {
+      return { gm: 0, source, price: typeof item.cts === 'number' ? item.cts : null };
+    }
     const price = priceFromCostAndGm(item.cts ?? null, gm);
     return { gm, source, price };
   }
@@ -1747,8 +1773,9 @@ export function PricingView() {
                             const { gm, source, price } = priceFor(item);
                             const overrideVal = overrides[item.id]?.gmPct;
                             const techDepr = typeof item.cts === 'number' ? item.cts * techDeprPct : null;
+                            const passThrough = isPassThrough(item);
                             return (
-                              <tr key={item.id}>
+                              <tr key={item.id} className={passThrough ? styles.passThroughRow : undefined}>
                                 {!colHidden('lineItem') && <td>{item.description}</td>}
                                 {!colHidden('type') && (
                                   <td>
@@ -1785,12 +1812,15 @@ export function PricingView() {
                                 {!colHidden('gm') && (
                                   <td className={styles.gmCell}>
                                     <GmInput
-                                      key={`${item.id}:${overrideVal === undefined ? 'unset' : overrideVal}`}
-                                      initialPct={overrideVal !== undefined ? overrideVal * 100 : null}
-                                      isOverride={overrideVal !== undefined}
-                                      placeholder={gm === null ? '' : `${Math.round(gm * 100)}%`}
+                                      key={`${item.id}:${passThrough ? 'pass' : (overrideVal === undefined ? 'unset' : overrideVal)}`}
+                                      initialPct={passThrough ? null : (overrideVal !== undefined ? overrideVal * 100 : null)}
+                                      isOverride={!passThrough && overrideVal !== undefined}
+                                      placeholder={passThrough ? 'pass' : (gm === null ? '' : `${Math.round(gm * 100)}%`)}
+                                      disabled={passThrough}
                                       title={
-                                        source === 'override'
+                                        passThrough
+                                          ? 'Pass-through row — billed to the customer at cost. Untick Pass-through to apply markup.'
+                                          : source === 'override'
                                           ? 'Per-line override. Clear to revert to global GM%.'
                                           : source === 'global'
                                           ? `Using global GM% (${fmtPct(globalGmPct)}). Type a value to override.`
@@ -1803,6 +1833,18 @@ export function PricingView() {
                                   </td>
                                 )}
                                 {!colHidden('price') && <td className={styles.priceCell}>{fmtMoney(price)}</td>}
+                                {!colHidden('passThrough') && (
+                                  <td className={styles.passThroughCell}>
+                                    <label className={styles.passThroughLabel} title="Bill this row to the customer at cost (no markup). The line still appears in totals but contributes zero margin.">
+                                      <input
+                                        type="checkbox"
+                                        checked={passThrough}
+                                        onChange={(e) => setItemPassThrough(item.id, e.target.checked)}
+                                      />
+                                      <span>Pass-through</span>
+                                    </label>
+                                  </td>
+                                )}
                                 {!colHidden('linkedTo') && (
                                   <td>
                                     {(() => {

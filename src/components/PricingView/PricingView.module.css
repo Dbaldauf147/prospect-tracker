@@ -422,6 +422,43 @@
   border-color: var(--color-border);
 }
 
+.cellInput:disabled {
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+  font-style: italic;
+}
+
+.cellInput:disabled:hover {
+  border-color: transparent;
+}
+
+.passThroughRow {
+  background: #f8fafc;
+  color: var(--color-text-muted);
+}
+
+.passThroughRow td {
+  color: var(--color-text-muted);
+}
+
+.passThroughCell {
+  text-align: center;
+}
+
+.passThroughLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.passThroughLabel input {
+  margin: 0;
+}
+
 .cellInput:focus {
   outline: none;
   border-color: var(--color-accent);
