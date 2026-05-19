@@ -31,6 +31,11 @@ const STATUS_COL_KEY = '__clientStatus__';
 const STATUS_COL_LABEL = 'Client Status';
 const PROGRESS_COL_KEY = '__progress__';
 const PROGRESS_COL_LABEL = 'Progress';
+// Per-deal flag (truthy → ignored). Lives on the deal row alongside
+// other cell values so it persists through the same dealsStore path
+// as everything else. Double-underscore prefix keeps it out of the
+// generated column list (buildColumns filters those out).
+const PROGRESS_IGNORED_KEY = '__progressIgnored';
 
 // The four "ready to invoice" handoff fields the user wants to see
 // at a glance on every deal. `label` is what shows up in the popover;
@@ -206,11 +211,15 @@ function ProgressCell({ row, columnLinks, listRegistry, onSave }) {
   const [anchor, setAnchor] = useState(null);
   const btnRef = useRef(null);
 
+  const ignored = isFilled(row[PROGRESS_IGNORED_KEY]);
   const done = PROGRESS_FIELDS.filter(f => isFilled(row[f.key])).length;
   const total = PROGRESS_FIELDS.length;
   const pct = total === 0 ? 0 : done / total;
-  const bg = pct === 1 ? '#DCFCE7' : pct === 0 ? '#FEE2E2' : '#FEF3C7';
-  const fg = pct === 1 ? '#166534' : pct === 0 ? '#991B1B' : '#92400E';
+  // Greyed-out pill when the user has opted this deal out of the
+  // handoff tally. Otherwise the regular red/yellow/green progress
+  // colors based on completion ratio.
+  const bg = ignored ? '#F1F5F9' : pct === 1 ? '#DCFCE7' : pct === 0 ? '#FEE2E2' : '#FEF3C7';
+  const fg = ignored ? '#94A3B8' : pct === 1 ? '#166534' : pct === 0 ? '#991B1B' : '#92400E';
 
   function openPopover(e) {
     e.stopPropagation();
@@ -219,16 +228,22 @@ function ProgressCell({ row, columnLinks, listRegistry, onSave }) {
     setOpen(true);
   }
 
+  function toggleIgnore() {
+    onSave?.(row.id, PROGRESS_IGNORED_KEY, ignored ? '' : '1');
+  }
+
   return (
     <>
       <button
         ref={btnRef}
         type="button"
         onClick={openPopover}
-        title={`${done} of ${total} handoff fields complete — click to edit`}
-        style={{ padding: '2px 10px', border: '1px solid', borderColor: fg, borderRadius: 999, background: bg, color: fg, fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', minWidth: 56 }}
+        title={ignored
+          ? 'Ignored — this deal is opted out of the handoff tally. Click to edit.'
+          : `${done} of ${total} handoff fields complete — click to edit`}
+        style={{ padding: '2px 10px', border: '1px solid', borderColor: fg, borderRadius: 999, background: bg, color: fg, fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', minWidth: 56, textDecoration: ignored ? 'line-through' : 'none', opacity: ignored ? 0.85 : 1 }}
       >
-        {done}/{total}{pct === 1 ? ' ✓' : ''}
+        {done}/{total}{pct === 1 && !ignored ? ' ✓' : ''}
       </button>
       {open && createPortal(
         <>
@@ -242,7 +257,7 @@ function ProgressCell({ row, columnLinks, listRegistry, onSave }) {
           >
             <div style={{ padding: '0.5rem 0.75rem', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#F8FAFC' }}>
               <strong style={{ fontSize: '0.75rem', color: '#1E293B' }}>
-                Handoff progress · {done}/{total}
+                Handoff progress · {ignored ? 'Ignored' : `${done}/${total}`}
               </strong>
               <button
                 type="button"
@@ -263,6 +278,22 @@ function ProgressCell({ row, columnLinks, listRegistry, onSave }) {
                 />
               ))}
             </div>
+            {onSave && (
+              <div style={{ padding: '0.4rem 0.75rem', borderTop: '1px solid #E2E8F0', background: '#F8FAFC' }}>
+                <label
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', cursor: 'pointer', fontSize: '0.7rem', color: '#475569' }}
+                  title="Don't count this deal in the X/4 tally — its pill shows greyed-out."
+                >
+                  <input
+                    type="checkbox"
+                    checked={ignored}
+                    onChange={toggleIgnore}
+                    style={{ margin: 0, cursor: 'pointer' }}
+                  />
+                  <span>Ignore this deal{ignored ? '' : ' — grey out the X/4'}</span>
+                </label>
+              </div>
+            )}
             {!onSave && (
               <div style={{ padding: '0.4rem 0.75rem', borderTop: '1px solid #E2E8F0', fontSize: '0.65rem', color: '#94A3B8', fontStyle: 'italic' }}>
                 Read-only — editing requires the inline-edit deploy.
@@ -675,6 +706,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
         />
       ),
       exportValue: (row) => {
+        if (isFilled(row[PROGRESS_IGNORED_KEY])) return 'Ignored';
         const done = PROGRESS_FIELDS.filter(f => isFilled(row[f.key])).length;
         return `${done}/${PROGRESS_FIELDS.length}`;
       },
