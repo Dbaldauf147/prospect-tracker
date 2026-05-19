@@ -1897,7 +1897,43 @@ export function PricingView() {
                       })()}
 
                       <AltFeeTable
-                        rows={altFees[opt.optionNumber] || altFeeStarter()}
+                        rows={(() => {
+                          // Auto-fill altItem from the option's Linked To
+                          // tags so the user just needs to fill in Type /
+                          // Unit / Unit Count. Duplicates collapse to a
+                          // single row, and a persisted non-empty altItem
+                          // wins so the user can override what the tags
+                          // would suggest.
+                          const uniqueLinkedTo = [];
+                          const seen = new Set();
+                          for (const sec of opt.sections) {
+                            for (const it of sec.items) {
+                              const name = (resolvedLinkedTo(it) || '').trim();
+                              if (!name) continue;
+                              const k = name.toLowerCase();
+                              if (seen.has(k)) continue;
+                              seen.add(k);
+                              uniqueLinkedTo.push(name);
+                            }
+                          }
+                          const persisted = altFees[opt.optionNumber] || [];
+                          const minRows = Math.max(persisted.length, uniqueLinkedTo.length, 9);
+                          const out = [];
+                          for (let i = 0; i < minRows; i++) {
+                            const p = persisted[i] || {};
+                            const persistedItem = (p.altItem || '').trim();
+                            const auto = uniqueLinkedTo[i] || '';
+                            out.push({
+                              altItem: persistedItem || auto,
+                              type: p.type || '',
+                              fee: p.fee ?? 0,
+                              unit: p.unit || '',
+                              unitCount: p.unitCount ?? '',
+                              startMonth: p.startMonth ?? 1,
+                            });
+                          }
+                          return out;
+                        })()}
                         globalGmPct={globalGmPct}
                         marginFor={altFeeMarginFor}
                         yearRevenue={altFeeYearRevenue}
