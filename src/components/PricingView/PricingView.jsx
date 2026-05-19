@@ -501,7 +501,6 @@ Type a value to override.`
                 {anyPassThrough && renderTotalsRow('Revenue less pass-through', revLessPass, fmtMoneyCell, true)}
                 {renderTotalsRow('Cumulative deal', cumulative, fmtMoneyCell, true)}
                 {Array.isArray(costByYear) && renderTotalsRow('Linked CTS cost', costs, fmtMoneyCell, true)}
-                {anyPassThrough && renderTotalsRow('Pass-through (excluded from margin)', passes, fmtMoneyCell, true)}
                 {Array.isArray(costByYear) && renderTotalsRow('Deal margin', margins, fmtPctCell, true)}
               </>
             );
