@@ -509,8 +509,8 @@ function buildColumns(rows, columnLinks, listRegistry) {
       : 'text';
     function renderValue(v) {
       if (v == null || v === '') return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
-      if (isCurrency) return <span style={{ display: 'block', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: '#0F172A' }}>{fmtCurrency(v)}</span>;
-      if (isPercent) return <span style={{ display: 'block', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: '#0F172A' }}>{fmtPercent(v)}</span>;
+      if (isCurrency) return <span style={{ display: 'block', textAlign: 'left', fontVariantNumeric: 'tabular-nums', color: '#0F172A' }}>{fmtCurrency(v)}</span>;
+      if (isPercent) return <span style={{ display: 'block', textAlign: 'left', fontVariantNumeric: 'tabular-nums', color: '#0F172A' }}>{fmtPercent(v)}</span>;
       if (isDate) return <span style={{ color: '#334155' }}>{fmtDate(v)}</span>;
       return <span>{String(v)}</span>;
     }
