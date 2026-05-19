@@ -645,6 +645,10 @@ const SUMMARY_COLS = [
 
 const STORE = 'pricing-cache';
 const KEY = 'current';
+// Saved Linked-To defaults live under their own key so they survive
+// parser-version cache wipes, file removal, and switching to a new
+// SIA workbook. They're user-curated mappings, not parser output.
+const LINKED_TO_DEFAULTS_KEY = 'linkedToDefaults';
 // Bump this whenever the parser output shape changes — older cached
 // parses are silently discarded on hydration so the user re-uploads
 // against the current parser.
@@ -712,12 +716,22 @@ export function PricingView() {
     let cancelled = false;
     (async () => {
       try {
+        // Linked-To defaults are loaded first from their own key so
+        // they survive even if the main cache is wiped (parser bump).
+        // Fall back to the legacy field on the main cache for users
+        // upgrading from before the split.
+        const savedDefaults = await dbGet(STORE, LINKED_TO_DEFAULTS_KEY);
+        if (!cancelled && savedDefaults && typeof savedDefaults === 'object') {
+          setLinkedToDefaults(savedDefaults);
+        }
         const saved = await dbGet(STORE, KEY);
         if (cancelled || !saved) { hydratedRef.current = true; return; }
         // Drop caches written by an older parser — their workbook
-        // shape may not match what the UI now expects.
+        // shape may not match what the UI now expects. Linked-To
+        // defaults are preserved via the separate key above.
         if (saved.parserVersion !== PARSER_VERSION) {
           await dbDelete(STORE, KEY).catch(() => {});
+          if (!savedDefaults && saved.linkedToDefaults) setLinkedToDefaults(saved.linkedToDefaults);
           hydratedRef.current = true;
           return;
         }
@@ -727,7 +741,7 @@ export function PricingView() {
         if (typeof saved.activeOption === 'number') setActiveOption(saved.activeOption);
         if (saved.colWidths) setColWidths(saved.colWidths);
         if (saved.altFees) setAltFees(saved.altFees);
-        if (saved.linkedToDefaults) setLinkedToDefaults(saved.linkedToDefaults);
+        if (!savedDefaults && saved.linkedToDefaults) setLinkedToDefaults(saved.linkedToDefaults);
         if (typeof saved.termMonths === 'number') setTermMonths(saved.termMonths);
         if (typeof saved.annualEscalator === 'number') setAnnualEscalator(saved.annualEscalator);
         if (typeof saved.chartTag === 'string') setChartTag(saved.chartTag);
@@ -756,6 +770,15 @@ export function PricingView() {
     const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, termMonths, annualEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData };
     dbPut(STORE, payload, KEY).catch(err => console.warn('Failed to save pricing cache:', err));
   }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, termMonths, annualEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData]);
+
+  // Mirror Linked-To defaults under their dedicated key so they
+  // outlive the main cache (parser-version bumps, Clear button,
+  // file removal). The main-cache copy above is kept for in-app
+  // state-snapshot exports.
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    dbPut(STORE, linkedToDefaults, LINKED_TO_DEFAULTS_KEY).catch(err => console.warn('Failed to save linked-to defaults:', err));
+  }, [linkedToDefaults]);
 
   // Per-year cost contribution from a single upper-table CTS item.
   // Setup / One Time hit year 1 in full; Rolled variants amortize
@@ -1035,7 +1058,12 @@ export function PricingView() {
     else if (s.workbook?.options?.[0]?.optionNumber != null) setActiveOption(s.workbook.options[0].optionNumber);
     setColWidths(s.colWidths || {});
     setAltFees(s.altFees || {});
-    setLinkedToDefaults(s.linkedToDefaults || {});
+    // Merge incoming snapshot defaults on top of existing ones so a
+    // round-tripped state file doesn't wipe defaults the user built
+    // up on this device. An empty {} in the snapshot is a no-op.
+    if (s.linkedToDefaults && typeof s.linkedToDefaults === 'object') {
+      setLinkedToDefaults(prev => ({ ...prev, ...s.linkedToDefaults }));
+    }
     if (typeof s.termMonths === 'number') setTermMonths(s.termMonths);
     if (typeof s.annualEscalator === 'number') setAnnualEscalator(s.annualEscalator);
     if (typeof s.chartTag === 'string') setChartTag(s.chartTag);
@@ -1089,11 +1117,13 @@ export function PricingView() {
   }
 
   function clearAll() {
-    if (!confirm('Clear the loaded workbook and all markup overrides?')) return;
+    if (!confirm('Clear the loaded workbook and all markup overrides? Saved Linked-To defaults are kept.')) return;
     setWorkbook(null);
     setOverrides({});
     setActiveOption(null);
     setError('');
+    // Linked-To defaults live under their own key (LINKED_TO_DEFAULTS_KEY)
+    // and are intentionally preserved across Clear / file changes.
     dbDelete(STORE, KEY).catch(() => {});
   }
 
