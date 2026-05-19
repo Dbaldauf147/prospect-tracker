@@ -306,6 +306,7 @@ export function DataTable({
   rows,
   onSort: externalSort,
   sortConfig: externalSortConfig,
+  defaultSort,
   alwaysVisible = [],
   onRowClick,
   rowClassName,
@@ -400,7 +401,10 @@ export function DataTable({
   }
 
   // Built-in sort state (used when no external sort is provided)
-  const [internalSort, setInternalSort] = useState({ key: null, direction: 'asc' });
+  const [internalSort, setInternalSort] = useState(() => ({
+    key: defaultSort?.key ?? null,
+    direction: defaultSort?.direction === 'desc' ? 'desc' : 'asc',
+  }));
   const sortConfig = externalSortConfig || internalSort;
 
   function handleSort(key) {
