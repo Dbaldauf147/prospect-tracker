@@ -1021,6 +1021,18 @@ export function PricingView() {
     dbPut(STORE, linkedToDefaults, LINKED_TO_DEFAULTS_KEY).catch(err => console.warn('Failed to save linked-to defaults:', err));
   }, [linkedToDefaults]);
 
+  // Effective per-row cost = supplier CTS + tech depreciation. Tech
+  // depr is item.cts × techDeprPct for non-pass-through rows (pass-
+  // through bills at face cost, so no depreciation is booked against
+  // it). Every cost-projection path that drives margin or the cost
+  // export uses this so the depreciation burden flows through both
+  // the per-year cost breakdown and the Deal margin calc.
+  function ctsItemEffectiveCost(item) {
+    if (typeof item.cts !== 'number') return 0;
+    if (isPassThrough(item)) return item.cts;
+    return item.cts * (1 + techDeprPct);
+  }
+
   // Per-year cost contribution from a single upper-table CTS item.
   // Setup / One Time hit year 1 in full; Rolled variants amortize
   // evenly across the term and escalate; Recurring (monthly) bills
@@ -1036,13 +1048,16 @@ export function PricingView() {
     // startMonth so the per-year cost breakdown lines up with the
     // per-year revenue breakdown for any pass-through link.
     const startMonth = Math.max(1, Math.round(Number(item.startMonth) || 1));
+    // Effective per-row cost folds tech depr into non-pass-through
+    // cost so margin reflects depreciation alongside supplier cost.
+    const baseCost = ctsItemEffectiveCost(item);
     if (isRecurring) {
       const billStart = Math.max(yearStart, startMonth);
       const billEnd = Math.min(yearEnd, termMonths);
       if (billEnd < billStart) return 0;
       const months = billEnd - billStart + 1;
       const esc = Math.pow(1 + costEscalator, yearIndex - 1);
-      return item.cts * months * esc;
+      return baseCost * months * esc;
     }
     // Setup / One Time + Setup-Rolled / One-Time-Rolled: cost lands
     // upfront in the year containing startMonth. Rolled variants still
@@ -1051,7 +1066,7 @@ export function PricingView() {
     // already been incurred — so margin should book it in Y1 instead
     // of spreading it monthly.
     if (startMonth > termMonths) return 0;
-    if (startMonth >= yearStart && startMonth <= yearEnd) return item.cts;
+    if (startMonth >= yearStart && startMonth <= yearEnd) return baseCost;
     return 0;
   }
 
@@ -1197,11 +1212,13 @@ export function PricingView() {
       if (typeof item.cts !== 'number') return s;
       const t = effectiveType(item);
       const isRecurring = /recurring.*monthly|monthly.*recurring|^recurring/i.test(t);
-      if (isRecurring) return s + projectMonthlyOverTerm(item.cts, costEscalator, termMonths);
+      // Effective cost folds tech depr into non-pass-through cost.
+      const baseCost = ctsItemEffectiveCost(item);
+      if (isRecurring) return s + projectMonthlyOverTerm(baseCost, costEscalator, termMonths);
       // Setup / One Time + Setup-Rolled / One-Time-Rolled: cost is
       // booked upfront, not amortized — the customer is billed on a
       // rolled schedule but our cost has already been incurred.
-      return s + item.cts;
+      return s + baseCost;
     }, 0);
 
     return {
@@ -1650,14 +1667,17 @@ export function PricingView() {
     const startMonth = Math.max(1, Math.round(Number(item.startMonth) || 1));
     const yearIdx = Math.ceil(monthIndex / 12);
     const esc = Math.pow(1 + costEscalator, yearIdx - 1);
+    // Includes tech depr on non-pass-through cost so the monthly-cost
+    // export matches what flows into the margin calc.
+    const baseCost = ctsItemEffectiveCost(item);
     if (isRecurring) {
       if (monthIndex < startMonth) return 0;
-      return item.cts * esc;
+      return baseCost * esc;
     }
     // Setup / One Time + Setup-Rolled / One-Time-Rolled: cost lands
     // upfront in the row's startMonth (Rolled bills the customer over
     // the term but we've already paid the supplier).
-    return monthIndex === startMonth ? item.cts : 0;
+    return monthIndex === startMonth ? baseCost : 0;
   }
 
   // Excel export: monthly CTS cost for every line item on the active
@@ -1673,7 +1693,7 @@ export function PricingView() {
     const monthHeaders = Array.from({ length: term }, (_, i) => `M${i + 1}`);
     const rows = [];
     rows.push([`Monthly Costs — ${opt.sheetName}`]);
-    rows.push([`Term: ${term} months · Cost escalator: ${(costEscalator * 100).toFixed(2)}% / yr`]);
+    rows.push([`Term: ${term} months · Cost escalator: ${(costEscalator * 100).toFixed(2)}% / yr · Tech depreciation: ${(techDeprPct * 100).toFixed(2)}% (folded into each non-pass-through row's cost)`]);
     rows.push([]);
     rows.push(['Section', 'Line Item', 'Type', 'Start Month', 'Term Total', ...monthHeaders]);
 
@@ -2490,7 +2510,12 @@ export function PricingView() {
                         // negative, flag it.
                         const flatItems = opt.sections.flatMap(s => s.items);
                         const y1Cost = flatItems.reduce((acc, i) => {
-                          const c = typeof i.cts === 'number' ? i.cts : 0;
+                          if (typeof i.cts !== 'number') return acc;
+                          // Effective cost folds in tech depr for
+                          // non-pass-through rows so the warning
+                          // matches the Linked CTS cost row in the
+                          // Alt Fee summary.
+                          const c = ctsItemEffectiveCost(i);
                           if (!c) return acc;
                           const t = effectiveType(i);
                           const isRecurring = /recurring.*monthly|monthly.*recurring|^recurring/i.test(t);
