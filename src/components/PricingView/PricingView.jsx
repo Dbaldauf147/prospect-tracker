@@ -433,11 +433,19 @@ Type a value to override.`
               return (fee - cost) / fee;
             });
             const fmtPctCell = (n) => n == null ? '' : `${(n * 100).toFixed(1)}%`;
+            // Running sum of fee revenue year-over-year, so the last
+            // value is the full-term cumulative deal amount.
+            const cumulative = grand.reduce((acc, v) => {
+              const prev = acc.length === 0 ? 0 : acc[acc.length - 1];
+              acc.push(prev + (v || 0));
+              return acc;
+            }, []);
             return (
               <>
                 {renderTotalsRow('Setup + One Time', setupOneTime)}
                 {renderTotalsRow('Recurring (monthly)', recurring)}
                 {renderTotalsRow('Total fee', grand)}
+                {renderTotalsRow('Cumulative deal', cumulative, fmtMoneyCell, true)}
                 {Array.isArray(costByYear) && renderTotalsRow('Linked CTS cost', costs, fmtMoneyCell, true)}
                 {Array.isArray(costByYear) && renderTotalsRow('Deal margin', margins, fmtPctCell, true)}
               </>
