@@ -118,7 +118,7 @@ function parseAltFeePaste(text) {
   return out;
 }
 
-function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onAppendRows, globalGmPct, marginFor, yearRevenue, autoFeeFor, siteCount, accountCount, altItemSuggestions = [], numYears = 1 }) {
+function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onAppendRows, globalGmPct, marginFor, yearRevenue, autoFeeFor, siteCount, accountCount, altItemSuggestions = [], costByYear, numYears = 1 }) {
   const altItemListId = useId();
   // When the user picks Per Site / Per Account, fill Unit Count from
   // the SIA metadata if the cell is still the default placeholder
@@ -368,22 +368,31 @@ Type a value to override.`
             const setupOneTime = sums(isOneTimeOrSetup);
             const recurring = sums(isRecurring);
             const grand = setupOneTime.map((v, i) => v + recurring[i]);
-            const renderTotalsRow = (label, values) => (
+            const costs = Array.isArray(costByYear) ? costByYear : Array.from({ length: numYears }, () => 0);
+            const renderTotalsRow = (label, values, fmt = fmtMoneyCell, showZero = false) => (
               <tr className={styles.totalsRow}>
                 <td colSpan={6} style={{ textAlign: 'right', fontWeight: 600 }}>{label}</td>
                 {values.map((v, i) => (
                   <td key={`tot-${label}-${i}`} className={styles.numCell}>
-                    {v > 0 ? fmtMoneyCell(v) : ''}
+                    {(showZero || v > 0) ? fmt(v) : ''}
                   </td>
                 ))}
                 <td colSpan={2} />
               </tr>
             );
+            const margins = grand.map((fee, i) => {
+              const cost = costs[i] || 0;
+              if (fee <= 0) return null;
+              return (fee - cost) / fee;
+            });
+            const fmtPctCell = (n) => n == null ? '' : `${(n * 100).toFixed(1)}%`;
             return (
               <>
                 {renderTotalsRow('Setup + One Time', setupOneTime)}
                 {renderTotalsRow('Recurring (monthly)', recurring)}
-                {renderTotalsRow('Total', grand)}
+                {renderTotalsRow('Total fee', grand)}
+                {Array.isArray(costByYear) && renderTotalsRow('Linked CTS cost', costs, fmtMoneyCell, true)}
+                {Array.isArray(costByYear) && renderTotalsRow('Deal margin', margins, fmtPctCell, true)}
               </>
             );
           })()}
@@ -2195,6 +2204,31 @@ export function PricingView() {
                         }
                         for (const r of (altFees[opt.optionNumber] || [])) add(r.altItem);
                         const altItemSuggestions = [...seen.values()].sort((a, b) => a.localeCompare(b));
+
+                        // Linked-CTS cost per year: every CTS row on
+                        // this option whose resolved Linked To
+                        // matches an alt-fee tag contributes its
+                        // ctsItemYearCost(year) into that year's
+                        // bucket. Used by the table's Deal-margin row
+                        // so margin = (totalFee - totalCost) / totalFee.
+                        const altTagSet = new Set(
+                          (altFees[opt.optionNumber] || [])
+                            .map(r => (r.altItem || '').trim().toLowerCase())
+                            .filter(Boolean)
+                        );
+                        const numYearsLocal = Math.max(1, Math.ceil(termMonths / 12));
+                        const costByYear = Array.from({ length: numYearsLocal }, (_, yi) => {
+                          let sum = 0;
+                          for (const sec of opt.sections) {
+                            for (const it of sec.items) {
+                              const tag = resolvedLinkedTo(it).trim().toLowerCase();
+                              if (!tag || !altTagSet.has(tag)) continue;
+                              sum += ctsItemYearCost(it, yi + 1);
+                            }
+                          }
+                          return sum;
+                        });
+
                         return (
                           <AltFeeTable
                             rows={altFees[opt.optionNumber] || altFeeStarter()}
@@ -2205,7 +2239,8 @@ export function PricingView() {
                             siteCount={opt.siteCount}
                             accountCount={opt.accountCount}
                             altItemSuggestions={altItemSuggestions}
-                            numYears={Math.max(1, Math.ceil(termMonths / 12))}
+                            costByYear={costByYear}
+                            numYears={numYearsLocal}
                             onChange={(idx, field, value) => updateAltFeeCell(opt.optionNumber, idx, field, value)}
                             onAddRow={() => addAltFeeRow(opt.optionNumber)}
                             onRemoveRow={(idx) => removeAltFeeRow(opt.optionNumber, idx)}
