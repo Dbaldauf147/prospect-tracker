@@ -112,11 +112,13 @@ function parseAltFeePaste(text) {
 
 function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onAppendRows, globalGmPct, marginFor, yearRevenue, autoFeeFor, siteCount, accountCount, numYears = 1 }) {
   // When the user picks Per Site / Per Account, fill Unit Count from
-  // the SIA metadata if the cell is still empty.
+  // the SIA metadata if the cell is still the default placeholder
+  // (blank or the seed value of 1).
   function handleUnitChange(idx, row, unit) {
     onChange(idx, 'unit', unit);
-    const blank = row.unitCount === '' || row.unitCount === null || row.unitCount === undefined;
-    if (!blank) return;
+    const uc = row.unitCount;
+    const isDefault = uc === '' || uc === null || uc === undefined || uc === 1 || uc === '1';
+    if (!isDefault) return;
     if (unit === 'Per Site' && typeof siteCount === 'number' && siteCount > 0) {
       onChange(idx, 'unitCount', siteCount);
     } else if (unit === 'Per Account' && typeof accountCount === 'number' && accountCount > 0) {
@@ -1100,7 +1102,7 @@ export function PricingView() {
   // 9 empty starter rows that match the Excel template — used when
   // an option's alt-fee table hasn't been edited yet.
   const altFeeStarter = () => Array.from({ length: 9 }, () => ({
-    altItem: '', type: '', fee: null, unit: '', unitCount: '', startMonth: 1,
+    altItem: '', type: '', fee: null, unit: '', unitCount: 1, startMonth: 1,
   }));
 
   function updateAltFeeCell(optionNumber, idx, field, value) {
@@ -1115,7 +1117,7 @@ export function PricingView() {
   function addAltFeeRow(optionNumber) {
     setAltFees(prev => {
       const list = (prev[optionNumber] || altFeeStarter()).slice();
-      list.push({ altItem: '', type: '', fee: 0, unit: '', unitCount: '', startMonth: 1 });
+      list.push({ altItem: '', type: '', fee: null, unit: '', unitCount: 1, startMonth: 1 });
       return { ...prev, [optionNumber]: list };
     });
   }
@@ -1139,7 +1141,8 @@ export function PricingView() {
       // don't sit below a wall of blanks.
       while (existing.length > 0) {
         const r = existing[existing.length - 1];
-        const isEmpty = !r.altItem && !r.type && !r.unit && !r.unitCount &&
+        const isEmpty = !r.altItem && !r.type && !r.unit &&
+          (!r.unitCount || r.unitCount === 1 || r.unitCount === '1') &&
           (typeof r.fee !== 'number' || r.fee === 0) &&
           (r.startMonth === '' || r.startMonth === 1);
         if (!isEmpty) break;
