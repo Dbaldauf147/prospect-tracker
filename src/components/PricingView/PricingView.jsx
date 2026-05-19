@@ -387,6 +387,7 @@ function LinkedToPanel({
   resolvedLinkedTo,
   effectiveType,
   linkedToDefaultKey,
+  removeLinkedToDefault,
 }) {
   const opt = workbook?.options.find(o => o.optionNumber === activeOption) || workbook?.options[0];
   const flatItems = opt ? opt.sections.flatMap(s => s.items) : [];
@@ -401,21 +402,33 @@ function LinkedToPanel({
     })
     .filter(Boolean);
 
-  // Saved (Line Item, Type) defaults that are reachable from at least
-  // one row on this option — keeps the panel focused on what's wired
-  // up here, not orphan keys left from other workbooks.
-  const reachableDefaults = (() => {
-    const out = [];
-    const seen = new Set();
+  // Every saved (Line Item, Type) default, regardless of whether the
+  // current workbook has a row matching it. When a workbook is loaded,
+  // we surface the original-case Line Item / Type from a matching row;
+  // unreachable defaults (or defaults shown without any workbook) fall
+  // back to the stored lowercase key. Each row carries a delete button
+  // so defaults can be cleaned up even when no file is loaded.
+  const defaultEntries = (() => {
+    const labelByKey = new Map();
     for (const item of flatItems) {
       const key = linkedToDefaultKey(item.description, effectiveType(item));
-      if (seen.has(key)) continue;
-      const val = linkedToDefaults[key];
-      if (!val) continue;
-      seen.add(key);
-      out.push({ key, lineItem: item.description, type: effectiveType(item), value: val });
+      if (!labelByKey.has(key)) labelByKey.set(key, { lineItem: item.description, type: effectiveType(item) });
     }
-    return out;
+    const rows = [];
+    for (const [key, value] of Object.entries(linkedToDefaults)) {
+      if (!value) continue;
+      const labels = labelByKey.get(key);
+      const [keyItem, keyType] = key.split('::');
+      rows.push({
+        key,
+        value,
+        lineItem: labels?.lineItem || keyItem || '',
+        type: labels?.type ?? (keyType || ''),
+        reachable: !!labels,
+      });
+    }
+    rows.sort((a, b) => (a.lineItem || '').localeCompare(b.lineItem || ''));
+    return rows;
   })();
 
   // Group rows by the alt-fee tag they currently resolve to. Untagged
@@ -475,9 +488,47 @@ function LinkedToPanel({
         </ul>
       </section>
 
+      <section className={styles.linkedSection}>
+        <h3 className={styles.linkedSubheading}>Saved defaults ({defaultEntries.length})</h3>
+        <p className={styles.linkedHint}>
+          Defaults apply to any row matching the same Line Item + Type, on any option, unless that row has its own override. They persist across uploaded files, the Clear button, and parser updates.
+        </p>
+        {defaultEntries.length === 0 ? (
+          <div className={styles.linkedEmptyInline}>No saved defaults yet. Click the ☆ next to any Linked To input to save one.</div>
+        ) : (
+          <table className={styles.linkedTable}>
+            <thead>
+              <tr><th>Line Item</th><th>Type</th><th>Default Linked To</th><th style={{ width: 32 }} /></tr>
+            </thead>
+            <tbody>
+              {defaultEntries.map(d => (
+                <tr key={d.key}>
+                  <td>
+                    {d.lineItem || <span className={styles.linkedMuted}>—</span>}
+                    {workbook && !d.reachable && <span className={styles.linkedMuted}> · not on this option</span>}
+                  </td>
+                  <td>{d.type || <span className={styles.linkedMuted}>—</span>}</td>
+                  <td><code>{d.value}</code></td>
+                  <td>
+                    {removeLinkedToDefault && (
+                      <button
+                        type="button"
+                        className={styles.rowDelBtn}
+                        title="Remove this saved default"
+                        onClick={() => removeLinkedToDefault(d.key)}
+                      >×</button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
+
       {!workbook ? (
         <div className={styles.linkedEmpty}>
-          Upload a workbook on the <strong>Pricing</strong> subtab to see the live Linked To wiring.
+          Upload a workbook on the <strong>Pricing</strong> subtab to see per-row overrides and live tag wiring.
         </div>
       ) : (
         <>
@@ -496,31 +547,6 @@ function LinkedToPanel({
               );
             })}
           </div>
-
-          <section className={styles.linkedSection}>
-            <h3 className={styles.linkedSubheading}>Saved defaults ({reachableDefaults.length})</h3>
-            <p className={styles.linkedHint}>
-              Defaults apply to any row matching the same Line Item + Type, on any option, unless that row has its own override.
-            </p>
-            {reachableDefaults.length === 0 ? (
-              <div className={styles.linkedEmptyInline}>No saved defaults are reachable from rows on this option.</div>
-            ) : (
-              <table className={styles.linkedTable}>
-                <thead>
-                  <tr><th>Line Item</th><th>Type</th><th>Default Linked To</th></tr>
-                </thead>
-                <tbody>
-                  {reachableDefaults.map(d => (
-                    <tr key={d.key}>
-                      <td>{d.lineItem}</td>
-                      <td>{d.type || <span className={styles.linkedMuted}>—</span>}</td>
-                      <td><code>{d.value}</code></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </section>
 
           <section className={styles.linkedSection}>
             <h3 className={styles.linkedSubheading}>Per-row overrides ({overrideRows.length})</h3>
@@ -1238,6 +1264,15 @@ export function PricingView() {
     });
   }
 
+  function removeLinkedToDefault(key) {
+    setLinkedToDefaults(prev => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  }
+
   function setItemGm(itemId, raw) {
     setOverrides(prev => {
       const next = { ...prev };
@@ -1556,6 +1591,7 @@ export function PricingView() {
           resolvedLinkedTo={resolvedLinkedTo}
           effectiveType={effectiveType}
           linkedToDefaultKey={linkedToDefaultKey}
+          removeLinkedToDefault={removeLinkedToDefault}
         />
       )}
 
