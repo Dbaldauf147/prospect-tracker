@@ -63,7 +63,7 @@ function ColumnsMenu({ open, onToggle, columns, hiddenFn, onItemToggle }) {
 // Local-draft text cell — commits on blur/Enter so re-renders don't
 // fight typing. Pass `listId` to bind the input to a <datalist> for
 // dropdown suggestions while still allowing free-text entry.
-function CellTextInput({ initial, placeholder, type, align, listId, onCommit }) {
+function CellTextInput({ initial, placeholder, type, align, listId, onCommit, disabled }) {
   const [draft, setDraft] = useState(initial == null ? '' : String(initial));
   return (
     <input
@@ -73,6 +73,7 @@ function CellTextInput({ initial, placeholder, type, align, listId, onCommit }) 
       value={draft}
       placeholder={placeholder || ''}
       list={listId}
+      disabled={disabled}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={() => onCommit(draft)}
       onKeyDown={(e) => {
@@ -105,6 +106,8 @@ function parseAltFeePaste(text) {
     const smNum = Number(cell(5));
     const gmRaw = cell(6).replace('%', '').trim();
     const gmNum = gmRaw === '' ? null : Number(gmRaw);
+    const passRaw = cell(7).trim().toLowerCase();
+    const passThrough = passRaw === 'yes' || passRaw === 'y' || passRaw === 'true' || passRaw === '1' || passRaw === 'pass' || passRaw === 'pass-through' || passRaw === 'passthrough';
     out.push({
       altItem: cell(0),
       type: cell(1),
@@ -113,6 +116,7 @@ function parseAltFeePaste(text) {
       unitCount: Number.isFinite(ucNum) ? ucNum : cell(4),
       startMonth: Number.isFinite(smNum) ? smNum : cell(5) || 1,
       feeGmPct: Number.isFinite(gmNum) ? (gmNum > 1 ? gmNum / 100 : gmNum) : null,
+      passThrough,
     });
   }
   return out;
@@ -186,6 +190,7 @@ function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onRepla
       const auto = !hasManual && autoFeeFor ? autoFeeFor(r) : null;
       const fee = hasManual ? manualFee : (typeof auto === 'number' ? auto : '');
       const feeCell = typeof fee === 'number' ? fee.toFixed(2) : '';
+      const gmCell = typeof r.feeGmPct === 'number' ? (r.feeGmPct * 100).toFixed(1) + '%' : '';
       lines.push([
         r.altItem || '',
         r.type || '',
@@ -193,6 +198,8 @@ function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onRepla
         r.unit || '',
         r.unitCount === '' || r.unitCount == null ? '' : r.unitCount,
         r.startMonth === '' || r.startMonth == null ? '' : r.startMonth,
+        gmCell,
+        r.passThrough ? 'yes' : '',
       ].join('\t'));
     }
     return lines.join('\n');
@@ -256,6 +263,7 @@ function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onRepla
               <th key={`yh-${i}`} className={styles.numCell} style={{ width: 90 }}>{`Y${i + 1}`}</th>
             ))}
             <th className={styles.numCell} style={{ width: 90 }}>Fee GM%</th>
+            <th style={{ width: 100, whiteSpace: 'nowrap' }} title="Bill this fee at face cost (no margin). Revenue still shows in totals but it's excluded from the Deal margin.">Pass-through</th>
             <th style={{ width: 32 }} />
           </tr>
         </thead>
@@ -264,10 +272,11 @@ function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onRepla
             const isDragging = dragFrom === idx;
             const showInsertBefore = dragFrom !== null && dragOverIdx === idx;
             const showInsertAfter = dragFrom !== null && dragOverIdx === idx + 1;
+            const passThrough = row.passThrough === true;
             return (
             <tr
               key={idx}
-              className={`${isDragging ? styles.dragRowGhost : ''} ${showInsertBefore ? styles.dragInsertBefore : ''} ${showInsertAfter ? styles.dragInsertAfter : ''}`.trim() || undefined}
+              className={`${isDragging ? styles.dragRowGhost : ''} ${showInsertBefore ? styles.dragInsertBefore : ''} ${showInsertAfter ? styles.dragInsertAfter : ''} ${passThrough ? styles.passThroughRow : ''}`.trim() || undefined}
               onDragOver={(e) => rowDragOver(idx, e)}
               onDrop={(e) => rowDrop(idx, e)}
               onDragEnd={rowDragEnd}
@@ -365,24 +374,29 @@ function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onRepla
               })}
               {(() => {
                 const computed = marginFor ? marginFor(row.altItem) : null;
-                const placeholder = computed
-                  ? `${(computed.marginPct * 100).toFixed(1)}%`
-                  : (typeof globalGmPct === 'number' ? `${Math.round(globalGmPct * 100)}%` : '');
+                const placeholder = passThrough
+                  ? 'pass'
+                  : (computed
+                    ? `${(computed.marginPct * 100).toFixed(1)}%`
+                    : (typeof globalGmPct === 'number' ? `${Math.round(globalGmPct * 100)}%` : ''));
                 const fmt = (n) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
-                const title = computed
-                  ? `Auto-margin for "${row.altItem}":
+                const title = passThrough
+                  ? 'Pass-through fee — billed at face cost, contributes no margin.'
+                  : (computed
+                    ? `Auto-margin for "${row.altItem}":
   • Total fee revenue: ${fmt(computed.totalFee)} (${computed.altRowCount} alt-fee row${computed.altRowCount === 1 ? '' : 's'} × unit count, recurring projected over term; total units = ${computed.totalUnits})
   • Total cost: ${fmt(computed.totalCost)} (${computed.matchCount} linked CTS row${computed.matchCount === 1 ? '' : 's'}, treated as totals; recurring/rolled projected over term)
   • Margin: (${fmt(computed.totalFee)} − ${fmt(computed.totalCost)}) ÷ ${fmt(computed.totalFee)} = ${(computed.marginPct * 100).toFixed(1)}%
 Type a value to override.`
-                  : 'No CTS items are linked to this Alt Fee item — falls back to the global GM%.';
+                    : 'No CTS items are linked to this Alt Fee item — falls back to the global GM%.');
                 return (
                   <td className={styles.numCell} title={title}>
                     <CellTextInput
-                      key={`alt-${idx}-feeGm-${row.feeGmPct ?? ''}-${computed ? computed.marginPct.toFixed(4) : 'n'}`}
-                      initial={typeof row.feeGmPct === 'number' ? (row.feeGmPct * 100).toString() : ''}
+                      key={`alt-${idx}-feeGm-${row.feeGmPct ?? ''}-${passThrough ? 'pass' : (computed ? computed.marginPct.toFixed(4) : 'n')}`}
+                      initial={passThrough ? '' : (typeof row.feeGmPct === 'number' ? (row.feeGmPct * 100).toString() : '')}
                       placeholder={placeholder}
                       align="right"
+                      disabled={passThrough}
                       onCommit={(v) => {
                         const trimmed = String(v ?? '').replace('%', '').trim();
                         if (!trimmed) { onChange(idx, 'feeGmPct', null); return; }
@@ -394,6 +408,16 @@ Type a value to override.`
                   </td>
                 );
               })()}
+              <td className={styles.passThroughCell}>
+                <label className={styles.passThroughLabel} title="Bill this fee at face cost (no margin). The line still appears in totals but is excluded from Deal margin.">
+                  <input
+                    type="checkbox"
+                    checked={passThrough}
+                    onChange={(e) => onChange(idx, 'passThrough', e.target.checked)}
+                  />
+                  {passThrough ? 'Pass' : ''}
+                </label>
+              </td>
               <td>
                 <button
                   type="button"
@@ -416,7 +440,15 @@ Type a value to override.`
             const recurring = sums(isRecurring);
             const grand = setupOneTime.map((v, i) => v + recurring[i]);
             const costs = Array.isArray(costByYear) ? costByYear : Array.from({ length: numYears }, () => 0);
-            const passes = Array.isArray(passThroughByYear) ? passThroughByYear : Array.from({ length: numYears }, () => 0);
+            const ctsPasses = Array.isArray(passThroughByYear) ? passThroughByYear : Array.from({ length: numYears }, () => 0);
+            // Revenue per year from alt-fee rows the user marked
+            // Pass-through. Treated as billed at face cost: it shows up
+            // in fee totals but is excluded from the Deal margin
+            // (revenue == cost cancels out of both sides).
+            const altPasses = Array.from({ length: numYears }, (_, i) =>
+              rows.reduce((s, r) => (r.passThrough && yearRevenue ? s + yearRevenue(r, i + 1) : s), 0)
+            );
+            const passes = ctsPasses.map((v, i) => v + altPasses[i]);
             const renderTotalsRow = (label, values, fmt = fmtMoneyCell, showZero = false) => (
               <tr className={styles.totalsRow}>
                 <td colSpan={7} style={{ textAlign: 'right', fontWeight: 600 }}>{label}</td>
@@ -425,19 +457,27 @@ Type a value to override.`
                     {(showZero || v > 0) ? fmt(v) : ''}
                   </td>
                 ))}
-                <td colSpan={2} />
+                <td colSpan={3} />
               </tr>
             );
             // Deal margin excludes pass-through cost and the matching
             // pass-through revenue. Pass-through bills at face cost, so
             // revenue and cost cancel — netting them out of both sides
             // leaves margin = (fee - cost) / (fee - passthrough).
+            //
+            // CTS-side pass-through has matching revenue in `grand` and
+            // matching cost in `costs`, so it cancels when subtracted
+            // from both. Alt-fee-side pass-through has revenue in
+            // `grand` but no matching CTS cost, so we only subtract it
+            // from the fee side — its conceptual cost equals its
+            // revenue and cancels in the numerator.
             const margins = grand.map((fee, i) => {
               const cost = costs[i] || 0;
-              const pass = passes[i] || 0;
-              const adjFee = fee - pass;
+              const ctsPass = ctsPasses[i] || 0;
+              const altPass = altPasses[i] || 0;
+              const adjFee = fee - ctsPass - altPass;
               if (adjFee <= 0) return null;
-              const adjCost = cost - pass;
+              const adjCost = cost - ctsPass;
               return (adjFee - adjCost) / adjFee;
             });
             const fmtPctCell = (n) => n == null ? '' : `${(n * 100).toFixed(1)}%`;
