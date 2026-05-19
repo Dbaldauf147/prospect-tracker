@@ -4,11 +4,20 @@ import { matchesCdm } from '../../utils/cdmMatch';
 import { DealsView } from '../DealsView/DealsView';
 import { loadDealsList } from '../../utils/dealsStore';
 import { loadDealClientMap, DEALS_CLIENT_MAP_EVENT } from '../../utils/dealClientMap';
-import { loadClientManagerMap, setClientManager, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
+import {
+  loadClientManagerMap, setClientManager, CLIENT_MANAGER_EVENT,
+  loadClientInPersonMap, setClientInPerson, CLIENT_IN_PERSON_EVENT,
+  loadClientStatusMap, setClientStatus, CLIENT_STATUS_EVENT,
+} from '../../utils/clientManagerStore';
 import {
   asDate, fmtCurrency, fmtPercent, fmtDate, isTruthy,
   DEAL_CURRENCY_KEYS, DEAL_DATE_KEYS, DEAL_PERCENT_KEYS, DEAL_CHECK_KEYS,
 } from '../../utils/dealsFormat';
+import {
+  buildListRegistry, buildAvailableLists, resolveColumnLink,
+  SelectCell, MultiSelectCell, LinkColumnsModal,
+} from '../common/columnLinks';
+import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 
 // The Paperwork column doubles as a status field in this dataset —
 // values like "Cancelled" and "Expired" mark agreements that no
@@ -100,6 +109,64 @@ function ClientManagerCell({ company, value, onCommit }) {
         fontSize: '0.72rem', fontFamily: 'inherit',
       }}
     />
+  );
+}
+
+// Free-text Status editor used when no Dropdowns list is bound to
+// the column. When a list IS bound, ClientsView uses the shared
+// SelectCell from columnLinks instead.
+function ClientStatusTextCell({ company, value, onCommit }) {
+  const [draft, setDraft] = useState(value || '');
+  const [focused, setFocused] = useState(false);
+  useEffect(() => { setDraft(value || ''); }, [value]);
+  function commit() {
+    const next = draft.trim();
+    if (next === (value || '').trim()) return;
+    onCommit(company, next);
+  }
+  return (
+    <input
+      type="text"
+      value={draft}
+      placeholder="—"
+      onChange={(e) => setDraft(e.target.value)}
+      onFocus={() => setFocused(true)}
+      onBlur={() => { setFocused(false); commit(); }}
+      onClick={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+        else if (e.key === 'Escape') { e.preventDefault(); setDraft(value || ''); e.currentTarget.blur(); }
+      }}
+      style={{
+        width: '100%', boxSizing: 'border-box',
+        padding: '3px 6px',
+        border: `1px solid ${focused ? '#3B82F6' : 'transparent'}`, borderRadius: 4,
+        background: focused ? '#fff' : 'transparent', color: '#1E293B',
+        fontSize: '0.72rem', fontFamily: 'inherit',
+      }}
+    />
+  );
+}
+
+// Per-client In Person Meeting flag. Centered checkbox; the table
+// row already has no onRowClick so a click on the box only toggles
+// the flag, but stop propagation anyway to be safe.
+function InPersonCell({ company, checked, onChange }) {
+  return (
+    <label
+      onClick={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      style={{ display: 'inline-flex', alignItems: 'center', cursor: 'pointer' }}
+    >
+      <input
+        type="checkbox"
+        checked={!!checked}
+        onChange={(e) => onChange(company, e.target.checked)}
+        style={{ cursor: 'pointer' }}
+      />
+    </label>
   );
 }
 
@@ -203,21 +270,31 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
   const [dealsList, setDealsList] = useState(() => loadDealsList().data);
   const [clientMap, setClientMap] = useState(() => loadDealClientMap());
   const [managerMap, setManagerMap] = useState(() => loadClientManagerMap());
+  const [inPersonMap, setInPersonMap] = useState(() => loadClientInPersonMap());
+  const [statusMap, setStatusMap] = useState(() => loadClientStatusMap());
   useEffect(() => {
     function onStorage(e) {
       if (e.key === 'deals-list-override') setDealsList(loadDealsList().data);
       if (e.key === 'deals-client-map') setClientMap(loadDealClientMap());
       if (e.key === 'clients-manager-map') setManagerMap(loadClientManagerMap());
+      if (e.key === 'clients-inperson-map') setInPersonMap(loadClientInPersonMap());
+      if (e.key === 'clients-status-map') setStatusMap(loadClientStatusMap());
     }
     function onClientMap() { setClientMap(loadDealClientMap()); }
     function onManagerMap() { setManagerMap(loadClientManagerMap()); }
+    function onInPersonMap() { setInPersonMap(loadClientInPersonMap()); }
+    function onStatusMap() { setStatusMap(loadClientStatusMap()); }
     window.addEventListener('storage', onStorage);
     window.addEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
     window.addEventListener(CLIENT_MANAGER_EVENT, onManagerMap);
+    window.addEventListener(CLIENT_IN_PERSON_EVENT, onInPersonMap);
+    window.addEventListener(CLIENT_STATUS_EVENT, onStatusMap);
     return () => {
       window.removeEventListener('storage', onStorage);
       window.removeEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
       window.removeEventListener(CLIENT_MANAGER_EVENT, onManagerMap);
+      window.removeEventListener(CLIENT_IN_PERSON_EVENT, onInPersonMap);
+      window.removeEventListener(CLIENT_STATUS_EVENT, onStatusMap);
     };
   }, []);
   // Refresh deals + client map whenever we switch back to the Clients
@@ -228,8 +305,25 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
       setDealsList(loadDealsList().data);
       setClientMap(loadDealClientMap());
       setManagerMap(loadClientManagerMap());
+      setInPersonMap(loadClientInPersonMap());
+      setStatusMap(loadClientStatusMap());
     }
   }, [subtab]);
+
+  // User-configurable column-to-Dropdowns-list bindings, mirroring the
+  // Deals / Opps 2 "Link columns" feature. Lets the Status column on
+  // this table pull picks from a Dropdowns-tab list.
+  const columnLinks = settings?.clientsColumnLinks || {};
+  const updateColumnLinks = (next) => {
+    updateSettings?.({ clientsColumnLinks: next || {} });
+  };
+  const dropdownLists = useMemo(
+    () => getEffectiveDropdownLists(settings),
+    [settings?.dropdownLists]
+  );
+  const listRegistry = useMemo(() => buildListRegistry(dropdownLists), [dropdownLists]);
+  const availableLists = useMemo(() => buildAvailableLists(dropdownLists), [dropdownLists]);
+  const [linkModalOpen, setLinkModalOpen] = useState(false);
 
   // Group deals by client. A row's raw Client Name is preferred, but
   // when the user has explicitly mapped that source name to a different
@@ -267,13 +361,17 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
 
   const q = query.trim().toLowerCase();
   const filtered = q
-    ? clients.filter(c => (
-        (c.company || '').toLowerCase().includes(q) ||
-        (c.cdm || '').toLowerCase().includes(q) ||
-        (c.type || '').toLowerCase().includes(q) ||
-        (c.website || '').toLowerCase().includes(q) ||
-        (managerMap[normClientName(c.company)] || '').toLowerCase().includes(q)
-      ))
+    ? clients.filter(c => {
+        const ck = normClientName(c.company);
+        return (
+          (c.company || '').toLowerCase().includes(q) ||
+          (c.cdm || '').toLowerCase().includes(q) ||
+          (c.type || '').toLowerCase().includes(q) ||
+          (c.website || '').toLowerCase().includes(q) ||
+          (managerMap[ck] || '').toLowerCase().includes(q) ||
+          (statusMap[ck] || '').toLowerCase().includes(q)
+        );
+      })
     : clients;
 
   const myProspects = useMemo(() => prospects.filter(p => matchesCdm(p.cdm, cdmName)), [prospects, cdmName]);
@@ -293,7 +391,8 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
   }, [prospects]);
 
   const rows = useMemo(() => filtered.map(c => {
-    const clientDeals = dealsByClient.get(normClientName(c.company)) || [];
+    const ck = normClientName(c.company);
+    const clientDeals = dealsByClient.get(ck) || [];
     const next = soonestExpiration(clientDeals);
     return {
       ...c,
@@ -302,9 +401,11 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
       contractCount: clientDeals.length,
       soonestExpiration: next.date,
       daysUntilExpiration: next.days,
-      clientManager: managerMap[normClientName(c.company)] || '',
+      clientManager: managerMap[ck] || '',
+      inPersonMeeting: !!inPersonMap[ck],
+      Status: statusMap[ck] || '',
     };
-  }), [filtered, dealsByClient, managerMap]);
+  }), [filtered, dealsByClient, managerMap, inPersonMap, statusMap]);
 
   const columns = useMemo(() => [
     {
@@ -336,13 +437,36 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
       },
     },
     {
-      key: 'status', label: 'Status', defaultWidth: 120,
+      key: 'status', label: 'Account Status', defaultWidth: 130,
       render: (row) => {
         const isOld = isOldClient(row);
         return (
           <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: isOld ? '#F1F5F9' : '#DCFCE7', color: isOld ? '#64748B' : '#166534' }}>
             {row.status || '—'}
           </span>
+        );
+      },
+    },
+    {
+      key: 'Status', label: 'Status', defaultWidth: 160,
+      getSortValue: (row) => (row.Status || '').toLowerCase(),
+      getFilterValue: (row) => row.Status || '',
+      render: (row) => {
+        const link = resolveColumnLink('Status', columnLinks);
+        if (link) {
+          const opts = listRegistry?.get(link.listKey)?.options || [];
+          const onChange = (v) => setClientStatus(row.company, v);
+          if (link.mode === 'multi') {
+            return <MultiSelectCell value={row.Status} onChange={onChange} options={opts} />;
+          }
+          return <SelectCell value={row.Status} onChange={onChange} options={opts} />;
+        }
+        return (
+          <ClientStatusTextCell
+            company={row.company}
+            value={row.Status}
+            onCommit={setClientStatus}
+          />
         );
       },
     },
@@ -358,11 +482,23 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
         />
       ),
     },
+    {
+      key: 'inPersonMeeting', label: 'In Person Meeting', defaultWidth: 150,
+      getSortValue: (row) => row.inPersonMeeting ? 1 : 0,
+      getFilterValue: (row) => row.inPersonMeeting ? 'Yes' : 'No',
+      render: (row) => (
+        <InPersonCell
+          company={row.company}
+          checked={row.inPersonMeeting}
+          onChange={setClientInPerson}
+        />
+      ),
+    },
     { key: 'type', label: 'Type', defaultWidth: 140 },
     {
       key: 'services', label: 'Services', defaultWidth: 100,
       render: (row) => (
-        <span style={{ display: 'block', textAlign: 'right', color: row.services > 0 ? '#059669' : '#94A3B8', fontWeight: row.services > 0 ? 600 : 400 }}>
+        <span style={{ color: row.services > 0 ? '#059669' : '#94A3B8', fontWeight: row.services > 0 ? 600 : 400 }}>
           {row.services || '—'}
         </span>
       ),
@@ -370,7 +506,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
     {
       key: 'numberOfSites', label: 'Sites', defaultWidth: 90,
       render: (row) => (
-        <span style={{ display: 'block', textAlign: 'right', color: '#475569' }}>{row.numberOfSites || '—'}</span>
+        <span style={{ color: '#475569' }}>{row.numberOfSites || '—'}</span>
       ),
     },
     {
@@ -392,7 +528,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
         // so they pop without the user having to sort the column manually.
         const color = d <= 30 ? '#B91C1C' : d <= 90 ? '#B45309' : '#475569';
         return (
-          <span style={{ display: 'block', textAlign: 'right', color, fontWeight: d <= 90 ? 600 : 400, fontVariantNumeric: 'tabular-nums' }}>
+          <span style={{ color, fontWeight: d <= 90 ? 600 : 400, fontVariantNumeric: 'tabular-nums' }}>
             {d}
           </span>
         );
@@ -415,7 +551,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
         );
       },
     },
-  ], [expandedIds]);
+  ], [expandedIds, columnLinks, listRegistry]);
 
   const subtabBar = (
     <div style={{ display: 'flex', gap: '0.25rem', padding: '0.5rem 1.25rem 0', borderBottom: '1px solid #E2E8F0', flexShrink: 0 }}>
@@ -480,9 +616,15 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
           type="text"
           value={query}
           onChange={e => setQuery(e.target.value)}
-          placeholder="Filter by company, CDM, Client Manager, type, website…"
+          placeholder="Filter by company, CDM, Client Manager, Status, type, website…"
           style={{ flex: 1, maxWidth: 400, padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
         />
+        <button
+          type="button"
+          onClick={() => setLinkModalOpen(true)}
+          title="Bind the Status column to a Dropdowns-tab list so the cell picks from a fixed option list."
+          style={{ padding: '0.4rem 0.8rem', border: '1px solid #E2E8F0', background: 'white', borderRadius: 6, fontSize: '0.78rem', cursor: 'pointer', fontFamily: 'inherit' }}
+        >Link columns</button>
         <span style={{ fontSize: '0.72rem', color: '#64748B' }}>
           {filtered.length} of {activeCount}{showOld ? ` active · ${oldCount} old` : ''}
         </span>
@@ -539,6 +681,16 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
           />
         )}
       </div>
+      {linkModalOpen && (
+        <LinkColumnsModal
+          headers={['Status']}
+          columnLinks={columnLinks}
+          listRegistry={listRegistry}
+          availableLists={availableLists}
+          onChange={updateColumnLinks}
+          onClose={() => setLinkModalOpen(false)}
+        />
+      )}
     </div>
   );
 }
