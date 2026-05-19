@@ -5,13 +5,15 @@ import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { DataTable } from '../common/DataTable';
 import {
-  LIST_REGISTRY,
+  buildListRegistry,
+  buildAvailableLists,
   parseMulti,
   resolveColumnLink as resolveSharedColumnLink,
   SelectCell,
   MultiSelectCell,
   LinkColumnsModal,
 } from '../common/columnLinks';
+import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { dbGet, dbPut } from '../../utils/db';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import styles from './OppsView2.module.css';
@@ -1261,7 +1263,7 @@ function OppInfoModal({ opp, headers, onClose, onDelete }) {
 // Status, Source, Scope, etc.) or bulk-delete them. The field list is
 // driven by the column header set so it tracks whatever columns the
 // user currently has + any list bindings they've set up.
-function MassEditBar({ selectedCount, headers, columnLinks, onApply, onDelete, onClear }) {
+function MassEditBar({ selectedCount, headers, columnLinks, listRegistry, onApply, onDelete, onClear }) {
   const editableFields = useMemo(() => {
     const out = [];
     for (const h of headers || []) {
@@ -1280,7 +1282,7 @@ function MassEditBar({ selectedCount, headers, columnLinks, onApply, onDelete, o
 
   const link = resolveColumnLink(field, columnLinks);
   const isDate = DATE_COLUMNS.has(field);
-  const listOptions = link ? (LIST_REGISTRY.get(link.listKey)?.options || []) : null;
+  const listOptions = link ? (listRegistry?.get(link.listKey)?.options || []) : null;
   const valueToApply = link && link.mode === 'multi' ? multiValue : textValue;
 
   return (
@@ -1642,6 +1644,15 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
 
   const headers = data?.headers || [];
   const columnLinks = data?.columnLinks || {};
+  // Effective dropdown vocabulary: built-in lists overlaid with the
+  // user's edits from the Dropdowns tab. Recomputed when the user
+  // tweaks a list so cells and the Link Columns modal stay in sync.
+  const dropdownLists = useMemo(
+    () => getEffectiveDropdownLists(settings),
+    [settings?.dropdownLists]
+  );
+  const listRegistry = useMemo(() => buildListRegistry(dropdownLists), [dropdownLists]);
+  const availableLists = useMemo(() => buildAvailableLists(dropdownLists), [dropdownLists]);
   const records = useMemo(() => {
     const raw = data?.records || [];
     return raw.filter(r => {
@@ -1724,7 +1735,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           }
           const link = resolveColumnLink(h, columnLinks);
           if (link) {
-            const opts = LIST_REGISTRY.get(link.listKey)?.options || [];
+            const opts = listRegistry.get(link.listKey)?.options || [];
             if (link.mode === 'multi') {
               return (
                 <MultiSelectCell
@@ -1852,7 +1863,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       ? [...mapped.slice(0, nextStepsIdx), infoCol, ...mapped.slice(nextStepsIdx)]
       : [...mapped, infoCol];
     return [selectCol, ...withInfo, actions];
-  }, [headers, columnLinks, updateOppField, deleteOpp, companySuggestions, prospects, updateProspect, hubspotContacts, selectedIds]);
+  }, [headers, columnLinks, listRegistry, updateOppField, deleteOpp, companySuggestions, prospects, updateProspect, hubspotContacts, selectedIds]);
 
   const stageOrder = ['Lead', 'Not Started', 'Qualifying', 'Quoting', 'Quoted', 'Verbal', 'Sold', 'Not Sold'];
   const CLOSED_STAGES = useMemo(() => new Set(['Sold', 'Not Sold']), []);
@@ -2033,6 +2044,8 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           headers={headers}
           columnLinks={columnLinks}
           defaultLinks={DEFAULT_COLUMN_LINKS}
+          listRegistry={listRegistry}
+          availableLists={availableLists}
           onChange={updateColumnLinks}
           onClose={() => setLinkModalOpen(false)}
         />
@@ -2041,7 +2054,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       {pendingNewOpp && (
         <NewOppSourceModal
           account={pendingNewOpp.account}
-          options={LIST_REGISTRY.get('source')?.options || []}
+          options={listRegistry.get('source')?.options || []}
           onCreate={(source) => {
             addNewOpp(pendingNewOpp.account, source);
             setPendingNewOpp(null);
@@ -2164,6 +2177,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               selectedCount={selectedIds.size}
               headers={headers}
               columnLinks={columnLinks}
+              listRegistry={listRegistry}
               onApply={(field, value) => updateManyOppFields(selectedIds, field, value)}
               onDelete={() => deleteManyOpps(selectedIds)}
               onClear={() => setSelectedIds(new Set())}

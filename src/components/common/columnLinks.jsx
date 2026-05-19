@@ -1,23 +1,27 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { SOLUTIONS_CATALOG, DROPDOWN_LISTS } from '../../data/dropdownLists';
 
-// Registry of every list a column can be bound to — the Dropdowns
-// page's named picklists plus the long Solutions / Service catalog
-// (exposed under a synthetic `solutions` key). Used by the "Link
-// columns" modal and by cell renderers to look up the option list
-// for a given binding.
-export const LIST_REGISTRY = (() => {
+// Build a key → { key, label, options } map from an array of lists.
+// Callers pass the user's effective lists (built-ins merged with the
+// per-key overrides stored on settings.dropdownLists) so cell
+// renderers and the Link Columns modal always see the latest
+// vocabulary.
+export function buildListRegistry(lists) {
   const map = new Map();
-  for (const list of DROPDOWN_LISTS) {
-    map.set(list.key, { key: list.key, label: list.label, options: list.options });
+  for (const list of (lists || [])) {
+    if (!list?.key) continue;
+    map.set(list.key, list);
   }
-  map.set('solutions', { key: 'solutions', label: 'Solutions / Service Catalog', options: SOLUTIONS_CATALOG });
   return map;
-})();
+}
 
-export const AVAILABLE_LISTS = Array.from(LIST_REGISTRY.values())
-  .sort((a, b) => a.label.localeCompare(b.label));
+// Same lists, sorted by label — used to populate the picker inside
+// the Link Columns modal.
+export function buildAvailableLists(lists) {
+  return [...(lists || [])].sort((a, b) =>
+    String(a.label || '').localeCompare(String(b.label || ''))
+  );
+}
 
 // Comma-separated string ↔ array helper used by the multi-select cell.
 // Tolerates an already-array value so it round-trips cleanly with
@@ -33,12 +37,16 @@ export function parseMulti(value) {
 // Resolve a column's effective dropdown binding. User picks (from the
 // Link Columns modal) win over the caller's built-in defaults; an
 // explicit `none` from the user disables a default. Returns null when
-// the column is free-text.
+// the column is free-text. The shared registry isn't consulted here —
+// if the user previously bound the column to a list that's since been
+// removed, the consumer's listRegistry.get(listKey)?.options || []
+// fallback yields an empty option set and the cell shows the current
+// value as-is.
 export function resolveColumnLink(columnName, userLinks, defaultLinks = {}) {
   const user = userLinks?.[columnName];
   if (user) {
     if (user.listKey === 'none') return null;
-    if (LIST_REGISTRY.has(user.listKey)) {
+    if (user.listKey && user.listKey !== 'default') {
       return { listKey: user.listKey, mode: user.mode === 'multi' ? 'multi' : 'single' };
     }
   }
@@ -322,7 +330,9 @@ export function MultiSelectCell({ value, onChange, options }) {
 // list + single/multi mode. "Default" leaves the binding to whatever
 // the caller's defaultLinks map says, so built-in bindings stay in
 // place unless explicitly overridden.
-export function LinkColumnsModal({ headers, columnLinks, defaultLinks = {}, onChange, onClose }) {
+export function LinkColumnsModal({ headers, columnLinks, defaultLinks = {}, listRegistry, availableLists, onChange, onClose }) {
+  const registry = listRegistry instanceof Map ? listRegistry : buildListRegistry(listRegistry || []);
+  const lists = availableLists || buildAvailableLists(Array.from(registry.values()));
   const setBinding = (column, patch) => {
     const next = { ...(columnLinks || {}) };
     const current = next[column] || { listKey: 'default', mode: 'single' };
@@ -404,12 +414,12 @@ export function LinkColumnsModal({ headers, columnLinks, defaultLinks = {}, onCh
                       >
                         <option value="default">
                           {defaultBinding
-                            ? `Default (${LIST_REGISTRY.get(defaultBinding.listKey)?.label || defaultBinding.listKey})`
+                            ? `Default (${registry.get(defaultBinding.listKey)?.label || defaultBinding.listKey})`
                             : 'Default (free text)'}
                         </option>
                         <option value="none">— No list (free text) —</option>
                         <optgroup label="Dropdowns">
-                          {AVAILABLE_LISTS.map(l => (
+                          {lists.map(l => (
                             <option key={l.key} value={l.key}>{l.label}</option>
                           ))}
                         </optgroup>
