@@ -44,13 +44,18 @@ const PROGRESS_FIELDS = [
 
 function normClient(s) { return String(s || '').toLowerCase().trim(); }
 
-// A handoff field counts as "done" when the user has put *anything*
-// in it — a date, a note, a "Yes", whatever. The Progress pill /
-// popover used to only count strict truthy tokens (Yes / TRUE / ✓),
-// which under-counted users who type a date or a custom marker into
-// the cell.
+// A handoff field counts as "done" when the user has put a real
+// value in it — a date, a note, a "Yes", whatever. We treat empty
+// strings and bare dash placeholders ("-", "—", "–") as not filled
+// so a workbook that uses a dash for "blank" doesn't bump the X/4
+// progress count.
+const DASH_PLACEHOLDERS = new Set(['-', '–', '—']);
 function isFilled(v) {
-  return v != null && String(v).trim() !== '';
+  if (v == null) return false;
+  const s = String(v).trim();
+  if (s === '') return false;
+  if (DASH_PLACEHOLDERS.has(s)) return false;
+  return true;
 }
 
 // Editable cell wrapper. Renders the column's normal display until the
