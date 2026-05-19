@@ -4,6 +4,7 @@ import { matchesCdm } from '../../utils/cdmMatch';
 import { DealsView } from '../DealsView/DealsView';
 import { loadDealsList } from '../../utils/dealsStore';
 import { loadDealClientMap, DEALS_CLIENT_MAP_EVENT } from '../../utils/dealClientMap';
+import { loadClientManagerMap, setClientManager, CLIENT_MANAGER_EVENT } from '../../utils/clientManagerStore';
 import {
   asDate, fmtCurrency, fmtPercent, fmtDate, isTruthy,
   DEAL_CURRENCY_KEYS, DEAL_DATE_KEYS, DEAL_PERCENT_KEYS, DEAL_CHECK_KEYS,
@@ -50,6 +51,45 @@ const CONTRACT_COLUMNS = [
 
 function normClientName(s) {
   return String(s || '').trim().toLowerCase();
+}
+
+// Inline editor for the Client Manager column. Local draft so typing
+// stays snappy; commits on blur or Enter, reverts on Escape. The
+// container swallows click + keydown so editing doesn't trigger the
+// row-open popup or table-level shortcuts.
+function ClientManagerCell({ company, value, onCommit }) {
+  const [draft, setDraft] = useState(value || '');
+  const [focused, setFocused] = useState(false);
+  useEffect(() => { setDraft(value || ''); }, [value]);
+  function commit() {
+    const next = draft.trim();
+    if (next === (value || '').trim()) return;
+    onCommit(company, next);
+  }
+  return (
+    <input
+      type="text"
+      value={draft}
+      placeholder="—"
+      onChange={(e) => setDraft(e.target.value)}
+      onFocus={() => setFocused(true)}
+      onBlur={() => { setFocused(false); commit(); }}
+      onClick={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+        else if (e.key === 'Escape') { e.preventDefault(); setDraft(value || ''); e.currentTarget.blur(); }
+      }}
+      style={{
+        width: '100%', boxSizing: 'border-box',
+        padding: '3px 6px',
+        border: `1px solid ${focused ? '#3B82F6' : 'transparent'}`, borderRadius: 4,
+        background: focused ? '#fff' : 'transparent', color: '#1E293B',
+        fontSize: '0.72rem', fontFamily: 'inherit',
+      }}
+    />
+  );
 }
 
 function renderContractCell(key, value) {
@@ -140,17 +180,22 @@ export function ClientsView({ prospects = [], onSelectProspect, cdmName, setting
   // upload from the Deals subtab in another window shows up here.
   const [dealsList, setDealsList] = useState(() => loadDealsList().data);
   const [clientMap, setClientMap] = useState(() => loadDealClientMap());
+  const [managerMap, setManagerMap] = useState(() => loadClientManagerMap());
   useEffect(() => {
     function onStorage(e) {
       if (e.key === 'deals-list-override') setDealsList(loadDealsList().data);
       if (e.key === 'deals-client-map') setClientMap(loadDealClientMap());
+      if (e.key === 'clients-manager-map') setManagerMap(loadClientManagerMap());
     }
     function onClientMap() { setClientMap(loadDealClientMap()); }
+    function onManagerMap() { setManagerMap(loadClientManagerMap()); }
     window.addEventListener('storage', onStorage);
     window.addEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
+    window.addEventListener(CLIENT_MANAGER_EVENT, onManagerMap);
     return () => {
       window.removeEventListener('storage', onStorage);
       window.removeEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
+      window.removeEventListener(CLIENT_MANAGER_EVENT, onManagerMap);
     };
   }, []);
   // Refresh deals + client map whenever we switch back to the Clients
@@ -160,6 +205,7 @@ export function ClientsView({ prospects = [], onSelectProspect, cdmName, setting
     if (subtab === 'clients') {
       setDealsList(loadDealsList().data);
       setClientMap(loadDealClientMap());
+      setManagerMap(loadClientManagerMap());
     }
   }, [subtab]);
 
@@ -203,7 +249,8 @@ export function ClientsView({ prospects = [], onSelectProspect, cdmName, setting
         (c.company || '').toLowerCase().includes(q) ||
         (c.cdm || '').toLowerCase().includes(q) ||
         (c.type || '').toLowerCase().includes(q) ||
-        (c.website || '').toLowerCase().includes(q)
+        (c.website || '').toLowerCase().includes(q) ||
+        (managerMap[normClientName(c.company)] || '').toLowerCase().includes(q)
       ))
     : clients;
 
@@ -233,8 +280,9 @@ export function ClientsView({ prospects = [], onSelectProspect, cdmName, setting
       contractCount: clientDeals.length,
       soonestExpiration: next.date,
       daysUntilExpiration: next.days,
+      clientManager: managerMap[normClientName(c.company)] || '',
     };
-  }), [filtered, dealsByClient]);
+  }), [filtered, dealsByClient, managerMap]);
 
   const columns = useMemo(() => [
     {
@@ -277,6 +325,17 @@ export function ClientsView({ prospects = [], onSelectProspect, cdmName, setting
       },
     },
     { key: 'cdm', label: 'CDM', defaultWidth: 160 },
+    {
+      key: 'clientManager', label: 'Client Manager', defaultWidth: 180,
+      getSortValue: (row) => (row.clientManager || '').toLowerCase(),
+      render: (row) => (
+        <ClientManagerCell
+          company={row.company}
+          value={row.clientManager}
+          onCommit={setClientManager}
+        />
+      ),
+    },
     { key: 'type', label: 'Type', defaultWidth: 140 },
     {
       key: 'services', label: 'Services', defaultWidth: 100,
@@ -399,7 +458,7 @@ export function ClientsView({ prospects = [], onSelectProspect, cdmName, setting
           type="text"
           value={query}
           onChange={e => setQuery(e.target.value)}
-          placeholder="Filter by company, CDM, type, website…"
+          placeholder="Filter by company, CDM, Client Manager, type, website…"
           style={{ flex: 1, maxWidth: 400, padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
         />
         <span style={{ fontSize: '0.72rem', color: '#64748B' }}>
