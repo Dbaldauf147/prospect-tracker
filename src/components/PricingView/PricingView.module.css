@@ -669,6 +669,43 @@
   font-size: var(--font-size-xs);
 }
 
+.scenarioWrap {
+  display: flex;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+  align-items: flex-start;
+}
+
+.scenarioTable {
+  border-collapse: collapse;
+  font-size: var(--font-size-xs);
+  min-width: 360px;
+  flex: 1 1 360px;
+}
+
+.scenarioTable th,
+.scenarioTable td {
+  border: 1px solid var(--color-border);
+  padding: 0.35rem 0.5rem;
+  vertical-align: middle;
+}
+
+.scenarioTable thead th {
+  background: var(--color-bg-muted, #f1f5f9);
+  font-weight: 700;
+  text-align: left;
+}
+
+.scenarioTable thead th.numCell {
+  text-align: right;
+}
+
+.scenarioTable tbody td:first-child {
+  font-weight: 500;
+  color: var(--color-text);
+}
+
 .altTable th,
 .altTable td {
   border: 1px solid var(--color-border);

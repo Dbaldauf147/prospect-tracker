@@ -429,119 +429,105 @@ Type a value to override.`
             </tr>
             );
           })}
-          {(() => {
-            // Per-year totals split into Setup + One Time vs Recurring (monthly).
-            const isRecurring = (t) => /recurring/i.test(t || '');
-            const isOneTimeOrSetup = (t) => /^setup$|^one\s*time$/i.test(t || '');
-            const sums = (predicate) => Array.from({ length: numYears }, (_, i) =>
-              rows.reduce((s, r) => predicate(r.type) && yearRevenue ? s + yearRevenue(r, i + 1) : s, 0)
-            );
-            const setupOneTime = sums(isOneTimeOrSetup);
-            const recurring = sums(isRecurring);
-            const grand = setupOneTime.map((v, i) => v + recurring[i]);
-            const costs = Array.isArray(costByYear) ? costByYear : Array.from({ length: numYears }, () => 0);
-            const ctsPasses = Array.isArray(passThroughByYear) ? passThroughByYear : Array.from({ length: numYears }, () => 0);
-            // Revenue per year from alt-fee rows the user marked
-            // Pass-through. Treated as billed at face cost: it shows up
-            // in fee totals but is excluded from the Deal margin
-            // (revenue == cost cancels out of both sides).
-            const altPasses = Array.from({ length: numYears }, (_, i) =>
-              rows.reduce((s, r) => (r.passThrough && yearRevenue ? s + yearRevenue(r, i + 1) : s), 0)
-            );
-            const passes = ctsPasses.map((v, i) => v + altPasses[i]);
-            const renderTotalsRow = (label, values, fmt = fmtMoneyCell, showZero = false) => (
-              <tr className={styles.totalsRow}>
-                <td colSpan={7} style={{ textAlign: 'right', fontWeight: 600 }}>{label}</td>
-                {values.map((v, i) => (
-                  <td key={`tot-${label}-${i}`} className={styles.numCell}>
-                    {(showZero || v > 0) ? fmt(v) : ''}
-                  </td>
-                ))}
-                <td colSpan={3} />
-              </tr>
-            );
-            // Deal margin excludes pass-through cost and the matching
-            // pass-through revenue. Pass-through bills at face cost, so
-            // revenue and cost cancel — netting them out of both sides
-            // leaves margin = (fee - cost) / (fee - passthrough).
-            //
-            // CTS-side pass-through has matching revenue in `grand` and
-            // matching cost in `costs`, so it cancels when subtracted
-            // from both. Alt-fee-side pass-through has revenue in
-            // `grand` but no matching CTS cost, so we only subtract it
-            // from the fee side — its conceptual cost equals its
-            // revenue and cancels in the numerator.
-            const margins = grand.map((fee, i) => {
-              const cost = costs[i] || 0;
-              const ctsPass = ctsPasses[i] || 0;
-              const altPass = altPasses[i] || 0;
-              const adjFee = fee - ctsPass - altPass;
-              if (adjFee <= 0) return null;
-              const adjCost = cost - ctsPass;
-              return (adjFee - adjCost) / adjFee;
-            });
-            const fmtPctCell = (n) => n == null ? '' : `${(n * 100).toFixed(1)}%`;
-            // Running sum of fee revenue year-over-year, so the last
-            // value is the full-term cumulative deal amount.
-            const cumulative = grand.reduce((acc, v) => {
-              const prev = acc.length === 0 ? 0 : acc[acc.length - 1];
-              acc.push(prev + (v || 0));
-              return acc;
-            }, []);
-            const anyPassThrough = passes.some(v => v > 0);
-            // Revenue less the pass-through portion — what's left of
-            // the fee after stripping out the bill-at-cost rows on
-            // both the CTS and alt-fee sides. CTS-side pass-through
-            // uses the rounded-per-unit revenue (what actually lands
-            // in Total fee) rather than the raw CTS cost, so the
-            // subtraction matches the revenue that came in.
-            const ctsPassRev = Array.isArray(passThroughRevenueByYear) ? passThroughRevenueByYear : ctsPasses;
-            const revLessPass = grand.map((v, i) => v - (ctsPassRev[i] || 0) - (altPasses[i] || 0));
-            // Cumulative margin year-over-year — the same (adjFee −
-            // adjCost) / adjFee ratio as the per-year Deal margin row,
-            // but each year's adjFee and adjCost are the running sums
-            // through that year. Mirrors the Cumulative deal row so
-            // the reader can see "what's the deal-to-date margin if we
-            // signed today and lived with it through year N."
-            const cumulativeMargins = (() => {
-              let cumFee = 0, cumAdjCost = 0;
-              return grand.map((fee, i) => {
-                const cost = costs[i] || 0;
-                const ctsPass = ctsPasses[i] || 0;
-                const altPass = altPasses[i] || 0;
-                cumFee += (fee - ctsPass - altPass);
-                cumAdjCost += (cost - ctsPass);
-                if (cumFee <= 0) return null;
-                return (cumFee - cumAdjCost) / cumFee;
-              });
-            })();
-            // Running sum of revenue less pass-through, paired with
-            // Cumulative deal as the second of two scenarios — Total
-            // fee on one side, net (excluding the bill-at-cost rows)
-            // on the other. Only meaningful when there is some pass-
-            // through in the deal, so it lives behind the same gate
-            // as the per-year Revenue less pass-through row.
-            const cumulativeRevLessPass = revLessPass.reduce((acc, v) => {
-              const prev = acc.length === 0 ? 0 : acc[acc.length - 1];
-              acc.push(prev + (v || 0));
-              return acc;
-            }, []);
-            return (
-              <>
-                {renderTotalsRow('Setup + One Time', setupOneTime)}
-                {renderTotalsRow('Recurring (monthly)', recurring)}
-                {renderTotalsRow('Total fee', grand)}
-                {anyPassThrough && renderTotalsRow('Revenue less pass-through', revLessPass, fmtMoneyCell, true)}
-                {Array.isArray(costByYear) && renderTotalsRow('Deal margin', margins, fmtPctCell, true)}
-                {renderTotalsRow('Cumulative deal', cumulative, fmtMoneyCell, true)}
-                {anyPassThrough && renderTotalsRow('Cumulative revenue less pass-through', cumulativeRevLessPass, fmtMoneyCell, true)}
-                {Array.isArray(costByYear) && renderTotalsRow('Cumulative margin', cumulativeMargins, fmtPctCell, true)}
-                {Array.isArray(costByYear) && renderTotalsRow('Linked CTS cost', costs, fmtMoneyCell, true)}
-              </>
-            );
-          })()}
         </tbody>
       </table>
+      {(() => {
+        // Two side-by-side summary tables under the alt-fee table.
+        //   LEFT  ("Total fees"): every fee, including pass-through.
+        //   RIGHT ("Revenue less pass-through"): same Setup + One Time
+        //         and Recurring rows (the breakdown stays as-billed)
+        //         but Total fee drops to revenue net of pass-through.
+        //         Only rendered when the deal has any pass-through.
+        // Deal margin and Linked CTS cost are identical in both — the
+        // existing margin formula already excludes pass-through from
+        // both sides, so the % doesn't change between scenarios.
+        const isRecurring = (t) => /recurring/i.test(t || '');
+        const isOneTimeOrSetup = (t) => /^setup$|^one\s*time$/i.test(t || '');
+        const sums = (predicate) => Array.from({ length: numYears }, (_, i) =>
+          rows.reduce((s, r) => predicate(r.type) && yearRevenue ? s + yearRevenue(r, i + 1) : s, 0)
+        );
+        const setupOneTime = sums(isOneTimeOrSetup);
+        const recurring = sums(isRecurring);
+        const grand = setupOneTime.map((v, i) => v + recurring[i]);
+        const costs = Array.isArray(costByYear) ? costByYear : Array.from({ length: numYears }, () => 0);
+        const ctsPasses = Array.isArray(passThroughByYear) ? passThroughByYear : Array.from({ length: numYears }, () => 0);
+        const altPasses = Array.from({ length: numYears }, (_, i) =>
+          rows.reduce((s, r) => (r.passThrough && yearRevenue ? s + yearRevenue(r, i + 1) : s), 0)
+        );
+        const passes = ctsPasses.map((v, i) => v + altPasses[i]);
+        const ctsPassRev = Array.isArray(passThroughRevenueByYear) ? passThroughRevenueByYear : ctsPasses;
+        const revLessPass = grand.map((v, i) => v - (ctsPassRev[i] || 0) - (altPasses[i] || 0));
+        const anyPassThrough = passes.some(v => v > 0);
+        const margins = grand.map((fee, i) => {
+          const cost = costs[i] || 0;
+          const ctsPass = ctsPasses[i] || 0;
+          const altPass = altPasses[i] || 0;
+          const adjFee = fee - ctsPass - altPass;
+          if (adjFee <= 0) return null;
+          const adjCost = cost - ctsPass;
+          return (adjFee - adjCost) / adjFee;
+        });
+        const fmtPctCell = (n) => n == null ? '' : `${(n * 100).toFixed(1)}%`;
+        const hasCost = Array.isArray(costByYear);
+
+        const cellMoney = (v, showZero = false) => (showZero || v > 0) ? fmtMoneyCell(v) : '';
+
+        const renderScenario = (heading, totalFeeValues) => (
+          <table className={styles.scenarioTable}>
+            <thead>
+              <tr>
+                <th>{heading}</th>
+                {Array.from({ length: numYears }, (_, i) => (
+                  <th key={`yh-${i}`} className={styles.numCell}>Year {i + 1}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Setup + One Time</td>
+                {setupOneTime.map((v, i) => (
+                  <td key={`so-${i}`} className={styles.numCell}>{cellMoney(v)}</td>
+                ))}
+              </tr>
+              <tr>
+                <td>Recurring (monthly)</td>
+                {recurring.map((v, i) => (
+                  <td key={`rec-${i}`} className={styles.numCell}>{cellMoney(v)}</td>
+                ))}
+              </tr>
+              <tr>
+                <td style={{ fontWeight: 600 }}>Total fee</td>
+                {totalFeeValues.map((v, i) => (
+                  <td key={`tot-${i}`} className={styles.numCell} style={{ fontWeight: 600 }}>{cellMoney(v, true)}</td>
+                ))}
+              </tr>
+              {hasCost && (
+                <tr>
+                  <td>Deal margin</td>
+                  {margins.map((v, i) => (
+                    <td key={`m-${i}`} className={styles.numCell}>{fmtPctCell(v)}</td>
+                  ))}
+                </tr>
+              )}
+              {hasCost && (
+                <tr>
+                  <td>Linked CTS cost</td>
+                  {costs.map((v, i) => (
+                    <td key={`c-${i}`} className={styles.numCell}>{cellMoney(v, true)}</td>
+                  ))}
+                </tr>
+              )}
+            </tbody>
+          </table>
+        );
+
+        return (
+          <div className={styles.scenarioWrap}>
+            {renderScenario('Total fees', grand)}
+            {anyPassThrough && renderScenario('Revenue less pass-through', revLessPass)}
+          </div>
+        );
+      })()}
       <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
         <button type="button" className={styles.actionBtn} onClick={onAddRow}>+ Add row</button>
         <button
