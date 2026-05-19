@@ -1010,8 +1010,13 @@ export function PricingView() {
     const isRolled = /\brolled\b/i.test(t);
     const yearStart = (yearIndex - 1) * 12 + 1;
     const yearEnd = yearIndex * 12;
+    // CTS row's Start Month (column on the pricing table) — defaults
+    // to 1. Mirrors how altFeeYearRevenue treats the alt-fee row's
+    // startMonth so the per-year cost breakdown lines up with the
+    // per-year revenue breakdown for any pass-through link.
+    const startMonth = Math.max(1, Math.round(Number(item.startMonth) || 1));
     if (isRecurring) {
-      const billStart = Math.max(yearStart, 1);
+      const billStart = Math.max(yearStart, startMonth);
       const billEnd = Math.min(yearEnd, termMonths);
       if (billEnd < billStart) return 0;
       const months = billEnd - billStart + 1;
@@ -1022,15 +1027,17 @@ export function PricingView() {
       // Amortize CTS across the term, then bill each year's months at
       // an escalated monthly rate.
       const monthlyAmt = item.cts / termMonths;
-      const billStart = Math.max(yearStart, 1);
+      const billStart = Math.max(yearStart, startMonth);
       const billEnd = Math.min(yearEnd, termMonths);
       if (billEnd < billStart) return 0;
       const months = billEnd - billStart + 1;
       const esc = Math.pow(1 + costEscalator, yearIndex - 1);
       return monthlyAmt * months * esc;
     }
-    // Setup / One Time: lands entirely in Y1.
-    return yearIndex === 1 ? item.cts : 0;
+    // Setup / One Time: lands in the year containing startMonth.
+    if (startMonth > termMonths) return 0;
+    if (startMonth >= yearStart && startMonth <= yearEnd) return item.cts;
+    return 0;
   }
 
   // Revenue from a single Alt Fee row in calendar year `yearIndex`
