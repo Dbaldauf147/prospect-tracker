@@ -28,7 +28,9 @@ export function fmtPercent(v) {
   if (n == null) return v ?? '';
   // Excel often gives 0.10 for 10%; treat anything ≤1 as already a fraction.
   const pct = Math.abs(n) <= 1 ? n * 100 : n;
-  return `${pct.toFixed(2)}%`;
+  // Drop trailing zeros so 20.00% reads as 20%; keep up to 2 decimals
+  // for values that actually need them.
+  return `${pct.toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 0 })}%`;
 }
 
 // Parse a deal cell into a JS Date, or null if it isn't one. Used by
