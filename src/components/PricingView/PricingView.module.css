@@ -535,13 +535,6 @@
   text-align: left;
 }
 
-.summaryTable th.numCell,
-.summaryTable td.numCell,
-.summaryTable th.priceCell,
-.summaryTable td.priceCell {
-  text-align: right;
-}
-
 .summaryTable th {
   background: var(--color-bg-muted, #f1f5f9);
   font-weight: 600;
