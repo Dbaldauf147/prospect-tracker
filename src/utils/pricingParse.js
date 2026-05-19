@@ -1,4 +1,4 @@
-// Parses cost data out of "Option 1/2/3/4" sheets in an uploaded fee
+// Parses cost data out of "Option 1/2/3/4/5" sheets in an uploaded fee
 // workbook. The data we care about is bounded between two anchor
 // rows on each sheet:
 //
@@ -21,7 +21,7 @@
 
 import * as XLSX from 'xlsx';
 
-const OPTION_RE = /^\s*Option\s*([1-4])\b/i;
+const OPTION_RE = /^\s*Option\s*([1-5])\b/i;
 const SOLUTION_DESC_RE = /^solution\s*description$/i;
 const END_ANCHOR_RE = /^\s*cost\s*summary\b/i;
 // Per the SIA template, the first 18 rows are sheet metadata (Date,
@@ -287,7 +287,7 @@ export function parsePricingWorkbook(buffer) {
 
   if (options.length === 0) {
     const all = (wb.SheetNames || []).join(', ') || '(none)';
-    throw new Error(`No "Option 1/2/3/4" sheets found in this workbook. Sheets present: ${all}.`);
+    throw new Error(`No "Option 1/2/3/4/5" sheets found in this workbook. Sheets present: ${all}.`);
   }
 
   return { options, sheetNames: wb.SheetNames || [] };
