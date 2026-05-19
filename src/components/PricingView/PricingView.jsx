@@ -94,6 +94,11 @@ function parseAltFeePaste(text) {
   for (const line of lines) {
     const cols = line.includes('\t') ? line.split('\t') : line.split(/\s*,\s*/);
     const cell = (i) => (cols[i] ?? '').trim();
+    // Skip a header row pasted alongside the data (e.g. from the
+    // built-in Copy button). The first column on a header reads
+    // "Alternative Fee…" or "Item" and the second is the literal
+    // word "Type".
+    if (/^(alternative\s*fee|item)\b/i.test(cell(0)) && /^type$/i.test(cell(1))) continue;
     const feeRaw = cell(2).replace(/[$,\s]/g, '');
     const feeNum = feeRaw === '' ? null : Number(feeRaw);
     const ucNum = Number(cell(4));
@@ -138,6 +143,49 @@ function AltFeeTable({ rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onA
   const [pasteText, setPasteText] = useState('');
   const [flash, setFlash] = useState('');
   const parsed = pasteOpen ? parseAltFeePaste(pasteText) : [];
+
+  // TSV (tab-separated) snapshot of the table — header row plus one
+  // row per alt-fee entry. The Fee column uses the effective fee
+  // (manual if present, otherwise the auto-computed marked-up fee
+  // from linked CTS rows) so the export reflects what the user sees.
+  // Pastes cleanly into Excel and round-trips through the paste box
+  // since parseAltFeePaste skips the header row.
+  function buildTsv() {
+    const header = ['Alternative Fee Structure/Schedule', 'Type', 'Fee', 'Unit', 'Unit Count', 'Fee Start Month'].join('\t');
+    const lines = [header];
+    for (const r of rows) {
+      const manualFee = Number(r.fee);
+      const hasManual = Number.isFinite(manualFee) && manualFee > 0;
+      const auto = !hasManual && autoFeeFor ? autoFeeFor(r) : null;
+      const fee = hasManual ? manualFee : (typeof auto === 'number' ? auto : '');
+      const feeCell = typeof fee === 'number' ? fee.toFixed(2) : '';
+      lines.push([
+        r.altItem || '',
+        r.type || '',
+        feeCell,
+        r.unit || '',
+        r.unitCount === '' || r.unitCount == null ? '' : r.unitCount,
+        r.startMonth === '' || r.startMonth == null ? '' : r.startMonth,
+      ].join('\t'));
+    }
+    return lines.join('\n');
+  }
+
+  async function handleCopy() {
+    const tsv = buildTsv();
+    try {
+      await navigator.clipboard.writeText(tsv);
+      setFlash(`Copied ${rows.length} row${rows.length === 1 ? '' : 's'} to clipboard — paste into Excel.`);
+    } catch {
+      // Clipboard API blocked (insecure context, permissions). Fall
+      // back to opening the paste box prefilled so the user can copy
+      // the text manually.
+      setPasteText(tsv);
+      setPasteOpen(true);
+      setFlash('Clipboard blocked — copy the text below manually.');
+    }
+    window.setTimeout(() => setFlash(''), 2500);
+  }
 
   // Intercept paste anywhere on the table. If the clipboard text
   // looks like multi-row tabular data (more than one row, or any
@@ -343,6 +391,14 @@ Type a value to override.`
       </table>
       <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
         <button type="button" className={styles.actionBtn} onClick={onAddRow}>+ Add row</button>
+        <button
+          type="button"
+          className={styles.actionBtn}
+          onClick={handleCopy}
+          title="Copy this table as tab-separated rows. Paste straight into Excel."
+        >
+          Copy to clipboard
+        </button>
         <button type="button" className={styles.actionBtn} onClick={() => setPasteOpen(o => !o)}>
           {pasteOpen ? 'Hide paste box' : 'Paste from spreadsheet…'}
         </button>
