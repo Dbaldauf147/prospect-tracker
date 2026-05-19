@@ -73,9 +73,20 @@ function isFilled(v) {
 // New rows auto-focus the first editable cell so the user can start
 // typing immediately.
 function EditableCell({ value, kind, render, onSave, autoFocus, listId }) {
+  // Dates edit as plain text in the same M/D/YYYY shape the cell shows,
+  // so users can type the short form directly and copy/paste it like
+  // any other text. asDate(...) handles parsing on save.
+  const toDraft = (v) => {
+    if (kind === 'date') return v == null || v === '' ? '' : fmtDate(v);
+    return v == null ? '' : String(v);
+  };
   const [editing, setEditing] = useState(!!autoFocus);
-  const [draft, setDraft] = useState(value == null ? '' : String(value));
-  useEffect(() => { if (!editing) setDraft(value == null ? '' : String(value)); }, [value, editing]);
+  const [draft, setDraft] = useState(toDraft(value));
+  useEffect(() => {
+    if (!editing) setDraft(kind === 'date'
+      ? (value == null || value === '' ? '' : fmtDate(value))
+      : (value == null ? '' : String(value)));
+  }, [value, editing, kind]);
 
   function commit(next) {
     const v = next == null ? '' : String(next);
@@ -83,7 +94,7 @@ function EditableCell({ value, kind, render, onSave, autoFocus, listId }) {
     setEditing(false);
   }
   function cancel() {
-    setDraft(value == null ? '' : String(value));
+    setDraft(toDraft(value));
     setEditing(false);
   }
 
@@ -100,7 +111,6 @@ function EditableCell({ value, kind, render, onSave, autoFocus, listId }) {
   }
 
   const inputType = (kind === 'currency' || kind === 'percent' || kind === 'number') ? 'number'
-    : kind === 'date' ? 'date'
     : 'text';
   return (
     <input
