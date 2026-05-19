@@ -14,18 +14,44 @@ const SOLUTIONS_LIST = {
 // matters here: it's the order the cards render in.
 export const BUILTIN_DROPDOWN_LISTS = [...DROPDOWN_LISTS, SOLUTIONS_LIST];
 
-// Apply the user's per-list option overrides on top of the built-in
-// vocabulary. `settings.dropdownLists` is shaped like
-//   { [listKey]: ['Option A', 'Option B', ...] }
-// and only contains entries for lists the user has touched — keys
-// without an override fall through to the built-in options. Returns
-// the same `{ key, label, options }` shape so callers (Dropdowns view,
-// column linking) can use one code path.
+// User-defined lists live under `custom:` to keep them out of the
+// built-in keyspace. New keys are slugged from the label + a short
+// suffix so similar labels don't collide.
+export const CUSTOM_LIST_PREFIX = 'custom:';
+export function isCustomListKey(key) { return String(key || '').startsWith(CUSTOM_LIST_PREFIX); }
+export function makeCustomListKey(label) {
+  const slug = String(label || '').toLowerCase().trim()
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'list';
+  return `${CUSTOM_LIST_PREFIX}${slug}:${Date.now().toString(36)}`;
+}
+
+// Apply user customizations on top of the built-in vocabulary:
+//   settings.dropdownLists       → per-list option overrides
+//   settings.dropdownListLabels  → per-list label renames (built-ins and customs)
+//   settings.dropdownListsHidden → array of built-in keys to omit
+//   settings.dropdownCustomLists → user-created lists [{ key, label, options }]
+// Returns one flat { key, label, options, builtin } array so callers
+// (Dropdowns view, column linking) can stay on one code path.
 export function getEffectiveDropdownLists(settings) {
-  const overrides = settings?.dropdownLists || {};
-  return BUILTIN_DROPDOWN_LISTS.map(list => {
-    const ov = overrides[list.key];
-    if (Array.isArray(ov)) return { ...list, options: ov };
-    return list;
-  });
+  const optionOverrides = settings?.dropdownLists || {};
+  const labelOverrides = settings?.dropdownListLabels || {};
+  const hidden = new Set(Array.isArray(settings?.dropdownListsHidden) ? settings.dropdownListsHidden : []);
+  const customLists = Array.isArray(settings?.dropdownCustomLists) ? settings.dropdownCustomLists : [];
+
+  const out = [];
+  for (const list of BUILTIN_DROPDOWN_LISTS) {
+    if (hidden.has(list.key)) continue;
+    const options = Array.isArray(optionOverrides[list.key]) ? optionOverrides[list.key] : list.options;
+    const label = labelOverrides[list.key] || list.label;
+    out.push({ key: list.key, label, options, builtin: true });
+  }
+  for (const list of customLists) {
+    if (!list?.key) continue;
+    const options = Array.isArray(optionOverrides[list.key])
+      ? optionOverrides[list.key]
+      : (Array.isArray(list.options) ? list.options : []);
+    const label = labelOverrides[list.key] || list.label || 'Untitled list';
+    out.push({ key: list.key, label, options, builtin: false });
+  }
+  return out;
 }
