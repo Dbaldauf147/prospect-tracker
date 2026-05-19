@@ -9,6 +9,7 @@ import {
   loadClientInPersonMap, setClientInPerson, CLIENT_IN_PERSON_EVENT,
   loadClientStatusMap, setClientStatus, CLIENT_STATUS_EVENT,
   loadClientNotesMap, setClientNotes, CLIENT_NOTES_EVENT,
+  loadClientUntrackedMap, setClientUntracked, CLIENT_UNTRACKED_EVENT,
 } from '../../utils/clientManagerStore';
 import {
   asDate, fmtCurrency, fmtPercent, fmtDate, isTruthy,
@@ -312,6 +313,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
   const [inPersonMap, setInPersonMap] = useState(() => loadClientInPersonMap());
   const [statusMap, setStatusMap] = useState(() => loadClientStatusMap());
   const [notesMap, setNotesMap] = useState(() => loadClientNotesMap());
+  const [untrackedMap, setUntrackedMap] = useState(() => loadClientUntrackedMap());
   useEffect(() => {
     function onStorage(e) {
       if (e.key === 'deals-list-override') setDealsList(loadDealsList().data);
@@ -320,18 +322,21 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
       if (e.key === 'clients-inperson-map') setInPersonMap(loadClientInPersonMap());
       if (e.key === 'clients-status-map') setStatusMap(loadClientStatusMap());
       if (e.key === 'clients-notes-map') setNotesMap(loadClientNotesMap());
+      if (e.key === 'clients-untracked-map') setUntrackedMap(loadClientUntrackedMap());
     }
     function onClientMap() { setClientMap(loadDealClientMap()); }
     function onManagerMap() { setManagerMap(loadClientManagerMap()); }
     function onInPersonMap() { setInPersonMap(loadClientInPersonMap()); }
     function onStatusMap() { setStatusMap(loadClientStatusMap()); }
     function onNotesMap() { setNotesMap(loadClientNotesMap()); }
+    function onUntrackedMap() { setUntrackedMap(loadClientUntrackedMap()); }
     window.addEventListener('storage', onStorage);
     window.addEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
     window.addEventListener(CLIENT_MANAGER_EVENT, onManagerMap);
     window.addEventListener(CLIENT_IN_PERSON_EVENT, onInPersonMap);
     window.addEventListener(CLIENT_STATUS_EVENT, onStatusMap);
     window.addEventListener(CLIENT_NOTES_EVENT, onNotesMap);
+    window.addEventListener(CLIENT_UNTRACKED_EVENT, onUntrackedMap);
     return () => {
       window.removeEventListener('storage', onStorage);
       window.removeEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
@@ -339,6 +344,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
       window.removeEventListener(CLIENT_IN_PERSON_EVENT, onInPersonMap);
       window.removeEventListener(CLIENT_STATUS_EVENT, onStatusMap);
       window.removeEventListener(CLIENT_NOTES_EVENT, onNotesMap);
+      window.removeEventListener(CLIENT_UNTRACKED_EVENT, onUntrackedMap);
     };
   }, []);
   // Refresh deals + client map whenever we switch back to the Clients
@@ -352,6 +358,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
       setInPersonMap(loadClientInPersonMap());
       setStatusMap(loadClientStatusMap());
       setNotesMap(loadClientNotesMap());
+      setUntrackedMap(loadClientUntrackedMap());
     }
   }, [subtab]);
 
@@ -439,19 +446,24 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
     const ck = normClientName(c.company);
     const clientDeals = dealsByClient.get(ck) || [];
     const next = soonestExpiration(clientDeals);
+    const untracked = !!untrackedMap[ck];
     return {
       ...c,
       id: c.id,
       services: getServicesCount(c),
       contractCount: clientDeals.length,
       soonestExpiration: next.date,
-      daysUntilExpiration: next.days,
+      // Untracked rows blank Days Until so they fall through the
+      // default ascending sort (nulls go last) and don't compete with
+      // active accounts for attention.
+      daysUntilExpiration: untracked ? null : next.days,
       clientManager: managerMap[ck] || '',
       inPersonMeeting: !!inPersonMap[ck],
       Status: statusMap[ck] || '',
       notes: notesMap[ck] || '',
+      untracked,
     };
-  }), [filtered, dealsByClient, managerMap, inPersonMap, statusMap, notesMap]);
+  }), [filtered, dealsByClient, managerMap, inPersonMap, statusMap, notesMap, untrackedMap]);
 
   const columns = useMemo(() => [
     {
@@ -537,6 +549,18 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
           company={row.company}
           checked={row.inPersonMeeting}
           onChange={setClientInPerson}
+        />
+      ),
+    },
+    {
+      key: 'untracked', label: "Don't Track", defaultWidth: 110,
+      getSortValue: (row) => row.untracked ? 1 : 0,
+      getFilterValue: (row) => row.untracked ? 'Yes' : 'No',
+      render: (row) => (
+        <InPersonCell
+          company={row.company}
+          checked={row.untracked}
+          onChange={setClientUntracked}
         />
       ),
     },
@@ -730,6 +754,12 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
             alwaysVisible={['company']}
             defaultSort={{ key: 'daysUntilExpiration', direction: 'asc' }}
             rowStyle={(row) => {
+              // Untracked clients sit greyed at the bottom (Days Until
+              // is blanked above so the default ascending sort drops
+              // them past every row with a real date).
+              if (row.untracked) {
+                return { background: '#F1F5F9', color: '#94A3B8' };
+              }
               // Tint the row light red when a renewal is closing in
               // (<270 days) and the Status column is unset — those are
               // the clients that need a status set before they slip.
