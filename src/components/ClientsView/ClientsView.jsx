@@ -62,7 +62,7 @@ function soonestExpiration(deals) {
 // DealsView already folds them onto the same key.
 const CONTRACT_COLUMNS = [
   { key: 'Agreement Name',          label: 'Agreement Name', minWidth: 260 },
-  { key: 'Paperwork completed',     label: 'Paperwork' },
+  { key: 'Paperwork completed',     label: 'Paperwork', minWidth: 220 },
   { key: 'Current Term Start Date', label: 'Current Term Start Date' },
   { key: 'Payment Terms',           label: 'Payment Terms' },
   { key: 'End Date',                label: 'End Date', minWidth: 130 },
