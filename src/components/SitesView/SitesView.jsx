@@ -6795,21 +6795,42 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const { firstRow, lastRow } = hedgingChartRange;
       buf = await injectLiveLineChart(buf, {
         sheetName: HSHEET,
-        title: 'Spot Price Savings vs. Current Hedging Scenario',
-        catRef: `'${HSHEET}'!$B$${firstRow}:$B$${lastRow}`,
-        areaSeries: [
-          { name: '',        valRef: `'${HSHEET}'!$U$${firstRow}:$U$${lastRow}`, noFill: true },
-          { name: 'Savings', valRef: `'${HSHEET}'!$V$${firstRow}:$V$${lastRow}`, color: '22C55E', alpha: 40000 },
+        charts: [
+          {
+            title: 'Spot Price Savings vs. Current Hedging Scenario',
+            catRef: `'${HSHEET}'!$B$${firstRow}:$B$${lastRow}`,
+            areaSeries: [
+              { name: '',        valRef: `'${HSHEET}'!$U$${firstRow}:$U$${lastRow}`, noFill: true },
+              { name: 'Savings', valRef: `'${HSHEET}'!$V$${firstRow}:$V$${lastRow}`, color: '22C55E', alpha: 40000 },
+            ],
+            lineSeries: [
+              { name: 'Index Price',          color: 'F97316', marker: 'circle', markerSize: 4, valRef: `'${HSHEET}'!$G$${firstRow}:$G$${lastRow}` },
+              { name: 'Current Fixed Price',  color: '1E40AF', dash: 'dash',                    valRef: `'${HSHEET}'!$F$${firstRow}:$F$${lastRow}` },
+            ],
+            hideLegendIndices: [0],
+            // Anchored at Excel col M (0-indexed 12), row 14 (0-indexed
+            // 13) — sits below the Year-by-Year result block (rows 6–12)
+            // and to the right of the 60-row tranche table. ~720 × 360 px.
+            anchor: { col: 12, colOff: 0, row: 13, rowOff: 0, cx: 6858000, cy: 3429000 },
+          },
+          {
+            // % of portfolio hedged over time — cumulative hedge ratio
+            // from columns C (Current) and D (Example). Y axis stays
+            // 0%-100% so the two ladder lines read as ratios. Anchored
+            // immediately below the Spot Price chart (row 13 + ~18
+            // default-height rows ≈ row 32).
+            title: '% of Portfolio Hedged Over Time',
+            catRef: `'${HSHEET}'!$B$${firstRow}:$B$${lastRow}`,
+            lineSeries: [
+              { name: 'Current Hedge %', color: '1E40AF', dash: 'dash',  valRef: `'${HSHEET}'!$C$${firstRow}:$C$${lastRow}` },
+              { name: 'Example Hedge %', color: '22C55E', marker: 'circle', markerSize: 4, valRef: `'${HSHEET}'!$D$${firstRow}:$D$${lastRow}` },
+            ],
+            yMin: 0,
+            yMax: 1,
+            numFmt: '0%',
+            anchor: { col: 12, colOff: 0, row: 31, rowOff: 0, cx: 6858000, cy: 3429000 },
+          },
         ],
-        lineSeries: [
-          { name: 'Index Price',          color: 'F97316', marker: 'circle', markerSize: 4, valRef: `'${HSHEET}'!$G$${firstRow}:$G$${lastRow}` },
-          { name: 'Current Fixed Price',  color: '1E40AF', dash: 'dash',                    valRef: `'${HSHEET}'!$F$${firstRow}:$F$${lastRow}` },
-        ],
-        hideLegendIndices: [0],
-        // Anchored at Excel col M (0-indexed 12), row 14 (0-indexed
-        // 13) — sits below the Year-by-Year result block (rows 6–12)
-        // and to the right of the 60-row tranche table. ~720 × 360 px.
-        anchor: { col: 12, colOff: 0, row: 13, rowOff: 0, cx: 6858000, cy: 3429000 },
       });
     }
     const fileName = `Indicative Savings by State - ${new Date().toISOString().slice(0, 10)}.xlsx`;

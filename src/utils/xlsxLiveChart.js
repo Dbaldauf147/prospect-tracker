@@ -87,7 +87,7 @@ function areaSeriesXml(s, idx, catRef) {
   </c:ser>`;
 }
 
-function buildChartXml({ title, catRef, lineSeries = [], areaSeries = [], yMin, yMax, hideLegendIndices = [] }) {
+function buildChartXml({ title, catRef, lineSeries = [], areaSeries = [], yMin, yMax, hideLegendIndices = [], numFmt }) {
   // Series indices are global across chart types. Areas come first
   // (drawn underneath) so they get the leading indices.
   let idx = 0;
@@ -163,7 +163,7 @@ function buildChartXml({ title, catRef, lineSeries = [], areaSeries = [], yMin, 
         ${yScaling}
         <c:delete val="0"/>
         <c:axPos val="l"/>
-        <c:numFmt formatCode="&quot;$&quot;#,##0" sourceLinked="0"/>
+        <c:numFmt formatCode="${escapeXml(numFmt || '"$"#,##0')}" sourceLinked="0"/>
         <c:majorTickMark val="out"/>
         <c:minorTickMark val="none"/>
         <c:crossAx val="111111111"/>
@@ -182,10 +182,9 @@ function buildChartXml({ title, catRef, lineSeries = [], areaSeries = [], yMin, 
 </c:chartSpace>`;
 }
 
-function buildDrawingXml({ col, colOff, row, rowOff, cx, cy }) {
-  return `${XML_HEADER}
-<xdr:wsDr xmlns:xdr="${NS.xdr}" xmlns:a="${NS.a}" xmlns:r="${NS.r}">
-  <xdr:oneCellAnchor>
+function anchorBlockXml({ anchor, relId, frameId, frameName }) {
+  const { col, colOff, row, rowOff, cx, cy } = anchor;
+  return `<xdr:oneCellAnchor>
     <xdr:from>
       <xdr:col>${col}</xdr:col>
       <xdr:colOff>${colOff}</xdr:colOff>
@@ -195,7 +194,7 @@ function buildDrawingXml({ col, colOff, row, rowOff, cx, cy }) {
     <xdr:ext cx="${cx}" cy="${cy}"/>
     <xdr:graphicFrame macro="">
       <xdr:nvGraphicFramePr>
-        <xdr:cNvPr id="2" name="Chart 1"/>
+        <xdr:cNvPr id="${frameId}" name="${escapeXml(frameName)}"/>
         <xdr:cNvGraphicFramePr/>
       </xdr:nvGraphicFramePr>
       <xdr:xfrm>
@@ -204,19 +203,32 @@ function buildDrawingXml({ col, colOff, row, rowOff, cx, cy }) {
       </xdr:xfrm>
       <a:graphic>
         <a:graphicData uri="${NS.c}">
-          <c:chart xmlns:c="${NS.c}" r:id="rId1"/>
+          <c:chart xmlns:c="${NS.c}" r:id="${relId}"/>
         </a:graphicData>
       </a:graphic>
     </xdr:graphicFrame>
     <xdr:clientData/>
-  </xdr:oneCellAnchor>
+  </xdr:oneCellAnchor>`;
+}
+
+function buildDrawingXmlMulti(anchors) {
+  const blocks = anchors.map((a, i) => anchorBlockXml({
+    anchor: a.anchor,
+    relId: a.relId,
+    frameId: 2 + i,
+    frameName: `Chart ${i + 1}`,
+  })).join('\n  ');
+  return `${XML_HEADER}
+<xdr:wsDr xmlns:xdr="${NS.xdr}" xmlns:a="${NS.a}" xmlns:r="${NS.r}">
+  ${blocks}
 </xdr:wsDr>`;
 }
 
-function buildDrawingRelsXml({ chartTarget }) {
+function buildDrawingRelsXmlMulti(rels) {
+  const lines = rels.map(r => `  <Relationship Id="${r.relId}" Type="${NS.r}/chart" Target="${r.chartTarget}"/>`).join('\n');
   return `${XML_HEADER}
 <Relationships xmlns="${NS.rel}">
-  <Relationship Id="rId1" Type="${NS.r}/chart" Target="${chartTarget}"/>
+${lines}
 </Relationships>`;
 }
 
@@ -225,7 +237,7 @@ function buildDrawingRelsXml({ chartTarget }) {
 // any failure the original buffer is returned and a warning logged —
 // the caller's export still produces a valid (chart-less) workbook.
 //
-// Options:
+// Single-chart options (back-compat):
 //   sheetName  — target worksheet (must already exist)
 //   title      — chart title
 //   catRef     — fully-qualified range for category axis labels
@@ -233,12 +245,30 @@ function buildDrawingRelsXml({ chartTarget }) {
 //   areaSeries — array of { name?, color, alpha?, noFill?, valRef } (rendered as a stacked area chart)
 //   yMin, yMax — explicit value-axis bounds (optional)
 //   hideLegendIndices — series indices to suppress from the legend
+//   numFmt     — Excel format string for the value axis labels (default "$"#,##0)
 //   anchor     — { col, colOff, row, rowOff, cx, cy } in EMU
-export async function injectLiveLineChart(buffer, { sheetName, title, catRef, lineSeries, areaSeries, yMin, yMax, hideLegendIndices, anchor, series }) {
+//
+// Multi-chart shape (preferred when stacking charts on one sheet):
+//   sheetName + charts: [{ title, catRef, lineSeries, areaSeries,
+//                          yMin, yMax, hideLegendIndices, numFmt, anchor }, …]
+// All charts on a sheet share one drawing file (OOXML allows only
+// one <drawing> element per worksheet); each gets its own chart XML.
+export async function injectLiveLineChart(buffer, options) {
+  const { sheetName } = options;
+  const charts = Array.isArray(options.charts) && options.charts.length > 0
+    ? options.charts
+    : [{
+        title: options.title,
+        catRef: options.catRef,
+        lineSeries: options.lineSeries ?? options.series ?? [],
+        areaSeries: options.areaSeries ?? [],
+        yMin: options.yMin,
+        yMax: options.yMax,
+        hideLegendIndices: options.hideLegendIndices ?? [],
+        numFmt: options.numFmt,
+        anchor: options.anchor,
+      }];
   try {
-    // Back-compat: if the caller passed a single `series` array, treat
-    // it as lineSeries.
-    const effectiveLineSeries = lineSeries ?? series ?? [];
     const zip = await JSZip.loadAsync(buffer);
 
     const workbookXml = await zip.file('xl/workbook.xml').async('string');
@@ -262,24 +292,37 @@ export async function injectLiveLineChart(buffer, { sheetName, title, catRef, li
     const sheetFileBase = sheetRelTarget.replace(/^worksheets\//, '');
     const sheetRelsPath = `xl/worksheets/_rels/${sheetFileBase}.rels`;
 
-    const chartIdx = pickFreeIndex(zip, 'xl/charts/chart', '.xml');
+    // One drawing file holds N graphic frames, one per chart. Each
+    // chart still gets its own chart XML part.
     const drawingIdx = pickFreeIndex(zip, 'xl/drawings/drawing', '.xml');
-
-    const chartFile = `xl/charts/chart${chartIdx}.xml`;
     const drawingFile = `xl/drawings/drawing${drawingIdx}.xml`;
     const drawingRelsFile = `xl/drawings/_rels/drawing${drawingIdx}.xml.rels`;
 
-    zip.file(chartFile, buildChartXml({
-      title,
-      catRef,
-      lineSeries: effectiveLineSeries,
-      areaSeries: areaSeries ?? [],
-      yMin,
-      yMax,
-      hideLegendIndices: hideLegendIndices ?? [],
-    }));
-    zip.file(drawingFile, buildDrawingXml(anchor));
-    zip.file(drawingRelsFile, buildDrawingRelsXml({ chartTarget: `../charts/chart${chartIdx}.xml` }));
+    let nextChartIdx = pickFreeIndex(zip, 'xl/charts/chart', '.xml');
+    const chartFiles = [];
+    const drawingRels = [];
+    const drawingAnchors = [];
+    for (let i = 0; i < charts.length; i++) {
+      const c = charts[i];
+      const idx = nextChartIdx + i;
+      const chartFile = `xl/charts/chart${idx}.xml`;
+      chartFiles.push(chartFile);
+      zip.file(chartFile, buildChartXml({
+        title: c.title,
+        catRef: c.catRef,
+        lineSeries: c.lineSeries ?? c.series ?? [],
+        areaSeries: c.areaSeries ?? [],
+        yMin: c.yMin,
+        yMax: c.yMax,
+        hideLegendIndices: c.hideLegendIndices ?? [],
+        numFmt: c.numFmt,
+      }));
+      const relId = `rId${i + 1}`;
+      drawingRels.push({ relId, chartTarget: `../charts/chart${idx}.xml` });
+      drawingAnchors.push({ relId, anchor: c.anchor });
+    }
+    zip.file(drawingFile, buildDrawingXmlMulti(drawingAnchors));
+    zip.file(drawingRelsFile, buildDrawingRelsXmlMulti(drawingRels));
 
     // Sheet -> drawing relationship.
     let sheetRelsContent;
@@ -335,10 +378,12 @@ export async function injectLiveLineChart(buffer, { sheetName, title, catRef, li
 
     // [Content_Types].xml: register chart + drawing overrides.
     let ctXml = await zip.file('[Content_Types].xml').async('string');
-    const chartOverride = `<Override PartName="/${chartFile}" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>`;
     const drawingOverride = `<Override PartName="/${drawingFile}" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>`;
     const additions = [];
-    if (!ctXml.includes(chartOverride)) additions.push(chartOverride);
+    for (const chartFile of chartFiles) {
+      const chartOverride = `<Override PartName="/${chartFile}" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>`;
+      if (!ctXml.includes(chartOverride)) additions.push(chartOverride);
+    }
     if (!ctXml.includes(drawingOverride)) additions.push(drawingOverride);
     if (additions.length) {
       ctXml = ctXml.replace('</Types>', `${additions.join('')}</Types>`);
