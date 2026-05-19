@@ -122,7 +122,7 @@ function parseAltFeePaste(text) {
   return out;
 }
 
-function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onReplaceRows, onAppendRows, globalGmPct, marginFor, yearRevenue, autoFeeFor, siteCount, accountCount, altItemSuggestions = [], costByYear, passThroughByYear, numYears = 1 }) {
+function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onReplaceRows, onAppendRows, globalGmPct, marginFor, yearRevenue, autoFeeFor, siteCount, accountCount, altItemSuggestions = [], costByYear, passThroughByYear, passThroughRevenueByYear, numYears = 1 }) {
   const altItemListId = useId();
   const [dragFrom, setDragFrom] = useState(null); // row currently being dragged
   const [dragOverIdx, setDragOverIdx] = useState(null); // insertion point (0..rows.length)
@@ -491,8 +491,12 @@ Type a value to override.`
             const anyPassThrough = passes.some(v => v > 0);
             // Revenue less the pass-through portion — what's left of
             // the fee after stripping out the bill-at-cost rows on
-            // both the CTS and alt-fee sides.
-            const revLessPass = grand.map((v, i) => v - (passes[i] || 0));
+            // both the CTS and alt-fee sides. CTS-side pass-through
+            // uses the rounded-per-unit revenue (what actually lands
+            // in Total fee) rather than the raw CTS cost, so the
+            // subtraction matches the revenue that came in.
+            const ctsPassRev = Array.isArray(passThroughRevenueByYear) ? passThroughRevenueByYear : ctsPasses;
+            const revLessPass = grand.map((v, i) => v - (ctsPassRev[i] || 0) - (altPasses[i] || 0));
             return (
               <>
                 {renderTotalsRow('Setup + One Time', setupOneTime)}
@@ -2421,6 +2425,40 @@ export function PricingView() {
                         // bills at face), so the Deal-margin row can
                         // subtract it from both sides of the ratio.
                         const passThroughByYear = Array.from({ length: numYearsLocal }, () => 0);
+                        // Revenue-side mirror of passThroughByYear used
+                        // by the "Revenue less pass-through" totals row.
+                        // For each pass-through CTS row we contribute
+                        // round(cts/uc, 2) × uc instead of the raw cts
+                        // value, where uc is the linked alt-fee row's
+                        // unit count. That matches what actually lands
+                        // in Total fee (the auto-fee per unit is rounded
+                        // to two decimals before being multiplied back
+                        // out), so revLessPass = Total fee − passRev
+                        // doesn't carry a phantom margin from per-unit
+                        // rounding.
+                        const passThroughRevenueByYear = Array.from({ length: numYearsLocal }, () => 0);
+                        const altRowsForOpt = altFees[opt.optionNumber] || [];
+                        const altRowByTag = new Map();
+                        for (const r of altRowsForOpt) {
+                          const k = (r.altItem || '').trim().toLowerCase();
+                          if (k && !altRowByTag.has(k)) altRowByTag.set(k, r);
+                        }
+                        // Round the per-unit cost the same way auto-fee
+                        // rounds (see autoFeePerUnitFor) and run it
+                        // through ctsItemYearCost via a shim object so
+                        // the year / startMonth / escalator logic stays
+                        // in one place.
+                        function ctsItemPassThroughRevenue(it, yearIndex) {
+                          const tag = resolvedLinkedTo(it).trim().toLowerCase();
+                          const altRow = tag ? altRowByTag.get(tag) : null;
+                          const uc = altRow ? Number(altRow.unitCount) : NaN;
+                          if (!altRow || !Number.isFinite(uc) || uc <= 0) {
+                            return ctsItemYearCost(it, yearIndex);
+                          }
+                          const rounded = Math.round((it.cts / uc) * 100) / 100;
+                          const shim = { ...it, cts: rounded * uc };
+                          return ctsItemYearCost(shim, yearIndex);
+                        }
                         const costByYear = Array.from({ length: numYearsLocal }, (_, yi) => {
                           let sum = 0;
                           for (const sec of opt.sections) {
@@ -2429,7 +2467,10 @@ export function PricingView() {
                               if (!tag || !altTagSet.has(tag)) continue;
                               const c = ctsItemYearCost(it, yi + 1);
                               sum += c;
-                              if (isPassThrough(it)) passThroughByYear[yi] += c;
+                              if (isPassThrough(it)) {
+                                passThroughByYear[yi] += c;
+                                passThroughRevenueByYear[yi] += ctsItemPassThroughRevenue(it, yi + 1);
+                              }
                             }
                           }
                           return sum;
@@ -2447,6 +2488,7 @@ export function PricingView() {
                             altItemSuggestions={altItemSuggestions}
                             costByYear={costByYear}
                             passThroughByYear={passThroughByYear}
+                            passThroughRevenueByYear={passThroughRevenueByYear}
                             numYears={numYearsLocal}
                             onChange={(idx, field, value) => updateAltFeeCell(opt.optionNumber, idx, field, value)}
                             onAddRow={() => addAltFeeRow(opt.optionNumber)}
