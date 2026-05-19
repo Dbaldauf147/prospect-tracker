@@ -31,17 +31,30 @@ export function fmtPercent(v) {
   return `${pct.toFixed(2)}%`;
 }
 
-export function fmtDate(v) {
-  if (v == null || v === '') return '';
-  // Excel serial date numbers (days since 1899-12-30).
+// Parse a deal cell into a JS Date, or null if it isn't one. Used by
+// both the formatter below and the sort comparator so the column
+// sorts the same way it displays. Handles ISO strings, locale date
+// strings (M/D/YYYY), JS Date instances, and the Excel serial format
+// XLSX emits when cellDates is off.
+export function asDate(v) {
+  if (v == null || v === '') return null;
+  if (v instanceof Date) return Number.isFinite(v.getTime()) ? v : null;
   if (typeof v === 'number' && Number.isFinite(v)) {
-    const ms = (v - 25569) * 86400 * 1000;
-    const d = new Date(ms);
-    if (!isNaN(d)) return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const d = new Date((v - 25569) * 86400 * 1000);
+    return Number.isFinite(d.getTime()) ? d : null;
   }
-  const d = new Date(v);
-  if (!isNaN(d) && String(v).length >= 6) return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  return String(v);
+  const s = String(v).trim();
+  if (s.length < 6) return null;
+  const d = new Date(s);
+  return Number.isFinite(d.getTime()) ? d : null;
+}
+
+export function fmtDate(v) {
+  const d = asDate(v);
+  if (!d) return v == null ? '' : String(v);
+  // Short numeric format (M/D/YYYY) — easier to scan and sorts cleanly
+  // when the underlying value is sent through asDate(...).getTime().
+  return d.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' });
 }
 
 export function isTruthy(v) {

@@ -490,10 +490,16 @@ export function DataTable({
 
   const sortedRows = useMemo(() => {
     if (externalSortConfig || !internalSort.key) return filteredRows;
+    // Columns can supply a getSortValue(row) that returns a number
+    // (e.g. epoch ms for a date) — overrides the default raw-cell
+    // numeric/string comparison so date columns sort chronologically
+    // instead of as alphabetical text on the displayed format.
+    const col = colByKey.get(internalSort.key);
+    const sortGetter = col?.getSortValue;
     const sorted = [...filteredRows];
     sorted.sort((a, b) => {
-      let aVal = a[internalSort.key];
-      let bVal = b[internalSort.key];
+      let aVal = sortGetter ? sortGetter(a) : a[internalSort.key];
+      let bVal = sortGetter ? sortGetter(b) : b[internalSort.key];
       if (aVal == null && bVal == null) return 0;
       if (aVal == null) return 1;
       if (bVal == null) return -1;
@@ -511,7 +517,7 @@ export function DataTable({
       return 0;
     });
     return sorted;
-  }, [filteredRows, internalSort, externalSortConfig]);
+  }, [filteredRows, internalSort, externalSortConfig, colByKey]);
 
   const headerRef = useRef(null);
   const bodyRef = useRef(null);

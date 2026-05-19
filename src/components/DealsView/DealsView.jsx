@@ -13,7 +13,7 @@ import {
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { loadDealsList, saveDealsOverride, clearDealsOverride } from '../../utils/dealsStore';
 import {
-  asNumber, fmtCurrency, fmtPercent, fmtDate,
+  asNumber, asDate, fmtCurrency, fmtPercent, fmtDate,
   DEAL_CURRENCY_KEYS, DEAL_DATE_KEYS, DEAL_PERCENT_KEYS, DEAL_CHECK_KEYS,
 } from '../../utils/dealsFormat';
 import { matchesCdm } from '../../utils/cdmMatch';
@@ -212,7 +212,7 @@ const CLIENT_NAME_LIST_ID = 'deals-client-name-suggestions';
 // editor per handoff field — a Dropdowns-list picker when the column
 // is linked, free-text otherwise. Saves go through the same updateCell
 // path as the regular table cells.
-function ProgressCell({ row, columnLinks, listRegistry, onSave }) {
+function ProgressCell({ row, columnLinks, listRegistry, onSave, onDelete }) {
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState(null);
   const btnRef = useRef(null);
@@ -285,7 +285,7 @@ function ProgressCell({ row, columnLinks, listRegistry, onSave }) {
               ))}
             </div>
             {onSave && (
-              <div style={{ padding: '0.4rem 0.75rem', borderTop: '1px solid #E2E8F0', background: '#F8FAFC' }}>
+              <div style={{ padding: '0.4rem 0.75rem', borderTop: '1px solid #E2E8F0', background: '#F8FAFC', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
                 <label
                   style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', cursor: 'pointer', fontSize: '0.7rem', color: '#475569' }}
                   title="Don't count this deal in the X/4 tally — its pill shows greyed-out."
@@ -298,6 +298,27 @@ function ProgressCell({ row, columnLinks, listRegistry, onSave }) {
                   />
                   <span>Ignore this deal{ignored ? '' : ' — grey out the X/4'}</span>
                 </label>
+                {onDelete && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const label = String(row['Client Name'] || '').trim() || 'this deal';
+                      if (window.confirm(`Delete ${label}? This can't be undone.`)) {
+                        onDelete(row.id);
+                        setOpen(false);
+                      }
+                    }}
+                    title="Remove this deal row from the tracker"
+                    style={{
+                      padding: '0.25rem 0.55rem',
+                      background: 'transparent',
+                      border: '1px solid #FCA5A5', borderRadius: 4,
+                      color: '#B91C1C', fontSize: '0.7rem', fontWeight: 600,
+                      fontFamily: 'inherit', cursor: 'pointer',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >Delete deal</button>
+                )}
               </div>
             )}
             {!onSave && (
@@ -506,6 +527,11 @@ function buildColumns(rows, columnLinks, listRegistry) {
       kind,
       renderValue,
       defaultWidth: sticky ? 220 : isCheck ? 110 : isCurrency || isPercent ? 130 : isDate ? 130 : 150,
+      // Date columns sort chronologically off the parsed epoch ms,
+      // not the formatted "M/D/YYYY" display string — without this
+      // the DataTable falls back to alphabetical text compare and
+      // dates land out of order.
+      ...(isDate ? { getSortValue: (row) => { const d = asDate(row[k]); return d ? d.getTime() : null; } } : {}),
       ...(sticky ? { sticky: true } : {}),
       ...(closedWonHeaderUrl ? {
         renderHeader: (label) => (
@@ -700,6 +726,20 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
     });
   }
 
+  // Drop a deal row entirely. Wired into the Progress popover's
+  // "Delete deal" button so the user can prune rows that shouldn't be
+  // in the tracker without hunting for the underlying source.
+  function deleteDeal(rowId) {
+    const idx = Number(rowId);
+    if (!Number.isFinite(idx)) return;
+    setStore(prev => {
+      if (idx < 0 || idx >= prev.data.length) return prev;
+      const next = prev.data.filter((_, i) => i !== idx);
+      try { saveDealsOverride(next); } catch (err) { console.warn('Save deals failed', err); }
+      return { data: next, source: 'override' };
+    });
+  }
+
   const rows = useMemo(
     () => data.map((r, i) => ({ ...r, id: i, __onUpdate: updateCell, __newRow: i === 0 && Object.keys(r).length === 0 })),
     [data]
@@ -730,6 +770,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
           columnLinks={columnLinks}
           listRegistry={listRegistry}
           onSave={updateCell}
+          onDelete={deleteDeal}
         />
       ),
       exportValue: (row) => {
