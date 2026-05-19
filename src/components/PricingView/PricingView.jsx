@@ -515,6 +515,17 @@ Type a value to override.`
                 return (cumFee - cumAdjCost) / cumFee;
               });
             })();
+            // Running sum of revenue less pass-through, paired with
+            // Cumulative deal as the second of two scenarios — Total
+            // fee on one side, net (excluding the bill-at-cost rows)
+            // on the other. Only meaningful when there is some pass-
+            // through in the deal, so it lives behind the same gate
+            // as the per-year Revenue less pass-through row.
+            const cumulativeRevLessPass = revLessPass.reduce((acc, v) => {
+              const prev = acc.length === 0 ? 0 : acc[acc.length - 1];
+              acc.push(prev + (v || 0));
+              return acc;
+            }, []);
             return (
               <>
                 {renderTotalsRow('Setup + One Time', setupOneTime)}
@@ -523,6 +534,7 @@ Type a value to override.`
                 {anyPassThrough && renderTotalsRow('Revenue less pass-through', revLessPass, fmtMoneyCell, true)}
                 {Array.isArray(costByYear) && renderTotalsRow('Deal margin', margins, fmtPctCell, true)}
                 {renderTotalsRow('Cumulative deal', cumulative, fmtMoneyCell, true)}
+                {anyPassThrough && renderTotalsRow('Cumulative revenue less pass-through', cumulativeRevLessPass, fmtMoneyCell, true)}
                 {Array.isArray(costByYear) && renderTotalsRow('Cumulative margin', cumulativeMargins, fmtPctCell, true)}
                 {Array.isArray(costByYear) && renderTotalsRow('Linked CTS cost', costs, fmtMoneyCell, true)}
               </>
