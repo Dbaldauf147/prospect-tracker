@@ -1487,33 +1487,78 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     };
   }, []);
 
-  // Per-Pricing-Option services bundle derived on the Pricing tab from
-  // the Line Item → Services mapping. Used by the Scope cell to offer
-  // an "Add from Pricing Option" bulk-add. Hydrated from IndexedDB on
-  // mount and refreshed when PricingView dispatches its change event so
-  // cross-tab edits show up live.
-  const [pricingOptionServices, setPricingOptionServices] = useState({});
+  // Per-Pricing-Option services bundle, used by the Scope cell to
+  // offer an "Add from Pricing Option" bulk-add. PricingView keeps a
+  // pre-derived copy in IndexedDB, but we also fall back to deriving
+  // from the raw cached workbook + Line Item → Services mapping —
+  // otherwise the picker would be empty whenever the user lands on
+  // Opps 2 without having opened the Pricing tab in this session.
+  const [pricingOptionServicesCache, setPricingOptionServicesCache] = useState({});
+  const [pricingWorkbook, setPricingWorkbook] = useState(null);
+  const [lineItemServices, setLineItemServices] = useState({});
   useEffect(() => {
     let cancelled = false;
-    dbGet('pricing-cache', 'pricingOptionServices')
-      .then(val => { if (!cancelled && val && typeof val === 'object') setPricingOptionServices(val); })
-      .catch(() => { /* missing cache is fine */ });
-    const refresh = (e) => {
+    const loadWorkbook = () => dbGet('pricing-cache', 'current')
+      .then(val => { if (!cancelled && val && val.workbook) setPricingWorkbook(val.workbook); })
+      .catch(() => {});
+    const loadMapping = () => dbGet('pricing-cache', 'lineItemServices')
+      .then(val => { if (!cancelled && val && typeof val === 'object') setLineItemServices(val); })
+      .catch(() => {});
+    const loadDerived = () => dbGet('pricing-cache', 'pricingOptionServices')
+      .then(val => { if (!cancelled && val && typeof val === 'object') setPricingOptionServicesCache(val); })
+      .catch(() => {});
+    loadWorkbook();
+    loadMapping();
+    loadDerived();
+    const onMapping = (e) => {
       const detail = e?.detail;
-      if (detail && typeof detail === 'object') {
-        setPricingOptionServices(detail);
-        return;
-      }
-      dbGet('pricing-cache', 'pricingOptionServices')
-        .then(val => { if (!cancelled && val && typeof val === 'object') setPricingOptionServices(val); })
-        .catch(() => {});
+      if (detail && typeof detail === 'object') setLineItemServices(detail); else loadMapping();
     };
-    window.addEventListener('pricing:optionServicesChanged', refresh);
+    const onDerived = (e) => {
+      const detail = e?.detail;
+      if (detail && typeof detail === 'object') setPricingOptionServicesCache(detail); else loadDerived();
+      // Workbook changes ride along with derived-bundle changes — refresh.
+      loadWorkbook();
+    };
+    window.addEventListener('pricing:lineItemServicesChanged', onMapping);
+    window.addEventListener('pricing:optionServicesChanged', onDerived);
     return () => {
       cancelled = true;
-      window.removeEventListener('pricing:optionServicesChanged', refresh);
+      window.removeEventListener('pricing:lineItemServicesChanged', onMapping);
+      window.removeEventListener('pricing:optionServicesChanged', onDerived);
     };
   }, []);
+
+  const pricingOptionServices = useMemo(() => {
+    // Local derivation always wins when a workbook is in the cache —
+    // it can't be stale relative to the inputs in this tab. The
+    // pre-derived copy is only used when the workbook is missing
+    // (e.g. PricingView populated it but the cache has since been
+    // partially cleared, or a cross-tab edit beat us to it).
+    if (pricingWorkbook && Array.isArray(pricingWorkbook.options) && pricingWorkbook.options.length > 0) {
+      const out = {};
+      for (const o of pricingWorkbook.options) {
+        const seen = new Set();
+        const services = [];
+        for (const sec of (o.sections || [])) {
+          for (const item of (sec.items || [])) {
+            const key = String(item.description || '').trim().toLowerCase();
+            const mapped = key ? lineItemServices?.[key] : null;
+            if (!Array.isArray(mapped)) continue;
+            for (const s of mapped) {
+              const k = String(s || '').toLowerCase();
+              if (!k || seen.has(k)) continue;
+              seen.add(k);
+              services.push(s);
+            }
+          }
+        }
+        out[o.sheetName] = services;
+      }
+      return out;
+    }
+    return pricingOptionServicesCache;
+  }, [pricingWorkbook, lineItemServices, pricingOptionServicesCache]);
   // Persisting only kicks in after the initial hydration finishes —
   // otherwise the seed value would be written back, wiping the saved
   // state for any user who happens to refresh before the load
