@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { loadOppsFromCache, searchOpps } from '../../utils/oppsCache';
+import { dbPut } from '../../utils/db';
 import styles from './AgentsView.module.css';
 
 // Manual BFO Opportunity tags the user picked for an email recipient
@@ -82,6 +83,40 @@ function writeAiPrompt(next) {
 // We piggy-back on that cache instead of doing our own fetch so the two
 // views never disagree about what happened today.
 const ACTIVITY_CACHE_KEY = 'hubspot-activity-cache';
+
+// Same Google Sheet + IndexedDB store the Opps tab pulls from. Mirrored
+// here so the Refresh button on this view can re-pull Opps without
+// requiring a trip to the Opps tab.
+const OPPS_SHEET_URL = 'https://docs.google.com/spreadsheets/d/1ee0OREqA25jzDaR6xRDSrj_ZIZDymQjf1k2Z2_ajVKw/export?format=csv&gid=0';
+const OPPS_DB_STORE = 'opps-cache';
+
+// Same CSV parser OppsView uses — handles quoted fields, escaped quotes,
+// and CRLF / LF line endings.
+function parseOppsCsv(text) {
+  const rows = [];
+  let current = [];
+  let field = '';
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; }
+        else inQuotes = false;
+      } else field += ch;
+    } else {
+      if (ch === '"') inQuotes = true;
+      else if (ch === ',') { current.push(field); field = ''; }
+      else if (ch === '\n' || (ch === '\r' && text[i + 1] === '\n')) {
+        current.push(field); field = '';
+        if (ch === '\r') i++;
+        rows.push(current); current = [];
+      } else field += ch;
+    }
+  }
+  if (field || current.length > 0) { current.push(field); rows.push(current); }
+  return rows;
+}
 
 // "Did I send this?" is keyed off the work email on HubSpot, not the
 // Google auth address — the user signs in as baldaufdan@gmail.com but
@@ -364,15 +399,18 @@ export function AgentsView() {
     };
   }, []);
 
-  // Pull the latest HubSpot activity (emails, calls, meetings) and write
-  // it to the shared localStorage cache — same shape ActivityView uses
-  // so both tabs stay in sync. Fires hubspot-activity-cache-updated on
-  // success so this view (and any other listener) re-reads the cache.
+  // Pull the latest HubSpot activity (emails, calls, meetings) AND
+  // re-fetch the Opps Google Sheet so the BFO tagging and the Called
+  // section both reflect the latest data. The HubSpot pull writes to
+  // the shared localStorage cache that ActivityView reads from; the
+  // Opps pull writes to the same IndexedDB key OppsView uses. Each
+  // half runs independently so a failure on one doesn't block the
+  // other.
   async function refreshActivityCache() {
     if (activityRefreshing) return;
     setActivityRefreshing(true);
     setActivityRefreshError(null);
-    setActivityRefreshProgress({ email: 0, call: 0, meeting: 0 });
+    setActivityRefreshProgress({ email: 0, call: 0, meeting: 0, opps: 0 });
     async function fetchAllPages(type) {
       const all = [];
       let after = '';
@@ -389,7 +427,36 @@ export function AgentsView() {
       }
       return all;
     }
-    try {
+    async function fetchOpps() {
+      const res = await fetch(OPPS_SHEET_URL);
+      if (!res.ok) throw new Error(`Opps HTTP ${res.status}`);
+      const csvText = await res.text();
+      const rows = parseOppsCsv(csvText);
+      if (rows.length < 2) throw new Error('Opps sheet returned no data');
+      const headers = rows[0].map(h => h.trim());
+      const records = [];
+      for (let i = 1; i < rows.length; i++) {
+        const row = rows[i];
+        const record = { _id: i };
+        let hasData = false;
+        for (let j = 0; j < headers.length; j++) {
+          const h = headers[j];
+          if (!h) continue;
+          const val = (row[j] || '').trim();
+          if (record[h] !== undefined && record[h] !== '' && record[h] !== '-' && record[h] !== '#N/A') continue;
+          record[h] = val;
+          if (val && val !== '-' && val !== '#N/A') hasData = true;
+        }
+        if (hasData && record['Account']) records.push(record);
+      }
+      const result = { headers, records, fetchedAt: new Date().toISOString() };
+      setActivityRefreshProgress(prev => ({ ...prev, opps: records.length }));
+      await dbPut(OPPS_DB_STORE, result, 'data');
+      setOppsCache(result);
+      return result;
+    }
+
+    const activityPromise = (async () => {
       const emails = await fetchAllPages('email');
       const calls = await fetchAllPages('call');
       const meetings = await fetchAllPages('meeting');
@@ -401,13 +468,22 @@ export function AgentsView() {
         console.warn('Agents activity cache write skipped (quota):', err?.message || err);
       }
       setCache(result);
-    } catch (err) {
-      console.error('Agents activity refresh error:', err);
-      setActivityRefreshError(err?.message || 'Failed to fetch activity');
-    } finally {
-      setActivityRefreshing(false);
-      setActivityRefreshProgress(null);
+    })();
+    const oppsPromise = fetchOpps();
+
+    const [activityRes, oppsRes] = await Promise.allSettled([activityPromise, oppsPromise]);
+    const errors = [];
+    if (activityRes.status === 'rejected') {
+      console.error('Agents activity refresh error:', activityRes.reason);
+      errors.push(`Activity: ${activityRes.reason?.message || 'fetch failed'}`);
     }
+    if (oppsRes.status === 'rejected') {
+      console.error('Agents opps refresh error:', oppsRes.reason);
+      errors.push(`Opps: ${oppsRes.reason?.message || 'fetch failed'}`);
+    }
+    if (errors.length > 0) setActivityRefreshError(errors.join(' · '));
+    setActivityRefreshing(false);
+    setActivityRefreshProgress(null);
   }
 
   // HubSpot contacts cache — email → company lookup for tagging.
@@ -678,18 +754,18 @@ export function AgentsView() {
           className={styles.refreshActivityBtn}
           onClick={refreshActivityCache}
           disabled={activityRefreshing}
-          title="Re-pull every HubSpot email, call, and meeting and update the shared activity cache. Same fetch the Activity tab's Refresh button runs."
+          title="Re-pull every HubSpot email, call, and meeting AND re-fetch the Opps Google Sheet. Updates the shared activity cache (same as the Activity tab's Refresh) and the Opps cache (same as the Opps tab's Refresh)."
         >
           {activityRefreshing
             ? (activityRefreshProgress
-                ? `Refreshing… ${activityRefreshProgress.email || 0} email · ${activityRefreshProgress.call || 0} call · ${activityRefreshProgress.meeting || 0} meeting`
+                ? `Refreshing… ${activityRefreshProgress.email || 0} email · ${activityRefreshProgress.call || 0} call · ${activityRefreshProgress.meeting || 0} meeting · ${activityRefreshProgress.opps || 0} opps`
                 : 'Refreshing…')
-            : 'Refresh Activity'}
+            : 'Refresh Activity & Opps'}
         </button>
       </div>
       {activityRefreshError && (
         <div className={styles.staleBanner}>
-          Activity refresh failed: {activityRefreshError}
+          Refresh failed: {activityRefreshError}
         </div>
       )}
       <p className={styles.subnote}>
