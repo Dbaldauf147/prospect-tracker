@@ -855,6 +855,8 @@ export function AgentsView() {
       const account = String(r.Account || '').trim();
       const leadSource = String(r['Lead Source'] || r['Source'] || '').trim();
       const scope = String(r.Scope || '').trim();
+      const callIn = callInDays(r);
+      const followUp = String(r['Follow Up'] ?? '').trim();
       rows.push({
         id: r._id ?? `${account}|${scope}`,
         company: account || '—',
@@ -862,6 +864,8 @@ export function AgentsView() {
         currentCustomer: CURRENT_CUSTOMER_LEAD_SOURCE_RE.test(leadSource),
         scope: scope || '—',
         status,
+        followUp,
+        callIn,
       });
     }
     rows.sort((a, b) => a.company.localeCompare(b.company));
@@ -1211,6 +1215,9 @@ export function AgentsView() {
                     <th>Lead Source</th>
                     <th style={{ width: 140 }}>Current Customer</th>
                     <th>Scope</th>
+                    <th style={{ width: 110 }}>Status</th>
+                    <th style={{ width: 110 }}>Follow Up</th>
+                    <th style={{ width: 80 }} title="Calendar days from today to Follow Up">Call In</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1227,6 +1234,9 @@ export function AgentsView() {
                         }}>{o.currentCustomer ? 'Yes' : 'No'}</span>
                       </td>
                       <td className={o.scope && o.scope !== '—' ? '' : styles.muted}>{o.scope || '—'}</td>
+                      <td>{o.status}</td>
+                      <td className={o.followUp ? '' : styles.muted}>{o.followUp || '—'}</td>
+                      <td className={o.callIn == null ? styles.muted : ''}>{o.callIn == null ? '—' : o.callIn}</td>
                     </tr>
                   ))}
                 </tbody>
