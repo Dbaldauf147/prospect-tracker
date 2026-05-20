@@ -496,6 +496,13 @@
   color: var(--color-text);
 }
 
+.altFeeReminder {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: #dc2626;
+  margin: 0 0 0.5rem;
+}
+
 .summaryMeta {
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
