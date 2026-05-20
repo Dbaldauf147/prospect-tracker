@@ -805,7 +805,7 @@ export function AgentsView() {
 
   // Opps that don't yet exist in BFO and need a fresh Guided Opportunity
   // created. Filter mirrors the user's spec:
-  //   • Status NOT in {Not Started, Not Sold, Sold}
+  //   • Stage NOT in {Not Started, Not Sold, Sold}
   //   • BFO Link is literally "-" (the Opps tab's placeholder for "no
   //     link yet")
   //   • The literal Call In cell on the Opps sheet is non-blank (we
@@ -816,11 +816,11 @@ export function AgentsView() {
   // user described.
   const newBfoOpps = useMemo(() => {
     const records = oppsCache?.records || [];
-    const EXCLUDED_STATUSES = new Set(['Not Started', 'Not Sold', 'Sold']);
+    const EXCLUDED_STAGES = new Set(['Not Started', 'Not Sold', 'Sold']);
     const rows = [];
     for (const r of records) {
-      const status = String(r.Status || '').trim();
-      if (!status || EXCLUDED_STATUSES.has(status)) continue;
+      const stage = String(r.Stage || '').trim();
+      if (!stage || EXCLUDED_STAGES.has(stage)) continue;
       const bfoLink = String(r['BFO Link'] ?? '').trim();
       if (bfoLink !== '-') continue;
       // Use the literal Call In cell from the Opps sheet (not the
@@ -838,7 +838,7 @@ export function AgentsView() {
         leadSource: leadSource || '—',
         currentCustomer: CURRENT_CUSTOMER_LEAD_SOURCE_RE.test(leadSource),
         scope: scope || '—',
-        status,
+        stage,
         followUp,
         callIn: callInRaw,
       });
@@ -1141,10 +1141,10 @@ export function AgentsView() {
         // New BFO Opp prompt — table of qualifying opps the AI assistant
         // should create in BFO. Rendered as a pipe-delimited block so a
         // plain-text paste keeps column alignment in most editors.
-        const header = 'Company | Lead Source | Current Customer | Scope | Status';
+        const header = 'Company | Lead Source | Current Customer | Scope | Stage';
         const lines = ['BFO Opportunities to Create', header];
         for (const o of newBfoOpps) {
-          lines.push(`${o.company} | ${o.leadSource} | ${o.currentCustomer ? 'Yes' : 'No'} | ${o.scope} | ${o.status}`);
+          lines.push(`${o.company} | ${o.leadSource} | ${o.currentCustomer ? 'Yes' : 'No'} | ${o.scope} | ${o.stage}`);
         }
         const block = lines.join('\n');
         const fullPrompt = `${newBfoOppPrompt}\n\n${block}`;
@@ -1164,7 +1164,7 @@ export function AgentsView() {
               <span className={styles.sectionCount}>{newBfoOpps.length}</span>
             </h2>
             <p className={styles.subnote}>
-              Lists Opps with Status outside Not Started / Not Sold / Sold, BFO Link of &ldquo;-&rdquo;, and a non-blank Call In cell on the Opps sheet. Company, Lead Source, Current Customer flag, and Scope are appended automatically.
+              Lists Opps with Stage of that is Not Started / Not Sold / Sold, BFO Link of &ldquo;-&rdquo;, and a non-blank Call In cell on the Opps sheet.
             </p>
             <textarea
               className={styles.aiPromptInput}
@@ -1180,7 +1180,7 @@ export function AgentsView() {
             </div>
             {newBfoOpps.length === 0 ? (
               <div className={styles.empty} style={{ marginTop: '0.5rem' }}>
-                No Opps currently match (Status ≠ Not Started / Not Sold / Sold, BFO Link = &ldquo;-&rdquo;, Call In cell not blank).
+                No Opps currently match (Stage ≠ Not Started / Not Sold / Sold, BFO Link = &ldquo;-&rdquo;, Call In cell not blank).
               </div>
             ) : (
               <table className={styles.table} style={{ marginTop: '0.5rem' }}>
@@ -1190,7 +1190,7 @@ export function AgentsView() {
                     <th>Lead Source</th>
                     <th style={{ width: 140 }}>Current Customer</th>
                     <th>Scope</th>
-                    <th style={{ width: 130 }}>Status</th>
+                    <th style={{ width: 130 }}>Stage</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1207,7 +1207,7 @@ export function AgentsView() {
                         }}>{o.currentCustomer ? 'Yes' : 'No'}</span>
                       </td>
                       <td className={o.scope && o.scope !== '—' ? '' : styles.muted}>{o.scope || '—'}</td>
-                      <td className={o.status ? '' : styles.muted}>{o.status || '—'}</td>
+                      <td className={o.stage ? '' : styles.muted}>{o.stage || '—'}</td>
                     </tr>
                   ))}
                 </tbody>
