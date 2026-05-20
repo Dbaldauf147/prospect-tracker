@@ -1002,9 +1002,22 @@ export function AgentsView() {
       )}
 
       {(() => {
+        // Build the BFO Address block from today's outbound emails AND
+        // the Called section so the AI prompt covers both touch types
+        // in one pass. Dedupe by URL so an opp that appears in both
+        // lists only gets one line (the email entry wins, matching the
+        // tab's read order).
         const lines = ['BFO Address'];
+        const seen = new Set();
         for (const e of todaysOutbound) {
-          if (e.bfoUrl) lines.push(`${e.bfoUrl}: Type ${e.nextStepsType}`);
+          if (!e.bfoUrl || seen.has(e.bfoUrl)) continue;
+          lines.push(`${e.bfoUrl}: Type ${e.nextStepsType}`);
+          seen.add(e.bfoUrl);
+        }
+        for (const o of calledOpps) {
+          if (!o.bfoUrl || seen.has(o.bfoUrl)) continue;
+          lines.push(`${o.bfoUrl}: Type called`);
+          seen.add(o.bfoUrl);
         }
         const addressBlock = lines.join('\n');
         const fullPrompt = `${aiPrompt}\n\n${addressBlock}`;
