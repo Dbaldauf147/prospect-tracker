@@ -16,6 +16,7 @@ import {
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { dbGet, dbPut } from '../../utils/db';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
+import { normalizeCompany } from '../../utils/companyNorm';
 import styles from './OppsView2.module.css';
 
 // Second Opps tab — user-entered opps stored in Firestore
@@ -566,6 +567,30 @@ function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel }) {
 // name on top and email muted underneath. Stores the chosen names
 // as a comma-separated string so the same parseMulti round-trip
 // works as for Scope.
+// Build a set of normalized match keys for a company name, including
+// the full name, the name with any parenthetical alias stripped, and
+// each parenthetical alias on its own. Two companies are considered
+// the same if their key sets intersect. This lets "Unibail-Rodamco-
+// Westfield (URW)" match contact records stored under either the long
+// form or just "URW".
+function companyMatchKeys(name) {
+  const s = String(name || '').trim();
+  const keys = new Set();
+  if (!s) return keys;
+  const full = normalizeCompany(s);
+  if (full) keys.add(full);
+  const aliases = [...s.matchAll(/\(([^)]+)\)/g)].map(m => m[1]);
+  if (aliases.length > 0) {
+    const stripped = normalizeCompany(s.replace(/\([^)]*\)/g, ' '));
+    if (stripped) keys.add(stripped);
+    for (const a of aliases) {
+      const n = normalizeCompany(a);
+      if (n) keys.add(n);
+    }
+  }
+  return keys;
+}
+
 function ContactCell({ value, onChange, account, prospects, updateProspect, hubspotContacts }) {
   // Single boolean for popover state — the popover handles both
   // viewing currently tagged contacts and adding new ones (from the
@@ -580,9 +605,22 @@ function ContactCell({ value, onChange, account, prospects, updateProspect, hubs
   const [copied, setCopied] = useState(null); // key of the last button that flashed "Copied!"
 
   const matched = useMemo(() => {
-    const target = String(account || '').trim().toLowerCase();
-    if (!target) return null;
-    return (prospects || []).find(p => String(p?.company || '').trim().toLowerCase() === target) || null;
+    const accountKeys = companyMatchKeys(account);
+    if (accountKeys.size === 0) return null;
+    // Prefer an exact normalized match over an alias-only match so
+    // "URW" on an opp doesn't accidentally pull from a prospect that
+    // happens to share an alias.
+    let exact = null;
+    let alias = null;
+    for (const p of (prospects || [])) {
+      const pk = companyMatchKeys(p?.company);
+      if (pk.size === 0) continue;
+      const full = normalizeCompany(p?.company);
+      const accountFull = normalizeCompany(account);
+      if (full && accountFull && full === accountFull) { exact = p; break; }
+      for (const k of pk) { if (accountKeys.has(k)) { alias = alias || p; break; } }
+    }
+    return exact || alias;
   }, [account, prospects]);
 
   // Build the contact roster for this opp's company. Pull from two
@@ -593,8 +631,8 @@ function ContactCell({ value, onChange, account, prospects, updateProspect, hubs
   // contacts live there); prospect.contacts is a fallback for
   // accounts that were curated manually.
   const contactOptions = useMemo(() => {
-    const target = String(account || '').trim().toLowerCase();
-    if (!target) return [];
+    const accountKeys = companyMatchKeys(account);
+    if (accountKeys.size === 0) return [];
     const seen = new Set();
     const out = [];
     const pushContact = (raw) => {
@@ -612,7 +650,11 @@ function ContactCell({ value, onChange, account, prospects, updateProspect, hubs
       });
     };
     for (const c of (hubspotContacts || [])) {
-      if (String(c?.company || '').trim().toLowerCase() !== target) continue;
+      const ck = companyMatchKeys(c?.company);
+      if (ck.size === 0) continue;
+      let hit = false;
+      for (const k of ck) { if (accountKeys.has(k)) { hit = true; break; } }
+      if (!hit) continue;
       pushContact(c);
     }
     for (const c of (matched?.contacts || [])) pushContact(c);
