@@ -1287,7 +1287,7 @@ function OppInfoModal({
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          width: 540, maxWidth: '94vw', maxHeight: '86vh',
+          width: 1100, maxWidth: '94vw', maxHeight: '92vh',
           background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)',
           display: 'flex', flexDirection: 'column', overflow: 'hidden',
         }}
