@@ -131,15 +131,42 @@ function detectNextStepsType(rawOpp) {
   return 'email';
 }
 
-// True when the Opps "Last Client Heard From Us" cell parses to exactly
-// 0 (covers raw "0", "0 days", "0d", or a literal number). Empty / -
-// / N/A values are treated as missing, not zero.
-function isLastClientHeardZero(rawOpp) {
-  const v = String(rawOpp?.['Last Client Heard From Us'] ?? '').trim();
-  if (!v || v === '-' || v === '—' || v === '#N/A') return false;
-  const m = v.match(/-?\d+(?:\.\d+)?/);
-  if (!m) return false;
-  return Number(m[0]) === 0;
+// Normalize an arbitrary date string into YYYY-MM-DD. Mirrors the
+// helper OppsView2 uses so a date parsed there parses the same way
+// here. Returns '' if the value isn't a date.
+function toISODate(raw) {
+  if (!raw) return '';
+  const s = String(raw).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const t = Date.parse(s);
+  if (isNaN(t)) return '';
+  const d = new Date(t);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+// Business days between the Opps "Last Client Heard From Us" date and
+// today — same formula OppsView2 uses for its computed "Last Spoke"
+// column. Returns null when the field is empty or unparseable.
+function lastSpokeBusinessDays(rawOpp) {
+  const iso = toISODate(rawOpp?.['Last Client Heard From Us']);
+  if (!iso) return null;
+  const [y, m, d] = iso.split('-').map(n => parseInt(n, 10));
+  const start = new Date(y, m - 1, d);
+  start.setHours(0, 0, 0, 0);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  if (today <= start) return 0;
+  let count = 0;
+  const cur = new Date(start);
+  while (cur < today) {
+    cur.setDate(cur.getDate() + 1);
+    const dow = cur.getDay();
+    if (dow !== 0 && dow !== 6) count++;
+  }
+  return count;
 }
 
 function todayBounds() {
@@ -636,17 +663,16 @@ export function AgentsView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cache, hubspotCache, oppIndex, overrides, ignoredEmailIds, ignoredMeetingIds]);
 
-  // Opps where the user logged a recent phone touch in Next Steps and
-  // the client side of the conversation has been quiet since (Last
-  // Client Heard From Us = 0). Drives the Called-today section above
-  // the email table.
+  // Opps where the user logged a phone touch in Next Steps and the
+  // Last Spoke column (business days since Last Client Heard From Us)
+  // computes to 0 — i.e. the client touched the conversation today.
   const calledOpps = useMemo(() => {
     const records = oppsCache?.records || [];
     const rows = [];
     for (const r of records) {
       const nextSteps = String(r['Next Steps'] || '');
       if (!CALLED_NEXT_STEPS_RE.test(nextSteps)) continue;
-      if (!isLastClientHeardZero(r)) continue;
+      if (lastSpokeBusinessDays(r) !== 0) continue;
       const account = String(r.Account || '').trim();
       const bfoOpp = String(r['BFO Link'] || '').trim();
       rows.push({
@@ -722,7 +748,7 @@ export function AgentsView() {
           Called <span className={styles.sectionCount}>{calledOpps.length}</span>
         </h2>
         {calledOpps.length === 0 ? (
-          <div className={styles.empty}>No Opps with a phone touch logged in Next Steps and Last Client Heard From Us = 0.</div>
+          <div className={styles.empty}>No Opps with a phone touch logged in Next Steps and Last Spoke = 0.</div>
         ) : (
           <table className={styles.table}>
             <thead>
