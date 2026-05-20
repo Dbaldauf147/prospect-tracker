@@ -169,7 +169,7 @@ export function SelectCell({ value, onChange, options }) {
 // Multi-select cell — checkbox popover. Stores the chosen options as a
 // comma-separated string so the value round-trips through plain text
 // storage (CSV export, Firestore strings, etc.).
-export function MultiSelectCell({ value, onChange, options, extraGroups }) {
+export function MultiSelectCell({ value, onChange, options, extraGroups, extraGroupsLabel, extraGroupsPlaceholder }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [popPos, setPopPos] = useState({ top: 0, left: 0 });
@@ -270,7 +270,7 @@ export function MultiSelectCell({ value, onChange, options, extraGroups }) {
               background: 'var(--color-bg)',
             }}>
               <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>
-                Add from Line Item
+                {extraGroupsLabel || 'Quick add'}
               </span>
               <select
                 value={quickPick}
@@ -282,7 +282,7 @@ export function MultiSelectCell({ value, onChange, options, extraGroups }) {
                   background: '#fff', color: 'var(--color-text)',
                 }}
               >
-                <option value="">— pick a line item —</option>
+                <option value="">{extraGroupsPlaceholder || '— pick one —'}</option>
                 {groups.map(g => (
                   <option key={g.label} value={g.label}>{g.label} ({g.options.length})</option>
                 ))}
