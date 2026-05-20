@@ -123,7 +123,7 @@ function parseAltFeePaste(text) {
   return out;
 }
 
-function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onReplaceRows, onAppendRows, globalGmPct, marginFor, yearRevenue, autoFeeFor, siteCount, accountCount, altItemSuggestions = [], costByYear, passThroughByYear, passThroughRevenueByYear, numYears = 1 }) {
+function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onReplaceRows, onAppendRows, onClearRows, globalGmPct, marginFor, yearRevenue, autoFeeFor, siteCount, accountCount, altItemSuggestions = [], costByYear, passThroughByYear, passThroughRevenueByYear, numYears = 1 }) {
   const altItemListId = useId();
   const [dragFrom, setDragFrom] = useState(null); // row currently being dragged
   const [dragOverIdx, setDragOverIdx] = useState(null); // insertion point (0..rows.length)
@@ -542,6 +542,20 @@ Type a value to override.`
         <button type="button" className={styles.actionBtn} onClick={() => setPasteOpen(o => !o)}>
           {pasteOpen ? 'Hide paste box' : 'Paste from spreadsheet…'}
         </button>
+        {onClearRows && (
+          <button
+            type="button"
+            className={styles.actionBtnDanger}
+            onClick={() => {
+              const hasData = rows.some(r => (r.altItem || '').trim() || (r.type || '').trim() || r.fee != null || (r.unit || '').trim());
+              if (hasData && !window.confirm('Clear the Alternative Fee schedule? This cannot be undone.')) return;
+              onClearRows();
+              setFlash('Cleared.');
+              window.setTimeout(() => setFlash(''), 2000);
+            }}
+            title="Reset the Alternative Fee schedule to blank starter rows."
+          >Clear</button>
+        )}
       </div>
       {pasteOpen && (
         <div className={styles.pasteBox}>
@@ -3014,6 +3028,7 @@ export function PricingView({ settings } = {}) {
                             onRemoveRow={(idx) => removeAltFeeRow(opt.optionNumber, idx)}
                             onReplaceRows={(rows) => replaceAltFeeRows(opt.optionNumber, rows)}
                             onAppendRows={(rows) => appendAltFeeRows(opt.optionNumber, rows)}
+                            onClearRows={() => replaceAltFeeRows(opt.optionNumber, altFeeStarter())}
                           />
                         );
                       })()}
