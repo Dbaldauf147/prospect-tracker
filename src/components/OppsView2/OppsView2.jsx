@@ -1874,6 +1874,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                   extraGroups={extraGroups}
                   extraGroupsLabel="Add from Pricing Option"
                   extraGroupsPlaceholder="— pick an option —"
+                  nowrap={h === 'Scope'}
                 />
               );
             }
