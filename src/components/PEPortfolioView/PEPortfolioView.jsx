@@ -97,9 +97,9 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
   // Persisted column widths + sort so the layout survives reloads.
-  const DEFAULT_COL_WIDTHS = { company: 240, peAum: 110, geography: 110, dm: 170, met: 170, mapping: 110, opps: 100, ratio: 120, clients: 110, keyContacts: 120 };
+  const DEFAULT_COL_WIDTHS = { company: 240, peAum: 110, geography: 110, dm: 170, met: 170, mapping: 110, opps: 100, ratio: 120, clients: 110, keyContacts: 120, caseStudy: 110 };
   // company is sticky and always shown — every other column is opt-in.
-  const ALL_COL_KEYS = ['company', 'peAum', 'geography', 'dm', 'met', 'mapping', 'opps', 'ratio', 'clients', 'keyContacts'];
+  const ALL_COL_KEYS = ['company', 'peAum', 'geography', 'dm', 'met', 'mapping', 'opps', 'ratio', 'clients', 'keyContacts', 'caseStudy'];
   const [colWidths, setColWidths] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('pe-portfolio:col-widths')) || {};
@@ -354,6 +354,16 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
         keyNames.push(kc.name);
       }
 
+      // Case study presence — Yes when the PE firm itself OR any of its
+      // portfolio companies has the caseStudyCreated flag set.
+      const caseStudyFirm = !!pe.caseStudyCreated;
+      const caseStudyPcs = portfolio.filter(p => !!p.caseStudyCreated);
+      const caseStudyYes = caseStudyFirm || caseStudyPcs.length > 0;
+      const caseStudyTipNames = [
+        ...(caseStudyFirm ? [pe.company] : []),
+        ...caseStudyPcs.map(p => p.company),
+      ];
+
       out.set(pe.id, {
         decisionMakerNames: dmNames,
         decisionMakerEntries: dmEntries,
@@ -371,6 +381,8 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
         pcClientCount,
         keyContactCount: keyNames.length,
         keyContactNames: keyNames,
+        caseStudyYes,
+        caseStudyTipNames,
       });
     }
     return out;
@@ -414,6 +426,9 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
           break;
         case 'keyContacts':
           cmp = (sa.keyContactCount || 0) - (sb.keyContactCount || 0);
+          break;
+        case 'caseStudy':
+          cmp = (sa.caseStudyYes ? 1 : 0) - (sb.caseStudyYes ? 1 : 0);
           break;
         default:
           cmp = 0;
@@ -472,7 +487,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
             const COL_LABELS = {
               company: 'PE firm', peAum: 'PE AUM', geography: 'Geography', dm: 'Decision Maker Found?',
               met: 'Met in Person', mapping: 'PC Mapping', opps: 'PC Opps', ratio: 'PC Opps 2/4',
-              clients: 'PC Clients', keyContacts: 'Key Contacts',
+              clients: 'PC Clients', keyContacts: 'Key Contacts', caseStudy: 'Case Study',
             };
             return (
               <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, background: '#fff', border: '1px solid #E2E8F0', borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.12)', zIndex: 100, minWidth: 200, padding: '0.3rem 0' }}>
@@ -534,6 +549,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
             { key: 'ratio',   label: 'PC Opps 2/4', align: 'center', tip: 'Active / total opps aggregated across the PE firm plus every portfolio company' },
             { key: 'clients', label: 'PC Clients', align: 'center',  tip: 'Portfolio companies currently set to status = Client' },
             { key: 'keyContacts', label: 'Key Contacts', align: 'center', tip: 'Count of HubSpot contacts tagged "Dan Key Target" across the PE firm plus its portfolio companies' },
+            { key: 'caseStudy', label: 'Case Study', align: 'center', tip: 'Yes when the PE firm or any of its portfolio companies has "Case Study Created?" set to Yes on its company page' },
           ];
           const HEADER_COLUMNS = ALL_HEADER_COLUMNS.filter(c => visibleCols.has(c.key));
           const GRID = `${HEADER_COLUMNS.map(c => `${colWidths[c.key] || DEFAULT_COL_WIDTHS[c.key] || 110}px`).join(' ')} 28px`;
@@ -743,6 +759,21 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
                         style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.78rem', fontWeight: 700, color: (stats.keyContactCount || 0) > 0 ? '#0891B2' : '#CBD5E1' }}
                       >
                         {stats.keyContactCount || 0}
+                      </div>
+                      )}
+
+                      {visibleCols.has('caseStudy') && (
+                      <div
+                        title={stats.caseStudyYes
+                          ? `Case study marked on:\n${(stats.caseStudyTipNames || []).join('\n')}`
+                          : 'No PE firm or portfolio company on this row has "Case Study Created?" set to Yes'}
+                        style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.72rem', fontWeight: 700 }}
+                      >
+                        {stats.caseStudyYes ? (
+                          <span style={{ padding: '1px 8px', borderRadius: 999, background: '#DCFCE7', border: '1px solid #86EFAC', color: '#166534' }}>Yes</span>
+                        ) : (
+                          <span style={{ padding: '1px 8px', borderRadius: 999, background: '#F1F5F9', border: '1px solid #CBD5E1', color: '#64748B' }}>No</span>
+                        )}
                       </div>
                       )}
 
