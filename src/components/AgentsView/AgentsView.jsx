@@ -238,12 +238,26 @@ function lastSpokeBusinessDays(rawOpp) {
 
 // Calendar days from today to the Opps "Follow Up" date — same formula
 // OppsView2 uses for its computed "Call In" column. Returns null when
-// the field is empty or unparseable (and a null Call In is what gates
-// the New BFO Opp prompt's row inclusion).
+// the field is empty or doesn't carry a full year+month+day date. We
+// validate the shape ourselves (rather than relying on Date.parse) so
+// loose values like a bare "2026", "May 2026", "TBD", or an Excel
+// serial number don't masquerade as valid Follow Up dates.
 function callInDays(rawOpp) {
-  const iso = toISODate(rawOpp?.['Follow Up']);
+  const raw = String(rawOpp?.['Follow Up'] ?? '').trim();
+  if (!raw) return null;
+  const looksLikeFullDate =
+    /^\d{4}-\d{1,2}-\d{1,2}\b/.test(raw)              // 2026-05-20
+    || /^\d{1,2}\/\d{1,2}\/\d{2,4}\b/.test(raw)        // 5/20/2026
+    || /^\d{1,2}-\d{1,2}-\d{2,4}\b/.test(raw)          // 5-20-2026
+    || /^[A-Za-z]{3,}\s+\d{1,2},?\s+\d{4}\b/.test(raw) // May 20, 2026
+    || /^\d{1,2}\s+[A-Za-z]{3,}\s+\d{4}\b/.test(raw);  // 20 May 2026
+  if (!looksLikeFullDate) return null;
+  const iso = toISODate(raw);
   if (!iso) return null;
   const [y, m, d] = iso.split('-').map(n => parseInt(n, 10));
+  // Sanity range so a misparsed value (e.g. Date.parse treating "45000"
+  // as year 45000) can't produce a "valid" Call In far in the future.
+  if (!Number.isFinite(y) || y < 1900 || y > 2100) return null;
   const target = new Date(y, m - 1, d);
   target.setHours(0, 0, 0, 0);
   const today = new Date();
