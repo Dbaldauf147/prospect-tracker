@@ -1290,6 +1290,39 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     );
   }, [search, rows]);
 
+  // Data-quality flag for the header — counts uploaded sites missing
+  // any of the three inputs that the rest of the page relies on:
+  // zip code (drives utility / supplier matching), electric kWh
+  // (actual-from-file or property-type estimate), and gas therms.
+  const missingStats = useMemo(() => {
+    if (!rows.length) return { total: 0, anyMissing: 0, noZip: 0, noElectric: 0, noGas: 0, samples: [] };
+    let anyMissing = 0;
+    let noZip = 0;
+    let noElectric = 0;
+    let noGas = 0;
+    const samples = [];
+    for (const r of rows) {
+      const missingZip = !r.__zipNorm__;
+      const missingElectric = r.__kwh__ == null;
+      const missingGas = r.__therms__ == null;
+      if (!(missingZip || missingElectric || missingGas)) continue;
+      anyMissing += 1;
+      if (missingZip) noZip += 1;
+      if (missingElectric) noElectric += 1;
+      if (missingGas) noGas += 1;
+      if (samples.length < 25) {
+        const name = String(r[Object.keys(r).find(k => !k.startsWith('__')) || ''] || '').trim() || '(no name)';
+        const flags = [
+          missingZip ? 'no zip' : null,
+          missingElectric ? 'no electric' : null,
+          missingGas ? 'no gas' : null,
+        ].filter(Boolean).join(' · ');
+        samples.push(`${name} — ${flags}`);
+      }
+    }
+    return { total: rows.length, anyMissing, noZip, noElectric, noGas, samples };
+  }, [rows]);
+
   const columns = useMemo(() => {
     if (!sitesData.length) return [];
     const headers = Object.keys(sitesData[0]);
@@ -7274,6 +7307,32 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
               </>
             )}
           </div>
+          {missingStats.total > 0 && (
+            <div style={{ marginTop: 4 }}>
+              {missingStats.anyMissing > 0 ? (
+                <span
+                  title={`Missing breakdown:\n  • ${missingStats.noZip} no zip code\n  • ${missingStats.noElectric} no electric consumption (actual or estimate)\n  • ${missingStats.noGas} no gas consumption (actual or estimate)\n\nFirst ${missingStats.samples.length} site${missingStats.samples.length === 1 ? '' : 's'}:\n${missingStats.samples.join('\n')}`}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '0.2rem 0.55rem', borderRadius: 999, background: '#FEF3C7', border: '1px solid #FCD34D', color: '#92400E', fontSize: '0.72rem', fontWeight: 600 }}
+                >
+                  <span aria-hidden="true">⚠</span>
+                  <span>
+                    {missingStats.anyMissing} of {missingStats.total} site{missingStats.total === 1 ? '' : 's'} missing data
+                  </span>
+                  <span style={{ color: '#78350F', fontWeight: 500 }}>
+                    ({missingStats.noZip} no zip · {missingStats.noElectric} no electric · {missingStats.noGas} no gas)
+                  </span>
+                </span>
+              ) : (
+                <span
+                  title="Every uploaded site has a zip code and a consumption value (actual or property-type estimate) for both electric and gas."
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '0.2rem 0.55rem', borderRadius: 999, background: '#DCFCE7', border: '1px solid #86EFAC', color: '#166534', fontSize: '0.72rem', fontWeight: 600 }}
+                >
+                  <span aria-hidden="true">✓</span>
+                  <span>All {missingStats.total} site{missingStats.total === 1 ? '' : 's'} have zip + electric + gas data</span>
+                </span>
+              )}
+            </div>
+          )}
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
           <input
