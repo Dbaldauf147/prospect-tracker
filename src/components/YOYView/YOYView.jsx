@@ -31,6 +31,25 @@ function parseYear(v) {
 
 const MONTH_LABELS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
+// Quoted Projections runs on a Dec-to-Nov fiscal year, starting in
+// December of the previous calendar year and ending in November of the
+// current calendar year. Returns 12 buckets each { label, year,
+// monthIdx, key } so a Close Date can be looked up in O(1).
+function fiscalMonths(currentYear) {
+  const months = [];
+  for (let i = 0; i < 12; i++) {
+    const monthIdx = (11 + i) % 12; // 11 = Dec, 0 = Jan, …, 10 = Nov
+    const year = i === 0 ? currentYear - 1 : currentYear;
+    months.push({
+      label: MONTH_LABELS[monthIdx],
+      year,
+      monthIdx,
+      key: `${year}-${monthIdx}`,
+    });
+  }
+  return months;
+}
+
 // Status values that mean the opp got priced. Used as the Quoted+
 // filter for Quoted C/R denominator.
 const QUOTED_PLUS_STATUSES = new Set([
@@ -129,14 +148,18 @@ export function YOYView() {
     return rows;
   }, [records, currentYear]);
 
-  // Quoted Projections — current calendar year, monthly buckets keyed by
-  // Close Date. Quoted Weak/OK/Expected come from the `Chance?` column;
-  // Agreements Sent from `Status` == "Agreement Sent". BFO Pipe Total =
-  // sum of Quoted Amount in month ÷ (annual target ÷ 12).
+  // Quoted Projections — Dec-to-Nov fiscal year ending in the current
+  // calendar year, monthly buckets keyed by Close Date. Quoted Weak/OK/
+  // Expected come from the `Chance?` column; Agreements Sent from
+  // `Status` == "Agreement Sent". BFO Pipe Total = sum of Quoted Amount
+  // in month ÷ (annual target ÷ 12).
   const quotedData = useMemo(() => {
     const monthlyTarget = target > 0 ? target / 12 : 0;
-    const rows = MONTH_LABELS.map((label) => ({
-      month: label,
+    const months = fiscalMonths(currentYear);
+    const indexByKey = new Map(months.map((m, i) => [m.key, i]));
+    const rows = months.map((m) => ({
+      month: m.label,
+      year: m.year,
       weak: 0,
       ok: 0,
       expected: 0,
@@ -150,13 +173,13 @@ export function YOYView() {
       const ts = Date.parse(cd);
       if (Number.isNaN(ts)) continue;
       const d = new Date(ts);
-      if (d.getFullYear() !== currentYear) continue;
-      const monthIdx = d.getMonth();
+      const idx = indexByKey.get(`${d.getFullYear()}-${d.getMonth()}`);
+      if (idx === undefined) continue;
       const amt = parseMoney(r['Quoted Amount']);
       if (typeof amt !== 'number' || amt <= 0) continue;
       const chance = String(r['Chance?'] || r['Chance'] || '').trim().toLowerCase();
       const status = String(r['Status'] || '').trim();
-      const row = rows[monthIdx];
+      const row = rows[idx];
       if (chance === 'weak') row.weak += amt;
       else if (chance === 'ok') row.ok += amt;
       else if (chance === 'expected') row.expected += amt;
@@ -365,6 +388,8 @@ export function YOYView() {
   // the matching useMemo above so the downloaded Excel rows tie back to
   // the chart values.
   const contributingRecords = useMemo(() => {
+    const quotedMonths = fiscalMonths(currentYear);
+    const quotedKeyToLabel = new Map(quotedMonths.map(m => [m.key, m.label]));
     const leads = [];
     const quoted = [];
     const closeRate = [];
@@ -455,7 +480,8 @@ export function YOYView() {
         const ts = Date.parse(closeDate);
         if (!Number.isNaN(ts)) {
           const d = new Date(ts);
-          if (d.getFullYear() === currentYear) {
+          const monthLabel = quotedKeyToLabel.get(`${d.getFullYear()}-${d.getMonth()}`);
+          if (monthLabel) {
             const lowerChance = chance.toLowerCase();
             const series =
               lowerChance === 'weak' ? 'Quoted Weak'
@@ -465,7 +491,7 @@ export function YOYView() {
             quoted.push({
               Account: account,
               'Close Date': closeDate,
-              Month: MONTH_LABELS[d.getMonth()],
+              Month: monthLabel,
               'Chance?': chance,
               Status: status,
               Stage: stage,
@@ -688,7 +714,7 @@ function QuotedProjectionsCard({ data, hasOpps, target, onDownload }) {
       {!hasOpps ? (
         <div className={styles.empty}>No Opps data — open the Opps tab to load.</div>
       ) : !hasAnyValues ? (
-        <div className={styles.empty}>No opps with a Close Date in {new Date().getFullYear()}.</div>
+        <div className={styles.empty}>No opps with a Close Date between Dec {new Date().getFullYear() - 1} and Nov {new Date().getFullYear()}.</div>
       ) : (
         <ResponsiveContainer width="100%" height={320}>
           <ComposedChart data={data} margin={{ top: 18, right: 12, left: 0, bottom: 4 }}>
