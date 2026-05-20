@@ -8,6 +8,7 @@ import styles from './AgentsView.module.css';
 // by lower-cased email (or meeting id when no contact email exists)
 // so the next email to the same recipient re-uses the same tag.
 const OVERRIDE_STORAGE_KEY = 'agents-bfo-overrides';
+const IGNORED_EMAILS_STORAGE_KEY = 'agents-ignored-emails';
 
 function readOverrides() {
   try {
@@ -20,6 +21,20 @@ function readOverrides() {
 
 function writeOverrides(next) {
   try { localStorage.setItem(OVERRIDE_STORAGE_KEY, JSON.stringify(next)); } catch {}
+}
+
+function readIgnoredEmails() {
+  try {
+    const raw = localStorage.getItem(IGNORED_EMAILS_STORAGE_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeIgnoredEmails(next) {
+  try { localStorage.setItem(IGNORED_EMAILS_STORAGE_KEY, JSON.stringify(next)); } catch {}
 }
 
 // Same localStorage key the Activity tab caches its HubSpot pull into.
@@ -190,6 +205,20 @@ export function AgentsView() {
   const [hubspotCache, setHubspotCache] = useState(null);
   const [oppsCache, setOppsCache] = useState(null);
   const [overrides, setOverrides] = useState(readOverrides);
+  const [ignoredEmails, setIgnoredEmails] = useState(readIgnoredEmails);
+
+  const ignoredEmailIds = useMemo(() => new Set(ignoredEmails), [ignoredEmails]);
+
+  const ignoreEmail = (id) => {
+    if (!id) return;
+    const key = String(id);
+    setIgnoredEmails(prev => {
+      if (prev.includes(key)) return prev;
+      const next = [...prev, key];
+      writeIgnoredEmails(next);
+      return next;
+    });
+  };
 
   const setOverride = (key, opp) => {
     if (!key || !opp) return;
@@ -322,6 +351,7 @@ export function AgentsView() {
       .filter(e => inToday(e.hs_timestamp))
       .filter(sentByMe)
       .filter(e => hasExternalRecipient(e.hs_email_to_email))
+      .filter(e => !ignoredEmailIds.has(String(e.id || e.hs_object_id)))
       .map(e => {
         const recipients = externalRecipientList(e.hs_email_to_email);
         // Pick the HubSpot-company off the first recipient we have a
@@ -436,7 +466,7 @@ export function AgentsView() {
     // dependency set as cache + hubspotCache + oppIndex + overrides,
     // so they don't need their own entries here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cache, hubspotCache, oppIndex, overrides]);
+  }, [cache, hubspotCache, oppIndex, overrides, ignoredEmailIds]);
 
   const dateLabel = useMemo(() => new Date().toLocaleDateString('en-US', {
     weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
@@ -492,6 +522,7 @@ export function AgentsView() {
                 <th>Company</th>
                 <th>BFO Opportunity</th>
                 <th style={{ width: 130 }}>Status</th>
+                <th style={{ width: 40 }} aria-label="Actions" />
               </tr>
             </thead>
             <tbody>
@@ -522,6 +553,15 @@ export function AgentsView() {
                     )}
                   </td>
                   <td className={e.status ? '' : styles.muted}>{e.status || '—'}</td>
+                  <td>
+                    <button
+                      type="button"
+                      className={styles.ignoreBtn}
+                      onClick={() => ignoreEmail(e.id)}
+                      title="Hide this email from the Sent emails table"
+                      aria-label="Ignore email"
+                    >✕</button>
+                  </td>
                 </tr>
               ))}
             </tbody>

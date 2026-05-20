@@ -264,3 +264,17 @@
 .overrideClear:hover {
   color: #DC2626;
 }
+
+.ignoreBtn {
+  font-size: 0.75rem;
+  color: #94A3B8;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 0 0.3rem;
+  font-family: inherit;
+}
+
+.ignoreBtn:hover {
+  color: #DC2626;
+}
