@@ -192,16 +192,14 @@ export function BrokerFeesTab({ rows, setRows }) {
   // total load so a small high-rate row can't skew it.
   let epLoadSum = 0;
   let epFeeRevSum = 0;
-  let epRowCount = 0;
   let ngLoadSum = 0;
   let ngFeeRevSum = 0;
-  let ngRowCount = 0;
   let totalRfps = 0;
   for (const r of safeRows) {
     const tEp = totalFee(r.loadEp, r.feeEp);
-    if (tEp != null) { epFeeRevSum += tEp; epLoadSum += toNum(r.loadEp) || 0; epRowCount += 1; }
+    if (tEp != null) { epFeeRevSum += tEp; epLoadSum += toNum(r.loadEp) || 0; }
     const tNg = totalFee(r.loadNg, r.feeNg);
-    if (tNg != null) { ngFeeRevSum += tNg; ngLoadSum += toNum(r.loadNg) || 0; ngRowCount += 1; }
+    if (tNg != null) { ngFeeRevSum += tNg; ngLoadSum += toNum(r.loadNg) || 0; }
     const rfps = toNum(r.rfps);
     if (rfps != null) totalRfps += rfps;
   }
@@ -222,41 +220,6 @@ export function BrokerFeesTab({ rows, setRows }) {
 
   return (
     <div className={styles.wrapper} onPaste={handleTablePaste}>
-      <div className={styles.intro}>
-        Historical broker-fee benchmarks per company. Paste a block from Excel — Total Fee
-        columns recompute as Load × Fee on each side. Separate roll-ups for Electric Power
-        (EP, ¢/kWh basis) and Natural Gas (NG, $/Dth basis).
-      </div>
-
-      <div className={styles.summaryStrip}>
-        <div className={styles.summaryCard}>
-          <div className={styles.summaryHeader}>Electric Power</div>
-          <div className={styles.summaryGrid}>
-            <div>Companies w/ EP fee</div><div className={styles.numCell}>{epRowCount}</div>
-            <div>Total annual load</div><div className={styles.numCell}>{fmtNum(epLoadSum)} kWh</div>
-            <div>Weighted avg fee</div><div className={styles.numCell}>{epWeightedRate != null ? `${fmtRate(epWeightedRate, 5)} / kWh` : '—'}</div>
-            <div>Total fee revenue</div><div className={`${styles.numCell} ${styles.strong}`}>{fmtMoney(epFeeRevSum)}</div>
-          </div>
-        </div>
-        <div className={styles.summaryCard}>
-          <div className={styles.summaryHeader}>Natural Gas</div>
-          <div className={styles.summaryGrid}>
-            <div>Companies w/ NG fee</div><div className={styles.numCell}>{ngRowCount}</div>
-            <div>Total annual load</div><div className={styles.numCell}>{fmtNum(ngLoadSum)} Dth</div>
-            <div>Weighted avg fee</div><div className={styles.numCell}>{ngWeightedRate != null ? `${fmtRate(ngWeightedRate, 4)} / Dth` : '—'}</div>
-            <div>Total fee revenue</div><div className={`${styles.numCell} ${styles.strong}`}>{fmtMoney(ngFeeRevSum)}</div>
-          </div>
-        </div>
-        <div className={styles.summaryCard}>
-          <div className={styles.summaryHeader}>Activity</div>
-          <div className={styles.summaryGrid}>
-            <div>Companies tracked</div><div className={styles.numCell}>{safeRows.filter(r => r.company && r.company.trim()).length}</div>
-            <div>RFPs recorded</div><div className={styles.numCell}>{fmtNum(totalRfps)}</div>
-            <div>Combined revenue</div><div className={`${styles.numCell} ${styles.strong}`}>{fmtMoney(epFeeRevSum + ngFeeRevSum)}</div>
-          </div>
-        </div>
-      </div>
-
       <div className={styles.toolbar}>
         <button type="button" className={styles.btn} onClick={() => setPasteOpen(o => !o)}>
           {pasteOpen ? 'Close paste' : 'Paste from Excel'}

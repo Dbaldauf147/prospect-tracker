@@ -1908,7 +1908,7 @@ export function PricingView() {
         </div>
       </div>
 
-      {workbook && (
+      {workbook && pageSubtab === 'pricing' && (
         <div style={{ padding: '0 1.25rem 0.5rem' }} className={styles.fileMeta}>
           <strong>{workbook.fileName}</strong>
           {' · '}
@@ -1933,7 +1933,7 @@ export function PricingView() {
         <div style={{ margin: '0 1.25rem 0.5rem', color: '#b91c1c' }}>{error}</div>
       )}
 
-      <PricingConversions />
+      {pageSubtab === 'pricing' && <PricingConversions />}
 
       <div className={styles.subtabStrip}>
         <button
