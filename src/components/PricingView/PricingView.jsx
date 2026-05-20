@@ -1768,6 +1768,49 @@ export function PricingView({ settings } = {}) {
     setActiveOption(newOptionNumber);
   }
 
+  // Drop a cloned Option from the in-memory workbook. Only options
+  // produced by Clone option (isClone === true) are deletable here —
+  // sheets from the source workbook stick around so the user can
+  // always re-clone from the original. Active option follows the
+  // deletion: if the user was sitting on the clone we switch to the
+  // option it was cloned from, falling back to the first remaining
+  // option. Per-option state (alt-fee rows, per-row overrides) tied
+  // to the clone's optionNumber + item ids is dropped along with it.
+  function deleteClonedOption(optionNumber) {
+    if (!workbook || !Array.isArray(workbook.options)) return;
+    const target = workbook.options.find(o => o.optionNumber === optionNumber);
+    if (!target || !target.isClone) return;
+    if (!window.confirm(`Delete the cloned option "${target.sheetName}"? Any markup overrides and alt-fee rows on this clone will be removed.`)) return;
+
+    const remaining = workbook.options.filter(o => o.optionNumber !== optionNumber);
+    setWorkbook(prev => prev ? { ...prev, options: remaining } : prev);
+    setAltFees(prev => {
+      if (!(optionNumber in prev)) return prev;
+      const next = { ...prev };
+      delete next[optionNumber];
+      return next;
+    });
+    setOverrides(prev => {
+      const droppedIds = new Set();
+      for (const sec of (target.sections || [])) {
+        for (const item of (sec.items || [])) {
+          if (item.id) droppedIds.add(item.id);
+        }
+      }
+      let changed = false;
+      const next = { ...prev };
+      for (const id of Object.keys(prev)) {
+        if (droppedIds.has(id)) { delete next[id]; changed = true; }
+      }
+      return changed ? next : prev;
+    });
+    if (activeOption === optionNumber) {
+      const fallback = remaining.find(o => o.sheetName === target.clonedFrom)
+        || remaining[0];
+      setActiveOption(fallback ? fallback.optionNumber : null);
+    }
+  }
+
   // 9 empty starter rows that match the Excel template — used when
   // an option's alt-fee table hasn't been edited yet.
   const altFeeStarter = () => Array.from({ length: 9 }, () => ({
@@ -2433,6 +2476,30 @@ export function PricingView({ settings } = {}) {
                     >
                       <span className={styles.tabLabel}>{o.sheetName}</span>
                       {o.hidden && <span className={styles.tabHidden} title="Hidden in source workbook">·</span>}
+                      {o.isClone && (
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          onClick={(e) => { e.stopPropagation(); deleteClonedOption(o.optionNumber); }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              deleteClonedOption(o.optionNumber);
+                            }
+                          }}
+                          title="Delete this cloned option"
+                          style={{
+                            marginLeft: 6,
+                            padding: '0 4px',
+                            borderRadius: 999,
+                            fontSize: '0.85em',
+                            lineHeight: 1,
+                            cursor: 'pointer',
+                            opacity: 0.75,
+                          }}
+                        >×</span>
+                      )}
                     </button>
                   );
                 })}
