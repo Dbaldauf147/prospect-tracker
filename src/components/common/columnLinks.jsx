@@ -169,14 +169,19 @@ export function SelectCell({ value, onChange, options }) {
 // Multi-select cell — checkbox popover. Stores the chosen options as a
 // comma-separated string so the value round-trips through plain text
 // storage (CSV export, Firestore strings, etc.).
-export function MultiSelectCell({ value, onChange, options }) {
+export function MultiSelectCell({ value, onChange, options, extraGroups }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [popPos, setPopPos] = useState({ top: 0, left: 0 });
+  const [quickPick, setQuickPick] = useState('');
   const wrapRef = useRef(null);
   const popRef = useRef(null);
   const selected = useMemo(() => parseMulti(value), [value]);
   const selectedSet = useMemo(() => new Set(selected.map(s => s.toLowerCase())), [selected]);
+  const groups = useMemo(
+    () => (Array.isArray(extraGroups) ? extraGroups.filter(g => g && g.label && Array.isArray(g.options) && g.options.length > 0) : []),
+    [extraGroups],
+  );
 
   useLayoutEffect(() => {
     if (!open || !wrapRef.current) return;
@@ -213,6 +218,23 @@ export function MultiSelectCell({ value, onChange, options }) {
     onChange('');
   }
 
+  // Add every option in a named group to the current selection. Items
+  // already selected are skipped (matched case-insensitively).
+  function addGroup(groupLabel) {
+    const g = groups.find(gr => gr.label === groupLabel);
+    if (!g) return;
+    const existing = new Set(selected.map(s => s.toLowerCase()));
+    const next = selected.slice();
+    for (const opt of g.options) {
+      const lower = String(opt || '').toLowerCase();
+      if (!lower || existing.has(lower)) continue;
+      existing.add(lower);
+      next.push(opt);
+    }
+    onChange(next.join(', '));
+    setQuickPick('');
+  }
+
   const isEmpty = selected.length === 0;
   return (
     <div ref={wrapRef} style={{ position: 'relative' }} onClick={(e) => e.stopPropagation()}>
@@ -240,6 +262,33 @@ export function MultiSelectCell({ value, onChange, options }) {
             fontSize: '0.9rem',
           }}
         >
+          {groups.length > 0 && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: '0.5rem',
+              padding: '0.5rem 0.6rem',
+              borderBottom: '1px solid var(--color-border-light)',
+              background: 'var(--color-bg)',
+            }}>
+              <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>
+                Add from Line Item
+              </span>
+              <select
+                value={quickPick}
+                onChange={(e) => { const v = e.target.value; if (v) addGroup(v); }}
+                style={{
+                  flex: 1, minWidth: 0, padding: '0.3rem 0.4rem',
+                  border: '1px solid var(--color-border)', borderRadius: 3,
+                  fontSize: '0.8rem', fontFamily: 'inherit',
+                  background: '#fff', color: 'var(--color-text)',
+                }}
+              >
+                <option value="">— pick a line item —</option>
+                {groups.map(g => (
+                  <option key={g.label} value={g.label}>{g.label} ({g.options.length})</option>
+                ))}
+              </select>
+            </div>
+          )}
           <div style={{ padding: '0.5rem 0.6rem', borderBottom: '1px solid var(--color-border-light)' }}>
             <input
               autoFocus

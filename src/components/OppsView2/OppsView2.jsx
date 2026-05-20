@@ -1444,6 +1444,33 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       window.removeEventListener('hubspot-cache-updated', refresh);
     };
   }, []);
+
+  // Line Item → Services mapping authored on the Pricing tab's Linked To
+  // page. Used by the Scope cell to offer a "From Line Item" bulk-add.
+  // Hydrated from IndexedDB on mount and refreshed when PricingView
+  // dispatches its change event so cross-tab edits show up live.
+  const [lineItemServices, setLineItemServices] = useState({});
+  useEffect(() => {
+    let cancelled = false;
+    dbGet('pricing-cache', 'lineItemServices')
+      .then(val => { if (!cancelled && val && typeof val === 'object') setLineItemServices(val); })
+      .catch(() => { /* missing cache is fine */ });
+    const refresh = (e) => {
+      const detail = e?.detail;
+      if (detail && typeof detail === 'object') {
+        setLineItemServices(detail);
+        return;
+      }
+      dbGet('pricing-cache', 'lineItemServices')
+        .then(val => { if (!cancelled && val && typeof val === 'object') setLineItemServices(val); })
+        .catch(() => {});
+    };
+    window.addEventListener('pricing:lineItemServicesChanged', refresh);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('pricing:lineItemServicesChanged', refresh);
+    };
+  }, []);
   // Persisting only kicks in after the initial hydration finishes —
   // otherwise the seed value would be written back, wiping the saved
   // state for any user who happens to refresh before the load
@@ -1737,11 +1764,26 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           if (link) {
             const opts = listRegistry.get(link.listKey)?.options || [];
             if (link.mode === 'multi') {
+              // Surface the Pricing-tab Line Item → Services mappings
+              // only when this cell's vocabulary is the Solutions
+              // catalog (the source of those mappings) — so the quick
+              // picker doesn't appear on unrelated multi-select cells
+              // the user might bind to other lists.
+              const extraGroups = link.listKey === 'solutions'
+                ? Object.entries(lineItemServices || {})
+                    .map(([key, services]) => ({
+                      label: key,
+                      options: Array.isArray(services) ? services : [],
+                    }))
+                    .filter(g => g.options.length > 0)
+                    .sort((a, b) => a.label.localeCompare(b.label))
+                : undefined;
               return (
                 <MultiSelectCell
                   value={row[h]}
                   onChange={(v) => updateOppField(row._id, h, v)}
                   options={opts}
+                  extraGroups={extraGroups}
                 />
               );
             }
@@ -1863,7 +1905,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       ? [...mapped.slice(0, nextStepsIdx), infoCol, ...mapped.slice(nextStepsIdx)]
       : [...mapped, infoCol];
     return [selectCol, ...withInfo, actions];
-  }, [headers, columnLinks, listRegistry, updateOppField, deleteOpp, companySuggestions, prospects, updateProspect, hubspotContacts, selectedIds]);
+  }, [headers, columnLinks, listRegistry, updateOppField, deleteOpp, companySuggestions, prospects, updateProspect, hubspotContacts, selectedIds, lineItemServices]);
 
   const stageOrder = ['Lead', 'Not Started', 'Qualifying', 'Quoting', 'Quoted', 'Verbal', 'Sold', 'Not Sold'];
   const CLOSED_STAGES = useMemo(() => new Set(['Sold', 'Not Sold']), []);

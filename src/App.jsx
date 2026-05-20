@@ -307,7 +307,7 @@ function App() {
           ) : view === 'vibe' ? (
             <VibeProspecting prospects={prospects} onUpdate={updateProspect} cdmName={cdmName} />
           ) : view === 'pricing' ? (
-            <PricingView />
+            <PricingView settings={settings} />
           ) : view === 'pipeline' ? (
             <PipelineView />
           ) : view === 'bfo' ? (
