@@ -227,6 +227,138 @@ export function YOYView() {
     return rows;
   }, [records, currentYear]);
 
+  // Lead Sources 2020+ — horizontal stacked bars per source value with
+  // counts of In Progress / Not Sold / Sold plus the Sold-count and
+  // close-rate (Sold / (Sold + Not Sold)) label at the end of each row.
+  // `Lead Source` is preferred; we fall back to `Source` per the column
+  // names already used elsewhere (PipelineView).
+  const leadSourcesData = useMemo(() => {
+    if (records.length === 0) return [];
+    const byKey = new Map();
+    for (const r of records) {
+      const y = parseYear(r['Open Year']);
+      if (y === null || y < 2020) continue;
+      const src = String(r['Lead Source'] || r['Source'] || '').trim();
+      if (!src || src === '-' || src === '#N/A') continue;
+      const stage = String(r.Stage || '').trim();
+      let bucket;
+      if (stage === 'Sold') bucket = 'sold';
+      else if (stage === 'Not Sold') bucket = 'notSold';
+      else bucket = 'inProgress';
+      if (!byKey.has(src)) byKey.set(src, { source: src, inProgress: 0, notSold: 0, sold: 0 });
+      byKey.get(src)[bucket] += 1;
+    }
+    if (byKey.size === 0) return [];
+    const rows = Array.from(byKey.values()).map(r => {
+      const closeDenom = r.sold + r.notSold;
+      const closeRate = closeDenom > 0 ? r.sold / closeDenom : null;
+      const total = r.inProgress + r.notSold + r.sold;
+      return { ...r, total, closeRate };
+    });
+    // Sort descending by total so the biggest source sits on top, matching
+    // the screenshot layout.
+    rows.sort((a, b) => b.total - a.total);
+    return rows;
+  }, [records]);
+
+  // Quoted (Thousands) — sum of Quoted Amount per Open Year (any stage),
+  // displayed in $k. Includes a Projected bar for the current year.
+  const quotedByYearData = useMemo(() => {
+    if (records.length === 0) return [];
+    const byYear = new Map();
+    let minYear = currentYear;
+    for (const r of records) {
+      const y = parseYear(r['Open Year']);
+      if (y === null) continue;
+      const amt = parseMoney(r['Quoted Amount']);
+      const v = (typeof amt === 'number' && Number.isFinite(amt)) ? amt : 0;
+      byYear.set(y, (byYear.get(y) || 0) + v);
+      if (y < minYear) minYear = y;
+    }
+    if (byYear.size === 0) return [];
+    const rows = [];
+    for (let y = minYear; y <= currentYear; y++) {
+      const total = byYear.get(y) || 0;
+      rows.push({
+        year: String(y),
+        thousands: Math.round(total / 1000),
+        isProjected: false,
+      });
+    }
+    const ytd = byYear.get(currentYear) || 0;
+    const frac = yearElapsedFraction(currentYear);
+    const projected = frac > 0 ? Math.round((ytd / frac) / 1000) : Math.round(ytd / 1000);
+    rows.push({ year: 'Projected', thousands: projected, isProjected: true });
+    return rows;
+  }, [records, currentYear]);
+
+  // Not Solds — count of Stage=Not Sold per Open Year + Projected, with
+  // three day-count lines on the same axis:
+  //   Avg Opp Life      — mean Age across Sold + Not Sold opps that year.
+  //   Age of not Quoted — mean Age across opps still in pre-quote stages
+  //                       (Lead / Not Started / Qualifying / Quoting).
+  //   Quote to Close    — mean (Close Date − Quoted On) for closed opps
+  //                       that have a parseable Quoted On / Quoted Date.
+  const notSoldsData = useMemo(() => {
+    if (records.length === 0) return [];
+    const NOT_QUOTED_STAGES = new Set(['Lead', 'Not Started', 'Qualifying', 'Quoting']);
+    const byYear = new Map();
+    let minYear = currentYear;
+    for (const r of records) {
+      const y = parseYear(r['Open Year']);
+      if (y === null) continue;
+      if (!byYear.has(y)) byYear.set(y, []);
+      byYear.get(y).push(r);
+      if (y < minYear) minYear = y;
+    }
+    if (byYear.size === 0) return [];
+    const rows = [];
+    for (let y = minYear; y <= currentYear; y++) {
+      const list = byYear.get(y) || [];
+      let notSold = 0;
+      let lifeSum = 0, lifeCount = 0;
+      let notQuotedSum = 0, notQuotedCount = 0;
+      let qtcSum = 0, qtcCount = 0;
+      for (const r of list) {
+        const stage = String(r.Stage || '').trim();
+        if (stage === 'Not Sold') notSold += 1;
+        const age = Number(String(r.Age ?? '').replace(/[^0-9.-]/g, ''));
+        const closedStage = (stage === 'Sold' || stage === 'Not Sold');
+        if (closedStage && Number.isFinite(age)) { lifeSum += age; lifeCount += 1; }
+        if (NOT_QUOTED_STAGES.has(stage) && Number.isFinite(age)) {
+          notQuotedSum += age; notQuotedCount += 1;
+        }
+        if (closedStage) {
+          const quotedOn = r['Quoted On'] || r['Quoted Date'] || '';
+          const closeDate = r['Close Date'] || '';
+          const qt = Date.parse(quotedOn);
+          const ct = Date.parse(closeDate);
+          if (!Number.isNaN(qt) && !Number.isNaN(ct) && ct >= qt) {
+            qtcSum += (ct - qt) / 86400000;
+            qtcCount += 1;
+          }
+        }
+      }
+      rows.push({
+        year: String(y),
+        notSold,
+        isProjected: false,
+        avgOppLife: lifeCount > 0 ? Math.round(lifeSum / lifeCount) : null,
+        ageNotQuoted: notQuotedCount > 0 ? Math.round(notQuotedSum / notQuotedCount) : null,
+        quoteToClose: qtcCount > 0 ? Math.round(qtcSum / qtcCount) : null,
+      });
+    }
+    // Projected Not Sold bar — annualize the current year's count.
+    const ytdNotSold = (byYear.get(currentYear) || []).filter(r => String(r.Stage || '').trim() === 'Not Sold').length;
+    const frac = yearElapsedFraction(currentYear);
+    const projected = frac > 0 ? Math.round(ytdNotSold / frac) : ytdNotSold;
+    rows.push({
+      year: 'Projected', notSold: projected, isProjected: true,
+      avgOppLife: null, ageNotQuoted: null, quoteToClose: null,
+    });
+    return rows;
+  }, [records, currentYear]);
+
   const hasOpps = records.length > 0;
 
   // Per-chart underlying records. Each entry mirrors the filter used by
@@ -236,6 +368,10 @@ export function YOYView() {
     const leads = [];
     const quoted = [];
     const closeRate = [];
+    const leadSources = [];
+    const quotedByYear = [];
+    const notSolds = [];
+    const NOT_QUOTED_STAGES = new Set(['Lead', 'Not Started', 'Qualifying', 'Quoting']);
     for (const r of records) {
       const oy = parseYear(r['Open Year']);
       const account = String(r.Account || '').trim();
@@ -243,9 +379,13 @@ export function YOYView() {
       const status = String(r.Status || '').trim();
       const chance = String(r['Chance?'] || r['Chance'] || '').trim();
       const closeDate = r['Close Date'] || '';
+      const quotedOn = r['Quoted On'] || r['Quoted Date'] || '';
+      const leadSource = String(r['Lead Source'] || r['Source'] || '').trim();
       const quotedAmtRaw = r['Quoted Amount'] || '';
       const quotedAmt = parseMoney(quotedAmtRaw);
       const scope = String(r.Scope || '').trim();
+      const ageNum = Number(String(r.Age ?? '').replace(/[^0-9.-]/g, ''));
+      const age = Number.isFinite(ageNum) ? ageNum : '';
 
       if (oy !== null) {
         leads.push({
@@ -268,6 +408,47 @@ export function YOYView() {
               ? (isQuotedPlus(r) ? 'Not Sold (Quoted+)' : 'Not Sold (pre-quote)')
               : 'In Progress',
           'Close Date': closeDate,
+        });
+        quotedByYear.push({
+          Account: account,
+          'Open Year': oy,
+          Stage: stage,
+          'Quoted Amount': quotedAmt ?? 0,
+          'Close Date': closeDate,
+        });
+        // Not Solds chart contributors — keep every row that fed any of
+        // the bars or lines so the user can audit each year's stats.
+        const closedStage = (stage === 'Sold' || stage === 'Not Sold');
+        const isAgeForNotQuoted = NOT_QUOTED_STAGES.has(stage);
+        const qt = Date.parse(quotedOn);
+        const ct = Date.parse(closeDate);
+        const quoteToClose = (!Number.isNaN(qt) && !Number.isNaN(ct) && ct >= qt && closedStage)
+          ? Math.round((ct - qt) / 86400000) : '';
+        notSolds.push({
+          Account: account,
+          'Open Year': oy,
+          Stage: stage,
+          Status: status,
+          Age: age,
+          'Counts in Not Sold bar': stage === 'Not Sold' ? 'Yes' : 'No',
+          'Counts in Avg Opp Life': closedStage && Number.isFinite(ageNum) ? 'Yes' : 'No',
+          'Counts in Age of not Quoted': isAgeForNotQuoted && Number.isFinite(ageNum) ? 'Yes' : 'No',
+          'Quoted On': quotedOn,
+          'Close Date': closeDate,
+          'Quote to Close (days)': quoteToClose,
+        });
+      }
+      // Lead Sources 2020+ contributors — Open Year ≥ 2020 with a
+      // non-empty source value.
+      if (oy !== null && oy >= 2020 && leadSource && leadSource !== '-' && leadSource !== '#N/A') {
+        leadSources.push({
+          'Lead Source': leadSource,
+          Account: account,
+          'Open Year': oy,
+          Stage: stage,
+          Status: status,
+          Bucket: stage === 'Sold' ? 'Sold' : stage === 'Not Sold' ? 'Not Sold' : 'In Progress',
+          'Quoted Amount': quotedAmt ?? '',
         });
       }
       if (closeDate && quotedAmt && quotedAmt > 0) {
@@ -299,6 +480,12 @@ export function YOYView() {
     }
     leads.sort((a, b) => a['Open Year'] - b['Open Year'] || a.Account.localeCompare(b.Account));
     closeRate.sort((a, b) => a['Open Year'] - b['Open Year'] || a.Account.localeCompare(b.Account));
+    quotedByYear.sort((a, b) => a['Open Year'] - b['Open Year'] || a.Account.localeCompare(b.Account));
+    notSolds.sort((a, b) => a['Open Year'] - b['Open Year'] || a.Account.localeCompare(b.Account));
+    leadSources.sort((a, b) =>
+      a['Lead Source'].localeCompare(b['Lead Source'])
+      || a['Open Year'] - b['Open Year']
+      || a.Account.localeCompare(b.Account));
     quoted.sort((a, b) => {
       const ta = Date.parse(a['Close Date']);
       const tb = Date.parse(b['Close Date']);
@@ -307,7 +494,7 @@ export function YOYView() {
       if (Number.isNaN(tb)) return -1;
       return ta - tb;
     });
-    return { leads, quoted, closeRate };
+    return { leads, quoted, closeRate, leadSources, quotedByYear, notSolds };
   }, [records, currentYear]);
 
   function downloadLeads() {
@@ -352,6 +539,45 @@ export function YOYView() {
     appendSheet(wb, 'Contributing Opps', contributingRecords.closeRate);
     XLSX.writeFile(wb, `yoy-close-rate-${todayStamp()}.xlsx`);
   }
+  function downloadLeadSources() {
+    const summary = leadSourcesData.map(r => ({
+      'Lead Source': r.source,
+      'In Progress': r.inProgress,
+      'Not Sold': r.notSold,
+      Sold: r.sold,
+      Total: r.total,
+      'Close Rate (%)': r.closeRate == null ? '' : Math.round(r.closeRate * 100),
+    }));
+    const wb = XLSX.utils.book_new();
+    appendSheet(wb, 'Lead Sources 2020+', summary);
+    appendSheet(wb, 'Contributing Opps', contributingRecords.leadSources);
+    XLSX.writeFile(wb, `yoy-lead-sources-${todayStamp()}.xlsx`);
+  }
+  function downloadQuotedByYear() {
+    const summary = quotedByYearData.map(r => ({
+      Year: r.year,
+      'Quoted ($k)': r.thousands,
+      Type: r.isProjected ? 'Projected (annualized YTD)' : 'Actual',
+    }));
+    const wb = XLSX.utils.book_new();
+    appendSheet(wb, 'Quoted by Year', summary);
+    appendSheet(wb, 'Contributing Opps', contributingRecords.quotedByYear);
+    XLSX.writeFile(wb, `yoy-quoted-by-year-${todayStamp()}.xlsx`);
+  }
+  function downloadNotSolds() {
+    const summary = notSoldsData.map(r => ({
+      'Open Year': r.year,
+      'Not Solds': r.notSold,
+      Type: r.isProjected ? 'Projected (annualized YTD)' : 'Actual',
+      'Avg Opp Life (days)': r.avgOppLife == null ? '' : r.avgOppLife,
+      'Age of not Quoted (days)': r.ageNotQuoted == null ? '' : r.ageNotQuoted,
+      'Quote to Close (days)': r.quoteToClose == null ? '' : r.quoteToClose,
+    }));
+    const wb = XLSX.utils.book_new();
+    appendSheet(wb, 'Not Solds by Year', summary);
+    appendSheet(wb, 'Contributing Opps', contributingRecords.notSolds);
+    XLSX.writeFile(wb, `yoy-not-solds-${todayStamp()}.xlsx`);
+  }
 
   return (
     <div className={styles.wrapper}>
@@ -365,9 +591,16 @@ export function YOYView() {
         </div>
       </div>
       <div className={styles.body}>
-        <LeadsCard data={leadsData} hasOpps={hasOpps} onDownload={downloadLeads} />
-        <QuotedProjectionsCard data={quotedData} hasOpps={hasOpps} target={target} onDownload={downloadQuoted} />
-        <CloseRateCard data={closeRateData} hasOpps={hasOpps} onDownload={downloadCloseRate} />
+        <div className={styles.row}>
+          <LeadsCard data={leadsData} hasOpps={hasOpps} onDownload={downloadLeads} />
+          <QuotedProjectionsCard data={quotedData} hasOpps={hasOpps} target={target} onDownload={downloadQuoted} />
+          <CloseRateCard data={closeRateData} hasOpps={hasOpps} onDownload={downloadCloseRate} />
+        </div>
+        <div className={styles.row}>
+          <LeadSourcesCard data={leadSourcesData} hasOpps={hasOpps} onDownload={downloadLeadSources} />
+          <QuotedByYearCard data={quotedByYearData} hasOpps={hasOpps} onDownload={downloadQuotedByYear} />
+          <NotSoldsCard data={notSoldsData} hasOpps={hasOpps} onDownload={downloadNotSolds} />
+        </div>
       </div>
     </div>
   );
@@ -556,6 +789,167 @@ function CloseRateCard({ data, hasOpps, onDownload }) {
             <Line yAxisId="cr" dataKey="totalCR" name="Total C/R" stroke="#16a34a" strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false} connectNulls>
               <LabelList dataKey="totalCR" position="bottom" style={{ fontSize: 10, fontWeight: 600, fill: '#15803d' }} formatter={(v) => v == null ? '' : `${Math.round(v)}%`} />
             </Line>
+          </ComposedChart>
+        </ResponsiveContainer>
+      )}
+    </div>
+  );
+}
+
+function LeadSourcesCard({ data, hasOpps, onDownload }) {
+  // Per-row height keeps the chart legible even when source values
+  // accumulate (e.g. opps tagged with novel sources over time). Pad
+  // the wrapper height so the LabelList sold count + close-rate label
+  // never collides with the rightmost gridline.
+  const rowHeight = 28;
+  const minHeight = 320;
+  const height = Math.max(minHeight, data.length * rowHeight + 80);
+  return (
+    <div className={styles.chartCard}>
+      <ChartHeader title="Lead Sources 2020+" onDownload={onDownload} canDownload={hasOpps && data.length > 0} />
+      {!hasOpps ? (
+        <div className={styles.empty}>No Opps data — open the Opps tab to load.</div>
+      ) : data.length === 0 ? (
+        <div className={styles.empty}>No opps with a Lead Source and Open Year ≥ 2020.</div>
+      ) : (
+        <ResponsiveContainer width="100%" height={height}>
+          <BarChart
+            data={data}
+            layout="vertical"
+            margin={{ top: 8, right: 70, left: 4, bottom: 4 }}
+          >
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" horizontal={false} />
+            <XAxis type="number" tick={{ fontSize: 12 }} allowDecimals={false} />
+            <YAxis
+              type="category"
+              dataKey="source"
+              tick={{ fontSize: 11 }}
+              width={155}
+              interval={0}
+            />
+            <Tooltip
+              formatter={(v, name) => [v.toLocaleString('en-US'), name]}
+              labelFormatter={(label) => `Lead Source: ${label}`}
+            />
+            <Legend wrapperStyle={{ fontSize: 12 }} />
+            <Bar dataKey="inProgress" stackId="ls" name="In Progress" fill="#3b82f6" isAnimationActive={false} />
+            <Bar dataKey="notSold" stackId="ls" name="Not Sold" fill="#ef4444" isAnimationActive={false} />
+            <Bar dataKey="sold" stackId="ls" name="Sold" fill="#facc15" isAnimationActive={false}>
+              <LabelList
+                dataKey="sold"
+                position="right"
+                style={{ fontSize: 11, fontWeight: 600, fill: '#1f2937' }}
+                formatter={(value) => value || ''}
+              />
+              <LabelList
+                dataKey="closeRate"
+                position="right"
+                offset={28}
+                style={{ fontSize: 11, fontWeight: 600, fill: '#16a34a' }}
+                formatter={(v) => v == null ? '' : `${Math.round(v * 100)}%`}
+              />
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      )}
+    </div>
+  );
+}
+
+function QuotedByYearCard({ data, hasOpps, onDownload }) {
+  return (
+    <div className={styles.chartCard}>
+      <ChartHeader title="Quoted (Thousands)" onDownload={onDownload} canDownload={hasOpps && data.length > 0} />
+      {!hasOpps ? (
+        <div className={styles.empty}>No Opps data — open the Opps tab to load.</div>
+      ) : data.length === 0 ? (
+        <div className={styles.empty}>No opps with an Open Year value.</div>
+      ) : (
+        <ResponsiveContainer width="100%" height={320}>
+          <BarChart data={data} margin={{ top: 18, right: 8, left: 0, bottom: 4 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
+            <XAxis dataKey="year" tick={{ fontSize: 12 }} />
+            <YAxis
+              tick={{ fontSize: 12 }}
+              tickFormatter={(v) => `$${v.toLocaleString('en-US')}`}
+            />
+            <Tooltip formatter={(v) => `$${v.toLocaleString('en-US')}k`} />
+            <Bar dataKey="thousands" isAnimationActive={false}>
+              {data.map((row, i) => (
+                <Cell key={i} fill={row.isProjected ? '#facc15' : '#3b82f6'} />
+              ))}
+              <LabelList
+                dataKey="thousands"
+                position="top"
+                style={{ fontSize: 11, fontWeight: 600, fill: '#1f2937' }}
+                formatter={(v) => `$${v.toLocaleString('en-US')}`}
+              />
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      )}
+    </div>
+  );
+}
+
+function NotSoldsCard({ data, hasOpps, onDownload }) {
+  return (
+    <div className={styles.chartCard}>
+      <ChartHeader title="Not Solds" onDownload={onDownload} canDownload={hasOpps && data.length > 0} />
+      {!hasOpps ? (
+        <div className={styles.empty}>No Opps data — open the Opps tab to load.</div>
+      ) : data.length === 0 ? (
+        <div className={styles.empty}>No opps with an Open Year value.</div>
+      ) : (
+        <ResponsiveContainer width="100%" height={320}>
+          <ComposedChart data={data} margin={{ top: 18, right: 8, left: 0, bottom: 4 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
+            <XAxis dataKey="year" tick={{ fontSize: 12 }} />
+            <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
+            <Tooltip
+              formatter={(v, name) => {
+                if (v == null) return ['—', name];
+                if (name === 'Not Solds') return [v.toLocaleString('en-US'), name];
+                return [`${v.toLocaleString('en-US')} days`, name];
+              }}
+            />
+            <Legend wrapperStyle={{ fontSize: 12 }} />
+            <Bar dataKey="notSold" name="Not Solds" isAnimationActive={false}>
+              {data.map((row, i) => (
+                <Cell key={i} fill={row.isProjected ? '#facc15' : '#3b82f6'} />
+              ))}
+              <LabelList dataKey="notSold" position="top" style={{ fontSize: 11, fontWeight: 600, fill: '#1f2937' }} />
+            </Bar>
+            <Line
+              dataKey="avgOppLife"
+              name="Avg Opp Life"
+              stroke="#dc2626"
+              strokeWidth={2.5}
+              dot={{ r: 4 }}
+              isAnimationActive={false}
+              connectNulls
+            >
+              <LabelList dataKey="avgOppLife" position="top" style={{ fontSize: 10, fontWeight: 600, fill: '#991b1b' }} formatter={(v) => v == null ? '' : v} />
+            </Line>
+            <Line
+              dataKey="ageNotQuoted"
+              name="Age of not Quoted"
+              stroke="#22c55e"
+              strokeWidth={1.5}
+              strokeDasharray="4 3"
+              dot={{ r: 3 }}
+              isAnimationActive={false}
+              connectNulls
+            />
+            <Line
+              dataKey="quoteToClose"
+              name="Quote to Close"
+              stroke="#eab308"
+              strokeWidth={2}
+              dot={{ r: 3 }}
+              isAnimationActive={false}
+              connectNulls
+            />
           </ComposedChart>
         </ResponsiveContainer>
       )}
