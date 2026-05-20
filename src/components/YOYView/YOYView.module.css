@@ -47,11 +47,41 @@
   flex-direction: column;
 }
 
+.chartHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+}
+
 .chartTitle {
   font-size: 1rem;
   font-weight: 600;
-  margin: 0 0 0.4rem;
+  margin: 0;
   color: var(--color-text);
+}
+
+.downloadBtn {
+  padding: 0.25rem 0.6rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-family: inherit;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.downloadBtn:hover:not(:disabled) {
+  background: var(--color-bg);
+}
+
+.downloadBtn:disabled {
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .empty {
