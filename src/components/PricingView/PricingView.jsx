@@ -1707,6 +1707,53 @@ export function PricingView({ settings } = {}) {
     dbDelete(STORE, KEY).catch(() => {});
   }
 
+  // Clone the active option in-place on the loaded workbook. The new
+  // option gets a fresh optionNumber, a unique sheet name ("(Clone)"
+  // suffix, with a counter if that name is already taken), and item
+  // IDs regenerated against the new sheet name so per-row overrides
+  // don't leak between original and clone. Alt-fee rows are deep-
+  // copied to the new option number. The clone lives on the in-memory
+  // workbook only, so removing the file (Clear / Replace) wipes it
+  // automatically along with everything else parsed from the upload.
+  function cloneActiveOption() {
+    if (!workbook || !Array.isArray(workbook.options) || workbook.options.length === 0) return;
+    const src = workbook.options.find(o => o.optionNumber === activeOption) || workbook.options[0];
+    if (!src) return;
+
+    const used = new Set(workbook.options.map(o => o.sheetName));
+    const baseName = `${src.sheetName} (Clone)`;
+    let newSheetName = baseName;
+    let n = 2;
+    while (used.has(newSheetName)) {
+      newSheetName = `${src.sheetName} (Clone ${n})`;
+      n += 1;
+    }
+    const newOptionNumber = workbook.options.reduce((m, o) => Math.max(m, o.optionNumber || 0), 0) + 1;
+
+    const cloned = JSON.parse(JSON.stringify(src));
+    cloned.sheetName = newSheetName;
+    cloned.optionNumber = newOptionNumber;
+    cloned.isClone = true;
+    cloned.clonedFrom = src.sheetName;
+    cloned.sections = (cloned.sections || []).map(sec => ({
+      ...sec,
+      items: (sec.items || []).map((item, idx) => ({
+        ...item,
+        // Mirror the parser's id pattern so resolveColumnLink and
+        // override lookups behave identically on the clone.
+        id: `${newSheetName}::${sec.title}::${idx}::${String(item.description || '').slice(0, 40)}`,
+      })),
+    }));
+
+    setWorkbook(prev => prev ? { ...prev, options: [...prev.options, cloned] } : prev);
+    setAltFees(prev => {
+      const srcRows = prev[src.optionNumber];
+      if (!Array.isArray(srcRows) || srcRows.length === 0) return prev;
+      return { ...prev, [newOptionNumber]: srcRows.map(r => ({ ...r })) };
+    });
+    setActiveOption(newOptionNumber);
+  }
+
   // 9 empty starter rows that match the Excel template — used when
   // an option's alt-fee table hasn't been edited yet.
   const altFeeStarter = () => Array.from({ length: 9 }, () => ({
@@ -2384,6 +2431,12 @@ export function PricingView({ settings } = {}) {
                     {opt.hidden && <span className={styles.hiddenPill}>hidden in workbook</span>}
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      className={styles.actionBtn}
+                      onClick={cloneActiveOption}
+                      title={`Clone "${opt.sheetName}" into a new Option on this workbook. The clone is temporary — it goes away when you remove or replace the file.`}
+                    >Clone option</button>
                     <ColumnsMenu
                       open={colMenuOpen}
                       onToggle={() => setColMenuOpen(o => !o)}
