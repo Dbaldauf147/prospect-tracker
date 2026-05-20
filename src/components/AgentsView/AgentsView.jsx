@@ -87,6 +87,27 @@ function readActivityCache() {
   }
 }
 
+// Pull the first http(s) URL out of any field on an opp record. The
+// BFO Link sheet column stores the opportunity name, not the URL, so
+// we scan every value to find the Salesforce / Lightning hyperlink.
+function detectBfoUrl(rawOpp) {
+  if (!rawOpp) return '';
+  for (const v of Object.values(rawOpp)) {
+    if (typeof v !== 'string' || !v) continue;
+    const m = v.match(/https?:\/\/\S+/i);
+    if (m) return m[0];
+  }
+  return '';
+}
+
+// "called" if the Next Steps text mentions a phone touch, otherwise
+// the row reflects the email cadence and we tag it as "email".
+function detectNextStepsType(rawOpp) {
+  const text = String(rawOpp?.['Next Steps'] || '');
+  if (/\b(call(ed)?|left\s+voicemail)\b/i.test(text)) return 'called';
+  return 'email';
+}
+
 function todayBounds() {
   const now = new Date();
   const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
@@ -336,21 +357,27 @@ export function AgentsView() {
   const oppIndex = useMemo(() => {
     const records = oppsCache?.records || [];
     const byEmail = new Map(); // lower-case email → opp
+    const byBfoOpp = new Map(); // lower-case opp name → opp
     const allOpps = [];
     for (const r of records) {
       const bfoOpp = String(r['BFO Link'] || '').trim();
       const account = String(r['Account'] || '').trim();
       // Skip opps that don't carry the data we need to surface.
       if (!bfoOpp && !account) continue;
-      allOpps.push({ raw: r, account, bfoOpp });
+      const entry = { raw: r, account, bfoOpp };
+      allOpps.push(entry);
+      if (bfoOpp) {
+        const key = bfoOpp.toLowerCase();
+        if (!byBfoOpp.has(key)) byBfoOpp.set(key, entry);
+      }
       const contactRaw = String(r['Contact'] || '').toLowerCase();
       if (!contactRaw) continue;
       const emails = contactRaw.match(EMAIL_RE) || [];
       for (const e of emails) {
-        if (!byEmail.has(e)) byEmail.set(e, { raw: r, account, bfoOpp });
+        if (!byEmail.has(e)) byEmail.set(e, entry);
       }
     }
-    return { byEmail, allOpps };
+    return { byEmail, byBfoOpp, allOpps };
   }, [oppsCache]);
 
   // Primary path: which Opps-tab row covers this email recipient?
@@ -414,6 +441,11 @@ export function AgentsView() {
         const account = override?.account || matchedOpp?.account || '';
         const bfoOpp = override?.bfoOpp || matchedOpp?.bfoOpp || '';
         const company = account || hubspotCompany || domainCompanyGuess(recipients[0]);
+        // Look up the full opp record by name so manual overrides
+        // pick up the same URL / Next Steps fields the auto-match has.
+        const oppForRow = bfoOpp ? oppIndex.byBfoOpp.get(bfoOpp.toLowerCase()) : matchedOpp;
+        const bfoUrl = detectBfoUrl(oppForRow?.raw);
+        const nextStepsType = detectNextStepsType(oppForRow?.raw);
         return {
           id: e.id || e.hs_object_id,
           ts: e.hs_timestamp,
@@ -423,6 +455,8 @@ export function AgentsView() {
           status: e.hs_email_status || '',
           company,
           bfoOpp,
+          bfoUrl,
+          nextStepsType,
           overrideKey,
           isManual: Boolean(override),
         };
@@ -555,6 +589,8 @@ export function AgentsView() {
                 <th>To (external)</th>
                 <th>Company</th>
                 <th>BFO Opportunity</th>
+                <th style={{ width: 70 }}>BFO Link</th>
+                <th style={{ width: 70 }}>Type</th>
                 <th style={{ width: 130 }}>Status</th>
                 <th style={{ width: 40 }} aria-label="Actions" />
               </tr>
@@ -586,6 +622,19 @@ export function AgentsView() {
                       />
                     )}
                   </td>
+                  <td>
+                    {e.bfoUrl ? (
+                      <a
+                        href={e.bfoUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className={styles.bfoLink}
+                      >Open</a>
+                    ) : (
+                      <span className={styles.muted}>—</span>
+                    )}
+                  </td>
+                  <td>{e.nextStepsType}</td>
                   <td className={e.status ? '' : styles.muted}>{e.status || '—'}</td>
                   <td>
                     <button
@@ -657,7 +706,7 @@ export function AgentsView() {
       {(() => {
         const lines = ['BFO Address'];
         for (const e of todaysOutbound) {
-          if (e.bfoOpp) lines.push(`${e.bfoOpp}: Type email`);
+          if (e.bfoUrl) lines.push(`${e.bfoUrl}: Type ${e.nextStepsType}`);
         }
         for (const m of todaysMeetings) {
           if (m.bfoOpp) lines.push(`${m.bfoOpp}: Type call`);

@@ -279,6 +279,16 @@
   color: #DC2626;
 }
 
+.bfoLink {
+  color: var(--color-accent, #2563eb);
+  text-decoration: underline;
+  font-size: var(--font-size-xs);
+}
+
+.bfoLink:hover {
+  text-decoration: none;
+}
+
 .aiPromptInput {
   width: 100%;
   padding: 0.6rem 0.75rem;
