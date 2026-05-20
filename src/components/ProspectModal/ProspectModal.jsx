@@ -389,7 +389,7 @@ const EMPTY = {
   company: '', cdm: '', status: 'Inside Sales', type: '', geography: '', publicPrivate: '',
   assetTypes: [], peAum: null, reAum: null, numberOfSites: null, rank: '', tier: 'Tier 2',
   hqRegion: '', frameworks: [], notes: '', website: '', emailDomain: '', servicesExplored: {}, serviceNotes: {}, competitors: {}, portfolioCompanies: [],
-  peOwner: '', sustainabilityTargets: '',
+  peOwner: '', sustainabilityTargets: '', caseStudyCreated: false,
 };
 
 // Company-name normalizer shared with the list tabs so fuzzy matching
@@ -3958,6 +3958,32 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   </div>
                 );
               })()}
+            </div>
+
+            <div>
+              <label className={styles.label}>Case Study Created?</label>
+              <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', padding: '0.25rem 0' }}>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.78rem', color: '#1E293B', cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name={`caseStudyCreated-${fields.id || 'new'}`}
+                    checked={fields.caseStudyCreated === true}
+                    onChange={() => set('caseStudyCreated', true)}
+                    style={{ accentColor: '#10B981' }}
+                  />
+                  Yes
+                </label>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.78rem', color: '#1E293B', cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name={`caseStudyCreated-${fields.id || 'new'}`}
+                    checked={!fields.caseStudyCreated}
+                    onChange={() => set('caseStudyCreated', false)}
+                    style={{ accentColor: '#94A3B8' }}
+                  />
+                  No
+                </label>
+              </div>
             </div>
 
             <div style={{ gridColumn: 'span 2' }}>
