@@ -375,7 +375,7 @@ function OppPicker({ oppsCache, onSelect }) {
   );
 }
 
-export function AgentsView() {
+export function AgentsView({ prospects = [] }) {
   const [cache, setCache] = useState(() => readActivityCache());
   const [hubspotCache, setHubspotCache] = useState(null);
   const [oppsCache, setOppsCache] = useState(null);
@@ -814,6 +814,23 @@ export function AgentsView() {
   // Output carries Company (Account), Lead Source + a current-customer
   // boolean, and Scope so the appended block reads as the table the
   // user described.
+  // BFO Company Name lookup — normalized company → bfoCompanyName from
+  // the Table View prospect records. Used to enrich each New BFO Opp
+  // row with the BFO-side account name (which often differs from the
+  // marketing-friendly Account on the Opps sheet).
+  const bfoCompanyByNorm = useMemo(() => {
+    const map = new Map();
+    for (const p of prospects) {
+      const norm = normalizeCompany(p.company);
+      const bfo = String(p.bfoCompanyName || '').trim();
+      if (!norm || !bfo) continue;
+      // First match wins so the lookup is deterministic when two
+      // prospect rows happen to normalize to the same key.
+      if (!map.has(norm)) map.set(norm, bfo);
+    }
+    return map;
+  }, [prospects]);
+
   const newBfoOpps = useMemo(() => {
     const records = oppsCache?.records || [];
     const EXCLUDED_STAGES = new Set(['Not Started', 'Not Sold', 'Sold']);
@@ -832,20 +849,32 @@ export function AgentsView() {
       const leadSource = String(r['Lead Source'] || r['Source'] || '').trim();
       const scope = String(r.Scope || '').trim();
       const followUp = String(r['Follow Up'] ?? '').trim();
+      const bfoCompanyName = bfoCompanyByNorm.get(normalizeCompany(account)) || '';
       rows.push({
         id: r._id ?? `${account}|${scope}`,
         company: account || '—',
+        bfoCompanyName,
         leadSource: leadSource || '—',
         currentCustomer: CURRENT_CUSTOMER_LEAD_SOURCE_RE.test(leadSource),
         scope: scope || '—',
         stage,
         followUp,
         callIn: callInRaw,
+        // Placeholder fields — populated later once the user provides
+        // the mapping for each. Kept on the row object now so the
+        // table column and prompt block don't need a second pass when
+        // the data source is wired up.
+        productLine: '',
+        localProjectName: '',
+        type: '',
+        region: '',
+        class: '',
+        years: '',
       });
     }
     rows.sort((a, b) => a.company.localeCompare(b.company));
     return rows;
-  }, [oppsCache]);
+  }, [oppsCache, bfoCompanyByNorm]);
 
   const dateLabel = useMemo(() => new Date().toLocaleDateString('en-US', {
     weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
@@ -1141,10 +1170,23 @@ export function AgentsView() {
         // New BFO Opp prompt — table of qualifying opps the AI assistant
         // should create in BFO. Rendered as a pipe-delimited block so a
         // plain-text paste keeps column alignment in most editors.
-        const header = 'Company | Lead Source | Current Customer | Scope | Stage';
+        const header = 'Company | BFO Company Name | Lead Source | Current Customer | Scope | Stage | Product Line | Local Project Name | Type | Region | Class | Years';
         const lines = ['BFO Opportunities to Create', header];
         for (const o of newBfoOpps) {
-          lines.push(`${o.company} | ${o.leadSource} | ${o.currentCustomer ? 'Yes' : 'No'} | ${o.scope} | ${o.stage}`);
+          lines.push([
+            o.company,
+            o.bfoCompanyName,
+            o.leadSource,
+            o.currentCustomer ? 'Yes' : 'No',
+            o.scope,
+            o.stage,
+            o.productLine,
+            o.localProjectName,
+            o.type,
+            o.region,
+            o.class,
+            o.years,
+          ].join(' | '));
         }
         const block = lines.join('\n');
         const fullPrompt = `${newBfoOppPrompt}\n\n${block}`;
@@ -1183,20 +1225,29 @@ export function AgentsView() {
                 No Opps currently match (Stage ≠ Not Started / Not Sold / Sold, BFO Link = &ldquo;-&rdquo;, Call In cell not blank).
               </div>
             ) : (
-              <table className={styles.table} style={{ marginTop: '0.5rem' }}>
+              <div style={{ marginTop: '0.5rem', overflowX: 'auto' }}>
+              <table className={styles.table}>
                 <thead>
                   <tr>
                     <th>Company</th>
+                    <th>BFO Company Name</th>
                     <th>Lead Source</th>
-                    <th style={{ width: 140 }}>Current Customer</th>
+                    <th style={{ width: 110 }}>Current Customer</th>
                     <th>Scope</th>
-                    <th style={{ width: 130 }}>Stage</th>
+                    <th style={{ width: 110 }}>Stage</th>
+                    <th>Product Line</th>
+                    <th>Local Project Name</th>
+                    <th>Type</th>
+                    <th>Region</th>
+                    <th>Class</th>
+                    <th>Years</th>
                   </tr>
                 </thead>
                 <tbody>
                   {newBfoOpps.map(o => (
                     <tr key={o.id}>
                       <td className={o.company && o.company !== '—' ? '' : styles.muted}>{o.company || '—'}</td>
+                      <td className={o.bfoCompanyName ? '' : styles.muted}>{o.bfoCompanyName || '—'}</td>
                       <td className={o.leadSource && o.leadSource !== '—' ? '' : styles.muted}>{o.leadSource || '—'}</td>
                       <td>
                         <span style={{
@@ -1208,10 +1259,17 @@ export function AgentsView() {
                       </td>
                       <td className={o.scope && o.scope !== '—' ? '' : styles.muted}>{o.scope || '—'}</td>
                       <td className={o.stage ? '' : styles.muted}>{o.stage || '—'}</td>
+                      <td className={o.productLine ? '' : styles.muted}>{o.productLine || '—'}</td>
+                      <td className={o.localProjectName ? '' : styles.muted}>{o.localProjectName || '—'}</td>
+                      <td className={o.type ? '' : styles.muted}>{o.type || '—'}</td>
+                      <td className={o.region ? '' : styles.muted}>{o.region || '—'}</td>
+                      <td className={o.class ? '' : styles.muted}>{o.class || '—'}</td>
+                      <td className={o.years ? '' : styles.muted}>{o.years || '—'}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+              </div>
             )}
             <pre className={styles.aiPromptPreview}>{fullPrompt}</pre>
           </section>
