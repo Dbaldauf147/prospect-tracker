@@ -117,12 +117,29 @@ function detectBfoUrl(rawOpp) {
   return '';
 }
 
+// Phone-touch detection for the Next Steps column — matches "call",
+// "called", "calls", "calling", any "voicemail", and "left a vm" / "left
+// vm". Shared by detectNextStepsType (email-table Type cell) and the
+// Called-today section so both use identical wording rules.
+const CALLED_NEXT_STEPS_RE = /\b(call(ed|s|ing)?|voicemail|left\s+(?:a\s+)?vm)\b/i;
+
 // "called" if the Next Steps text mentions a phone touch, otherwise
 // the row reflects the email cadence and we tag it as "email".
 function detectNextStepsType(rawOpp) {
   const text = String(rawOpp?.['Next Steps'] || '');
-  if (/\b(call(ed)?|left\s+voicemail)\b/i.test(text)) return 'called';
+  if (CALLED_NEXT_STEPS_RE.test(text)) return 'called';
   return 'email';
+}
+
+// True when the Opps "Last Client Heard From Us" cell parses to exactly
+// 0 (covers raw "0", "0 days", "0d", or a literal number). Empty / -
+// / N/A values are treated as missing, not zero.
+function isLastClientHeardZero(rawOpp) {
+  const v = String(rawOpp?.['Last Client Heard From Us'] ?? '').trim();
+  if (!v || v === '-' || v === '—' || v === '#N/A') return false;
+  const m = v.match(/-?\d+(?:\.\d+)?/);
+  if (!m) return false;
+  return Number(m[0]) === 0;
 }
 
 function todayBounds() {
@@ -619,6 +636,31 @@ export function AgentsView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cache, hubspotCache, oppIndex, overrides, ignoredEmailIds, ignoredMeetingIds]);
 
+  // Opps where the user logged a recent phone touch in Next Steps and
+  // the client side of the conversation has been quiet since (Last
+  // Client Heard From Us = 0). Drives the Called-today section above
+  // the email table.
+  const calledOpps = useMemo(() => {
+    const records = oppsCache?.records || [];
+    const rows = [];
+    for (const r of records) {
+      const nextSteps = String(r['Next Steps'] || '');
+      if (!CALLED_NEXT_STEPS_RE.test(nextSteps)) continue;
+      if (!isLastClientHeardZero(r)) continue;
+      const account = String(r.Account || '').trim();
+      const bfoOpp = String(r['BFO Link'] || '').trim();
+      rows.push({
+        id: r._id ?? `${account}|${bfoOpp}`,
+        company: account || '—',
+        bfoOpp: (bfoOpp && bfoOpp !== '-' && bfoOpp !== '#N/A') ? bfoOpp : '',
+        bfoUrl: detectBfoUrl(r),
+        nextSteps,
+      });
+    }
+    rows.sort((a, b) => a.company.localeCompare(b.company));
+    return rows;
+  }, [oppsCache]);
+
   const dateLabel = useMemo(() => new Date().toLocaleDateString('en-US', {
     weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
   }), []);
@@ -674,6 +716,49 @@ export function AgentsView() {
       {cache && fetchedLabel && (
         <div className={styles.subnote}>Cache last refreshed {fetchedLabel}.</div>
       )}
+
+      <section className={styles.section}>
+        <h2 className={styles.sectionHeader}>
+          Called <span className={styles.sectionCount}>{calledOpps.length}</span>
+        </h2>
+        {calledOpps.length === 0 ? (
+          <div className={styles.empty}>No Opps with a phone touch logged in Next Steps and Last Client Heard From Us = 0.</div>
+        ) : (
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                <th>Company</th>
+                <th>BFO Opportunity</th>
+                <th style={{ width: 70 }}>BFO Link</th>
+                <th style={{ width: 70 }}>Type</th>
+              </tr>
+            </thead>
+            <tbody>
+              {calledOpps.map(o => (
+                <tr key={o.id}>
+                  <td className={o.company && o.company !== '—' ? '' : styles.muted}>{o.company || '—'}</td>
+                  <td className={o.bfoOpp ? '' : styles.muted} title={o.nextSteps}>
+                    {o.bfoOpp || '—'}
+                  </td>
+                  <td>
+                    {o.bfoUrl ? (
+                      <a
+                        href={o.bfoUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className={styles.bfoLink}
+                      >Open</a>
+                    ) : (
+                      <span className={styles.muted}>—</span>
+                    )}
+                  </td>
+                  <td>called</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
 
       <section className={styles.section}>
         <h2 className={styles.sectionHeader}>
