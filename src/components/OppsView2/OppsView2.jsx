@@ -1487,30 +1487,31 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     };
   }, []);
 
-  // Line Item → Services mapping authored on the Pricing tab's Linked To
-  // page. Used by the Scope cell to offer a "From Line Item" bulk-add.
-  // Hydrated from IndexedDB on mount and refreshed when PricingView
-  // dispatches its change event so cross-tab edits show up live.
-  const [lineItemServices, setLineItemServices] = useState({});
+  // Per-Pricing-Option services bundle derived on the Pricing tab from
+  // the Line Item → Services mapping. Used by the Scope cell to offer
+  // an "Add from Pricing Option" bulk-add. Hydrated from IndexedDB on
+  // mount and refreshed when PricingView dispatches its change event so
+  // cross-tab edits show up live.
+  const [pricingOptionServices, setPricingOptionServices] = useState({});
   useEffect(() => {
     let cancelled = false;
-    dbGet('pricing-cache', 'lineItemServices')
-      .then(val => { if (!cancelled && val && typeof val === 'object') setLineItemServices(val); })
+    dbGet('pricing-cache', 'pricingOptionServices')
+      .then(val => { if (!cancelled && val && typeof val === 'object') setPricingOptionServices(val); })
       .catch(() => { /* missing cache is fine */ });
     const refresh = (e) => {
       const detail = e?.detail;
       if (detail && typeof detail === 'object') {
-        setLineItemServices(detail);
+        setPricingOptionServices(detail);
         return;
       }
-      dbGet('pricing-cache', 'lineItemServices')
-        .then(val => { if (!cancelled && val && typeof val === 'object') setLineItemServices(val); })
+      dbGet('pricing-cache', 'pricingOptionServices')
+        .then(val => { if (!cancelled && val && typeof val === 'object') setPricingOptionServices(val); })
         .catch(() => {});
     };
-    window.addEventListener('pricing:lineItemServicesChanged', refresh);
+    window.addEventListener('pricing:optionServicesChanged', refresh);
     return () => {
       cancelled = true;
-      window.removeEventListener('pricing:lineItemServicesChanged', refresh);
+      window.removeEventListener('pricing:optionServicesChanged', refresh);
     };
   }, []);
   // Persisting only kicks in after the initial hydration finishes —
@@ -1806,15 +1807,15 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           if (link) {
             const opts = listRegistry.get(link.listKey)?.options || [];
             if (link.mode === 'multi') {
-              // Surface the Pricing-tab Line Item → Services mappings
-              // only when this cell's vocabulary is the Solutions
-              // catalog (the source of those mappings) — so the quick
-              // picker doesn't appear on unrelated multi-select cells
-              // the user might bind to other lists.
+              // Surface the Pricing-tab per-Option services bundle only
+              // when this cell's vocabulary is the Solutions catalog
+              // (the source of those mappings) — so the quick picker
+              // doesn't appear on unrelated multi-select cells the user
+              // might bind to other lists.
               const extraGroups = link.listKey === 'solutions'
-                ? Object.entries(lineItemServices || {})
-                    .map(([key, services]) => ({
-                      label: key,
+                ? Object.entries(pricingOptionServices || {})
+                    .map(([sheetName, services]) => ({
+                      label: sheetName,
                       options: Array.isArray(services) ? services : [],
                     }))
                     .filter(g => g.options.length > 0)
@@ -1826,6 +1827,8 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                   onChange={(v) => updateOppField(row._id, h, v)}
                   options={opts}
                   extraGroups={extraGroups}
+                  extraGroupsLabel="Add from Pricing Option"
+                  extraGroupsPlaceholder="— pick an option —"
                 />
               );
             }
@@ -1947,7 +1950,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       ? [...mapped.slice(0, nextStepsIdx), infoCol, ...mapped.slice(nextStepsIdx)]
       : [...mapped, infoCol];
     return [selectCol, ...withInfo, actions];
-  }, [headers, columnLinks, listRegistry, updateOppField, deleteOpp, companySuggestions, prospects, updateProspect, hubspotContacts, selectedIds, lineItemServices]);
+  }, [headers, columnLinks, listRegistry, updateOppField, deleteOpp, companySuggestions, prospects, updateProspect, hubspotContacts, selectedIds, pricingOptionServices]);
 
   const stageOrder = ['Lead', 'Not Started', 'Qualifying', 'Quoting', 'Quoted', 'Verbal', 'Sold', 'Not Sold'];
   const CLOSED_STAGES = useMemo(() => new Set(['Sold', 'Not Sold']), []);

@@ -649,8 +649,9 @@ function LineItemServicesSection({ workbookItems, lineItemServices, setLineItemS
       <h3 className={styles.linkedSubheading}>Line Item → Services ({mappedCount})</h3>
       <p className={styles.linkedHint}>
         Tie each pricing Line Item to one or more services from the Dropdowns tab's
-        Solutions / Service Catalog. Opps 2's Scope column can then bulk-add those
-        services from a "From Line Item" picker.
+        Solutions / Service Catalog. Opps 2's Scope column can then bulk-add the
+        union of services across every line item in a Pricing Option from an
+        "Add from Pricing Option" picker.
       </p>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
         <input
@@ -1131,6 +1132,12 @@ const LINKED_TO_DEFAULTS_KEY = 'linkedToDefaults';
 // defaults.
 const LINE_ITEM_SERVICES_KEY = 'lineItemServices';
 const LINE_ITEM_SERVICES_EVENT = 'pricing:lineItemServicesChanged';
+// Per-Option services bundle derived from the loaded workbook + the
+// Line Item → Services mapping. Persisted separately so Opps 2 can
+// offer an "Add from Pricing Option" picker on its Scope cell without
+// needing to walk the workbook itself.
+const OPTION_SERVICES_KEY = 'pricingOptionServices';
+const OPTION_SERVICES_EVENT = 'pricing:optionServicesChanged';
 // Bump this whenever the parser output shape changes — older cached
 // parses are silently discarded on hydration so the user re-uploads
 // against the current parser.
@@ -1290,6 +1297,45 @@ export function PricingView({ settings } = {}) {
       window.dispatchEvent(new CustomEvent(LINE_ITEM_SERVICES_EVENT, { detail: lineItemServices }));
     } catch { /* CustomEvent unavailable */ }
   }, [lineItemServices]);
+
+  // Derive a per-Pricing-Option services bundle by walking each option's
+  // line items, looking up their saved services in lineItemServices,
+  // and unioning the results (case-insensitive dedupe, original casing
+  // preserved). Keyed by sheet name so the Opps 2 picker can show the
+  // same labels the Pricing tab does.
+  const pricingOptionServices = useMemo(() => {
+    if (!workbook || !Array.isArray(workbook.options)) return {};
+    const out = {};
+    for (const o of workbook.options) {
+      const seen = new Set();
+      const services = [];
+      for (const sec of (o.sections || [])) {
+        for (const item of (sec.items || [])) {
+          const key = String(item.description || '').trim().toLowerCase();
+          const mapped = key && lineItemServices ? lineItemServices[key] : null;
+          if (!Array.isArray(mapped)) continue;
+          for (const s of mapped) {
+            const k = String(s || '').toLowerCase();
+            if (!k || seen.has(k)) continue;
+            seen.add(k);
+            services.push(s);
+          }
+        }
+      }
+      out[o.sheetName] = services;
+    }
+    return out;
+  }, [workbook, lineItemServices]);
+
+  // Persist the derived per-Option bundle and broadcast a change so
+  // Opps 2 can refresh its picker without needing the workbook itself.
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    dbPut(STORE, pricingOptionServices, OPTION_SERVICES_KEY).catch(err => console.warn('Failed to save option services:', err));
+    try {
+      window.dispatchEvent(new CustomEvent(OPTION_SERVICES_EVENT, { detail: pricingOptionServices }));
+    } catch { /* CustomEvent unavailable */ }
+  }, [pricingOptionServices]);
 
   // Effective per-row cost = supplier CTS + tech depreciation. Tech
   // depr is item.cts × techDeprPct for non-pass-through rows (pass-
