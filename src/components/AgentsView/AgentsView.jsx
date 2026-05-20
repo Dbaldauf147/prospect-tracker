@@ -749,9 +749,6 @@ export function AgentsView() {
         for (const e of todaysOutbound) {
           if (e.bfoUrl) lines.push(`${e.bfoUrl}: Type ${e.nextStepsType}`);
         }
-        for (const m of todaysMeetings) {
-          if (m.bfoOpp) lines.push(`${m.bfoOpp}: Type call`);
-        }
         const addressBlock = lines.join('\n');
         const fullPrompt = `${aiPrompt}\n\n${addressBlock}`;
         const onCopy = async () => {
