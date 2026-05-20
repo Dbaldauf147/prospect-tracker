@@ -267,11 +267,16 @@ export function OppsView({ settings, updateSettings } = {}) {
     });
   }, [records, dateFrom, dateTo, statusFilter, activityFilter, CLOSED_STAGES]);
 
+  // Global search across every column on each record — Object.values
+  // walks the entire shape, so the user can type any value (Account,
+  // Status, Stage, Scope, Notes, BFO Address, etc.) and the row that
+  // contains it surfaces. Term is trimmed + lowercased so accidental
+  // whitespace and casing don't break matches.
   const filtered = useMemo(() => {
-    if (!search.trim()) return prefiltered;
-    const term = search.toLowerCase();
+    const term = search.trim().toLowerCase();
+    if (!term) return prefiltered;
     return prefiltered.filter(r =>
-      Object.values(r).some(v => v && String(v).toLowerCase().includes(term))
+      Object.values(r).some(v => v != null && v !== '' && String(v).toLowerCase().includes(term))
     );
   }, [prefiltered, search]);
 
@@ -480,7 +485,7 @@ export function OppsView({ settings, updateSettings } = {}) {
             <input
               className={styles.searchInput}
               type="text"
-              placeholder="Search opps..."
+              placeholder="Search across all columns (Account, Stage, Scope, Notes, BFO Address, …)"
               value={search}
               onChange={e => setSearch(e.target.value)}
             />
