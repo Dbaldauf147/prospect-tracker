@@ -1184,7 +1184,20 @@ function NewOppSourceModal({ account, options, onCreate, onCancel }) {
 // Popup that shows the basic info for one opp + a Delete button. Opened
 // from the row-level info button so the user can eyeball the full record
 // without having to hunt through the (often horizontally scrolled) row.
-function OppInfoModal({ opp, headers, onClose, onDelete }) {
+function OppInfoModal({
+  opp,
+  headers,
+  onClose,
+  onDelete,
+  onFieldChange,
+  columnLinks,
+  listRegistry,
+  companySuggestions,
+  prospects,
+  updateProspect,
+  hubspotContacts,
+  pricingOptionServices,
+}) {
   if (!opp) return null;
   // Show every header column the row has a value for, in the same order
   // the table presents them, so the popup matches the user's mental
@@ -1195,6 +1208,73 @@ function OppInfoModal({ opp, headers, onClose, onDelete }) {
     if (raw == null || raw === '') return '—';
     if (DATE_COLUMNS.has(key)) return formatDateDisplay(raw);
     return String(raw);
+  };
+  const renderEditor = (h) => {
+    const value = opp[h];
+    // Computed columns stay read-only — they're derived from sibling
+    // fields and don't have a stored value to edit.
+    if (h === 'Call In' || h === 'Last Spoke') {
+      return (
+        <span style={{ color: 'var(--color-text-muted)' }}>
+          {value == null || value === '' ? '—' : String(value)}
+        </span>
+      );
+    }
+    if (!onFieldChange) {
+      // Fallback to the original read-only renderer when the modal is
+      // mounted without an edit callback.
+      return <span>{formatValue(h, value)}</span>;
+    }
+    const onChange = (v) => onFieldChange(h, v);
+    if (DATE_COLUMNS.has(h)) {
+      return <DateCell value={value} onChange={onChange} />;
+    }
+    const link = columnLinks ? resolveColumnLink(h, columnLinks) : null;
+    if (link && listRegistry) {
+      const opts = listRegistry.get(link.listKey)?.options || [];
+      if (link.mode === 'multi') {
+        const extraGroups = link.listKey === 'solutions'
+          ? Object.entries(pricingOptionServices || {})
+              .map(([sheetName, services]) => ({
+                label: sheetName,
+                options: Array.isArray(services) ? services : [],
+              }))
+              .filter(g => g.options.length > 0)
+              .sort((a, b) => a.label.localeCompare(b.label))
+          : undefined;
+        return (
+          <MultiSelectCell
+            value={value}
+            onChange={onChange}
+            options={opts}
+            extraGroups={extraGroups}
+            extraGroupsLabel="Add from Pricing Option"
+            extraGroupsPlaceholder="— pick an option —"
+            nowrap={h === 'Scope'}
+          />
+        );
+      }
+      return <SelectCell value={value} onChange={onChange} options={opts} />;
+    }
+    if (h === 'Contact') {
+      return (
+        <ContactCell
+          value={value}
+          onChange={onChange}
+          account={opp['Account']}
+          prospects={prospects}
+          updateProspect={updateProspect}
+          hubspotContacts={hubspotContacts}
+        />
+      );
+    }
+    return (
+      <EditableCell
+        value={value}
+        onChange={onChange}
+        suggestions={h === 'Account' ? companySuggestions : undefined}
+      />
+    );
   };
   return createPortal(
     <div
@@ -1255,7 +1335,7 @@ function OppInfoModal({ opp, headers, onClose, onDelete }) {
                     padding: '0.45rem 0',
                     color: 'var(--color-text)',
                     whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                  }}>{formatValue(h, opp[h])}</td>
+                  }}>{renderEditor(h)}</td>
                 </tr>
               ))}
             </tbody>
@@ -2213,6 +2293,14 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             headers={headers}
             onClose={() => setInfoOppId(null)}
             onDelete={deleteOpp}
+            onFieldChange={(field, value) => updateOppField(opp._id, field, value)}
+            columnLinks={columnLinks}
+            listRegistry={listRegistry}
+            companySuggestions={companySuggestions}
+            prospects={prospects}
+            updateProspect={updateProspect}
+            hubspotContacts={hubspotContacts}
+            pricingOptionServices={pricingOptionServices}
           />
         );
       })()}
