@@ -32,6 +32,7 @@ import { ListsView } from './components/ListsView/ListsView';
 import { PEPortfolioView } from './components/PEPortfolioView/PEPortfolioView';
 import { PricingView } from './components/PricingView/PricingView';
 import { PipelineView } from './components/PipelineView/PipelineView';
+import { YOYView } from './components/YOYView/YOYView';
 import { BFOActivityView } from './components/BFOActivityView/BFOActivityView';
 import { DailySuccessManager } from './components/DailySuccess/DailySuccessManager';
 import { DailySuccessLogModal } from './components/DailySuccess/DailySuccessLogModal';
@@ -310,6 +311,8 @@ function App() {
             <PricingView settings={settings} />
           ) : view === 'pipeline' ? (
             <PipelineView />
+          ) : view === 'yoy' ? (
+            <YOYView />
           ) : view === 'bfo' ? (
             <BFOActivityView />
           ) : view === 'privacy' ? (

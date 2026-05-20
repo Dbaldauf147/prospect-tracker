@@ -158,6 +158,13 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
           Pipeline
         </button>
         <button
+          className={view === 'yoy' ? styles.navItemActive : styles.navItem}
+          onClick={() => setView('yoy')}
+        >
+          <span className={styles.navIcon}>&#128200;</span>
+          YOY
+        </button>
+        <button
           className={view === 'bfo' ? styles.navItemActive : styles.navItem}
           onClick={() => setView('bfo')}
         >
