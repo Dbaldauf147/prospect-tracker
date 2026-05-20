@@ -278,3 +278,81 @@
 .ignoreBtn:hover {
   color: #DC2626;
 }
+
+.aiPromptInput {
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+  resize: vertical;
+  min-height: 12rem;
+}
+
+.aiPromptInput:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.aiPromptControls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.aiPromptBtn {
+  padding: 0.4rem 0.85rem;
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  background: var(--color-accent);
+  color: #fff;
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.aiPromptBtn:hover {
+  filter: brightness(0.95);
+}
+
+.aiPromptBtnGhost {
+  padding: 0.4rem 0.85rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.aiPromptBtnGhost:hover {
+  border-color: var(--color-accent);
+}
+
+.copyFlash {
+  font-size: var(--font-size-xs);
+  color: #16a34a;
+  font-weight: 600;
+}
+
+.aiPromptPreview {
+  margin-top: 0.75rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  background: #f8fafc;
+  color: var(--color-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 24rem;
+  overflow: auto;
+}

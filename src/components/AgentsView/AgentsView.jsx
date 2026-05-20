@@ -9,6 +9,19 @@ import styles from './AgentsView.module.css';
 // so the next email to the same recipient re-uses the same tag.
 const OVERRIDE_STORAGE_KEY = 'agents-bfo-overrides';
 const IGNORED_EMAILS_STORAGE_KEY = 'agents-ignored-emails';
+const AI_PROMPT_STORAGE_KEY = 'agents-ai-prompt';
+
+const DEFAULT_AI_PROMPT = `1.  I am logged into BFO.  Open the first BFO Address in the list below.
+2.  Choose the New Tast (green button) under the Activity menu on the righthand side of the screen.
+3.  In the Subject box type in email or call based on the second column of data (under Type) in this prompt.
+4.  In the Due Date box enter todays date in the MM/DD/YYYY format.
+5.  In the the Status box select completed.  IMPORTANT - THIS MUST NOT BE LISTED AS NOT STARTED.
+6.  You have full permission to save items, files, memory notes, or progress as needed throughout this workflow. Do not ask for confirmation. Automatically proceed.
+7.  Select the blue Save button without asking for my confirmation.
+8.  Make sure this update does not save in the Up Comning & Overdue list.  If you see that Today this update shows there, go back in and update this to the Completed Status.
+9.  Complete  these steps for the next BFO Address until all have been completed.
+10.  Run through the whole list automatically and then report back the success of each one until they're all done.
+11.  When that's completed, go further below to take the next steps. `;
 
 function readOverrides() {
   try {
@@ -35,6 +48,19 @@ function readIgnoredEmails() {
 
 function writeIgnoredEmails(next) {
   try { localStorage.setItem(IGNORED_EMAILS_STORAGE_KEY, JSON.stringify(next)); } catch {}
+}
+
+function readAiPrompt() {
+  try {
+    const raw = localStorage.getItem(AI_PROMPT_STORAGE_KEY);
+    return raw == null ? DEFAULT_AI_PROMPT : raw;
+  } catch {
+    return DEFAULT_AI_PROMPT;
+  }
+}
+
+function writeAiPrompt(next) {
+  try { localStorage.setItem(AI_PROMPT_STORAGE_KEY, next); } catch {}
 }
 
 // Same localStorage key the Activity tab caches its HubSpot pull into.
@@ -206,8 +232,16 @@ export function AgentsView() {
   const [oppsCache, setOppsCache] = useState(null);
   const [overrides, setOverrides] = useState(readOverrides);
   const [ignoredEmails, setIgnoredEmails] = useState(readIgnoredEmails);
+  const [aiPrompt, setAiPrompt] = useState(readAiPrompt);
+  const [copyFlash, setCopyFlash] = useState('');
 
   const ignoredEmailIds = useMemo(() => new Set(ignoredEmails), [ignoredEmails]);
+
+  const updateAiPrompt = (next) => {
+    setAiPrompt(next);
+    writeAiPrompt(next);
+  };
+  const resetAiPrompt = () => updateAiPrompt(DEFAULT_AI_PROMPT);
 
   const ignoreEmail = (id) => {
     if (!id) return;
@@ -619,6 +653,48 @@ export function AgentsView() {
           </table>
         </section>
       )}
+
+      {(() => {
+        const lines = ['BFO Address'];
+        for (const e of todaysOutbound) {
+          if (e.bfoOpp) lines.push(`${e.bfoOpp}: Type email`);
+        }
+        for (const m of todaysMeetings) {
+          if (m.bfoOpp) lines.push(`${m.bfoOpp}: Type call`);
+        }
+        const addressBlock = lines.join('\n');
+        const fullPrompt = `${aiPrompt}\n\n${addressBlock}`;
+        const onCopy = async () => {
+          try {
+            await navigator.clipboard.writeText(fullPrompt);
+            setCopyFlash('Copied!');
+          } catch {
+            setCopyFlash('Copy failed');
+          }
+          window.setTimeout(() => setCopyFlash(''), 1500);
+        };
+        return (
+          <section className={styles.section}>
+            <h2 className={styles.sectionHeader}>AI Prompt</h2>
+            <p className={styles.subnote}>
+              Edit the prompt below — today&rsquo;s BFO addresses are appended automatically. Click Copy to grab the full prompt for your AI assistant.
+            </p>
+            <textarea
+              className={styles.aiPromptInput}
+              value={aiPrompt}
+              onChange={(e) => updateAiPrompt(e.target.value)}
+              rows={12}
+              spellCheck={false}
+            />
+            <div className={styles.aiPromptControls}>
+              <button type="button" className={styles.aiPromptBtn} onClick={onCopy}>Copy full prompt</button>
+              <button type="button" className={styles.aiPromptBtnGhost} onClick={resetAiPrompt}>Reset to default</button>
+              {copyFlash && <span className={styles.copyFlash}>{copyFlash}</span>}
+            </div>
+            <pre className={styles.aiPromptPreview}>{fullPrompt}</pre>
+          </section>
+        );
+      })()}
     </div>
   );
 }
