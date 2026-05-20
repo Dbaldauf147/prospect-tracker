@@ -187,7 +187,7 @@ function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onRepla
     const lines = [];
     for (const r of rows) {
       const manualFee = Number(r.fee);
-      const hasManual = Number.isFinite(manualFee) && manualFee > 0;
+      const hasManual = r.fee != null && r.fee !== '' && Number.isFinite(manualFee) && manualFee >= 0;
       const auto = !hasManual && autoFeeFor ? autoFeeFor(r) : null;
       const fee = hasManual ? manualFee : (typeof auto === 'number' ? auto : '');
       const feeCell = typeof fee === 'number' ? fee.toFixed(2) : '';
@@ -312,7 +312,7 @@ function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onRepla
               </td>
               {(() => {
                 const auto = autoFeeFor ? autoFeeFor(row) : null;
-                const hasManualFee = typeof row.fee === 'number' && row.fee > 0;
+                const hasManualFee = typeof row.fee === 'number' && Number.isFinite(row.fee) && row.fee >= 0;
                 const initial = hasManualFee ? fmtFeeInput(row.fee) : '';
                 const placeholder = typeof auto === 'number' ? fmtFeeInput(auto) : '';
                 const title = typeof auto === 'number'
@@ -375,11 +375,14 @@ function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onRepla
               })}
               {(() => {
                 const computed = marginFor ? marginFor(row.altItem) : null;
+                const explicitZeroFee = typeof row.fee === 'number' && row.fee === 0;
                 const placeholder = passThrough
                   ? 'pass'
                   : (computed
                     ? `${(computed.marginPct * 100).toFixed(1)}%`
-                    : (typeof globalGmPct === 'number' ? `${Math.round(globalGmPct * 100)}%` : ''));
+                    : (explicitZeroFee
+                      ? ''
+                      : (typeof globalGmPct === 'number' ? `${Math.round(globalGmPct * 100)}%` : '')));
                 const fmt = (n) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
                 const title = passThrough
                   ? 'Pass-through fee — billed at face cost, contributes no margin.'
@@ -1406,9 +1409,8 @@ export function PricingView({ settings } = {}) {
   // startMonth through termMonths, escalated each year.
   function altFeeYearRevenue(row, yearIndex) {
     const manualFee = Number(row.fee);
-    const fee = Number.isFinite(manualFee) && manualFee > 0
-      ? manualFee
-      : (autoFeePerUnitFor(row) ?? 0);
+    const hasManualFee = row.fee != null && row.fee !== '' && Number.isFinite(manualFee) && manualFee >= 0;
+    const fee = hasManualFee ? manualFee : (autoFeePerUnitFor(row) ?? 0);
     const uc = Number(row.unitCount);
     if (!Number.isFinite(fee) || fee <= 0 || !Number.isFinite(uc) || uc <= 0) return 0;
     const startMonth = Math.max(1, Math.round(Number(row.startMonth) || 1));
@@ -1520,9 +1522,8 @@ export function PricingView({ settings } = {}) {
 
     const totalFee = altRows.reduce((s, r) => {
       const manualFee = Number(r.fee);
-      const fee = Number.isFinite(manualFee) && manualFee > 0
-        ? manualFee
-        : (autoFeePerUnitFor(r) ?? 0);
+      const hasManualFee = r.fee != null && r.fee !== '' && Number.isFinite(manualFee) && manualFee >= 0;
+      const fee = hasManualFee ? manualFee : (autoFeePerUnitFor(r) ?? 0);
       const uc = Number(r.unitCount);
       if (!Number.isFinite(fee) || fee <= 0 || !Number.isFinite(uc) || uc <= 0) return s;
       const isRecurring = /recurring/i.test(r.type || '');
