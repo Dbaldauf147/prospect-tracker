@@ -5907,6 +5907,25 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         title={rows.length === 0 ? 'No data to download' : `Download ${rows.length} row${rows.length === 1 ? '' : 's'}`}
                         style={{ padding: '0.3rem 0.7rem', border: '1px solid var(--color-border)', borderRadius: '5px', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: rows.length === 0 ? 'not-allowed' : 'pointer', fontFamily: 'inherit', color: rows.length === 0 ? 'var(--color-text-muted)' : 'var(--color-accent)', opacity: rows.length === 0 ? 0.6 : 1 }}
                       >↓ Download Current Data</button>
+                      <button
+                        onClick={() => {
+                          const sf = portfolioSourceFile;
+                          if (!sf?.blob) return;
+                          const url = URL.createObjectURL(sf.blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = sf.name || 'portfolio-source-file';
+                          document.body.appendChild(a);
+                          a.click();
+                          a.remove();
+                          setTimeout(() => URL.revokeObjectURL(url), 1000);
+                        }}
+                        disabled={!portfolioSourceFile?.blob}
+                        title={portfolioSourceFile?.blob
+                          ? `Download the raw ${portfolioSourceFile.name} that was uploaded (unmodified, not the polished export)`
+                          : 'No source file uploaded yet — use ↑ Upload Excel to save one'}
+                        style={{ padding: '0.3rem 0.7rem', border: '1px solid var(--color-border)', borderRadius: '5px', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: portfolioSourceFile?.blob ? 'pointer' : 'not-allowed', fontFamily: 'inherit', color: portfolioSourceFile?.blob ? 'var(--color-accent)' : 'var(--color-text-muted)', opacity: portfolioSourceFile?.blob ? 1 : 0.6 }}
+                      >↓ Download Source File</button>
                       <label style={{ padding: '0.3rem 0.7rem', border: '1px solid var(--color-border)', borderRadius: '5px', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-text)' }}>
                         ↑ Upload Excel
                         <input type="file" accept=".xlsx,.xls,.csv" onChange={handleUpload} style={{ display: 'none' }} />
