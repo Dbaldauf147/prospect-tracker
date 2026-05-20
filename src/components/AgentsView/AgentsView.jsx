@@ -236,35 +236,6 @@ function lastSpokeBusinessDays(rawOpp) {
   return count;
 }
 
-// Calendar days from today to the Opps "Follow Up" date — same formula
-// OppsView2 uses for its computed "Call In" column. Returns null when
-// the field is empty or doesn't carry a full year+month+day date. We
-// validate the shape ourselves (rather than relying on Date.parse) so
-// loose values like a bare "2026", "May 2026", "TBD", or an Excel
-// serial number don't masquerade as valid Follow Up dates.
-function callInDays(rawOpp) {
-  const raw = String(rawOpp?.['Follow Up'] ?? '').trim();
-  if (!raw) return null;
-  const looksLikeFullDate =
-    /^\d{4}-\d{1,2}-\d{1,2}\b/.test(raw)              // 2026-05-20
-    || /^\d{1,2}\/\d{1,2}\/\d{2,4}\b/.test(raw)        // 5/20/2026
-    || /^\d{1,2}-\d{1,2}-\d{2,4}\b/.test(raw)          // 5-20-2026
-    || /^[A-Za-z]{3,}\s+\d{1,2},?\s+\d{4}\b/.test(raw) // May 20, 2026
-    || /^\d{1,2}\s+[A-Za-z]{3,}\s+\d{4}\b/.test(raw);  // 20 May 2026
-  if (!looksLikeFullDate) return null;
-  const iso = toISODate(raw);
-  if (!iso) return null;
-  const [y, m, d] = iso.split('-').map(n => parseInt(n, 10));
-  // Sanity range so a misparsed value (e.g. Date.parse treating "45000"
-  // as year 45000) can't produce a "valid" Call In far in the future.
-  if (!Number.isFinite(y) || y < 1900 || y > 2100) return null;
-  const target = new Date(y, m - 1, d);
-  target.setHours(0, 0, 0, 0);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  return Math.round((target - today) / 86400000);
-}
-
 function todayBounds() {
   const now = new Date();
   const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
@@ -834,27 +805,33 @@ export function AgentsView() {
 
   // Opps that don't yet exist in BFO and need a fresh Guided Opportunity
   // created. Filter mirrors the user's spec:
-  //   • Status NOT in {Not Started, Not Sold}
+  //   • Status NOT in {Not Started, Not Sold, Sold}
   //   • BFO Link is literally "-" (the Opps tab's placeholder for "no
   //     link yet")
-  //   • Call In (days-to-Follow-Up) is not null — i.e. the row has a
-  //     parseable Follow Up date set
+  //   • The literal Call In cell on the Opps sheet is non-blank (we
+  //     read it directly rather than computing it from Follow Up — the
+  //     user wants the sheet value to gate inclusion).
   // Output carries Company (Account), Lead Source + a current-customer
   // boolean, and Scope so the appended block reads as the table the
   // user described.
   const newBfoOpps = useMemo(() => {
     const records = oppsCache?.records || [];
-    const EXCLUDED_STATUSES = new Set(['Not Started', 'Not Sold']);
+    const EXCLUDED_STATUSES = new Set(['Not Started', 'Not Sold', 'Sold']);
     const rows = [];
     for (const r of records) {
       const status = String(r.Status || '').trim();
       if (!status || EXCLUDED_STATUSES.has(status)) continue;
       const bfoLink = String(r['BFO Link'] ?? '').trim();
       if (bfoLink !== '-') continue;
-      if (callInDays(r) == null) continue;
+      // Use the literal Call In cell from the Opps sheet (not the
+      // Follow-Up-derived computation). Blank / "-" / "#N/A" all count
+      // as missing.
+      const callInRaw = String(r['Call In'] ?? '').trim();
+      if (!callInRaw || callInRaw === '-' || callInRaw === '#N/A') continue;
       const account = String(r.Account || '').trim();
       const leadSource = String(r['Lead Source'] || r['Source'] || '').trim();
       const scope = String(r.Scope || '').trim();
+      const followUp = String(r['Follow Up'] ?? '').trim();
       rows.push({
         id: r._id ?? `${account}|${scope}`,
         company: account || '—',
@@ -862,6 +839,8 @@ export function AgentsView() {
         currentCustomer: CURRENT_CUSTOMER_LEAD_SOURCE_RE.test(leadSource),
         scope: scope || '—',
         status,
+        followUp,
+        callIn: callInRaw,
       });
     }
     rows.sort((a, b) => a.company.localeCompare(b.company));
@@ -1185,7 +1164,7 @@ export function AgentsView() {
               <span className={styles.sectionCount}>{newBfoOpps.length}</span>
             </h2>
             <p className={styles.subnote}>
-              Lists Opps with Status outside Not Started / Not Sold, BFO Link of &ldquo;-&rdquo;, and a Follow Up date set (Call In not blank). Company, Lead Source, Current Customer flag, and Scope are appended automatically.
+              Lists Opps with Status outside Not Started / Not Sold / Sold, BFO Link of &ldquo;-&rdquo;, and a non-blank Call In cell on the Opps sheet. Company, Lead Source, Current Customer flag, and Scope are appended automatically.
             </p>
             <textarea
               className={styles.aiPromptInput}
@@ -1201,7 +1180,7 @@ export function AgentsView() {
             </div>
             {newBfoOpps.length === 0 ? (
               <div className={styles.empty} style={{ marginTop: '0.5rem' }}>
-                No Opps currently match (Status ≠ Not Started/Not Sold, BFO Link = &ldquo;-&rdquo;, Call In set).
+                No Opps currently match (Status ≠ Not Started / Not Sold / Sold, BFO Link = &ldquo;-&rdquo;, Call In cell not blank).
               </div>
             ) : (
               <table className={styles.table} style={{ marginTop: '0.5rem' }}>
