@@ -87,11 +87,13 @@ function readActivityCache() {
   }
 }
 
-// Pull the first http(s) URL out of any field on an opp record. The
-// BFO Link sheet column stores the opportunity name, not the URL, so
-// we scan every value to find the Salesforce / Lightning hyperlink.
+// The Opps sheet keeps the Salesforce / Lightning URL in the
+// "BFO Address" column. Fall back to scanning every field if that one
+// happens to be empty so older rows still surface a link when possible.
 function detectBfoUrl(rawOpp) {
   if (!rawOpp) return '';
+  const direct = String(rawOpp['BFO Address'] || '').trim();
+  if (/^https?:\/\//i.test(direct)) return direct;
   for (const v of Object.values(rawOpp)) {
     if (typeof v !== 'string' || !v) continue;
     const m = v.match(/https?:\/\/\S+/i);
