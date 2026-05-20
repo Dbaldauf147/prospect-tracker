@@ -4,6 +4,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, CartesianGrid, Responsive
 import styles from './PricingView.module.css';
 import { parsePricingWorkbook, priceFromCostAndGm } from '../../utils/pricingParse';
 import { dbGet, dbPut, dbDelete } from '../../utils/db';
+import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { OptionsTab } from './OptionsTab';
 import { PricingConversions } from './PricingConversions';
 import { CompareTab } from './CompareTab';
@@ -577,6 +578,238 @@ Type a value to override.`
   );
 }
 
+// Inline editor that maps a Line Item (description) to one or more
+// services from the Solutions / Service Catalog. The mapping is keyed
+// by lowercase line item name so it persists across workbooks and
+// matches case-insensitively. Rows come from two sources combined:
+// every line item in the current workbook option plus every saved
+// mapping (so entries stay reachable after the workbook is cleared).
+function LineItemServicesSection({ workbookItems, lineItemServices, setLineItemServices, solutionsOptions }) {
+  const [draftItem, setDraftItem] = useState('');
+  const [filter, setFilter] = useState('');
+
+  // Build the row list: union of workbook descriptions and saved-mapping
+  // line items, deduped case-insensitively. Workbook ordering wins for
+  // names it knows; remaining saved entries get appended alphabetically.
+  const rows = useMemo(() => {
+    const out = [];
+    const seen = new Set();
+    for (const item of workbookItems || []) {
+      const name = String(item.description || '').trim();
+      if (!name) continue;
+      const key = name.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ key, name });
+    }
+    const savedExtras = [];
+    for (const key of Object.keys(lineItemServices || {})) {
+      if (!key || seen.has(key)) continue;
+      const services = lineItemServices[key];
+      if (!Array.isArray(services) || services.length === 0) continue;
+      seen.add(key);
+      savedExtras.push({ key, name: key });
+    }
+    savedExtras.sort((a, b) => a.name.localeCompare(b.name));
+    return out.concat(savedExtras);
+  }, [workbookItems, lineItemServices]);
+
+  const filteredRows = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter(r => r.name.toLowerCase().includes(q));
+  }, [rows, filter]);
+
+  function updateServices(key, services) {
+    const next = { ...(lineItemServices || {}) };
+    if (!services || services.length === 0) {
+      delete next[key];
+    } else {
+      next[key] = services;
+    }
+    setLineItemServices(next);
+  }
+
+  function addLineItem() {
+    const name = draftItem.trim();
+    if (!name) return;
+    const key = name.toLowerCase();
+    if (!(lineItemServices || {})[key]) {
+      setLineItemServices({ ...(lineItemServices || {}), [key]: [] });
+    }
+    setDraftItem('');
+  }
+
+  const mappedCount = Object.values(lineItemServices || {})
+    .filter(arr => Array.isArray(arr) && arr.length > 0).length;
+  const hasSolutions = Array.isArray(solutionsOptions) && solutionsOptions.length > 0;
+
+  return (
+    <section className={styles.linkedSection}>
+      <h3 className={styles.linkedSubheading}>Line Item → Services ({mappedCount})</h3>
+      <p className={styles.linkedHint}>
+        Tie each pricing Line Item to one or more services from the Dropdowns tab's
+        Solutions / Service Catalog. Opps 2's Scope column can then bulk-add those
+        services from a "From Line Item" picker.
+      </p>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
+        <input
+          type="text"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="Filter line items…"
+          style={{
+            flex: '0 1 220px', padding: '0.3rem 0.45rem',
+            border: '1px solid var(--color-border)', borderRadius: 4,
+            fontSize: '0.82rem', fontFamily: 'inherit',
+            background: '#fff', color: 'var(--color-text)',
+          }}
+        />
+        <input
+          type="text"
+          value={draftItem}
+          onChange={(e) => setDraftItem(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addLineItem(); } }}
+          placeholder="Add a custom line item…"
+          style={{
+            flex: '0 1 260px', padding: '0.3rem 0.45rem',
+            border: '1px solid var(--color-border)', borderRadius: 4,
+            fontSize: '0.82rem', fontFamily: 'inherit',
+            background: '#fff', color: 'var(--color-text)',
+          }}
+        />
+        <button
+          type="button"
+          onClick={addLineItem}
+          disabled={!draftItem.trim()}
+          style={{
+            padding: '0.3rem 0.7rem', background: draftItem.trim() ? 'var(--color-accent)' : 'transparent',
+            color: draftItem.trim() ? '#fff' : 'var(--color-text-muted)',
+            border: '1px solid var(--color-border)', borderRadius: 4,
+            fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+            cursor: draftItem.trim() ? 'pointer' : 'not-allowed',
+          }}
+        >Add line item</button>
+      </div>
+      {!hasSolutions && (
+        <div className={styles.linkedEmptyInline}>
+          Solutions / Service Catalog list is empty. Add services to it on the Dropdowns tab first.
+        </div>
+      )}
+      {filteredRows.length === 0 ? (
+        <div className={styles.linkedEmptyInline}>
+          {rows.length === 0
+            ? 'No line items yet. Upload a workbook on the Pricing subtab or add a custom line item above.'
+            : 'No line items match the filter.'}
+        </div>
+      ) : (
+        <table className={styles.linkedTable}>
+          <thead>
+            <tr>
+              <th style={{ width: '32%' }}>Line Item</th>
+              <th>Services</th>
+              <th style={{ width: 32 }} />
+            </tr>
+          </thead>
+          <tbody>
+            {filteredRows.map(row => {
+              const services = Array.isArray(lineItemServices?.[row.key]) ? lineItemServices[row.key] : [];
+              return (
+                <tr key={row.key}>
+                  <td>{row.name}</td>
+                  <td>
+                    <ServicesPicker
+                      selected={services}
+                      options={solutionsOptions}
+                      onChange={(next) => updateServices(row.key, next)}
+                    />
+                  </td>
+                  <td>
+                    {services.length > 0 && (
+                      <button
+                        type="button"
+                        className={styles.rowDelBtn}
+                        title="Clear all services for this line item"
+                        onClick={() => updateServices(row.key, [])}
+                      >×</button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
+// Chip-style multi-select for the Line Item → Services table. Shows
+// the currently-picked services as chips with × buttons, plus a
+// dropdown that adds the next pick. Keeping selection inline (no
+// popover) so a long table of mappings stays scannable.
+function ServicesPicker({ selected, options, onChange }) {
+  const [adding, setAdding] = useState('');
+  const selectedSet = useMemo(() => new Set(selected.map(s => s.toLowerCase())), [selected]);
+  const remaining = useMemo(() => options.filter(o => !selectedSet.has(o.toLowerCase())), [options, selectedSet]);
+
+  function addService(service) {
+    if (!service) return;
+    if (selectedSet.has(service.toLowerCase())) return;
+    onChange([...selected, service]);
+    setAdding('');
+  }
+  function removeService(service) {
+    onChange(selected.filter(s => s.toLowerCase() !== service.toLowerCase()));
+  }
+
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', alignItems: 'center' }}>
+      {selected.map(s => (
+        <span
+          key={s}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 4,
+            padding: '2px 6px 2px 8px',
+            background: '#DCFCE7', color: '#166534',
+            border: '1px solid #86EFAC', borderRadius: 999,
+            fontSize: '0.75rem', fontWeight: 600,
+          }}
+        >
+          {s}
+          <button
+            type="button"
+            onClick={() => removeService(s)}
+            title={`Remove ${s}`}
+            style={{
+              padding: 0, width: 14, height: 14, lineHeight: 1,
+              background: 'transparent', border: 'none',
+              color: '#166534', cursor: 'pointer', fontSize: '0.85rem',
+            }}
+          >×</button>
+        </span>
+      ))}
+      {remaining.length > 0 && (
+        <select
+          value={adding}
+          onChange={(e) => addService(e.target.value)}
+          style={{
+            padding: '0.2rem 0.35rem',
+            border: '1px solid var(--color-border)', borderRadius: 3,
+            fontSize: '0.78rem', fontFamily: 'inherit',
+            background: '#fff', color: 'var(--color-text)',
+          }}
+        >
+          <option value="">+ Add service…</option>
+          {remaining.map(o => (
+            <option key={o} value={o}>{o}</option>
+          ))}
+        </select>
+      )}
+    </div>
+  );
+}
+
 // Read-only panel describing the existing Linked To logic and showing
 // the active relationships on the current workbook. Rendered on the
 // "Linked To" page subtab.
@@ -591,6 +824,9 @@ function LinkedToPanel({
   effectiveType,
   linkedToDefaultKey,
   removeLinkedToDefault,
+  lineItemServices,
+  setLineItemServices,
+  solutionsOptions,
 }) {
   const opt = workbook?.options.find(o => o.optionNumber === activeOption) || workbook?.options[0];
   const flatItems = opt ? opt.sections.flatMap(s => s.items) : [];
@@ -728,6 +964,13 @@ function LinkedToPanel({
           </table>
         )}
       </section>
+
+      <LineItemServicesSection
+        workbookItems={flatItems}
+        lineItemServices={lineItemServices}
+        setLineItemServices={setLineItemServices}
+        solutionsOptions={solutionsOptions}
+      />
 
       {!workbook ? (
         <div className={styles.linkedEmpty}>
@@ -881,6 +1124,13 @@ const KEY = 'current';
 // parser-version cache wipes, file removal, and switching to a new
 // SIA workbook. They're user-curated mappings, not parser output.
 const LINKED_TO_DEFAULTS_KEY = 'linkedToDefaults';
+// Line Item → Services catalog mapping. Keyed by lowercase line item
+// name; value is an array of service strings from the Dropdowns-tab
+// Solutions / Service Catalog. Persisted on its own key so it survives
+// parser bumps and Clear-button workbook wipes, just like Linked-To
+// defaults.
+const LINE_ITEM_SERVICES_KEY = 'lineItemServices';
+const LINE_ITEM_SERVICES_EVENT = 'pricing:lineItemServicesChanged';
 // Bump this whenever the parser output shape changes — older cached
 // parses are silently discarded on hydration so the user re-uploads
 // against the current parser.
@@ -917,7 +1167,12 @@ function parsePctInput(s) {
   return n > 1 ? n / 100 : n;
 }
 
-export function PricingView() {
+export function PricingView({ settings } = {}) {
+  const solutionsOptions = useMemo(() => {
+    const lists = getEffectiveDropdownLists(settings);
+    const solutions = lists.find(l => l.key === 'solutions');
+    return Array.isArray(solutions?.options) ? solutions.options : [];
+  }, [settings]);
   const [workbook, setWorkbook] = useState(null); // { fileName, options, sheetNames, loadedAt }
   const [globalGmPct, setGlobalGmPct] = useState(0.5);
   const [overrides, setOverrides] = useState({}); // { [itemId]: { gmPct } }
@@ -925,6 +1180,7 @@ export function PricingView() {
   const [colWidths, setColWidths] = useState({}); // { [colKey]: pixelWidth }
   const [altFees, setAltFees] = useState({}); // { [optionNumber]: [{ altItem, type, fee, unit, unitCount, startMonth }] }
   const [linkedToDefaults, setLinkedToDefaults] = useState({}); // { [`${lineItem}::${type}`]: 'value' }
+  const [lineItemServices, setLineItemServices] = useState({}); // { [lineItemKey]: string[] }
   const [termMonths, setTermMonths] = useState(36);
   const [annualEscalator, setAnnualEscalator] = useState(0.03);
   // Separate escalator for CTS costs — defaults to 3.85% so margin
@@ -962,6 +1218,10 @@ export function PricingView() {
         if (!cancelled && savedDefaults && typeof savedDefaults === 'object') {
           setLinkedToDefaults(savedDefaults);
         }
+        const savedLineItemServices = await dbGet(STORE, LINE_ITEM_SERVICES_KEY);
+        if (!cancelled && savedLineItemServices && typeof savedLineItemServices === 'object') {
+          setLineItemServices(savedLineItemServices);
+        }
         const saved = await dbGet(STORE, KEY);
         if (cancelled || !saved) { hydratedRef.current = true; return; }
         // Drop caches written by an older parser — their workbook
@@ -980,6 +1240,7 @@ export function PricingView() {
         if (saved.colWidths) setColWidths(saved.colWidths);
         if (saved.altFees) setAltFees(saved.altFees);
         if (!savedDefaults && saved.linkedToDefaults) setLinkedToDefaults(saved.linkedToDefaults);
+        if (!savedLineItemServices && saved.lineItemServices && typeof saved.lineItemServices === 'object') setLineItemServices(saved.lineItemServices);
         if (typeof saved.termMonths === 'number') setTermMonths(saved.termMonths);
         if (typeof saved.annualEscalator === 'number') setAnnualEscalator(saved.annualEscalator);
         if (typeof saved.costEscalator === 'number') setCostEscalator(saved.costEscalator);
@@ -1006,9 +1267,9 @@ export function PricingView() {
   // Persist on changes (skip the first render until hydration finishes).
   useEffect(() => {
     if (!hydratedRef.current) return;
-    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, termMonths, annualEscalator, costEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData };
+    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, lineItemServices, termMonths, annualEscalator, costEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData };
     dbPut(STORE, payload, KEY).catch(err => console.warn('Failed to save pricing cache:', err));
-  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, termMonths, annualEscalator, costEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData]);
+  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, lineItemServices, termMonths, annualEscalator, costEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData]);
 
   // Mirror Linked-To defaults under their dedicated key so they
   // outlive the main cache (parser-version bumps, Clear button,
@@ -1018,6 +1279,17 @@ export function PricingView() {
     if (!hydratedRef.current) return;
     dbPut(STORE, linkedToDefaults, LINKED_TO_DEFAULTS_KEY).catch(err => console.warn('Failed to save linked-to defaults:', err));
   }, [linkedToDefaults]);
+
+  // Persist Line Item → Services mapping on its own key and broadcast
+  // a custom event so other views (Opps 2's Scope cell) can refresh
+  // their cached copy without waiting for a remount.
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    dbPut(STORE, lineItemServices, LINE_ITEM_SERVICES_KEY).catch(err => console.warn('Failed to save line-item services:', err));
+    try {
+      window.dispatchEvent(new CustomEvent(LINE_ITEM_SERVICES_EVENT, { detail: lineItemServices }));
+    } catch { /* CustomEvent unavailable */ }
+  }, [lineItemServices]);
 
   // Effective per-row cost = supplier CTS + tech depreciation. Tech
   // depr is item.cts × techDeprPct for non-pass-through rows (pass-
@@ -1992,6 +2264,9 @@ export function PricingView() {
           effectiveType={effectiveType}
           linkedToDefaultKey={linkedToDefaultKey}
           removeLinkedToDefault={removeLinkedToDefault}
+          lineItemServices={lineItemServices}
+          setLineItemServices={setLineItemServices}
+          solutionsOptions={solutionsOptions}
         />
       )}
 
