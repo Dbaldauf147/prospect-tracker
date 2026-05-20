@@ -359,6 +359,233 @@ export function YOYView() {
     return rows;
   }, [records, currentYear]);
 
+  // Year range shared by Top Accounts / Annual Sales / Deal Size — use
+  // the same min-year-with-data → currentYear span as the other charts.
+  const yearRange = useMemo(() => {
+    if (records.length === 0) return [];
+    let minYear = currentYear;
+    let any = false;
+    for (const r of records) {
+      const y = parseYear(r['Open Year']);
+      if (y === null) continue;
+      any = true;
+      if (y < minYear) minYear = y;
+    }
+    if (!any) return [];
+    const out = [];
+    for (let y = minYear; y <= currentYear; y++) out.push(y);
+    return out;
+  }, [records, currentYear]);
+
+  // Top Accounts — pick the top 4 accounts by lifetime Sold $, then
+  // stack per Open Year. Everything outside the top-4 lumps into the
+  // "Remaining" bucket. The Projected bar for the current year adds
+  // YTD Sold $ + the in-progress pipeline (opps opened this year that
+  // haven't closed yet) using the same per-account breakdown.
+  const topAccountsData = useMemo(() => {
+    if (records.length === 0 || yearRange.length === 0) return { years: [], topAccounts: [], colors: {} };
+    const lifetimeSold = new Map();
+    for (const r of records) {
+      const stage = String(r.Stage || '').trim();
+      if (stage !== 'Sold') continue;
+      const account = String(r.Account || '').trim();
+      if (!account) continue;
+      const amt = parseMoney(r['Quoted Amount']) || 0;
+      lifetimeSold.set(account, (lifetimeSold.get(account) || 0) + amt);
+    }
+    const topAccounts = Array.from(lifetimeSold.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4)
+      .map(([name]) => name);
+    const topSet = new Set(topAccounts);
+    // Positional colors so the 1st top account is always blue, then red,
+    // yellow, purple. Remaining is always green.
+    const colors = {
+      [topAccounts[0]]: '#3b82f6',
+      [topAccounts[1]]: '#ef4444',
+      [topAccounts[2]]: '#facc15',
+      [topAccounts[3]]: '#a855f7',
+      Remaining: '#22c55e',
+    };
+    // Year buckets — Sold $ split per top account + Remaining.
+    const buckets = new Map();
+    for (const y of yearRange) {
+      const row = { year: String(y), _total: 0, Remaining: 0 };
+      for (const a of topAccounts) row[a] = 0;
+      buckets.set(y, row);
+    }
+    for (const r of records) {
+      const stage = String(r.Stage || '').trim();
+      if (stage !== 'Sold') continue;
+      const y = parseYear(r['Open Year']);
+      if (y === null || !buckets.has(y)) continue;
+      const amt = parseMoney(r['Quoted Amount']) || 0;
+      const account = String(r.Account || '').trim();
+      const row = buckets.get(y);
+      if (topSet.has(account)) row[account] += amt;
+      else row.Remaining += amt;
+      row._total += amt;
+    }
+    const rows = Array.from(buckets.values()).map(r => ({
+      ...r,
+      year: r.year,
+      _total: Math.round(r._total),
+      Remaining: Math.round(r.Remaining),
+      ...Object.fromEntries(topAccounts.map(a => [a, Math.round(r[a])])),
+    }));
+    // Projected bar — sum of pipeline (any opp with Open Year = current,
+    // Stage NOT in Sold/Not Sold) added to YTD Sold $.
+    const projected = { year: 'Projected', _total: 0, Remaining: 0, _isProjected: true };
+    for (const a of topAccounts) projected[a] = 0;
+    for (const r of records) {
+      const y = parseYear(r['Open Year']);
+      if (y !== currentYear) continue;
+      const stage = String(r.Stage || '').trim();
+      if (stage === 'Not Sold') continue;
+      const amt = parseMoney(r['Quoted Amount']) || 0;
+      if (!amt) continue;
+      const account = String(r.Account || '').trim();
+      if (topSet.has(account)) projected[account] += amt;
+      else projected.Remaining += amt;
+      projected._total += amt;
+    }
+    projected._total = Math.round(projected._total);
+    projected.Remaining = Math.round(projected.Remaining);
+    for (const a of topAccounts) projected[a] = Math.round(projected[a]);
+    rows.push(projected);
+    return { years: rows, topAccounts, colors };
+  }, [records, yearRange, currentYear]);
+
+  // Annual Sales — Sold Quoted Amount per Open Year split into Current
+  // Client vs New Client buckets. Current Client classification mirrors
+  // the regex PipelineView uses (client|existing|renewal|cross-sell|
+  // expansion|upsell on the Lead Source value).
+  const annualSalesData = useMemo(() => {
+    if (records.length === 0 || yearRange.length === 0) return [];
+    const CLIENT_RE = /client|existing|renewal|cross[\s-]?sell|expansion|upsell/i;
+    const annualTarget = target > 0 ? target : DEFAULT_ANNUAL_TARGET;
+    const buckets = new Map();
+    for (const y of yearRange) {
+      buckets.set(y, { year: String(y), currentClient: 0, newClient: 0, _total: 0, _isProjected: false });
+    }
+    for (const r of records) {
+      if (String(r.Stage || '').trim() !== 'Sold') continue;
+      const y = parseYear(r['Open Year']);
+      if (y === null || !buckets.has(y)) continue;
+      const amt = parseMoney(r['Quoted Amount']) || 0;
+      const src = String(r['Lead Source'] || r['Source'] || '');
+      const row = buckets.get(y);
+      if (CLIENT_RE.test(src)) row.currentClient += amt;
+      else row.newClient += amt;
+      row._total += amt;
+    }
+    const rows = Array.from(buckets.values()).map(r => ({
+      ...r,
+      currentClient: Math.round(r.currentClient),
+      newClient: Math.round(r.newClient),
+      _total: Math.round(r._total),
+      pctQuota: annualTarget > 0 ? Math.round((r._total / annualTarget) * 100) : null,
+    }));
+    // Projected — current year YTD Sold + active-pipeline Quoted Amount.
+    let projCurrent = 0, projNew = 0;
+    for (const r of records) {
+      const y = parseYear(r['Open Year']);
+      if (y !== currentYear) continue;
+      const stage = String(r.Stage || '').trim();
+      if (stage === 'Not Sold') continue;
+      const amt = parseMoney(r['Quoted Amount']) || 0;
+      if (!amt) continue;
+      const src = String(r['Lead Source'] || r['Source'] || '');
+      if (CLIENT_RE.test(src)) projCurrent += amt;
+      else projNew += amt;
+    }
+    const projTotal = projCurrent + projNew;
+    rows.push({
+      year: 'Projected',
+      currentClient: Math.round(projCurrent),
+      newClient: Math.round(projNew),
+      _total: Math.round(projTotal),
+      pctQuota: annualTarget > 0 ? Math.round((projTotal / annualTarget) * 100) : null,
+      _isProjected: true,
+    });
+    return rows;
+  }, [records, yearRange, currentYear, target]);
+
+  // Deal Size — composed chart per Open Year:
+  //   Deals (gray bars)     = count of closed opps (Sold + Not Sold)
+  //   Quoted (red line)     = mean Quoted Amount across closed opps
+  //   Deal Size (blue line) = mean Quoted Amount of Sold opps only
+  // Projected bar treats still-active pipeline opps as if they were
+  // future closes, so the Projected count/Quoted average reflect the
+  // pipeline as well as YTD actuals.
+  const dealSizeData = useMemo(() => {
+    if (records.length === 0 || yearRange.length === 0) return [];
+    const stats = new Map();
+    for (const y of yearRange) {
+      stats.set(y, { closedCount: 0, quotedSum: 0, quotedCount: 0, soldSum: 0, soldCount: 0 });
+    }
+    for (const r of records) {
+      const y = parseYear(r['Open Year']);
+      if (y === null || !stats.has(y)) continue;
+      const stage = String(r.Stage || '').trim();
+      if (stage !== 'Sold' && stage !== 'Not Sold') continue;
+      const s = stats.get(y);
+      s.closedCount += 1;
+      const amt = parseMoney(r['Quoted Amount']);
+      if (typeof amt === 'number' && amt > 0) {
+        s.quotedSum += amt;
+        s.quotedCount += 1;
+        if (stage === 'Sold') {
+          s.soldSum += amt;
+          s.soldCount += 1;
+        }
+      }
+    }
+    const rows = [];
+    for (const y of yearRange) {
+      const s = stats.get(y);
+      rows.push({
+        year: String(y),
+        deals: s.closedCount,
+        quoted: s.quotedCount > 0 ? Math.round(s.quotedSum / s.quotedCount) : null,
+        dealSize: s.soldCount > 0 ? Math.round(s.soldSum / s.soldCount) : null,
+        _isProjected: false,
+      });
+    }
+    // Projected — active-pipeline opps for the current year are added
+    // to deals count and Quoted mean (treated as future closes). Deal
+    // Size is reused from Sold actuals (no Sold $ to project on yet
+    // for still-open opps).
+    let projClosed = 0, projQuotedSum = 0, projQuotedCount = 0;
+    let projSoldSum = 0, projSoldCount = 0;
+    for (const r of records) {
+      const y = parseYear(r['Open Year']);
+      if (y !== currentYear) continue;
+      const stage = String(r.Stage || '').trim();
+      const isClosed = (stage === 'Sold' || stage === 'Not Sold');
+      const isPipeline = !isClosed; // any non-closed stage
+      const amt = parseMoney(r['Quoted Amount']);
+      if (isClosed) projClosed += 1;
+      else if (isPipeline) projClosed += 1; // counted toward "expected deals"
+      if (typeof amt === 'number' && amt > 0) {
+        projQuotedSum += amt;
+        projQuotedCount += 1;
+        if (stage === 'Sold') {
+          projSoldSum += amt;
+          projSoldCount += 1;
+        }
+      }
+    }
+    rows.push({
+      year: 'Projected',
+      deals: projClosed,
+      quoted: projQuotedCount > 0 ? Math.round(projQuotedSum / projQuotedCount) : null,
+      dealSize: projSoldCount > 0 ? Math.round(projSoldSum / projSoldCount) : null,
+      _isProjected: true,
+    });
+    return rows;
+  }, [records, yearRange, currentYear]);
+
   const hasOpps = records.length > 0;
 
   // Per-chart underlying records. Each entry mirrors the filter used by
@@ -494,8 +721,56 @@ export function YOYView() {
       if (Number.isNaN(tb)) return -1;
       return ta - tb;
     });
-    return { leads, quoted, closeRate, leadSources, quotedByYear, notSolds };
-  }, [records, currentYear]);
+    // Row-3 chart contributors. Built from the same `records` loop in
+    // a second pass so we don't disrupt the existing classifications.
+    const topAccountsRecs = [];
+    const annualSalesRecs = [];
+    const dealSizeRecs = [];
+    const CLIENT_RE = /client|existing|renewal|cross[\s-]?sell|expansion|upsell/i;
+    const topSet = new Set(topAccountsData.topAccounts || []);
+    for (const r of records) {
+      const oy = parseYear(r['Open Year']);
+      if (oy === null) continue;
+      const account = String(r.Account || '').trim();
+      const stage = String(r.Stage || '').trim();
+      const closedStage = (stage === 'Sold' || stage === 'Not Sold');
+      const amt = parseMoney(r['Quoted Amount']);
+      const src = String(r['Lead Source'] || r['Source'] || '').trim();
+      if (stage === 'Sold') {
+        topAccountsRecs.push({
+          Account: account,
+          'Open Year': oy,
+          'Quoted Amount': amt ?? '',
+          'Top-4 Bucket': topSet.has(account) ? account : 'Remaining',
+        });
+        annualSalesRecs.push({
+          Account: account,
+          'Open Year': oy,
+          'Lead Source': src,
+          'Client Bucket': CLIENT_RE.test(src) ? 'Current Client' : 'New Client',
+          'Quoted Amount': amt ?? '',
+        });
+      }
+      if (closedStage) {
+        dealSizeRecs.push({
+          Account: account,
+          'Open Year': oy,
+          Stage: stage,
+          'Quoted Amount': amt ?? '',
+          'Counts in Deals': 'Yes',
+          'Counts in Quoted avg': (amt && amt > 0) ? 'Yes' : 'No',
+          'Counts in Deal Size avg': (stage === 'Sold' && amt && amt > 0) ? 'Yes' : 'No',
+        });
+      }
+    }
+    topAccountsRecs.sort((a, b) => a['Open Year'] - b['Open Year'] || a.Account.localeCompare(b.Account));
+    annualSalesRecs.sort((a, b) => a['Open Year'] - b['Open Year'] || a.Account.localeCompare(b.Account));
+    dealSizeRecs.sort((a, b) => a['Open Year'] - b['Open Year'] || a.Account.localeCompare(b.Account));
+    return {
+      leads, quoted, closeRate, leadSources, quotedByYear, notSolds,
+      topAccounts: topAccountsRecs, annualSales: annualSalesRecs, dealSize: dealSizeRecs,
+    };
+  }, [records, currentYear, topAccountsData]);
 
   function downloadLeads() {
     const summary = leadsData.map(r => ({
@@ -578,6 +853,52 @@ export function YOYView() {
     appendSheet(wb, 'Contributing Opps', contributingRecords.notSolds);
     XLSX.writeFile(wb, `yoy-not-solds-${todayStamp()}.xlsx`);
   }
+  function downloadTopAccounts() {
+    const tops = topAccountsData.topAccounts || [];
+    const summary = (topAccountsData.years || []).map(r => {
+      const out = {
+        Year: r.year,
+        Type: r._isProjected ? 'Projected (YTD + active pipeline)' : 'Actual',
+        Total: r._total,
+      };
+      for (const a of tops) out[a] = r[a] ?? 0;
+      out.Remaining = r.Remaining ?? 0;
+      return out;
+    });
+    const wb = XLSX.utils.book_new();
+    appendSheet(wb, 'Top Accounts', summary);
+    appendSheet(wb, 'Contributing Opps', contributingRecords.topAccounts);
+    XLSX.writeFile(wb, `yoy-top-accounts-${todayStamp()}.xlsx`);
+  }
+  function downloadAnnualSales() {
+    const annualTarget = target > 0 ? target : DEFAULT_ANNUAL_TARGET;
+    const summary = annualSalesData.map(r => ({
+      Year: r.year,
+      Type: r._isProjected ? 'Projected (YTD + active pipeline)' : 'Actual',
+      'Current Client ($)': r.currentClient,
+      'New Client ($)': r.newClient,
+      'Total Sold ($)': r._total,
+      'Annual Target ($)': annualTarget,
+      '% Quota': r.pctQuota == null ? '' : r.pctQuota,
+    }));
+    const wb = XLSX.utils.book_new();
+    appendSheet(wb, 'Annual Sales', summary);
+    appendSheet(wb, 'Contributing Opps', contributingRecords.annualSales);
+    XLSX.writeFile(wb, `yoy-annual-sales-${todayStamp()}.xlsx`);
+  }
+  function downloadDealSize() {
+    const summary = dealSizeData.map(r => ({
+      Year: r.year,
+      Type: r._isProjected ? 'Projected (YTD + active pipeline)' : 'Actual',
+      Deals: r.deals,
+      'Quoted (mean of closed, $)': r.quoted == null ? '' : r.quoted,
+      'Deal Size (mean of Sold, $)': r.dealSize == null ? '' : r.dealSize,
+    }));
+    const wb = XLSX.utils.book_new();
+    appendSheet(wb, 'Deal Size', summary);
+    appendSheet(wb, 'Contributing Opps', contributingRecords.dealSize);
+    XLSX.writeFile(wb, `yoy-deal-size-${todayStamp()}.xlsx`);
+  }
 
   return (
     <div className={styles.wrapper}>
@@ -600,6 +921,11 @@ export function YOYView() {
           <LeadSourcesCard data={leadSourcesData} hasOpps={hasOpps} onDownload={downloadLeadSources} />
           <QuotedByYearCard data={quotedByYearData} hasOpps={hasOpps} onDownload={downloadQuotedByYear} />
           <NotSoldsCard data={notSoldsData} hasOpps={hasOpps} onDownload={downloadNotSolds} />
+        </div>
+        <div className={styles.row}>
+          <TopAccountsCard data={topAccountsData} hasOpps={hasOpps} onDownload={downloadTopAccounts} />
+          <AnnualSalesCard data={annualSalesData} hasOpps={hasOpps} onDownload={downloadAnnualSales} />
+          <DealSizeCard data={dealSizeData} hasOpps={hasOpps} onDownload={downloadDealSize} />
         </div>
       </div>
     </div>
@@ -950,6 +1276,196 @@ function NotSoldsCard({ data, hasOpps, onDownload }) {
               isAnimationActive={false}
               connectNulls
             />
+          </ComposedChart>
+        </ResponsiveContainer>
+      )}
+    </div>
+  );
+}
+
+// Compact `$1,234,567` formatter for label lists on $-axis charts.
+function fmtMoneyLabel(v) {
+  if (v == null || !Number.isFinite(v) || v === 0) return '';
+  return `$${Math.round(v).toLocaleString('en-US')}`;
+}
+
+function TopAccountsCard({ data, hasOpps, onDownload }) {
+  const { years = [], topAccounts = [], colors = {} } = data || {};
+  const hasAny = years.some(r => r._total > 0);
+  return (
+    <div className={styles.chartCard}>
+      <ChartHeader title="Top Accounts" onDownload={onDownload} canDownload={hasOpps && hasAny} />
+      {!hasOpps ? (
+        <div className={styles.empty}>No Opps data — open the Opps tab to load.</div>
+      ) : !hasAny ? (
+        <div className={styles.empty}>No Sold opps with a Quoted Amount yet.</div>
+      ) : (
+        <ResponsiveContainer width="100%" height={320}>
+          <BarChart data={years} margin={{ top: 20, right: 8, left: 16, bottom: 4 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
+            <XAxis dataKey="year" tick={{ fontSize: 12 }} />
+            <YAxis
+              tick={{ fontSize: 12 }}
+              tickFormatter={(v) => `$${(v / 1_000_000).toFixed(0)}M`}
+            />
+            <Tooltip
+              formatter={(v, name) => [fmtMoneyLabel(v), name]}
+              labelFormatter={(label) => `Year: ${label}`}
+            />
+            <Legend wrapperStyle={{ fontSize: 12 }} />
+            {/* Stack order: largest (Brookfield) at bottom; Remaining at top. */}
+            {topAccounts.map((a, i) => (
+              <Bar
+                key={a}
+                dataKey={a}
+                stackId="ta"
+                name={a}
+                fill={colors[a] || '#94a3b8'}
+                isAnimationActive={false}
+              >
+                {i === 0 ? (
+                  <LabelList
+                    dataKey={a}
+                    position="center"
+                    style={{ fontSize: 10, fontWeight: 600, fill: '#fff' }}
+                    formatter={(v) => v && v >= 50_000 ? fmtMoneyLabel(v) : ''}
+                  />
+                ) : null}
+              </Bar>
+            ))}
+            <Bar dataKey="Remaining" stackId="ta" name="Remaining" fill={colors.Remaining || '#22c55e'} isAnimationActive={false}>
+              <LabelList
+                dataKey="_total"
+                position="top"
+                style={{ fontSize: 11, fontWeight: 600, fill: '#1f2937' }}
+                formatter={(v) => fmtMoneyLabel(v)}
+              />
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      )}
+    </div>
+  );
+}
+
+function AnnualSalesCard({ data, hasOpps, onDownload }) {
+  const hasAny = data.some(r => r._total > 0);
+  return (
+    <div className={styles.chartCard}>
+      <ChartHeader title="Annual Sales" onDownload={onDownload} canDownload={hasOpps && hasAny} />
+      {!hasOpps ? (
+        <div className={styles.empty}>No Opps data — open the Opps tab to load.</div>
+      ) : !hasAny ? (
+        <div className={styles.empty}>No Sold opps with a Quoted Amount yet.</div>
+      ) : (
+        <ResponsiveContainer width="100%" height={320}>
+          <BarChart data={data} margin={{ top: 32, right: 8, left: 16, bottom: 4 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
+            <XAxis dataKey="year" tick={{ fontSize: 12 }} />
+            <YAxis
+              tick={{ fontSize: 12 }}
+              tickFormatter={(v) => v >= 1_000_000 ? `${(v / 1_000_000).toFixed(0)}M` : v.toLocaleString('en-US')}
+            />
+            <Tooltip
+              formatter={(v, name) => name === '% Quota'
+                ? [`${v}%`, name]
+                : [fmtMoneyLabel(v), name]}
+              labelFormatter={(label) => `Year: ${label}`}
+            />
+            <Legend
+              wrapperStyle={{ fontSize: 12 }}
+              payload={[
+                { value: '% Quota', type: 'circle', color: '#eab308', id: 'pct' },
+                { value: 'New Client', type: 'rect', color: '#ef4444', id: 'new' },
+                { value: 'Current Client', type: 'rect', color: '#3b82f6', id: 'cur' },
+              ]}
+            />
+            <Bar dataKey="currentClient" stackId="as" name="Current Client" fill="#3b82f6" isAnimationActive={false} />
+            <Bar dataKey="newClient" stackId="as" name="New Client" fill="#ef4444" isAnimationActive={false}>
+              <LabelList
+                dataKey="_total"
+                position="top"
+                style={{ fontSize: 11, fontWeight: 600, fill: '#1f2937' }}
+                formatter={(v) => fmtMoneyLabel(v)}
+              />
+              <LabelList
+                dataKey="pctQuota"
+                position="top"
+                offset={18}
+                style={{ fontSize: 10, fontWeight: 600, fill: '#a16207' }}
+                formatter={(v) => v == null ? '' : `${v}%`}
+              />
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      )}
+    </div>
+  );
+}
+
+function DealSizeCard({ data, hasOpps, onDownload }) {
+  const hasAny = data.some(r => r.deals > 0);
+  return (
+    <div className={styles.chartCard}>
+      <ChartHeader title="Deal Size" onDownload={onDownload} canDownload={hasOpps && hasAny} />
+      {!hasOpps ? (
+        <div className={styles.empty}>No Opps data — open the Opps tab to load.</div>
+      ) : !hasAny ? (
+        <div className={styles.empty}>No closed opps yet.</div>
+      ) : (
+        <ResponsiveContainer width="100%" height={320}>
+          <ComposedChart data={data} margin={{ top: 20, right: 16, left: 16, bottom: 4 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
+            <XAxis dataKey="year" tick={{ fontSize: 12 }} />
+            <YAxis
+              yAxisId="deals"
+              tick={{ fontSize: 12 }}
+              allowDecimals={false}
+            />
+            <YAxis
+              yAxisId="dollars"
+              orientation="right"
+              tick={{ fontSize: 12 }}
+              tickFormatter={(v) => v >= 1000 ? `$${Math.round(v / 1000)}k` : `$${v}`}
+            />
+            <Tooltip
+              formatter={(v, name) => {
+                if (name === 'Deals') return [v.toLocaleString('en-US'), name];
+                return [fmtMoneyLabel(v), name];
+              }}
+              labelFormatter={(label) => `Year: ${label}`}
+            />
+            <Legend wrapperStyle={{ fontSize: 12 }} />
+            <Bar yAxisId="deals" dataKey="deals" name="Deals" isAnimationActive={false}>
+              {data.map((row, i) => (
+                <Cell key={i} fill={row._isProjected ? '#facc15' : '#94a3b8'} />
+              ))}
+              <LabelList dataKey="deals" position="top" style={{ fontSize: 11, fontWeight: 600, fill: '#475569' }} />
+            </Bar>
+            <Line
+              yAxisId="dollars"
+              dataKey="quoted"
+              name="Quoted"
+              stroke="#dc2626"
+              strokeWidth={2}
+              dot={{ r: 4 }}
+              isAnimationActive={false}
+              connectNulls
+            >
+              <LabelList dataKey="quoted" position="top" style={{ fontSize: 10, fontWeight: 600, fill: '#991b1b' }} formatter={(v) => fmtMoneyLabel(v)} />
+            </Line>
+            <Line
+              yAxisId="dollars"
+              dataKey="dealSize"
+              name="Deal Size"
+              stroke="#3b82f6"
+              strokeWidth={2}
+              dot={{ r: 4 }}
+              isAnimationActive={false}
+              connectNulls
+            >
+              <LabelList dataKey="dealSize" position="bottom" style={{ fontSize: 10, fontWeight: 600, fill: '#1d4ed8' }} formatter={(v) => fmtMoneyLabel(v)} />
+            </Line>
           </ComposedChart>
         </ResponsiveContainer>
       )}
