@@ -130,15 +130,17 @@ export function YOYView() {
     if (records.length === 0) return [];
     const byYear = new Map();
     let minYear = currentYear;
+    let maxYear = currentYear;
     for (const r of records) {
       const y = parseYear(r['Open Year']);
       if (y === null) continue;
       byYear.set(y, (byYear.get(y) || 0) + 1);
       if (y < minYear) minYear = y;
+      if (y > maxYear) maxYear = y;
     }
     if (byYear.size === 0) return [];
     const rows = [];
-    for (let y = minYear; y <= currentYear; y++) {
+    for (let y = minYear; y <= maxYear; y++) {
       rows.push({ year: String(y), count: byYear.get(y) || 0, isProjected: false });
     }
     const ytdCount = byYear.get(currentYear) || 0;
@@ -209,16 +211,18 @@ export function YOYView() {
     // Group records by year.
     const byYear = new Map();
     let minYear = currentYear;
+    let maxYear = currentYear;
     for (const r of records) {
       const y = parseYear(r['Open Year']);
       if (y === null) continue;
       if (!byYear.has(y)) byYear.set(y, []);
       byYear.get(y).push(r);
       if (y < minYear) minYear = y;
+      if (y > maxYear) maxYear = y;
     }
     if (byYear.size === 0) return [];
     const rows = [];
-    for (let y = minYear; y <= currentYear; y++) {
+    for (let y = minYear; y <= maxYear; y++) {
       const list = byYear.get(y) || [];
       let sold = 0, notSold = 0, inProgress = 0, quotedNotSold = 0;
       for (const r of list) {
@@ -290,6 +294,7 @@ export function YOYView() {
     if (records.length === 0) return [];
     const byYear = new Map();
     let minYear = currentYear;
+    let maxYear = currentYear;
     for (const r of records) {
       const y = parseYear(r['Open Year']);
       if (y === null) continue;
@@ -297,10 +302,11 @@ export function YOYView() {
       const v = (typeof amt === 'number' && Number.isFinite(amt)) ? amt : 0;
       byYear.set(y, (byYear.get(y) || 0) + v);
       if (y < minYear) minYear = y;
+      if (y > maxYear) maxYear = y;
     }
     if (byYear.size === 0) return [];
     const rows = [];
-    for (let y = minYear; y <= currentYear; y++) {
+    for (let y = minYear; y <= maxYear; y++) {
       const total = byYear.get(y) || 0;
       rows.push({
         year: String(y),
@@ -327,16 +333,18 @@ export function YOYView() {
     const NOT_QUOTED_STAGES = new Set(['Lead', 'Not Started', 'Qualifying', 'Quoting']);
     const byYear = new Map();
     let minYear = currentYear;
+    let maxYear = currentYear;
     for (const r of records) {
       const y = parseYear(r['Open Year']);
       if (y === null) continue;
       if (!byYear.has(y)) byYear.set(y, []);
       byYear.get(y).push(r);
       if (y < minYear) minYear = y;
+      if (y > maxYear) maxYear = y;
     }
     if (byYear.size === 0) return [];
     const rows = [];
-    for (let y = minYear; y <= currentYear; y++) {
+    for (let y = minYear; y <= maxYear; y++) {
       const list = byYear.get(y) || [];
       let notSold = 0;
       let lifeSum = 0, lifeCount = 0;
@@ -383,20 +391,24 @@ export function YOYView() {
   }, [records, currentYear]);
 
   // Year range shared by Top Accounts / Annual Sales / Deal Size — use
-  // the same min-year-with-data → currentYear span as the other charts.
+  // the same min-year-with-data → max(currentYear, maxYearInData) span
+  // as the other charts so future-dated Open Years (e.g. 2026 entered
+  // while the browser clock still reads 2025) still get a bar.
   const yearRange = useMemo(() => {
     if (records.length === 0) return [];
     let minYear = currentYear;
+    let maxYear = currentYear;
     let any = false;
     for (const r of records) {
       const y = parseYear(r['Open Year']);
       if (y === null) continue;
       any = true;
       if (y < minYear) minYear = y;
+      if (y > maxYear) maxYear = y;
     }
     if (!any) return [];
     const out = [];
-    for (let y = minYear; y <= currentYear; y++) out.push(y);
+    for (let y = minYear; y <= maxYear; y++) out.push(y);
     return out;
   }, [records, currentYear]);
 
