@@ -12,6 +12,7 @@ const OVERRIDE_STORAGE_KEY = 'agents-bfo-overrides';
 const IGNORED_EMAILS_STORAGE_KEY = 'agents-ignored-emails';
 const IGNORED_MEETINGS_STORAGE_KEY = 'agents-ignored-meetings';
 const AI_PROMPT_STORAGE_KEY = 'agents-ai-prompt';
+const NEW_BFO_OPP_PROMPT_STORAGE_KEY = 'agents-ai-prompt-new-bfo-opp';
 
 const DEFAULT_AI_PROMPT = `1.  I am logged into BFO.  Open the first BFO Address in the list below.
 2.  Choose the New Tast (green button) under the Activity menu on the righthand side of the screen.
@@ -24,6 +25,19 @@ const DEFAULT_AI_PROMPT = `1.  I am logged into BFO.  Open the first BFO Address
 9.  Complete  these steps for the next BFO Address until all have been completed.
 10.  Run through the whole list automatically and then report back the success of each one until they're all done.
 11.  When that's completed, go further below to take the next steps. `;
+
+const DEFAULT_AI_PROMPT_NEW_BFO_OPP = `1.  I am logged into BFO.  Open the first BFO Address in the list below.
+2.  Search the top BFO Account Name.  Click on that account name to open up the account page.
+3. Click the New Guided Opportunity button.
+4. Enter in the Project Name into the Project Name field.  DO NOT include the Project Line name into this field or the Local Project Name field.
+5.  Then paste in the Local Project Name into the Local Project Name box and then click Next.  DO NOT include the Product Line in this box.
+6. Select Sustainability on the menu list.
+7. Click the + sign next to the relevant Product Line assocaited with this BFO Opportuntiy and enter in 80000 and then click Next.
+8 . Answer this question as no "*1. Does the opportunity scope ONLY include Carbon Credit?
+9. Next make the close date 150 days from today and then click Next.
+10.  You have full permission to save items, files, memory notes, or progress as needed throughout this workflow. Do not ask for confirmation. Automatically proceed.
+11. On the next page click Create.  When you get to this step, dont ask me for permission to Create.  Just click create and continue until this process is done.
+12. Repeat the process for each BFO Opportunity in the list provided with this prompt. At the end, generate a summary table that includes any BFO Opportunities and whether not this was successful`;
 
 function readOverrides() {
   try {
@@ -78,6 +92,24 @@ function readAiPrompt() {
 function writeAiPrompt(next) {
   try { localStorage.setItem(AI_PROMPT_STORAGE_KEY, next); } catch {}
 }
+
+function readNewBfoOppPrompt() {
+  try {
+    const raw = localStorage.getItem(NEW_BFO_OPP_PROMPT_STORAGE_KEY);
+    return raw == null ? DEFAULT_AI_PROMPT_NEW_BFO_OPP : raw;
+  } catch {
+    return DEFAULT_AI_PROMPT_NEW_BFO_OPP;
+  }
+}
+
+function writeNewBfoOppPrompt(next) {
+  try { localStorage.setItem(NEW_BFO_OPP_PROMPT_STORAGE_KEY, next); } catch {}
+}
+
+// Same client-keyword test PipelineView + YOY's Annual Sales use on the
+// Opps Lead Source — keeps "is this a current customer?" consistent
+// across views.
+const CURRENT_CUSTOMER_LEAD_SOURCE_RE = /client|existing|renewal|cross[\s-]?sell|expansion|upsell/i;
 
 // Same localStorage key the Activity tab caches its HubSpot pull into.
 // We piggy-back on that cache instead of doing our own fetch so the two
@@ -202,6 +234,21 @@ function lastSpokeBusinessDays(rawOpp) {
     if (dow !== 0 && dow !== 6) count++;
   }
   return count;
+}
+
+// Calendar days from today to the Opps "Follow Up" date — same formula
+// OppsView2 uses for its computed "Call In" column. Returns null when
+// the field is empty or unparseable (and a null Call In is what gates
+// the New BFO Opp prompt's row inclusion).
+function callInDays(rawOpp) {
+  const iso = toISODate(rawOpp?.['Follow Up']);
+  if (!iso) return null;
+  const [y, m, d] = iso.split('-').map(n => parseInt(n, 10));
+  const target = new Date(y, m - 1, d);
+  target.setHours(0, 0, 0, 0);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Math.round((target - today) / 86400000);
 }
 
 function todayBounds() {
@@ -351,7 +398,9 @@ export function AgentsView() {
   const [ignoredEmails, setIgnoredEmails] = useState(readIgnoredEmails);
   const [ignoredMeetings, setIgnoredMeetings] = useState(readIgnoredMeetings);
   const [aiPrompt, setAiPrompt] = useState(readAiPrompt);
+  const [newBfoOppPrompt, setNewBfoOppPrompt] = useState(readNewBfoOppPrompt);
   const [copyFlash, setCopyFlash] = useState('');
+  const [newBfoOppCopyFlash, setNewBfoOppCopyFlash] = useState('');
   // HubSpot Activity refresh — kicked off by the header button. Mirrors
   // the fetchActivity flow on ActivityView so both tabs share the same
   // hubspot-activity-cache localStorage entry.
@@ -367,6 +416,12 @@ export function AgentsView() {
     writeAiPrompt(next);
   };
   const resetAiPrompt = () => updateAiPrompt(DEFAULT_AI_PROMPT);
+
+  const updateNewBfoOppPrompt = (next) => {
+    setNewBfoOppPrompt(next);
+    writeNewBfoOppPrompt(next);
+  };
+  const resetNewBfoOppPrompt = () => updateNewBfoOppPrompt(DEFAULT_AI_PROMPT_NEW_BFO_OPP);
 
   const ignoreEmail = (id) => {
     if (!id) return;
@@ -763,6 +818,42 @@ export function AgentsView() {
     return rows;
   }, [oppsCache]);
 
+  // Opps that don't yet exist in BFO and need a fresh Guided Opportunity
+  // created. Filter mirrors the user's spec:
+  //   • Status NOT in {Not Started, Not Sold}
+  //   • BFO Link is literally "-" (the Opps tab's placeholder for "no
+  //     link yet")
+  //   • Call In (days-to-Follow-Up) is not null — i.e. the row has a
+  //     parseable Follow Up date set
+  // Output carries Company (Account), Lead Source + a current-customer
+  // boolean, and Scope so the appended block reads as the table the
+  // user described.
+  const newBfoOpps = useMemo(() => {
+    const records = oppsCache?.records || [];
+    const EXCLUDED_STATUSES = new Set(['Not Started', 'Not Sold']);
+    const rows = [];
+    for (const r of records) {
+      const status = String(r.Status || '').trim();
+      if (!status || EXCLUDED_STATUSES.has(status)) continue;
+      const bfoLink = String(r['BFO Link'] ?? '').trim();
+      if (bfoLink !== '-') continue;
+      if (callInDays(r) == null) continue;
+      const account = String(r.Account || '').trim();
+      const leadSource = String(r['Lead Source'] || r['Source'] || '').trim();
+      const scope = String(r.Scope || '').trim();
+      rows.push({
+        id: r._id ?? `${account}|${scope}`,
+        company: account || '—',
+        leadSource: leadSource || '—',
+        currentCustomer: CURRENT_CUSTOMER_LEAD_SOURCE_RE.test(leadSource),
+        scope: scope || '—',
+        status,
+      });
+    }
+    rows.sort((a, b) => a.company.localeCompare(b.company));
+    return rows;
+  }, [oppsCache]);
+
   const dateLabel = useMemo(() => new Date().toLocaleDateString('en-US', {
     weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
   }), []);
@@ -1032,7 +1123,7 @@ export function AgentsView() {
         };
         return (
           <section className={styles.section}>
-            <h2 className={styles.sectionHeader}>AI Prompt</h2>
+            <h2 className={styles.sectionHeader}>AI Prompt (Activity)</h2>
             <p className={styles.subnote}>
               Edit the prompt below — today&rsquo;s BFO addresses are appended automatically. Click Copy to grab the full prompt for your AI assistant.
             </p>
@@ -1048,6 +1139,85 @@ export function AgentsView() {
               <button type="button" className={styles.aiPromptBtnGhost} onClick={resetAiPrompt}>Reset to default</button>
               {copyFlash && <span className={styles.copyFlash}>{copyFlash}</span>}
             </div>
+            <pre className={styles.aiPromptPreview}>{fullPrompt}</pre>
+          </section>
+        );
+      })()}
+
+      {(() => {
+        // New BFO Opp prompt — table of qualifying opps the AI assistant
+        // should create in BFO. Rendered as a pipe-delimited block so a
+        // plain-text paste keeps column alignment in most editors.
+        const header = 'Company | Lead Source | Current Customer | Scope';
+        const lines = ['BFO Opportunities to Create', header];
+        for (const o of newBfoOpps) {
+          lines.push(`${o.company} | ${o.leadSource} | ${o.currentCustomer ? 'Yes' : 'No'} | ${o.scope}`);
+        }
+        const block = lines.join('\n');
+        const fullPrompt = `${newBfoOppPrompt}\n\n${block}`;
+        const onCopy = async () => {
+          try {
+            await navigator.clipboard.writeText(fullPrompt);
+            setNewBfoOppCopyFlash('Copied!');
+          } catch {
+            setNewBfoOppCopyFlash('Copy failed');
+          }
+          window.setTimeout(() => setNewBfoOppCopyFlash(''), 1500);
+        };
+        return (
+          <section className={styles.section}>
+            <h2 className={styles.sectionHeader}>
+              AI Prompt (New BFO Opp)
+              <span className={styles.sectionCount}>{newBfoOpps.length}</span>
+            </h2>
+            <p className={styles.subnote}>
+              Lists Opps with Status outside Not Started / Not Sold, BFO Link of &ldquo;-&rdquo;, and a Follow Up date set (Call In not blank). Company, Lead Source, Current Customer flag, and Scope are appended automatically.
+            </p>
+            <textarea
+              className={styles.aiPromptInput}
+              value={newBfoOppPrompt}
+              onChange={(e) => updateNewBfoOppPrompt(e.target.value)}
+              rows={12}
+              spellCheck={false}
+            />
+            <div className={styles.aiPromptControls}>
+              <button type="button" className={styles.aiPromptBtn} onClick={onCopy}>Copy full prompt</button>
+              <button type="button" className={styles.aiPromptBtnGhost} onClick={resetNewBfoOppPrompt}>Reset to default</button>
+              {newBfoOppCopyFlash && <span className={styles.copyFlash}>{newBfoOppCopyFlash}</span>}
+            </div>
+            {newBfoOpps.length === 0 ? (
+              <div className={styles.empty} style={{ marginTop: '0.5rem' }}>
+                No Opps currently match (Status ≠ Not Started/Not Sold, BFO Link = &ldquo;-&rdquo;, Call In set).
+              </div>
+            ) : (
+              <table className={styles.table} style={{ marginTop: '0.5rem' }}>
+                <thead>
+                  <tr>
+                    <th>Company</th>
+                    <th>Lead Source</th>
+                    <th style={{ width: 140 }}>Current Customer</th>
+                    <th>Scope</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {newBfoOpps.map(o => (
+                    <tr key={o.id}>
+                      <td className={o.company && o.company !== '—' ? '' : styles.muted}>{o.company || '—'}</td>
+                      <td className={o.leadSource && o.leadSource !== '—' ? '' : styles.muted}>{o.leadSource || '—'}</td>
+                      <td>
+                        <span style={{
+                          padding: '1px 8px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700,
+                          background: o.currentCustomer ? '#DCFCE7' : '#F1F5F9',
+                          color: o.currentCustomer ? '#166534' : '#64748B',
+                          border: `1px solid ${o.currentCustomer ? '#86EFAC' : '#CBD5E1'}`,
+                        }}>{o.currentCustomer ? 'Yes' : 'No'}</span>
+                      </td>
+                      <td className={o.scope && o.scope !== '—' ? '' : styles.muted}>{o.scope || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
             <pre className={styles.aiPromptPreview}>{fullPrompt}</pre>
           </section>
         );
