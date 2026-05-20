@@ -27,6 +27,28 @@
   font-weight: 600;
 }
 
+.refreshActivityBtn {
+  margin-left: auto;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: #1E40AF;
+  background: #EFF6FF;
+  border: 1px solid #BFDBFE;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.refreshActivityBtn:hover:not(:disabled) {
+  background: #DBEAFE;
+}
+
+.refreshActivityBtn:disabled {
+  cursor: wait;
+  opacity: 0.75;
+}
+
 .subnote {
   margin: 0;
   color: #64748B;

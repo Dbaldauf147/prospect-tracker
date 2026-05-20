@@ -273,6 +273,12 @@ export function AgentsView() {
   const [ignoredMeetings, setIgnoredMeetings] = useState(readIgnoredMeetings);
   const [aiPrompt, setAiPrompt] = useState(readAiPrompt);
   const [copyFlash, setCopyFlash] = useState('');
+  // HubSpot Activity refresh — kicked off by the header button. Mirrors
+  // the fetchActivity flow on ActivityView so both tabs share the same
+  // hubspot-activity-cache localStorage entry.
+  const [activityRefreshing, setActivityRefreshing] = useState(false);
+  const [activityRefreshError, setActivityRefreshError] = useState(null);
+  const [activityRefreshProgress, setActivityRefreshProgress] = useState(null);
 
   const ignoredEmailIds = useMemo(() => new Set(ignoredEmails), [ignoredEmails]);
   const ignoredMeetingIds = useMemo(() => new Set(ignoredMeetings), [ignoredMeetings]);
@@ -340,6 +346,52 @@ export function AgentsView() {
       window.removeEventListener('storage', refresh);
     };
   }, []);
+
+  // Pull the latest HubSpot activity (emails, calls, meetings) and write
+  // it to the shared localStorage cache — same shape ActivityView uses
+  // so both tabs stay in sync. Fires hubspot-activity-cache-updated on
+  // success so this view (and any other listener) re-reads the cache.
+  async function refreshActivityCache() {
+    if (activityRefreshing) return;
+    setActivityRefreshing(true);
+    setActivityRefreshError(null);
+    setActivityRefreshProgress({ email: 0, call: 0, meeting: 0 });
+    async function fetchAllPages(type) {
+      const all = [];
+      let after = '';
+      while (true) {
+        const url = `/api/hubspot?action=activity&type=${type}${after ? `&after=${after}` : ''}`;
+        const res = await fetch(url);
+        const json = await res.json();
+        if (json.error) throw new Error(json.error);
+        all.push(...(json.results || []));
+        setActivityRefreshProgress(prev => ({ ...prev, [type]: all.length }));
+        if (json.nextAfter) after = json.nextAfter;
+        else break;
+        if (all.length > 5000) break;
+      }
+      return all;
+    }
+    try {
+      const emails = await fetchAllPages('email');
+      const calls = await fetchAllPages('call');
+      const meetings = await fetchAllPages('meeting');
+      const result = { emails, calls, meetings, fetchedAt: new Date().toISOString() };
+      try {
+        localStorage.setItem(ACTIVITY_CACHE_KEY, JSON.stringify(result));
+        window.dispatchEvent(new CustomEvent('hubspot-activity-cache-updated'));
+      } catch (err) {
+        console.warn('Agents activity cache write skipped (quota):', err?.message || err);
+      }
+      setCache(result);
+    } catch (err) {
+      console.error('Agents activity refresh error:', err);
+      setActivityRefreshError(err?.message || 'Failed to fetch activity');
+    } finally {
+      setActivityRefreshing(false);
+      setActivityRefreshProgress(null);
+    }
+  }
 
   // HubSpot contacts cache — email → company lookup for tagging.
   useEffect(() => {
@@ -579,7 +631,25 @@ export function AgentsView() {
       <div className={styles.header}>
         <h1 className={styles.title}>Agents</h1>
         <span className={styles.dateline}>{dateLabel}</span>
+        <button
+          type="button"
+          className={styles.refreshActivityBtn}
+          onClick={refreshActivityCache}
+          disabled={activityRefreshing}
+          title="Re-pull every HubSpot email, call, and meeting and update the shared activity cache. Same fetch the Activity tab's Refresh button runs."
+        >
+          {activityRefreshing
+            ? (activityRefreshProgress
+                ? `Refreshing… ${activityRefreshProgress.email || 0} email · ${activityRefreshProgress.call || 0} call · ${activityRefreshProgress.meeting || 0} meeting`
+                : 'Refreshing…')
+            : 'Refresh Activity'}
+        </button>
       </div>
+      {activityRefreshError && (
+        <div className={styles.staleBanner}>
+          Activity refresh failed: {activityRefreshError}
+        </div>
+      )}
       <p className={styles.subnote}>
         Today&rsquo;s outbound emails from <strong>{SENDER_EMAIL}</strong> to non-SE recipients, plus any meetings on today&rsquo;s calendar. BFO Opportunity tagging walks each recipient&rsquo;s email against the Opps tab&rsquo;s Contact field first, then falls back to fuzzy-matching the HubSpot company against the Opps tab&rsquo;s Account field. When neither matches, use the inline picker to search the Opps tab — your selection is remembered for that recipient on future emails. The Company column falls back to HubSpot&rsquo;s contact record when no Opp is matched.
       </p>
