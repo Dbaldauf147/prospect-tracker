@@ -245,6 +245,9 @@ function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onRepla
 
   return (
     <div className={styles.altFeeWrap} onPaste={handleTablePaste}>
+      <div className={styles.altFeeReminder}>
+        Reminder: start with bulk fees to create wiggle room for negotiations.
+      </div>
       <h3 className={styles.summaryTitle}>Alternative Fee Structure / Schedule</h3>
       {flash && <div className={styles.pasteFlash}>{flash}</div>}
       <datalist id={altItemListId}>
