@@ -9,6 +9,7 @@ import styles from './AgentsView.module.css';
 // so the next email to the same recipient re-uses the same tag.
 const OVERRIDE_STORAGE_KEY = 'agents-bfo-overrides';
 const IGNORED_EMAILS_STORAGE_KEY = 'agents-ignored-emails';
+const IGNORED_MEETINGS_STORAGE_KEY = 'agents-ignored-meetings';
 const AI_PROMPT_STORAGE_KEY = 'agents-ai-prompt';
 
 const DEFAULT_AI_PROMPT = `1.  I am logged into BFO.  Open the first BFO Address in the list below.
@@ -48,6 +49,20 @@ function readIgnoredEmails() {
 
 function writeIgnoredEmails(next) {
   try { localStorage.setItem(IGNORED_EMAILS_STORAGE_KEY, JSON.stringify(next)); } catch {}
+}
+
+function readIgnoredMeetings() {
+  try {
+    const raw = localStorage.getItem(IGNORED_MEETINGS_STORAGE_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeIgnoredMeetings(next) {
+  try { localStorage.setItem(IGNORED_MEETINGS_STORAGE_KEY, JSON.stringify(next)); } catch {}
 }
 
 function readAiPrompt() {
@@ -255,10 +270,12 @@ export function AgentsView() {
   const [oppsCache, setOppsCache] = useState(null);
   const [overrides, setOverrides] = useState(readOverrides);
   const [ignoredEmails, setIgnoredEmails] = useState(readIgnoredEmails);
+  const [ignoredMeetings, setIgnoredMeetings] = useState(readIgnoredMeetings);
   const [aiPrompt, setAiPrompt] = useState(readAiPrompt);
   const [copyFlash, setCopyFlash] = useState('');
 
   const ignoredEmailIds = useMemo(() => new Set(ignoredEmails), [ignoredEmails]);
+  const ignoredMeetingIds = useMemo(() => new Set(ignoredMeetings), [ignoredMeetings]);
 
   const updateAiPrompt = (next) => {
     setAiPrompt(next);
@@ -273,6 +290,17 @@ export function AgentsView() {
       if (prev.includes(key)) return prev;
       const next = [...prev, key];
       writeIgnoredEmails(next);
+      return next;
+    });
+  };
+
+  const ignoreMeeting = (id) => {
+    if (!id) return;
+    const key = String(id);
+    setIgnoredMeetings(prev => {
+      if (prev.includes(key)) return prev;
+      const next = [...prev, key];
+      writeIgnoredMeetings(next);
       return next;
     });
   };
@@ -467,6 +495,7 @@ export function AgentsView() {
 
     const meetings = (cache?.meetings || [])
       .filter(m => inToday(m.hs_meeting_start_time || m.hs_timestamp))
+      .filter(m => !ignoredMeetingIds.has(String(m.id || m.hs_object_id)))
       .map(m => {
         // Resolve associated HubSpot contacts up front. We walk each
         // one looking for an Opps-tab match (by email → Contact, then
@@ -536,7 +565,7 @@ export function AgentsView() {
     // dependency set as cache + hubspotCache + oppIndex + overrides,
     // so they don't need their own entries here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cache, hubspotCache, oppIndex, overrides, ignoredEmailIds]);
+  }, [cache, hubspotCache, oppIndex, overrides, ignoredEmailIds, ignoredMeetingIds]);
 
   const dateLabel = useMemo(() => new Date().toLocaleDateString('en-US', {
     weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
@@ -668,6 +697,7 @@ export function AgentsView() {
                 <th>BFO Opportunity</th>
                 <th style={{ width: 160 }}>Outcome</th>
                 <th>Location</th>
+                <th style={{ width: 40 }} aria-label="Actions" />
               </tr>
             </thead>
             <tbody>
@@ -698,6 +728,15 @@ export function AgentsView() {
                   </td>
                   <td className={m.outcome ? '' : styles.muted}>{m.outcome || '—'}</td>
                   <td className={m.location ? '' : styles.muted}>{m.location || '—'}</td>
+                  <td>
+                    <button
+                      type="button"
+                      className={styles.ignoreBtn}
+                      onClick={() => ignoreMeeting(m.id)}
+                      title="Hide this meeting from the Meetings table"
+                      aria-label="Ignore meeting"
+                    >✕</button>
+                  </td>
                 </tr>
               ))}
             </tbody>
