@@ -1,10 +1,106 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { STAGE_AGE_GUIDANCE } from '../../data/dropdownLists';
+import { getServiceMetadata } from '../../data/serviceCatalog';
 import {
   getEffectiveDropdownLists,
   makeCustomListKey,
 } from '../../utils/dropdownListsStore';
 import styles from './DropdownsView.module.css';
+
+const SERVICE_TABLE_COLUMNS = [
+  { key: 'name',        label: 'Solutions',    width: 'auto' },
+  { key: 'bfoTag',      label: 'BFO Tag',      width: 110 },
+  { key: 'region',      label: 'Region',       width: 90 },
+  { key: 'years',       label: 'Years',        width: 90 },
+  { key: 'productLine', label: 'Product Line', width: 260 },
+  { key: 'serviceType', label: 'Service Type', width: 110 },
+];
+
+// Single row in the Services subtab. The Solutions cell renders as a
+// hyperlink when the user has saved a URL for that service; clicking
+// the pencil opens a tiny inline editor so per-service URLs can be
+// added, updated, or cleared.
+function ServiceRow({ name, meta, url, onSaveUrl }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const inputRef = useRef(null);
+  useEffect(() => { if (editing) inputRef.current?.focus(); }, [editing]);
+
+  function startEdit() {
+    setDraft(url || '');
+    setEditing(true);
+  }
+  function commit() {
+    const next = draft.trim();
+    setEditing(false);
+    if ((next || '') === (url || '')) return;
+    onSaveUrl(name, next);
+  }
+  function cancel() {
+    setEditing(false);
+  }
+
+  const muted = meta?.graveyard;
+  return (
+    <tr className={muted ? styles.serviceRowMuted : undefined}>
+      <td className={styles.serviceNameCell}>
+        {editing ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <input
+              ref={inputRef}
+              type="url"
+              value={draft}
+              placeholder="https://example.com"
+              onChange={e => setDraft(e.target.value)}
+              onBlur={commit}
+              onKeyDown={e => {
+                if (e.key === 'Enter') { e.preventDefault(); commit(); }
+                else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+              }}
+              style={{ flex: 1, minWidth: 0, padding: '3px 6px', border: '1px solid var(--color-accent)', borderRadius: 4, fontSize: '0.75rem', fontFamily: 'inherit' }}
+            />
+            <span style={{ fontSize: '0.62rem', color: 'var(--color-text-muted)' }}>{name}</span>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            {url ? (
+              <a
+                href={url}
+                target="_blank"
+                rel="noreferrer"
+                className={styles.serviceLink}
+                title={url}
+              >{name}</a>
+            ) : (
+              <span style={{ color: 'var(--color-text)' }}>{name}</span>
+            )}
+            <button
+              type="button"
+              className={styles.serviceLinkEditBtn}
+              onClick={startEdit}
+              title={url ? 'Edit link' : 'Add link'}
+              aria-label={url ? 'Edit link' : 'Add link'}
+            >{url ? '✎' : '+ link'}</button>
+            {url && (
+              <button
+                type="button"
+                className={styles.serviceLinkEditBtn}
+                onClick={() => onSaveUrl(name, '')}
+                title="Remove link"
+                aria-label="Remove link"
+              >×</button>
+            )}
+          </div>
+        )}
+      </td>
+      <td>{meta?.bfoTag || <span className={styles.serviceMutedCell}>—</span>}</td>
+      <td>{meta?.region || <span className={styles.serviceMutedCell}>—</span>}</td>
+      <td>{meta?.years || <span className={styles.serviceMutedCell}>—</span>}</td>
+      <td>{meta?.productLine || <span className={styles.serviceMutedCell}>—</span>}</td>
+      <td>{meta?.serviceType || <span className={styles.serviceMutedCell}>—</span>}</td>
+    </tr>
+  );
+}
 
 // Reference + edit page for the Dropdowns vocabulary that the rest of
 // the app uses (Opps 2 column linking, Deals / Clients column linking).
@@ -236,13 +332,44 @@ function ListCard({ list, filter, wide, onChange, onRenameLabel, onRemoveList })
 }
 
 export function DropdownsView({ settings, updateSettings }) {
+  const [activeTab, setActiveTab] = useState('lists');
   const [search, setSearch] = useState('');
+  const [serviceSearch, setServiceSearch] = useState('');
   const lists = useMemo(() => getEffectiveDropdownLists(settings), [
     settings?.dropdownLists,
     settings?.dropdownListLabels,
     settings?.dropdownListsHidden,
     settings?.dropdownCustomLists,
   ]);
+
+  // Per-service URLs the user can paste in for hyperlinking. Stored
+  // alongside the other dropdown settings so they sync across devices.
+  const serviceLinks = (settings?.serviceLinks && typeof settings.serviceLinks === 'object') ? settings.serviceLinks : {};
+  function saveServiceLink(name, url) {
+    const next = { ...serviceLinks };
+    const trimmed = (url || '').trim();
+    if (trimmed) next[name] = trimmed;
+    else delete next[name];
+    updateSettings?.({ serviceLinks: next });
+  }
+
+  // Solutions list drives the Services subtab — same source the Lists
+  // tab edits, so adding a service in one place shows it in the other.
+  const solutionsList = useMemo(() => lists.find(l => l.key === 'solutions'), [lists]);
+  const serviceRows = useMemo(() => {
+    const options = solutionsList?.options || [];
+    return options.map(name => ({ name, meta: getServiceMetadata(name) }));
+  }, [solutionsList]);
+  const filteredServiceRows = useMemo(() => {
+    const term = serviceSearch.trim().toLowerCase();
+    if (!term) return serviceRows;
+    return serviceRows.filter(({ name, meta }) => {
+      if (name.toLowerCase().includes(term)) return true;
+      if (!meta) return false;
+      return [meta.bfoTag, meta.region, meta.years, meta.productLine, meta.serviceType]
+        .some(v => String(v || '').toLowerCase().includes(term));
+    });
+  }, [serviceRows, serviceSearch]);
 
   // Save a list's full options array back to settings. We always
   // store the override even if the user happened to type the
@@ -326,80 +453,154 @@ export function DropdownsView({ settings, updateSettings }) {
         </span>
       </div>
 
-      <div className={styles.searchRow}>
-        <input
-          type="text"
-          className={styles.searchInput}
-          placeholder="Search options or list name…"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-        />
+      <div className={styles.subtabs}>
         <button
           type="button"
-          onClick={addNewList}
-          title="Create a new dropdown list"
-          style={{
-            padding: '0.4rem 0.8rem',
-            background: 'var(--color-accent)', color: '#fff',
-            border: 'none', borderRadius: 'var(--radius-md)',
-            fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
-          }}
-        >+ New list</button>
-        <span className={styles.resultCount}>
-          {term ? `${shownOptions} of ${totalOptions} options` : `${totalOptions} options across ${lists.length} lists`}
-        </span>
+          className={activeTab === 'lists' ? styles.subtabActive : styles.subtab}
+          onClick={() => setActiveTab('lists')}
+        >Lists</button>
+        <button
+          type="button"
+          className={activeTab === 'services' ? styles.subtabActive : styles.subtab}
+          onClick={() => setActiveTab('services')}
+        >Services <span className={styles.subtabCount}>{serviceRows.length}</span></button>
       </div>
 
-      <div className={styles.scroll}>
-        <div className={styles.grid}>
-          {visibleNamed.map(list => (
-            <ListCard
-              key={list.key}
-              list={list}
-              filter={search}
-              onChange={saveList}
-              onRenameLabel={renameList}
-              onRemoveList={removeList}
+      {activeTab === 'lists' ? (
+        <>
+          <div className={styles.searchRow}>
+            <input
+              type="text"
+              className={styles.searchInput}
+              placeholder="Search options or list name…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
             />
-          ))}
-
-          {solutionsVisible && (
-            <ListCard
-              key={solutions.key}
-              list={solutions}
-              filter={search}
-              wide
-              onChange={saveList}
-              onRenameLabel={renameList}
-              onRemoveList={removeList}
-            />
-          )}
-        </div>
-
-        {!term && (
-          <div className={styles.section}>
-            <h3 className={styles.sectionTitle}>Stage age guidance</h3>
-            <table className={styles.guidanceTable}>
-              <thead>
-                <tr>
-                  <th>Stage</th>
-                  <th>Max Target Age</th>
-                  <th>Next Move</th>
-                </tr>
-              </thead>
-              <tbody>
-                {STAGE_AGE_GUIDANCE.map(row => (
-                  <tr key={row.stage}>
-                    <td>{row.stage}</td>
-                    <td>{row.maxAge}</td>
-                    <td>{row.nextMove}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <button
+              type="button"
+              onClick={addNewList}
+              title="Create a new dropdown list"
+              style={{
+                padding: '0.4rem 0.8rem',
+                background: 'var(--color-accent)', color: '#fff',
+                border: 'none', borderRadius: 'var(--radius-md)',
+                fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+              }}
+            >+ New list</button>
+            <span className={styles.resultCount}>
+              {term ? `${shownOptions} of ${totalOptions} options` : `${totalOptions} options across ${lists.length} lists`}
+            </span>
           </div>
-        )}
-      </div>
+
+          <div className={styles.scroll}>
+            <div className={styles.grid}>
+              {visibleNamed.map(list => (
+                <ListCard
+                  key={list.key}
+                  list={list}
+                  filter={search}
+                  onChange={saveList}
+                  onRenameLabel={renameList}
+                  onRemoveList={removeList}
+                />
+              ))}
+
+              {solutionsVisible && (
+                <ListCard
+                  key={solutions.key}
+                  list={solutions}
+                  filter={search}
+                  wide
+                  onChange={saveList}
+                  onRenameLabel={renameList}
+                  onRemoveList={removeList}
+                />
+              )}
+            </div>
+
+            {!term && (
+              <div className={styles.section}>
+                <h3 className={styles.sectionTitle}>Stage age guidance</h3>
+                <table className={styles.guidanceTable}>
+                  <thead>
+                    <tr>
+                      <th>Stage</th>
+                      <th>Max Target Age</th>
+                      <th>Next Move</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {STAGE_AGE_GUIDANCE.map(row => (
+                      <tr key={row.stage}>
+                        <td>{row.stage}</td>
+                        <td>{row.maxAge}</td>
+                        <td>{row.nextMove}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </>
+      ) : (
+        <>
+          <div className={styles.searchRow}>
+            <input
+              type="text"
+              className={styles.searchInput}
+              placeholder="Search services, BFO tags, regions, product lines…"
+              value={serviceSearch}
+              onChange={e => setServiceSearch(e.target.value)}
+            />
+            <span className={styles.resultCount}>
+              {serviceSearch.trim()
+                ? `${filteredServiceRows.length} of ${serviceRows.length} services`
+                : `${serviceRows.length} services`}
+            </span>
+          </div>
+
+          <div className={styles.scroll}>
+            <div className={styles.section}>
+              <table className={styles.serviceTable}>
+                <colgroup>
+                  {SERVICE_TABLE_COLUMNS.map(c => (
+                    <col key={c.key} style={c.width === 'auto' ? undefined : { width: c.width }} />
+                  ))}
+                </colgroup>
+                <thead>
+                  <tr>
+                    {SERVICE_TABLE_COLUMNS.map(c => (
+                      <th key={c.key}>{c.label}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredServiceRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={SERVICE_TABLE_COLUMNS.length} className={styles.serviceEmpty}>
+                        {serviceRows.length === 0
+                          ? 'The Solutions dropdown list is empty. Add services on the Lists tab.'
+                          : `No services match "${serviceSearch}".`}
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredServiceRows.map(({ name, meta }) => (
+                      <ServiceRow
+                        key={name}
+                        name={name}
+                        meta={meta}
+                        url={serviceLinks[name] || ''}
+                        onSaveUrl={saveServiceLink}
+                      />
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
