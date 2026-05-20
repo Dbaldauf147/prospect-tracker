@@ -5250,6 +5250,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       { label: 'ST / Prov', get: (s) => s.state, width: 14 },
       { label: 'Country', get: (s) => s.country, width: 18 },
       { label: 'Zip', get: (s) => s.zip, width: 9 },
+      { label: 'Property Type', get: (s) => s.propertyType, width: 22 },
       { label: 'Electric Utility', get: (s) => s.electricUtility, width: 22 },
       { label: 'Electric Supplier', get: (s) => s.electricSupplier, width: 22 },
       { label: 'Reg. Rate Savings Opportunity', get: (s) => s.regRateOpportunity, width: 28 },
@@ -5356,6 +5357,11 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           state: stateCode || canonicalCountry,
           zip: r.__zipNorm__ || '',
           country,
+          // Prefer the canonical property type so the value here lines
+          // up with what the Property Type Estimates sheet keys on; if
+          // the upload's raw value wasn't recognized, surface it as-is
+          // (the Flags column already calls out the unrecognized case).
+          propertyType: r.__propertyType__ || r.__propertyTypeRaw__ || '',
           electricUtility,
           electricSupplier,
           regRateOpportunity: isRegRateOpportunity ? 'Yes' : '',
