@@ -1141,10 +1141,10 @@ export function AgentsView() {
         // New BFO Opp prompt — table of qualifying opps the AI assistant
         // should create in BFO. Rendered as a pipe-delimited block so a
         // plain-text paste keeps column alignment in most editors.
-        const header = 'Company | Lead Source | Current Customer | Scope';
+        const header = 'Company | Lead Source | Current Customer | Scope | Status';
         const lines = ['BFO Opportunities to Create', header];
         for (const o of newBfoOpps) {
-          lines.push(`${o.company} | ${o.leadSource} | ${o.currentCustomer ? 'Yes' : 'No'} | ${o.scope}`);
+          lines.push(`${o.company} | ${o.leadSource} | ${o.currentCustomer ? 'Yes' : 'No'} | ${o.scope} | ${o.status}`);
         }
         const block = lines.join('\n');
         const fullPrompt = `${newBfoOppPrompt}\n\n${block}`;
@@ -1190,6 +1190,7 @@ export function AgentsView() {
                     <th>Lead Source</th>
                     <th style={{ width: 140 }}>Current Customer</th>
                     <th>Scope</th>
+                    <th style={{ width: 130 }}>Status</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1206,6 +1207,7 @@ export function AgentsView() {
                         }}>{o.currentCustomer ? 'Yes' : 'No'}</span>
                       </td>
                       <td className={o.scope && o.scope !== '—' ? '' : styles.muted}>{o.scope || '—'}</td>
+                      <td className={o.status ? '' : styles.muted}>{o.status || '—'}</td>
                     </tr>
                   ))}
                 </tbody>
