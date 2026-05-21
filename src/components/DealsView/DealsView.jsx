@@ -537,16 +537,19 @@ function buildColumns(rows, columnLinks, listRegistry) {
       if (isDate) return <span style={{ color: '#334155' }}>{fmtDate(v)}</span>;
       return <span>{String(v)}</span>;
     }
-    // Revenue Recorded reads as "$recorded/($setup + $recurring)";
+    // Revenue Recorded reads as "$recorded/$(setup + recurring)" with
+    // the two contract amounts summed into a single denominator.
     // Paid to Date reads as "$paid/$commission". Both pull the
     // supporting amounts from sibling cells on the same row so the
     // user can spot under/over-recording at a glance.
     function renderCompound(row, v) {
       const primary = currencyOrZero(v);
       if (isRevenueRecorded) {
+        const setup = asNumber(row['Setup']) ?? 0;
+        const recurring = asNumber(row['Recurring Revenue']) ?? 0;
         return (
           <span style={{ display: 'block', textAlign: 'left', fontVariantNumeric: 'tabular-nums', color: '#0F172A' }}>
-            {primary}/({currencyOrZero(row['Setup'])} + {currencyOrZero(row['Recurring Revenue'])})
+            {primary}/{fmtCurrency(setup + recurring)}
           </span>
         );
       }
@@ -568,7 +571,7 @@ function buildColumns(rows, columnLinks, listRegistry) {
       label: k,
       kind,
       renderValue,
-      defaultWidth: sticky ? 220 : isCheck ? 110 : isRevenueRecorded ? 240 : isPaidToDate ? 180 : isCurrency || isPercent ? 130 : isDate ? 130 : 150,
+      defaultWidth: sticky ? 220 : isCheck ? 110 : isRevenueRecorded ? 180 : isPaidToDate ? 180 : isCurrency || isPercent ? 130 : isDate ? 130 : 150,
       // Date columns sort chronologically off the parsed epoch ms,
       // not the formatted "M/D/YYYY" display string — without this
       // the DataTable falls back to alphabetical text compare and
