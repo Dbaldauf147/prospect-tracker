@@ -2016,6 +2016,22 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
 
   const utilMeta = utility?.meta || null;
 
+  // Virginia's retail-choice program is gated on individual-site load:
+  // only sites consuming more than 45,000 MWh/yr (5 MW × 8,760 hr) can
+  // leave the regulated tariff. We don't want VA showing up as a
+  // deregulated market just because the portfolio has small VA sites —
+  // it would advertise a savings motion that's not actually available.
+  // So VA is conditionally included in the deregulation map: it lands
+  // in the table only when at least one VA site in the uploaded data
+  // clears the 45,000 MWh/yr threshold. The site-level Flags column on
+  // the export still surfaces the gating alert.
+  const VA_HEAVY_LOAD_KWH = 45_000 * 1_000;
+  const vaHasQualifyingSite = rows.some((r) => {
+    if (r.__state__ !== 'VA') return false;
+    const kwh = r.__kwh__;
+    return typeof kwh === 'number' && Number.isFinite(kwh) && kwh > VA_HEAVY_LOAD_KWH;
+  });
+
   // Per-commodity savings % used for the overview. Applied to
   // deregulated spend only — the user can adjust the numbers later if
   // their bid-based estimates diverge.
@@ -2042,20 +2058,23 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     RI: { status: 'yes',     range: '2 - 4%',  lowPct: 0.02, highPct: 0.04 },
     TX: { status: 'yes',     range: '1 - 2%',  lowPct: 0.01, highPct: 0.02 },
     // Limited-deregulation markets — the underlying retail-choice
-    // programs are narrow enough (Direct Access only in CA, heavy-load
-    // gating in VA, opt-in pilots in MI, prior-3rd-party gating in AZ)
-    // that the standard 2-4 % commodity savings doesn't apply.
-    // Surfaced as 0 - 0 % so the Indicative Savings tab still lists
-    // them (Status stays "Limited" so they aren't filtered out as
-    // regulated) but every savings column resolves to $0. WA is
-    // intentionally absent — its retail-choice pilot was small enough
-    // that the seller no longer wants WA sites surfaced as
-    // deregulated at all, so it falls through to the regulated
-    // bucket.
+    // programs are narrow enough (Direct Access only in CA, opt-in
+    // pilots in MI, prior-3rd-party gating in AZ) that the standard
+    // 2-4 % commodity savings doesn't apply. Surfaced as 0 - 0 % so
+    // the Indicative Savings tab still lists them (Status stays
+    // "Limited" so they aren't filtered out as regulated) but every
+    // savings column resolves to $0. WA is intentionally absent —
+    // its retail-choice pilot was small enough that the seller no
+    // longer wants WA sites surfaced as deregulated at all, so it
+    // falls through to the regulated bucket. VA is handled separately
+    // below — it's only included when at least one site clears the
+    // 45,000 MWh/yr large-load threshold.
     AZ: { status: 'Limited', range: '0 - 0%', lowPct: 0, highPct: 0 },
     CA: { status: 'Limited', range: '0 - 0%', lowPct: 0, highPct: 0 },
     MI: { status: 'Limited', range: '0 - 0%', lowPct: 0, highPct: 0 },
-    VA: { status: 'Limited', range: '0 - 0%', lowPct: 0, highPct: 0 },
+    ...(vaHasQualifyingSite
+      ? { VA: { status: 'Limited', range: '0 - 0%', lowPct: 0, highPct: 0 } }
+      : {}),
   };
   // Flat savings range applied to any deregulated natural-gas site.
   const GAS_SAVINGS = { range: '2 - 4%', lowPct: 0.02, highPct: 0.04 };
