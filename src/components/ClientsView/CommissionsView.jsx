@@ -366,7 +366,33 @@ function buildColumns(oppsCache) {
     },
     exportValue: (row) => paymentStatusFor(row).label,
   };
-  return [...front, ...canonical, fyCommissionCol, paymentStatusCol];
+  // Trailing per-row delete cell. Lives in its own column so the user
+  // can wipe a stale project without clearing every other row through
+  // the Clear button.
+  const deleteCol = {
+    key: '__delete',
+    label: '',
+    defaultWidth: 44,
+    render: (row) => (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          const label = String(row['Project Name'] || row['Name'] || 'this row').trim() || 'this row';
+          if (!window.confirm(`Delete "${label}" from the commissions roster?`)) return;
+          row.__onDelete?.(row.id);
+        }}
+        title="Delete this row"
+        style={{
+          background: 'transparent', border: '1px solid var(--color-border)',
+          color: '#B91C1C', borderRadius: 4, padding: '0 6px',
+          fontSize: '0.78rem', fontFamily: 'inherit', cursor: 'pointer', lineHeight: 1.4,
+        }}
+      >×</button>
+    ),
+    exportValue: () => '',
+  };
+  return [...front, ...canonical, fyCommissionCol, paymentStatusCol, deleteCol];
 }
 
 export function CommissionsView({ settings, updateSettings, prospects = [] }) {
@@ -456,8 +482,24 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     });
   }
 
+  // Drop a single row from the roster. Triggered by the trailing × cell
+  // on each row; a confirm() prompt keeps a stray click from nuking a
+  // project. Row ids are the raw array index so we splice the original
+  // data array, not the filtered view.
+  function deleteRow(rowId) {
+    const idx = Number(rowId);
+    if (!Number.isFinite(idx)) return;
+    setStore(prev => {
+      const next = [...prev.data];
+      if (idx < 0 || idx >= next.length) return prev;
+      next.splice(idx, 1);
+      try { saveCommissionsOverride(next); } catch (err) { console.warn('Save commissions failed', err); }
+      return { data: next, source: 'override' };
+    });
+  }
+
   const rows = useMemo(
-    () => data.map((r, i) => ({ ...r, id: i, __onUpdate: updateCell })),
+    () => data.map((r, i) => ({ ...r, id: i, __onUpdate: updateCell, __onDelete: deleteRow })),
     [data]
   );
 
