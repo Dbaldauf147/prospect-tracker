@@ -3,6 +3,70 @@ import { DataTable } from '../common/DataTable';
 import { asNumber, asDate, fmtCurrency, fmtPercent, fmtDate } from '../../utils/dealsFormat';
 import { loadCommissions, saveCommissionsOverride, clearCommissionsOverride } from '../../utils/commissionsStore';
 import { CommissionsPasteImportModal, COMMISSIONS_CANONICAL } from './CommissionsPasteImportModal';
+import { loadOppsFromCache, findOppByBfoLink } from '../../utils/oppsCache';
+
+// Lookup columns the user adds at the front of the table. Account Name
+// is an autocomplete against the Table View prospect roster; BFO Name is
+// the BFO Opportunity Name the user pastes from the Opps tab; Scope is
+// a read-only lookup that resolves BFO Name against the cached Opps
+// records.
+const ACCOUNT_NAME_KEY = 'Account Name';
+const BFO_NAME_KEY = 'BFO Name';
+const SCOPE_KEY = 'Scope';
+
+// Shared <datalist> id for the Account Name autocomplete — every cell
+// editor on the column points at this list via `list="..."`.
+const ACCOUNT_NAME_LIST_ID = 'commissions-account-name-suggestions';
+
+// Inline cell editor: shows the formatted value, swaps to a text input on
+// double-click, commits on Enter / blur, cancels on Escape. `listId`
+// hooks the input up to a <datalist> for autocomplete (Account Name).
+function EditableCell({ value, render, onSave, listId }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value == null ? '' : String(value));
+  useEffect(() => {
+    if (!editing) setDraft(value == null ? '' : String(value));
+  }, [value, editing]);
+
+  function commit(next) {
+    onSave(next == null ? '' : String(next));
+    setEditing(false);
+  }
+
+  if (!editing) {
+    return (
+      <span
+        onDoubleClick={(e) => { e.stopPropagation(); setEditing(true); }}
+        title="Double-click to edit"
+        style={{ display: 'inline-block', width: '100%', cursor: 'text' }}
+      >
+        {render(value)}
+      </span>
+    );
+  }
+
+  return (
+    <input
+      autoFocus
+      type="text"
+      value={draft}
+      list={listId}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => commit(draft)}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') { e.preventDefault(); commit(draft); }
+        else if (e.key === 'Escape') { e.preventDefault(); setDraft(value == null ? '' : String(value)); setEditing(false); }
+      }}
+      style={{
+        width: '100%', padding: '0.15rem 0.3rem',
+        border: '1px solid #3B82F6', borderRadius: 4,
+        fontSize: '0.7rem', fontFamily: 'inherit', background: '#fff', color: '#1E293B',
+        boxSizing: 'border-box',
+      }}
+    />
+  );
+}
 
 // Detect a "<m>/1/<y>" header so the column renderer can flip to
 // currency formatting. The plain-date header is the commission $ for
@@ -21,6 +85,9 @@ const DATE_KEYS = new Set(['Comm Start Date', 'Comm End Date']);
 const PERCENT_KEYS = new Set(['%']);
 
 function defaultWidth(k) {
+  if (k === ACCOUNT_NAME_KEY) return 200;
+  if (k === BFO_NAME_KEY) return 200;
+  if (k === SCOPE_KEY) return 180;
   if (k === 'Name') return 170;
   if (k === 'Project Name') return 280;
   if (DATE_KEYS.has(k)) return 120;
@@ -30,9 +97,76 @@ function defaultWidth(k) {
   return 130;
 }
 
-function buildColumns() {
-  return COMMISSIONS_CANONICAL.map((k, i) => {
-    const sticky = i === 0;
+// Plain-text cell used by Account Name / BFO Name / pasted Name fields.
+function plainTextRender(v) {
+  if (v == null || v === '') return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
+  return <span>{String(v)}</span>;
+}
+
+// Build the three lookup columns the user adds in front of the imported
+// roster: Account Name (autocomplete from prospects), BFO Name (free
+// text — the BFO Opportunity Name the user pastes), and Scope (read-only
+// lookup that resolves BFO Name against the cached Opps records).
+function buildFrontColumns(oppsCache) {
+  return [
+    {
+      key: ACCOUNT_NAME_KEY,
+      label: ACCOUNT_NAME_KEY,
+      defaultWidth: defaultWidth(ACCOUNT_NAME_KEY),
+      sticky: true,
+      render: (row) => (
+        <EditableCell
+          value={row[ACCOUNT_NAME_KEY]}
+          render={plainTextRender}
+          onSave={(v) => row.__onUpdate?.(row.id, ACCOUNT_NAME_KEY, v)}
+          listId={ACCOUNT_NAME_LIST_ID}
+        />
+      ),
+      exportValue: (row) => row[ACCOUNT_NAME_KEY] ?? '',
+    },
+    {
+      key: BFO_NAME_KEY,
+      label: BFO_NAME_KEY,
+      defaultWidth: defaultWidth(BFO_NAME_KEY),
+      render: (row) => (
+        <EditableCell
+          value={row[BFO_NAME_KEY]}
+          render={plainTextRender}
+          onSave={(v) => row.__onUpdate?.(row.id, BFO_NAME_KEY, v)}
+        />
+      ),
+      exportValue: (row) => row[BFO_NAME_KEY] ?? '',
+    },
+    {
+      key: SCOPE_KEY,
+      label: SCOPE_KEY,
+      defaultWidth: defaultWidth(SCOPE_KEY),
+      // Scope is derived from the Opps cache — sort and export off the
+      // resolved value, not whatever (nothing) is stored on the row.
+      getSortValue: (row) => {
+        const opp = findOppByBfoLink(oppsCache, row[BFO_NAME_KEY]);
+        return opp ? String(opp[SCOPE_KEY] || '') : '';
+      },
+      render: (row) => {
+        const bfo = String(row[BFO_NAME_KEY] || '').trim();
+        if (!bfo) return <span style={{ color: 'var(--color-text-muted)' }} title="Paste a BFO Opportunity Name in the previous column to look up its Scope">—</span>;
+        const opp = findOppByBfoLink(oppsCache, bfo);
+        if (!opp) return <span style={{ color: '#B91C1C' }} title="No Opps row matches this BFO Opportunity Name">no match</span>;
+        const scope = String(opp[SCOPE_KEY] || '').trim();
+        if (!scope) return <span style={{ color: 'var(--color-text-muted)' }} title="Matching Opps row has no Scope set">—</span>;
+        return <span title={`From Opps row for "${bfo}"`}>{scope}</span>;
+      },
+      exportValue: (row) => {
+        const opp = findOppByBfoLink(oppsCache, row[BFO_NAME_KEY]);
+        return opp ? (opp[SCOPE_KEY] || '') : '';
+      },
+    },
+  ];
+}
+
+function buildColumns(oppsCache) {
+  const front = buildFrontColumns(oppsCache);
+  const canonical = COMMISSIONS_CANONICAL.map((k) => {
     const isCurrency = CURRENCY_KEYS.has(k) || isMonthRevenueKey(k) || isFYRevenueKey(k) || isMonthCommissionKey(k);
     const isDate = DATE_KEYS.has(k);
     const isPercent = PERCENT_KEYS.has(k);
@@ -40,7 +174,6 @@ function buildColumns() {
       key: k,
       label: k,
       defaultWidth: defaultWidth(k),
-      ...(sticky ? { sticky: true } : {}),
       ...(isDate ? { getSortValue: (row) => { const d = asDate(row[k]); return d ? d.getTime() : null; } } : {}),
       ...(isCurrency || isPercent ? { getSortValue: (row) => asNumber(row[k]) } : {}),
       render: (row) => {
@@ -62,13 +195,27 @@ function buildColumns() {
       },
     };
   });
+  return [...front, ...canonical];
 }
 
-export function CommissionsView({ settings, updateSettings }) {
+export function CommissionsView({ settings, updateSettings, prospects = [] }) {
   const [{ data, source }, setStore] = useState(() => loadCommissions());
   const [search, setSearch] = useState('');
   const [showPaste, setShowPaste] = useState(false);
   const [initialPaste, setInitialPaste] = useState('');
+  // Cached Opps records, used by the Scope lookup column. Refreshes on
+  // mount and when the window regains focus so pasting on the Opps tab
+  // and switching back here reflects new entries without a reload.
+  const [oppsCache, setOppsCache] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      loadOppsFromCache().then(c => { if (!cancelled) setOppsCache(c || null); }).catch(() => {});
+    };
+    refresh();
+    window.addEventListener('focus', refresh);
+    return () => { cancelled = true; window.removeEventListener('focus', refresh); };
+  }, []);
 
   useEffect(() => {
     function onStorage(e) {
@@ -100,11 +247,46 @@ export function CommissionsView({ settings, updateSettings }) {
     return () => document.removeEventListener('paste', onPaste);
   }, [showPaste]);
 
-  const columns = useMemo(buildColumns, []);
+  const columns = useMemo(() => buildColumns(oppsCache), [oppsCache]);
   const tableId = useMemo(() => 'commissions:' + columns.map(c => c.key).sort().join('|'), [columns]);
 
+  // Page-level autocomplete pool for the Account Name column —
+  // mirrors the Deals tab's Client Name suggestions so the user gets
+  // predictive matches against every company already in Table View.
+  const accountNameSuggestions = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    for (const p of (prospects || [])) {
+      const c = String(p?.company || '').trim();
+      if (!c) continue;
+      const k = c.toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(c);
+    }
+    out.sort((a, b) => a.localeCompare(b));
+    return out;
+  }, [prospects]);
+
+  // Save a single cell back to localStorage / the in-memory data array.
+  // Empty values delete the key entirely so empty cells render the muted
+  // "—" placeholder. Mirrors the DealsView updateCell pattern.
+  function updateCell(rowId, key, value) {
+    const idx = Number(rowId);
+    if (!Number.isFinite(idx)) return;
+    setStore(prev => {
+      const next = [...prev.data];
+      const current = { ...(next[idx] || {}) };
+      if (value === '' || value == null) delete current[key];
+      else current[key] = value;
+      next[idx] = current;
+      try { saveCommissionsOverride(next); } catch (err) { console.warn('Save commissions failed', err); }
+      return { data: next, source: 'override' };
+    });
+  }
+
   const rows = useMemo(
-    () => data.map((r, i) => ({ ...r, id: i })),
+    () => data.map((r, i) => ({ ...r, id: i, __onUpdate: updateCell })),
     [data]
   );
 
@@ -130,6 +312,14 @@ export function CommissionsView({ settings, updateSettings }) {
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+      {/* Predictive-text source for every Account Name cell. Rendered
+          once at the view level so each EditableCell input just points
+          at it via list="..." — matches the Deals tab pattern. */}
+      <datalist id={ACCOUNT_NAME_LIST_ID}>
+        {accountNameSuggestions.map(name => (
+          <option key={name} value={name} />
+        ))}
+      </datalist>
       <div style={{ padding: '1rem 1.25rem 0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexShrink: 0, flexWrap: 'wrap' }}>
         <div>
           <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: '#1E293B' }}>Commissions</h2>
