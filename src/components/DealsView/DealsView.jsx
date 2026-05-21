@@ -726,6 +726,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
   const [clientMap, setClientMap] = useState(() => loadDealClientMap());
   const [ignoreSet, setIgnoreSet] = useState(() => loadDealClientIgnore());
   const [onlyUnmapped, setOnlyUnmapped] = useState(false);
+  const [onlyIncomplete, setOnlyIncomplete] = useState(false);
   const [bulkPick, setBulkPick] = useState('');
   const [linkModalOpen, setLinkModalOpen] = useState(false);
   const fileInputRef = useRef(null);
@@ -1041,6 +1042,16 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
     return true;
   }
 
+  // A row counts as "incomplete handoff" when it isn't opted-out via
+  // the Progress popover and at least one of the PROGRESS_FIELDS is
+  // still blank. Mirrors the X/N math the pill shows in the first
+  // column so the filter button stays in lockstep with the badge.
+  const incompleteCount = useMemo(
+    () => rows.filter(r => !isFilled(r[PROGRESS_IGNORED_KEY])
+      && PROGRESS_FIELDS.some(f => !isFilled(r[f.key]))).length,
+    [rows]
+  );
+
   const filtered = useMemo(() => {
     let out = rows;
     if (search.trim()) {
@@ -1050,8 +1061,12 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
       );
     }
     if (onlyUnmapped) out = out.filter(isRowUnmapped);
+    if (onlyIncomplete) {
+      out = out.filter(r => !isFilled(r[PROGRESS_IGNORED_KEY])
+        && PROGRESS_FIELDS.some(f => !isFilled(r[f.key])));
+    }
     return out;
-  }, [search, rows, onlyUnmapped, clientNameSet, clientMap, ignoreSet, clientOptions]);
+  }, [search, rows, onlyUnmapped, onlyIncomplete, clientNameSet, clientMap, ignoreSet, clientOptions]);
 
   async function handleUpload(e) {
     const file = e.target.files?.[0];
@@ -1257,6 +1272,29 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
             }}
           >{onlyUnmapped ? `✓ Showing unmapped (${unmappedCount})` : `Show only unmapped (${unmappedCount})`}</button>
         )}
+        <button
+          type="button"
+          onClick={() => setOnlyIncomplete(v => !v)}
+          disabled={incompleteCount === 0 && !onlyIncomplete}
+          title={incompleteCount === 0
+            ? 'Every deal has a fully-checked Handoff progress'
+            : (onlyIncomplete
+                ? 'Show all rows'
+                : `Show only deals whose Handoff progress is less than ${PROGRESS_FIELDS.length}/${PROGRESS_FIELDS.length}`)}
+          style={{
+            padding: '0.35rem 0.7rem',
+            border: '1px solid',
+            borderColor: onlyIncomplete ? '#991B1B' : '#FCA5A5',
+            borderRadius: 6,
+            background: onlyIncomplete ? '#991B1B' : '#FEF2F2',
+            color: onlyIncomplete ? '#fff' : '#991B1B',
+            fontSize: '0.72rem', fontWeight: 700, fontFamily: 'inherit',
+            cursor: (incompleteCount === 0 && !onlyIncomplete) ? 'not-allowed' : 'pointer',
+            opacity: (incompleteCount === 0 && !onlyIncomplete) ? 0.5 : 1,
+          }}
+        >{onlyIncomplete
+          ? `✓ Showing incomplete (${incompleteCount})`
+          : `Show only < ${PROGRESS_FIELDS.length}/${PROGRESS_FIELDS.length} (${incompleteCount})`}</button>
       </div>
 
       {onlyUnmapped && distinctUnmappedNames.size > 0 && (
