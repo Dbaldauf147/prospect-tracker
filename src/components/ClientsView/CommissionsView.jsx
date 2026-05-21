@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, useRef } from 'react';
 import { DataTable } from '../common/DataTable';
 import { asNumber, asDate, fmtCurrency, fmtPercent, fmtDate } from '../../utils/dealsFormat';
 import {
@@ -320,7 +320,110 @@ function renderSumCell(total, emptyTitle, sumTitle) {
   );
 }
 
-function buildColumns(oppsCache) {
+// Columns the user can drive from the bulk-edit bar. Derived columns
+// (Scope is read from the Opps cache, FY Revenue / FY Commission are
+// summed at render time, Payment Status is computed) are excluded
+// because setting them on a row wouldn't survive the next render.
+function buildBulkEditableKeys() {
+  const out = [
+    ACCOUNT_NAME_KEY, BFO_NAME_KEY,
+    'Name', 'Project Name',
+    'Comm Start Date', 'Comm End Date', '%',
+  ];
+  for (const m of COMMISSION_MONTH_NAMES) out.push(`${m} Revenue`);
+  for (const m of COMMISSION_MONTH_NAMES) out.push(m);
+  return out;
+}
+const BULK_EDITABLE_KEYS = buildBulkEditableKeys();
+
+// Bulk-edit toolbar. Pops in above the table whenever the user has
+// at least one row selected. Picks a target column, takes a value,
+// and routes the write through onApply / onDelete on the parent.
+function BulkEditBar({ selectedCount, onApply, onDelete, onClearSelection }) {
+  const [field, setField] = useState(BULK_EDITABLE_KEYS[0]);
+  const [value, setValue] = useState('');
+  return (
+    <div style={{
+      margin: '0 1.25rem 0.5rem', padding: '0.5rem 0.75rem',
+      background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 6,
+      display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap',
+      fontSize: '0.75rem', color: '#1E3A8A',
+    }}>
+      <strong>{selectedCount}</strong> selected · set
+      <select
+        value={field}
+        onChange={(e) => setField(e.target.value)}
+        style={{ padding: '0.25rem 0.4rem', border: '1px solid #93C5FD', borderRadius: 4, fontSize: '0.75rem', fontFamily: 'inherit', background: '#fff' }}
+        title="Pick which column to set on every selected row"
+      >
+        {BULK_EDITABLE_KEYS.map(k => <option key={k} value={k}>{k}</option>)}
+      </select>
+      to
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder="value (leave blank to clear)"
+        style={{ flex: 1, minWidth: 160, maxWidth: 320, padding: '0.25rem 0.4rem', border: '1px solid #93C5FD', borderRadius: 4, fontSize: '0.75rem', fontFamily: 'inherit', background: '#fff' }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { e.preventDefault(); onApply(field, value); setValue(''); }
+        }}
+      />
+      <button
+        type="button"
+        onClick={() => { onApply(field, value); setValue(''); }}
+        title={`Set ${field} = "${value}" on all ${selectedCount} selected rows`}
+        style={{ padding: '0.3rem 0.7rem', border: 'none', borderRadius: 4, background: '#2563EB', color: '#fff', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+      >Apply</button>
+      <button
+        type="button"
+        onClick={() => onApply(field, '')}
+        title={`Clear ${field} on all ${selectedCount} selected rows`}
+        style={{ padding: '0.3rem 0.7rem', border: '1px solid #93C5FD', borderRadius: 4, background: '#fff', color: '#1E3A8A', fontSize: '0.75rem', cursor: 'pointer', fontFamily: 'inherit' }}
+      >Clear field</button>
+      <span style={{ flex: 1 }} />
+      <button
+        type="button"
+        onClick={onDelete}
+        title="Delete every selected row"
+        style={{ padding: '0.3rem 0.7rem', border: '1px solid #FCA5A5', borderRadius: 4, background: '#fff', color: '#B91C1C', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+      >Delete selected</button>
+      <button
+        type="button"
+        onClick={onClearSelection}
+        title="Deselect every row"
+        style={{ padding: '0.3rem 0.7rem', border: '1px solid #CBD5E1', borderRadius: 4, background: '#fff', color: '#475569', fontSize: '0.75rem', cursor: 'pointer', fontFamily: 'inherit' }}
+      >Cancel</button>
+    </div>
+  );
+}
+
+// Per-row selection checkbox. Lives in its own sticky column on the
+// far left of the table. The "select all" header is rendered by
+// `buildSelectHeader` inside the component so it can close over the
+// current visible-rows state setter.
+function buildSelectCol(renderHeader) {
+  return {
+    key: '__select',
+    label: '',
+    defaultWidth: 36,
+    sticky: true,
+    renderHeader,
+    render: (row) => (
+      <input
+        type="checkbox"
+        checked={!!row.__isSelected}
+        onClick={(e) => e.stopPropagation()}
+        onChange={() => row.__onToggleSelect?.(row.id)}
+        style={{ cursor: 'pointer' }}
+        aria-label="Select row for bulk actions"
+      />
+    ),
+    exportValue: () => '',
+  };
+}
+
+function buildColumns(oppsCache, selectCol) {
   const front = buildFrontColumns(oppsCache);
   const canonical = COMMISSIONS_CANONICAL.map((k) => {
     const isCurrency = CURRENCY_KEYS.has(k) || isMonthRevenueKey(k) || isFYRevenueKey(k) || isMonthCommissionKey(k);
@@ -420,7 +523,7 @@ function buildColumns(oppsCache) {
     ),
     exportValue: () => '',
   };
-  return [...front, ...canonical, fyCommissionCol, paymentStatusCol, deleteCol];
+  return [selectCol, ...front, ...canonical, fyCommissionCol, paymentStatusCol, deleteCol];
 }
 
 export function CommissionsView({ settings, updateSettings, prospects = [] }) {
@@ -472,7 +575,70 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     return () => document.removeEventListener('paste', onPaste);
   }, [showPaste]);
 
-  const columns = useMemo(() => buildColumns(oppsCache), [oppsCache]);
+  // Selection state for the bulk-edit toolbar. Row "ids" are the raw
+  // array indices on the underlying data; we clear the selection after
+  // every bulk mutation so a shifted index never resurfaces as a
+  // mis-targeted edit. `visibleIdsRef` is updated below so the header
+  // "select all" checkbox can grab the filtered roster without
+  // re-triggering buildColumns on every selection change.
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const visibleIdsRef = useRef([]);
+
+  const toggleSelect = (rowId) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(rowId)) next.delete(rowId); else next.add(rowId);
+      return next;
+    });
+  };
+
+  const selectAllVisible = () => {
+    setSelectedIds(prev => {
+      const visible = visibleIdsRef.current;
+      const allSelected = visible.length > 0 && visible.every(id => prev.has(id));
+      if (allSelected) {
+        // Toggle off — clear just the visible ones, leave any
+        // off-screen selection alone (the user can still see the count
+        // and act on it via the toolbar).
+        const next = new Set(prev);
+        for (const id of visible) next.delete(id);
+        return next;
+      }
+      const next = new Set(prev);
+      for (const id of visible) next.add(id);
+      return next;
+    });
+  };
+
+  // Closure-captured renderHeader so the select-all checkbox sees the
+  // live selection state without forcing the column list to rebuild on
+  // every toggle.
+  const selectColHeader = () => {
+    const visible = visibleIdsRef.current;
+    const allSelected = visible.length > 0 && visible.every(id => selectedIds.has(id));
+    const someSelected = !allSelected && visible.some(id => selectedIds.has(id));
+    return (
+      <input
+        type="checkbox"
+        checked={allSelected}
+        ref={(el) => { if (el) el.indeterminate = someSelected; }}
+        onClick={(e) => e.stopPropagation()}
+        onChange={selectAllVisible}
+        style={{ cursor: 'pointer' }}
+        title="Select / clear every row currently visible in the table"
+      />
+    );
+  };
+
+  const columns = useMemo(
+    () => buildColumns(oppsCache, buildSelectCol(selectColHeader)),
+    // selectColHeader closes over selectedIds. tableId depends only on
+    // the column keys (stable), so re-creating the array on every
+    // selection toggle re-renders the header without remounting the
+    // table.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [oppsCache, selectedIds]
+  );
   const tableId = useMemo(() => 'commissions:' + columns.map(c => c.key).sort().join('|'), [columns]);
 
   // Page-level autocomplete pool for the Account Name column —
@@ -527,8 +693,15 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
   }
 
   const rows = useMemo(
-    () => data.map((r, i) => ({ ...r, id: i, __onUpdate: updateCell, __onDelete: deleteRow })),
-    [data]
+    () => data.map((r, i) => ({
+      ...r,
+      id: i,
+      __onUpdate: updateCell,
+      __onDelete: deleteRow,
+      __isSelected: selectedIds.has(i),
+      __onToggleSelect: toggleSelect,
+    })),
+    [data, selectedIds]
   );
 
   const filtered = useMemo(() => {
@@ -536,6 +709,45 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     const term = search.toLowerCase();
     return rows.filter(r => Object.values(r).some(v => String(v).toLowerCase().includes(term)));
   }, [rows, search]);
+
+  // Keep the "what's currently on screen" list in sync so the select-
+  // all checkbox and any "selected of visible" math reflect the
+  // current search filter.
+  visibleIdsRef.current = filtered.map(r => r.id);
+
+  // Bulk mutations operate on the full underlying data array; row ids
+  // are indices into that array, so we just rebuild it once. After
+  // every mutation we wipe the selection so a stale index (rows have
+  // shifted up or values have already been written) can't re-trigger
+  // an edit on the wrong row.
+  function bulkSet(key, rawValue) {
+    if (!key) return;
+    if (selectedIds.size === 0) return;
+    setStore(prev => {
+      const next = prev.data.map((row, i) => {
+        if (!selectedIds.has(i)) return row;
+        const out = { ...row };
+        if (rawValue === '' || rawValue == null) delete out[key];
+        else out[key] = rawValue;
+        return out;
+      });
+      try { saveCommissionsOverride(next); } catch (err) { console.warn('Save commissions failed', err); }
+      return { data: next, source: 'override' };
+    });
+    setSelectedIds(new Set());
+  }
+
+  function bulkDelete() {
+    if (selectedIds.size === 0) return;
+    const n = selectedIds.size;
+    if (!window.confirm(`Delete ${n} selected commission row${n === 1 ? '' : 's'}?`)) return;
+    setStore(prev => {
+      const next = prev.data.filter((_row, i) => !selectedIds.has(i));
+      try { saveCommissionsOverride(next); } catch (err) { console.warn('Save commissions failed', err); }
+      return { data: next, source: 'override' };
+    });
+    setSelectedIds(new Set());
+  }
 
   function handleImport(records) {
     setStore(prev => {
@@ -607,6 +819,15 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
           {filtered.length} of {rows.length}
         </span>
       </div>
+
+      {selectedIds.size > 0 && (
+        <BulkEditBar
+          selectedCount={selectedIds.size}
+          onApply={bulkSet}
+          onDelete={bulkDelete}
+          onClearSelection={() => setSelectedIds(new Set())}
+        />
+      )}
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {rows.length === 0 ? (
