@@ -68,6 +68,7 @@ export function CommissionsView({ settings, updateSettings }) {
   const [{ data, source }, setStore] = useState(() => loadCommissions());
   const [search, setSearch] = useState('');
   const [showPaste, setShowPaste] = useState(false);
+  const [initialPaste, setInitialPaste] = useState('');
 
   useEffect(() => {
     function onStorage(e) {
@@ -76,6 +77,28 @@ export function CommissionsView({ settings, updateSettings }) {
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
   }, []);
+
+  // Page-level paste handler. When the user hits Ctrl/Cmd+V anywhere on
+  // the Commissions tab — including the empty-state placeholder, the
+  // toolbar, or the table — pop the import modal open with the
+  // clipboard text pre-filled so they don't have to click Paste from
+  // Excel first. Skipped while a real input / textarea has focus so the
+  // search box and the modal's own textarea keep working normally.
+  useEffect(() => {
+    function onPaste(e) {
+      if (showPaste) return;
+      const ae = document.activeElement;
+      const tag = ae && ae.tagName ? ae.tagName.toLowerCase() : '';
+      if (tag === 'input' || tag === 'textarea' || (ae && ae.isContentEditable)) return;
+      const text = e.clipboardData ? e.clipboardData.getData('text/plain') : '';
+      if (!text || !text.trim()) return;
+      e.preventDefault();
+      setInitialPaste(text);
+      setShowPaste(true);
+    }
+    document.addEventListener('paste', onPaste);
+    return () => document.removeEventListener('paste', onPaste);
+  }, [showPaste]);
 
   const columns = useMemo(buildColumns, []);
   const tableId = useMemo(() => 'commissions:' + columns.map(c => c.key).sort().join('|'), [columns]);
@@ -173,8 +196,9 @@ export function CommissionsView({ settings, updateSettings }) {
 
       {showPaste && (
         <CommissionsPasteImportModal
-          onClose={() => setShowPaste(false)}
-          onImport={handleImport}
+          onClose={() => { setShowPaste(false); setInitialPaste(''); }}
+          onImport={(records) => { handleImport(records); setInitialPaste(''); }}
+          initialPaste={initialPaste}
         />
       )}
     </div>
