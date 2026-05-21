@@ -102,7 +102,6 @@ export function CommissionsView({ settings, updateSettings }) {
 
   const columns = useMemo(buildColumns, []);
   const tableId = useMemo(() => 'commissions:' + columns.map(c => c.key).sort().join('|'), [columns]);
-  const alwaysVisible = useMemo(() => (columns[0] ? [columns[0].key] : []), [columns]);
 
   const rows = useMemo(
     () => data.map((r, i) => ({ ...r, id: i })),
@@ -185,7 +184,6 @@ export function CommissionsView({ settings, updateSettings }) {
             tableId={tableId}
             columns={columns}
             rows={filtered}
-            alwaysVisible={alwaysVisible}
             emptyMessage={search ? `No rows match "${search}"` : 'No commissions to display'}
             enableColumnFilters
             settings={settings}
