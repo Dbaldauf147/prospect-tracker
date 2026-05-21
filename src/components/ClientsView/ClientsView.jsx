@@ -62,7 +62,7 @@ function soonestExpiration(deals) {
 // aliases of the Deals-subtab headers — the upload normalizer in
 // DealsView already folds them onto the same key.
 const CONTRACT_COLUMNS = [
-  { key: 'Agreement Name',          label: 'Agreement Name', minWidth: 260 },
+  { key: 'Agreement Name',          label: 'Agreement Name', minWidth: 420 },
   { key: 'Paperwork completed',     label: 'Paperwork', minWidth: 220 },
   { key: 'Current Term Start Date', label: 'Current Term Start Date' },
   { key: 'Payment Terms',           label: 'Payment Terms' },
