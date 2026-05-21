@@ -485,11 +485,6 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
               }}
             >{isOpen ? '▾' : '▸'}</button>
             <span style={{ fontWeight: 600, color: '#1E293B' }}>{row.company || '—'}</span>
-            {count > 0 && (
-              <span title={`${count} contract${count === 1 ? '' : 's'} on file`} style={{ display: 'inline-block', padding: '0 6px', borderRadius: 999, fontSize: '0.6rem', fontWeight: 700, background: '#E0E7FF', color: '#3730A3' }}>
-                {count}
-              </span>
-            )}
           </span>
         );
       },
