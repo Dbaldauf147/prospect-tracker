@@ -13,6 +13,7 @@ import {
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { loadDealsList, saveDealsOverride, clearDealsOverride } from '../../utils/dealsStore';
 import { loadCommissions } from '../../utils/commissionsStore';
+import { COMMISSIONS_CANONICAL } from '../ClientsView/CommissionsPasteImportModal';
 import {
   asNumber, asDate, fmtCurrency, fmtPercent, fmtDate,
   DEAL_CURRENCY_KEYS, DEAL_DATE_KEYS, DEAL_PERCENT_KEYS, DEAL_CHECK_KEYS,
@@ -82,7 +83,20 @@ const DAYS_PAID_ON_HIDDEN_KEY = '__daysPaidOnHidden';
 const DEAL_BFO_KEY = 'BFO - Close after contract execution email has been sent';
 
 const COMMISSION_MONTHLY_REVENUE_RE = /^\d{1,2}\/1\/\d{4}\s+Revenue$/i;
-const COMMISSION_MONTHLY_COMMISSION_RE = /^\d{1,2}\/1\/\d{4}$/;
+const COMMISSION_MONTHLY_COMMISSION_RE = /^(\d{1,2})\/1\/(\d{4})$/;
+const COMMISSION_FY_REVENUE_RE = /^FY(\d{4})\s+Revenue$/i;
+
+// The fiscal year the canonical month columns cover. Derived from the
+// Commissions canonical column list so this view tracks the same year
+// the Commissions tab is rendering against — without having to import
+// a private constant.
+const COMMISSIONS_CANONICAL_YEAR = (() => {
+  for (const k of COMMISSIONS_CANONICAL) {
+    const m = COMMISSION_FY_REVENUE_RE.exec(String(k).trim());
+    if (m) return Number(m[1]);
+  }
+  return new Date().getFullYear();
+})();
 
 // Normalize a BFO opp name for matching across Deals ↔ Commissions —
 // the user copies and pastes the same identifier on both tabs so a
@@ -92,11 +106,40 @@ function normBfo(v) {
   return String(v ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
+// Mirror of the Commissions tab's Payment Status logic, run against the
+// per-BFO aggregate so a deal that maps to multiple commission rows
+// gets a single Active / Stopped read-out. Prefers the latest Comm End
+// Date across matching rows; falls back to the latest non-zero
+// commission month versus today when no end date is on file.
+function computePaymentStatus(info) {
+  if (info.endDate) {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const e = new Date(info.endDate); e.setHours(0, 0, 0, 0);
+    if (e.getTime() < today.getTime()) {
+      return { state: 'stopped', label: 'Stopped', title: `Comm End Date ${fmtDate(info.endDate)} is in the past` };
+    }
+    return { state: 'active', label: 'Active', title: `Comm End Date ${fmtDate(info.endDate)}` };
+  }
+  let lastIdx = -1;
+  for (let m = 0; m < 12; m++) if (info.monthlyComm[m] !== 0) lastIdx = m;
+  if (lastIdx === -1) return { state: 'unknown', label: '—', title: 'No Comm End Date and no commission entries on file' };
+  const today = new Date();
+  const todayMonthIdx = today.getFullYear() === COMMISSIONS_CANONICAL_YEAR
+    ? today.getMonth()
+    : (today.getFullYear() < COMMISSIONS_CANONICAL_YEAR ? -1 : 12);
+  if (lastIdx >= todayMonthIdx - 1) {
+    return { state: 'active', label: 'Active', title: `Most recent commission: ${lastIdx + 1}/${COMMISSIONS_CANONICAL_YEAR}` };
+  }
+  return { state: 'stopped', label: 'Stopped', title: `Most recent commission: ${lastIdx + 1}/${COMMISSIONS_CANONICAL_YEAR} — no payments since` };
+}
+
 // Roll the Commissions roster into a map keyed by normalized BFO Name,
 // summing each project's monthly revenue / commission cells. Multiple
 // commission rows that share a BFO Name (different project lines of
-// the same opp) accumulate into a single total. Returns an empty Map
-// when nothing is on file so callers can treat the lookup uniformly.
+// the same opp) accumulate into a single total, and the latest Comm
+// End Date across them feeds the Payment Status read-out. Returns an
+// empty Map when nothing is on file so callers can treat the lookup
+// uniformly.
 function indexCommissionsByBfo(rows) {
   const map = new Map();
   for (const row of (rows || [])) {
@@ -104,21 +147,36 @@ function indexCommissionsByBfo(rows) {
     if (!key) continue;
     let revenue = 0;
     let commission = 0;
+    const monthlyComm = new Array(12).fill(0);
+    const endDate = asDate(row?.['Comm End Date']);
     for (const [k, v] of Object.entries(row)) {
       const n = asNumber(v);
       if (n == null) continue;
-      if (COMMISSION_MONTHLY_REVENUE_RE.test(k)) revenue += n;
-      else if (COMMISSION_MONTHLY_COMMISSION_RE.test(k)) commission += n;
+      if (COMMISSION_MONTHLY_REVENUE_RE.test(k)) {
+        revenue += n;
+        continue;
+      }
+      const mm = COMMISSION_MONTHLY_COMMISSION_RE.exec(k);
+      if (mm) {
+        commission += n;
+        const monthNum = Number(mm[1]);
+        if (monthNum >= 1 && monthNum <= 12) monthlyComm[monthNum - 1] += n;
+      }
     }
     const prev = map.get(key);
     if (prev) {
       prev.revenue += revenue;
       prev.commission += commission;
       prev.rows += 1;
+      for (let i = 0; i < 12; i++) prev.monthlyComm[i] += monthlyComm[i];
+      if (endDate && (!prev.endDate || endDate.getTime() > prev.endDate.getTime())) {
+        prev.endDate = endDate;
+      }
     } else {
-      map.set(key, { revenue, commission, rows: 1 });
+      map.set(key, { revenue, commission, rows: 1, monthlyComm, endDate: endDate || null });
     }
   }
+  for (const info of map.values()) info.paymentStatus = computePaymentStatus(info);
   return map;
 }
 
@@ -674,6 +732,7 @@ function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
     const isRevenueRecorded = k === 'Revenue Recorded';
     const isPaidToDate = k === 'Paid to Date';
     const isDaysPaidOn = k === 'Days/Paid on';
+    const isCurrentlyBeingPaid = k === 'Currently being paid';
     const kind = isCheck ? 'check'
       : isCurrency ? 'currency'
       : isPercent ? 'percent'
@@ -818,6 +877,26 @@ function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
       render: (row) => {
         if (isDaysPaidOn) {
           return <DaysPaidOnCell row={row} />;
+        }
+        // Currently being paid mirrors the Commissions tab's Payment
+        // Status pill — pulled by the deal's BFO opp name so the user
+        // doesn't have to keep two columns in sync by hand. Falls back
+        // to the editable cell when no match exists.
+        if (isCurrentlyBeingPaid) {
+          const bfo = normBfo(row?.[DEAL_BFO_KEY]);
+          const hit = bfo ? commissionsByBfo?.get(bfo) : null;
+          const status = hit?.paymentStatus;
+          if (status) {
+            const palette = status.state === 'active' ? { bg: '#DCFCE7', fg: '#166534' }
+              : status.state === 'stopped' ? { bg: '#FEE2E2', fg: '#991B1B' }
+              : { bg: '#F1F5F9', fg: '#64748B' };
+            const title = `Auto-populated from Commissions for "${String(row?.[DEAL_BFO_KEY] || '').trim()}" — ${status.title}`;
+            return (
+              <span title={title} style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 4, background: palette.bg, color: palette.fg, fontWeight: 600, fontSize: '0.7rem' }}>
+                {status.label}
+              </span>
+            );
+          }
         }
         // User-configured dropdown binding from the Link Columns modal
         // wins over the default text/number/date editor. The shared
