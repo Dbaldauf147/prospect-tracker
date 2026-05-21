@@ -2,6 +2,7 @@ import { useMemo, useState, useEffect } from 'react';
 import { DataTable } from '../common/DataTable';
 import { matchesCdm } from '../../utils/cdmMatch';
 import { DealsView } from '../DealsView/DealsView';
+import { CommissionsView } from './CommissionsView';
 import { loadDealsList } from '../../utils/dealsStore';
 import { loadDealClientMap, DEALS_CLIENT_MAP_EVENT } from '../../utils/dealClientMap';
 import {
@@ -313,7 +314,7 @@ const SUBTAB_STORAGE_KEY = 'clients-view:active-subtab';
 function readSavedSubtab() {
   try {
     const s = localStorage.getItem(SUBTAB_STORAGE_KEY);
-    if (s === 'clients' || s === 'deals') return s;
+    if (s === 'clients' || s === 'deals' || s === 'commissions') return s;
   } catch {}
   return 'clients';
 }
@@ -671,6 +672,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
       {[
         { key: 'clients', label: 'Clients' },
         { key: 'deals', label: 'Deals' },
+        { key: 'commissions', label: 'Commissions' },
       ].map(t => {
         const active = subtab === t.key;
         return (
@@ -703,6 +705,15 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
         {subtabBar}
         <DealsView settings={settings} updateSettings={updateSettings} prospects={prospects} cdmName={cdmName} />
+      </div>
+    );
+  }
+
+  if (subtab === 'commissions') {
+    return (
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+        {subtabBar}
+        <CommissionsView settings={settings} updateSettings={updateSettings} />
       </div>
     );
   }
