@@ -637,11 +637,12 @@ function BulkUploadModal({ onUpload, onClose, uploading, progress }) {
 }
 
 
-function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptions, ccMap, toAlsoMap, onSaveCcMap, onSaveToAlsoMap, contactOldEmails = {}, onSaveOldEmails, companyDomainsMap = {}, contactNicknames = {}, onSaveNickname }) {
+function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptions, ccMap, toAlsoMap, onSaveCcMap, onSaveToAlsoMap, contactOldEmails = {}, onSaveOldEmails, companyDomainsMap = {}, contactNicknames = {}, onSaveNickname, contactFamilies = {}, onSaveFamily }) {
   const isNew = !contact;
   const cid = contact?.id || contact?.vid;
   const savedOldEmails = (cid && contactOldEmails[cid]) || '';
   const savedNickname = (cid && contactNicknames[cid]) || '';
+  const savedFamily = (cid && contactFamilies[cid]) || { partner: '', kids: '' };
   const [fields, setFields] = useState({
     firstname: contact?.firstname || '',
     lastname: contact?.lastname || '',
@@ -657,6 +658,8 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
     dans_tags: contact?.dans_tags || contact?.dan_s_tags || contact?.dans_tag || '',
     notes: contact?.hs_note || contact?.notes || '',
     oldEmails: savedOldEmails,
+    partner: savedFamily.partner || '',
+    kids: savedFamily.kids || '',
   });
   // CC emails per contact email
   const [ccEmails, setCcEmails] = useState(() => {
@@ -831,6 +834,14 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
             <div className={styles.modalSpan2}>
               <label className={styles.modalLabel}>Nickname <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(opt.)</span></label>
               <input className={styles.modalInput} value={fields.nickname} onChange={e => set('nickname', e.target.value)} placeholder="e.g. Bob" />
+            </div>
+            <div>
+              <label className={styles.modalLabel}>Partner&apos;s name <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(opt.)</span></label>
+              <input className={styles.modalInput} value={fields.partner} onChange={e => set('partner', e.target.value)} placeholder="e.g. Jane" />
+            </div>
+            <div>
+              <label className={styles.modalLabel}>Kids&apos; names <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(opt.)</span></label>
+              <input className={styles.modalInput} value={fields.kids} onChange={e => set('kids', e.target.value)} placeholder="e.g. Sam (12), Riley (9)" />
             </div>
             <div className={styles.modalSpan2}>
               <label className={styles.modalLabel}>Email <span style={{ fontWeight: 400, textTransform: 'none', color: '#DC2626' }}>*</span></label>
@@ -1121,8 +1132,11 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
             if (cid && onSaveNickname) {
               onSaveNickname(cid, fields.nickname || '');
             }
+            if (cid && onSaveFamily) {
+              onSaveFamily(cid, { partner: fields.partner || '', kids: fields.kids || '' });
+            }
             // Strip local-only fields before HubSpot save
-            const { oldEmails, nickname, ...hsFields } = fields;
+            const { oldEmails, nickname, partner, kids, ...hsFields } = fields;
             onSave(hsFields, contact?.id);
           }} disabled={saving || !fields.email.trim()}>
             {saving ? 'Saving...' : isNew ? 'Create in HubSpot' : 'Update in HubSpot'}
@@ -1164,9 +1178,9 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
   const [dansTagOptions, setDansTagOptions] = useState([]);
   // Per-contact family info (partner name, kids names) stored in user
   // settings under contactFamilies, keyed by HubSpot contact id. Click
-  // the 👪 button in the first column to open the editor.
+  // the 👪 button in the first column to open the contact pop-up — the
+  // family fields live alongside the rest of the contact details there.
   const contactFamilies = settings?.contactFamilies || {};
-  const [familyForContact, setFamilyForContact] = useState(null);
   function saveFamily(contactId, info) {
     const next = { ...(settings?.contactFamilies || {}) };
     const partner = String(info.partner || '').trim();
@@ -2610,7 +2624,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
                     <button
                       type="button"
                       title={has ? `Partner: ${fam.partner || '—'} · Kids: ${fam.kids || '—'}` : 'Add partner / kids names'}
-                      onClick={(e) => { e.stopPropagation(); setFamilyForContact(c); }}
+                      onClick={(e) => { e.stopPropagation(); setEditContact(c); }}
                       style={{
                         background: has ? '#ECFDF5' : '#F8FAFC',
                         border: `1px solid ${has ? '#A7F3D0' : 'var(--color-border)'}`,
@@ -2882,6 +2896,8 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
             else delete next[contactId];
             updateSettings({ contactNicknames: next });
           }}
+          contactFamilies={contactFamilies}
+          onSaveFamily={saveFamily}
         />
       )}
 
@@ -2951,59 +2967,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
           ))
         )
       )}
-      {familyForContact && (
-        <FamilyModal
-          contact={familyForContact}
-          initial={contactFamilies[familyForContact.id] || { partner: '', kids: '' }}
-          onSave={(info) => { saveFamily(familyForContact.id, info); setFamilyForContact(null); }}
-          onClose={() => setFamilyForContact(null)}
-        />
-      )}
     </div>
   );
 }
 
-function FamilyModal({ contact, initial, onSave, onClose }) {
-  const [partner, setPartner] = useState(initial.partner || '');
-  const [kids, setKids] = useState(initial.kids || '');
-  const name = [contact.firstname, contact.lastname].filter(Boolean).join(' ') || contact.email || 'this contact';
-  return (
-    <div className={styles.modalOverlay} onClick={onClose}>
-      <div className={styles.modal} style={{ width: 460 }} onClick={e => e.stopPropagation()}>
-        <div className={styles.modalHeader}>
-          <h3 className={styles.modalTitle}>Family — {name}</h3>
-          <button type="button" className={styles.modalClose} onClick={onClose}>×</button>
-        </div>
-        <div className={styles.modalBody}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-            <div>
-              <label className={styles.modalLabel}>Partner&apos;s name</label>
-              <input
-                className={styles.modalInput}
-                value={partner}
-                onChange={e => setPartner(e.target.value)}
-                placeholder="e.g. Jane"
-                autoFocus
-              />
-            </div>
-            <div>
-              <label className={styles.modalLabel}>Kids&apos; names</label>
-              <textarea
-                className={styles.modalInput}
-                value={kids}
-                onChange={e => setKids(e.target.value)}
-                placeholder="e.g. Sam (12), Riley (9)"
-                rows={3}
-                style={{ resize: 'vertical', minHeight: 60 }}
-              />
-            </div>
-          </div>
-        </div>
-        <div className={styles.modalFooter}>
-          <button type="button" className={styles.modalCancelBtn} onClick={onClose}>Cancel</button>
-          <button type="button" className={styles.modalSaveBtn} onClick={() => onSave({ partner, kids })}>Save</button>
-        </div>
-      </div>
-    </div>
-  );
-}
