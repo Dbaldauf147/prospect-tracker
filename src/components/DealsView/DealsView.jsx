@@ -12,6 +12,7 @@ import {
 } from '../common/columnLinks';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { loadDealsList, saveDealsOverride, clearDealsOverride } from '../../utils/dealsStore';
+import { loadCommissions } from '../../utils/commissionsStore';
 import {
   asNumber, asDate, fmtCurrency, fmtPercent, fmtDate,
   DEAL_CURRENCY_KEYS, DEAL_DATE_KEYS, DEAL_PERCENT_KEYS, DEAL_CHECK_KEYS,
@@ -71,6 +72,55 @@ function isFilled(v) {
 // key so the column is filtered out of the visible header set but the
 // value still round-trips through the regular dealsStore.
 const DAYS_PAID_ON_HIDDEN_KEY = '__daysPaidOnHidden';
+
+// The Deal column that holds the BFO opportunity name. Labeled
+// "BFO opp name" everywhere user-facing; the underlying key is the
+// long string the user originally pasted from their tracker. Used to
+// look the deal up against the Commissions tab's BFO Name column so
+// the Revenue Recorded / Paid to Date cells can auto-populate from
+// the matching commission roster rows.
+const DEAL_BFO_KEY = 'BFO - Close after contract execution email has been sent';
+
+const COMMISSION_MONTHLY_REVENUE_RE = /^\d{1,2}\/1\/\d{4}\s+Revenue$/i;
+const COMMISSION_MONTHLY_COMMISSION_RE = /^\d{1,2}\/1\/\d{4}$/;
+
+// Normalize a BFO opp name for matching across Deals ↔ Commissions —
+// the user copies and pastes the same identifier on both tabs so a
+// loose compare (trimmed, lowercased, internal whitespace collapsed)
+// shouldn't drop matches over trivial typing differences.
+function normBfo(v) {
+  return String(v ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+// Roll the Commissions roster into a map keyed by normalized BFO Name,
+// summing each project's monthly revenue / commission cells. Multiple
+// commission rows that share a BFO Name (different project lines of
+// the same opp) accumulate into a single total. Returns an empty Map
+// when nothing is on file so callers can treat the lookup uniformly.
+function indexCommissionsByBfo(rows) {
+  const map = new Map();
+  for (const row of (rows || [])) {
+    const key = normBfo(row?.['BFO Name']);
+    if (!key) continue;
+    let revenue = 0;
+    let commission = 0;
+    for (const [k, v] of Object.entries(row)) {
+      const n = asNumber(v);
+      if (n == null) continue;
+      if (COMMISSION_MONTHLY_REVENUE_RE.test(k)) revenue += n;
+      else if (COMMISSION_MONTHLY_COMMISSION_RE.test(k)) commission += n;
+    }
+    const prev = map.get(key);
+    if (prev) {
+      prev.revenue += revenue;
+      prev.commission += commission;
+      prev.rows += 1;
+    } else {
+      map.set(key, { revenue, commission, rows: 1 });
+    }
+  }
+  return map;
+}
 
 // Whole-day delta between a Due Date cell and today. Returns null when
 // the cell can't be parsed as a date. Both sides are flattened to local
@@ -594,7 +644,7 @@ const COLUMN_ORDER = [
   'Follow Up On Sale',
 ];
 
-function buildColumns(rows, columnLinks, listRegistry) {
+function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
   if (!rows.length) return [];
   const keys = new Set();
   // Skip 'id' and any double-underscore internal field (__onUpdate,
@@ -654,10 +704,28 @@ function buildColumns(rows, columnLinks, listRegistry) {
     //   • explicitly ignored → grey (toggled by the ⊘ / ↻ button)
     // The ignored state is persisted per-row on a __ flag key so the
     // override doesn't leak into the visible column list.
+    // Look the deal's BFO opp name up against the Commissions roster
+    // and pull the matching summed total when one exists. Revenue
+    // Recorded reads from the project's annual revenue total; Paid to
+    // Date from its commission total. null when nothing matches — the
+    // caller falls back to whatever's stored on the deal row in that
+    // case so legacy pasted values keep working.
+    function lookupCommissionNumerator(row) {
+      const bfo = normBfo(row?.[DEAL_BFO_KEY]);
+      if (!bfo) return null;
+      const hit = commissionsByBfo?.get(bfo);
+      if (!hit) return null;
+      return isRevenueRecorded ? hit.revenue : hit.commission;
+    }
+
     function renderCompound(row, v) {
       const ignoreKey = isRevenueRecorded ? '__revenueRecordedIgnored' : '__paidToDateIgnored';
       const ignored = isFilled(row[ignoreKey]);
-      const numerator = asNumber(v) ?? 0;
+      // Prefer the live Commissions roll-up over whatever was pasted /
+      // typed into this cell so the deal tracks the source-of-truth
+      // Commissions tab without the user having to copy numbers across.
+      const commNumerator = lookupCommissionNumerator(row);
+      const numerator = commNumerator != null ? commNumerator : (asNumber(v) ?? 0);
       const denominator = isRevenueRecorded
         ? (asNumber(row['Setup']) ?? 0) + (asNumber(row['Recurring Revenue']) ?? 0)
         : (asNumber(row['Commission']) ?? 0);
@@ -691,10 +759,13 @@ function buildColumns(rows, columnLinks, listRegistry) {
         stateTitle = `Short by ${fmtCurrency(denominator - numerator)}`;
       }
 
-      const primary = currencyOrZero(v);
+      const primary = commNumerator != null ? fmtCurrency(commNumerator) : currencyOrZero(v);
       const denomText = fmtCurrency(denominator);
+      const fullTitle = commNumerator != null
+        ? `Auto-populated from Commissions for "${String(row?.[DEAL_BFO_KEY] || '').trim()}" — ${stateTitle}`
+        : stateTitle;
       return (
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, width: '100%' }} title={stateTitle}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, width: '100%' }} title={fullTitle}>
           <span style={{ flex: 1, padding: '1px 8px', borderRadius: 4, background: bg, color: fg, fontVariantNumeric: 'tabular-nums', fontWeight: 600, textAlign: 'left', textDecoration: ignored ? 'line-through' : 'none' }}>
             {primary}/{denomText}
           </span>
@@ -761,6 +832,15 @@ function buildColumns(rows, columnLinks, listRegistry) {
           }
           return <SelectCell value={row[k]} onChange={onChange} options={opts} />;
         }
+        // Revenue Recorded / Paid to Date auto-populate from the
+        // Commissions tab when the deal's BFO opp name matches a
+        // commission row — render the pill directly so the user
+        // isn't tempted to double-click-edit a derived value that
+        // wouldn't display anyway. Source-of-truth edits happen on
+        // the Commissions tab.
+        if ((isRevenueRecorded || isPaidToDate) && lookupCommissionNumerator(row) != null) {
+          return renderCompound(row, row[k]);
+        }
         const cellRender = (isRevenueRecorded || isPaidToDate)
           ? (v) => renderCompound(row, v)
           : renderValue;
@@ -797,6 +877,11 @@ function buildColumns(rows, columnLinks, listRegistry) {
 
 export function DealsView({ settings, updateSettings, prospects = [], cdmName }) {
   const [{ data, source }, setStore] = useState(() => loadDealsList());
+  // Commissions roster feeds the Revenue Recorded / Paid to Date auto-
+  // population. Re-hydrated on the storage event so a paste on the
+  // Commissions tab in another window flows through here without a
+  // reload.
+  const [commissionsData, setCommissionsData] = useState(() => loadCommissions().data || []);
   const [search, setSearch] = useState('');
   const [uploadError, setUploadError] = useState(null);
   const [showPaste, setShowPaste] = useState(false);
@@ -837,6 +922,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
       if (e.key === 'deals-list-override') setStore(loadDealsList());
       if (e.key === 'deals-client-map') setClientMap(loadDealClientMap());
       if (e.key === 'deals-client-ignore') setIgnoreSet(loadDealClientIgnore());
+      if (e.key === 'commissions-list-override') setCommissionsData(loadCommissions().data || []);
     }
     function onClientMap() {
       setClientMap(loadDealClientMap());
@@ -1028,9 +1114,15 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
     () => data.map((r, i) => ({ ...r, id: i, __onUpdate: updateCell, __newRow: i === 0 && !isFilled(r['Client Name']) })),
     [data]
   );
+  // Rolled-up Commissions data, keyed by normalized BFO opp name. Feeds
+  // the Revenue Recorded / Paid to Date auto-population in buildColumns.
+  const commissionsByBfo = useMemo(
+    () => indexCommissionsByBfo(commissionsData),
+    [commissionsData]
+  );
   const baseColumns = useMemo(
-    () => buildColumns(rows, columnLinks, listRegistry),
-    [rows, columnLinks, listRegistry]
+    () => buildColumns(rows, columnLinks, listRegistry, commissionsByBfo),
+    [rows, columnLinks, listRegistry, commissionsByBfo]
   );
   // Inject a helper "Mapped to Client" column right after the sticky
   // Client Name. The column is read-only when the row's Client Name
