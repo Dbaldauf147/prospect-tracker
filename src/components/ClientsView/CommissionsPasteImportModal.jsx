@@ -114,9 +114,15 @@ export function CommissionsPasteImportModal({ onClose, onImport, initialPaste = 
     setStage('map');
   }
 
-  function handleImport() {
-    const records = [];
-    for (const cells of rawRows) {
+  // Live import preview — re-runs whenever the mapping or pasted data
+  // changes so the user sees in real time which rows will land and which
+  // will get dropped (and why). handleImport just consumes this same
+  // breakdown so the button never disagrees with the on-screen counts.
+  const importPreview = useMemo(() => {
+    const accepted = [];
+    const skipped = [];
+    for (let r = 0; r < rawRows.length; r++) {
+      const cells = rawRows[r];
       const obj = {};
       for (let i = 0; i < headers.length; i++) {
         const dest = mapping[headers[i]];
@@ -125,20 +131,34 @@ export function CommissionsPasteImportModal({ onClose, onImport, initialPaste = 
         if (v == null || v === '') continue;
         obj[dest] = v;
       }
-      // Rows with no mapped cells are noise from blank pasted lines —
-      // drop them silently. Rows that have data but no Project Name
-      // are skipped intentionally: the dedup-on-import step keys off
-      // Project Name, so an unnamed row would either pile up as a
-      // duplicate or get lost on the next re-paste.
-      if (Object.keys(obj).length === 0) continue;
-      if (!String(obj['Project Name'] || '').trim()) continue;
-      records.push(obj);
+      // Row numbers report against the user's pasted spreadsheet —
+      // headers are row 1, the first data row is row 2, etc.
+      const rowNumber = r + 2;
+      if (Object.keys(obj).length === 0) {
+        skipped.push({ rowNumber, reason: 'Blank row (no mapped cells had a value)' });
+        continue;
+      }
+      if (!String(obj['Project Name'] || '').trim()) {
+        skipped.push({ rowNumber, reason: 'Missing Project Name' });
+        continue;
+      }
+      accepted.push(obj);
     }
-    if (records.length === 0) {
+    const byReason = new Map();
+    for (const s of skipped) {
+      if (!byReason.has(s.reason)) byReason.set(s.reason, []);
+      byReason.get(s.reason).push(s.rowNumber);
+    }
+    return { accepted, skipped, byReason };
+  }, [rawRows, headers, mapping]);
+
+  function handleImport() {
+    const { accepted } = importPreview;
+    if (accepted.length === 0) {
       setParseError('Nothing to import — every pasted row was either blank or missing a Project Name.');
       return;
     }
-    onImport(records);
+    onImport(accepted);
   }
 
   const mappedCount = useMemo(
@@ -199,6 +219,31 @@ export function CommissionsPasteImportModal({ onClose, onImport, initialPaste = 
               {unmappedSourceNames.length > 0 && <> · <span style={{ color: '#92400E' }}>{unmappedSourceNames.length} pasted column{unmappedSourceNames.length === 1 ? '' : 's'} will be skipped</span></>}
               {duplicateDestinations.length > 0 && <> · <span style={{ color: '#991B1B' }}>Multiple sources point at: {duplicateDestinations.join(', ')}</span></>}
             </div>
+            {/* Per-row outcome summary. Lists how many pasted rows
+                will land vs. get dropped, broken out by reason. The
+                user expects every paste to fully import, so when rows
+                fail we want it loud and explicit. */}
+            <div style={{ padding: '0.5rem 0.7rem', borderRadius: 6, border: `1px solid ${importPreview.skipped.length > 0 ? '#FCA5A5' : '#A7F3D0'}`, background: importPreview.skipped.length > 0 ? '#FEF2F2' : '#F0FDF4', fontSize: '0.72rem', color: '#1E293B', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+              <div>
+                <strong style={{ color: importPreview.accepted.length > 0 ? '#166534' : '#991B1B' }}>{importPreview.accepted.length}</strong>
+                {' of '}<strong>{rawRows.length}</strong> row{rawRows.length === 1 ? '' : 's'} will import
+                {importPreview.skipped.length > 0 && (
+                  <> · <strong style={{ color: '#991B1B' }}>{importPreview.skipped.length} skipped</strong></>
+                )}
+              </div>
+              {importPreview.byReason.size > 0 && (
+                <ul style={{ margin: '0.1rem 0 0', padding: '0 0 0 1rem', color: '#7F1D1D' }}>
+                  {[...importPreview.byReason.entries()].map(([reason, rowNums]) => (
+                    <li key={reason}>
+                      <strong>{rowNums.length}</strong> {rowNums.length === 1 ? 'row' : 'rows'} — {reason}
+                      <span style={{ color: '#94A3B8' }}> ({rowNums.length <= 10
+                        ? `row${rowNums.length === 1 ? '' : 's'} ${rowNums.join(', ')}`
+                        : `rows ${rowNums.slice(0, 10).join(', ')}, +${rowNums.length - 10} more`})</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
             <div style={{ overflow: 'auto', border: '1px solid #E2E8F0', borderRadius: 6, flex: 1, minHeight: 0 }}>
               <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '0.72rem' }}>
                 <thead style={{ background: '#F1F5F9', position: 'sticky', top: 0, zIndex: 1 }}>
@@ -246,7 +291,7 @@ export function CommissionsPasteImportModal({ onClose, onImport, initialPaste = 
               <button onClick={() => setStage('paste')} style={{ padding: '0.4rem 0.8rem', border: '1px solid #CBD5E1', borderRadius: 6, background: '#fff', fontSize: '0.78rem', cursor: 'pointer', fontFamily: 'inherit' }}>← Back</button>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
                 <button onClick={onClose} style={{ padding: '0.4rem 0.8rem', border: '1px solid #CBD5E1', borderRadius: 6, background: '#fff', fontSize: '0.78rem', cursor: 'pointer', fontFamily: 'inherit' }}>Cancel</button>
-                <button onClick={handleImport} disabled={mappedCount === 0} title="New rows are merged into the existing list. Duplicates are screened out by Project Name — the copy with more data filled in survives." style={{ padding: '0.4rem 0.9rem', border: 'none', borderRadius: 6, background: mappedCount === 0 ? '#94A3B8' : '#16A34A', color: '#fff', fontSize: '0.78rem', cursor: mappedCount === 0 ? 'not-allowed' : 'pointer', fontFamily: 'inherit', fontWeight: 600 }}>Import {rawRows.length} rows (merge by Project Name) →</button>
+                <button onClick={handleImport} disabled={mappedCount === 0 || importPreview.accepted.length === 0} title="New rows are merged into the existing list. Duplicates are screened out by Project Name — the copy with more data filled in survives." style={{ padding: '0.4rem 0.9rem', border: 'none', borderRadius: 6, background: (mappedCount === 0 || importPreview.accepted.length === 0) ? '#94A3B8' : '#16A34A', color: '#fff', fontSize: '0.78rem', cursor: (mappedCount === 0 || importPreview.accepted.length === 0) ? 'not-allowed' : 'pointer', fontFamily: 'inherit', fontWeight: 600 }}>Import {importPreview.accepted.length} row{importPreview.accepted.length === 1 ? '' : 's'} (merge by Project Name) →</button>
               </div>
             </div>
           </div>
