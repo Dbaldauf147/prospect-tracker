@@ -46,6 +46,9 @@ const PROGRESS_FIELDS = [
   { key: 'Paperwork completed', label: 'Paperwork' },
   { key: 'Billing information collected', label: 'Billing Letter' },
   { key: 'Closed Won', label: 'Closed Won' },
+  { key: 'Setup', label: 'Setup' },
+  { key: 'Recurring Revenue', label: 'Recurring' },
+  { key: 'Commission', label: 'Commission' },
 ];
 
 function normClient(s) { return String(s || '').toLowerCase().trim(); }
