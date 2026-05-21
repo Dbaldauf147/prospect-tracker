@@ -1136,6 +1136,41 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                 {agendaSum < meetingTotalMinutes && ` · ${meetingTotalMinutes - agendaSum} min unassigned`}
               </span>
             )}
+            {(t.key === 'ourQuestions' || t.key === 'theirQuestions') && (() => {
+              const rowCount = (formData.tables?.[t.key] || []).filter(r => {
+                if (!r) return false;
+                for (const c of t.columns) if ((r[c.key] || '').toString().trim()) return true;
+                return false;
+              }).length;
+              return (
+                <button
+                  type="button"
+                  disabled={rowCount === 0}
+                  onClick={() => {
+                    if (rowCount === 0) return;
+                    if (!window.confirm(`Clear all ${rowCount} row${rowCount === 1 ? '' : 's'} from "${t.label}"? The auto-fill will not re-add canned questions for services already in Scope.`)) return;
+                    // Mark every current Scope service as already seeded
+                    // so the canned-question auto-fill effect doesn't
+                    // immediately re-populate the table after the clear.
+                    const scope = (formData.fieldValues?.scope || '').trim();
+                    const services = scope ? scope.split(',').map(s => s.trim()).filter(Boolean) : [];
+                    const priorSeed = new Set((formData.seededScopeServices?.[t.key] || []).map(s => String(s).toLowerCase()));
+                    for (const svc of services) priorSeed.add(svc.toLowerCase());
+                    set({
+                      tables: { ...formData.tables, [t.key]: [] },
+                      seededScopeServices: {
+                        ...(formData.seededScopeServices || {}),
+                        [t.key]: [...priorSeed],
+                      },
+                    });
+                  }}
+                  title={rowCount === 0
+                    ? 'Already empty'
+                    : `Remove every row from ${t.label} and stop the auto-fill from re-seeding canned questions for the current Scope services.`}
+                  style={{ marginLeft: 'auto', fontSize: '0.68rem', padding: '0.15rem 0.5rem', border: '1px solid #FCA5A5', background: rowCount === 0 ? '#F8FAFC' : '#FEF2F2', color: rowCount === 0 ? '#94A3B8' : '#B91C1C', borderRadius: 4, cursor: rowCount === 0 ? 'not-allowed' : 'pointer', fontWeight: 600, fontFamily: 'inherit' }}
+                >Clear all{rowCount > 0 ? ` (${rowCount})` : ''}</button>
+              );
+            })()}
             {t.key === 'meetingNotes' && importableNotes.some(n => (n.rows?.length || 0) > 0) && (
               <select
                 defaultValue=""
