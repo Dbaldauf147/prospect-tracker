@@ -146,7 +146,7 @@ function DaysPaidOnCell({ row }) {
 // the boolean default). Saves on Enter / blur, cancels on Escape.
 // New rows auto-focus the first editable cell so the user can start
 // typing immediately.
-function EditableCell({ value, kind, render, onSave, autoFocus, listId }) {
+function EditableCell({ value, kind, render, onSave, autoFocus, listId, hoverTitle }) {
   // Dates edit as plain text in the same M/D/YYYY shape the cell shows,
   // so users can type the short form directly and copy/paste it like
   // any other text. asDate(...) handles parsing on save.
@@ -173,10 +173,13 @@ function EditableCell({ value, kind, render, onSave, autoFocus, listId }) {
   }
 
   if (!editing) {
+    // hoverTitle lets a column override the default "Double-click to
+    // edit" hint with the cell's actual content — handy for narrow
+    // columns (e.g. Agreement Name) where the text often gets clipped.
     return (
       <span
         onDoubleClick={(e) => { e.stopPropagation(); setEditing(true); }}
-        title="Double-click to edit"
+        title={hoverTitle || 'Double-click to edit'}
         style={{ display: 'inline-block', width: '100%', cursor: 'text' }}
       >
         {render(value)}
@@ -702,6 +705,12 @@ function buildColumns(rows, columnLinks, listRegistry) {
         const cellRender = (isRevenueRecorded || isPaidToDate)
           ? (v) => renderCompound(row, v)
           : renderValue;
+        // Long contract names get clipped in narrow cells; show the
+        // full value as the hover tooltip on the Agreement Name column
+        // so the user can read it without expanding the column.
+        const hoverTitle = k === 'Agreement Name' && isFilled(row[k])
+          ? String(row[k])
+          : undefined;
         return (
           <EditableCell
             value={row[k]}
@@ -710,6 +719,7 @@ function buildColumns(rows, columnLinks, listRegistry) {
             onSave={(v) => row.__onUpdate?.(row.id, k, v)}
             autoFocus={!!row.__newRow && sticky}
             listId={k === 'Client Name' ? CLIENT_NAME_LIST_ID : undefined}
+            hoverTitle={hoverTitle}
           />
         );
       },
