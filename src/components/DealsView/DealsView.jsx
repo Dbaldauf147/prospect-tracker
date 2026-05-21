@@ -85,6 +85,17 @@ function daysUntilDue(dueRaw) {
   return Math.round((target.getTime() - today.getTime()) / 86400000);
 }
 
+// The effective Days/Paid on value for a row — null when the cell is
+// hidden, the deal is fully paid, or the Due Date is missing/unparseable.
+// Shared by the cell renderer, the column sort, and the Revenue Recorded /
+// Paid to Date "grey until overdue" coloring so all three stay in sync.
+function effectiveDaysPaidOn(row) {
+  if (isFilled(row[DAYS_PAID_ON_HIDDEN_KEY])) return null;
+  const commStatus = String(row['Comm Status'] ?? '').trim().toLowerCase();
+  if (commStatus === 'fully paid') return null;
+  return daysUntilDue(row['Due Date']);
+}
+
 // Custom renderer for the "Days/Paid on" column. Shows the computed
 // days-until-due delta from the row's Due Date, with a small × button
 // that suppresses the value for this row (stored on __daysPaidOnHidden)
@@ -650,6 +661,12 @@ function buildColumns(rows, columnLinks, listRegistry) {
       const denominator = isRevenueRecorded
         ? (asNumber(row['Setup']) ?? 0) + (asNumber(row['Recurring Revenue']) ?? 0)
         : (asNumber(row['Commission']) ?? 0);
+      // Hold the cell in its neutral grey state until the deal's Days/Paid
+      // on goes negative (overdue). Before that point the recorded /
+      // paid amounts are still expected to be short of the contract, so
+      // the green/gold/red comparison would be noise.
+      const delta = effectiveDaysPaidOn(row);
+      const overdue = delta != null && delta < 0;
 
       let bg = '#F1F5F9';
       let fg = '#475569';
@@ -660,6 +677,9 @@ function buildColumns(rows, columnLinks, listRegistry) {
       } else if (numerator === 0 && denominator === 0) {
         bg = '#F1F5F9'; fg = '#475569';
         stateTitle = 'Nothing recorded yet';
+      } else if (!overdue) {
+        bg = '#F1F5F9'; fg = '#475569';
+        stateTitle = 'Status color appears once Days/Paid on goes overdue';
       } else if (numerator === denominator) {
         bg = '#DCFCE7'; fg = '#166534';
         stateTitle = 'Matches expected';
@@ -706,6 +726,11 @@ function buildColumns(rows, columnLinks, listRegistry) {
       // the DataTable falls back to alphabetical text compare and
       // dates land out of order.
       ...(isDate ? { getSortValue: (row) => { const d = asDate(row[k]); return d ? d.getTime() : null; } } : {}),
+      // Days/Paid on shows a computed delta, not a stored cell value, so
+      // hand the sorter the same number the renderer uses. Hidden /
+      // fully-paid / no-due-date rows come through as null and fall to
+      // the bottom of the sort either direction.
+      ...(isDaysPaidOn ? { getSortValue: (row) => effectiveDaysPaidOn(row) } : {}),
       ...(sticky ? { sticky: true } : {}),
       ...(closedWonHeaderUrl ? {
         renderHeader: (label) => (
@@ -1596,6 +1621,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
             tableId={tableId}
             columns={columns}
             rows={filtered}
+            defaultSort={{ key: 'Days/Paid on', direction: 'desc' }}
             alwaysVisible={alwaysVisible}
             rowStyle={(row) => {
               if (clientOptions.length === 0) return undefined;
