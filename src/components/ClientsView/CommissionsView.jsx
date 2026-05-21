@@ -78,7 +78,22 @@ function isMonthRevenueKey(k) {
   const s = String(k || '').trim();
   return /^\d{1,2}\/1\/\d{4}\s+Revenue$/i.test(s);
 }
-function isFYRevenueKey(k) { return /^FY\d{4}\s+Revenue$/i.test(String(k || '').trim()); }
+const FY_REVENUE_RE = /^FY(\d{4})\s+Revenue$/i;
+function isFYRevenueKey(k) { return FY_REVENUE_RE.test(String(k || '').trim()); }
+
+// The fiscal year the canonical month columns cover. Pulled out of the
+// canonical FY Revenue header so the matching FY Commission column we
+// add below tracks the same year without needing the paste-import
+// modal to export it separately.
+const CANONICAL_YEAR = (() => {
+  for (const k of COMMISSIONS_CANONICAL) {
+    const m = FY_REVENUE_RE.exec(String(k).trim());
+    if (m) return Number(m[1]);
+  }
+  return new Date().getFullYear();
+})();
+const FY_COMMISSION_KEY = `FY${CANONICAL_YEAR} Commission`;
+const PAYMENT_STATUS_KEY = 'Payment Status';
 
 const CURRENCY_KEYS = new Set();
 const DATE_KEYS = new Set(['Comm Start Date', 'Comm End Date']);
@@ -88,6 +103,8 @@ function defaultWidth(k) {
   if (k === ACCOUNT_NAME_KEY) return 200;
   if (k === BFO_NAME_KEY) return 200;
   if (k === SCOPE_KEY) return 180;
+  if (k === FY_COMMISSION_KEY) return 130;
+  if (k === PAYMENT_STATUS_KEY) return 110;
   if (k === 'Name') return 170;
   if (k === 'Project Name') return 280;
   if (DATE_KEYS.has(k)) return 120;
@@ -95,6 +112,64 @@ function defaultWidth(k) {
   if (isFYRevenueKey(k)) return 130;
   if (isMonthRevenueKey(k) || isMonthCommissionKey(k)) return 110;
   return 130;
+}
+
+// Sum every column on the row whose key matches `match`. Returns null
+// when the row has no matching cells at all — the renderer falls back
+// to a muted dash for that case so an empty roster row still reads as
+// "no data" instead of "$0.00".
+function sumMatchingCells(row, match) {
+  let total = 0;
+  let any = false;
+  for (const k of Object.keys(row || {})) {
+    if (!match(k)) continue;
+    const n = asNumber(row[k]);
+    if (n == null) continue;
+    total += n;
+    any = true;
+  }
+  return any ? total : null;
+}
+
+// "Are payments still rolling in or have they stopped?" — used by the
+// Payment Status column. Prefers the explicit Comm End Date when set; if
+// the row doesn't have one, falls back to the most recent non-zero
+// monthly commission cell and compares it against today.
+function paymentStatusFor(row) {
+  const end = asDate(row?.['Comm End Date']);
+  if (end) {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const e = new Date(end); e.setHours(0, 0, 0, 0);
+    if (e.getTime() < today.getTime()) {
+      return { state: 'stopped', label: 'Stopped', title: `Comm End Date ${fmtDate(end)} is in the past` };
+    }
+    return { state: 'active', label: 'Active', title: `Comm End Date ${fmtDate(end)}` };
+  }
+  let lastIdx = -1;
+  for (let m = 1; m <= 12; m++) {
+    const n = asNumber(row?.[`${m}/1/${CANONICAL_YEAR}`]);
+    if (n != null && n !== 0) lastIdx = m - 1;
+  }
+  if (lastIdx === -1) return { state: 'unknown', label: '—', title: 'No Comm End Date and no commission entries on file' };
+  const today = new Date();
+  const todayMonthIdx = today.getFullYear() === CANONICAL_YEAR
+    ? today.getMonth()
+    : (today.getFullYear() < CANONICAL_YEAR ? -1 : 12);
+  if (lastIdx >= todayMonthIdx - 1) {
+    return { state: 'active', label: 'Active', title: `Most recent commission: ${lastIdx + 1}/${CANONICAL_YEAR}` };
+  }
+  return { state: 'stopped', label: 'Stopped', title: `Most recent commission: ${lastIdx + 1}/${CANONICAL_YEAR} — no payments since` };
+}
+
+function PaymentStatusBadge({ state, label, title }) {
+  const palette = state === 'active' ? { bg: '#DCFCE7', fg: '#166534' }
+    : state === 'stopped' ? { bg: '#FEE2E2', fg: '#991B1B' }
+    : { bg: '#F1F5F9', fg: '#64748B' };
+  return (
+    <span title={title} style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 4, background: palette.bg, color: palette.fg, fontWeight: 600, fontSize: '0.7rem' }}>
+      {label}
+    </span>
+  );
 }
 
 // Plain-text cell used by Account Name / BFO Name / pasted Name fields.
@@ -164,12 +239,45 @@ function buildFrontColumns(oppsCache) {
   ];
 }
 
+// Pill-style currency cell used by the auto-summed FY Revenue / FY
+// Commission columns so they read as derived totals, not editable cells.
+function renderSumCell(total, emptyTitle, sumTitle) {
+  if (total == null) {
+    return <span style={{ color: 'var(--color-text-muted)' }} title={emptyTitle}>—</span>;
+  }
+  return (
+    <span
+      title={sumTitle}
+      style={{ display: 'block', textAlign: 'left', fontVariantNumeric: 'tabular-nums', color: '#0F172A', fontWeight: 600 }}
+    >
+      {fmtCurrency(total)}
+    </span>
+  );
+}
+
 function buildColumns(oppsCache) {
   const front = buildFrontColumns(oppsCache);
   const canonical = COMMISSIONS_CANONICAL.map((k) => {
     const isCurrency = CURRENCY_KEYS.has(k) || isMonthRevenueKey(k) || isFYRevenueKey(k) || isMonthCommissionKey(k);
     const isDate = DATE_KEYS.has(k);
     const isPercent = PERCENT_KEYS.has(k);
+    // FY Revenue is computed at render time from the 12 monthly revenue
+    // cells to its left — the user wants a live total, not whatever was
+    // pasted. Sort / export both follow the same computed number.
+    if (isFYRevenueKey(k)) {
+      return {
+        key: k,
+        label: k,
+        defaultWidth: defaultWidth(k),
+        getSortValue: (row) => sumMatchingCells(row, isMonthRevenueKey),
+        render: (row) => renderSumCell(
+          sumMatchingCells(row, isMonthRevenueKey),
+          'No monthly revenue entries on this row',
+          `Sum of the 12 monthly revenue cells for ${CANONICAL_YEAR}`,
+        ),
+        exportValue: (row) => sumMatchingCells(row, isMonthRevenueKey) ?? '',
+      };
+    }
     return {
       key: k,
       label: k,
@@ -195,7 +303,33 @@ function buildColumns(oppsCache) {
       },
     };
   });
-  return [...front, ...canonical];
+  // Mirror of the FY Revenue column, but summing the 12 monthly
+  // commission cells — sits at the tail of the table where the user
+  // wanted it. Followed by the derived Payment Status pill.
+  const fyCommissionCol = {
+    key: FY_COMMISSION_KEY,
+    label: FY_COMMISSION_KEY,
+    defaultWidth: defaultWidth(FY_COMMISSION_KEY),
+    getSortValue: (row) => sumMatchingCells(row, isMonthCommissionKey),
+    render: (row) => renderSumCell(
+      sumMatchingCells(row, isMonthCommissionKey),
+      'No monthly commission entries on this row',
+      `Sum of the 12 monthly commission cells for ${CANONICAL_YEAR}`,
+    ),
+    exportValue: (row) => sumMatchingCells(row, isMonthCommissionKey) ?? '',
+  };
+  const paymentStatusCol = {
+    key: PAYMENT_STATUS_KEY,
+    label: PAYMENT_STATUS_KEY,
+    defaultWidth: defaultWidth(PAYMENT_STATUS_KEY),
+    getSortValue: (row) => paymentStatusFor(row).state,
+    render: (row) => {
+      const s = paymentStatusFor(row);
+      return <PaymentStatusBadge state={s.state} label={s.label} title={s.title} />;
+    },
+    exportValue: (row) => paymentStatusFor(row).label,
+  };
+  return [...front, ...canonical, fyCommissionCol, paymentStatusCol];
 }
 
 export function CommissionsView({ settings, updateSettings, prospects = [] }) {
