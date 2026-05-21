@@ -4259,6 +4259,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                         <OpportunityForm
                           value={selectedOpp.formData}
                           importableNotes={importableNotes}
+                          companyBackground={sustainResearch?.data || null}
                           onChange={(next) => updateOpportunityFormData(selectedOpp.id, next)}
                           onLinkOpp={(_opp, nextFormData) => {
                             // Persist the linked formData without touching
