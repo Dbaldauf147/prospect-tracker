@@ -706,16 +706,23 @@ export function DataTable({
               </colgroup>
               <thead>
                 <tr>
-                  {visibleColumns.map(col => (
+                  {visibleColumns.map(col => {
+                    const headerLabel = colNames[col.key] || col.label;
+                    // Native hover tooltip on every header so users can
+                    // read the full column name even when the cell text
+                    // is truncated by the fixed column width.
+                    const headerTitle = typeof headerLabel === 'string' ? headerLabel : undefined;
+                    return (
                     <th
                       key={col.key}
                       style={{ width: getWidth(col), position: 'relative' }}
                       onClick={() => handleSort(col.key)}
                       className={col.sticky ? styles.stickyCol : undefined}
+                      title={headerTitle}
                     >
                       {col.renderHeader
-                        ? col.renderHeader(colNames[col.key] || col.label)
-                        : (colNames[col.key] || col.label)}
+                        ? col.renderHeader(headerLabel)
+                        : headerLabel}
                       {sortConfig?.key === col.key && (
                         <span className={styles.sortArrow}>
                           {sortConfig.direction === 'asc' ? '\u25B2' : '\u25BC'}
@@ -727,7 +734,8 @@ export function DataTable({
                         onClick={e => e.stopPropagation()}
                       />
                     </th>
-                  ))}
+                    );
+                  })}
                 </tr>
                 {enableColumnFilters && (
                   <tr>
