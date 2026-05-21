@@ -1430,6 +1430,48 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
         >{onlyIncomplete
           ? `✓ Showing incomplete (${incompleteCount})`
           : `Show only < ${PROGRESS_FIELDS.length}/${PROGRESS_FIELDS.length} (${incompleteCount})`}</button>
+        {(() => {
+          const visibleIds = filtered.map(r => r.id);
+          const visibleCount = visibleIds.length;
+          const allSelected = visibleCount > 0 && visibleIds.every(id => selectedIds.has(id));
+          return (
+            <button
+              type="button"
+              onClick={() => {
+                if (allSelected) {
+                  setSelectedIds(prev => {
+                    const next = new Set(prev);
+                    for (const id of visibleIds) next.delete(id);
+                    return next;
+                  });
+                } else {
+                  setSelectedIds(prev => {
+                    const next = new Set(prev);
+                    for (const id of visibleIds) next.add(id);
+                    return next;
+                  });
+                }
+              }}
+              disabled={visibleCount === 0}
+              title={visibleCount === 0
+                ? 'No rows visible to select'
+                : allSelected
+                  ? `Deselect the ${visibleCount} visible row${visibleCount === 1 ? '' : 's'}`
+                  : `Tick the bulk-edit checkbox on every visible row (${visibleCount})`}
+              style={{
+                padding: '0.35rem 0.7rem',
+                border: '1px solid',
+                borderColor: allSelected ? '#1D4ED8' : '#93C5FD',
+                borderRadius: 6,
+                background: allSelected ? '#1D4ED8' : '#EFF6FF',
+                color: allSelected ? '#fff' : '#1D4ED8',
+                fontSize: '0.72rem', fontWeight: 700, fontFamily: 'inherit',
+                cursor: visibleCount === 0 ? 'not-allowed' : 'pointer',
+                opacity: visibleCount === 0 ? 0.5 : 1,
+              }}
+            >{allSelected ? `✓ All visible selected (${visibleCount})` : `Select all (${visibleCount})`}</button>
+          );
+        })()}
       </div>
 
       {selectedIds.size > 0 && (() => {
