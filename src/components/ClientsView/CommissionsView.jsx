@@ -103,6 +103,53 @@ function plainTextRender(v) {
   return <span>{String(v)}</span>;
 }
 
+// Normalize a Project Name for dedup matching — strips surrounding
+// whitespace, collapses internal whitespace, and lowercases so trivial
+// typing differences ("Acme — Phase 1" vs "ACME — Phase 1 ") don't
+// produce two duplicate rows that fall through the merge.
+function normProjectName(v) {
+  return String(v ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+// How many "real" cells on this row carry a value. Used to pick the
+// surviving row when two rows share a project name — whichever copy has
+// more months / columns filled in beats the stale one.
+function countFilledCells(row) {
+  let n = 0;
+  for (const k of Object.keys(row || {})) {
+    if (k === 'id' || k.startsWith('__')) continue;
+    const v = row[k];
+    if (v == null) continue;
+    const s = String(v).trim();
+    if (s === '') continue;
+    n++;
+  }
+  return n;
+}
+
+// Concatenate existing + newly-pasted commission rows and dedup by
+// normalized Project Name. Rows without a project name pass through
+// untouched (we have no key to group them by); for rows with one, the
+// copy with more filled cells survives. Newer (incoming) rows win ties
+// so a re-paste of an equally-filled row picks up any edits.
+export function mergeAndDedupCommissions(existing, incoming) {
+  const out = [];
+  const winnerByKey = new Map();
+  function consider(row, isIncoming) {
+    const key = normProjectName(row['Project Name']);
+    if (!key) { out.push(row); return; }
+    const score = countFilledCells(row);
+    const prev = winnerByKey.get(key);
+    if (!prev || score > prev.score || (score === prev.score && isIncoming)) {
+      winnerByKey.set(key, { row, score });
+    }
+  }
+  for (const r of (existing || [])) consider(r, false);
+  for (const r of (incoming || [])) consider(r, true);
+  for (const { row } of winnerByKey.values()) out.push(row);
+  return out;
+}
+
 // Build the three lookup columns the user adds in front of the imported
 // roster: Account Name (autocomplete from prospects), BFO Name (free
 // text — the BFO Opportunity Name the user pastes), and Scope (read-only
@@ -297,9 +344,16 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
   }, [rows, search]);
 
   function handleImport(records) {
-    setStore(() => {
-      try { saveCommissionsOverride(records); } catch (err) { console.warn('Save commissions failed', err); }
-      return { data: records, source: 'override' };
+    setStore(prev => {
+      // Merge the freshly-pasted records into whatever's already on
+      // file, then dedup by Project Name so re-pasting a refreshed
+      // commission roster doesn't pile duplicate rows on top of the
+      // existing data. When two rows share a project name, the one
+      // with more filled cells (months / columns) wins — the user's
+      // expectation is that the more complete snapshot survives.
+      const merged = mergeAndDedupCommissions(prev.data || [], records);
+      try { saveCommissionsOverride(merged); } catch (err) { console.warn('Save commissions failed', err); }
+      return { data: merged, source: 'override' };
     });
     setShowPaste(false);
   }
