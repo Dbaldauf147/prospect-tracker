@@ -71,8 +71,8 @@ function parseTSV(text) {
   return { headers, rows: rows.slice(1) };
 }
 
-export function CommissionsPasteImportModal({ onClose, onImport }) {
-  const [paste, setPaste] = useState('');
+export function CommissionsPasteImportModal({ onClose, onImport, initialPaste = '' }) {
+  const [paste, setPaste] = useState(initialPaste);
   const [stage, setStage] = useState('paste');
   const [headers, setHeaders] = useState([]);
   const [rawRows, setRawRows] = useState([]);
@@ -150,6 +150,7 @@ export function CommissionsPasteImportModal({ onClose, onImport }) {
               In Excel, select the rows you want (including the header row) and copy with <strong>Ctrl+C</strong> / <strong>Cmd+C</strong>. Then click in the box below and paste. The next step lets you confirm which pasted column maps to each commission field.
             </div>
             <textarea
+              autoFocus
               value={paste}
               onChange={e => setPaste(e.target.value)}
               placeholder="Paste your tab-separated data here…"
