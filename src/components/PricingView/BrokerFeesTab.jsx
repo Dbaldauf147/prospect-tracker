@@ -142,6 +142,11 @@ export function BrokerFeesTab({ rows, setRows }) {
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState('');
   const [flash, setFlash] = useState('');
+  // Column sort is a view-only overlay. Click a header to cycle
+  // unsorted → ascending → descending → unsorted. The underlying
+  // rows array stays in its persisted order so updateRow / removeRow
+  // hit the right cell after a sort.
+  const [sortConfig, setSortConfig] = useState(null);
 
   const updateRow = (idx, key, value) => {
     const next = safeRows.slice();
@@ -218,6 +223,66 @@ export function BrokerFeesTab({ rows, setRows }) {
   const loadNgRange = rangeOf(safeRows.map(r => r.loadNg));
   const feeNgRange  = rangeOf(safeRows.map(r => r.feeNg));
 
+  // Sortable column accessor. Returns the value the sorter should
+  // compare on — numeric for load / fee / RFP / total columns,
+  // lowercased string for company. Total columns sort on the
+  // computed load × fee, not on whatever's stored.
+  function sortValueFor(row, key) {
+    switch (key) {
+      case 'company': return String(row.company || '').toLowerCase();
+      case 'loadEp':  return toNum(row.loadEp);
+      case 'feeEp':   return toNum(row.feeEp);
+      case 'rfps':    return toNum(row.rfps);
+      case 'totalEp': return totalFee(row.loadEp, row.feeEp);
+      case 'loadNg':  return toNum(row.loadNg);
+      case 'feeNg':   return toNum(row.feeNg);
+      case 'totalNg': return totalFee(row.loadNg, row.feeNg);
+      default:        return null;
+    }
+  }
+
+  // Visible row order. Without a sort, that's just the persisted
+  // order. With one, sort a copy by the chosen column — blank cells
+  // sink to the bottom regardless of direction so empty padding
+  // rows don't shove real data offscreen.
+  const indexedRows = safeRows.map((row, idx) => ({ row, idx }));
+  let viewRows = indexedRows;
+  if (sortConfig?.key) {
+    const isAsc = sortConfig.direction === 'asc';
+    viewRows = indexedRows.slice().sort((a, b) => {
+      const av = sortValueFor(a.row, sortConfig.key);
+      const bv = sortValueFor(b.row, sortConfig.key);
+      const aEmpty = av == null || av === '';
+      const bEmpty = bv == null || bv === '';
+      if (aEmpty && bEmpty) return a.idx - b.idx;
+      if (aEmpty) return 1;
+      if (bEmpty) return -1;
+      if (typeof av === 'number' && typeof bv === 'number') return isAsc ? av - bv : bv - av;
+      const as = String(av), bs = String(bv);
+      return isAsc ? as.localeCompare(bs) : bs.localeCompare(as);
+    });
+  }
+
+  function toggleSort(key) {
+    setSortConfig(prev => {
+      if (!prev || prev.key !== key) return { key, direction: 'asc' };
+      if (prev.direction === 'asc') return { key, direction: 'desc' };
+      return null;
+    });
+  }
+
+  function sortArrow(key) {
+    if (sortConfig?.key !== key) return '';
+    return sortConfig.direction === 'asc' ? ' ▲' : ' ▼';
+  }
+
+  const sortableHeaderProps = (key, className) => ({
+    className,
+    onClick: () => toggleSort(key),
+    style: { cursor: 'pointer', userSelect: 'none' },
+    title: 'Click to sort — click again to reverse, third click clears the sort',
+  });
+
   return (
     <div className={styles.wrapper} onPaste={handleTablePaste}>
       <div className={styles.toolbar}>
@@ -280,23 +345,39 @@ export function BrokerFeesTab({ rows, setRows }) {
         <table className={styles.grid}>
           <thead>
             <tr>
-              <th rowSpan={2} className={styles.colCompany}>Company</th>
+              <th rowSpan={2} {...sortableHeaderProps('company', styles.colCompany)}>
+                Company{sortArrow('company')}
+              </th>
               <th colSpan={4} className={styles.epGroup}>Electric Power</th>
               <th colSpan={3} className={styles.ngGroup}>Natural Gas</th>
               <th rowSpan={2} className={styles.actionCol} />
             </tr>
             <tr>
-              <th className={`${styles.colLoad} ${styles.numCell} ${styles.epGroup}`}>Annual Deregulated Load (kWh)</th>
-              <th className={`${styles.colFee} ${styles.numCell} ${styles.epGroup}`}>Broker Fee /kWh</th>
-              <th className={`${styles.colRfps} ${styles.numCell} ${styles.epGroup}`}>RFPs</th>
-              <th className={`${styles.colTotal} ${styles.numCell} ${styles.epGroup}`}>Total Fee</th>
-              <th className={`${styles.colLoad} ${styles.numCell} ${styles.ngGroup}`}>Annual Load (Dth)</th>
-              <th className={`${styles.colFee} ${styles.numCell} ${styles.ngGroup}`}>Broker Fee /Dth</th>
-              <th className={`${styles.colTotal} ${styles.numCell} ${styles.ngGroup}`}>Total Fee</th>
+              <th {...sortableHeaderProps('loadEp', `${styles.colLoad} ${styles.numCell} ${styles.epGroup}`)}>
+                Annual Deregulated Load (kWh){sortArrow('loadEp')}
+              </th>
+              <th {...sortableHeaderProps('feeEp', `${styles.colFee} ${styles.numCell} ${styles.epGroup}`)}>
+                Broker Fee /kWh{sortArrow('feeEp')}
+              </th>
+              <th {...sortableHeaderProps('rfps', `${styles.colRfps} ${styles.numCell} ${styles.epGroup}`)}>
+                RFPs{sortArrow('rfps')}
+              </th>
+              <th {...sortableHeaderProps('totalEp', `${styles.colTotal} ${styles.numCell} ${styles.epGroup}`)}>
+                Total Fee{sortArrow('totalEp')}
+              </th>
+              <th {...sortableHeaderProps('loadNg', `${styles.colLoad} ${styles.numCell} ${styles.ngGroup}`)}>
+                Annual Load (Dth){sortArrow('loadNg')}
+              </th>
+              <th {...sortableHeaderProps('feeNg', `${styles.colFee} ${styles.numCell} ${styles.ngGroup}`)}>
+                Broker Fee /Dth{sortArrow('feeNg')}
+              </th>
+              <th {...sortableHeaderProps('totalNg', `${styles.colTotal} ${styles.numCell} ${styles.ngGroup}`)}>
+                Total Fee{sortArrow('totalNg')}
+              </th>
             </tr>
           </thead>
           <tbody>
-            {safeRows.map((row, idx) => {
+            {viewRows.map(({ row, idx }) => {
               const tEp = totalFee(row.loadEp, row.feeEp);
               const tNg = totalFee(row.loadNg, row.feeNg);
               const k = `${idx}-${row.company}-${row.loadEp}-${row.feeEp}-${row.rfps}-${row.loadNg}-${row.feeNg}`;
