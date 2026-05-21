@@ -2692,7 +2692,33 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
         const href = raw ? (/^https?:\/\//i.test(raw) ? raw : `https://${raw}`) : '';
         addFieldRow('PPT Link', raw, href);
       }
-      addFieldRow('Call Context', formData.fieldValues.context || '');
+      // Call Context can be long — when a single cell exceeds Excel's
+      // per-row height limit (~409 pt) the trailing lines clip and the
+      // user has to expand the row by hand to see them. Render it as a
+      // subheading + one row per paragraph so each row stays well under
+      // the cap and the full text is visible by default.
+      {
+        const ctx = String(formData.fieldValues.context || '').trim();
+        if (ctx) {
+          addSubheading('Call Context');
+          const fullWidth = colWidths.reduce((a, b) => a + b, 0);
+          const paragraphs = ctx.split(/\n{2,}/);
+          for (const para of paragraphs) {
+            const text = para.replace(/\s+$/g, '');
+            if (!text) continue;
+            const row = ws.addRow([]);
+            ws.mergeCells(row.number, 1, row.number, SPAN);
+            const c = ws.getCell(row.number, 1);
+            c.value = text;
+            c.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+            c.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
+            c.border = borderAll;
+            row.height = rowHeightForLines(estimateWrappedLines(text, fullWidth));
+          }
+        } else {
+          addFieldRow('Call Context', '');
+        }
+      }
       addFieldRow('Intent', formData.fieldValues.intent || '');
       addFieldRow('End In Mind', formData.fieldValues.endInMind || '');
 
