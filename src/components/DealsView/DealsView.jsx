@@ -513,17 +513,45 @@ function buildColumns(rows, columnLinks, listRegistry) {
     const isPercent = DEAL_PERCENT_KEYS.has(k);
     const isDate = DEAL_DATE_KEYS.has(k);
     const isCheck = DEAL_CHECK_KEYS.has(k);
+    const isRevenueRecorded = k === 'Revenue Recorded';
+    const isPaidToDate = k === 'Paid to Date';
     const kind = isCheck ? 'check'
       : isCurrency ? 'currency'
       : isPercent ? 'percent'
       : isDate ? 'date'
       : 'text';
+    // Display zero when a supporting currency cell is empty so the
+    // compound "$X/($Y + $Z)" formulas on Revenue Recorded / Paid to
+    // Date stay readable instead of collapsing to bare slashes.
+    function currencyOrZero(v) {
+      const n = asNumber(v);
+      return fmtCurrency(n == null ? 0 : n);
+    }
     function renderValue(v) {
       if (v == null || v === '') return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
       if (isCurrency) return <span style={{ display: 'block', textAlign: 'left', fontVariantNumeric: 'tabular-nums', color: '#0F172A' }}>{fmtCurrency(v)}</span>;
       if (isPercent) return <span style={{ display: 'block', textAlign: 'left', fontVariantNumeric: 'tabular-nums', color: '#0F172A' }}>{fmtPercent(v)}</span>;
       if (isDate) return <span style={{ color: '#334155' }}>{fmtDate(v)}</span>;
       return <span>{String(v)}</span>;
+    }
+    // Revenue Recorded reads as "$recorded/($setup + $recurring)";
+    // Paid to Date reads as "$paid/$commission". Both pull the
+    // supporting amounts from sibling cells on the same row so the
+    // user can spot under/over-recording at a glance.
+    function renderCompound(row, v) {
+      const primary = currencyOrZero(v);
+      if (isRevenueRecorded) {
+        return (
+          <span style={{ display: 'block', textAlign: 'left', fontVariantNumeric: 'tabular-nums', color: '#0F172A' }}>
+            {primary}/({currencyOrZero(row['Setup'])} + {currencyOrZero(row['Recurring Revenue'])})
+          </span>
+        );
+      }
+      return (
+        <span style={{ display: 'block', textAlign: 'left', fontVariantNumeric: 'tabular-nums', color: '#0F172A' }}>
+          {primary}/{currencyOrZero(row['Commission'])}
+        </span>
+      );
     }
     // Closed Won gets a clickable column header that opens the
     // Schneider Electric ServiceDesk "Close after contract execution"
@@ -537,7 +565,7 @@ function buildColumns(rows, columnLinks, listRegistry) {
       label: k,
       kind,
       renderValue,
-      defaultWidth: sticky ? 220 : isCheck ? 110 : isCurrency || isPercent ? 130 : isDate ? 130 : 150,
+      defaultWidth: sticky ? 220 : isCheck ? 110 : isRevenueRecorded ? 240 : isPaidToDate ? 180 : isCurrency || isPercent ? 130 : isDate ? 130 : 150,
       // Date columns sort chronologically off the parsed epoch ms,
       // not the formatted "M/D/YYYY" display string — without this
       // the DataTable falls back to alphabetical text compare and
@@ -570,11 +598,14 @@ function buildColumns(rows, columnLinks, listRegistry) {
           }
           return <SelectCell value={row[k]} onChange={onChange} options={opts} />;
         }
+        const cellRender = (isRevenueRecorded || isPaidToDate)
+          ? (v) => renderCompound(row, v)
+          : renderValue;
         return (
           <EditableCell
             value={row[k]}
             kind={kind}
-            render={renderValue}
+            render={cellRender}
             onSave={(v) => row.__onUpdate?.(row.id, k, v)}
             autoFocus={!!row.__newRow && sticky}
             listId={k === 'Client Name' ? CLIENT_NAME_LIST_ID : undefined}
