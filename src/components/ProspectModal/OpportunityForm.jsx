@@ -867,132 +867,6 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     set({ fieldValues: { ...fv, ...updates } });
   }, [companyName, prospects, formData.fieldValues?.companyWebsite, formData.fieldValues?.currentScope, formData.fieldValues?.clientManager, formData.fieldValues?.currentClientScope]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Self-heal: for every service listed in Scope Being Explored, add its
-  // canned 'Questions to Ask Them' to the ourQuestions table — but only
-  // ONCE per service per form. We persist a list of services that have
-  // already been seeded inside formData so a refresh (or scope re-edit)
-  // never re-imports questions the user has since deleted. For legacy
-  // forms (no seededScopeServices key), every service that already has
-  // populated rows is treated as already seeded so the first refresh
-  // after this change doesn't resurrect previously-deleted questions.
-  useEffect(() => {
-    const scope = (formData.fieldValues?.scope || '').trim();
-    if (!scope) return;
-    const services = scope.split(',').map(s => s.trim()).filter(Boolean);
-    if (services.length === 0) return;
-
-    const seedKey = 'ourQuestions';
-    const existingRows = formData.tables?.ourQuestions || [];
-    const populated = existingRows.filter(r =>
-      (r.service || '').trim() || (r.question || '').trim()
-    );
-
-    const prior = new Set((formData.seededScopeServices?.[seedKey] || []).map(s => s.toLowerCase()));
-    const hasSeedRecord = !!formData.seededScopeServices?.[seedKey];
-    if (!hasSeedRecord) {
-      for (const r of populated) {
-        const s = (r.service || '').toLowerCase().trim();
-        if (s) prior.add(s);
-      }
-    }
-
-    const existingKeys = new Set(
-      populated.map(r => `${(r.service || '').toLowerCase().trim()}::${(r.question || '').trim()}`)
-    );
-    const additions = [];
-    for (const svc of services) {
-      const key = svc.toLowerCase();
-      if (prior.has(key)) continue;
-      const canned = SERVICE_QUESTIONS[key];
-      if (!canned) continue;
-      for (const q of canned) {
-        const k = `${key}::${q}`;
-        if (existingKeys.has(k)) continue;
-        additions.push({ service: svc, question: q });
-        existingKeys.add(k);
-      }
-    }
-
-    const fullSeed = new Set(prior);
-    for (const svc of services) fullSeed.add(svc.toLowerCase());
-    const priorList = formData.seededScopeServices?.[seedKey] || [];
-    const seedListChanged = fullSeed.size !== priorList.length || [...fullSeed].some(s => !priorList.includes(s));
-    if (additions.length === 0 && !seedListChanged) return;
-
-    const patch = {};
-    if (additions.length > 0) {
-      patch.tables = { ...formData.tables, ourQuestions: [...populated, ...additions] };
-    }
-    if (seedListChanged) {
-      patch.seededScopeServices = {
-        ...(formData.seededScopeServices || {}),
-        [seedKey]: [...fullSeed],
-      };
-    }
-    set(patch);
-  }, [formData.fieldValues?.scope]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Self-heal: mirror the ourQuestions auto-fill for theirQuestions.
-  // Same one-shot-per-service-per-form rule via seededScopeServices.
-  useEffect(() => {
-    const scope = (formData.fieldValues?.scope || '').trim();
-    if (!scope) return;
-    const services = scope.split(',').map(s => s.trim()).filter(Boolean);
-    if (services.length === 0) return;
-
-    const seedKey = 'theirQuestions';
-    const existingRows = formData.tables?.theirQuestions || [];
-    const populated = existingRows.filter(r =>
-      (r.service || '').trim() || (r.question || '').trim() || (r.response || '').trim()
-    );
-
-    const prior = new Set((formData.seededScopeServices?.[seedKey] || []).map(s => s.toLowerCase()));
-    const hasSeedRecord = !!formData.seededScopeServices?.[seedKey];
-    if (!hasSeedRecord) {
-      for (const r of populated) {
-        const s = (r.service || '').toLowerCase().trim();
-        if (s) prior.add(s);
-      }
-    }
-
-    const existingKeys = new Set(
-      populated.map(r => `${(r.service || '').toLowerCase().trim()}::${(r.question || '').trim().toLowerCase()}`)
-    );
-    const additions = [];
-    for (const svc of services) {
-      const key = svc.toLowerCase();
-      if (prior.has(key)) continue;
-      const canned = SERVICE_THEIR_QUESTIONS[key];
-      if (!canned) continue;
-      for (const pair of canned) {
-        const qText = (pair.question || '').trim();
-        if (!qText) continue;
-        const k = `${key}::${qText.toLowerCase()}`;
-        if (existingKeys.has(k)) continue;
-        additions.push({ service: svc, question: pair.question, response: pair.response });
-        existingKeys.add(k);
-      }
-    }
-
-    const fullSeed = new Set(prior);
-    for (const svc of services) fullSeed.add(svc.toLowerCase());
-    const priorList = formData.seededScopeServices?.[seedKey] || [];
-    const seedListChanged = fullSeed.size !== priorList.length || [...fullSeed].some(s => !priorList.includes(s));
-    if (additions.length === 0 && !seedListChanged) return;
-
-    const patch = {};
-    if (additions.length > 0) {
-      patch.tables = { ...formData.tables, theirQuestions: [...populated, ...additions] };
-    }
-    if (seedListChanged) {
-      patch.seededScopeServices = {
-        ...(formData.seededScopeServices || {}),
-        [seedKey]: [...fullSeed],
-      };
-    }
-    set(patch);
-  }, [formData.fieldValues?.scope]); // eslint-disable-line react-hooks/exhaustive-deps
-
   // Always keep at least one empty row at the bottom of Questions to
   // Ask Them so the user can always type a new question without having
   // to go find an 'add row' button.
@@ -1137,38 +1011,79 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
               </span>
             )}
             {(t.key === 'ourQuestions' || t.key === 'theirQuestions') && (() => {
-              const rowCount = (formData.tables?.[t.key] || []).filter(r => {
+              // Compute what the "Add from Scope" button would inject if
+              // clicked right now — used for both the count badge on the
+              // button and the disabled state. The same logic runs at
+              // click time so what the user sees is what they get.
+              const cannedBank = t.key === 'ourQuestions' ? SERVICE_QUESTIONS : SERVICE_THEIR_QUESTIONS;
+              const scope = (formData.fieldValues?.scope || '').trim();
+              const services = scope ? scope.split(',').map(s => s.trim()).filter(Boolean) : [];
+              const rows = formData.tables?.[t.key] || [];
+              const existingKeys = new Set(
+                rows.map(r => `${(r?.service || '').toLowerCase().trim()}::${(r?.question || '').trim().toLowerCase()}`)
+              );
+              const additions = [];
+              const seen = new Set(existingKeys);
+              for (const svc of services) {
+                const list = cannedBank[svc.toLowerCase()];
+                if (!list) continue;
+                for (const item of list) {
+                  const q = (typeof item === 'string' ? item : item.question || '').trim();
+                  if (!q) continue;
+                  const k = `${svc.toLowerCase()}::${q.toLowerCase()}`;
+                  if (seen.has(k)) continue;
+                  seen.add(k);
+                  additions.push(t.key === 'ourQuestions'
+                    ? { service: svc, question: q }
+                    : { service: svc, question: q, response: (item.response || '') }
+                  );
+                }
+              }
+              const addDisabled = additions.length === 0;
+              const addTitle = additions.length > 0
+                ? `Append ${additions.length} canned question${additions.length === 1 ? '' : 's'} for the current Scope (${services.join(', ')})`
+                : services.length === 0
+                  ? 'Pick at least one service under "Scope Being Explored" first'
+                  : `No canned questions left to add for the current Scope (${services.join(', ')})`;
+
+              const rowCount = rows.filter(r => {
                 if (!r) return false;
                 for (const c of t.columns) if ((r[c.key] || '').toString().trim()) return true;
                 return false;
               }).length;
+
               return (
-                <button
-                  type="button"
-                  disabled={rowCount === 0}
-                  onClick={() => {
-                    if (rowCount === 0) return;
-                    if (!window.confirm(`Clear all ${rowCount} row${rowCount === 1 ? '' : 's'} from "${t.label}"? The auto-fill will not re-add canned questions for services already in Scope.`)) return;
-                    // Mark every current Scope service as already seeded
-                    // so the canned-question auto-fill effect doesn't
-                    // immediately re-populate the table after the clear.
-                    const scope = (formData.fieldValues?.scope || '').trim();
-                    const services = scope ? scope.split(',').map(s => s.trim()).filter(Boolean) : [];
-                    const priorSeed = new Set((formData.seededScopeServices?.[t.key] || []).map(s => String(s).toLowerCase()));
-                    for (const svc of services) priorSeed.add(svc.toLowerCase());
-                    set({
-                      tables: { ...formData.tables, [t.key]: [] },
-                      seededScopeServices: {
-                        ...(formData.seededScopeServices || {}),
-                        [t.key]: [...priorSeed],
-                      },
-                    });
-                  }}
-                  title={rowCount === 0
-                    ? 'Already empty'
-                    : `Remove every row from ${t.label} and stop the auto-fill from re-seeding canned questions for the current Scope services.`}
-                  style={{ marginLeft: 'auto', fontSize: '0.68rem', padding: '0.15rem 0.5rem', border: '1px solid #FCA5A5', background: rowCount === 0 ? '#F8FAFC' : '#FEF2F2', color: rowCount === 0 ? '#94A3B8' : '#B91C1C', borderRadius: 4, cursor: rowCount === 0 ? 'not-allowed' : 'pointer', fontWeight: 600, fontFamily: 'inherit' }}
-                >Clear all{rowCount > 0 ? ` (${rowCount})` : ''}</button>
+                <>
+                  <button
+                    type="button"
+                    disabled={addDisabled}
+                    onClick={() => {
+                      if (addDisabled) return;
+                      // Drop the new rows in just above the trailing
+                      // always-empty input row so the user's "type a new
+                      // question" slot stays at the bottom of the table.
+                      const current = [...(formData.tables?.[t.key] || [])];
+                      const lastIdx = current.length - 1;
+                      const lastIsEmpty = lastIdx >= 0 && t.columns.every(c => !((current[lastIdx]?.[c.key] || '').toString().trim()));
+                      const insertAt = lastIsEmpty ? lastIdx : current.length;
+                      current.splice(insertAt, 0, ...additions);
+                      set({ tables: { ...formData.tables, [t.key]: current } });
+                    }}
+                    title={addTitle}
+                    style={{ marginLeft: 'auto', fontSize: '0.68rem', padding: '0.15rem 0.5rem', border: '1px solid #16A34A', background: addDisabled ? '#F8FAFC' : '#F0FDF4', color: addDisabled ? '#94A3B8' : '#166534', borderRadius: 4, cursor: addDisabled ? 'not-allowed' : 'pointer', fontWeight: 600, fontFamily: 'inherit' }}
+                  >+ Add from Scope{additions.length > 0 ? ` (${additions.length})` : ''}</button>
+                  <button
+                    type="button"
+                    disabled={rowCount === 0}
+                    onClick={() => {
+                      if (rowCount === 0) return;
+                      if (!window.confirm(`Clear all ${rowCount} row${rowCount === 1 ? '' : 's'} from "${t.label}"?`)) return;
+                      set({ tables: { ...formData.tables, [t.key]: [] } });
+                    }}
+                    title={rowCount === 0 ? 'Already empty' : `Remove every row from ${t.label}`}
+                    style={{ fontSize: '0.68rem', padding: '0.15rem 0.5rem', border: '1px solid #FCA5A5', background: rowCount === 0 ? '#F8FAFC' : '#FEF2F2', color: rowCount === 0 ? '#94A3B8' : '#B91C1C', borderRadius: 4, cursor: rowCount === 0 ? 'not-allowed' : 'pointer', fontWeight: 600, fontFamily: 'inherit' }}
+                  >Clear all{rowCount > 0 ? ` (${rowCount})` : ''}</button>
+                </>
               );
             })()}
             {t.key === 'meetingNotes' && importableNotes.some(n => (n.rows?.length || 0) > 0) && (
