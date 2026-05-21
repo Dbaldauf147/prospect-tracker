@@ -2697,9 +2697,15 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       addFieldRow('End In Mind', formData.fieldValues.endInMind || '');
 
       // --- Details (structured fields) --------------------------------
+      // "General Notes" and "Scoping Details Notes" are explicitly
+      // excluded from the export — they're surfaced inside the Notes
+      // page UI but the user doesn't want them duplicated into the
+      // structured Details block of the workbook.
+      const DETAILS_EXPORT_SKIP = new Set(['summary', 'scopingNotes']);
       addBlankRow();
       addSectionHeader('Details');
       for (const f of template.fields) {
+        if (DETAILS_EXPORT_SKIP.has(f.key)) continue;
         if (f.showWhenStatus && formData.fieldValues.status !== f.showWhenStatus) continue;
         const raw = (formData.fieldValues[f.key] || '').trim ? (formData.fieldValues[f.key] || '').trim() : (formData.fieldValues[f.key] || '');
         if (f.isLink && raw) {
