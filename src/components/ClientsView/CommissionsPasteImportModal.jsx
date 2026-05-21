@@ -115,21 +115,27 @@ export function CommissionsPasteImportModal({ onClose, onImport, initialPaste = 
   }
 
   function handleImport() {
-    const records = rawRows
-      .map(cells => {
-        const obj = {};
-        for (let i = 0; i < headers.length; i++) {
-          const dest = mapping[headers[i]];
-          if (!dest) continue;
-          const v = cells[i];
-          if (v == null || v === '') continue;
-          obj[dest] = v;
-        }
-        return obj;
-      })
-      .filter(r => Object.keys(r).length > 0);
+    const records = [];
+    for (const cells of rawRows) {
+      const obj = {};
+      for (let i = 0; i < headers.length; i++) {
+        const dest = mapping[headers[i]];
+        if (!dest) continue;
+        const v = cells[i];
+        if (v == null || v === '') continue;
+        obj[dest] = v;
+      }
+      // Rows with no mapped cells are noise from blank pasted lines —
+      // drop them silently. Rows that have data but no Project Name
+      // are skipped intentionally: the dedup-on-import step keys off
+      // Project Name, so an unnamed row would either pile up as a
+      // duplicate or get lost on the next re-paste.
+      if (Object.keys(obj).length === 0) continue;
+      if (!String(obj['Project Name'] || '').trim()) continue;
+      records.push(obj);
+    }
     if (records.length === 0) {
-      setParseError('No mapped columns — pick at least one destination column.');
+      setParseError('Nothing to import — every pasted row was either blank or missing a Project Name.');
       return;
     }
     onImport(records);
