@@ -1,7 +1,10 @@
 import { useMemo, useState, useEffect } from 'react';
 import { DataTable } from '../common/DataTable';
 import { asNumber, asDate, fmtCurrency, fmtPercent, fmtDate } from '../../utils/dealsFormat';
-import { loadCommissions, saveCommissionsOverride, clearCommissionsOverride } from '../../utils/commissionsStore';
+import {
+  loadCommissions, saveCommissionsOverride, clearCommissionsOverride,
+  COMMISSION_MONTH_NAMES,
+} from '../../utils/commissionsStore';
 import { CommissionsPasteImportModal, COMMISSIONS_CANONICAL } from './CommissionsPasteImportModal';
 import { loadOppsFromCache, findOppByBfoLink } from '../../utils/oppsCache';
 
@@ -68,31 +71,21 @@ function EditableCell({ value, render, onSave, listId }) {
   );
 }
 
-// Detect a "<m>/1/<y>" header so the column renderer can flip to
-// currency formatting. The plain-date header is the commission $ for
-// that month; the "<m>/1/<y> Revenue" variant is the underlying project
-// revenue that produced it.
-const MONTH_KEY_RE = /^\d{1,2}\/1\/\d{4}$/;
-function isMonthCommissionKey(k) { return MONTH_KEY_RE.test(String(k || '').trim()); }
+// Month columns are year-agnostic — "January" is the January commission
+// $, "January Revenue" is its underlying project revenue, and "FY
+// Revenue" is the annual roll-up. Helpers recognize those keys when
+// summing / formatting; data pasted under the legacy "<m>/1/<year>"
+// shape gets migrated to month names on load by commissionsStore.
+const MONTH_NAME_SET = new Set(COMMISSION_MONTH_NAMES);
+function isMonthCommissionKey(k) { return MONTH_NAME_SET.has(String(k || '').trim()); }
 function isMonthRevenueKey(k) {
   const s = String(k || '').trim();
-  return /^\d{1,2}\/1\/\d{4}\s+Revenue$/i.test(s);
+  if (!s.endsWith(' Revenue')) return false;
+  return MONTH_NAME_SET.has(s.slice(0, s.length - ' Revenue'.length));
 }
-const FY_REVENUE_RE = /^FY(\d{4})\s+Revenue$/i;
-function isFYRevenueKey(k) { return FY_REVENUE_RE.test(String(k || '').trim()); }
+function isFYRevenueKey(k) { return String(k || '').trim() === 'FY Revenue'; }
 
-// The fiscal year the canonical month columns cover. Pulled out of the
-// canonical FY Revenue header so the matching FY Commission column we
-// add below tracks the same year without needing the paste-import
-// modal to export it separately.
-const CANONICAL_YEAR = (() => {
-  for (const k of COMMISSIONS_CANONICAL) {
-    const m = FY_REVENUE_RE.exec(String(k).trim());
-    if (m) return Number(m[1]);
-  }
-  return new Date().getFullYear();
-})();
-const FY_COMMISSION_KEY = `FY${CANONICAL_YEAR} Commission`;
+const FY_COMMISSION_KEY = 'FY Commission';
 const PAYMENT_STATUS_KEY = 'Payment Status';
 
 const CURRENCY_KEYS = new Set();
@@ -146,19 +139,16 @@ function paymentStatusFor(row) {
     return { state: 'active', label: 'Active', title: `Comm End Date ${fmtDate(end)}` };
   }
   let lastIdx = -1;
-  for (let m = 1; m <= 12; m++) {
-    const n = asNumber(row?.[`${m}/1/${CANONICAL_YEAR}`]);
-    if (n != null && n !== 0) lastIdx = m - 1;
+  for (let i = 0; i < COMMISSION_MONTH_NAMES.length; i++) {
+    const n = asNumber(row?.[COMMISSION_MONTH_NAMES[i]]);
+    if (n != null && n !== 0) lastIdx = i;
   }
   if (lastIdx === -1) return { state: 'unknown', label: '—', title: 'No Comm End Date and no commission entries on file' };
-  const today = new Date();
-  const todayMonthIdx = today.getFullYear() === CANONICAL_YEAR
-    ? today.getMonth()
-    : (today.getFullYear() < CANONICAL_YEAR ? -1 : 12);
+  const todayMonthIdx = new Date().getMonth();
   if (lastIdx >= todayMonthIdx - 1) {
-    return { state: 'active', label: 'Active', title: `Most recent commission: ${lastIdx + 1}/${CANONICAL_YEAR}` };
+    return { state: 'active', label: 'Active', title: `Most recent commission: ${COMMISSION_MONTH_NAMES[lastIdx]}` };
   }
-  return { state: 'stopped', label: 'Stopped', title: `Most recent commission: ${lastIdx + 1}/${CANONICAL_YEAR} — no payments since` };
+  return { state: 'stopped', label: 'Stopped', title: `Most recent commission: ${COMMISSION_MONTH_NAMES[lastIdx]} — no payments since` };
 }
 
 function PaymentStatusBadge({ state, label, title }) {
@@ -320,7 +310,7 @@ function buildColumns(oppsCache) {
         render: (row) => renderSumCell(
           sumMatchingCells(row, isMonthRevenueKey),
           'No monthly revenue entries on this row',
-          `Sum of the 12 monthly revenue cells for ${CANONICAL_YEAR}`,
+          `Sum of the 12 monthly revenue cells across the year`,
         ),
         exportValue: (row) => sumMatchingCells(row, isMonthRevenueKey) ?? '',
       };
@@ -361,7 +351,7 @@ function buildColumns(oppsCache) {
     render: (row) => renderSumCell(
       sumMatchingCells(row, isMonthCommissionKey),
       'No monthly commission entries on this row',
-      `Sum of the 12 monthly commission cells for ${CANONICAL_YEAR}`,
+      `Sum of the 12 monthly commission cells across the year`,
     ),
     exportValue: (row) => sumMatchingCells(row, isMonthCommissionKey) ?? '',
   };

@@ -1,37 +1,57 @@
 import { useState, useMemo } from 'react';
-
-// Year that the canonical revenue / commission month columns live in.
-// Aligned to the current fiscal year — bump when the user starts
-// importing the next year's commission roster.
-const CANONICAL_YEAR = 2026;
-
-const MONTHS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+import { COMMISSION_MONTH_NAMES } from '../../utils/commissionsStore';
 
 // Canonical destination columns. Order mirrors the table layout the
 // user pastes in: identity columns, then monthly revenue, the FY
-// total, and finally the monthly commission amounts.
-function buildCanonical(year) {
+// total, and finally the monthly commission amounts. Columns are
+// year-agnostic — a pasted "1/1/2026 Revenue" cell lands in the
+// "January Revenue" column regardless of year.
+function buildCanonical() {
   const cols = ['Name', 'Project Name', 'Comm Start Date', 'Comm End Date', '%'];
-  for (const m of MONTHS) cols.push(`${m}/1/${year} Revenue`);
-  cols.push(`FY${year} Revenue`);
-  for (const m of MONTHS) cols.push(`${m}/1/${year}`);
+  for (const m of COMMISSION_MONTH_NAMES) cols.push(`${m} Revenue`);
+  cols.push('FY Revenue');
+  for (const m of COMMISSION_MONTH_NAMES) cols.push(m);
   return cols;
 }
 
-export const COMMISSIONS_CANONICAL = buildCanonical(CANONICAL_YEAR);
+export const COMMISSIONS_CANONICAL = buildCanonical();
 
 // Cheap normalizer for header-vs-header comparisons. Lowercases,
-// drops whitespace, "." and "$", so e.g. "Comm. Start Date" matches
-// "Comm Start Date" and "1/1/2026" matches " 1/1/2026 ".
+// drops whitespace, "." and "$".
 function normHeader(s) {
   return String(s || '').toLowerCase().replace(/[\s.$]/g, '');
 }
 
 const NORM_CANONICAL = COMMISSIONS_CANONICAL.map(c => ({ c, n: normHeader(c) }));
 
+// Map a pasted source header onto a canonical destination. Direct
+// month-name matches go through the normalized lookup; legacy
+// "<m>/1/<year>" date headers (the way Excel sometimes labels monthly
+// columns) are translated to the matching month name so the user can
+// paste this year's data into year-agnostic columns without
+// re-mapping each month by hand.
 function autoMap(srcHeader) {
   const cleaned = String(srcHeader || '').trim().replace(/\.+$/, '');
   if (!cleaned) return '';
+
+  // FY{year} Revenue → FY Revenue (year stripped, value rolls into the
+  // single year-agnostic FY column).
+  if (/^FY\d{4}\s+Revenue$/i.test(cleaned)) return 'FY Revenue';
+
+  // <m>/1/<year> Revenue → "<Month> Revenue"
+  const monthRev = /^(\d{1,2})\/1\/\d{4}\s+Revenue$/i.exec(cleaned);
+  if (monthRev) {
+    const mi = Number(monthRev[1]);
+    if (mi >= 1 && mi <= 12) return `${COMMISSION_MONTH_NAMES[mi - 1]} Revenue`;
+  }
+
+  // <m>/1/<year> → "<Month>" (commission column)
+  const month = /^(\d{1,2})\/1\/\d{4}$/.exec(cleaned);
+  if (month) {
+    const mi = Number(month[1]);
+    if (mi >= 1 && mi <= 12) return COMMISSION_MONTH_NAMES[mi - 1];
+  }
+
   const n = normHeader(cleaned);
   const hit = NORM_CANONICAL.find(x => x.n === n);
   return hit ? hit.c : '';
