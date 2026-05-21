@@ -320,7 +320,7 @@ function App() {
           ) : view === 'activity' ? (
             <ActivityView prospects={prospects} settings={settings} updateSettings={updateSettings} />
           ) : view === 'agents' ? (
-            <AgentsView prospects={prospects} />
+            <AgentsView prospects={prospects} settings={settings} />
           ) : view === 'pe' ? (
             <PEPortfolioView prospects={prospects} onSelectProspect={handleSelect} />
           ) : view === 'contacts' ? (

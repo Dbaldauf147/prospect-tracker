@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { loadOppsFromCache, searchOpps } from '../../utils/oppsCache';
 import { dbPut } from '../../utils/db';
+import { getEffectiveServiceMetadata } from '../../data/serviceCatalog';
 import styles from './AgentsView.module.css';
 
 // Manual BFO Opportunity tags the user picked for an email recipient
@@ -375,7 +376,7 @@ function OppPicker({ oppsCache, onSelect }) {
   );
 }
 
-export function AgentsView({ prospects = [] }) {
+export function AgentsView({ prospects = [], settings }) {
   const [cache, setCache] = useState(() => readActivityCache());
   const [hubspotCache, setHubspotCache] = useState(null);
   const [oppsCache, setOppsCache] = useState(null);
@@ -834,6 +835,7 @@ export function AgentsView({ prospects = [] }) {
   const newBfoOpps = useMemo(() => {
     const records = oppsCache?.records || [];
     const EXCLUDED_STAGES = new Set(['Not Started', 'Not Sold', 'Sold']);
+    const overrides = settings?.serviceOverrides || {};
     const rows = [];
     for (const r of records) {
       const stage = String(r.Stage || '').trim();
@@ -850,6 +852,12 @@ export function AgentsView({ prospects = [] }) {
       const scope = String(r.Scope || '').trim();
       const followUp = String(r['Follow Up'] ?? '').trim();
       const bfoCompanyName = bfoCompanyByNorm.get(normalizeCompany(account)) || '';
+      // Look up the per-service metadata from the Dropdowns › Services
+      // subtab. Scope is the canonical service name; the catalog
+      // supplies Product Line, Type, Region, Class (= BFO Tag), Years,
+      // and Local Project Name. User overrides on the Services tab
+      // win over the seed values.
+      const svcMeta = getEffectiveServiceMetadata(scope, overrides);
       rows.push({
         id: r._id ?? `${account}|${scope}`,
         company: account || '—',
@@ -860,21 +868,17 @@ export function AgentsView({ prospects = [] }) {
         stage,
         followUp,
         callIn: callInRaw,
-        // Placeholder fields — populated later once the user provides
-        // the mapping for each. Kept on the row object now so the
-        // table column and prompt block don't need a second pass when
-        // the data source is wired up.
-        productLine: '',
-        localProjectName: '',
-        type: '',
-        region: '',
-        class: '',
-        years: '',
+        productLine: svcMeta?.productLine || '',
+        localProjectName: svcMeta?.localProjectName || '',
+        type: svcMeta?.serviceType || '',
+        region: svcMeta?.region || '',
+        class: svcMeta?.bfoTag || '',
+        years: svcMeta?.years || '',
       });
     }
     rows.sort((a, b) => a.company.localeCompare(b.company));
     return rows;
-  }, [oppsCache, bfoCompanyByNorm]);
+  }, [oppsCache, bfoCompanyByNorm, settings?.serviceOverrides]);
 
   const dateLabel = useMemo(() => new Date().toLocaleDateString('en-US', {
     weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',

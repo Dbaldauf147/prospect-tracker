@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { STAGE_AGE_GUIDANCE } from '../../data/dropdownLists';
-import { getServiceMetadata } from '../../data/serviceCatalog';
+import { getEffectiveServiceMetadata } from '../../data/serviceCatalog';
 import {
   getEffectiveDropdownLists,
   makeCustomListKey,
@@ -8,19 +8,75 @@ import {
 import styles from './DropdownsView.module.css';
 
 const SERVICE_TABLE_COLUMNS = [
-  { key: 'name',        label: 'Solutions',    width: 'auto' },
-  { key: 'bfoTag',      label: 'BFO Tag',      width: 110 },
-  { key: 'region',      label: 'Region',       width: 90 },
-  { key: 'years',       label: 'Years',        width: 90 },
-  { key: 'productLine', label: 'Product Line', width: 260 },
-  { key: 'serviceType', label: 'Service Type', width: 110 },
+  { key: 'name',             label: 'Solutions',         width: 'auto', editable: false },
+  { key: 'bfoTag',           label: 'BFO Tag',           width: 110,    editable: true  },
+  { key: 'region',           label: 'Region',            width: 90,     editable: true  },
+  { key: 'years',            label: 'Years',             width: 90,     editable: true  },
+  { key: 'productLine',      label: 'Product Line',      width: 260,    editable: true  },
+  { key: 'serviceType',      label: 'Service Type',      width: 110,    editable: true  },
+  { key: 'localProjectName', label: 'Local Project Name', width: 200,   editable: true  },
 ];
+
+// Inline cell editor for the Services subtab. Renders the current
+// value as plain text; clicking it swaps to an input that commits on
+// blur / Enter and cancels on Escape. Empty value clears the
+// override (so the cell falls back to the seed-catalog value if any).
+function ServiceCell({ value, onCommit }) {
+  const [draft, setDraft] = useState(null);
+  const inputRef = useRef(null);
+  const editing = draft !== null;
+  useEffect(() => { if (editing) inputRef.current?.focus(); }, [editing]);
+
+  function startEdit() { setDraft(value || ''); }
+  function commit() {
+    const trimmed = (draft ?? '').trim();
+    setDraft(null);
+    if (trimmed === (value || '')) return;
+    onCommit(trimmed);
+  }
+  function cancel() { setDraft(null); }
+
+  if (!editing) {
+    return (
+      <span
+        onClick={startEdit}
+        title="Click to edit"
+        style={{ display: 'inline-block', width: '100%', cursor: 'text', minHeight: '1em' }}
+      >
+        {value
+          ? value
+          : <span className={styles.serviceMutedCell}>—</span>}
+      </span>
+    );
+  }
+  return (
+    <input
+      ref={inputRef}
+      type="text"
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') { e.preventDefault(); commit(); }
+        else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+      }}
+      style={{
+        width: '100%',
+        padding: '3px 6px',
+        border: '1px solid var(--color-accent)', borderRadius: 4,
+        fontSize: '0.75rem', fontFamily: 'inherit',
+        background: '#fff', color: 'var(--color-text)',
+        boxSizing: 'border-box',
+      }}
+    />
+  );
+}
 
 // Single row in the Services subtab. The Solutions cell renders as a
 // hyperlink when the user has saved a URL for that service; clicking
 // the pencil opens a tiny inline editor so per-service URLs can be
 // added, updated, or cleared.
-function ServiceRow({ name, meta, url, onSaveUrl }) {
+function ServiceRow({ name, meta, url, onSaveUrl, onSaveField }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const inputRef = useRef(null);
@@ -93,11 +149,12 @@ function ServiceRow({ name, meta, url, onSaveUrl }) {
           </div>
         )}
       </td>
-      <td>{meta?.bfoTag || <span className={styles.serviceMutedCell}>—</span>}</td>
-      <td>{meta?.region || <span className={styles.serviceMutedCell}>—</span>}</td>
-      <td>{meta?.years || <span className={styles.serviceMutedCell}>—</span>}</td>
-      <td>{meta?.productLine || <span className={styles.serviceMutedCell}>—</span>}</td>
-      <td>{meta?.serviceType || <span className={styles.serviceMutedCell}>—</span>}</td>
+      <td><ServiceCell value={meta?.bfoTag || ''}           onCommit={(v) => onSaveField(name, 'bfoTag', v)} /></td>
+      <td><ServiceCell value={meta?.region || ''}           onCommit={(v) => onSaveField(name, 'region', v)} /></td>
+      <td><ServiceCell value={meta?.years || ''}            onCommit={(v) => onSaveField(name, 'years', v)} /></td>
+      <td><ServiceCell value={meta?.productLine || ''}      onCommit={(v) => onSaveField(name, 'productLine', v)} /></td>
+      <td><ServiceCell value={meta?.serviceType || ''}      onCommit={(v) => onSaveField(name, 'serviceType', v)} /></td>
+      <td><ServiceCell value={meta?.localProjectName || ''} onCommit={(v) => onSaveField(name, 'localProjectName', v)} /></td>
     </tr>
   );
 }
@@ -353,20 +410,44 @@ export function DropdownsView({ settings, updateSettings }) {
     updateSettings?.({ serviceLinks: next });
   }
 
+  // User overrides for the Services subtab cells. Persisted under
+  // settings.serviceOverrides so edits sync across devices. A blank
+  // value clears that field's override so the cell falls back to the
+  // seed catalog value. Memoized so the conditional fallback to `{}`
+  // doesn't churn the serviceRows useMemo every render.
+  const serviceOverrides = useMemo(
+    () => (settings?.serviceOverrides && typeof settings.serviceOverrides === 'object')
+      ? settings.serviceOverrides
+      : {},
+    [settings?.serviceOverrides]
+  );
+  function saveServiceField(name, field, value) {
+    const next = { ...serviceOverrides };
+    const row = { ...(next[name] || {}) };
+    if (value == null || value === '') delete row[field];
+    else row[field] = value;
+    if (Object.keys(row).length === 0) delete next[name];
+    else next[name] = row;
+    updateSettings?.({ serviceOverrides: next });
+  }
+
   // Solutions list drives the Services subtab — same source the Lists
   // tab edits, so adding a service in one place shows it in the other.
+  // Effective metadata = seed catalog + user override, computed via
+  // getEffectiveServiceMetadata so the editor and any downstream
+  // consumers (AI Prompt etc.) see exactly the same values.
   const solutionsList = useMemo(() => lists.find(l => l.key === 'solutions'), [lists]);
   const serviceRows = useMemo(() => {
     const options = solutionsList?.options || [];
-    return options.map(name => ({ name, meta: getServiceMetadata(name) }));
-  }, [solutionsList]);
+    return options.map(name => ({ name, meta: getEffectiveServiceMetadata(name, serviceOverrides) }));
+  }, [solutionsList, serviceOverrides]);
   const filteredServiceRows = useMemo(() => {
     const term = serviceSearch.trim().toLowerCase();
     if (!term) return serviceRows;
     return serviceRows.filter(({ name, meta }) => {
       if (name.toLowerCase().includes(term)) return true;
       if (!meta) return false;
-      return [meta.bfoTag, meta.region, meta.years, meta.productLine, meta.serviceType]
+      return [meta.bfoTag, meta.region, meta.years, meta.productLine, meta.serviceType, meta.localProjectName]
         .some(v => String(v || '').toLowerCase().includes(term));
     });
   }, [serviceRows, serviceSearch]);
@@ -592,6 +673,7 @@ export function DropdownsView({ settings, updateSettings }) {
                         meta={meta}
                         url={serviceLinks[name] || ''}
                         onSaveUrl={saveServiceLink}
+                        onSaveField={saveServiceField}
                       />
                     ))
                   )}
