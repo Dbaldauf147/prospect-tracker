@@ -736,6 +736,12 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
   const [onlyUnmapped, setOnlyUnmapped] = useState(false);
   const [onlyIncomplete, setOnlyIncomplete] = useState(false);
   const [bulkPick, setBulkPick] = useState('');
+  // Bulk-edit selection (row indices) + the active column / value the
+  // user wants to push out to all selected rows. The toolbar lives
+  // above the table and only appears when at least one row is ticked.
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [bulkEditColumn, setBulkEditColumn] = useState('');
+  const [bulkEditValue, setBulkEditValue] = useState('');
   const [linkModalOpen, setLinkModalOpen] = useState(false);
   const fileInputRef = useRef(null);
 
@@ -876,6 +882,42 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
     });
   }
 
+  // Bulk-edit helpers. Selection lives in DealsView state (Set of row
+  // indices) and survives table re-renders since `rows` is derived
+  // deterministically from `data`. Apply pushes the picked value into
+  // every selected row in one setStore pass so the override file gets
+  // a single write instead of N round-trips through updateCell.
+  function toggleSelected(rowId) {
+    const idx = Number(rowId);
+    if (!Number.isFinite(idx)) return;
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
+      return next;
+    });
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set());
+  }
+
+  function applyBulkEdit() {
+    if (!bulkEditColumn || selectedIds.size === 0) return;
+    setStore(prev => {
+      const next = prev.data.map((row, idx) => {
+        if (!selectedIds.has(idx)) return row;
+        const updated = { ...row };
+        const v = bulkEditValue;
+        if (v === '' || v == null) delete updated[bulkEditColumn];
+        else updated[bulkEditColumn] = v;
+        return updated;
+      });
+      try { saveDealsOverride(next); } catch (err) { console.warn('Bulk save failed', err); }
+      return { data: next, source: 'override' };
+    });
+  }
+
   // Drop a deal row entirely. Wired into the Progress popover's
   // "Delete deal" button so the user can prune rows that shouldn't be
   // in the tracker without hunting for the underlying source.
@@ -910,6 +952,29 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
   // surfaces when prospects are passed in.
   const columns = useMemo(() => {
     if (baseColumns.length === 0) return baseColumns;
+    // Leading checkbox column for bulk-edit selection. Underscore-key
+    // so DataTable's filter row leaves it alone, and the header
+    // renders a compact "select-all-visible" toggle that respects the
+    // currently filtered row set.
+    const selectCol = {
+      key: '__bulkSelect__',
+      label: '',
+      defaultWidth: 36,
+      sticky: false,
+      renderHeader: () => null,
+      render: (row) => (
+        <input
+          type="checkbox"
+          checked={selectedIds.has(row.id)}
+          onChange={(e) => { e.stopPropagation(); toggleSelected(row.id); }}
+          onClick={(e) => e.stopPropagation()}
+          title="Select this deal for bulk edit"
+          style={{ cursor: 'pointer' }}
+        />
+      ),
+      exportValue: () => '',
+      getFilterValue: () => '',
+    };
     // Leading column shows a compact handoff-progress pill for each
     // deal (e.g. "2/4") and opens a popover with the four fields.
     // Always added — independent of the Mapped to Client / Status
@@ -939,7 +1004,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
     // one column can be left-anchored at a time.
     const clientNameCol = { ...baseColumns[0], sticky: false };
     if (clientOptions.length === 0) {
-      return [progressCol, clientNameCol, ...baseColumns.slice(1)];
+      return [selectCol, progressCol, clientNameCol, ...baseColumns.slice(1)];
     }
     const helperCol = {
       key: MAPPED_COL_KEY,
@@ -1019,15 +1084,15 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
         return prospectByName.get(lookupKey)?.status || '';
       },
     };
-    // Order: progress · client name · mapped-to-client · status · rest.
-    return [progressCol, clientNameCol, helperCol, statusCol, ...baseColumns.slice(1)];
-  }, [baseColumns, clientOptions, clientNameSet, clientMap, ignoreSet, prospectByName, columnLinks, listRegistry]);
+    // Order: select · progress · client name · mapped-to-client · status · rest.
+    return [selectCol, progressCol, clientNameCol, helperCol, statusCol, ...baseColumns.slice(1)];
+  }, [baseColumns, clientOptions, clientNameSet, clientMap, ignoreSet, prospectByName, columnLinks, listRegistry, selectedIds]);
   const tableId = useMemo(
     () => 'deals:' + columns.map(c => c.key).sort().join('|'),
     [columns]
   );
   const alwaysVisible = useMemo(
-    () => (columns[0] ? [columns[0].key] : []),
+    () => columns.slice(0, 2).map(c => c.key),
     [columns]
   );
   // Headers that the Link Columns modal lets the user bind to a
@@ -1304,6 +1369,66 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
           ? `✓ Showing incomplete (${incompleteCount})`
           : `Show only < ${PROGRESS_FIELDS.length}/${PROGRESS_FIELDS.length} (${incompleteCount})`}</button>
       </div>
+
+      {selectedIds.size > 0 && (() => {
+        const link = bulkEditColumn ? resolveColumnLink(bulkEditColumn, columnLinks) : null;
+        const linkedOpts = link ? (listRegistry?.get(link.listKey)?.options || []) : null;
+        return (
+          <div style={{ margin: '0 1.25rem 0.5rem', padding: '0.5rem 0.75rem', background: '#EFF6FF', border: '1px solid #93C5FD', borderRadius: 6, display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', flexShrink: 0 }}>
+            <strong style={{ fontSize: '0.72rem', color: '#1D4ED8' }}>
+              {selectedIds.size} selected
+            </strong>
+            <span style={{ fontSize: '0.7rem', color: '#1E40AF' }}>· set</span>
+            <select
+              value={bulkEditColumn}
+              onChange={(e) => { setBulkEditColumn(e.target.value); setBulkEditValue(''); }}
+              style={{ padding: '0.25rem 0.4rem', border: '1px solid #93C5FD', borderRadius: 4, fontSize: '0.72rem', fontFamily: 'inherit', background: '#fff', color: '#1E293B', maxWidth: 220 }}
+            >
+              <option value="">— Column… —</option>
+              {linkableHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+            </select>
+            <span style={{ fontSize: '0.7rem', color: '#1E40AF' }}>=</span>
+            {linkedOpts ? (
+              <select
+                value={bulkEditValue}
+                onChange={(e) => setBulkEditValue(e.target.value)}
+                disabled={!bulkEditColumn}
+                style={{ padding: '0.25rem 0.4rem', border: '1px solid #93C5FD', borderRadius: 4, fontSize: '0.72rem', fontFamily: 'inherit', background: '#fff', color: '#1E293B', maxWidth: 220 }}
+              >
+                <option value="">(clear)</option>
+                {linkedOpts.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+              </select>
+            ) : (
+              <input
+                type="text"
+                value={bulkEditValue}
+                onChange={(e) => setBulkEditValue(e.target.value)}
+                placeholder="New value (blank = clear)"
+                disabled={!bulkEditColumn}
+                style={{ padding: '0.25rem 0.4rem', border: '1px solid #93C5FD', borderRadius: 4, fontSize: '0.72rem', fontFamily: 'inherit', background: bulkEditColumn ? '#fff' : '#F1F5F9', color: '#1E293B', minWidth: 160 }}
+              />
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                if (!bulkEditColumn) return;
+                const label = bulkEditValue === ''
+                  ? `Clear ${bulkEditColumn} on ${selectedIds.size} deal${selectedIds.size === 1 ? '' : 's'}?`
+                  : `Set ${bulkEditColumn} to "${bulkEditValue}" on ${selectedIds.size} deal${selectedIds.size === 1 ? '' : 's'}?`;
+                if (!window.confirm(label)) return;
+                applyBulkEdit();
+              }}
+              disabled={!bulkEditColumn}
+              style={{ padding: '0.3rem 0.7rem', border: 'none', borderRadius: 4, background: bulkEditColumn ? '#1D4ED8' : '#94A3B8', color: '#fff', fontSize: '0.7rem', fontWeight: 700, fontFamily: 'inherit', cursor: bulkEditColumn ? 'pointer' : 'not-allowed' }}
+            >Apply to {selectedIds.size}</button>
+            <button
+              type="button"
+              onClick={clearSelection}
+              style={{ padding: '0.3rem 0.7rem', border: '1px solid #CBD5E1', borderRadius: 4, background: '#fff', color: '#475569', fontSize: '0.7rem', fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer' }}
+            >Clear selection</button>
+          </div>
+        );
+      })()}
 
       {onlyUnmapped && distinctUnmappedNames.size > 0 && (
         <div style={{ margin: '0 1.25rem 0.5rem', padding: '0.5rem 0.75rem', background: '#FFFBEB', border: '1px solid #FCD34D', borderRadius: 6, display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', flexShrink: 0 }}>
