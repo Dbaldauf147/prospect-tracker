@@ -67,9 +67,34 @@ const CONTRACT_COLUMNS = [
   { key: 'Current Term Start Date', label: 'Current Term Start Date' },
   { key: 'Payment Terms',           label: 'Payment Terms' },
   { key: 'End Date',                label: 'End Date', minWidth: 130 },
+  { key: '__daysToEnd',             label: 'Days to End Date', minWidth: 130 },
   { key: 'Auto renewal?',           label: 'Auto renewal?' },
   { key: 'Esc',                     label: 'Esc', minWidth: 140 },
 ];
+
+// Whole-day delta between a contract End Date and today, rendered as
+// a colored cell. Negative means the date has already passed; rows
+// inside 30 days run amber so renewals are easy to spot. Cancelled /
+// expired rows render in grey to match the rest of the inactive row.
+function renderDaysToEnd(endRaw, inactive) {
+  const d = asDate(endRaw);
+  if (!d) return <span style={{ color: '#94A3B8' }}>—</span>;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const target = new Date(d);
+  target.setHours(0, 0, 0, 0);
+  const days = Math.round((target.getTime() - today.getTime()) / MS_PER_DAY);
+  const color = inactive
+    ? '#94A3B8'
+    : days < 0 ? '#B91C1C'
+    : days <= 30 ? '#92400E'
+    : '#334155';
+  const label = days === 0
+    ? 'Today'
+    : days > 0 ? `${days}d`
+    : `${Math.abs(days)}d ago`;
+  return <span style={{ color, fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{label}</span>;
+}
 
 function normClientName(s) {
   return String(s || '').trim().toLowerCase();
@@ -235,11 +260,20 @@ function ContractTable({ deals }) {
     );
   }
   // Cancelled / Expired agreements sink to the bottom — they're still
-  // worth seeing as history but shouldn't crowd the active rows.
+  // worth seeing as history but shouldn't crowd the active rows. Inside
+  // each group sort by End Date ascending so the soonest-expiring
+  // contracts surface first; rows with no End Date drop to the bottom
+  // of their group.
   const sorted = [...deals].sort((a, b) => {
     const ai = isInactiveAgreement(a) ? 1 : 0;
     const bi = isInactiveAgreement(b) ? 1 : 0;
-    return ai - bi;
+    if (ai !== bi) return ai - bi;
+    const aDate = asDate(a['End Date']);
+    const bDate = asDate(b['End Date']);
+    if (!aDate && !bDate) return 0;
+    if (!aDate) return 1;
+    if (!bDate) return -1;
+    return aDate.getTime() - bDate.getTime();
   });
   return (
     <div style={{ overflowX: 'auto', padding: '0.5rem 0.75rem 0.75rem' }}>
@@ -261,7 +295,9 @@ function ContractTable({ deals }) {
             <tr key={i} style={{ background: inactive ? '#F1F5F9' : baseBg, color: inactive ? '#94A3B8' : undefined, opacity: inactive ? 0.7 : 1 }}>
               {CONTRACT_COLUMNS.map(col => (
                 <td key={col.key} style={{ padding: '0.3rem 0.5rem', whiteSpace: 'nowrap', borderBottom: '1px solid #E2E8F0', minWidth: col.minWidth }}>
-                  {renderContractCell(col.key, d[col.key])}
+                  {col.key === '__daysToEnd'
+                    ? renderDaysToEnd(d['End Date'], inactive)
+                    : renderContractCell(col.key, d[col.key])}
                 </td>
               ))}
             </tr>
