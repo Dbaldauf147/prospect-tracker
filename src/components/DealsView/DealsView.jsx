@@ -93,6 +93,14 @@ function DaysPaidOnCell({ row }) {
   const hidden = isFilled(row[DAYS_PAID_ON_HIDDEN_KEY]);
   const onUpdate = row.__onUpdate;
 
+  // Once a deal is marked Fully Paid, the days-until-due delta is no
+  // longer meaningful — collapse the cell to blank so it doesn't keep
+  // counting down (or showing "overdue") against a closed-out deal.
+  const commStatus = String(row['Comm Status'] ?? '').trim().toLowerCase();
+  if (commStatus === 'fully paid') {
+    return <span />;
+  }
+
   if (hidden) {
     return (
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, width: '100%' }}>
