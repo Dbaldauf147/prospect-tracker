@@ -67,6 +67,69 @@ function isFilled(v) {
   return true;
 }
 
+// Days/Paid on stores a per-row "hide" flag under a double-underscore
+// key so the column is filtered out of the visible header set but the
+// value still round-trips through the regular dealsStore.
+const DAYS_PAID_ON_HIDDEN_KEY = '__daysPaidOnHidden';
+
+// Whole-day delta between a Due Date cell and today. Returns null when
+// the cell can't be parsed as a date. Both sides are flattened to local
+// midnight so the value doesn't drift around DST transitions.
+function daysUntilDue(dueRaw) {
+  const d = asDate(dueRaw);
+  if (!d) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const target = new Date(d);
+  target.setHours(0, 0, 0, 0);
+  return Math.round((target.getTime() - today.getTime()) / 86400000);
+}
+
+// Custom renderer for the "Days/Paid on" column. Shows the computed
+// days-until-due delta from the row's Due Date, with a small × button
+// that suppresses the value for this row (stored on __daysPaidOnHidden)
+// and a ↻ to restore it.
+function DaysPaidOnCell({ row }) {
+  const hidden = isFilled(row[DAYS_PAID_ON_HIDDEN_KEY]);
+  const onUpdate = row.__onUpdate;
+
+  if (hidden) {
+    return (
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, width: '100%' }}>
+        <span style={{ color: 'var(--color-text-muted)', flex: 1 }}>—</span>
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onUpdate?.(row.id, DAYS_PAID_ON_HIDDEN_KEY, ''); }}
+          title="Restore the computed days-until-due value"
+          style={{ background: 'transparent', border: '1px solid var(--color-border)', color: '#475569', cursor: 'pointer', fontSize: '0.7rem', padding: '0 6px', borderRadius: 4, fontFamily: 'inherit', lineHeight: 1.4 }}
+        >↻</button>
+      </span>
+    );
+  }
+
+  const delta = daysUntilDue(row['Due Date']);
+  if (delta == null) {
+    return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
+  }
+
+  const color = delta < 0 ? '#B91C1C' : delta <= 7 ? '#92400E' : '#0F172A';
+  const label = delta === 0 ? 'Due today'
+    : delta > 0 ? `${delta}d`
+    : `${Math.abs(delta)}d overdue`;
+
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, width: '100%' }}>
+      <span style={{ flex: 1, color, fontVariantNumeric: 'tabular-nums' }}>{label}</span>
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onUpdate?.(row.id, DAYS_PAID_ON_HIDDEN_KEY, '1'); }}
+        title="Hide the days-until-due value for this deal"
+        style={{ background: 'transparent', border: '1px solid var(--color-border)', color: '#94A3B8', cursor: 'pointer', fontSize: '0.7rem', padding: '0 6px', borderRadius: 4, fontFamily: 'inherit', lineHeight: 1 }}
+      >×</button>
+    </span>
+  );
+}
+
 // Editable cell wrapper. Renders the column's normal display until the
 // user double-clicks, then swaps to an input typed to match the
 // column kind: date picker for date fields, number for currency /
@@ -244,7 +307,27 @@ function ProgressCell({ row, columnLinks, listRegistry, onSave, onDelete }) {
   function openPopover(e) {
     e.stopPropagation();
     const rect = btnRef.current?.getBoundingClientRect();
-    if (rect) setAnchor({ left: rect.left, top: rect.bottom + 4, width: Math.max(rect.width, 320) });
+    if (!rect) { setOpen(true); return; }
+    // Keep the popover on-screen: prefer opening below the pill, but
+    // flip above when the row is near the bottom of the viewport and
+    // there's more room overhead. Either way cap maxHeight so the body
+    // scrolls inside the panel instead of bleeding off the page.
+    const margin = 8;
+    const viewportH = window.innerHeight || document.documentElement.clientHeight;
+    const spaceBelow = viewportH - rect.bottom - margin;
+    const spaceAbove = rect.top - margin;
+    const estimatedH = 420;
+    const placeAbove = spaceBelow < estimatedH && spaceAbove > spaceBelow;
+    const available = Math.max(180, placeAbove ? spaceAbove : spaceBelow);
+    const top = placeAbove
+      ? Math.max(margin, rect.top - margin - Math.min(estimatedH, spaceAbove))
+      : rect.bottom + 4;
+    setAnchor({
+      left: rect.left,
+      top,
+      width: Math.max(rect.width, 320),
+      maxHeight: available,
+    });
     setOpen(true);
   }
 
@@ -273,9 +356,9 @@ function ProgressCell({ row, columnLinks, listRegistry, onSave, onDelete }) {
           />
           <div
             onClick={(e) => e.stopPropagation()}
-            style={{ position: 'fixed', left: anchor?.left ?? 0, top: anchor?.top ?? 0, width: anchor?.width ?? 320, maxWidth: 'calc(100vw - 16px)', zIndex: 5000, background: '#fff', border: '1px solid #CBD5E1', borderRadius: 8, boxShadow: '0 10px 30px rgba(15, 23, 42, 0.18)', overflow: 'hidden' }}
+            style={{ position: 'fixed', left: anchor?.left ?? 0, top: anchor?.top ?? 0, width: anchor?.width ?? 320, maxWidth: 'calc(100vw - 16px)', maxHeight: anchor?.maxHeight ?? undefined, zIndex: 5000, background: '#fff', border: '1px solid #CBD5E1', borderRadius: 8, boxShadow: '0 10px 30px rgba(15, 23, 42, 0.18)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
           >
-            <div style={{ padding: '0.5rem 0.75rem', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#F8FAFC' }}>
+            <div style={{ padding: '0.5rem 0.75rem', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#F8FAFC', flex: '0 0 auto' }}>
               <strong style={{ fontSize: '0.75rem', color: '#1E293B' }}>
                 Handoff progress · {ignored ? 'Ignored' : `${done}/${total}`}
               </strong>
@@ -286,7 +369,7 @@ function ProgressCell({ row, columnLinks, listRegistry, onSave, onDelete }) {
                 aria-label="Close"
               >×</button>
             </div>
-            <div style={{ padding: '0.25rem 0' }}>
+            <div style={{ padding: '0.25rem 0', flex: '1 1 auto', overflowY: 'auto', minHeight: 0 }}>
               {PROGRESS_FIELDS.map(f => (
                 <ProgressPopoverRow
                   key={f.key}
@@ -299,7 +382,7 @@ function ProgressCell({ row, columnLinks, listRegistry, onSave, onDelete }) {
               ))}
             </div>
             {onSave && (
-              <div style={{ padding: '0.4rem 0.75rem', borderTop: '1px solid #E2E8F0', background: '#F8FAFC', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+              <div style={{ padding: '0.4rem 0.75rem', borderTop: '1px solid #E2E8F0', background: '#F8FAFC', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', flex: '0 0 auto' }}>
                 <label
                   style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', cursor: 'pointer', fontSize: '0.7rem', color: '#475569' }}
                   title="Don't count this deal in the X/N tally — its pill shows greyed-out."
@@ -336,7 +419,7 @@ function ProgressCell({ row, columnLinks, listRegistry, onSave, onDelete }) {
               </div>
             )}
             {!onSave && (
-              <div style={{ padding: '0.4rem 0.75rem', borderTop: '1px solid #E2E8F0', fontSize: '0.65rem', color: '#94A3B8', fontStyle: 'italic' }}>
+              <div style={{ padding: '0.4rem 0.75rem', borderTop: '1px solid #E2E8F0', fontSize: '0.65rem', color: '#94A3B8', fontStyle: 'italic', flex: '0 0 auto' }}>
                 Read-only — editing requires the inline-edit deploy.
               </div>
             )}
@@ -518,6 +601,7 @@ function buildColumns(rows, columnLinks, listRegistry) {
     const isCheck = DEAL_CHECK_KEYS.has(k);
     const isRevenueRecorded = k === 'Revenue Recorded';
     const isPaidToDate = k === 'Paid to Date';
+    const isDaysPaidOn = k === 'Days/Paid on';
     const kind = isCheck ? 'check'
       : isCurrency ? 'currency'
       : isPercent ? 'percent'
@@ -591,6 +675,9 @@ function buildColumns(rows, columnLinks, listRegistry) {
         ),
       } : {}),
       render: (row) => {
+        if (isDaysPaidOn) {
+          return <DaysPaidOnCell row={row} />;
+        }
         // User-configured dropdown binding from the Link Columns modal
         // wins over the default text/number/date editor. The shared
         // Select/MultiSelect cells store the value as a string so the
@@ -768,7 +855,13 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
 
   function addNewDeal() {
     setStore(prev => {
-      const next = [{}, ...prev.data];
+      // Pre-fill Due Date 60 days from today so the Days/Paid on
+      // delta has something to render against the moment the row
+      // appears. Stored in the same M/D/YYYY shape Excel exports use.
+      const due = new Date();
+      due.setDate(due.getDate() + 60);
+      const dueDateStr = due.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' });
+      const next = [{ 'Due Date': dueDateStr }, ...prev.data];
       try { saveDealsOverride(next); } catch (err) { console.warn('Save deal failed', err); }
       return { data: next, source: 'override' };
     });
@@ -789,7 +882,12 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
   }
 
   const rows = useMemo(
-    () => data.map((r, i) => ({ ...r, id: i, __onUpdate: updateCell, __newRow: i === 0 && Object.keys(r).length === 0 })),
+    // A row counts as the freshly-added "new" row (and gets autofocused
+    // on its Client Name cell) as long as the top row hasn't been given
+    // a Client Name yet. Anchoring this to Client Name rather than the
+    // raw key count lets addNewDeal seed defaults like Due Date without
+    // disabling the autofocus behavior.
+    () => data.map((r, i) => ({ ...r, id: i, __onUpdate: updateCell, __newRow: i === 0 && !isFilled(r['Client Name']) })),
     [data]
   );
   const baseColumns = useMemo(
