@@ -220,7 +220,7 @@ export function CommissionsPasteImportModal({ onClose, onImport, initialPaste = 
               <button onClick={() => setStage('paste')} style={{ padding: '0.4rem 0.8rem', border: '1px solid #CBD5E1', borderRadius: 6, background: '#fff', fontSize: '0.78rem', cursor: 'pointer', fontFamily: 'inherit' }}>← Back</button>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
                 <button onClick={onClose} style={{ padding: '0.4rem 0.8rem', border: '1px solid #CBD5E1', borderRadius: 6, background: '#fff', fontSize: '0.78rem', cursor: 'pointer', fontFamily: 'inherit' }}>Cancel</button>
-                <button onClick={handleImport} disabled={mappedCount === 0} style={{ padding: '0.4rem 0.9rem', border: 'none', borderRadius: 6, background: mappedCount === 0 ? '#94A3B8' : '#16A34A', color: '#fff', fontSize: '0.78rem', cursor: mappedCount === 0 ? 'not-allowed' : 'pointer', fontFamily: 'inherit', fontWeight: 600 }}>Replace commissions with {rawRows.length} rows →</button>
+                <button onClick={handleImport} disabled={mappedCount === 0} title="New rows are merged into the existing list. Duplicates are screened out by Project Name — the copy with more data filled in survives." style={{ padding: '0.4rem 0.9rem', border: 'none', borderRadius: 6, background: mappedCount === 0 ? '#94A3B8' : '#16A34A', color: '#fff', fontSize: '0.78rem', cursor: mappedCount === 0 ? 'not-allowed' : 'pointer', fontFamily: 'inherit', fontWeight: 600 }}>Import {rawRows.length} rows (merge by Project Name) →</button>
               </div>
             </div>
           </div>
