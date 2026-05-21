@@ -962,6 +962,24 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
     });
   }
 
+  // Flip the Handoff-progress "ignored" flag on every selected deal.
+  // `mode` toggles which way to push it: ignore greys out the first
+  // column pill, restore removes the flag.
+  function applyBulkIgnore(mode) {
+    if (selectedIds.size === 0) return;
+    setStore(prev => {
+      const next = prev.data.map((row, idx) => {
+        if (!selectedIds.has(idx)) return row;
+        const updated = { ...row };
+        if (mode === 'ignore') updated[PROGRESS_IGNORED_KEY] = '1';
+        else delete updated[PROGRESS_IGNORED_KEY];
+        return updated;
+      });
+      try { saveDealsOverride(next); } catch (err) { console.warn('Bulk ignore save failed', err); }
+      return { data: next, source: 'override' };
+    });
+  }
+
   // Drop a deal row entirely. Wired into the Progress popover's
   // "Delete deal" button so the user can prune rows that shouldn't be
   // in the tracker without hunting for the underlying source.
@@ -1465,6 +1483,25 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
               disabled={!bulkEditColumn}
               style={{ padding: '0.3rem 0.7rem', border: 'none', borderRadius: 4, background: bulkEditColumn ? '#1D4ED8' : '#94A3B8', color: '#fff', fontSize: '0.7rem', fontWeight: 700, fontFamily: 'inherit', cursor: bulkEditColumn ? 'pointer' : 'not-allowed' }}
             >Apply to {selectedIds.size}</button>
+            <span style={{ fontSize: '0.7rem', color: '#1E40AF' }}>·</span>
+            <button
+              type="button"
+              onClick={() => {
+                if (!window.confirm(`Mark ${selectedIds.size} deal${selectedIds.size === 1 ? '' : 's'} as Ignored? Their Handoff progress pills will grey out.`)) return;
+                applyBulkIgnore('ignore');
+              }}
+              title="Grey out the Handoff progress pill on every selected deal"
+              style={{ padding: '0.3rem 0.7rem', border: '1px solid #64748B', borderRadius: 4, background: '#64748B', color: '#fff', fontSize: '0.7rem', fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer' }}
+            >✕ Ignore {selectedIds.size}</button>
+            <button
+              type="button"
+              onClick={() => {
+                if (!window.confirm(`Restore ${selectedIds.size} deal${selectedIds.size === 1 ? '' : 's'} into the Handoff progress tally?`)) return;
+                applyBulkIgnore('restore');
+              }}
+              title="Re-include the selected deals in the Handoff progress tally"
+              style={{ padding: '0.3rem 0.7rem', border: '1px solid #CBD5E1', borderRadius: 4, background: '#fff', color: '#475569', fontSize: '0.7rem', fontWeight: 700, fontFamily: 'inherit', cursor: 'pointer' }}
+            >↻ Restore</button>
             <button
               type="button"
               onClick={clearSelection}
