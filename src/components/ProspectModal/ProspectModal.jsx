@@ -5259,25 +5259,113 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     });
                     ws.columns = colWidths.map(w => ({ width: w }));
 
-                    // Row 1: Title band
-                    ws.mergeCells(1, 1, 1, headers.length);
-                    const titleCell = ws.getCell(1, 1);
+                    // Optional "Company Background" header section at the
+                    // very top, populated from the Claude research stored
+                    // on the prospect. Everything except the source list is
+                    // included. When no research has been run the section
+                    // is skipped and the original Title/Subtitle/Headers
+                    // rows stay at rows 1-3.
+                    function writeCompanyBackground(sheet, research, ncols) {
+                      const d = research?.data;
+                      if (!d) return 0;
+                      const hasSummary = typeof d.summary === 'string' && d.summary.trim().length > 0;
+                      const hasPrograms = Array.isArray(d.programs) && d.programs.length > 0;
+                      const hasTargets = Array.isArray(d.targets) && d.targets.length > 0;
+                      const hasFrameworks = Array.isArray(d.frameworks) && d.frameworks.length > 0;
+                      const hasReports = Array.isArray(d.reports) && d.reports.length > 0;
+                      if (!hasSummary && !hasPrograms && !hasTargets && !hasFrameworks && !hasReports) return 0;
+
+                      let r = 1;
+                      const writeBanner = () => {
+                        sheet.mergeCells(r, 1, r, ncols);
+                        const c = sheet.getCell(r, 1);
+                        c.value = 'Company Background';
+                        c.font = { name: 'Nunito Sans', bold: true, size: 14, color: { argb: 'FFFFFFFF' } };
+                        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+                        c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+                        sheet.getRow(r).height = 24;
+                        r++;
+                      };
+                      const writeLabel = (label) => {
+                        sheet.mergeCells(r, 1, r, ncols);
+                        const c = sheet.getCell(r, 1);
+                        c.value = label;
+                        c.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FF166534' } };
+                        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0FDF4' } };
+                        c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+                        sheet.getRow(r).height = 18;
+                        r++;
+                      };
+                      const writeText = (text) => {
+                        sheet.mergeCells(r, 1, r, ncols);
+                        const c = sheet.getCell(r, 1);
+                        c.value = text;
+                        c.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+                        c.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
+                        sheet.getRow(r).height = Math.max(18, Math.min(120, Math.ceil(String(text).length / 110) * 16));
+                        r++;
+                      };
+                      const writeBullets = (items) => {
+                        for (const item of items) writeText(`• ${item}`);
+                      };
+
+                      writeBanner();
+                      if (hasSummary) { writeLabel('Summary'); writeText(d.summary.trim()); }
+                      if (hasPrograms) { writeLabel('Programs'); writeBullets(d.programs); }
+                      if (hasTargets) { writeLabel('Targets'); writeBullets(d.targets); }
+                      if (hasFrameworks) { writeLabel('Frameworks'); writeText(d.frameworks.join(', ')); }
+                      if (hasReports) {
+                        writeLabel('Reports');
+                        for (const rep of d.reports) {
+                          sheet.mergeCells(r, 1, r, ncols);
+                          const c = sheet.getCell(r, 1);
+                          const title = rep?.title || rep?.url || '';
+                          const year = rep?.year ? ` (${rep.year})` : '';
+                          const text = `${title}${year}`;
+                          if (rep?.url) {
+                            c.value = { text, hyperlink: rep.url };
+                            c.font = { name: 'Nunito Sans', size: 10, color: { argb: 'FF1E40AF' }, underline: true };
+                          } else {
+                            c.value = text;
+                            c.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+                          }
+                          c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+                          sheet.getRow(r).height = 18;
+                          r++;
+                        }
+                      }
+                      // Blank spacer row before the Title band kicks in.
+                      r++;
+                      return r - 1;
+                    }
+                    const bgOffset = writeCompanyBackground(ws, sustainResearch, headers.length);
+                    // Re-anchor the frozen split below the new section so
+                    // the header row keeps scrolling locked, not the
+                    // background.
+                    if (bgOffset > 0) ws.views = [{ state: 'frozen', ySplit: bgOffset + 3 }];
+
+                    // Row (bgOffset + 1): Title band
+                    const titleRow = bgOffset + 1;
+                    const subRow = bgOffset + 2;
+                    const headerRowIdx = bgOffset + 3;
+                    ws.mergeCells(titleRow, 1, titleRow, headers.length);
+                    const titleCell = ws.getCell(titleRow, 1);
                     titleCell.value = 'Schneider Electric';
                     titleCell.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
                     titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN } };
                     titleCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-                    ws.getRow(1).height = 30;
+                    ws.getRow(titleRow).height = 30;
 
-                    // Row 2: Subtitle — "{Company} · Portfolio Companies"
-                    ws.mergeCells(2, 1, 2, headers.length);
-                    const subCell = ws.getCell(2, 1);
+                    // Row (bgOffset + 2): Subtitle — "{Company} · Portfolio Companies"
+                    ws.mergeCells(subRow, 1, subRow, headers.length);
+                    const subCell = ws.getCell(subRow, 1);
                     subCell.value = fields.company || 'Company';
                     subCell.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: 'FF64748B' } };
                     subCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-                    ws.getRow(2).height = 20;
+                    ws.getRow(subRow).height = 20;
 
-                    // Row 3: Column headers
-                    const headerRow = ws.getRow(3);
+                    // Row (bgOffset + 3): Column headers
+                    const headerRow = ws.getRow(headerRowIdx);
                     headers.forEach((h, i) => {
                       const cell = headerRow.getCell(i + 1);
                       cell.value = h;
@@ -5319,7 +5407,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                       return set;
                     })();
                     data.forEach((vals, idx) => {
-                      const row = ws.getRow(4 + idx);
+                      const row = ws.getRow(headerRowIdx + 1 + idx);
                       const companyKey = String(vals[1] ?? '').trim().toLowerCase();
                       const isFrameRow = companyKey && deepDiveNames.has(companyKey);
                       vals.forEach((v, i) => {
@@ -5391,7 +5479,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                     });
 
                     // Auto-filter on the header row so users can sort/filter immediately
-                    ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: headers.length } };
+                    ws.autoFilter = { from: { row: headerRowIdx, column: 1 }, to: { row: headerRowIdx, column: headers.length } };
 
                     // Re-apply column widths AFTER all cells are written. ExcelJS
                     // sometimes recalculates a column's width when cells are added
