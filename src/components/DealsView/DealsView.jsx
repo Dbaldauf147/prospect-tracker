@@ -12,8 +12,7 @@ import {
 } from '../common/columnLinks';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { loadDealsList, saveDealsOverride, clearDealsOverride } from '../../utils/dealsStore';
-import { loadCommissions } from '../../utils/commissionsStore';
-import { COMMISSIONS_CANONICAL } from '../ClientsView/CommissionsPasteImportModal';
+import { loadCommissions, COMMISSION_MONTH_NAMES } from '../../utils/commissionsStore';
 import {
   asNumber, asDate, fmtCurrency, fmtPercent, fmtDate,
   DEAL_CURRENCY_KEYS, DEAL_DATE_KEYS, DEAL_PERCENT_KEYS, DEAL_CHECK_KEYS,
@@ -82,21 +81,16 @@ const DAYS_PAID_ON_HIDDEN_KEY = '__daysPaidOnHidden';
 // the matching commission roster rows.
 const DEAL_BFO_KEY = 'BFO - Close after contract execution email has been sent';
 
-const COMMISSION_MONTHLY_REVENUE_RE = /^\d{1,2}\/1\/\d{4}\s+Revenue$/i;
-const COMMISSION_MONTHLY_COMMISSION_RE = /^(\d{1,2})\/1\/(\d{4})$/;
-const COMMISSION_FY_REVENUE_RE = /^FY(\d{4})\s+Revenue$/i;
-
-// The fiscal year the canonical month columns cover. Derived from the
-// Commissions canonical column list so this view tracks the same year
-// the Commissions tab is rendering against — without having to import
-// a private constant.
-const COMMISSIONS_CANONICAL_YEAR = (() => {
-  for (const k of COMMISSIONS_CANONICAL) {
-    const m = COMMISSION_FY_REVENUE_RE.exec(String(k).trim());
-    if (m) return Number(m[1]);
-  }
-  return new Date().getFullYear();
-})();
+// Commissions tab stores monthly cells under year-agnostic month names:
+// "January" for the commission $ and "January Revenue" for the
+// underlying project revenue. Lookups here run against those keys.
+const COMMISSION_MONTH_NAME_SET = new Set(COMMISSION_MONTH_NAMES);
+function isCommissionMonthlyRevenueKey(k) {
+  const s = String(k || '').trim();
+  if (!s.endsWith(' Revenue')) return false;
+  return COMMISSION_MONTH_NAME_SET.has(s.slice(0, s.length - ' Revenue'.length));
+}
+function isCommissionMonthlyKey(k) { return COMMISSION_MONTH_NAME_SET.has(String(k || '').trim()); }
 
 // Normalize a BFO opp name for matching across Deals ↔ Commissions —
 // the user copies and pastes the same identifier on both tabs so a
@@ -123,14 +117,11 @@ function computePaymentStatus(info) {
   let lastIdx = -1;
   for (let m = 0; m < 12; m++) if (info.monthlyComm[m] !== 0) lastIdx = m;
   if (lastIdx === -1) return { state: 'unknown', label: '—', title: 'No Comm End Date and no commission entries on file' };
-  const today = new Date();
-  const todayMonthIdx = today.getFullYear() === COMMISSIONS_CANONICAL_YEAR
-    ? today.getMonth()
-    : (today.getFullYear() < COMMISSIONS_CANONICAL_YEAR ? -1 : 12);
+  const todayMonthIdx = new Date().getMonth();
   if (lastIdx >= todayMonthIdx - 1) {
-    return { state: 'active', label: 'Active', title: `Most recent commission: ${lastIdx + 1}/${COMMISSIONS_CANONICAL_YEAR}` };
+    return { state: 'active', label: 'Active', title: `Most recent commission: ${COMMISSION_MONTH_NAMES[lastIdx]}` };
   }
-  return { state: 'stopped', label: 'Stopped', title: `Most recent commission: ${lastIdx + 1}/${COMMISSIONS_CANONICAL_YEAR} — no payments since` };
+  return { state: 'stopped', label: 'Stopped', title: `Most recent commission: ${COMMISSION_MONTH_NAMES[lastIdx]} — no payments since` };
 }
 
 // Roll the Commissions roster into a map keyed by normalized BFO Name,
@@ -152,15 +143,14 @@ function indexCommissionsByBfo(rows) {
     for (const [k, v] of Object.entries(row)) {
       const n = asNumber(v);
       if (n == null) continue;
-      if (COMMISSION_MONTHLY_REVENUE_RE.test(k)) {
+      if (isCommissionMonthlyRevenueKey(k)) {
         revenue += n;
         continue;
       }
-      const mm = COMMISSION_MONTHLY_COMMISSION_RE.exec(k);
-      if (mm) {
+      if (isCommissionMonthlyKey(k)) {
         commission += n;
-        const monthNum = Number(mm[1]);
-        if (monthNum >= 1 && monthNum <= 12) monthlyComm[monthNum - 1] += n;
+        const idx = COMMISSION_MONTH_NAMES.indexOf(String(k).trim());
+        if (idx >= 0) monthlyComm[idx] += n;
       }
     }
     const prev = map.get(key);
