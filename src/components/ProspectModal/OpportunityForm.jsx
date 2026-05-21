@@ -714,7 +714,7 @@ function CallContextImportPicker({ candidates, onImport }) {
   );
 }
 
-export function OpportunityForm({ value, onChange, onLinkOpp, companyName, companyContacts = [], allHubspotContacts = [], contactNotes = {}, contactReportsTo = {}, contactNicknames = {}, prospects = [], onCreateContact, importableNotes = [], cdmName, competitorOptions = [], onMentionCompetitor }) {
+export function OpportunityForm({ value, onChange, onLinkOpp, companyName, companyContacts = [], allHubspotContacts = [], contactNotes = {}, contactReportsTo = {}, contactNicknames = {}, prospects = [], onCreateContact, importableNotes = [], cdmName, competitorOptions = [], onMentionCompetitor, companyBackground = null }) {
   const template = DEFAULT_FORM_TEMPLATE;
 
   // Local mirror of the persisted value. All edits update localValue
@@ -2485,6 +2485,35 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
           dRow.height = rowHeightForLines(maxLines);
         });
       };
+
+      // --- Company Background (from saved Claude research) -------------
+      // Surfaces the prospect's Claude research at the very top of the
+      // export. Sources are intentionally omitted; Summary, Programs,
+      // Targets, Frameworks, and Reports (with clickable URLs) are
+      // included. Skipped entirely when no research has been run yet.
+      if (companyBackground) {
+        const d = companyBackground;
+        const hasSummary = typeof d.summary === 'string' && d.summary.trim().length > 0;
+        const hasPrograms = Array.isArray(d.programs) && d.programs.length > 0;
+        const hasTargets = Array.isArray(d.targets) && d.targets.length > 0;
+        const hasFrameworks = Array.isArray(d.frameworks) && d.frameworks.length > 0;
+        const hasReports = Array.isArray(d.reports) && d.reports.length > 0;
+        if (hasSummary || hasPrograms || hasTargets || hasFrameworks || hasReports) {
+          addBlankRow();
+          addSectionHeader('Company Background');
+          if (hasSummary) addFieldRow('Summary', d.summary.trim());
+          if (hasPrograms) addFieldRow('Programs', d.programs.map(p => `• ${p}`).join('\n'));
+          if (hasTargets) addFieldRow('Targets', d.targets.map(t => `• ${t}`).join('\n'));
+          if (hasFrameworks) addFieldRow('Frameworks', d.frameworks.join(', '));
+          if (hasReports) {
+            for (const r of d.reports) {
+              const title = r?.title || r?.url || '';
+              const year = r?.year ? ` (${r.year})` : '';
+              addFieldRow('Report', `${title}${year}`, r?.url || undefined);
+            }
+          }
+        }
+      }
 
       // --- Meeting (imported from .ics) --------------------------------
       if (formData.meeting) {
