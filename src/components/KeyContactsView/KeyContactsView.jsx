@@ -3099,6 +3099,16 @@ function KeyContactsViewInner({
             onSaveCcMap={m => updateSettings({ ccMap: m })}
             toAlsoMap={settings?.toAlsoMap || {}}
             onSaveToAlsoMap={m => updateSettings({ toAlsoMap: m })}
+            contactFamilies={settings?.contactFamilies || {}}
+            onSaveFamily={(contactId, info) => {
+              const current = settings?.contactFamilies || {};
+              const next = { ...current };
+              const partner = String(info?.partner || '').trim();
+              const kids = String(info?.kids || '').trim();
+              if (!partner && !kids) delete next[contactId];
+              else next[contactId] = { partner, kids };
+              updateSettings({ contactFamilies: next });
+            }}
             companyContacts={sameCompanyContacts}
             emailDomains={emailDomains}
             companyNames={prospects.map(p => p.company).filter(Boolean)}

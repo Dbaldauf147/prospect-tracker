@@ -678,7 +678,7 @@ async function lookupStateForCity(city, countryHint) {
   }
 }
 
-export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, companyContacts = [], emailDomains = [], companyNames = [] }) {
+export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, companyContacts = [], emailDomains = [], companyNames = [] }) {
   const rawTags = contact.dans_tags || contact.dan_s_tags || contact.dans_tag || '';
   // Parse existing tags; track which known tags are checked separately from free-text extras
   const parsedTags = rawTags.split(';').map(t => t.trim()).filter(Boolean);
@@ -689,6 +689,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   const savedOldEmails = (cid && contactOldEmails[cid]) || '';
   const savedNickname = (cid && contactNicknames[cid]) || '';
   const savedTeamName = (cid && contactTeamNames[cid]) || '';
+  const savedFamily = (cid && contactFamilies[cid]) || { partner: '', kids: '' };
 
   // Prevent Backspace from triggering browser back-navigation (Firefox / older Edge behaviour)
   // when focus is outside a text field. This otherwise unmounts the modal.
@@ -721,6 +722,8 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     teamName: savedTeamName,
     notes: savedNote,
     oldEmails: savedOldEmails,
+    partner: savedFamily.partner || '',
+    kids: savedFamily.kids || '',
   });
   // Checked state for the 5 known tags
   const [checkedTags, setCheckedTags] = useState(() =>
@@ -957,11 +960,12 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     try {
       const allProps = { ...f, dans_tags: buildTagsString() };
       // HubSpot doesn't have these local-only fields — save them separately via settings.
-      const { notes, oldEmails, nickname, teamName, ...hsProps } = allProps;
+      const { notes, oldEmails, nickname, teamName, partner, kids, ...hsProps } = allProps;
       const noteValue = notes || '';
       const oldEmailsValue = oldEmails || '';
       const nicknameValue = nickname || '';
       const teamNameValue = teamName || '';
+      const familyValue = { partner: partner || '', kids: kids || '' };
       const existingId = contact.id || contact.vid;
       const isLocalOnly = typeof existingId === 'string' && existingId.startsWith('local-');
       let isNew = !existingId || isLocalOnly;
@@ -1030,6 +1034,9 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
       if (savedCid && onSaveTeamName) {
         onSaveTeamName(savedCid, teamNameValue);
       }
+      if (savedCid && onSaveFamily) {
+        onSaveFamily(savedCid, familyValue);
+      }
       // Persist CC / To Also maps keyed by the contact's primary
       // email — Draft Emails reads these on every campaign preview to
       // auto-add the linked recipients.
@@ -1082,6 +1089,8 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
           <div><label style={labelStyle}>Cell Phone Number</label><input style={inputStyle} value={f.mobilephone} onChange={e => set('mobilephone', e.target.value)} /></div>
           <div><label style={labelStyle}>Nickname <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(opt.)</span></label><input style={inputStyle} value={f.nickname} onChange={e => set('nickname', e.target.value)} placeholder="e.g. Bob" /></div>
           <div><label style={labelStyle}>Team Name <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(opt.)</span></label><input style={inputStyle} value={f.teamName} onChange={e => set('teamName', e.target.value)} placeholder="e.g. FP&A" /></div>
+          <div><label style={labelStyle}>Partner&apos;s name <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(opt.)</span></label><input style={inputStyle} value={f.partner} onChange={e => set('partner', e.target.value)} placeholder="e.g. Jane" /></div>
+          <div><label style={labelStyle}>Kids&apos; names <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(opt.)</span></label><input style={inputStyle} value={f.kids} onChange={e => set('kids', e.target.value)} placeholder="e.g. Sam (12), Riley (9)" /></div>
           <div style={{ gridColumn: 'span 2' }}>
             <label style={labelStyle}>Email <span style={{ fontWeight: 400, textTransform: 'none', color: '#DC2626' }}>*</span></label>
             <input style={inputStyle} type="email" value={f.email} onChange={e => set('email', e.target.value)} />
@@ -7362,6 +7371,16 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           onSaveCcMap={m => updateSettings({ ccMap: m })}
           toAlsoMap={settings.toAlsoMap || {}}
           onSaveToAlsoMap={m => updateSettings({ toAlsoMap: m })}
+          contactFamilies={settings.contactFamilies || {}}
+          onSaveFamily={(contactId, info) => {
+            const current = settings.contactFamilies || {};
+            const next = { ...current };
+            const partner = String(info?.partner || '').trim();
+            const kids = String(info?.kids || '').trim();
+            if (!partner && !kids) delete next[contactId];
+            else next[contactId] = { partner, kids };
+            updateSettings({ contactFamilies: next });
+          }}
           companyContacts={companyContacts}
           emailDomains={(fields.emailDomain || '').split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)}
           companyNames={(prospects || []).map(p => p.company).filter(Boolean)}
