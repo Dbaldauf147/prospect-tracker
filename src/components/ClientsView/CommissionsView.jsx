@@ -192,17 +192,31 @@ function countFilledCells(row) {
   return n;
 }
 
+// Columns the user fills in by hand on top of the pasted roster. They
+// are never present in a fresh paste from Excel, so the merge has to
+// carry them over from the existing row whenever a re-paste lands on
+// the same project — otherwise pasting refreshed commission data wipes
+// out the Account Name / BFO Name mapping the user already built up.
+// Scope is derived from BFO Name via the Opps cache, but we preserve a
+// stored value too in case one was hand-edited.
+const USER_MAPPED_KEYS = [ACCOUNT_NAME_KEY, BFO_NAME_KEY, SCOPE_KEY];
+
 // Concatenate existing + newly-pasted commission rows and dedup by
 // normalized Project Name. Rows without a project name pass through
 // untouched (we have no key to group them by); for rows with one, the
 // copy with more filled cells survives. Newer (incoming) rows win ties
-// so a re-paste of an equally-filled row picks up any edits.
+// so a re-paste of an equally-filled row picks up any edits. The
+// user-mapped lookup columns (Account Name, BFO Name, Scope) are
+// always carried over from the existing row when there is one, since
+// the paste source never includes them.
 export function mergeAndDedupCommissions(existing, incoming) {
   const out = [];
   const winnerByKey = new Map();
+  const existingByKey = new Map();
   function consider(row, isIncoming) {
     const key = normProjectName(row['Project Name']);
     if (!key) { out.push(row); return; }
+    if (!isIncoming) existingByKey.set(key, row);
     const score = countFilledCells(row);
     const prev = winnerByKey.get(key);
     if (!prev || score > prev.score || (score === prev.score && isIncoming)) {
@@ -211,7 +225,21 @@ export function mergeAndDedupCommissions(existing, incoming) {
   }
   for (const r of (existing || [])) consider(r, false);
   for (const r of (incoming || [])) consider(r, true);
-  for (const { row } of winnerByKey.values()) out.push(row);
+  for (const [key, { row }] of winnerByKey.entries()) {
+    const prior = existingByKey.get(key);
+    if (prior && prior !== row) {
+      const merged = { ...row };
+      for (const k of USER_MAPPED_KEYS) {
+        const priorVal = prior[k];
+        if (priorVal != null && String(priorVal).trim() !== '') {
+          merged[k] = priorVal;
+        }
+      }
+      out.push(merged);
+    } else {
+      out.push(row);
+    }
+  }
   return out;
 }
 
