@@ -631,23 +631,57 @@ function buildColumns(rows, columnLinks, listRegistry) {
     }
     // Revenue Recorded reads as "$recorded/$(setup + recurring)" with
     // the two contract amounts summed into a single denominator.
-    // Paid to Date reads as "$paid/$commission". Both pull the
-    // supporting amounts from sibling cells on the same row so the
-    // user can spot under/over-recording at a glance.
+    // Paid to Date reads as "$paid/$commission". The cell is colored
+    // by how the numerator compares to the denominator:
+    //   • match              → green
+    //   • numerator > denom  → gold (more recorded / paid than expected)
+    //   • numerator < denom  → red  (less recorded / paid than expected)
+    //   • 0 / 0              → grey
+    //   • explicitly ignored → grey (toggled by the ⊘ / ↻ button)
+    // The ignored state is persisted per-row on a __ flag key so the
+    // override doesn't leak into the visible column list.
     function renderCompound(row, v) {
-      const primary = currencyOrZero(v);
-      if (isRevenueRecorded) {
-        const setup = asNumber(row['Setup']) ?? 0;
-        const recurring = asNumber(row['Recurring Revenue']) ?? 0;
-        return (
-          <span style={{ display: 'block', textAlign: 'left', fontVariantNumeric: 'tabular-nums', color: '#0F172A' }}>
-            {primary}/{fmtCurrency(setup + recurring)}
-          </span>
-        );
+      const ignoreKey = isRevenueRecorded ? '__revenueRecordedIgnored' : '__paidToDateIgnored';
+      const ignored = isFilled(row[ignoreKey]);
+      const numerator = asNumber(v) ?? 0;
+      const denominator = isRevenueRecorded
+        ? (asNumber(row['Setup']) ?? 0) + (asNumber(row['Recurring Revenue']) ?? 0)
+        : (asNumber(row['Commission']) ?? 0);
+
+      let bg = '#F1F5F9';
+      let fg = '#475569';
+      let stateTitle = 'No amounts yet';
+      if (ignored) {
+        bg = '#F1F5F9'; fg = '#475569';
+        stateTitle = 'Ignored — click ↻ to re-enable status color';
+      } else if (numerator === 0 && denominator === 0) {
+        bg = '#F1F5F9'; fg = '#475569';
+        stateTitle = 'Nothing recorded yet';
+      } else if (numerator === denominator) {
+        bg = '#DCFCE7'; fg = '#166534';
+        stateTitle = 'Matches expected';
+      } else if (numerator > denominator) {
+        bg = '#FEF3C7'; fg = '#92400E';
+        stateTitle = `Over by ${fmtCurrency(numerator - denominator)}`;
+      } else {
+        bg = '#FEE2E2'; fg = '#991B1B';
+        stateTitle = `Short by ${fmtCurrency(denominator - numerator)}`;
       }
+
+      const primary = currencyOrZero(v);
+      const denomText = fmtCurrency(denominator);
       return (
-        <span style={{ display: 'block', textAlign: 'left', fontVariantNumeric: 'tabular-nums', color: '#0F172A' }}>
-          {primary}/{currencyOrZero(row['Commission'])}
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, width: '100%' }} title={stateTitle}>
+          <span style={{ flex: 1, padding: '1px 8px', borderRadius: 4, background: bg, color: fg, fontVariantNumeric: 'tabular-nums', fontWeight: 600, textAlign: 'left', textDecoration: ignored ? 'line-through' : 'none' }}>
+            {primary}/{denomText}
+          </span>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); row.__onUpdate?.(row.id, ignoreKey, ignored ? '' : '1'); }}
+            onDoubleClick={(e) => e.stopPropagation()}
+            title={ignored ? 'Re-enable status color for this cell' : 'Ignore this cell — show as grey'}
+            style={{ background: 'transparent', border: '1px solid var(--color-border)', color: '#94A3B8', cursor: 'pointer', fontSize: '0.7rem', padding: '0 6px', borderRadius: 4, fontFamily: 'inherit', lineHeight: 1 }}
+          >{ignored ? '↻' : '⊘'}</button>
         </span>
       );
     }
@@ -663,7 +697,7 @@ function buildColumns(rows, columnLinks, listRegistry) {
       label: k,
       kind,
       renderValue,
-      defaultWidth: sticky ? 220 : isCheck ? 110 : isRevenueRecorded ? 180 : isPaidToDate ? 180 : isCurrency || isPercent ? 130 : isDate ? 130 : 150,
+      defaultWidth: sticky ? 220 : isCheck ? 110 : isRevenueRecorded ? 210 : isPaidToDate ? 210 : isCurrency || isPercent ? 130 : isDate ? 130 : 150,
       // Date columns sort chronologically off the parsed epoch ms,
       // not the formatted "M/D/YYYY" display string — without this
       // the DataTable falls back to alphabetical text compare and
