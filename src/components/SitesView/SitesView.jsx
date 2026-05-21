@@ -2043,16 +2043,19 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     TX: { status: 'yes',     range: '1 - 2%',  lowPct: 0.01, highPct: 0.02 },
     // Limited-deregulation markets — the underlying retail-choice
     // programs are narrow enough (Direct Access only in CA, heavy-load
-    // gating in VA, opt-in pilots in MI / WA, prior-3rd-party gating
-    // in AZ) that the standard 2-4 % commodity savings doesn't apply.
+    // gating in VA, opt-in pilots in MI, prior-3rd-party gating in AZ)
+    // that the standard 2-4 % commodity savings doesn't apply.
     // Surfaced as 0 - 0 % so the Indicative Savings tab still lists
     // them (Status stays "Limited" so they aren't filtered out as
-    // regulated) but every savings column resolves to $0.
+    // regulated) but every savings column resolves to $0. WA is
+    // intentionally absent — its retail-choice pilot was small enough
+    // that the seller no longer wants WA sites surfaced as
+    // deregulated at all, so it falls through to the regulated
+    // bucket.
     AZ: { status: 'Limited', range: '0 - 0%', lowPct: 0, highPct: 0 },
     CA: { status: 'Limited', range: '0 - 0%', lowPct: 0, highPct: 0 },
     MI: { status: 'Limited', range: '0 - 0%', lowPct: 0, highPct: 0 },
     VA: { status: 'Limited', range: '0 - 0%', lowPct: 0, highPct: 0 },
-    WA: { status: 'Limited', range: '0 - 0%', lowPct: 0, highPct: 0 },
   };
   // Flat savings range applied to any deregulated natural-gas site.
   const GAS_SAVINGS = { range: '2 - 4%', lowPct: 0.02, highPct: 0.04 };
@@ -6780,6 +6783,146 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         from: { row: countryTableHeaderRow, column: 1 },
         to:   { row: r - 1, column: 5 },
       };
+    }
+
+    // Findings & Recommendations rule catalog. Lists every alert
+    // currently wired up — the per-state flags emitted into the
+    // electricRows / gasRows arrays plus the portfolio-wide VPPA
+    // signal — so the seller can hand the buyer (or themselves) a
+    // single page that documents what each alert actually means and
+    // when it fires. Independent of this run's results; this is a
+    // reference of "what's mapped so far."
+    {
+      const SE_GREEN = 'FF3DCD58';
+      const SE_GREEN_DARK = 'FF009530';
+      const SE_GREEN_LIGHT = 'FFE6F7EC';
+      const SE_TEXT_DARK = 'FF1E293B';
+      const SE_BORDER = 'FFD4DDE1';
+      const ws = wb.addWorksheet('Alerts Catalog', {
+        properties: { tabColor: { argb: SE_GREEN } },
+        views: [{ showGridLines: false, state: 'frozen', ySplit: 3 }],
+      });
+      const COLS = 5;
+      ws.columns = [34, 12, 38, 24, 56].map(w => ({ width: w }));
+
+      let r = 1;
+      // Row 1 — title band
+      ws.mergeCells(r, 1, r, COLS);
+      const title = ws.getCell(r, 1);
+      title.value = 'Findings & Recommendations — Alert Catalog';
+      title.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
+      title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+      title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(r).height = 30;
+      r += 1;
+      // Row 2 — subtitle paragraph
+      ws.mergeCells(r, 1, r, COLS);
+      const sub = ws.getCell(r, 1);
+      sub.value = 'Every alert below feeds the Findings & Recommendations band at the top of the Indicative Savings sheet. Each row documents the alert name, which commodity it targets, the trigger threshold, and the action it suggests.';
+      sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: 'FF64748B' } };
+      sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+      ws.getRow(r).height = 32;
+      r += 1;
+      // Row 3 — column headers
+      const headers = ['Alert', 'Commodity', 'Trigger', 'Threshold', 'Recommendation'];
+      headers.forEach((h, i) => {
+        const c = ws.getCell(r, i + 1);
+        c.value = h;
+        c.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+        c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+        c.border = {
+          top: { style: 'thin', color: { argb: SE_BORDER } },
+          bottom: { style: 'thin', color: { argb: SE_BORDER } },
+          left: { style: 'thin', color: { argb: SE_BORDER } },
+          right: { style: 'thin', color: { argb: SE_BORDER } },
+        };
+      });
+      ws.getRow(r).height = 24;
+      r += 1;
+
+      const catalog = [
+        {
+          alert: 'VPPA opportunity',
+          commodity: 'Electric (portfolio)',
+          trigger: 'Total North America electric consumption (all US states + Canadian provinces, regulated and deregulated combined)',
+          threshold: '> 100,000 MWh / yr',
+          action: 'A Virtual PPA should be explored — load is large enough to anchor an off-site renewable contract.',
+        },
+        {
+          alert: 'Risk Management',
+          commodity: 'Electric (per state)',
+          trigger: 'State-level deregulated electric consumption',
+          threshold: '> 10,000 MWh / yr',
+          action: 'Risk Management strategy (hedge layering, structured product) should be considered.',
+        },
+        {
+          alert: 'Wholesale Plus',
+          commodity: 'Electric (per state)',
+          trigger: 'State-level deregulated electric consumption',
+          threshold: '> 44,000 MWh / yr',
+          action: 'Wholesale Plus structured procurement should be explored — load justifies the product.',
+        },
+        {
+          alert: 'Virginia large-load gating',
+          commodity: 'Electric (Virginia)',
+          trigger: 'Largest single VA site\'s annual consumption (no aggregation across sites)',
+          threshold: '> 45,000 MWh / yr',
+          action: 'Site meets Virginia\'s large-load retail-choice threshold and can leave the regulated tariff.',
+        },
+        {
+          alert: 'Limited market (3rd-party supply only)',
+          commodity: 'Electric (AZ, MI)',
+          trigger: 'Any electric consumption on an AZ or MI site',
+          threshold: '> 0 kWh',
+          action: 'We can only support these customers when they already hold a third-party supply contract — surface the gating up front.',
+        },
+        {
+          alert: 'Small electric market',
+          commodity: 'Electric (per state)',
+          trigger: 'State-level deregulated electric spend',
+          threshold: '$0 < spend < $1M / yr',
+          action: 'Small market — sourcing motion may not pencil out. Flag for review.',
+        },
+        {
+          alert: 'Mexico sourcing opportunity',
+          commodity: 'Electric (Mexico)',
+          trigger: 'CFE-supplied Mexican site (Baja California / Baja California Sur excluded — separate grid)',
+          threshold: '> 6,000,000 kWh / yr',
+          action: 'Potential CFE sourcing opportunity — load is large enough to consider Mexican retail choice.',
+        },
+        {
+          alert: 'Low gas spend',
+          commodity: 'Natural gas (per state)',
+          trigger: 'State-level deregulated gas spend',
+          threshold: '$0 < spend < $30K / yr',
+          action: 'Consumption might be too low for a gas sourcing motion. Flag for review.',
+        },
+      ];
+
+      catalog.forEach((row, idx) => {
+        const zebra = idx % 2 === 1;
+        const cells = [row.alert, row.commodity, row.trigger, row.threshold, row.action];
+        cells.forEach((v, i) => {
+          const c = ws.getCell(r, i + 1);
+          c.value = v;
+          c.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK }, bold: i === 0 };
+          c.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
+          c.border = {
+            top:    { style: 'hair', color: { argb: SE_BORDER } },
+            bottom: { style: 'hair', color: { argb: SE_BORDER } },
+            left:   { style: 'hair', color: { argb: SE_BORDER } },
+            right:  { style: 'hair', color: { argb: SE_BORDER } },
+          };
+          if (zebra) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+        });
+        // Row height tuned to the widest free-text column (Recommendation
+        // at 56 chars wide). Bumps up when the wrap would otherwise
+        // truncate.
+        const longest = Math.max(row.trigger.length, row.action.length);
+        ws.getRow(r).height = Math.max(28, Math.ceil(longest / 50) * 16);
+        r += 1;
+      });
     }
 
     const rawBuf = await wb.xlsx.writeBuffer();
