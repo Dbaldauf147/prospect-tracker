@@ -160,3 +160,52 @@ export function getServiceMetadata(name) {
   if (!name) return null;
   return SERVICE_BY_NAME.get(String(name).toLowerCase()) || null;
 }
+
+// Editable per-service fields the Dropdowns › Services subtab exposes.
+// The seed values above are the defaults; the user can override any of
+// them via settings.serviceOverrides. Local Project Name has no seed —
+// it's a user-supplied label that flows into the AI Prompt (New BFO
+// Opp) prompt block.
+export const SERVICE_EDITABLE_FIELDS = [
+  'bfoTag', 'region', 'years', 'productLine', 'serviceType', 'localProjectName',
+];
+
+// Merge the static seed catalog with the user's per-service overrides.
+// Returns a fully-populated metadata object (every editable field
+// present, even if empty) so callers don't have to defensively
+// fallback themselves. `overrides` is the raw settings.serviceOverrides
+// map keyed by service name (case-insensitive).
+export function getEffectiveServiceMetadata(name, overrides) {
+  if (!name) return null;
+  const key = String(name).toLowerCase();
+  const seed = SERVICE_BY_NAME.get(key) || null;
+  // Overrides are stored under the original-case name so the
+  // Dropdowns view can round-trip them. Look up case-insensitively
+  // to forgive casing drift between the Solutions list and the
+  // stored map.
+  let override = null;
+  if (overrides && typeof overrides === 'object') {
+    if (overrides[name]) override = overrides[name];
+    else {
+      for (const k of Object.keys(overrides)) {
+        if (k.toLowerCase() === key) { override = overrides[k]; break; }
+      }
+    }
+  }
+  if (!seed && !override) {
+    return {
+      name, bfoTag: '', region: '', years: '',
+      productLine: '', serviceType: '', localProjectName: '',
+    };
+  }
+  return {
+    name,
+    bfoTag:           override?.bfoTag           ?? seed?.bfoTag           ?? '',
+    region:           override?.region           ?? seed?.region           ?? '',
+    years:            override?.years            ?? seed?.years            ?? '',
+    productLine:      override?.productLine      ?? seed?.productLine      ?? '',
+    serviceType:      override?.serviceType      ?? seed?.serviceType      ?? '',
+    localProjectName: override?.localProjectName ?? seed?.localProjectName ?? '',
+    graveyard: seed?.graveyard || false,
+  };
+}
