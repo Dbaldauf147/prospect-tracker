@@ -182,6 +182,32 @@
   border-radius: 999px;
 }
 
+.savedChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: var(--font-size-xs);
+  color: #1e3a8a;
+  background: #dbeafe;
+  border: 1px solid #93c5fd;
+  padding: 0.2rem 0.45rem 0.2rem 0.65rem;
+  border-radius: 999px;
+}
+
+.savedChipClear {
+  border: none;
+  background: transparent;
+  color: #1e3a8a;
+  cursor: pointer;
+  font-size: 1em;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.savedChipClear:hover {
+  color: #b91c1c;
+}
+
 .pasteBox {
   display: flex;
   flex-direction: column;

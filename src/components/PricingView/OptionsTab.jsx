@@ -1,4 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { dbGet } from '../../utils/db';
+import {
+  loadOptionLinks,
+  setOppOptionLink,
+  renameOptionInLinks,
+  dropOptionFromLinks,
+  OPTION_LINKS_EVENT,
+} from '../../utils/pricingOptionLinks';
 import styles from './OptionsTab.module.css';
 
 const TYPE_OPTIONS = ['Setup', 'One Time', 'Recurring (monthly)'];
@@ -125,7 +133,7 @@ function CellInput({ value, onCommit, align, placeholder }) {
   );
 }
 
-function OptionPanel({ opt, onChange }) {
+function OptionPanel({ opt, onChange, savedToLabel, onClickSave, onClearSave }) {
   const [flash, setFlash] = useState('');
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState('');
@@ -238,6 +246,24 @@ function OptionPanel({ opt, onChange }) {
         </button>
         <button type="button" className={styles.btn} onClick={addRow}>+ Row</button>
         <button type="button" className={styles.btnDanger} onClick={clearOption}>Clear</button>
+        {savedToLabel ? (
+          <span
+            className={styles.savedChip}
+            title={`Linked to Opps 2 row: ${savedToLabel}`}
+          >
+            Saved to: {savedToLabel}
+            <button
+              type="button"
+              className={styles.savedChipClear}
+              onClick={onClearSave}
+              title="Unlink from this Opp"
+            >×</button>
+          </span>
+        ) : (
+          <button type="button" className={styles.btn} onClick={onClickSave}>
+            Save to Opp…
+          </button>
+        )}
         {flash && <span className={styles.flash}>{flash}</span>}
       </div>
 
@@ -454,10 +480,57 @@ export function OptionsTab({ options, setOptions }) {
   const safeIdx = Math.min(activeIdx, list.length - 1);
   const opt = list[safeIdx];
 
+  // Opps 2 records (for the picker) and Option ↔ Opp link map. Loaded
+  // from IndexedDB on mount and refreshed when either store fires its
+  // change event so a save in another tab shows up live here too.
+  const [opps2Records, setOpps2Records] = useState([]);
+  const [optionLinks, setOptionLinks] = useState({});
+  useEffect(() => {
+    let cancelled = false;
+    dbGet('opps2-cache', 'data')
+      .then(val => { if (!cancelled && val && Array.isArray(val.records)) setOpps2Records(val.records); })
+      .catch(() => {});
+    loadOptionLinks().then(val => { if (!cancelled) setOptionLinks(val || {}); });
+    const onLinks = (e) => {
+      const detail = e?.detail;
+      if (detail && typeof detail === 'object') setOptionLinks(detail);
+    };
+    window.addEventListener(OPTION_LINKS_EVENT, onLinks);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(OPTION_LINKS_EVENT, onLinks);
+    };
+  }, []);
+
+  // Which opp (if any) the active option is linked to. Links are keyed
+  // by opp id, but we want to display the Account name in the chip.
+  const linkedOppId = useMemo(() => {
+    const name = (opt?.name || '').trim();
+    if (!name) return null;
+    for (const [id, v] of Object.entries(optionLinks)) {
+      if (v === name) return id;
+    }
+    return null;
+  }, [opt?.name, optionLinks]);
+  const linkedOpp = useMemo(() => {
+    if (!linkedOppId) return null;
+    return opps2Records.find(r => String(r._id) === String(linkedOppId)) || null;
+  }, [linkedOppId, opps2Records]);
+  const linkedLabel = linkedOpp
+    ? `${linkedOpp.Account || '(no Account)'}${linkedOpp.Scope ? ` · ${linkedOpp.Scope}` : ''}`
+    : (linkedOppId ? `(opp ${linkedOppId})` : null);
+
   const updateOpt = (next) => {
     const copy = list.slice();
     copy[safeIdx] = next;
     setOptions(copy);
+    // Keep the link map in sync when the user renames an option so the
+    // "Pricing Option" column on Opps 2 doesn't strand on the old name.
+    const prevName = (opt?.name || '').trim();
+    const nextName = (next?.name || '').trim();
+    if (prevName && nextName && prevName !== nextName) {
+      renameOptionInLinks(prevName, nextName).catch(() => {});
+    }
   };
 
   const addOption = () => {
@@ -467,6 +540,8 @@ export function OptionsTab({ options, setOptions }) {
   };
 
   const removeOption = (idx) => {
+    const removed = list[idx];
+    if (removed?.name) dropOptionFromLinks(removed.name).catch(() => {});
     if (list.length <= 1) {
       setOptions([emptyOption(0)]);
       setActiveIdx(0);
@@ -476,6 +551,23 @@ export function OptionsTab({ options, setOptions }) {
     next.splice(idx, 1);
     setOptions(next);
     if (safeIdx >= next.length) setActiveIdx(next.length - 1);
+  };
+
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const openPicker = () => {
+    if (!(opt?.name || '').trim()) {
+      // Linking by name only makes sense once the option has one.
+      window.alert('Give this Option a name before saving it to an Opp.');
+      return;
+    }
+    setPickerOpen(true);
+  };
+  const onClearSave = () => {
+    if (linkedOppId) setOppOptionLink(linkedOppId, '').catch(() => {});
+  };
+  const onPickOpp = (oppId) => {
+    setOppOptionLink(oppId, (opt?.name || '').trim()).catch(() => {});
+    setPickerOpen(false);
   };
 
   return (
@@ -508,7 +600,111 @@ export function OptionsTab({ options, setOptions }) {
         ))}
         <button type="button" className={styles.optAddBtn} onClick={addOption}>+ Option</button>
       </div>
-      <OptionPanel opt={opt} onChange={updateOpt} />
+      <OptionPanel
+        opt={opt}
+        onChange={updateOpt}
+        savedToLabel={linkedLabel}
+        onClickSave={openPicker}
+        onClearSave={onClearSave}
+      />
+      {pickerOpen && (
+        <OppPickerModal
+          opps={opps2Records}
+          optionName={opt?.name || ''}
+          onPick={onPickOpp}
+          onClose={() => setPickerOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+function OppPickerModal({ opps, optionName, onPick, onClose }) {
+  const [query, setQuery] = useState('');
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const ranked = (opps || [])
+      .map(r => ({
+        r,
+        // The picker is keyed on what the user sees in Opps 2 — Account
+        // for "who", Scope/Stage for "which deal". Other fields stay
+        // out of the search corpus so a typo in Notes can't pull
+        // unrelated opps to the top.
+        hay: `${r.Account || ''}  ${r.Scope || ''}  ${r.Stage || ''}  ${r.Source || ''}  ${r['BFO Link'] || ''}`.toLowerCase(),
+      }))
+      .filter(({ r, hay }) => !!(r.Account || r.Scope) && (!q || hay.includes(q)))
+      .map(({ r }) => r);
+    ranked.sort((a, b) => (a.Account || '').localeCompare(b.Account || ''));
+    return ranked.slice(0, 200);
+  }, [opps, query]);
+
+  return (
+    <div
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+      }}
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: '#fff', borderRadius: 10, padding: '1rem 1.1rem',
+          width: 'min(560px, 92vw)', maxHeight: '80vh', display: 'flex',
+          flexDirection: 'column', gap: '0.75rem', boxShadow: '0 20px 60px rgba(15,23,42,0.25)',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <h3 style={{ margin: 0, fontSize: '1rem' }}>
+            Save "{optionName || 'Option'}" to an Opp
+          </h3>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              border: 'none', background: 'transparent', cursor: 'pointer',
+              fontSize: '1.2rem', color: '#64748b',
+            }}
+          >×</button>
+        </div>
+        <input
+          autoFocus
+          type="text"
+          placeholder="Search Opps 2 by Account, Scope, Stage…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          style={{
+            padding: '0.5rem 0.65rem', border: '1px solid var(--color-border, #cbd5e1)',
+            borderRadius: 6, fontSize: '0.9rem', fontFamily: 'inherit',
+          }}
+        />
+        <div style={{ overflowY: 'auto', border: '1px solid #e5e7eb', borderRadius: 6 }}>
+          {filtered.length === 0 ? (
+            <div style={{ padding: '0.75rem', color: '#64748b', fontSize: '0.85rem' }}>
+              {opps.length === 0
+                ? 'No Opps 2 rows found in this browser. Open the Opps 2 tab first to load them.'
+                : 'No matches.'}
+            </div>
+          ) : filtered.map(r => (
+            <button
+              key={r._id}
+              type="button"
+              onClick={() => onPick(r._id)}
+              style={{
+                display: 'flex', flexDirection: 'column', alignItems: 'flex-start',
+                gap: 2, width: '100%', textAlign: 'left', padding: '0.5rem 0.7rem',
+                border: 'none', borderBottom: '1px solid #f1f5f9', background: '#fff',
+                cursor: 'pointer', fontFamily: 'inherit',
+              }}
+            >
+              <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{r.Account || '—'}</span>
+              <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                {[r.Scope, r.Stage, r.Source].filter(Boolean).join(' · ') || 'No Scope / Stage'}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
