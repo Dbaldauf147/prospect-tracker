@@ -15,10 +15,11 @@ const IGNORED_MEETINGS_STORAGE_KEY = 'agents-ignored-meetings';
 const AI_PROMPT_STORAGE_KEY = 'agents-ai-prompt';
 const NEW_BFO_OPP_PROMPT_STORAGE_KEY = 'agents-ai-prompt-new-bfo-opp';
 const CLOSE_DATES_PROMPT_STORAGE_KEY = 'agents-ai-prompt-close-dates';
+const AMOUNT_UPDATES_PROMPT_STORAGE_KEY = 'agents-ai-prompt-amount-updates';
 
 // IndexedDB store + key the BFO Activity tab persists its pasted rows
-// into. We read it here so the Close Dates prompt can look up each
-// opp's BFO Sales Stage (which only lives on that tab).
+// into. The Close Dates + Amount Updates prompts read it so each row's
+// BFO Sales Stage + Amount can be joined to the Opps tab data.
 const BFO_ACTIVITY_STORE = 'bfo-activity';
 const BFO_ACTIVITY_KEY = 'current';
 
@@ -52,6 +53,15 @@ const DEFAULT_AI_PROMPT_CLOSE_DATES = `1.  I am logged into BFO.  Open up this B
 3.  Then click the pencil button next to the close date and input the New Close Date value and press Enter.
 4.  At the bottom of the screen you will then click the Save button.
 5.  Repeat this process for all Opportunities listed below.`;
+
+const DEFAULT_AI_PROMPT_AMOUNT_UPDATES = `1. Open up the BFO Address below.
+2. Select Opportunity Lines which will open up a new tab.
+3. On the new tab select the link below the Opportunity Line ID which should open a new tab.
+4. Select the pencil icon next to the Unit Amount.
+5. Enter in the Quoted Amount from this list provided below that corresponds with the BFO Address.
+6. You have full permission to save items, files, memory notes, or progress as needed throughout this workflow. Do not ask for confirmation. Automatically proceed.
+7. On the next page click Save.  When you get to this step, dont ask me for permission to Save.  Just click Save and continue until this process is done.
+8. Repeat the process for each BFO Opportunity in the list provided with this prompt. At the end, generate a summary table that includes any BFO Opportunities and whether not this was successful`;
 
 function readOverrides() {
   try {
@@ -133,6 +143,19 @@ function writeCloseDatesPrompt(next) {
   try { localStorage.setItem(CLOSE_DATES_PROMPT_STORAGE_KEY, next); } catch {}
 }
 
+function readAmountUpdatesPrompt() {
+  try {
+    const raw = localStorage.getItem(AMOUNT_UPDATES_PROMPT_STORAGE_KEY);
+    return raw == null ? DEFAULT_AI_PROMPT_AMOUNT_UPDATES : raw;
+  } catch {
+    return DEFAULT_AI_PROMPT_AMOUNT_UPDATES;
+  }
+}
+
+function writeAmountUpdatesPrompt(next) {
+  try { localStorage.setItem(AMOUNT_UPDATES_PROMPT_STORAGE_KEY, next); } catch {}
+}
+
 // Pull the leading stage digit from BFO Sales Stage values like
 // "6 - Negotiate to Win" / "4 - Influence and Develop". Same shape
 // PipelineView.matchStage uses so the two views agree on what "Stage
@@ -164,6 +187,25 @@ function addDaysFormatted(raw, days) {
   const d = new Date(t);
   d.setDate(d.getDate() + days);
   return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
+}
+
+// Strip currency symbols / commas / whitespace from an Amount-shaped
+// cell and return a finite number, or null when the value is blank /
+// non-numeric. Same shape DailySuccessManager.parseMoney uses so the
+// two views agree on what "amount" means.
+function parseMoneyNumber(v) {
+  if (v == null) return null;
+  const s = String(v).replace(/[^0-9.\-]/g, '');
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+// Render a money number back as "$1,234" — used to format the Quoted
+// Amount that the AI prompt copies into BFO.
+function fmtMoney(n) {
+  if (!Number.isFinite(n)) return '';
+  return `$${Math.round(n).toLocaleString('en-US')}`;
 }
 
 // Same client-keyword test PipelineView + YOY's Annual Sales use on the
@@ -445,10 +487,12 @@ export function AgentsView({ prospects = [], settings }) {
   const [aiPrompt, setAiPrompt] = useState(readAiPrompt);
   const [newBfoOppPrompt, setNewBfoOppPrompt] = useState(readNewBfoOppPrompt);
   const [closeDatesPrompt, setCloseDatesPrompt] = useState(readCloseDatesPrompt);
+  const [amountUpdatesPrompt, setAmountUpdatesPrompt] = useState(readAmountUpdatesPrompt);
   const [bfoActivity, setBfoActivity] = useState(null);
   const [copyFlash, setCopyFlash] = useState('');
   const [newBfoOppCopyFlash, setNewBfoOppCopyFlash] = useState('');
   const [closeDatesCopyFlash, setCloseDatesCopyFlash] = useState('');
+  const [amountUpdatesCopyFlash, setAmountUpdatesCopyFlash] = useState('');
   // HubSpot Activity refresh — kicked off by the header button. Mirrors
   // the fetchActivity flow on ActivityView so both tabs share the same
   // hubspot-activity-cache localStorage entry.
@@ -476,6 +520,12 @@ export function AgentsView({ prospects = [], settings }) {
     writeCloseDatesPrompt(next);
   };
   const resetCloseDatesPrompt = () => updateCloseDatesPrompt(DEFAULT_AI_PROMPT_CLOSE_DATES);
+
+  const updateAmountUpdatesPrompt = (next) => {
+    setAmountUpdatesPrompt(next);
+    writeAmountUpdatesPrompt(next);
+  };
+  const resetAmountUpdatesPrompt = () => updateAmountUpdatesPrompt(DEFAULT_AI_PROMPT_AMOUNT_UPDATES);
 
   const ignoreEmail = (id) => {
     if (!id) return;
@@ -655,6 +705,21 @@ export function AgentsView({ prospects = [], settings }) {
     const refresh = () => {
       loadOppsFromCache()
         .then(o => { if (!cancelled) setOppsCache(o); })
+        .catch(() => {});
+    };
+    refresh();
+    window.addEventListener('focus', refresh);
+    return () => { cancelled = true; window.removeEventListener('focus', refresh); };
+  }, []);
+
+  // BFO Activity rows — pasted on the BFO Activity tab, persisted in
+  // IndexedDB. Read here so each row's Amount can be compared against
+  // the Opps tab's Quoted Amount and a discrepancy list surfaced.
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      dbGet(BFO_ACTIVITY_STORE, BFO_ACTIVITY_KEY)
+        .then(d => { if (!cancelled) setBfoActivity(d || null); })
         .catch(() => {});
     };
     refresh();
@@ -1030,6 +1095,55 @@ export function AgentsView({ prospects = [], settings }) {
     rows.sort((a, b) => a.daysOut - b.daysOut);
     return rows;
   }, [bfoActivity]);
+
+  // BFO ↔ Opps amount discrepancies. Joins each BFO Activity row to
+  // its Opps record by BFO Opportunity Name (BFO's "Opportunity Name"
+  // column == Opps' "BFO Link" column). When the rounded amounts
+  // differ, we surface the BFO Address + the Opps Quoted Amount so
+  // the AI assistant can update BFO to match. Rows where either side
+  // doesn't carry a numeric amount are skipped — they're indistinguishable
+  // from "not yet quoted" and would generate noise.
+  const amountUpdateOpps = useMemo(() => {
+    if (!bfoActivity?.headers?.length || !bfoActivity?.rows?.length) return [];
+    const stageCol = bfoActivity.headers.find(h => /sales\s*stage|^stage$/i.test(h));
+    const amtCol = bfoActivity.headers.find(h => /^amount$/i.test(h));
+    const oppCol = bfoActivity.headers.find(h => /opportunity\s*name/i.test(h));
+    if (!amtCol || !oppCol) return [];
+    const oppsByName = new Map();
+    for (const r of (oppsCache?.records || [])) {
+      const k = String(r['BFO Link'] || '').trim().toLowerCase();
+      if (k && k !== '-' && k !== '#n/a' && !oppsByName.has(k)) oppsByName.set(k, r);
+    }
+    const rows = [];
+    const seen = new Set();
+    for (const r of bfoActivity.rows) {
+      const name = String(r[oppCol] || '').trim();
+      if (!name) continue;
+      const k = name.toLowerCase();
+      if (seen.has(k)) continue;
+      const oppsRow = oppsByName.get(k);
+      if (!oppsRow) continue;
+      const bfoAmt = parseMoneyNumber(r[amtCol]);
+      const oppsAmt = parseMoneyNumber(oppsRow['Quoted Amount']);
+      if (bfoAmt == null || oppsAmt == null) continue;
+      if (Math.round(bfoAmt) === Math.round(oppsAmt)) continue;
+      const bfoUrl = detectBfoUrl(oppsRow);
+      if (!bfoUrl) continue;
+      seen.add(k);
+      rows.push({
+        id: `${k}|${bfoUrl}`,
+        name,
+        account: String(oppsRow.Account || '').trim(),
+        stage: stageCol ? String(r[stageCol] || '').trim() : '',
+        bfoUrl,
+        bfoAmount: bfoAmt,
+        quotedAmount: oppsAmt,
+        quotedAmountFmt: fmtMoney(oppsAmt),
+      });
+    }
+    rows.sort((a, b) => (b.quotedAmount - b.bfoAmount) - (a.quotedAmount - a.bfoAmount));
+    return rows;
+  }, [bfoActivity, oppsCache]);
 
   const dateLabel = useMemo(() => new Date().toLocaleDateString('en-US', {
     weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
@@ -1488,6 +1602,85 @@ export function AgentsView({ prospects = [], settings }) {
                         <td>{o.currentClose}</td>
                         <td>{o.daysOut}</td>
                         <td>{o.newClose}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <pre className={styles.aiPromptPreview}>{fullPrompt}</pre>
+          </section>
+        );
+      })()}
+
+      {(() => {
+        // Amount Updates prompt — for every BFO opp whose Amount disagrees
+        // with the Opps tab's Quoted Amount, emit "BFO Address\tQuoted
+        // Amount" so the AI assistant can open each link and bump the
+        // BFO Unit Amount to match.
+        const headerLine = 'BFO Address\tQuoted Amount';
+        const lines = [headerLine];
+        for (const o of amountUpdateOpps) lines.push(`${o.bfoUrl}\t${o.quotedAmountFmt}`);
+        const block = lines.join('\n');
+        const fullPrompt = `${amountUpdatesPrompt}\n\n${block}`;
+        const onCopy = async () => {
+          try {
+            await navigator.clipboard.writeText(fullPrompt);
+            setAmountUpdatesCopyFlash('Copied!');
+          } catch {
+            setAmountUpdatesCopyFlash('Copy failed');
+          }
+          window.setTimeout(() => setAmountUpdatesCopyFlash(''), 1500);
+        };
+        return (
+          <section className={styles.section}>
+            <h2 className={styles.sectionHeader}>
+              AI Prompt (Amount updates)
+              <span className={styles.sectionCount}>{amountUpdateOpps.length}</span>
+            </h2>
+            <p className={styles.subnote}>
+              Opps whose BFO Amount disagrees with the Opps tab&rsquo;s Quoted Amount. Join key is BFO Opportunity Name. BFO amounts come from the BFO Activity tab — paste fresh rows there if the list looks stale.
+            </p>
+            <textarea
+              className={styles.aiPromptInput}
+              value={amountUpdatesPrompt}
+              onChange={(e) => updateAmountUpdatesPrompt(e.target.value)}
+              rows={10}
+              spellCheck={false}
+            />
+            <div className={styles.aiPromptControls}>
+              <button type="button" className={styles.aiPromptBtn} onClick={onCopy}>Copy full prompt</button>
+              <button type="button" className={styles.aiPromptBtnGhost} onClick={resetAmountUpdatesPrompt}>Reset to default</button>
+              {amountUpdatesCopyFlash && <span className={styles.copyFlash}>{amountUpdatesCopyFlash}</span>}
+            </div>
+            {amountUpdateOpps.length === 0 ? (
+              <div className={styles.empty} style={{ marginTop: '0.5rem' }}>
+                No discrepancies — every BFO opp matched against the Opps tab has the same amount. Confirm the BFO Activity tab has fresh data if you expected mismatches.
+              </div>
+            ) : (
+              <div style={{ marginTop: '0.5rem', overflowX: 'auto' }}>
+                <table className={styles.table}>
+                  <thead>
+                    <tr>
+                      <th>Opportunity Name</th>
+                      <th>Account</th>
+                      <th style={{ width: 110 }}>Stage</th>
+                      <th style={{ width: 120 }}>BFO Amount</th>
+                      <th style={{ width: 120 }}>Quoted Amount</th>
+                      <th style={{ width: 70 }}>BFO Link</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {amountUpdateOpps.map(o => (
+                      <tr key={o.id}>
+                        <td>{o.name}</td>
+                        <td className={o.account ? '' : styles.muted}>{o.account || '—'}</td>
+                        <td className={o.stage ? '' : styles.muted}>{o.stage || '—'}</td>
+                        <td>{fmtMoney(o.bfoAmount)}</td>
+                        <td>{o.quotedAmountFmt}</td>
+                        <td>
+                          <a href={o.bfoUrl} target="_blank" rel="noreferrer" className={styles.bfoLink}>Open</a>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
