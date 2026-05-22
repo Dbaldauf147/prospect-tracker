@@ -2240,11 +2240,22 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       for (const h of (opps?.headers || [])) {
         if (h && !headerSet.has(h)) { headerSet.add(h); mergedHeaders.push(h); }
       }
-      setData(prev => ({
-        ...(prev || {}),
-        headers: mergedHeaders,
-        records: [...additions, ...(prev?.records || [])],
-      }));
+      // Build the next state explicitly so we can persist it
+      // synchronously below — relying solely on the debounced
+      // save-effect lets a quick refresh / tab switch lose the import
+      // (component unmount cancels the pending Firestore write, and on
+      // the next load the stale Firestore copy wins over IndexedDB).
+      const nextRecords = [...additions, ...(data?.records || [])];
+      const nextState = { ...(data || {}), headers: mergedHeaders, records: nextRecords };
+      setData(nextState);
+      // Cancel any in-flight debounced Firestore save so the explicit
+      // write below isn't immediately followed by a stale debounced one.
+      if (firestoreSaveTimerRef.current) {
+        clearTimeout(firestoreSaveTimerRef.current);
+        firestoreSaveTimerRef.current = null;
+      }
+      await saveOpps2Cache(nextState);
+      if (user?.uid) await saveOpps2ToFirestore(user.uid, nextState);
       window.alert(
         `Imported ${additions.length} row${additions.length === 1 ? '' : 's'} ` +
         `from the Opps tab. Skipped ${skippedDuplicate} already on Opps 2, ` +
@@ -2256,7 +2267,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     } finally {
       setImportingFromOpps(false);
     }
-  }, [importingFromOpps, data, oppDedupKeyForImport]);
+  }, [importingFromOpps, data, oppDedupKeyForImport, user?.uid]);
 
   // Look the tagged contact's full HubSpot record up by email (most
   // reliable) and fall back to a case-insensitive name match. When
@@ -2441,6 +2452,14 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     return () => window.removeEventListener(OPPS_PRICING_SNAPSHOT_EVENT, onSnapshotChanged);
   }, [user?.uid]);
 
+  // Track the latest data + uid in refs so the unmount-flush effect
+  // (which only runs on mount/unmount) can read the most recent values
+  // without re-subscribing on every keystroke.
+  const latestDataRef = useRef(data);
+  const latestUidRef = useRef(user?.uid);
+  useEffect(() => { latestDataRef.current = data; }, [data]);
+  useEffect(() => { latestUidRef.current = user?.uid; }, [user?.uid]);
+
   // Persistence — IndexedDB writes immediately (cheap, survives
   // reload), Firestore writes are debounced 1.5s so a flurry of cell
   // edits collapses into a single round-trip.
@@ -2456,6 +2475,21 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       if (firestoreSaveTimerRef.current) clearTimeout(firestoreSaveTimerRef.current);
     };
   }, [data, user?.uid]);
+
+  // Flush any pending Firestore save on unmount — without this, a
+  // user who clicks Import (or makes a quick edit) and then switches
+  // tabs inside the 1.5s debounce window loses the write. On next
+  // hydration the stale Firestore copy wins over the up-to-date IDB
+  // cache, so the change appears to vanish.
+  useEffect(() => {
+    return () => {
+      if (firestoreSaveTimerRef.current && latestUidRef.current) {
+        clearTimeout(firestoreSaveTimerRef.current);
+        firestoreSaveTimerRef.current = null;
+        saveOpps2ToFirestore(latestUidRef.current, latestDataRef.current);
+      }
+    };
+  }, []);
 
   // Flush any pending Firestore save when the tab is closed / reloaded
   // so the last keystroke before a reload still survives the round
