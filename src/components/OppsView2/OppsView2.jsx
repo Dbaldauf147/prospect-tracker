@@ -15,6 +15,7 @@ import {
 } from '../common/columnLinks';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { dbGet, dbPut } from '../../utils/db';
+import { loadOptionLinks, setOppOptionLink, OPTION_LINKS_EVENT } from '../../utils/pricingOptionLinks';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { normalizeCompany } from '../../utils/companyNorm';
 import styles from './OppsView2.module.css';
@@ -65,6 +66,7 @@ const DEFAULT_HEADERS = [
   'Start Date', 'Status', 'Quoted Amount', 'Sites', 'Age',
   'Last Client Heard From Us', 'Last Spoke', 'Follow Up', 'Call In', 'Notes',
   'Next Steps', 'Competition', 'Waiting On', 'Close Date', 'BFO Link',
+  'Pricing Option',
 ];
 
 // Key columns to show by default (the rest are available via Columns toggle)
@@ -93,7 +95,7 @@ const COMPUTED_COLUMNS = ['Last Spoke', 'Call In'];
 // users who saved their layout before this column existed still pick
 // it up — and its "Find out the Story" default lands somewhere
 // visible on the next new opp.
-const ENSURED_COLUMNS = [...COMPUTED_COLUMNS, 'Next Steps'];
+const ENSURED_COLUMNS = [...COMPUTED_COLUMNS, 'Next Steps', 'Pricing Option'];
 
 function todayISO() {
   const d = new Date();
@@ -373,6 +375,41 @@ function ComputedCell({ value }) {
       title="Computed value"
     >
       {isEmpty ? '—' : String(value)}
+    </span>
+  );
+}
+
+// Read-only "Pricing Option" cell: shows the option name linked to this
+// opp from the Pricing → Options tab. The user can't type into it — the
+// link is set from Pricing → Options ("Save to Opp…") and cleared with
+// the × that appears here when a value is present.
+function PricingOptionCell({ value, onClear }) {
+  const isEmpty = !value;
+  return (
+    <span
+      style={{
+        display: 'flex', alignItems: 'center', gap: 4,
+        padding: '1px 2px',
+        color: isEmpty ? 'var(--color-text-muted)' : 'inherit',
+      }}
+      title={isEmpty
+        ? 'Set from the Pricing → Options tab: open an Option, then click “Save to Opp…”.'
+        : `Linked Pricing Option: ${value}`}
+    >
+      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {isEmpty ? '—' : value}
+      </span>
+      {!isEmpty && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onClear?.(); }}
+          title="Clear pricing-option link"
+          style={{
+            border: 'none', background: 'transparent', cursor: 'pointer',
+            color: '#94a3b8', padding: '0 2px', fontSize: '0.85em', lineHeight: 1,
+          }}
+        >×</button>
+      )}
     </span>
   );
 }
@@ -1573,6 +1610,24 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // from the raw cached workbook + Line Item → Services mapping —
   // otherwise the picker would be empty whenever the user lands on
   // Opps 2 without having opened the Pricing tab in this session.
+  // Map of `oppId → Pricing Option name` owned by the Pricing tab.
+  // We render the "Pricing Option" column from this map so the link
+  // lives in one place — saving from Pricing or clearing from here
+  // both go through `setOppOptionLink`.
+  const [optionLinks, setOptionLinks] = useState({});
+  useEffect(() => {
+    let cancelled = false;
+    loadOptionLinks().then(val => { if (!cancelled) setOptionLinks(val || {}); });
+    const onChange = (e) => {
+      const detail = e?.detail;
+      if (detail && typeof detail === 'object') setOptionLinks(detail);
+    };
+    window.addEventListener(OPTION_LINKS_EVENT, onChange);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(OPTION_LINKS_EVENT, onChange);
+    };
+  }, []);
   const [pricingOptionServicesCache, setPricingOptionServicesCache] = useState({});
   const [pricingWorkbook, setPricingWorkbook] = useState(null);
   const [lineItemServices, setLineItemServices] = useState({});
@@ -1920,6 +1975,18 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             const n = daysFromToday(row['Follow Up']);
             return <ComputedCell value={n == null ? '' : n} />;
           }
+          if (h === 'Pricing Option') {
+            // Read-only column populated from the Pricing → Options tab.
+            // The cell shows the linked option name (or em-dash). A
+            // small × button clears the link in place.
+            const linked = optionLinks[String(row._id)] || '';
+            return (
+              <PricingOptionCell
+                value={linked}
+                onClear={() => setOppOptionLink(row._id, '')}
+              />
+            );
+          }
           if (h === 'Last Spoke') {
             // Business days since the Last Client Heard From Us date.
             const n = businessDaysSince(row['Last Client Heard From Us']);
@@ -2076,7 +2143,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       ? [...mapped.slice(0, nextStepsIdx), infoCol, ...mapped.slice(nextStepsIdx)]
       : [...mapped, infoCol];
     return [selectCol, ...withInfo, actions];
-  }, [headers, columnLinks, listRegistry, updateOppField, deleteOpp, companySuggestions, prospects, updateProspect, hubspotContacts, selectedIds, pricingOptionServices]);
+  }, [headers, columnLinks, listRegistry, updateOppField, deleteOpp, companySuggestions, prospects, updateProspect, hubspotContacts, selectedIds, pricingOptionServices, optionLinks]);
 
   const stageOrder = ['Lead', 'Not Started', 'Qualifying', 'Quoting', 'Quoted', 'Verbal', 'Sold', 'Not Sold'];
   const CLOSED_STAGES = useMemo(() => new Set(['Sold', 'Not Sold']), []);
