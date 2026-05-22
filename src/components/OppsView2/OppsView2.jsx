@@ -3836,19 +3836,20 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         {filtersActive && (
           <button className={styles.clearFiltersBtn} onClick={clearFilters}>Clear filters</button>
         )}
-        {(filtersActive || showHiddenByFilter) && (
-          <button
-            className={styles.clearFiltersBtn}
-            onClick={() => setShowHiddenByFilter(v => !v)}
-            title={showHiddenByFilter
-              ? 'Re-apply the Date / Status / Show filters above.'
-              : 'Temporarily reveal every row hidden by the current filters without changing the filter inputs.'}
-          >
-            {showHiddenByFilter
-              ? 'Re-apply filters'
-              : `Show hidden${hiddenByFilterCount ? ` (${hiddenByFilterCount})` : ''}`}
-          </button>
-        )}
+        <button
+          className={styles.clearFiltersBtn}
+          onClick={() => setShowHiddenByFilter(v => !v)}
+          disabled={!showHiddenByFilter && hiddenByFilterCount === 0}
+          title={showHiddenByFilter
+            ? 'Re-apply the Date / Status / Show filters above.'
+            : hiddenByFilterCount > 0
+              ? 'Temporarily reveal every row hidden by the current filters without changing the filter inputs.'
+              : 'No rows are currently hidden by the Date / Status / Show filters.'}
+        >
+          {showHiddenByFilter
+            ? 'Re-apply filters'
+            : `Show hidden${hiddenByFilterCount ? ` (${hiddenByFilterCount})` : ''}`}
+        </button>
       </div>
 
       {activeTab === 'opps' ? (
