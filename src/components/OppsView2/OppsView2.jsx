@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
+import { ContactEditModal } from '../ProspectModal/ProspectModal';
 import { DataTable } from '../common/DataTable';
 import {
   buildListRegistry,
@@ -961,7 +962,7 @@ function companyMatchKeys(name) {
   return keys;
 }
 
-function ContactCell({ value, onChange, account, prospects, updateProspect, hubspotContacts }) {
+function ContactCell({ value, onChange, account, prospects, updateProspect, hubspotContacts, onOpenContact }) {
   // Single boolean for popover state — the popover handles both
   // viewing currently tagged contacts and adding new ones (from the
   // company roster or as a custom one-off tag), so the picker/view
@@ -1257,10 +1258,27 @@ function ContactCell({ value, onChange, account, prospects, updateProspect, hubs
                       }}
                     >
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{
-                          fontWeight: 600, color: '#1E293B',
-                          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                        }}>{t.name}</div>
+                        {onOpenContact ? (
+                          <button
+                            type="button"
+                            onClick={() => { onOpenContact(t.name, t.email); setOpen(false); }}
+                            title={`Open ${t.name}'s details`}
+                            style={{
+                              display: 'block', width: '100%', textAlign: 'left',
+                              padding: 0, border: 'none', background: 'transparent',
+                              fontFamily: 'inherit', fontSize: 'inherit',
+                              fontWeight: 600, color: '#2563EB', cursor: 'pointer',
+                              textDecoration: 'underline', textDecorationColor: '#93C5FD',
+                              textUnderlineOffset: '2px',
+                              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                            }}
+                          >{t.name}</button>
+                        ) : (
+                          <div style={{
+                            fontWeight: 600, color: '#1E293B',
+                            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                          }}>{t.name}</div>
+                        )}
                         <div style={{
                           fontSize: '0.75rem',
                           color: t.email ? 'var(--color-text-muted)' : '#94A3B8',
@@ -1603,6 +1621,7 @@ function OppInfoModal({
   hubspotContacts,
   pricingOptionServices,
   pricingOptionLinkName,
+  onOpenContact,
 }) {
   if (!opp) return null;
   // Show every header column the row has a value for, in the same order
@@ -1674,6 +1693,7 @@ function OppInfoModal({
           prospects={prospects}
           updateProspect={updateProspect}
           hubspotContacts={hubspotContacts}
+          onOpenContact={onOpenContact}
         />
       );
     }
@@ -2133,6 +2153,90 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // bulk toolbar is only available) while this is on, so the default
   // view is uncluttered.
   const [massEditOn, setMassEditOn] = useState(false);
+  // The HubSpot contact currently open in the rich ContactEditModal,
+  // launched when the user clicks a tagged-contact name on the
+  // Contact cell's popover. Null when no modal is open.
+  const [editingContact, setEditingContact] = useState(null);
+
+  // Look the tagged contact's full HubSpot record up by email (most
+  // reliable) and fall back to a case-insensitive name match. When
+  // nothing matches, fabricate a minimal record so ContactEditModal
+  // can still display the name + email the user already had visible.
+  const openContactDetails = useCallback((name, email) => {
+    const normEmail = String(email || '').trim().toLowerCase();
+    const normName = String(name || '').trim().toLowerCase();
+    let found = null;
+    if (normEmail) {
+      found = (hubspotContacts || []).find(c => String(c?.email || '').trim().toLowerCase() === normEmail);
+    }
+    if (!found && normName) {
+      found = (hubspotContacts || []).find(c => {
+        const cName = [c?.firstname, c?.lastname].filter(Boolean).join(' ').trim().toLowerCase();
+        return cName === normName;
+      });
+    }
+    if (!found) {
+      const parts = String(name || '').trim().split(/\s+/);
+      found = {
+        firstname: parts[0] || '',
+        lastname: parts.slice(1).join(' ') || '',
+        email: email || '',
+      };
+    }
+    setEditingContact(found);
+  }, [hubspotContacts]);
+
+  // ContactEditModal saves through these handlers so per-contact
+  // notes / nicknames / etc. land in the same Firestore settings
+  // maps every other view writes to (Key Contacts uses the same
+  // set). `silent` saves come from the modal's tag-autosave path —
+  // don't close the modal in that case.
+  const closeContactModal = useCallback((updated, opts) => {
+    if (!opts?.silent) setEditingContact(null);
+    void updated;
+  }, []);
+  const saveContactNote = useCallback((cid, note) => {
+    const cur = settings?.contactNotes || {};
+    const next = { ...cur };
+    if (note && note.trim()) next[cid] = note; else delete next[cid];
+    updateSettings({ contactNotes: next });
+  }, [settings?.contactNotes, updateSettings]);
+  const saveContactOldEmails = useCallback((cid, val) => {
+    const cur = settings?.contactOldEmails || {};
+    const next = { ...cur };
+    if (val && val.trim()) next[cid] = val; else delete next[cid];
+    updateSettings({ contactOldEmails: next });
+  }, [settings?.contactOldEmails, updateSettings]);
+  const saveContactNickname = useCallback((cid, val) => {
+    const cur = settings?.contactNicknames || {};
+    const next = { ...cur };
+    if (val && val.trim()) next[cid] = val; else delete next[cid];
+    updateSettings({ contactNicknames: next });
+  }, [settings?.contactNicknames, updateSettings]);
+  const saveContactTeamName = useCallback((cid, val) => {
+    const cur = settings?.contactTeamNames || {};
+    const next = { ...cur };
+    if (val && val.trim()) next[cid] = val.trim(); else delete next[cid];
+    updateSettings({ contactTeamNames: next });
+  }, [settings?.contactTeamNames, updateSettings]);
+  const saveContactReportsTo = useCallback((cid, managerIds) => {
+    const cur = settings?.contactReportsTo || {};
+    const next = { ...cur };
+    const arr = Array.isArray(managerIds)
+      ? managerIds.filter(Boolean).map(String)
+      : (managerIds ? [String(managerIds)] : []);
+    if (arr.length > 0) next[cid] = arr; else delete next[cid];
+    updateSettings({ contactReportsTo: next });
+  }, [settings?.contactReportsTo, updateSettings]);
+  const saveContactFamily = useCallback((cid, info) => {
+    const cur = settings?.contactFamilies || {};
+    const next = { ...cur };
+    const partner = String(info?.partner || '').trim();
+    const kids = String(info?.kids || '').trim();
+    if (!partner && !kids) delete next[cid];
+    else next[cid] = { partner, kids };
+    updateSettings({ contactFamilies: next });
+  }, [settings?.contactFamilies, updateSettings]);
 
   // Hydration — load the user's saved opps. Prefer Firestore (cross-
   // device truth), fall back to the IndexedDB cache (last-known on
@@ -2507,6 +2611,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                 prospects={prospects}
                 updateProspect={updateProspect}
                 hubspotContacts={hubspotContacts}
+                onOpenContact={openContactDetails}
               />
             );
           }
@@ -2765,7 +2870,6 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       <div className={styles.header}>
         <div>
           <h2 className={styles.title}>Opps 2</h2>
-          <span className={styles.lastSync}>Sandbox copy — not connected to any data source</span>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
           <AddCompanyCombobox
@@ -2839,9 +2943,41 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             hubspotContacts={hubspotContacts}
             pricingOptionServices={pricingOptionServices}
             pricingOptionLinkName={optionLinks[String(opp._id)] || ''}
+            onOpenContact={openContactDetails}
           />
         );
       })()}
+
+      {editingContact && (
+        <ContactEditModal
+          contact={editingContact}
+          onSave={closeContactModal}
+          onClose={() => setEditingContact(null)}
+          contactNotes={settings?.contactNotes || {}}
+          onSaveNote={saveContactNote}
+          contactOldEmails={settings?.contactOldEmails || {}}
+          onSaveOldEmails={saveContactOldEmails}
+          contactNicknames={settings?.contactNicknames || {}}
+          onSaveNickname={saveContactNickname}
+          contactTeamNames={settings?.contactTeamNames || {}}
+          onSaveTeamName={saveContactTeamName}
+          contactReportsTo={settings?.contactReportsTo || {}}
+          onSaveReportsTo={saveContactReportsTo}
+          ccMap={settings?.ccMap || {}}
+          onSaveCcMap={(m) => updateSettings({ ccMap: m })}
+          toAlsoMap={settings?.toAlsoMap || {}}
+          onSaveToAlsoMap={(m) => updateSettings({ toAlsoMap: m })}
+          contactFamilies={settings?.contactFamilies || {}}
+          onSaveFamily={saveContactFamily}
+          companyContacts={(hubspotContacts || []).filter(c => {
+            const cCompany = String(c?.company || '').trim().toLowerCase();
+            const tgt = String(editingContact?.company || '').trim().toLowerCase();
+            return cCompany && tgt && cCompany === tgt;
+          })}
+          emailDomains={[]}
+          companyNames={(prospects || []).map(p => p.company).filter(Boolean)}
+        />
+      )}
 
       <div className={styles.tabs}>
         <button
