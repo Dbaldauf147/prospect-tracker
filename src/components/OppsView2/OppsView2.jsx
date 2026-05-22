@@ -1,6 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, getDocs, writeBatch, deleteField } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
@@ -53,38 +53,72 @@ async function saveOpps2Cache(data) {
   catch (err) { console.error('opps2: IndexedDB save failed', err); }
 }
 
+// Firestore caps a single document at ~1 MB. Once Opps 2 grows past
+// that, the legacy single-field save fails silently and cross-device
+// sync stalls. The JSON is now split across a `chunks` subcollection
+// under the user's doc; the parent doc holds metadata and the
+// legacy `json` field is cleared on the first chunked write so it
+// can't shadow the fresh data. Each chunk stays well below the cap.
+const OPPS2_CHUNK_SIZE = 700 * 1024;
+
 async function loadOpps2FromFirestore(userId) {
   try {
     const ref = doc(db, OPPS2_FIRESTORE_COLLECTION, userId);
     const snap = await getDoc(ref);
-    if (snap.exists()) {
-      const raw = snap.data();
-      if (raw?.json) {
-        const parsed = JSON.parse(raw.json);
-        // Lift the doc's stored updatedAt onto the payload so the
-        // hydration timestamp compare works even when the json blob
-        // predates the _updatedAt stamp inside it.
-        if (parsed && parsed._updatedAt == null && raw.updatedAt) {
-          const t = Date.parse(raw.updatedAt);
-          if (Number.isFinite(t)) parsed._updatedAt = t;
+    if (!snap.exists()) return null;
+    const raw = snap.data() || {};
+    let json = null;
+    if (Number.isFinite(raw.chunkCount) && raw.chunkCount > 0) {
+      const parts = new Array(raw.chunkCount).fill('');
+      const chunksSnap = await getDocs(collection(ref, 'chunks'));
+      chunksSnap.forEach((d) => {
+        const idx = Number(d.id);
+        if (Number.isFinite(idx) && idx >= 0 && idx < parts.length) {
+          parts[idx] = String(d.data()?.json || '');
         }
-        return parsed;
-      }
+      });
+      json = parts.join('');
+    } else if (raw.json) {
+      json = raw.json;
     }
+    if (!json) return null;
+    const parsed = JSON.parse(json);
+    // Lift the doc's stored updatedAt onto the payload so the
+    // hydration timestamp compare works even when the json blob
+    // predates the _updatedAt stamp inside it.
+    if (parsed && parsed._updatedAt == null && raw.updatedAt) {
+      const t = Date.parse(raw.updatedAt);
+      if (Number.isFinite(t)) parsed._updatedAt = t;
+    }
+    return parsed;
   } catch (err) { console.error('opps2: Firestore load failed', err); }
   return null;
 }
 
 // Throws when the save fails so callers (e.g. the Import button) can
 // surface the failure instead of silently leaving stale data behind.
-// Firestore caps a single document at 1 MB — when Opps 2 grows past
-// that we want the user to know rather than discover it later when
-// data appears to vanish.
 async function saveOpps2ToFirestore(userId, data) {
   const stamped = stampUpdatedAt(data);
   const json = JSON.stringify(stamped);
   const ref = doc(db, OPPS2_FIRESTORE_COLLECTION, userId);
-  await setDoc(ref, { json, updatedAt: new Date(stamped._updatedAt).toISOString() });
+  const updatedAt = new Date(stamped._updatedAt).toISOString();
+  const chunks = [];
+  for (let i = 0; i < json.length; i += OPPS2_CHUNK_SIZE) {
+    chunks.push(json.slice(i, i + OPPS2_CHUNK_SIZE));
+  }
+  // Drop any leftover chunks from a previous (larger) save so a
+  // shrinking dataset doesn't reassemble with stale tail data.
+  const existing = await getDocs(collection(ref, 'chunks'));
+  const batch = writeBatch(db);
+  batch.set(ref, { chunkCount: chunks.length, updatedAt, json: deleteField() });
+  for (let i = 0; i < chunks.length; i++) {
+    batch.set(doc(ref, 'chunks', String(i)), { json: chunks[i] });
+  }
+  existing.forEach((d) => {
+    const idx = Number(d.id);
+    if (!Number.isFinite(idx) || idx >= chunks.length) batch.delete(d.ref);
+  });
+  await batch.commit();
 }
 
 // Non-throwing wrapper for the auto-save / unmount / beforeunload

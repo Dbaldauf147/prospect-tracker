@@ -62,6 +62,13 @@ service cloud.firestore {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
 
+    // Opps 2 payload chunks: the JSON blob is split across this
+    // subcollection so the dataset can grow past Firestore's 1 MB
+    // per-document cap.
+    match /opps2Data/{userId}/chunks/{chunkId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
     // Email campaigns: users can only read/write their own data
     match /emailCampaigns/{userId} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
