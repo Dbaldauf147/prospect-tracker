@@ -2157,6 +2157,106 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // launched when the user clicks a tagged-contact name on the
   // Contact cell's popover. Null when no modal is open.
   const [editingContact, setEditingContact] = useState(null);
+  // Set while the "Import from Opps tab" one-time copy is running so
+  // the button locks out double-clicks and shows a "Importing…"
+  // label.
+  const [importingFromOpps, setImportingFromOpps] = useState(false);
+
+  // Dedup key for the Opps → Opps 2 one-time import. BFO Link is the
+  // natural unique id; for rows that lack one we fall back to a
+  // composite of Account + Open Year + Scope + Start Date so a
+  // legacy hand-typed Opps 2 entry doesn't get blocked by a fuzzy
+  // match against a Google-Sheets row with the same Account in a
+  // different year.
+  const oppDedupKeyForImport = useCallback((r) => {
+    if (!r) return '';
+    const bfo = String(r['BFO Link'] || '').trim().toLowerCase();
+    if (bfo && bfo !== '-' && bfo !== '#n/a') return `bfo:${bfo}`;
+    const acct = String(r['Account'] || '').trim().toLowerCase();
+    const year = String(r['Open Year'] || '').trim();
+    const scope = String(r['Scope'] || '').trim().toLowerCase();
+    const start = String(r['Start Date'] || '').trim();
+    if (!acct && !year && !scope && !start) return '';
+    return `acct:${acct}|${year}|${scope}|${start}`;
+  }, []);
+
+  // One-time copy from the Opps tab's IndexedDB cache into Opps 2.
+  // Adds only — every existing Opps 2 record is left exactly as-is.
+  // Dedup is by BFO Link (with the composite fallback above), so a
+  // re-run only adds rows that are new since the last import. The
+  // user is free to re-click this any time they refresh the Opps tab
+  // and want the new rows mirrored over.
+  const importFromOppsTab = useCallback(async () => {
+    if (importingFromOpps) return;
+    setImportingFromOpps(true);
+    try {
+      let opps = null;
+      try { opps = await dbGet('opps-cache', 'data'); } catch { /* ignore */ }
+      const incoming = Array.isArray(opps?.records) ? opps.records : [];
+      if (!incoming.length) {
+        window.alert(
+          'No Opps tab data found in this browser. Open the Opps tab once so it ' +
+          'fetches the Google Sheet, then come back and click Import again.'
+        );
+        return;
+      }
+      const baseHeaders = data?.headers?.length ? data.headers : DEFAULT_HEADERS;
+      const baseRecords = data?.records || [];
+      const existingKeys = new Set();
+      for (const r of baseRecords) {
+        const k = oppDedupKeyForImport(r);
+        if (k) existingKeys.add(k);
+      }
+      let nextId = baseRecords.reduce((m, r) => Math.max(m, Number(r?._id) || 0), 0);
+      const additions = [];
+      let skippedNoOpenYear = 0;
+      let skippedNoAccount = 0;
+      let skippedDuplicate = 0;
+      for (const r of incoming) {
+        const openYear = String(r?.['Open Year'] ?? '').trim();
+        if (!openYear || openYear === '-' || openYear === '#N/A') { skippedNoOpenYear += 1; continue; }
+        const hasAccount = !!String(r?.['Account'] || '').trim();
+        const hasBfo = !!String(r?.['BFO Link'] || '').trim();
+        if (!hasAccount && !hasBfo) { skippedNoAccount += 1; continue; }
+        const key = oppDedupKeyForImport(r);
+        if (!key || existingKeys.has(key)) { skippedDuplicate += 1; continue; }
+        existingKeys.add(key);
+        nextId += 1;
+        additions.push({ ...r, _id: nextId, id: nextId, _source: 'opps-import' });
+      }
+      if (!additions.length) {
+        window.alert(
+          `Nothing new to import — every Opps tab row (${incoming.length}) is ` +
+          `already on Opps 2 or was skipped (no Open Year: ${skippedNoOpenYear}, ` +
+          `no Account/BFO: ${skippedNoAccount}, duplicates: ${skippedDuplicate}).`
+        );
+        return;
+      }
+      // Union headers so any columns the Opps tab tracks but Opps 2's
+      // saved layout doesn't yet know about become selectable from the
+      // Columns toggle. Preserve Opps 2's column order.
+      const headerSet = new Set(baseHeaders);
+      const mergedHeaders = [...baseHeaders];
+      for (const h of (opps?.headers || [])) {
+        if (h && !headerSet.has(h)) { headerSet.add(h); mergedHeaders.push(h); }
+      }
+      setData(prev => ({
+        ...(prev || {}),
+        headers: mergedHeaders,
+        records: [...additions, ...(prev?.records || [])],
+      }));
+      window.alert(
+        `Imported ${additions.length} row${additions.length === 1 ? '' : 's'} ` +
+        `from the Opps tab. Skipped ${skippedDuplicate} already on Opps 2, ` +
+        `${skippedNoOpenYear} with no Open Year, ${skippedNoAccount} with no Account/BFO Link.`
+      );
+    } catch (err) {
+      console.error('Import from Opps tab failed:', err);
+      window.alert(`Import failed: ${err?.message || err}`);
+    } finally {
+      setImportingFromOpps(false);
+    }
+  }, [importingFromOpps, data, oppDedupKeyForImport]);
 
   // Look the tagged contact's full HubSpot record up by email (most
   // reliable) and fall back to a case-insensitive name match. When
@@ -2887,6 +2987,18 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             }}
             title="Bind columns to Dropdowns-tab lists"
           >Link columns</button>
+          <button
+            type="button"
+            onClick={importFromOppsTab}
+            disabled={importingFromOpps}
+            style={{
+              padding: '0.45rem 0.85rem', background: 'transparent',
+              border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)',
+              fontSize: 'var(--font-size-sm)', fontWeight: 600, fontFamily: 'inherit',
+              color: 'var(--color-text)', cursor: importingFromOpps ? 'progress' : 'pointer',
+            }}
+            title="One-time copy of every row from the Opps tab cache that isn't already on Opps 2"
+          >{importingFromOpps ? 'Importing…' : 'Import from Opps tab'}</button>
           <button className={styles.syncBtn} onClick={() => setPendingNewOpp({})}>+ New Opp</button>
         </div>
       </div>
