@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useRef } from 'react';
+import { useMemo, useState, useEffect, useCallback } from 'react';
 import { DataTable } from '../common/DataTable';
 import { asNumber, asDate, fmtCurrency, fmtPercent, fmtDate } from '../../utils/dealsFormat';
 import {
@@ -623,11 +623,15 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
   // Selection state for the bulk-edit toolbar. Row "ids" are the raw
   // array indices on the underlying data; we clear the selection after
   // every bulk mutation so a shifted index never resurfaces as a
-  // mis-targeted edit. `visibleIdsRef` is updated below so the header
-  // "select all" checkbox can grab the filtered roster without
-  // re-triggering buildColumns on every selection change.
+  // mis-targeted edit. `visibleIds` mirrors the rows the DataTable is
+  // actually rendering (after both the search box and any in-table
+  // column-filter chips have been applied), so the header "select all"
+  // checkbox grabs only what the user can see.
   const [selectedIds, setSelectedIds] = useState(() => new Set());
-  const visibleIdsRef = useRef([]);
+  const [visibleIds, setVisibleIds] = useState([]);
+  const onTableFilteredRowsChange = useCallback((tableRows) => {
+    setVisibleIds(tableRows.map(r => r.id));
+  }, []);
 
   const toggleSelect = (rowId) => {
     setSelectedIds(prev => {
@@ -639,7 +643,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
 
   const selectAllVisible = () => {
     setSelectedIds(prev => {
-      const visible = visibleIdsRef.current;
+      const visible = visibleIds;
       const allSelected = visible.length > 0 && visible.every(id => prev.has(id));
       if (allSelected) {
         // Toggle off — clear just the visible ones, leave any
@@ -659,7 +663,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
   // live selection state without forcing the column list to rebuild on
   // every toggle.
   const selectColHeader = () => {
-    const visible = visibleIdsRef.current;
+    const visible = visibleIds;
     const allSelected = visible.length > 0 && visible.every(id => selectedIds.has(id));
     const someSelected = !allSelected && visible.some(id => selectedIds.has(id));
     return (
@@ -790,11 +794,6 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     const term = search.toLowerCase();
     return rows.filter(r => Object.values(r).some(v => String(v).toLowerCase().includes(term)));
   }, [rows, search]);
-
-  // Keep the "what's currently on screen" list in sync so the select-
-  // all checkbox and any "selected of visible" math reflect the
-  // current search filter.
-  visibleIdsRef.current = filtered.map(r => r.id);
 
   // Bulk mutations operate on the full underlying data array; row ids
   // are indices into that array, so we just rebuild it once. After
@@ -928,6 +927,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
             emptyMessage={search ? `No rows match "${search}"` : 'No commissions to display'}
             enableColumnFilters
             rowStyle={(row) => row.__ignored ? { opacity: 0.45, background: '#F8FAFC', color: '#64748B' } : undefined}
+            onFilteredRowsChange={onTableFilteredRowsChange}
             settings={settings}
             updateSettings={updateSettings}
           />
