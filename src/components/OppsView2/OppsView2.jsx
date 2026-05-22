@@ -3463,6 +3463,12 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               emptyMessage="No opps yet — click + New Opp to create one."
               settings={settings}
               updateSettings={updateSettings}
+              // Notes / Next Steps can grow taller via Alt+Enter newlines,
+              // so the fixed-rowHeight virtualization spacers misalign and
+              // the user ends up scrolled into a "ghost" zone with no
+              // rendered rows. variableRowHeight renders every row and lets
+              // content-visibility handle off-screen perf.
+              variableRowHeight
               rowStyle={(row) => {
                 // Tint closed opps so the table reads at a glance —
                 // light green for wins, light red for losses. Other

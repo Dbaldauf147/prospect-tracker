@@ -338,6 +338,14 @@ export function DataTable({
   // so a parent can sync its own "select all visible" / "rows on
   // screen" UI against the same set the user sees.
   onFilteredRowsChange,
+  // Opt out of fixed-rowHeight virtualization. Consumers whose rows
+  // can grow taller than a single line (Opps 2's Alt+Enter Next Steps,
+  // Notes, etc.) set this so the table renders every row instead — the
+  // JS spacer math assumes a constant row height, and a single tall
+  // row breaks scrolling for everything below it. The browser still
+  // skips painting off-screen rows via `content-visibility: auto`, so
+  // scroll perf stays close to the virtualized path.
+  variableRowHeight = false,
   // Optional Firestore-backed settings store. When provided, column
   // prefs (widths, visibility, renames) persist to settings.tablePrefs[tableId]
   // in addition to localStorage so they survive a clear-site-data.
@@ -799,7 +807,7 @@ export function DataTable({
             // Expansion rows have variable height and would corrupt the
             // fixed-rowHeight virtualization math; render every row when
             // expansion is enabled.
-            const virtualize = !expandable && total > VIRTUALIZE_THRESHOLD && rowHeight > 0;
+            const virtualize = !expandable && !variableRowHeight && total > VIRTUALIZE_THRESHOLD && rowHeight > 0;
             let startIdx = 0;
             let endIdx = total;
             if (virtualize) {
@@ -843,13 +851,21 @@ export function DataTable({
                       // mirroring the style onto each cell guarantees
                       // visible row tints on `.stickyCol` too.
                       const computedRowStyle = rowStyle ? rowStyle(row) : undefined;
+                      // In variable-row-height mode we render every row
+                      // and let the browser skip painting the ones off
+                      // screen via content-visibility. The reserved
+                      // ~33px keeps the scrollbar accurate before each
+                      // row is laid out.
+                      const variableRowStyle = variableRowHeight
+                        ? { contentVisibility: 'auto', containIntrinsicSize: '0 33px' }
+                        : undefined;
                       const rowTr = (
                         <tr
                           key={expandable ? `r:${rowKey}` : rowKey}
                           ref={ri === 0 ? firstRowRef : undefined}
                           className={rowClassName ? rowClassName(row) : undefined}
                           onClick={onRowClick ? () => onRowClick(row) : undefined}
-                          style={{ ...(onRowClick ? { cursor: 'pointer' } : undefined), ...computedRowStyle }}
+                          style={{ ...(onRowClick ? { cursor: 'pointer' } : undefined), ...variableRowStyle, ...computedRowStyle }}
                         >
                           {visibleColumns.map(col => (
                             <td
