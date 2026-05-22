@@ -6,13 +6,12 @@
 import { Component, useEffect, useMemo, useState } from 'react';
 import styles from './PipelineView.module.css';
 import { dbGet, dbPut, dbDelete } from '../../utils/db';
+import { loadOppsFromCache } from '../../utils/oppsCache';
 
 const STORE = 'pipeline-dashboard';
 const KEY = 'current';
 const BFO_STORE = 'bfo-activity';
 const BFO_KEY = 'current';
-const OPPS_STORE = 'opps-cache';
-const OPPS_KEY = 'data';
 
 // Parse "USD 15,000.00" / "$15,000" / "15000" -> 15000.
 function parseMoney(v) {
@@ -393,7 +392,7 @@ function PipelineViewInner() {
         }));
         const bfoSaved = await dbGet(BFO_STORE, BFO_KEY);
         if (!cancelled && bfoSaved) setBfo(bfoSaved);
-        const oppsSaved = await dbGet(OPPS_STORE, OPPS_KEY);
+        const oppsSaved = await loadOppsFromCache();
         if (!cancelled && oppsSaved) setOpps(oppsSaved);
       } catch (e) {
         console.warn('Pipeline hydrate failed', e);
@@ -407,7 +406,7 @@ function PipelineViewInner() {
       // absence (e.g. user clicked Clear). Without explicit null
       // fallback, deletions wouldn't propagate to this view.
       dbGet(BFO_STORE, BFO_KEY).then(b => setBfo(b || null)).catch(() => setBfo(null));
-      dbGet(OPPS_STORE, OPPS_KEY).then(o => setOpps(o || null)).catch(() => setOpps(null));
+      loadOppsFromCache().then(o => setOpps(o || null)).catch(() => setOpps(null));
     }
     window.addEventListener('focus', onFocus);
     return () => { cancelled = true; window.removeEventListener('focus', onFocus); };

@@ -4,6 +4,7 @@ import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { DataTable } from '../common/DataTable';
 import { dbGet, dbPut } from '../../utils/db';
+import { OPPS_CACHE_UPDATED_EVENT } from '../../utils/oppsCache';
 import styles from './OppsView.module.css';
 
 const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1ee0OREqA25jzDaR6xRDSrj_ZIZDymQjf1k2Z2_ajVKw/export?format=csv&gid=0';
@@ -145,6 +146,15 @@ export function OppsView({ settings, updateSettings } = {}) {
       setData(result);
       saveCacheAsync(result);
       if (user?.uid) saveToFirestore(user.uid, result);
+      // Notify the Opps 2 view (and any other listener) so it can
+      // additively merge any new rows from this fetch into its own
+      // store. Opps is being phased out in favour of Opps 2 — see
+      // src/utils/oppsCache.js.
+      try {
+        window.dispatchEvent(new CustomEvent(OPPS_CACHE_UPDATED_EVENT, {
+          detail: { fetchedAt: result.fetchedAt },
+        }));
+      } catch { /* ignore */ }
     } catch (err) {
       setError(err.message);
     } finally {

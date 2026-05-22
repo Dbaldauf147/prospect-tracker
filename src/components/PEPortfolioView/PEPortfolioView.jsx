@@ -4,6 +4,7 @@ import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { dbGet } from '../../utils/db';
+import { loadOppsFromCache } from '../../utils/oppsCache';
 import { formatAum } from '../../utils/formatters';
 
 // Closed/invalid stages from the Opps tab — these shouldn't count toward "active pipeline".
@@ -48,7 +49,7 @@ function useOppsRecords(userId) {
     let cancelled = false;
     async function loadFromIndexedDB() {
       try {
-        const data = await dbGet('opps-cache', 'data');
+        const data = await loadOppsFromCache();
         return data?.records || null;
       } catch { return null; }
     }

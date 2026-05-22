@@ -16,12 +16,13 @@ import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { getHubspotCache, updateHubspotCache, notifyCacheUpdated } from '../../utils/hubspotContactsCache';
 import { dbGet } from '../../utils/db';
+import { loadOppsFromCache } from '../../utils/oppsCache';
 import { subscribeIndicativeAnalysis } from '../../utils/firestoreSync';
 import { ListsMatchPanel } from './ListsMatchPanel';
 import styles from './ProspectModal.module.css';
 
 async function loadOppsFromIndexedDB() {
-  try { return (await dbGet('opps-cache', 'data')) || null; }
+  try { return await loadOppsFromCache(); }
   catch { return null; }
 }
 

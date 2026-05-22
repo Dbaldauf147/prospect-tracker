@@ -11,6 +11,7 @@ import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { buildCompanyIndex, findMatchesInIndex, hasMatchInIndex } from '../../utils/companyIndex';
 import { getHubspotCache, setHubspotCache } from '../../utils/hubspotContactsCache';
 import { dbGet } from '../../utils/db';
+import { loadOppsFromCache } from '../../utils/oppsCache';
 import { matchesCdm } from '../../utils/cdmMatch';
 import * as XLSX from 'xlsx';
 import styles from './MyAccountsView.module.css';
@@ -1335,7 +1336,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     let cancelled = false;
     async function loadFromIndexedDB() {
       try {
-        const data = await dbGet('opps-cache', 'data');
+        const data = await loadOppsFromCache();
         return data?.records || null;
       } catch { return null; }
     }

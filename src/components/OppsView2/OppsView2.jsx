@@ -15,6 +15,7 @@ import {
 } from '../common/columnLinks';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { dbGet, dbPut } from '../../utils/db';
+import { oppDedupKey, OPPS_CACHE_UPDATED_EVENT } from '../../utils/oppsCache';
 import { loadOptionLinks, setOppOptionLink, OPTION_LINKS_EVENT } from '../../utils/pricingOptionLinks';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { normalizeCompany } from '../../utils/companyNorm';
@@ -57,6 +58,57 @@ async function saveOpps2ToFirestore(userId, data) {
     const ref = doc(db, OPPS2_FIRESTORE_COLLECTION, userId);
     await setDoc(ref, { json: JSON.stringify(data), updatedAt: new Date().toISOString() });
   } catch (err) { console.error('opps2: Firestore save failed', err); }
+}
+
+// Pull rows out of the legacy Opps cache (Google Sheets) and append
+// any that aren't already present in `prev` (the Opps 2 state). Adds
+// only — never modifies or removes an existing Opps 2 row. Returns the
+// next state object (same identity if nothing changed) so the caller
+// can decide whether to re-render / persist.
+async function mergeOppsFeedInto(prev) {
+  let opps = null;
+  try { opps = await dbGet('opps-cache', 'data'); } catch { /* ignore */ }
+  const incoming = opps?.records || [];
+  if (!incoming.length) return prev;
+  const baseHeaders = prev?.headers?.length ? prev.headers : DEFAULT_HEADERS;
+  const baseRecords = prev?.records || [];
+  const existingKeys = new Set();
+  for (const r of baseRecords) {
+    const k = oppDedupKey(r);
+    if (k) existingKeys.add(k);
+  }
+  let nextId = baseRecords.reduce((m, r) => Math.max(m, Number(r?._id) || 0), 0);
+  const additions = [];
+  for (const r of incoming) {
+    // Opps 2 filters out any row without an Open Year, so don't bother
+    // feeding those — they'd just be hidden dead weight.
+    const openYear = String(r?.['Open Year'] ?? '').trim();
+    if (!openYear || openYear === '-' || openYear === '#N/A') continue;
+    // A row with neither Account nor BFO Link can't be deduped safely
+    // and has nothing useful to show — skip it.
+    const hasAccount = !!String(r?.['Account'] || '').trim();
+    const hasBfo = !!String(r?.['BFO Link'] || '').trim();
+    if (!hasAccount && !hasBfo) continue;
+    const key = oppDedupKey(r);
+    if (!key || existingKeys.has(key)) continue;
+    existingKeys.add(key);
+    nextId += 1;
+    additions.push({ ...r, _id: nextId, id: nextId, _source: 'opps-feed' });
+  }
+  if (!additions.length) return prev;
+  // Union headers so any columns the Opps tab tracks (but Opps 2's
+  // saved layout doesn't yet know about) are still selectable from
+  // the Columns toggle — preserve Opps 2's column order.
+  const headerSet = new Set(baseHeaders);
+  const mergedHeaders = [...baseHeaders];
+  for (const h of (opps?.headers || [])) {
+    if (h && !headerSet.has(h)) { headerSet.add(h); mergedHeaders.push(h); }
+  }
+  return {
+    ...(prev || {}),
+    headers: mergedHeaders,
+    records: [...additions, ...baseRecords],
+  };
 }
 
 // Default column set, seeded so the table has columns to show / sort /
@@ -1826,12 +1878,43 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         const headerSet = new Set((next.headers || []).map(h => String(h || '').trim()).filter(Boolean));
         const extra = ENSURED_COLUMNS.filter(c => !headerSet.has(c));
         if (extra.length) next = { ...next, headers: [...(next.headers || []), ...extra] };
-        setData(next);
       }
+      // Additively pull in anything new from the Opps tab's Google
+      // Sheets cache. The Opps tab is being phased out — Opps 2 is the
+      // canonical store going forward — so on every mount we make sure
+      // every Opps row has a home in Opps 2. When the user has no saved
+      // Opps 2 state at all (`next == null`), the merge still kicks in
+      // and seeds an initial record set from Opps.
+      const merged = await mergeOppsFeedInto(next);
+      if (cancelled) return;
+      // Only setData when we have something — either a hydrated state
+      // or a non-empty merge. Skipping the call preserves the seeded
+      // DEFAULT_HEADERS in the initial useState value.
+      if (merged) setData(merged);
+      else if (next) setData(next);
       setLoading(false);
       hydratedRef.current = true;
     })();
     return () => { cancelled = true; };
+  }, [user?.uid]);
+
+  // The Opps tab fires `opps-cache-updated` after each successful
+  // Google Sheets fetch — re-merge so newly-arrived opps land in
+  // Opps 2 without the user having to reload. A ref tracks the latest
+  // `data` so the listener (whose closure captures only the initial
+  // state) merges against the current rows.
+  const dataRef = useRef(data);
+  useEffect(() => { dataRef.current = data; }, [data]);
+  useEffect(() => {
+    if (!user?.uid) return;
+    async function onOppsFeed() {
+      if (!hydratedRef.current) return;
+      const current = dataRef.current || { headers: [], records: [] };
+      const merged = await mergeOppsFeedInto(current);
+      if (merged !== current) setData(merged);
+    }
+    window.addEventListener(OPPS_CACHE_UPDATED_EVENT, onOppsFeed);
+    return () => window.removeEventListener(OPPS_CACHE_UPDATED_EVENT, onOppsFeed);
   }, [user?.uid]);
 
   // Persistence — IndexedDB writes immediately (cheap, survives

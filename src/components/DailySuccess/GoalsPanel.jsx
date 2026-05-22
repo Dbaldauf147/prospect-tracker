@@ -13,6 +13,7 @@ import {
 } from './goalsStore';
 import { upsertEntry, getEntry, todayKey, newBullet } from './dailySuccessStore';
 import { dbGet } from '../../utils/db';
+import { loadOppsFromCache } from '../../utils/oppsCache';
 import { subscribeToCoachingRules, DEFAULT_COACHING_RULES } from './coachingRulesStore';
 
 // Goals panel — long-running ambitions the user wants Claude to help
@@ -27,7 +28,7 @@ async function buildPipelineSummary() {
   try {
     const pipeline = await dbGet('pipeline-dashboard', 'current');
     const bfo = await dbGet('bfo-activity', 'current');
-    const opps = await dbGet('opps-cache', 'data');
+    const opps = await loadOppsFromCache();
     const lines = [];
     if (pipeline) {
       const fmt = (v) => typeof v === 'number'
