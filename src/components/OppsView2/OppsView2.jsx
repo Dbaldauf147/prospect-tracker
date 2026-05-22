@@ -658,6 +658,71 @@ function PricingOptionCell({ value, onClear }) {
   );
 }
 
+// Hover-triggered popover that surfaces the full text of a cell whose
+// value is either multi-line (Alt+Enter newlines) or wider than the
+// column. Skipped silently when the value fits the cell so single-line
+// rows don't get noisy on every mouseover.
+function CellHoverPopover({ anchorRef, value, enabled }) {
+  const [pos, setPos] = useState(null);
+  const timerRef = useRef(null);
+
+  useEffect(() => {
+    const el = anchorRef.current;
+    if (!el || !enabled) return undefined;
+    function onEnter() {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => {
+        const node = anchorRef.current;
+        if (!node) return;
+        // Only show when there's something to reveal: a real newline,
+        // OR the text is being clipped horizontally by the column.
+        const text = String(value ?? '');
+        const hasNewline = text.includes('\n');
+        const hasOverflow = node.scrollWidth > node.clientWidth + 1;
+        if (!hasNewline && !hasOverflow) return;
+        const rect = node.getBoundingClientRect();
+        // Open downward by default; flip above when the cell sits near
+        // the bottom of the viewport so the popover stays on-screen.
+        const vh = window.innerHeight;
+        const flipAbove = rect.bottom + 220 > vh && rect.top > 220;
+        setPos({
+          top: flipAbove ? rect.top - 4 : rect.bottom + 4,
+          left: Math.min(rect.left, window.innerWidth - 500),
+          flipAbove,
+        });
+      }, 250);
+    }
+    function onLeave() {
+      if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+      setPos(null);
+    }
+    el.addEventListener('mouseenter', onEnter);
+    el.addEventListener('mouseleave', onLeave);
+    return () => {
+      el.removeEventListener('mouseenter', onEnter);
+      el.removeEventListener('mouseleave', onLeave);
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, [anchorRef, value, enabled]);
+
+  if (!pos || !enabled) return null;
+  return createPortal(
+    <div
+      style={{
+        position: 'fixed', top: pos.top, left: pos.left,
+        transform: pos.flipAbove ? 'translateY(-100%)' : 'none',
+        background: '#1e293b', color: '#f8fafc',
+        padding: '6px 10px', borderRadius: 4, fontSize: '0.78rem',
+        maxWidth: 480, maxHeight: 320, overflow: 'auto',
+        whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.35,
+        boxShadow: '0 8px 22px rgba(15, 23, 42, 0.28)',
+        zIndex: 10000, pointerEvents: 'none',
+      }}
+    >{String(value ?? '')}</div>,
+    document.body,
+  );
+}
+
 function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value ?? '');
@@ -668,7 +733,18 @@ function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel }) {
   // rect whenever the dropdown opens.
   const [dropPos, setDropPos] = useState({ top: 0, left: 0, width: 0 });
   const wrapRef = useRef(null);
+  const displayRef = useRef(null);
+  const textareaRef = useRef(null);
   useEffect(() => { if (!editing) setDraft(value ?? ''); }, [value, editing]);
+
+  // Auto-grow the textarea to fit its contents so the user sees every
+  // line of an Alt+Enter note while typing.
+  useLayoutEffect(() => {
+    if (!editing || !textareaRef.current) return;
+    const ta = textareaRef.current;
+    ta.style.height = 'auto';
+    ta.style.height = ta.scrollHeight + 'px';
+  }, [editing, draft]);
 
   // Matches are a mix of plain strings (existing suggestions) and an
   // optional `+ Add "X"` sentinel object at the end when `onAddNew` is
@@ -741,25 +817,32 @@ function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel }) {
 
   if (!editing) {
     const isEmpty = value === '' || value == null;
+    const text = isEmpty ? '—' : String(value);
     return (
-      <span
-        onClick={(e) => { e.stopPropagation(); setEditing(true); setOpen(dropdownAvailable); }}
-        style={{
-          display: 'block', cursor: 'text', minHeight: '1em',
-          padding: '1px 2px',
-          color: isEmpty ? 'var(--color-text-muted)' : 'inherit',
-        }}
-        title="Click to edit"
-      >
-        {isEmpty ? '—' : String(value)}
-      </span>
+      <>
+        <span
+          ref={displayRef}
+          onClick={(e) => { e.stopPropagation(); setEditing(true); setOpen(dropdownAvailable); }}
+          style={{
+            // `white-space: pre` keeps Alt+Enter newlines on their own
+            // line (so the row grows vertically to fit) while still
+            // clipping anything wider than the column.
+            display: 'block', cursor: 'text', minHeight: '1em',
+            padding: '1px 2px', whiteSpace: 'pre', overflow: 'hidden',
+            color: isEmpty ? 'var(--color-text-muted)' : 'inherit',
+          }}
+          title="Click to edit"
+        >{text}</span>
+        <CellHoverPopover anchorRef={displayRef} value={text} enabled={!isEmpty} />
+      </>
     );
   }
   return (
     <div ref={wrapRef} style={{ position: 'relative' }} onClick={(e) => e.stopPropagation()}>
-      <input
+      <textarea
+        ref={textareaRef}
         autoFocus
-        type="text"
+        rows={1}
         value={draft}
         onChange={(e) => { setDraft(e.target.value); setOpen(true); setHoverIdx(0); }}
         onFocus={() => { if (dropdownAvailable) setOpen(true); }}
@@ -774,10 +857,22 @@ function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel }) {
             if (e.key === 'ArrowDown') { e.preventDefault(); setHoverIdx(i => (i + 1) % matches.length); return; }
             if (e.key === 'ArrowUp')   { e.preventDefault(); setHoverIdx(i => (i - 1 + matches.length) % matches.length); return; }
             if (e.key === 'Tab')       { e.preventDefault(); pickMatch(matches[hoverIdx] || matches[0]); return; }
-            if (e.key === 'Enter')     { e.preventDefault(); pickMatch(matches[hoverIdx] || matches[0]); return; }
+            if (e.key === 'Enter' && !(e.altKey || e.shiftKey)) {
+              e.preventDefault();
+              pickMatch(matches[hoverIdx] || matches[0]);
+              return;
+            }
             if (e.key === 'Escape')    { e.preventDefault(); setDraft(value ?? ''); setEditing(false); setOpen(false); return; }
           } else {
-            if (e.key === 'Enter')  { e.preventDefault(); e.currentTarget.blur(); }
+            // Alt+Enter / Shift+Enter inserts a newline (Excel
+            // convention) — let the textarea handle it natively.
+            // Plain Enter commits and exits edit mode.
+            if (e.key === 'Enter' && !(e.altKey || e.shiftKey)) {
+              e.preventDefault();
+              e.currentTarget.blur();
+              return;
+            }
+            if (e.key === 'Tab')    { e.preventDefault(); e.currentTarget.blur(); return; }
             if (e.key === 'Escape') { setDraft(value ?? ''); setEditing(false); }
           }
         }}
@@ -786,7 +881,8 @@ function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel }) {
           border: '1px solid var(--color-accent)', borderRadius: 3,
           padding: '1px 4px',
           fontSize: 'inherit', fontFamily: 'inherit', color: 'var(--color-text)',
-          background: '#fff',
+          background: '#fff', resize: 'none', overflow: 'hidden',
+          lineHeight: 1.3,
         }}
       />
       {open && matches.length > 0 && createPortal(
