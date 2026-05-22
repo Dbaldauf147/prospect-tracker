@@ -1723,6 +1723,18 @@ export function PricingView({ settings } = {}) {
       });
       setOverrides({});
       setActiveOption(parsed.options[0]?.optionNumber ?? null);
+      // Seed the Alternative Fee schedule for each option from the
+      // workbook. The parser returns alt-fee rows that lived in the
+      // sheet's Alternative Fee Structure table; pad to 9 rows so the
+      // displayed grid still feels like the Excel template.
+      const seeded = {};
+      for (const opt of parsed.options) {
+        if (!Array.isArray(opt.altFees) || opt.altFees.length === 0) continue;
+        const rows = opt.altFees.map(r => ({ ...r }));
+        while (rows.length < 9) rows.push({ altItem: '', type: '', fee: null, unit: '', unitCount: 1, startMonth: 1 });
+        seeded[opt.optionNumber] = rows;
+      }
+      setAltFees(seeded);
     } catch (err) {
       setError(err?.message || 'Failed to parse file.');
     }
