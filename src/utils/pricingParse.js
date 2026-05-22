@@ -222,19 +222,20 @@ function parseOptionSheet(sheet, sheetName) {
     const stop = endIdx === -1 ? rows.length : endIdx;
     // Find every header row. CTS section headers must sit inside the
     // bounded Delivery-Team-Inputs → Cost-Summary range; the
-    // Alternative Fee table is allowed anywhere below the metadata
-    // block — some SIAs park it below Cost Summary, so we keep
-    // scanning past `stop` for alt-fee headers only. Both kinds share
+    // Alternative Fee table is allowed anywhere on the sheet — some
+    // SIAs put it above the metadata block (e.g. a "Fee Development"
+    // layout at the very top) and others park it below Cost Summary,
+    // so we scan the full sheet for alt-fee headers. Both kinds share
     // the same "row index → next-row-index" segmentation so each
     // block's items don't bleed into the next.
     const headerIdxs = [];
     const altFeeHeaderIdxs = new Set();
-    for (let i = startIdx; i < rows.length; i++) {
+    for (let i = 0; i < rows.length; i++) {
       const row = rows[i] || [];
       if (isAltFeeHeaderRow(row)) {
         headerIdxs.push(i);
         altFeeHeaderIdxs.add(i);
-      } else if (i < stop && isHeaderRow(row)) {
+      } else if (i >= startIdx && i < stop && isHeaderRow(row)) {
         headerIdxs.push(i);
       }
     }
