@@ -370,13 +370,13 @@ export function useOppsRecords(userId) {
     async function loadFromIndexedDB() {
       try { const data = await loadOppsFromCache(); return data?.records || null; } catch { return null; }
     }
-    function loadFromLocalStorage() {
-      try { const cache = JSON.parse(localStorage.getItem('opps-cache')); return cache?.records || null; } catch { return null; }
-    }
     async function loadFromFirestore() {
+      // Opps 2 is the canonical store now — fall back to its
+      // Firestore doc when the local IDB cache is empty (e.g. fresh
+      // browser, never opened Opps 2 here yet).
       if (!userId) return null;
       try {
-        const ref = doc(db, 'oppsData', userId);
+        const ref = doc(db, 'opps2Data', userId);
         const snap = await getDoc(ref);
         if (!snap.exists()) return null;
         const raw = snap.data();
@@ -387,7 +387,6 @@ export function useOppsRecords(userId) {
     }
     (async () => {
       let recs = await loadFromIndexedDB();
-      if (!recs || recs.length === 0) recs = loadFromLocalStorage();
       if (!recs || recs.length === 0) recs = await loadFromFirestore();
       if (!cancelled && recs && recs.length > 0) setRecords(recs);
     })();

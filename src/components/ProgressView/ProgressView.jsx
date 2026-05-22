@@ -347,24 +347,21 @@ export function ProgressView({ prospects, settings, cdmName }) {
         }
       } catch {}
       if (records.length === 0) {
+        // Opps 2 is the canonical store. Fall back to the Opps 2
+        // Firestore doc when the local IDB cache is empty (e.g. fresh
+        // browser, never opened Opps 2 here yet).
         try {
-          const oppsRef = doc(db, 'oppsData', user.uid);
+          const oppsRef = doc(db, 'opps2Data', user.uid);
           const oppsSnap = await getDoc(oppsRef);
           if (oppsSnap.exists()) {
             const raw = oppsSnap.data();
             const parsed = raw.json ? JSON.parse(raw.json) : raw;
             records = parsed?.records || [];
           }
-        } catch {}
+        } catch { /* ignore */ }
       }
       if (records.length === 0) {
         records = await loadOppsFromIndexedDB();
-      }
-      if (records.length === 0) {
-        try {
-          const cache = JSON.parse(localStorage.getItem('opps-cache'));
-          records = cache?.records || [];
-        } catch {}
       }
       console.log(`Progress: loaded ${records.length} opps records`);
       setOppsRecordsState(records);

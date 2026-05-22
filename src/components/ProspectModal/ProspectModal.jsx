@@ -2605,14 +2605,13 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   useEffect(() => {
     if (isNew) return;
     (async () => {
+      // Opps 2 is the canonical opps store now — loadOppsFromIndexedDB
+      // already routes through the Opps 2 cache, so the legacy
+      // localStorage fallback (which only ever held Opps tab data) is
+      // gone.
       const idbData = await loadOppsFromIndexedDB();
       if (idbData?.records) {
         setOppsCache(idbData.records);
-      } else {
-        try {
-          const cache = JSON.parse(localStorage.getItem('opps-cache'));
-          if (cache?.records) setOppsCache(cache.records);
-        } catch {}
       }
       // Load clients and find CM
       const clientsData = await loadClientsFromIndexedDB();

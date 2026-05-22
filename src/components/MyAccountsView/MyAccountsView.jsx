@@ -1340,16 +1340,13 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         return data?.records || null;
       } catch { return null; }
     }
-    function loadFromLocalStorage() {
-      try {
-        const cache = JSON.parse(localStorage.getItem('opps-cache'));
-        return cache?.records || null;
-      } catch { return null; }
-    }
     async function loadFromFirestore() {
+      // Opps 2 is the canonical store — fall back to its Firestore
+      // doc when local IDB is empty (e.g. fresh browser, never
+      // opened Opps 2 here yet).
       if (!user?.uid) return null;
       try {
-        const ref = doc(db, 'oppsData', user.uid);
+        const ref = doc(db, 'opps2Data', user.uid);
         const snap = await getDoc(ref);
         if (!snap.exists()) return null;
         const raw = snap.data();
@@ -1360,7 +1357,6 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     }
     (async () => {
       let records = await loadFromIndexedDB();
-      if (!records || records.length === 0) records = loadFromLocalStorage();
       if (!records || records.length === 0) records = await loadFromFirestore();
       if (!cancelled && records && records.length > 0) setOppsRecords(records);
     })();
