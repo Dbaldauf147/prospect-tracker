@@ -17,6 +17,8 @@ import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { dbGet, dbPut } from '../../utils/db';
 import { oppDedupKey, OPPS_CACHE_UPDATED_EVENT } from '../../utils/oppsCache';
 import { loadOptionLinks, setOppOptionLink, OPTION_LINKS_EVENT } from '../../utils/pricingOptionLinks';
+import { OPPS_PRICING_SNAPSHOT_EVENT } from '../../utils/oppsPricingSnapshot';
+import { fmtMoneyWhole } from '../../utils/pricingOptionCalc';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { normalizeCompany } from '../../utils/companyNorm';
 import styles from './OppsView2.module.css';
@@ -427,6 +429,196 @@ function ComputedCell({ value }) {
       title="Computed value"
     >
       {isEmpty ? '—' : String(value)}
+    </span>
+  );
+}
+
+// Renders a frozen Pricing → Options snapshot saved onto the opp.
+// Self-contained: doesn't read from Pricing's IndexedDB cache, so it
+// keeps working even after the Pricing tab has been cleared.
+function PricingOptionSnapshotView({ snapshot }) {
+  if (!snapshot) return null;
+  const rows = Array.isArray(snapshot.rows) ? snapshot.rows : [];
+  const yearTotals = Array.isArray(snapshot.yearTotals) ? snapshot.yearTotals : [];
+  const termValues = Array.isArray(snapshot.termValues) ? snapshot.termValues : [];
+  const year1Monthly = Array.isArray(snapshot.year1Monthly) ? snapshot.year1Monthly : [];
+  const termYears = Math.max(1, Number(snapshot.years) || 1);
+  return (
+    <div style={{
+      border: '1px solid var(--color-border)', borderRadius: 6,
+      background: '#fafbfc', padding: '0.65rem 0.75rem',
+    }}>
+      <div style={{
+        display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+        gap: '0.5rem', marginBottom: '0.5rem',
+      }}>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: '0.92rem' }}>{snapshot.name || '(unnamed)'}</div>
+          <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
+            {termYears}-year term · {snapshot.escPct || 0}% escalator
+            {snapshot.savedAt ? ` · saved ${new Date(snapshot.savedAt).toLocaleDateString()}` : ''}
+          </div>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Year 1</div>
+          <div style={{ fontWeight: 700, fontSize: '1rem' }}>{fmtMoneyWhole(snapshot.year1Total || 0)}</div>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem', marginBottom: '0.6rem' }}>
+        <div>
+          <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 2 }}>Year breakdown</div>
+          <table style={{ width: '100%', fontSize: '0.78rem', borderCollapse: 'collapse' }}>
+            <tbody>
+              {Array.from({ length: termYears }, (_, i) => (
+                <tr key={`y-${i}`}>
+                  <td style={{ padding: '2px 4px', color: 'var(--color-text-muted)' }}>Year {i + 1}</td>
+                  <td style={{ padding: '2px 4px', textAlign: 'right' }}>{fmtMoneyWhole(yearTotals[i] || 0)}</td>
+                </tr>
+              ))}
+              <tr style={{ borderTop: '1px solid var(--color-border)' }}>
+                <td style={{ padding: '2px 4px', fontWeight: 600 }}>Total Contract Value</td>
+                <td style={{ padding: '2px 4px', textAlign: 'right', fontWeight: 600 }}>{fmtMoneyWhole(termValues[termYears - 1] || 0)}</td>
+              </tr>
+              {snapshot.setupTotal ? (
+                <tr>
+                  <td style={{ padding: '2px 4px', color: 'var(--color-text-muted)' }}>Setup</td>
+                  <td style={{ padding: '2px 4px', textAlign: 'right' }}>{fmtMoneyWhole(snapshot.setupTotal)}</td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+        <div>
+          <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 2 }}>Year 1 monthly</div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ fontSize: '0.72rem', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  {year1Monthly.map((_, i) => (
+                    <th key={`mh-${i}`} style={{ padding: '2px 4px', color: 'var(--color-text-muted)', fontWeight: 500 }}>M{i + 1}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  {year1Monthly.map((v, i) => (
+                    <td key={`mv-${i}`} style={{ padding: '2px 4px', textAlign: 'right' }}>{fmtMoneyWhole(v)}</td>
+                  ))}
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 2 }}>
+          Fee schedule ({rows.filter(r => r.fee || r.feeSchedule).length} rows)
+        </div>
+        <div style={{ maxHeight: 220, overflowY: 'auto', border: '1px solid var(--color-border-light)', borderRadius: 4 }}>
+          <table style={{ width: '100%', fontSize: '0.74rem', borderCollapse: 'collapse' }}>
+            <thead style={{ position: 'sticky', top: 0, background: '#f1f5f9' }}>
+              <tr>
+                <th style={{ padding: '4px 6px', textAlign: 'left', fontWeight: 600 }}>Fee Schedule</th>
+                <th style={{ padding: '4px 6px', textAlign: 'left', fontWeight: 600 }}>Type</th>
+                <th style={{ padding: '4px 6px', textAlign: 'right', fontWeight: 600 }}>Fee</th>
+                <th style={{ padding: '4px 6px', textAlign: 'left', fontWeight: 600 }}>Unit</th>
+                <th style={{ padding: '4px 6px', textAlign: 'right', fontWeight: 600 }}>Est. Count</th>
+                <th style={{ padding: '4px 6px', textAlign: 'right', fontWeight: 600 }}>Start Month</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.filter(r => r.fee || r.feeSchedule || r.type).map((r, idx) => (
+                <tr key={idx} style={{ borderTop: '1px solid var(--color-border-light)' }}>
+                  <td style={{ padding: '3px 6px' }}>{r.feeSchedule || '—'}</td>
+                  <td style={{ padding: '3px 6px' }}>{r.type || '—'}</td>
+                  <td style={{ padding: '3px 6px', textAlign: 'right' }}>{r.fee || '—'}</td>
+                  <td style={{ padding: '3px 6px' }}>{r.unit || '—'}</td>
+                  <td style={{ padding: '3px 6px', textAlign: 'right' }}>{r.unitCount || '—'}</td>
+                  <td style={{ padding: '3px 6px', textAlign: 'right' }}>{r.startMonth || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Quoted Amount cell. Behaves like a plain editable cell unless the
+// opp has a Pricing-Option snapshot attached — then the value is
+// rendered as a hyperlink that calls `onViewSnapshot` (which the
+// parent wires to the Opp details popup), with a small ✎ icon to
+// switch to inline edit mode so the user can write over the value.
+function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value ?? '');
+  useEffect(() => { if (!editing) setDraft(value ?? ''); }, [value, editing]);
+
+  const commit = () => {
+    setEditing(false);
+    if (draft !== (value ?? '')) onChange?.(draft);
+  };
+  const cancel = () => { setDraft(value ?? ''); setEditing(false); };
+
+  if (editing) {
+    return (
+      <input
+        type="text"
+        autoFocus
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { e.preventDefault(); commit(); }
+          else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+        }}
+        style={{
+          width: '100%', border: '1px solid var(--color-border)',
+          borderRadius: 3, padding: '1px 4px', font: 'inherit',
+          background: '#fff',
+        }}
+      />
+    );
+  }
+  if (!snapshot) {
+    return (
+      <span
+        onClick={(e) => { e.stopPropagation(); setEditing(true); }}
+        style={{
+          display: 'block', cursor: 'text', minHeight: '1em', padding: '1px 2px',
+          color: value ? 'inherit' : 'var(--color-text-muted)',
+        }}
+        title="Click to edit"
+      >{value || '—'}</span>
+    );
+  }
+  // Snapshot attached: value is a hyperlink to the Opp's Pricing
+  // Option detail (rendered inside the Opp details popup), with a
+  // pencil affordance to switch to inline edit.
+  return (
+    <span style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '1px 2px' }}>
+      <a
+        href="#"
+        onClick={(e) => { e.preventDefault(); e.stopPropagation(); onViewSnapshot?.(); }}
+        title={`Year 1 from Pricing Option: ${snapshot.name || '(unnamed)'} — click to view the saved snapshot`}
+        style={{
+          color: '#2563eb', textDecoration: 'underline', cursor: 'pointer',
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          flex: 1,
+        }}
+      >{value || fmtMoneyWhole(snapshot.year1Total || 0) || '—'}</a>
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setEditing(true); }}
+        title="Write over the Quoted Amount"
+        style={{
+          border: 'none', background: 'transparent', cursor: 'pointer',
+          color: '#94a3b8', padding: '0 2px', fontSize: '0.85em', lineHeight: 1,
+        }}
+      >✎</button>
     </span>
   );
 }
@@ -1445,6 +1637,15 @@ function OppInfoModal({
         </div>
 
         <div style={{ overflowY: 'auto', padding: '0.5rem 1rem 0.75rem' }}>
+          {opp._pricingOption && (
+            <div style={{ margin: '0.25rem 0 0.75rem' }}>
+              <div style={{
+                fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.03em',
+                color: 'var(--color-text-muted)', fontWeight: 600, marginBottom: '0.35rem',
+              }}>Pricing Option (saved snapshot)</div>
+              <PricingOptionSnapshotView snapshot={opp._pricingOption} />
+            </div>
+          )}
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
             <tbody>
               {orderedFields.map(h => (
@@ -1917,6 +2118,34 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     return () => window.removeEventListener(OPPS_CACHE_UPDATED_EVENT, onOppsFeed);
   }, [user?.uid]);
 
+  // The Pricing → Options tab writes the snapshot directly into our
+  // IndexedDB cache (so it survives a Pricing tab Clear) — when that
+  // happens, patch the affected row in place. Reading the whole cache
+  // back here would risk clobbering an in-flight cell edit that's only
+  // in component state but not yet flushed to IDB.
+  useEffect(() => {
+    if (!user?.uid) return;
+    function onSnapshotChanged(e) {
+      if (!hydratedRef.current) return;
+      const detail = e?.detail;
+      if (!detail || detail.oppId == null) return;
+      setData(prev => {
+        const records = prev?.records || [];
+        const idx = records.findIndex(r => String(r._id) === String(detail.oppId));
+        if (idx === -1) return prev;
+        const updates = detail.record || {};
+        const merged = { ...records[idx] };
+        if ('_pricingOption' in updates) merged._pricingOption = updates._pricingOption || null;
+        if ('Quoted Amount' in updates) merged['Quoted Amount'] = updates['Quoted Amount'];
+        const next = records.slice();
+        next[idx] = merged;
+        return { ...prev, records: next };
+      });
+    }
+    window.addEventListener(OPPS_PRICING_SNAPSHOT_EVENT, onSnapshotChanged);
+    return () => window.removeEventListener(OPPS_PRICING_SNAPSHOT_EVENT, onSnapshotChanged);
+  }, [user?.uid]);
+
   // Persistence — IndexedDB writes immediately (cheap, survives
   // reload), Firestore writes are debounced 1.5s so a flurry of cell
   // edits collapses into a single round-trip.
@@ -2106,6 +2335,20 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               <PricingOptionCell
                 value={linked}
                 onClear={() => setOppOptionLink(row._id, '')}
+              />
+            );
+          }
+          if (h === 'Quoted Amount') {
+            // When the opp has a Pricing-Option snapshot attached, the
+            // cell renders as a hyperlink that opens the Opp details
+            // popup (where the snapshot detail lives) and exposes a
+            // small ✎ for inline override edits.
+            return (
+              <QuotedAmountCell
+                value={row[h]}
+                snapshot={row._pricingOption || null}
+                onChange={(v) => updateOppField(row._id, h, v)}
+                onViewSnapshot={() => setInfoOppId(row._id)}
               />
             );
           }
