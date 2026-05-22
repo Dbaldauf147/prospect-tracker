@@ -7,7 +7,7 @@ import { COMMISSION_MONTH_NAMES } from '../../utils/commissionsStore';
 // year-agnostic — a pasted "1/1/2026 Revenue" cell lands in the
 // "January Revenue" column regardless of year.
 function buildCanonical() {
-  const cols = ['Name', 'Project Name', 'Comm Start Date', 'Comm End Date', '%'];
+  const cols = ['Name', 'Account Name', 'BFO Name', 'Project Name', 'Comm Start Date', 'Comm End Date', '%'];
   for (const m of COMMISSION_MONTH_NAMES) cols.push(`${m} Revenue`);
   cols.push('FY Revenue');
   for (const m of COMMISSION_MONTH_NAMES) cols.push(m);

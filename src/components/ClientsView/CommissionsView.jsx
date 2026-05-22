@@ -192,13 +192,12 @@ function countFilledCells(row) {
   return n;
 }
 
-// Columns the user fills in by hand on top of the pasted roster. They
-// are never present in a fresh paste from Excel, so the merge has to
-// carry them over from the existing row whenever a re-paste lands on
-// the same project — otherwise pasting refreshed commission data wipes
-// out the Account Name / BFO Name mapping the user already built up.
-// Scope is derived from BFO Name via the Opps cache, but we preserve a
-// stored value too in case one was hand-edited.
+// Columns the user fills in by hand on top of the pasted roster, or
+// that they can now paste in directly. The merge keeps a prior value
+// whenever the incoming paste leaves the cell blank — so re-pasting
+// refreshed commission data without an Account Name / BFO Name column
+// doesn't wipe out the mapping the user already built up. When the
+// incoming paste does provide a value, it wins.
 const USER_MAPPED_KEYS = [ACCOUNT_NAME_KEY, BFO_NAME_KEY, SCOPE_KEY];
 
 // Concatenate existing + newly-pasted commission rows and dedup by
@@ -230,6 +229,9 @@ export function mergeAndDedupCommissions(existing, incoming) {
     if (prior && prior !== row) {
       const merged = { ...row };
       for (const k of USER_MAPPED_KEYS) {
+        const incomingVal = row[k];
+        const incomingHas = incomingVal != null && String(incomingVal).trim() !== '';
+        if (incomingHas) continue;
         const priorVal = prior[k];
         if (priorVal != null && String(priorVal).trim() !== '') {
           merged[k] = priorVal;
@@ -834,7 +836,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
           <div style={{ margin: '0 1.25rem', padding: '1.25rem', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569', textAlign: 'center' }}>
             <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>No commissions yet</div>
             <div style={{ fontSize: '0.78rem' }}>
-              Click <strong>Paste from Excel</strong> to drop in copied commission rows. The popup will map each pasted column (Name, Project Name, monthly revenue, monthly commission…) onto its destination.
+              Click <strong>Paste from Excel</strong> to drop in copied commission rows. The popup will map each pasted column (Name, Account Name, BFO Name, Project Name, monthly revenue, monthly commission…) onto its destination.
             </div>
           </div>
         ) : (
