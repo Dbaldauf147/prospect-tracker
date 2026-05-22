@@ -1,33 +1,14 @@
 // Read helper for opportunities.
 //
 // Opps 2 (`opps2-cache` IndexedDB + `opps2Data` Firestore) is the
-// canonical source going forward. The legacy Opps tab (`opps-cache`,
-// fed from a Google Sheet) is kept as a read-only backup view and
-// continues to additively feed new rows into Opps 2 via the
-// `opps-cache-updated` event so Opps 2 stays current. Every other
-// surface in the app — Daily Success, Progress, My Accounts, Key
-// Contacts, PE Portfolio, Pricing pickers, etc. — now reads from
-// Opps 2 only.
+// canonical store. The legacy Opps tab (`opps-cache`, fed from a
+// Google Sheet) is kept in the sidebar as a read-only backup view of
+// the sheet — it no longer feeds Opps 2 in any way. Opps 2 evolves
+// independently from user edits.
 
 import { dbGet } from './db';
 
 const OPPS2_STORE = 'opps2-cache';
-
-// Dedup key kept around so the Opps 2 view (and the Opps-tab feed
-// inside it) can detect whether an incoming Google-Sheets row is
-// already on the Opps 2 record set. Consumers don't need this — it's
-// only used by the feed logic.
-export function oppDedupKey(r) {
-  if (!r) return '';
-  const bfo = String(r['BFO Link'] || '').trim().toLowerCase();
-  if (bfo && bfo !== '-' && bfo !== '#n/a') return `bfo:${bfo}`;
-  const acct = String(r['Account'] || '').trim().toLowerCase();
-  const year = String(r['Open Year'] || '').trim();
-  const scope = String(r['Scope'] || '').trim().toLowerCase();
-  const start = String(r['Start Date'] || '').trim();
-  if (!acct && !year && !scope && !start) return '';
-  return `acct:${acct}|${year}|${scope}|${start}`;
-}
 
 // Returns the Opps 2 cache (the canonical opps store). Consumers
 // across the app go through this helper so a future re-shape of the
@@ -63,8 +44,3 @@ export function searchOpps(cache, term) {
       .some(k => String(r[k] || '').toLowerCase().includes(t));
   }).slice(0, 25);
 }
-
-// Window event the Opps tab fires after a successful Google-Sheets
-// fetch so the Opps 2 view (when mounted) can additively merge any
-// new rows into its own store.
-export const OPPS_CACHE_UPDATED_EVENT = 'opps-cache-updated';

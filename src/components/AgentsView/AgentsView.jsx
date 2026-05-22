@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
-import { loadOppsFromCache, searchOpps, OPPS_CACHE_UPDATED_EVENT } from '../../utils/oppsCache';
+import { loadOppsFromCache, searchOpps } from '../../utils/oppsCache';
 import { dbPut } from '../../utils/db';
 import { getEffectiveServiceMetadata } from '../../data/serviceCatalog';
 import styles from './AgentsView.module.css';
@@ -521,15 +521,6 @@ export function AgentsView({ prospects = [], settings }) {
       setActivityRefreshProgress(prev => ({ ...prev, opps: records.length }));
       await dbPut(OPPS_DB_STORE, result, 'data');
       setOppsCache(result);
-      // Mirror the Opps view's behaviour: fire the cache-updated
-      // event so the Opps 2 feed (when Opps 2 is mounted) picks up
-      // any new rows. Without this, refreshing activity from this
-      // tab leaves Opps 2 stale until the user opens the Opps tab.
-      try {
-        window.dispatchEvent(new CustomEvent(OPPS_CACHE_UPDATED_EVENT, {
-          detail: { fetchedAt: result.fetchedAt, source: 'agents' },
-        }));
-      } catch { /* ignore */ }
       return result;
     }
 
