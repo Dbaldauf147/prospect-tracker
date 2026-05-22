@@ -2684,7 +2684,33 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         // filled in directly. getFilterValue exposes the raw text to
         // the per-column filter so search keeps working on the value
         // the user sees, not the rendered <input>.
-        getFilterValue: (row) => row[h] ?? '',
+        getFilterValue: (row) => {
+          // Computed columns derive from sibling fields rather than a
+          // stored value — surface the live computation so the search
+          // box matches the number the user sees in the cell.
+          if (h === 'Call In') {
+            const n = daysFromToday(row['Follow Up']);
+            return n == null ? '' : String(n);
+          }
+          if (h === 'Last Spoke') {
+            const n = businessDaysSince(row['Last Client Heard From Us']);
+            return n == null ? '' : String(n);
+          }
+          return row[h] ?? '';
+        },
+        // Computed columns also need their own getSortValue, otherwise
+        // DataTable sorts by the stored row[h] (empty for new rows /
+        // stale for rows imported from the Opps tab) and the displayed
+        // order — including negative "overdue" days — doesn't match
+        // what the cells actually show.
+        getSortValue: (h === 'Call In' || h === 'Last Spoke')
+          ? (row) => {
+              const n = h === 'Call In'
+                ? daysFromToday(row['Follow Up'])
+                : businessDaysSince(row['Last Client Heard From Us']);
+              return n == null ? null : n;
+            }
+          : undefined,
         render: (row) => {
           if (h === 'Call In') {
             // Days until the Follow Up date (negative = overdue).
