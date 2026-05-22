@@ -71,22 +71,27 @@ function isHeaderRow(row) {
   return hasType && hasCts;
 }
 
-// The Alternative Fee Structure table has its own header row — the
-// first cell says "Alternative Fee Structure/Schedule" and the row
-// carries Type / Fee / Unit / Unit Count / Fee Start Month columns
-// (but no CTS). Detect it so we can pull those rows into the alt-fee
-// schedule on the pricing page instead of treating them as line items.
+// The Alternative Fee Structure table has its own header row shape —
+// no CTS column, but Type / Fee / Unit / Unit Count / Fee Start Month
+// instead. We accept two flavors: the strict SIA template ("Alternative
+// Fee Structure/Schedule" label + Fee + Unit/Unit Count), and a looser
+// pattern (Type + Fee + Unit or Unit Count, no CTS) so workbooks that
+// don't repeat the literal label on the header row still parse.
 function isAltFeeHeaderRow(row) {
   if (!Array.isArray(row)) return false;
-  let hasAltLabel = false, hasFeeCol = false, hasUnitCol = false;
+  let hasAltLabel = false, hasType = false, hasFeeCol = false, hasUnitCol = false, hasCts = false;
   for (const c of row) {
     const s = cellStr(c);
     if (!s) continue;
     if (/alternative\s*fee\s*structure/i.test(s)) hasAltLabel = true;
+    if (/^type$/i.test(s)) hasType = true;
     if (/^fee$/i.test(s)) hasFeeCol = true;
     if (/^unit$/i.test(s) || /unit\s*count/i.test(s)) hasUnitCol = true;
+    if (/^cts$|cost\s*to\s*serve/i.test(s)) hasCts = true;
   }
-  return hasAltLabel && hasFeeCol && hasUnitCol;
+  if (hasCts) return false;
+  if (hasAltLabel && hasFeeCol) return true;
+  return hasType && hasFeeCol && hasUnitCol;
 }
 
 function classifyColumns(headerRow) {
@@ -215,19 +220,21 @@ function parseOptionSheet(sheet, sheetName) {
   const altFees = [];
   {
     const stop = endIdx === -1 ? rows.length : endIdx;
-    // Find every header row inside the bounded range. Two kinds:
-    // regular CTS sections, and the Alternative Fee table (which has
-    // its own header shape — no CTS column). They share the same
-    // "row index → next-row-index" segmentation so each block's
-    // items don't bleed into the next.
+    // Find every header row. CTS section headers must sit inside the
+    // bounded Delivery-Team-Inputs → Cost-Summary range; the
+    // Alternative Fee table is allowed anywhere below the metadata
+    // block — some SIAs park it below Cost Summary, so we keep
+    // scanning past `stop` for alt-fee headers only. Both kinds share
+    // the same "row index → next-row-index" segmentation so each
+    // block's items don't bleed into the next.
     const headerIdxs = [];
     const altFeeHeaderIdxs = new Set();
-    for (let i = startIdx; i < stop; i++) {
+    for (let i = startIdx; i < rows.length; i++) {
       const row = rows[i] || [];
       if (isAltFeeHeaderRow(row)) {
         headerIdxs.push(i);
         altFeeHeaderIdxs.add(i);
-      } else if (isHeaderRow(row)) {
+      } else if (i < stop && isHeaderRow(row)) {
         headerIdxs.push(i);
       }
     }
@@ -270,6 +277,10 @@ function parseOptionSheet(sheet, sheetName) {
       }
       const headerRow = (rows[idx] || []).map(cellStr);
       const cols = classifyColumns(headerRow);
+      // CTS sections never read past Cost Summary, even if the next
+      // boundary in `headerIdxs` is an alt-fee header that lives
+      // below it.
+      const ctsSectionEnd = Math.min(nextHeaderIdx, stop);
 
       // Section title: nearest non-blank single-label row above the
       // header (e.g. "SB Services (CTS w/recommended GM%)"), bounded
@@ -294,7 +305,7 @@ function parseOptionSheet(sheet, sheetName) {
       }
 
       const items = [];
-      for (let r = idx + 1; r < nextHeaderIdx; r++) {
+      for (let r = idx + 1; r < ctsSectionEnd; r++) {
         const row = rows[r] || [];
         if (rowIsBlank(row)) continue;
         const desc = cellStr(row[cols.description ?? 0]);
