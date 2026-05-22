@@ -186,9 +186,14 @@
   cursor: pointer;
 }
 
-.clearFiltersBtn:hover {
+.clearFiltersBtn:hover:not(:disabled) {
   color: var(--color-text);
   border-color: var(--color-accent);
+}
+
+.clearFiltersBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .servicesWrap {
