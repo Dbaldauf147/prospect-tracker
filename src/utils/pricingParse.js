@@ -241,7 +241,11 @@ function parseOptionSheet(sheet, sheetName) {
 
     for (let hi = 0; hi < headerIdxs.length; hi++) {
       const idx = headerIdxs[hi];
-      const nextHeaderIdx = headerIdxs[hi + 1] ?? stop;
+      // Default the segment end to the end of the sheet — alt-fee
+      // tables sometimes live below Cost Summary, and `stop` would
+      // truncate the scan to zero rows in that case. CTS sections
+      // cap themselves at `stop` below.
+      const nextHeaderIdx = headerIdxs[hi + 1] ?? rows.length;
       if (altFeeHeaderIdxs.has(idx)) {
         // Alt-fee table — collect into altFees[] and continue. We
         // skip the rest of the CTS-section logic for this block since
