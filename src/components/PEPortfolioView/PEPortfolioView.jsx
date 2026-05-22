@@ -38,11 +38,11 @@ function companiesMatch(a, b) {
   return false;
 }
 
-// Matches the fallback chain MyAccountsView uses: version-agnostic
-// IndexedDB open (so a settings-backups VersionError doesn't wipe us
-// out), then localStorage, then the user's Firestore oppsData doc.
-// Without the Firestore tier this view was showing "No Opps data loaded"
-// even when the other tabs had synced fine from Firestore.
+// Reads Opps 2 — the canonical opps store. Local IndexedDB first for
+// speed; falls back to the user's Firestore `opps2Data` doc when the
+// local cache is empty (e.g. fresh browser, never opened Opps 2 here
+// yet) so this view doesn't show "No Opps data loaded" right after
+// sign-in on a new machine.
 function useOppsRecords(userId) {
   const [records, setRecords] = useState([]);
   useEffect(() => {
@@ -53,16 +53,10 @@ function useOppsRecords(userId) {
         return data?.records || null;
       } catch { return null; }
     }
-    function loadFromLocalStorage() {
-      try {
-        const cache = JSON.parse(localStorage.getItem('opps-cache'));
-        return cache?.records || null;
-      } catch { return null; }
-    }
     async function loadFromFirestore() {
       if (!userId) return null;
       try {
-        const ref = doc(db, 'oppsData', userId);
+        const ref = doc(db, 'opps2Data', userId);
         const snap = await getDoc(ref);
         if (!snap.exists()) return null;
         const raw = snap.data();
@@ -73,7 +67,6 @@ function useOppsRecords(userId) {
     }
     (async () => {
       let recs = await loadFromIndexedDB();
-      if (!recs || recs.length === 0) recs = loadFromLocalStorage();
       if (!recs || recs.length === 0) recs = await loadFromFirestore();
       if (!cancelled && recs && recs.length > 0) setRecords(recs);
     })();
