@@ -8,6 +8,7 @@ import {
   Tooltip, Legend, ResponsiveContainer, LabelList, Cell,
 } from 'recharts';
 import { dbGet } from '../../utils/db';
+import { loadCommissions, COMMISSION_MONTH_NAMES } from '../../utils/commissionsStore';
 import styles from './YOYView.module.css';
 
 const OPPS_STORE = 'opps-cache';
@@ -90,6 +91,21 @@ function fmtMoneyFull(n) {
 export function YOYView() {
   const [opps, setOpps] = useState(null);
   const [target, setTarget] = useState(DEFAULT_ANNUAL_TARGET);
+  const [commissions, setCommissions] = useState(() => loadCommissions().data);
+  useEffect(() => {
+    function onStorage(e) {
+      if (!e || e.key === 'commissions-list-override') {
+        setCommissions(loadCommissions().data);
+      }
+    }
+    function onFocus() { setCommissions(loadCommissions().data); }
+    window.addEventListener('storage', onStorage);
+    window.addEventListener('focus', onFocus);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -623,6 +639,41 @@ export function YOYView() {
 
   const hasOpps = records.length > 0;
 
+  // Commissions — bucket every row from the Commissions tab by the
+  // calendar year of its Comm Start Date, summing the 12 monthly
+  // commission cells. Ignored rows (the per-row Ignore toggle on the
+  // Commissions tab) are dropped so a row parked for visual mute also
+  // disappears from the YOY total. Years between the earliest and the
+  // latest are kept even if blank, so a missing year shows as a $0 bar
+  // instead of a gap.
+  const commissionsData = useMemo(() => {
+    const byYear = new Map();
+    for (const row of (commissions || [])) {
+      if (row?.__ignored) continue;
+      const ts = Date.parse(row?.['Comm Start Date']);
+      if (Number.isNaN(ts)) continue;
+      const y = new Date(ts).getFullYear();
+      if (!Number.isFinite(y) || y < 1900 || y > 2100) continue;
+      let total = 0;
+      let any = false;
+      for (const m of COMMISSION_MONTH_NAMES) {
+        const v = parseMoney(row[m]);
+        if (typeof v === 'number') { total += v; any = true; }
+      }
+      if (!any) continue;
+      byYear.set(y, (byYear.get(y) || 0) + total);
+    }
+    if (byYear.size === 0) return [];
+    const minY = Math.min(...byYear.keys());
+    const maxY = Math.max(...byYear.keys());
+    const rows = [];
+    for (let y = minY; y <= maxY; y++) {
+      rows.push({ year: String(y), total: byYear.get(y) || 0 });
+    }
+    return rows;
+  }, [commissions]);
+  const hasCommissions = (commissions || []).length > 0;
+
   // Per-chart underlying records. Each entry mirrors the filter used by
   // the matching useMemo above so the downloaded Excel rows tie back to
   // the chart values.
@@ -924,6 +975,16 @@ export function YOYView() {
     appendSheet(wb, 'Contributing Opps', contributingRecords.annualSales);
     XLSX.writeFile(wb, `yoy-annual-sales-${todayStamp()}.xlsx`);
   }
+  function downloadCommissions() {
+    const summary = commissionsData.map(r => ({
+      Year: r.year,
+      'Total Commissions ($)': round0(r.total),
+    }));
+    const wb = XLSX.utils.book_new();
+    appendSheet(wb, 'Commissions by Year', summary);
+    XLSX.writeFile(wb, `yoy-commissions-${todayStamp()}.xlsx`);
+  }
+
   function downloadDealSize() {
     const summary = dealSizeData.map(r => ({
       Year: r.year,
@@ -964,6 +1025,9 @@ export function YOYView() {
           <TopAccountsCard data={topAccountsData} hasOpps={hasOpps} onDownload={downloadTopAccounts} />
           <AnnualSalesCard data={annualSalesData} hasOpps={hasOpps} onDownload={downloadAnnualSales} />
           <DealSizeCard data={dealSizeData} hasOpps={hasOpps} onDownload={downloadDealSize} />
+        </div>
+        <div className={styles.row}>
+          <CommissionsCard data={commissionsData} hasCommissions={hasCommissions} onDownload={downloadCommissions} />
         </div>
       </div>
     </div>
@@ -1505,6 +1569,39 @@ function DealSizeCard({ data, hasOpps, onDownload }) {
               <LabelList dataKey="dealSize" position="bottom" style={{ fontSize: 10, fontWeight: 600, fill: '#1d4ed8' }} formatter={(v) => fmtMoneyLabel(v)} />
             </Line>
           </ComposedChart>
+        </ResponsiveContainer>
+      )}
+    </div>
+  );
+}
+
+function CommissionsCard({ data, hasCommissions, onDownload }) {
+  return (
+    <div className={styles.chartCard}>
+      <ChartHeader title="Commissions" onDownload={onDownload} canDownload={hasCommissions && data.length > 0} />
+      {!hasCommissions ? (
+        <div className={styles.empty}>No commissions yet — paste a roster on the Clients › Commissions tab.</div>
+      ) : data.length === 0 ? (
+        <div className={styles.empty}>No commissions with a Comm Start Date.</div>
+      ) : (
+        <ResponsiveContainer width="100%" height={320}>
+          <BarChart data={data} margin={{ top: 22, right: 8, left: 16, bottom: 4 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
+            <XAxis dataKey="year" tick={{ fontSize: 12 }} />
+            <YAxis
+              tick={{ fontSize: 12 }}
+              tickFormatter={(v) => fmtMoneyShort(v)}
+            />
+            <Tooltip formatter={(v, name) => [fmtMoneyFull(v), name]} />
+            <Bar dataKey="total" name="Commissions" fill="#3b82f6" isAnimationActive={false}>
+              <LabelList
+                dataKey="total"
+                position="top"
+                style={{ fontSize: 11, fontWeight: 600, fill: '#1f2937' }}
+                formatter={(v) => fmtMoneyFull(v)}
+              />
+            </Bar>
+          </BarChart>
         </ResponsiveContainer>
       )}
     </div>
