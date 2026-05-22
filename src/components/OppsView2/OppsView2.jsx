@@ -38,8 +38,18 @@ async function loadOpps2Cache() {
   catch (err) { console.error('opps2: IndexedDB load failed', err); return null; }
 }
 
+// Stamp every save with a wall-clock timestamp so hydration can pick
+// the strictly newer source between IDB and Firestore. Without this,
+// a stale Firestore doc (e.g. when a debounced save was cancelled by
+// an unmount, the doc grew past the 1 MB Firestore limit and the
+// write failed silently, or the network was offline) would clobber a
+// fresh local IDB cache.
+function stampUpdatedAt(data) {
+  return { ...(data || {}), _updatedAt: Date.now() };
+}
+
 async function saveOpps2Cache(data) {
-  try { await dbPut(OPPS2_STORE, data, OPPS2_CACHE_KEY); }
+  try { await dbPut(OPPS2_STORE, stampUpdatedAt(data), OPPS2_CACHE_KEY); }
   catch (err) { console.error('opps2: IndexedDB save failed', err); }
 }
 
@@ -49,17 +59,40 @@ async function loadOpps2FromFirestore(userId) {
     const snap = await getDoc(ref);
     if (snap.exists()) {
       const raw = snap.data();
-      if (raw?.json) return JSON.parse(raw.json);
+      if (raw?.json) {
+        const parsed = JSON.parse(raw.json);
+        // Lift the doc's stored updatedAt onto the payload so the
+        // hydration timestamp compare works even when the json blob
+        // predates the _updatedAt stamp inside it.
+        if (parsed && parsed._updatedAt == null && raw.updatedAt) {
+          const t = Date.parse(raw.updatedAt);
+          if (Number.isFinite(t)) parsed._updatedAt = t;
+        }
+        return parsed;
+      }
     }
   } catch (err) { console.error('opps2: Firestore load failed', err); }
   return null;
 }
 
+// Throws when the save fails so callers (e.g. the Import button) can
+// surface the failure instead of silently leaving stale data behind.
+// Firestore caps a single document at 1 MB — when Opps 2 grows past
+// that we want the user to know rather than discover it later when
+// data appears to vanish.
 async function saveOpps2ToFirestore(userId, data) {
-  try {
-    const ref = doc(db, OPPS2_FIRESTORE_COLLECTION, userId);
-    await setDoc(ref, { json: JSON.stringify(data), updatedAt: new Date().toISOString() });
-  } catch (err) { console.error('opps2: Firestore save failed', err); }
+  const stamped = stampUpdatedAt(data);
+  const json = JSON.stringify(stamped);
+  const ref = doc(db, OPPS2_FIRESTORE_COLLECTION, userId);
+  await setDoc(ref, { json, updatedAt: new Date(stamped._updatedAt).toISOString() });
+}
+
+// Non-throwing wrapper for the auto-save / unmount / beforeunload
+// callers that don't have a UI surface for failures — they just want
+// best-effort durability and a console error on failure.
+async function trySaveOpps2ToFirestore(userId, data) {
+  try { await saveOpps2ToFirestore(userId, data); }
+  catch (err) { console.error('opps2: Firestore save failed', err); }
 }
 
 // Default column set, seeded so the table has columns to show / sort /
@@ -2291,11 +2324,19 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         firestoreSaveTimerRef.current = null;
       }
       await saveOpps2Cache(nextState);
-      if (user?.uid) await saveOpps2ToFirestore(user.uid, nextState);
+      let firestoreWarning = '';
+      if (user?.uid) {
+        try {
+          await saveOpps2ToFirestore(user.uid, nextState);
+        } catch (err) {
+          console.error('Import from Opps tab: Firestore save failed:', err);
+          firestoreWarning = `\n\nWarning: cross-device sync failed (${err?.message || err}). Rows are safe on this device — hydration now picks the newer of IndexedDB vs Firestore, so a refresh here will keep them.`;
+        }
+      }
       window.alert(
         `Imported ${additions.length} row${additions.length === 1 ? '' : 's'} ` +
         `from the Opps tab. Skipped ${skippedDuplicate} already on Opps 2, ` +
-        `${skippedNoOpenYear} with no Open Year, ${skippedNoAccount} with no Account/BFO Link.`
+        `${skippedNoOpenYear} with no Open Year, ${skippedNoAccount} with no Account/BFO Link.${firestoreWarning}`
       );
     } catch (err) {
       console.error('Import from Opps tab failed:', err);
@@ -2412,7 +2453,23 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         loadOpps2Cache(),
       ]);
       if (cancelled) return;
-      if (fromFs && (Array.isArray(fromFs.records) || Array.isArray(fromFs.headers))) {
+      // Pick the strictly newer of Firestore vs IndexedDB so writes
+      // that didn't make it round-trip (a debounce cancelled by
+      // unmount, network glitch, Firestore 1 MB doc size cap, expired
+      // auth) don't clobber a fresh local cache on the next load.
+      // When both are present, compare _updatedAt and pick the newer;
+      // when only one has data, use it directly.
+      const fsHas = fromFs && (Array.isArray(fromFs.records) || Array.isArray(fromFs.headers));
+      const idbHas = fromIdb && (Array.isArray(fromIdb.records) || Array.isArray(fromIdb.headers));
+      const fsTs = Number(fromFs?._updatedAt) || 0;
+      const idbTs = Number(fromIdb?._updatedAt) || 0;
+      const preferIdb = idbHas && (!fsHas || idbTs > fsTs);
+      if (preferIdb) {
+        next = fromIdb;
+        // Push the IDB copy back to Firestore so the cloud catches up
+        // to whatever local writes never made the round trip.
+        if (user?.uid) trySaveOpps2ToFirestore(user.uid, next);
+      } else if (fsHas) {
         next = fromFs;
         // Reconcile: any record on IDB that already carries a
         // `_pricingOption` snapshot wins over the Firestore version of
@@ -2441,8 +2498,6 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         // Cache the (possibly-reconciled) copy locally for the next
         // reload.
         saveOpps2Cache(next);
-      } else if (fromIdb && (Array.isArray(fromIdb.records) || Array.isArray(fromIdb.headers))) {
-        next = fromIdb;
       }
       if (cancelled) return;
       if (next) {
@@ -2505,7 +2560,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     if (!user?.uid) return;
     if (firestoreSaveTimerRef.current) clearTimeout(firestoreSaveTimerRef.current);
     firestoreSaveTimerRef.current = setTimeout(() => {
-      saveOpps2ToFirestore(user.uid, data);
+      trySaveOpps2ToFirestore(user.uid, data);
     }, 1500);
     return () => {
       if (firestoreSaveTimerRef.current) clearTimeout(firestoreSaveTimerRef.current);
@@ -2522,7 +2577,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       if (firestoreSaveTimerRef.current && latestUidRef.current) {
         clearTimeout(firestoreSaveTimerRef.current);
         firestoreSaveTimerRef.current = null;
-        saveOpps2ToFirestore(latestUidRef.current, latestDataRef.current);
+        trySaveOpps2ToFirestore(latestUidRef.current, latestDataRef.current);
       }
     };
   }, []);
@@ -2535,7 +2590,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       if (firestoreSaveTimerRef.current && user?.uid) {
         clearTimeout(firestoreSaveTimerRef.current);
         firestoreSaveTimerRef.current = null;
-        saveOpps2ToFirestore(user.uid, data);
+        trySaveOpps2ToFirestore(user.uid, data);
       }
     }
     window.addEventListener('beforeunload', flush);
