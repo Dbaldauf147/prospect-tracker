@@ -829,16 +829,27 @@ export function DataTable({
                     {visibleRows.map((row, ri) => {
                       const absoluteIdx = startIdx + ri;
                       const rowKey = row.id ?? absoluteIdx;
+                      // Compute the rowStyle once and apply it to both
+                      // the <tr> AND every <td>: tr-level backgrounds
+                      // can't tint cells whose CSS sets an explicit
+                      // background (e.g. the sticky Account column), so
+                      // mirroring the style onto each cell guarantees
+                      // visible row tints on `.stickyCol` too.
+                      const computedRowStyle = rowStyle ? rowStyle(row) : undefined;
                       const rowTr = (
                         <tr
                           key={expandable ? `r:${rowKey}` : rowKey}
                           ref={ri === 0 ? firstRowRef : undefined}
                           className={rowClassName ? rowClassName(row) : undefined}
                           onClick={onRowClick ? () => onRowClick(row) : undefined}
-                          style={{ ...(onRowClick ? { cursor: 'pointer' } : undefined), ...(rowStyle ? rowStyle(row) : undefined) }}
+                          style={{ ...(onRowClick ? { cursor: 'pointer' } : undefined), ...computedRowStyle }}
                         >
                           {visibleColumns.map(col => (
-                            <td key={col.key} className={col.sticky ? styles.stickyCol : undefined}>
+                            <td
+                              key={col.key}
+                              className={col.sticky ? styles.stickyCol : undefined}
+                              style={computedRowStyle}
+                            >
                               {col.render ? col.render(row) : (row[col.key] ?? '—')}
                             </td>
                           ))}
