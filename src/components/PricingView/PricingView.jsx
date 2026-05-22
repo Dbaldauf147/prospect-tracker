@@ -2207,9 +2207,6 @@ export function PricingView({ settings } = {}) {
       <div className={styles.header}>
         <div className={styles.titleBlock}>
           <h1 className={styles.title}>Pricing</h1>
-          <span className={styles.subtitle}>
-            Upload a fee workbook to pull cost data from its Option 1 / 2 / 3 / 4 sheets and apply markup.
-          </span>
         </div>
 
         <div className={styles.toolbar}>
