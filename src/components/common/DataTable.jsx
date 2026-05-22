@@ -568,17 +568,24 @@ export function DataTable({
     return () => window.removeEventListener('resize', update);
   }, []);
 
+  // Measure row height once on first paint and freeze it. Re-measuring
+  // on every render (or only ratcheting up) breaks scrolling on tables
+  // with variable-height rows: when the user scrolls past a tall row
+  // (e.g. an Opps 2 Next Steps cell with several Alt+Enter lines), that
+  // row becomes the new firstRowRef, the estimate balloons, and the
+  // virtualization spacer math drops the visible window into a "ghost"
+  // zone where no rendered rows live. A single measurement avoids both
+  // that bug and the original oscillation / infinite re-render loop the
+  // ratcheting was meant to dodge — at the cost of slight under- or
+  // over-estimation if the very first row isn't representative.
+  const rowHeightMeasuredRef = useRef(false);
   useEffect(() => {
-    if (firstRowRef.current) {
-      const h = firstRowRef.current.offsetHeight;
-      // One-way ratchet: only grow the row-height estimate, never shrink.
-      // The first visible row changes as the user scrolls (virtualization),
-      // so different rows feed measurements in turn — letting the value
-      // shrink causes oscillation between row heights and an infinite
-      // re-render loop on big lists like GRESB. Settling at the tallest
-      // row seen costs a few empty pixels under shorter rows; that's
-      // far better than the visible "jumping" the loop produces.
-      if (h && h > rowHeight + 0.5) setRowHeight(h);
+    if (rowHeightMeasuredRef.current) return;
+    if (!firstRowRef.current) return;
+    const h = firstRowRef.current.offsetHeight;
+    if (h > 0) {
+      rowHeightMeasuredRef.current = true;
+      if (Math.abs(h - rowHeight) > 0.5) setRowHeight(h);
     }
   });
 
