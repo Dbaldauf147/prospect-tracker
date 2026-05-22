@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import * as XLSX from 'xlsx';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -401,9 +402,36 @@ export function OppsView({ settings, updateSettings } = {}) {
           <h2 className={styles.title}>Opps</h2>
           {data?.fetchedAt && <span className={styles.lastSync}>Last fetched: {new Date(data.fetchedAt).toLocaleString()}</span>}
         </div>
-        <button className={styles.syncBtn} onClick={fetchOpps} disabled={loading}>
-          {loading ? 'Fetching...' : 'Refresh'}
-        </button>
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <button
+            type="button"
+            className={styles.syncBtn}
+            disabled={!filtered?.length}
+            title={filtered?.length ? 'Download every visible row with every Google-Sheet column' : 'No rows to export'}
+            onClick={() => {
+              // Build the export from the Google Sheet's raw headers +
+              // the currently-filtered rows. Skips internal bookkeeping
+              // fields (_id) that aren't in the sheet's header set.
+              const exportHeaders = (headers || []).filter(Boolean);
+              const data = filtered.map(row => {
+                const obj = {};
+                for (const h of exportHeaders) obj[h] = row[h] ?? '';
+                return obj;
+              });
+              const ws = XLSX.utils.json_to_sheet(data, { header: exportHeaders });
+              ws['!cols'] = exportHeaders.map(h => ({ wch: Math.max(String(h).length + 2, 14) }));
+              const wb = XLSX.utils.book_new();
+              XLSX.utils.book_append_sheet(wb, ws, 'Opps');
+              const stamp = new Date().toISOString().slice(0, 10);
+              XLSX.writeFile(wb, `opps-${stamp}.xlsx`);
+            }}
+          >
+            Export to Excel
+          </button>
+          <button className={styles.syncBtn} onClick={fetchOpps} disabled={loading}>
+            {loading ? 'Fetching...' : 'Refresh'}
+          </button>
+        </div>
       </div>
 
       {error && <div className={styles.error}>{error}</div>}
