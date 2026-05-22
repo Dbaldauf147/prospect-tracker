@@ -633,7 +633,10 @@ export function AgentsView({ prospects = [], settings }) {
           record[h] = val;
           if (val && val !== '-' && val !== '#N/A') hasData = true;
         }
-        if (hasData && record['Account']) records.push(record);
+        // Mirror the Opps tab's filter — keep every row with at least
+        // one populated cell. Earlier we required an Account too, which
+        // silently dropped sheet rows whose Account was blank.
+        if (hasData) records.push(record);
       }
       const result = { headers, records, fetchedAt: new Date().toISOString() };
       setActivityRefreshProgress(prev => ({ ...prev, opps: records.length }));

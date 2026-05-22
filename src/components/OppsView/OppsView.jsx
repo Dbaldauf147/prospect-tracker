@@ -138,7 +138,11 @@ export function OppsView({ settings, updateSettings } = {}) {
           record[h] = val;
           if (val && val !== '-' && val !== '#N/A') hasData = true;
         }
-        if (hasData && record['Account']) records.push(record);
+        // Keep every row that has at least one populated cell. The
+        // earlier "must have an Account" guard silently dropped sheet
+        // rows where the Account column was left blank, which the user
+        // could see in the source Google Sheet but not on the Opps tab.
+        if (hasData) records.push(record);
       }
 
       const result = { headers, records, fetchedAt: new Date().toISOString() };
