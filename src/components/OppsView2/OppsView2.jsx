@@ -2590,6 +2590,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   const [dateTo, setDateTo] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [activityFilter, setActivityFilter] = useState('all');
+  const [showHiddenByFilter, setShowHiddenByFilter] = useState(false);
   const servicesDefaultAppliedRef = useRef(false);
   useEffect(() => {
     if (activeTab === 'services' && !servicesDefaultAppliedRef.current) {
@@ -3437,7 +3438,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     return Array.from(set).sort();
   }, [records]);
 
-  const prefiltered = useMemo(() => {
+  // Rows the current Date / Status / Show filters allow. Always
+  // computed so `hiddenByFilterCount` stays accurate even when the
+  // Show-hidden toggle is on.
+  const filteredByActiveFilters = useMemo(() => {
     const fromTs = dateFrom ? Date.parse(dateFrom) : null;
     const toTs = dateTo ? Date.parse(dateTo) + 86399999 : null;
     return records.filter(r => {
@@ -3455,6 +3459,14 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       return true;
     });
   }, [records, dateFrom, dateTo, statusFilter, activityFilter, CLOSED_STAGES]);
+
+  // When the user clicks "Show hidden", bypass the active filters and
+  // surface every row — the filter inputs are left untouched so a
+  // second click returns to the filtered view. Aggregates (stage
+  // chips, service breakdown) follow the same source so the page
+  // reflects whatever the table is showing.
+  const hiddenByFilterCount = records.length - filteredByActiveFilters.length;
+  const prefiltered = showHiddenByFilter ? records : filteredByActiveFilters;
 
   // Global search across every column on each record — see OppsView for
   // the same shape. Trims + lowercases the term so the value the user
@@ -3823,6 +3835,19 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         </label>
         {filtersActive && (
           <button className={styles.clearFiltersBtn} onClick={clearFilters}>Clear filters</button>
+        )}
+        {(filtersActive || showHiddenByFilter) && (
+          <button
+            className={styles.clearFiltersBtn}
+            onClick={() => setShowHiddenByFilter(v => !v)}
+            title={showHiddenByFilter
+              ? 'Re-apply the Date / Status / Show filters above.'
+              : 'Temporarily reveal every row hidden by the current filters without changing the filter inputs.'}
+          >
+            {showHiddenByFilter
+              ? 'Re-apply filters'
+              : `Show hidden${hiddenByFilterCount ? ` (${hiddenByFilterCount})` : ''}`}
+          </button>
         )}
       </div>
 
