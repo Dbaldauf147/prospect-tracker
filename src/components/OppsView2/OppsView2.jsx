@@ -2305,15 +2305,15 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       }
       let nextId = baseRecords.reduce((m, r) => Math.max(m, Number(r?._id) || 0), 0);
       const additions = [];
-      let skippedNoOpenYear = 0;
-      let skippedNoAccount = 0;
       let skippedDuplicate = 0;
+      // Bring everything across — every row the Opps tab cached is fair
+      // game. The Opps cache parser already drops rows with no Account
+      // and no other data, so we don't need a second guard here. Older
+      // versions of this import filtered on Open Year and on having
+      // Account-or-BFO Link, which silently dropped legitimate rows
+      // (e.g. opps still missing an Open Year value) and produced a
+      // smaller Opps 2 dataset than the source Opps tab.
       for (const r of incoming) {
-        const openYear = String(r?.['Open Year'] ?? '').trim();
-        if (!openYear || openYear === '-' || openYear === '#N/A') { skippedNoOpenYear += 1; continue; }
-        const hasAccount = !!String(r?.['Account'] || '').trim();
-        const hasBfo = !!String(r?.['BFO Link'] || '').trim();
-        if (!hasAccount && !hasBfo) { skippedNoAccount += 1; continue; }
         const key = oppDedupKeyForImport(r);
         if (!key || existingKeys.has(key)) { skippedDuplicate += 1; continue; }
         existingKeys.add(key);
@@ -2323,8 +2323,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       if (!additions.length) {
         window.alert(
           `Nothing new to import — every Opps tab row (${incoming.length}) is ` +
-          `already on Opps 2 or was skipped (no Open Year: ${skippedNoOpenYear}, ` +
-          `no Account/BFO: ${skippedNoAccount}, duplicates: ${skippedDuplicate}).`
+          `already on Opps 2 (duplicates skipped: ${skippedDuplicate}).`
         );
         return;
       }
@@ -2362,8 +2361,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       }
       window.alert(
         `Imported ${additions.length} row${additions.length === 1 ? '' : 's'} ` +
-        `from the Opps tab. Skipped ${skippedDuplicate} already on Opps 2, ` +
-        `${skippedNoOpenYear} with no Open Year, ${skippedNoAccount} with no Account/BFO Link.${firestoreWarning}`
+        `from the Opps tab. Skipped ${skippedDuplicate} already on Opps 2.${firestoreWarning}`
       );
     } catch (err) {
       console.error('Import from Opps tab failed:', err);
