@@ -636,7 +636,7 @@ function ContactCell({ value, onChange, account, prospects, updateProspect, hubs
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [customDraft, setCustomDraft] = useState('');
-  const [popPos, setPopPos] = useState({ top: 0, left: 0 });
+  const [popPos, setPopPos] = useState({ top: 0, bottom: null, left: 0, maxHeight: 0, placement: 'below' });
   const wrapRef = useRef(null);
   const popRef = useRef(null);
   const [copied, setCopied] = useState(null); // key of the last button that flashed "Copied!"
@@ -710,10 +710,41 @@ function ContactCell({ value, onChange, account, prospects, updateProspect, hubs
     );
   }, [contactOptions, query]);
 
+  // Anchor the popover next to the cell, flipping above when the row
+  // sits near the bottom of the viewport so a long contact list isn't
+  // cut off. Also caps the popover's overall max height to whatever
+  // vertical space is available on the chosen side; the internal lists
+  // stay capped at their own maxHeights so the user can still scroll
+  // through them individually.
   useLayoutEffect(() => {
     if (!open || !wrapRef.current) return;
     const rect = wrapRef.current.getBoundingClientRect();
-    setPopPos({ top: rect.bottom + 2, left: rect.left });
+    const margin = 8;
+    const gap = 2;
+    const spaceBelow = window.innerHeight - rect.bottom - margin;
+    const spaceAbove = rect.top - margin;
+    // Prefer below — the popover's natural sit — unless there's
+    // meaningfully more room above. The 200px floor on "below" keeps a
+    // close-to-bottom row from flipping needlessly when there's still
+    // some room (the list will scroll internally).
+    const placeBelow = spaceBelow >= 200 || spaceBelow >= spaceAbove;
+    if (placeBelow) {
+      setPopPos({
+        top: rect.bottom + gap,
+        bottom: null,
+        left: rect.left,
+        maxHeight: Math.max(160, spaceBelow),
+        placement: 'below',
+      });
+    } else {
+      setPopPos({
+        top: null,
+        bottom: window.innerHeight - rect.top + gap,
+        left: rect.left,
+        maxHeight: Math.max(160, spaceAbove),
+        placement: 'above',
+      });
+    }
   }, [open]);
 
   useEffect(() => {
@@ -836,8 +867,12 @@ function ContactCell({ value, onChange, account, prospects, updateProspect, hubs
           ref={popRef}
           onMouseDown={(e) => e.stopPropagation()}
           style={{
-            position: 'fixed', top: popPos.top, left: popPos.left,
+            position: 'fixed',
+            ...(popPos.top != null ? { top: popPos.top } : {}),
+            ...(popPos.bottom != null ? { bottom: popPos.bottom } : {}),
+            left: popPos.left,
             zIndex: 9999, width: 380, maxWidth: '92vw',
+            maxHeight: popPos.maxHeight, overflowY: 'auto',
             background: '#fff', border: '1px solid var(--color-border)',
             borderRadius: 4, boxShadow: '0 8px 20px rgba(15, 23, 42, 0.18)',
             fontSize: '0.85rem',
