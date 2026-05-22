@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import * as XLSX from 'xlsx';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, CartesianGrid, ResponsiveContainer } from 'recharts';
 import styles from './PricingView.module.css';
+import { useAuth } from '../../contexts/AuthContext';
 import { parsePricingWorkbook, priceFromCostAndGm } from '../../utils/pricingParse';
 import { dbGet, dbPut, dbDelete } from '../../utils/db';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
@@ -10,6 +11,8 @@ import { PricingConversions } from './PricingConversions';
 import { CompareTab } from './CompareTab';
 import { BrokerFeesTab } from './BrokerFeesTab';
 import { S2CTab } from './S2CTab';
+import { buildPricingOptionSnapshot } from '../../utils/pricingOptionCalc';
+import { setOppPricingSnapshot } from '../../utils/oppsPricingSnapshot';
 import {
   loadOptionLinks,
   setOppOptionLink,
@@ -1200,6 +1203,7 @@ function parsePctInput(s) {
 }
 
 export function PricingView({ settings } = {}) {
+  const { user } = useAuth();
   const solutionsOptions = useMemo(() => {
     const lists = getEffectiveDropdownLists(settings);
     const solutions = lists.find(l => l.key === 'solutions');
@@ -3330,9 +3334,50 @@ export function PricingView({ settings } = {}) {
           <OppPickerModal
             opps={opps2Records}
             optionName={label}
-            onPick={(oppId) => {
-              setOppOptionLink(oppId, label).catch(() => {});
-              setPricingPickerOpen(false);
+            onPick={async (oppId) => {
+              // Convert the workbook's Alt-Fee rows for this option to
+              // the OptionsTab row shape and resolve any auto-computed
+              // fees to concrete numbers, so `buildPricingOptionSnapshot`
+              // produces a self-contained snapshot that survives a
+              // Pricing-tab Clear (or a workbook re-upload).
+              const altRowsForOpt = opt ? (altFees[opt.optionNumber] || []) : [];
+              const rows = altRowsForOpt.map(r => {
+                const manualFee = Number(r.fee);
+                const hasManualFee = r.fee != null && r.fee !== ''
+                  && Number.isFinite(manualFee) && manualFee >= 0;
+                const resolvedFee = hasManualFee ? manualFee : (autoFeePerUnitFor(r) ?? 0);
+                return {
+                  feeSchedule: r.altItem || '',
+                  type: r.type || '',
+                  fee: resolvedFee,
+                  unit: r.unit || '',
+                  unitCount: r.unitCount,
+                  startMonth: r.startMonth,
+                };
+              });
+              const snapshot = buildPricingOptionSnapshot({
+                name: label,
+                years: Math.max(1, Math.round((termMonths || 12) / 12)),
+                escPct: (Number(annualEscalator) || 0) * 100,
+                rows,
+              });
+              try {
+                // Await both writes so the picker doesn't close before
+                // Firestore has the snapshot — otherwise Opps 2's next
+                // hydration can overwrite our IDB write with a pre-write
+                // Firestore copy and the user sees only the link.
+                await setOppOptionLink(oppId, label);
+                await setOppPricingSnapshot(user?.uid, oppId, snapshot);
+                setPricingPickerOpen(false);
+              } catch (err) {
+                console.error('Save to Opp (Pricing): snapshot save failed', err);
+                window.alert(
+                  'Saved the link, but the Pricing snapshot failed to save to Firestore. ' +
+                  'Year 1 fees and the saved details may not appear on the Opp. ' +
+                  'Check your network and try again.\n\n' +
+                  (err?.message || String(err))
+                );
+              }
             }}
             onClose={() => setPricingPickerOpen(false)}
           />
