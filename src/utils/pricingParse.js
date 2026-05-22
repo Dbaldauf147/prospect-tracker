@@ -255,7 +255,12 @@ function parseOptionSheet(sheet, sheetName) {
         const cols = classifyAltFeeColumns(headerRow);
         for (let r = idx + 1; r < nextHeaderIdx; r++) {
           const row = rows[r] || [];
-          if (rowIsBlank(row)) continue;
+          // The first truly-blank row ends the alt-fee table —
+          // anything beyond it belongs to whatever section comes
+          // next on the sheet (Fee Structure Variance, term/TCV
+          // breakdown, etc.) and must not be imported as alt-fee
+          // rows.
+          if (rowIsBlank(row)) break;
           const altItem = cellStr(row[cols.altItem]);
           if (!altItem) continue;
           if (/^enter\s+.+\s+here$/i.test(altItem)) continue;
@@ -265,6 +270,11 @@ function parseOptionSheet(sheet, sheetName) {
           if (END_ANCHOR_RE.test(altItem)) break;
           const typeStr = cols.type !== undefined ? cellStr(row[cols.type]) : '';
           if (/^(description|type|comments?|fee|unit|cts|cost\s*to\s*serve|gm\s*%|individual\s*gm|start\s*month)$/i.test(typeStr)) continue;
+          // Real alt-fee rows always declare a Type ("Setup", "One
+          // Time", "Recurring (monthly)", …). A row with text in
+          // column 0 but no Type is a section title that slipped in
+          // below the table — drop it.
+          if (!typeStr) continue;
           const ucRaw = cols.unitCount !== undefined ? toNumber(row[cols.unitCount]) : null;
           const smRaw = cols.startMonth !== undefined ? toNumber(row[cols.startMonth]) : null;
           altFees.push({
