@@ -1027,6 +1027,11 @@ export function YOYView() {
         </div>
         <div className={styles.row}>
           <CommissionsCard data={commissionsData} hasCommissions={hasCommissions} onDownload={downloadCommissions} />
+          {/* Empty slots keep the Commissions card at one-third row width
+              so it matches the other charts above rather than stretching
+              to the full row. */}
+          <div style={{ flex: '1 1 0' }} aria-hidden="true" />
+          <div style={{ flex: '1 1 0' }} aria-hidden="true" />
         </div>
       </div>
     </div>
