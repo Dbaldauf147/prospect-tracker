@@ -854,10 +854,39 @@ export function AgentsView({ prospects = [], settings }) {
       const bfoCompanyName = bfoCompanyByNorm.get(normalizeCompany(account)) || '';
       // Look up the per-service metadata from the Dropdowns › Services
       // subtab. Scope is the canonical service name; the catalog
-      // supplies Product Line, Type, Region, Class (= BFO Tag), Years,
-      // and Local Project Name. User overrides on the Services tab
-      // win over the seed values.
+      // supplies Product Line, Type, Region, Class (= BFO Tag), and
+      // Local Project Name. User overrides on the Services tab win
+      // over the seed values.
       const svcMeta = getEffectiveServiceMetadata(scope, overrides);
+      const productLine = svcMeta?.productLine || '';
+      const type = svcMeta?.serviceType || '';
+      const region = svcMeta?.region || '';
+      const klass = svcMeta?.bfoTag || '';
+      // Local Project Name picks up the seed / override value. When
+      // the opp's Lead Source is "PE Partner" (the PE-firm referral
+      // bucket), append "#PE PRACTICE" so the BFO opp is tagged into
+      // the PE practice book of business.
+      const baseLpn = svcMeta?.localProjectName || '';
+      const isPePartner = /^pe partner$/i.test(leadSource);
+      const localProjectName = isPePartner
+        ? (baseLpn ? `${baseLpn} #PE PRACTICE` : '#PE PRACTICE')
+        : baseLpn;
+      // Years is fixed: every new BFO opp starts at Year 1. The
+      // catalog's "X years" value represents contract duration, which
+      // BFO doesn't surface in the opp name.
+      const years = 'YEAR1';
+      // Combined Project Name the user pastes into BFO's Project Name
+      // box. Format:
+      //   SB - {ProductLine code} - New - {Type} - {Region} - YEAR1 - {Scope}
+      // {ProductLine code} is the first segment of the Product Line
+      // before " - " (e.g. "SUSUP" from "SUSUP - SUPPLY & SUST
+      // SERVICES"). Falls back to the raw productLine when the code
+      // can't be parsed.
+      const plCode = productLine.includes(' - ')
+        ? productLine.split(' - ')[0].trim()
+        : productLine.trim();
+      const projectNameParts = ['SB', plCode, 'New', type, region, years, scope].filter(Boolean);
+      const projectName = projectNameParts.join(' - ');
       rows.push({
         id: r._id ?? `${account}|${scope}`,
         company: account || '—',
@@ -868,12 +897,13 @@ export function AgentsView({ prospects = [], settings }) {
         stage,
         followUp,
         callIn: callInRaw,
-        productLine: svcMeta?.productLine || '',
-        localProjectName: svcMeta?.localProjectName || '',
-        type: svcMeta?.serviceType || '',
-        region: svcMeta?.region || '',
-        class: svcMeta?.bfoTag || '',
-        years: svcMeta?.years || '',
+        productLine,
+        localProjectName,
+        projectName,
+        type,
+        region,
+        class: klass,
+        years,
       });
     }
     rows.sort((a, b) => a.company.localeCompare(b.company));
@@ -1174,7 +1204,7 @@ export function AgentsView({ prospects = [], settings }) {
         // New BFO Opp prompt — table of qualifying opps the AI assistant
         // should create in BFO. Rendered as a pipe-delimited block so a
         // plain-text paste keeps column alignment in most editors.
-        const header = 'Company | BFO Company Name | Lead Source | Current Customer | Scope | Stage | Product Line | Local Project Name | Type | Region | Class | Years';
+        const header = 'Company | BFO Company Name | Lead Source | Current Customer | Scope | Stage | Project Name | Product Line | Local Project Name | Type | Region | Class | Years';
         const lines = ['BFO Opportunities to Create', header];
         for (const o of newBfoOpps) {
           lines.push([
@@ -1184,6 +1214,7 @@ export function AgentsView({ prospects = [], settings }) {
             o.currentCustomer ? 'Yes' : 'No',
             o.scope,
             o.stage,
+            o.projectName,
             o.productLine,
             o.localProjectName,
             o.type,
@@ -1239,6 +1270,7 @@ export function AgentsView({ prospects = [], settings }) {
                     <th style={{ width: 110 }}>Current Customer</th>
                     <th>Scope</th>
                     <th style={{ width: 110 }}>Stage</th>
+                    <th>Project Name</th>
                     <th>Product Line</th>
                     <th>Local Project Name</th>
                     <th>Type</th>
@@ -1263,6 +1295,7 @@ export function AgentsView({ prospects = [], settings }) {
                       </td>
                       <td className={o.scope && o.scope !== '—' ? '' : styles.muted}>{o.scope || '—'}</td>
                       <td className={o.stage ? '' : styles.muted}>{o.stage || '—'}</td>
+                      <td className={o.projectName ? '' : styles.muted}>{o.projectName || '—'}</td>
                       <td className={o.productLine ? '' : styles.muted}>{o.productLine || '—'}</td>
                       <td className={o.localProjectName ? '' : styles.muted}>{o.localProjectName || '—'}</td>
                       <td className={o.type ? '' : styles.muted}>{o.type || '—'}</td>
