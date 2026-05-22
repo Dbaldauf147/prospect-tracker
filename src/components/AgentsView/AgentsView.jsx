@@ -1295,13 +1295,17 @@ export function AgentsView({ prospects = [], settings }) {
     const records = oppsCache?.records || [];
     if (!records.length) return [];
     // Index BFO Activity by opportunity name so we can quickly check
-    // whether an Opps 2 row has a corresponding open BFO opp.
+    // whether an Opps 2 row has a corresponding open BFO opp. Collapse
+    // runs of whitespace and lower-case so a stray double-space in
+    // either the BFO Link or the Opportunity Name doesn't drop the
+    // match.
+    const normalizeName = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
     const bfoByName = new Map();
     const headers = bfoActivity?.headers || [];
     const oppCol = headers.find(h => /opportunity\s*name/i.test(h));
     if (oppCol) {
       for (const r of (bfoActivity?.rows || [])) {
-        const k = String(r[oppCol] || '').trim().toLowerCase();
+        const k = normalizeName(r[oppCol]);
         if (k && !bfoByName.has(k)) bfoByName.set(k, r);
       }
     }
@@ -1312,19 +1316,22 @@ export function AgentsView({ prospects = [], settings }) {
       if (stage !== 'not sold') continue;
       const bfoOpp = String(r['BFO Link'] || '').trim();
       if (!bfoOpp || bfoOpp === '-' || bfoOpp === '#N/A') continue;
-      const bfoUrl = detectBfoUrl(r);
-      if (!bfoUrl) continue;
-      const key = bfoOpp.toLowerCase();
+      const key = normalizeName(bfoOpp);
       if (seen.has(key)) continue;
       // Only surface opps that still exist on the BFO Activity tab —
       // the prompt is about closing them out in BFO, so a BFO row is
       // required.
       if (bfoByName.size > 0 && !bfoByName.has(key)) continue;
+      // URL is nice-to-have, not a gate: a Not-Sold opp with a
+      // matching BFO Activity row but a missing BFO Address still
+      // surfaces here (with the URL cell flagged red) so the user can
+      // patch the Opps 2 row.
+      const bfoUrl = detectBfoUrl(r);
       const reasonNotSold = String(r['Reason Not Sold'] || '').trim();
       const map = REASON_NOT_SOLD_TO_BFO[reasonNotSold.toLowerCase()] || null;
       seen.add(key);
       rows.push({
-        id: `${key}|${bfoUrl}`,
+        id: `${key}|${bfoUrl || bfoOpp}`,
         name: bfoOpp,
         account: String(r.Account || '').trim(),
         reasonNotSold,
@@ -1398,68 +1405,69 @@ export function AgentsView({ prospects = [], settings }) {
         <h2 className={styles.sectionHeader}>
           Called <span className={styles.sectionCount}>{calledOpps.length}</span>
         </h2>
-        {calledOpps.length === 0 ? (
-          <div className={styles.empty}>No Opps with a phone touch logged in Next Steps and Last Spoke = 0.</div>
-        ) : (
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th>Company</th>
-                <th>BFO Opportunity</th>
-                <th style={{ width: 70 }}>BFO Link</th>
-                <th style={{ width: 70 }}>Type</th>
+        <table className={styles.table}>
+          <thead>
+            <tr>
+              <th>Company</th>
+              <th>BFO Opportunity</th>
+              <th style={{ width: 70 }}>BFO Link</th>
+              <th style={{ width: 70 }}>Type</th>
+            </tr>
+          </thead>
+          <tbody>
+            {calledOpps.length === 0 ? (
+              <tr className={styles.emptyRow}>
+                <td colSpan={4}>No Opps with a phone touch logged in Next Steps and Last Spoke = 0.</td>
               </tr>
-            </thead>
-            <tbody>
-              {calledOpps.map(o => (
-                <tr key={o.id}>
-                  <td className={o.company && o.company !== '—' ? '' : styles.muted}>{o.company || '—'}</td>
-                  <td className={o.bfoOpp ? '' : styles.muted} title={o.nextSteps}>
-                    {o.bfoOpp || '—'}
-                  </td>
-                  <td>
-                    {o.bfoUrl ? (
-                      <a
-                        href={o.bfoUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className={styles.bfoLink}
-                      >Open</a>
-                    ) : (
-                      <span className={styles.muted}>—</span>
-                    )}
-                  </td>
-                  <td>called</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+            ) : calledOpps.map(o => (
+              <tr key={o.id}>
+                <td className={o.company && o.company !== '—' ? '' : styles.muted}>{o.company || '—'}</td>
+                <td className={o.bfoOpp ? '' : styles.muted} title={o.nextSteps}>
+                  {o.bfoOpp || '—'}
+                </td>
+                <td>
+                  {o.bfoUrl ? (
+                    <a
+                      href={o.bfoUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className={styles.bfoLink}
+                    >Open</a>
+                  ) : (
+                    <span className={styles.muted}>—</span>
+                  )}
+                </td>
+                <td>called</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </section>
 
       <section className={styles.section}>
         <h2 className={styles.sectionHeader}>
           Sent emails <span className={styles.sectionCount}>{todaysOutbound.length}</span>
         </h2>
-        {todaysOutbound.length === 0 ? (
-          <div className={styles.empty}>No outbound emails to external recipients today.</div>
-        ) : (
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th style={{ width: 90 }}>Time</th>
-                <th>Subject</th>
-                <th>To (external)</th>
-                <th>Company</th>
-                <th>BFO Opportunity</th>
-                <th style={{ width: 70 }}>BFO Link</th>
-                <th style={{ width: 70 }}>Type</th>
-                <th style={{ width: 130 }}>Status</th>
-                <th style={{ width: 40 }} aria-label="Actions" />
+        <table className={styles.table}>
+          <thead>
+            <tr>
+              <th style={{ width: 90 }}>Time</th>
+              <th>Subject</th>
+              <th>To (external)</th>
+              <th>Company</th>
+              <th>BFO Opportunity</th>
+              <th style={{ width: 70 }}>BFO Link</th>
+              <th style={{ width: 70 }}>Type</th>
+              <th style={{ width: 130 }}>Status</th>
+              <th style={{ width: 40 }} aria-label="Actions" />
+            </tr>
+          </thead>
+          <tbody>
+            {todaysOutbound.length === 0 ? (
+              <tr className={styles.emptyRow}>
+                <td colSpan={9}>No outbound emails to external recipients today.</td>
               </tr>
-            </thead>
-            <tbody>
-              {todaysOutbound.map(e => (
+            ) : todaysOutbound.map(e => (
                 <tr key={e.id}>
                   <td>{fmtTime(e.ts)}</td>
                   <td>{e.subject}</td>
@@ -1510,31 +1518,33 @@ export function AgentsView({ prospects = [], settings }) {
                   </td>
                 </tr>
               ))}
-            </tbody>
-          </table>
-        )}
+          </tbody>
+        </table>
       </section>
 
-      {todaysMeetings.length > 0 && (
-        <section className={styles.section}>
-          <h2 className={styles.sectionHeader}>
-            Meetings <span className={styles.sectionCount}>{todaysMeetings.length}</span>
-          </h2>
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th style={{ width: 130 }}>Time</th>
-                <th>Title</th>
-                <th>Company</th>
-                <th>BFO Opportunity</th>
-                <th style={{ width: 160 }}>Outcome</th>
-                <th>Location</th>
-                <th style={{ width: 40 }} aria-label="Actions" />
+      <section className={styles.section}>
+        <h2 className={styles.sectionHeader}>
+          Meetings <span className={styles.sectionCount}>{todaysMeetings.length}</span>
+        </h2>
+        <table className={styles.table}>
+          <thead>
+            <tr>
+              <th style={{ width: 130 }}>Time</th>
+              <th>Title</th>
+              <th>Company</th>
+              <th>BFO Opportunity</th>
+              <th style={{ width: 160 }}>Outcome</th>
+              <th>Location</th>
+              <th style={{ width: 40 }} aria-label="Actions" />
+            </tr>
+          </thead>
+          <tbody>
+            {todaysMeetings.length === 0 ? (
+              <tr className={styles.emptyRow}>
+                <td colSpan={7}>No meetings on today&rsquo;s calendar.</td>
               </tr>
-            </thead>
-            <tbody>
-              {todaysMeetings.map(m => (
-                <tr key={m.id}>
+            ) : todaysMeetings.map(m => (
+              <tr key={m.id}>
                   <td>{fmtTime(m.ts)}{m.endTs ? ` – ${fmtTime(m.endTs)}` : ''}</td>
                   <td>{m.title}</td>
                   <td className={m.company ? '' : styles.muted}>{m.company || '—'}</td>
@@ -1570,11 +1580,10 @@ export function AgentsView({ prospects = [], settings }) {
                     >✕</button>
                   </td>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
-      )}
+            ))}
+          </tbody>
+        </table>
+      </section>
 
       {(() => {
         // Build the BFO Address block from today's outbound emails AND
@@ -1674,12 +1683,7 @@ export function AgentsView({ prospects = [], settings }) {
               <button type="button" className={styles.aiPromptBtnGhost} onClick={resetNewBfoOppPrompt}>Reset to default</button>
               {newBfoOppCopyFlash && <span className={styles.copyFlash}>{newBfoOppCopyFlash}</span>}
             </div>
-            {newBfoOpps.length === 0 ? (
-              <div className={styles.empty} style={{ marginTop: '0.5rem' }}>
-                No Opps currently match (Stage ≠ Not Started / Not Sold / Sold, BFO Link = &ldquo;-&rdquo;, Call In cell not blank).
-              </div>
-            ) : (
-              <div style={{ marginTop: '0.5rem', overflowX: 'auto' }}>
+            <div style={{ marginTop: '0.5rem', overflowX: 'auto' }}>
               <table className={styles.table}>
                 <thead>
                   <tr>
@@ -1699,7 +1703,11 @@ export function AgentsView({ prospects = [], settings }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {newBfoOpps.map(o => (
+                  {newBfoOpps.length === 0 ? (
+                    <tr className={styles.emptyRow}>
+                      <td colSpan={13}>No Opps currently match (Stage ≠ Not Started / Not Sold / Sold, BFO Link = &ldquo;-&rdquo;, Call In cell not blank).</td>
+                    </tr>
+                  ) : newBfoOpps.map(o => (
                     <tr key={o.id}>
                       <td className={o.company && o.company !== '—' ? '' : styles.muted}>{o.company || '—'}</td>
                       <td className={o.bfoCompanyName ? '' : styles.muted}>{o.bfoCompanyName || '—'}</td>
@@ -1725,8 +1733,7 @@ export function AgentsView({ prospects = [], settings }) {
                   ))}
                 </tbody>
               </table>
-              </div>
-            )}
+            </div>
             <pre className={styles.aiPromptPreview}>{fullPrompt}</pre>
           </section>
         );
@@ -1771,36 +1778,34 @@ export function AgentsView({ prospects = [], settings }) {
               <button type="button" className={styles.aiPromptBtnGhost} onClick={resetCloseDatesPrompt}>Reset to default</button>
               {closeDatesCopyFlash && <span className={styles.copyFlash}>{closeDatesCopyFlash}</span>}
             </div>
-            {closeDateOpps.length === 0 ? (
-              <div className={styles.empty} style={{ marginTop: '0.5rem' }}>
-                No BFO opps currently meet the close-date slip criteria. Confirm the BFO Activity tab has fresh data.
-              </div>
-            ) : (
-              <div style={{ marginTop: '0.5rem', overflowX: 'auto' }}>
-                <table className={styles.table}>
-                  <thead>
-                    <tr>
-                      <th>Opportunity Name</th>
-                      <th style={{ width: 110 }}>Stage</th>
-                      <th style={{ width: 120 }}>Current Close</th>
-                      <th style={{ width: 90 }}>Days Out</th>
-                      <th style={{ width: 130 }}>New Close Date</th>
+            <div style={{ marginTop: '0.5rem', overflowX: 'auto' }}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>Opportunity Name</th>
+                    <th style={{ width: 110 }}>Stage</th>
+                    <th style={{ width: 120 }}>Current Close</th>
+                    <th style={{ width: 90 }}>Days Out</th>
+                    <th style={{ width: 130 }}>New Close Date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {closeDateOpps.length === 0 ? (
+                    <tr className={styles.emptyRow}>
+                      <td colSpan={5}>No BFO opps currently meet the close-date slip criteria. Confirm the BFO Activity tab has fresh data.</td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {closeDateOpps.map(o => (
-                      <tr key={o.id}>
-                        <td>{o.name}</td>
-                        <td>{o.stageLabel || `Stage ${o.stage}`}</td>
-                        <td>{o.currentClose}</td>
-                        <td>{o.daysOut}</td>
-                        <td>{o.newClose}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+                  ) : closeDateOpps.map(o => (
+                    <tr key={o.id}>
+                      <td>{o.name}</td>
+                      <td>{o.stageLabel || `Stage ${o.stage}`}</td>
+                      <td>{o.currentClose}</td>
+                      <td>{o.daysOut}</td>
+                      <td>{o.newClose}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
             <pre className={styles.aiPromptPreview}>{fullPrompt}</pre>
           </section>
         );
@@ -1846,40 +1851,38 @@ export function AgentsView({ prospects = [], settings }) {
               <button type="button" className={styles.aiPromptBtnGhost} onClick={resetAmountUpdatesPrompt}>Reset to default</button>
               {amountUpdatesCopyFlash && <span className={styles.copyFlash}>{amountUpdatesCopyFlash}</span>}
             </div>
-            {amountUpdateOpps.length === 0 ? (
-              <div className={styles.empty} style={{ marginTop: '0.5rem' }}>
-                No discrepancies — every BFO opp matched against the Opps tab has the same amount. Confirm the BFO Activity tab has fresh data if you expected mismatches.
-              </div>
-            ) : (
-              <div style={{ marginTop: '0.5rem', overflowX: 'auto' }}>
-                <table className={styles.table}>
-                  <thead>
-                    <tr>
-                      <th>Opportunity Name</th>
-                      <th>Account</th>
-                      <th style={{ width: 110 }}>Stage</th>
-                      <th style={{ width: 120 }}>BFO Amount</th>
-                      <th style={{ width: 120 }}>Quoted Amount</th>
-                      <th style={{ width: 70 }}>BFO Link</th>
+            <div style={{ marginTop: '0.5rem', overflowX: 'auto' }}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>Opportunity Name</th>
+                    <th>Account</th>
+                    <th style={{ width: 110 }}>Stage</th>
+                    <th style={{ width: 120 }}>BFO Amount</th>
+                    <th style={{ width: 120 }}>Quoted Amount</th>
+                    <th style={{ width: 70 }}>BFO Link</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {amountUpdateOpps.length === 0 ? (
+                    <tr className={styles.emptyRow}>
+                      <td colSpan={6}>No discrepancies — every BFO opp matched against the Opps tab has the same amount. Confirm the BFO Activity tab has fresh data if you expected mismatches.</td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {amountUpdateOpps.map(o => (
-                      <tr key={o.id}>
-                        <td>{o.name}</td>
-                        <td className={o.account ? '' : styles.muted}>{o.account || '—'}</td>
-                        <td className={o.stage ? '' : styles.muted}>{o.stage || '—'}</td>
-                        <td>{fmtMoney(o.bfoAmount)}</td>
-                        <td>{o.quotedAmountFmt}</td>
-                        <td>
-                          <a href={o.bfoUrl} target="_blank" rel="noreferrer" className={styles.bfoLink}>Open</a>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+                  ) : amountUpdateOpps.map(o => (
+                    <tr key={o.id}>
+                      <td>{o.name}</td>
+                      <td className={o.account ? '' : styles.muted}>{o.account || '—'}</td>
+                      <td className={o.stage ? '' : styles.muted}>{o.stage || '—'}</td>
+                      <td>{fmtMoney(o.bfoAmount)}</td>
+                      <td>{o.quotedAmountFmt}</td>
+                      <td>
+                        <a href={o.bfoUrl} target="_blank" rel="noreferrer" className={styles.bfoLink}>Open</a>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
             <pre className={styles.aiPromptPreview}>{fullPrompt}</pre>
           </section>
         );
@@ -1924,40 +1927,38 @@ export function AgentsView({ prospects = [], settings }) {
               <button type="button" className={styles.aiPromptBtnGhost} onClick={resetStageChangePrompt}>Reset to default</button>
               {stageChangeCopyFlash && <span className={styles.copyFlash}>{stageChangeCopyFlash}</span>}
             </div>
-            {stageChangeOpps.length === 0 ? (
-              <div className={styles.empty} style={{ marginTop: '0.5rem' }}>
-                No stage mismatches — every BFO opp matched against the Opps tab is on the BFO stage its Opps 2 Stage maps to.
-              </div>
-            ) : (
-              <div style={{ marginTop: '0.5rem', overflowX: 'auto' }}>
-                <table className={styles.table}>
-                  <thead>
-                    <tr>
-                      <th>Opportunity Name</th>
-                      <th>Account</th>
-                      <th>Opps 2 Stage</th>
-                      <th>BFO Stage (current)</th>
-                      <th>New BFO Stage</th>
-                      <th style={{ width: 70 }}>BFO Link</th>
+            <div style={{ marginTop: '0.5rem', overflowX: 'auto' }}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>Opportunity Name</th>
+                    <th>Account</th>
+                    <th>Opps 2 Stage</th>
+                    <th>BFO Stage (current)</th>
+                    <th>New BFO Stage</th>
+                    <th style={{ width: 70 }}>BFO Link</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {stageChangeOpps.length === 0 ? (
+                    <tr className={styles.emptyRow}>
+                      <td colSpan={6}>No stage mismatches — every BFO opp matched against the Opps tab is on the BFO stage its Opps 2 Stage maps to.</td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {stageChangeOpps.map(o => (
-                      <tr key={o.id}>
-                        <td>{o.name}</td>
-                        <td className={o.account ? '' : styles.muted}>{o.account || '—'}</td>
-                        <td>{o.oppsStage}</td>
-                        <td>{o.bfoStage}</td>
-                        <td>{o.expectedBfoStage}</td>
-                        <td>
-                          <a href={o.bfoUrl} target="_blank" rel="noreferrer" className={styles.bfoLink}>Open</a>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+                  ) : stageChangeOpps.map(o => (
+                    <tr key={o.id}>
+                      <td>{o.name}</td>
+                      <td className={o.account ? '' : styles.muted}>{o.account || '—'}</td>
+                      <td>{o.oppsStage}</td>
+                      <td>{o.bfoStage}</td>
+                      <td>{o.expectedBfoStage}</td>
+                      <td>
+                        <a href={o.bfoUrl} target="_blank" rel="noreferrer" className={styles.bfoLink}>Open</a>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
             <pre className={styles.aiPromptPreview}>{fullPrompt}</pre>
           </section>
         );
@@ -2010,45 +2011,45 @@ export function AgentsView({ prospects = [], settings }) {
               <button type="button" className={styles.aiPromptBtnGhost} onClick={resetCloseNotSoldsPrompt}>Reset to default</button>
               {closeNotSoldsCopyFlash && <span className={styles.copyFlash}>{closeNotSoldsCopyFlash}</span>}
             </div>
-            {closeNotSoldOpps.length === 0 ? (
-              <div className={styles.empty} style={{ marginTop: '0.5rem' }}>
-                No Not-Sold opps with a matching BFO Activity row. Paste fresh BFO Activity data if you expected matches.
+            {closeNotSoldOpps.length > 0 && (
+              <div style={{ marginTop: '0.5rem', fontSize: '0.72rem', color: '#64748B' }}>
+                {readyCount} ready · {unmappedCount} need a mapped Reason Not Sold (excluded from the prompt block below).
               </div>
-            ) : (
-              <>
-                <div style={{ marginTop: '0.5rem', fontSize: '0.72rem', color: '#64748B' }}>
-                  {readyCount} ready · {unmappedCount} need a mapped Reason Not Sold (excluded from the prompt block below).
-                </div>
-                <div style={{ marginTop: '0.5rem', overflowX: 'auto' }}>
-                  <table className={styles.table}>
-                    <thead>
-                      <tr>
-                        <th>Opportunity Name</th>
-                        <th>Account</th>
-                        <th>Reason Not Sold</th>
-                        <th>Status</th>
-                        <th>Reason</th>
-                        <th style={{ width: 70 }}>BFO Link</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {closeNotSoldOpps.map(o => (
-                        <tr key={o.id} style={o.unmapped ? { background: '#FEF3C7' } : undefined}>
-                          <td>{o.name}</td>
-                          <td className={o.account ? '' : styles.muted}>{o.account || '—'}</td>
-                          <td className={o.reasonNotSold ? '' : styles.muted}>{o.reasonNotSold || '—'}</td>
-                          <td className={o.status ? '' : styles.muted}>{o.status || (o.unmapped ? '(unmapped)' : '—')}</td>
-                          <td className={o.reason ? '' : styles.muted}>{o.reason || (o.unmapped ? '(unmapped)' : '—')}</td>
-                          <td>
-                            <a href={o.bfoUrl} target="_blank" rel="noreferrer" className={styles.bfoLink}>Open</a>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </>
             )}
+            <div style={{ marginTop: '0.5rem', overflowX: 'auto' }}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>Opportunity Name</th>
+                    <th>Account</th>
+                    <th>Reason Not Sold</th>
+                    <th>Status</th>
+                    <th>Reason</th>
+                    <th style={{ width: 70 }}>BFO Link</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {closeNotSoldOpps.length === 0 ? (
+                    <tr className={styles.emptyRow}>
+                      <td colSpan={6}>No Not-Sold opps with a matching BFO Activity row. Paste fresh BFO Activity data if you expected matches.</td>
+                    </tr>
+                  ) : closeNotSoldOpps.map(o => (
+                    <tr key={o.id} style={o.unmapped ? { background: '#FEF3C7' } : undefined}>
+                      <td className={o.name ? '' : styles.missing}>{o.name || 'Missing'}</td>
+                      <td className={o.account ? '' : styles.missing}>{o.account || 'Missing'}</td>
+                      <td className={o.reasonNotSold ? '' : styles.missing}>{o.reasonNotSold || 'Missing'}</td>
+                      <td className={o.status ? '' : styles.missing}>{o.status || (o.unmapped ? 'Missing (unmapped reason)' : 'Missing')}</td>
+                      <td className={o.reason ? '' : styles.missing}>{o.reason || (o.unmapped ? 'Missing (unmapped reason)' : 'Missing')}</td>
+                      <td className={o.bfoUrl ? '' : styles.missing}>
+                        {o.bfoUrl ? (
+                          <a href={o.bfoUrl} target="_blank" rel="noreferrer" className={styles.bfoLink}>Open</a>
+                        ) : 'Missing'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
             <pre className={styles.aiPromptPreview}>{fullPrompt}</pre>
           </section>
         );
