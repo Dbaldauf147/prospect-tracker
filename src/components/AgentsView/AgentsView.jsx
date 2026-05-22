@@ -17,6 +17,7 @@ const NEW_BFO_OPP_PROMPT_STORAGE_KEY = 'agents-ai-prompt-new-bfo-opp';
 const CLOSE_DATES_PROMPT_STORAGE_KEY = 'agents-ai-prompt-close-dates';
 const AMOUNT_UPDATES_PROMPT_STORAGE_KEY = 'agents-ai-prompt-amount-updates';
 const STAGE_CHANGE_PROMPT_STORAGE_KEY = 'agents-ai-prompt-stage-change';
+const CLOSE_NOT_SOLDS_PROMPT_STORAGE_KEY = 'agents-ai-prompt-close-not-solds';
 
 // IndexedDB store + key the BFO Activity tab persists its pasted rows
 // into. The Close Dates + Amount Updates prompts read it so each row's
@@ -80,6 +81,35 @@ const OPPS_STAGE_TO_BFO_STAGE = {
   'quoting': '4 - Influence and Develop',
   'qualifying': '4 - Influence and Develop',
   'lead': '3 - Qualify Opportunity',
+};
+
+const DEFAULT_AI_PROMPT_CLOSE_NOT_SOLDS = `1.  Reference the BFO links below.
+2.  If the link's associated status is Lost, then click on the Competitors button and then select New
+3.  In the Competitor Name enter Unknown Competition and mark the box below Winner as checked.
+4.  Click the save button and then navigate back to the BFO link for this opportunity.
+5.  When you are back on that page, update the opportunity to the stage Closed and then click the Select Closed Stage blue button.
+6.  The Edit Dependencies menu, choose the 0 - Closed option.
+7.  Then select the corresponding Status from the menu below.
+8.  Then select the corresponding Reason from the menu below.
+9.  Repeat this process for all Opportunities listed below.`;
+
+// Opps 2 "Reason Not Sold" → corresponding BFO Status + Reason. Used by
+// the Close Not Solds prompt so the AI assistant can advance each BFO
+// opp through the close-out flow without the user picking values by
+// hand. Keys are lower-cased + trimmed for resilient matching.
+const REASON_NOT_SOLD_TO_BFO = {
+  'cancelled internally - no opp': { status: 'Cancelled by Schneider', reason: 'No real opportunity / out of SE strategy' },
+  'cancelled internally - not in targets': { status: 'Cancelled by Schneider', reason: 'No real opportunity / out of SE strategy' },
+  'current service delivery issues': { status: 'Lost', reason: 'Relationship Issue with SE' },
+  "customer didnt have enough pain": { status: 'Lost', reason: 'No acceptable Offer from SE' },
+  "customer didn't have enough pain": { status: 'Lost', reason: 'No acceptable Offer from SE' },
+  'duplicate opp': { status: 'Cancelled by Schneider', reason: 'No real opportunity / out of SE strategy' },
+  'free service': { status: 'Cancelled by Schneider', reason: 'No real opportunity / out of SE strategy' },
+  'ghosted - no response': { status: 'Cancelled by Customer', reason: 'No acceptable Offer from SE' },
+  'never connected': { status: 'Cancelled by Customer', reason: 'No acceptable Offer from SE' },
+  'price pain': { status: 'Lost', reason: 'No acceptable Offer from SE' },
+  "software or service doesn't meet need": { status: 'Lost', reason: 'No acceptable Offer from SE' },
+  'unknown': { status: 'Cancelled by Customer', reason: 'No acceptable Offer from SE' },
 };
 
 function readOverrides() {
@@ -186,6 +216,19 @@ function readStageChangePrompt() {
 
 function writeStageChangePrompt(next) {
   try { localStorage.setItem(STAGE_CHANGE_PROMPT_STORAGE_KEY, next); } catch {}
+}
+
+function readCloseNotSoldsPrompt() {
+  try {
+    const raw = localStorage.getItem(CLOSE_NOT_SOLDS_PROMPT_STORAGE_KEY);
+    return raw == null ? DEFAULT_AI_PROMPT_CLOSE_NOT_SOLDS : raw;
+  } catch {
+    return DEFAULT_AI_PROMPT_CLOSE_NOT_SOLDS;
+  }
+}
+
+function writeCloseNotSoldsPrompt(next) {
+  try { localStorage.setItem(CLOSE_NOT_SOLDS_PROMPT_STORAGE_KEY, next); } catch {}
 }
 
 // Pull the leading stage digit from BFO Sales Stage values like
@@ -521,12 +564,14 @@ export function AgentsView({ prospects = [], settings }) {
   const [closeDatesPrompt, setCloseDatesPrompt] = useState(readCloseDatesPrompt);
   const [amountUpdatesPrompt, setAmountUpdatesPrompt] = useState(readAmountUpdatesPrompt);
   const [stageChangePrompt, setStageChangePrompt] = useState(readStageChangePrompt);
+  const [closeNotSoldsPrompt, setCloseNotSoldsPrompt] = useState(readCloseNotSoldsPrompt);
   const [bfoActivity, setBfoActivity] = useState(null);
   const [copyFlash, setCopyFlash] = useState('');
   const [newBfoOppCopyFlash, setNewBfoOppCopyFlash] = useState('');
   const [closeDatesCopyFlash, setCloseDatesCopyFlash] = useState('');
   const [amountUpdatesCopyFlash, setAmountUpdatesCopyFlash] = useState('');
   const [stageChangeCopyFlash, setStageChangeCopyFlash] = useState('');
+  const [closeNotSoldsCopyFlash, setCloseNotSoldsCopyFlash] = useState('');
   // HubSpot Activity refresh — kicked off by the header button. Mirrors
   // the fetchActivity flow on ActivityView so both tabs share the same
   // hubspot-activity-cache localStorage entry.
@@ -566,6 +611,12 @@ export function AgentsView({ prospects = [], settings }) {
     writeStageChangePrompt(next);
   };
   const resetStageChangePrompt = () => updateStageChangePrompt(DEFAULT_AI_PROMPT_STAGE_CHANGE);
+
+  const updateCloseNotSoldsPrompt = (next) => {
+    setCloseNotSoldsPrompt(next);
+    writeCloseNotSoldsPrompt(next);
+  };
+  const resetCloseNotSoldsPrompt = () => updateCloseNotSoldsPrompt(DEFAULT_AI_PROMPT_CLOSE_NOT_SOLDS);
 
   const ignoreEmail = (id) => {
     if (!id) return;
@@ -1235,6 +1286,58 @@ export function AgentsView({ prospects = [], settings }) {
     return rows;
   }, [bfoActivity, oppsCache]);
 
+  // Not-Sold opps that still have a corresponding BFO row open. Each
+  // pulls its Reason Not Sold from Opps 2 and maps it to the Status +
+  // Reason values BFO expects when closing the opp out. Rows whose
+  // Reason Not Sold isn't in the mapping table fall through so the
+  // user can see them and either update the row or extend the table.
+  const closeNotSoldOpps = useMemo(() => {
+    const records = oppsCache?.records || [];
+    if (!records.length) return [];
+    // Index BFO Activity by opportunity name so we can quickly check
+    // whether an Opps 2 row has a corresponding open BFO opp.
+    const bfoByName = new Map();
+    const headers = bfoActivity?.headers || [];
+    const oppCol = headers.find(h => /opportunity\s*name/i.test(h));
+    if (oppCol) {
+      for (const r of (bfoActivity?.rows || [])) {
+        const k = String(r[oppCol] || '').trim().toLowerCase();
+        if (k && !bfoByName.has(k)) bfoByName.set(k, r);
+      }
+    }
+    const rows = [];
+    const seen = new Set();
+    for (const r of records) {
+      const stage = String(r.Stage || '').trim().toLowerCase();
+      if (stage !== 'not sold') continue;
+      const bfoOpp = String(r['BFO Link'] || '').trim();
+      if (!bfoOpp || bfoOpp === '-' || bfoOpp === '#N/A') continue;
+      const bfoUrl = detectBfoUrl(r);
+      if (!bfoUrl) continue;
+      const key = bfoOpp.toLowerCase();
+      if (seen.has(key)) continue;
+      // Only surface opps that still exist on the BFO Activity tab —
+      // the prompt is about closing them out in BFO, so a BFO row is
+      // required.
+      if (bfoByName.size > 0 && !bfoByName.has(key)) continue;
+      const reasonNotSold = String(r['Reason Not Sold'] || '').trim();
+      const map = REASON_NOT_SOLD_TO_BFO[reasonNotSold.toLowerCase()] || null;
+      seen.add(key);
+      rows.push({
+        id: `${key}|${bfoUrl}`,
+        name: bfoOpp,
+        account: String(r.Account || '').trim(),
+        reasonNotSold,
+        status: map?.status || '',
+        reason: map?.reason || '',
+        unmapped: !map,
+        bfoUrl,
+      });
+    }
+    rows.sort((a, b) => a.account.localeCompare(b.account));
+    return rows;
+  }, [oppsCache, bfoActivity]);
+
   const dateLabel = useMemo(() => new Date().toLocaleDateString('en-US', {
     weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
   }), []);
@@ -1854,6 +1957,97 @@ export function AgentsView({ prospects = [], settings }) {
                   </tbody>
                 </table>
               </div>
+            )}
+            <pre className={styles.aiPromptPreview}>{fullPrompt}</pre>
+          </section>
+        );
+      })()}
+
+      {(() => {
+        // Close Not Solds prompt — every Not-Sold Opps 2 opp that's
+        // still open on the BFO Activity tab. Output is a tab-delimited
+        // "BFO Link\tStatus\tReason" block so the AI assistant can walk
+        // each row and close it out. Rows without a known Reason Not
+        // Sold mapping leave Status / Reason blank — surfaced in the
+        // table so the user can act on them.
+        const headerLine = 'BFO Link\tStatus\tReason';
+        const lines = [headerLine];
+        for (const o of closeNotSoldOpps) {
+          if (o.unmapped) continue;
+          lines.push(`${o.bfoUrl}\t${o.status}\t${o.reason}`);
+        }
+        const block = lines.join('\n');
+        const fullPrompt = `${closeNotSoldsPrompt}\n\n${block}`;
+        const onCopy = async () => {
+          try {
+            await navigator.clipboard.writeText(fullPrompt);
+            setCloseNotSoldsCopyFlash('Copied!');
+          } catch {
+            setCloseNotSoldsCopyFlash('Copy failed');
+          }
+          window.setTimeout(() => setCloseNotSoldsCopyFlash(''), 1500);
+        };
+        const unmappedCount = closeNotSoldOpps.filter(o => o.unmapped).length;
+        const readyCount = closeNotSoldOpps.length - unmappedCount;
+        return (
+          <section className={styles.section}>
+            <h2 className={styles.sectionHeader}>
+              AI Prompt (Close Not Solds)
+              <span className={styles.sectionCount}>{closeNotSoldOpps.length}</span>
+            </h2>
+            <p className={styles.subnote}>
+              Not-Sold Opps 2 rows that still have a matching BFO Activity row. Status + Reason come from the Reason Not Sold → BFO mapping. Rows whose Reason Not Sold isn&rsquo;t in the mapping table are listed (highlighted) so you can update them on Opps 2 or extend the mapping.
+            </p>
+            <textarea
+              className={styles.aiPromptInput}
+              value={closeNotSoldsPrompt}
+              onChange={(e) => updateCloseNotSoldsPrompt(e.target.value)}
+              rows={10}
+              spellCheck={false}
+            />
+            <div className={styles.aiPromptControls}>
+              <button type="button" className={styles.aiPromptBtn} onClick={onCopy}>Copy full prompt</button>
+              <button type="button" className={styles.aiPromptBtnGhost} onClick={resetCloseNotSoldsPrompt}>Reset to default</button>
+              {closeNotSoldsCopyFlash && <span className={styles.copyFlash}>{closeNotSoldsCopyFlash}</span>}
+            </div>
+            {closeNotSoldOpps.length === 0 ? (
+              <div className={styles.empty} style={{ marginTop: '0.5rem' }}>
+                No Not-Sold opps with a matching BFO Activity row. Paste fresh BFO Activity data if you expected matches.
+              </div>
+            ) : (
+              <>
+                <div style={{ marginTop: '0.5rem', fontSize: '0.72rem', color: '#64748B' }}>
+                  {readyCount} ready · {unmappedCount} need a mapped Reason Not Sold (excluded from the prompt block below).
+                </div>
+                <div style={{ marginTop: '0.5rem', overflowX: 'auto' }}>
+                  <table className={styles.table}>
+                    <thead>
+                      <tr>
+                        <th>Opportunity Name</th>
+                        <th>Account</th>
+                        <th>Reason Not Sold</th>
+                        <th>Status</th>
+                        <th>Reason</th>
+                        <th style={{ width: 70 }}>BFO Link</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {closeNotSoldOpps.map(o => (
+                        <tr key={o.id} style={o.unmapped ? { background: '#FEF3C7' } : undefined}>
+                          <td>{o.name}</td>
+                          <td className={o.account ? '' : styles.muted}>{o.account || '—'}</td>
+                          <td className={o.reasonNotSold ? '' : styles.muted}>{o.reasonNotSold || '—'}</td>
+                          <td className={o.status ? '' : styles.muted}>{o.status || (o.unmapped ? '(unmapped)' : '—')}</td>
+                          <td className={o.reason ? '' : styles.muted}>{o.reason || (o.unmapped ? '(unmapped)' : '—')}</td>
+                          <td>
+                            <a href={o.bfoUrl} target="_blank" rel="noreferrer" className={styles.bfoLink}>Open</a>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             )}
             <pre className={styles.aiPromptPreview}>{fullPrompt}</pre>
           </section>
