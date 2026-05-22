@@ -1728,6 +1728,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // Mass-edit selection — set of row _id's the user has checked. The
   // mass-edit toolbar shows whenever this is non-empty.
   const [selectedIds, setSelectedIds] = useState(() => new Set());
+  // Mass-edit mode. The checkbox column is only rendered (and the
+  // bulk toolbar is only available) while this is on, so the default
+  // view is uncluttered.
+  const [massEditOn, setMassEditOn] = useState(false);
 
   // Hydration — load the user's saved opps. Prefer Firestore (cross-
   // device truth), fall back to the IndexedDB cache (last-known on
@@ -2142,8 +2146,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     const withInfo = nextStepsIdx >= 0
       ? [...mapped.slice(0, nextStepsIdx), infoCol, ...mapped.slice(nextStepsIdx)]
       : [...mapped, infoCol];
-    return [selectCol, ...withInfo, actions];
-  }, [headers, columnLinks, listRegistry, updateOppField, deleteOpp, companySuggestions, prospects, updateProspect, hubspotContacts, selectedIds, pricingOptionServices, optionLinks]);
+    return massEditOn
+      ? [selectCol, ...withInfo, actions]
+      : [...withInfo, actions];
+  }, [headers, columnLinks, listRegistry, updateOppField, deleteOpp, companySuggestions, prospects, updateProspect, hubspotContacts, selectedIds, pricingOptionServices, optionLinks, massEditOn]);
 
   const stageOrder = ['Lead', 'Not Started', 'Qualifying', 'Quoting', 'Quoted', 'Verbal', 'Sold', 'Not Sold'];
   const CLOSED_STAGES = useMemo(() => new Set(['Sold', 'Not Sold']), []);
@@ -2461,9 +2467,36 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               onChange={e => setSearch(e.target.value)}
             />
             <span className={styles.resultCount}>{filtered.length} of {prefiltered.length}{filtersActive && prefiltered.length !== records.length ? ` (filtered from ${records.length})` : ''}</span>
+            <button
+              type="button"
+              onClick={() => {
+                setMassEditOn(on => {
+                  // Leaving mass-edit mode clears any in-flight
+                  // selection so the bulk toolbar disappears and the
+                  // next time the user re-enters they start fresh.
+                  if (on) setSelectedIds(new Set());
+                  return !on;
+                });
+              }}
+              title={massEditOn
+                ? 'Hide the selection checkboxes and exit mass-edit mode.'
+                : 'Show selection checkboxes so you can pick multiple rows to edit at once.'}
+              style={{
+                marginLeft: '0.5rem',
+                padding: '0.3rem 0.7rem',
+                fontSize: '0.78rem',
+                fontWeight: 600,
+                fontFamily: 'inherit',
+                color: massEditOn ? '#fff' : '#1E3A8A',
+                background: massEditOn ? '#2563EB' : '#fff',
+                border: `1px solid ${massEditOn ? '#2563EB' : '#93C5FD'}`,
+                borderRadius: 6,
+                cursor: 'pointer',
+              }}
+            >{massEditOn ? 'Exit Mass Edit' : 'Mass Edit'}</button>
           </div>
 
-          {selectedIds.size > 0 && (
+          {massEditOn && selectedIds.size > 0 && (
             <MassEditBar
               selectedCount={selectedIds.size}
               headers={headers}
