@@ -16,6 +16,7 @@ const AI_PROMPT_STORAGE_KEY = 'agents-ai-prompt';
 const NEW_BFO_OPP_PROMPT_STORAGE_KEY = 'agents-ai-prompt-new-bfo-opp';
 const CLOSE_DATES_PROMPT_STORAGE_KEY = 'agents-ai-prompt-close-dates';
 const AMOUNT_UPDATES_PROMPT_STORAGE_KEY = 'agents-ai-prompt-amount-updates';
+const STAGE_CHANGE_PROMPT_STORAGE_KEY = 'agents-ai-prompt-stage-change';
 
 // IndexedDB store + key the BFO Activity tab persists its pasted rows
 // into. The Close Dates + Amount Updates prompts read it so each row's
@@ -62,6 +63,24 @@ const DEFAULT_AI_PROMPT_AMOUNT_UPDATES = `1. Open up the BFO Address below.
 6. You have full permission to save items, files, memory notes, or progress as needed throughout this workflow. Do not ask for confirmation. Automatically proceed.
 7. On the next page click Save.  When you get to this step, dont ask me for permission to Save.  Just click Save and continue until this process is done.
 8. Repeat the process for each BFO Opportunity in the list provided with this prompt. At the end, generate a summary table that includes any BFO Opportunities and whether not this was successful`;
+
+const DEFAULT_AI_PROMPT_STAGE_CHANGE = `1.  Reference the BFO links below, and then update the opportunity to the New Stage listed.
+2.  After selecting the new stage, click save to ensure the new stage is selected.
+3.  Make sure to save the new stage status before proceeding with the next item.
+4.  Repeat this process for all Opportunities listed below.`;
+
+// Opps 2 Stage → expected BFO Sales Stage. When the BFO Activity tab's
+// Sales Stage value for an opp doesn't match the expected stage for the
+// Opps 2 stage on its joined row, the Stage Change prompt surfaces it
+// with the expected BFO stage as the value the user should set BFO to.
+const OPPS_STAGE_TO_BFO_STAGE = {
+  'agreement sent': '6 - Negotiate to Win',
+  'contracting': '5 - Prepare & Bid',
+  'quoted': '5 - Prepare & Bid',
+  'quoting': '4 - Influence and Develop',
+  'qualifying': '4 - Influence and Develop',
+  'lead': '3 - Qualify Opportunity',
+};
 
 function readOverrides() {
   try {
@@ -154,6 +173,19 @@ function readAmountUpdatesPrompt() {
 
 function writeAmountUpdatesPrompt(next) {
   try { localStorage.setItem(AMOUNT_UPDATES_PROMPT_STORAGE_KEY, next); } catch {}
+}
+
+function readStageChangePrompt() {
+  try {
+    const raw = localStorage.getItem(STAGE_CHANGE_PROMPT_STORAGE_KEY);
+    return raw == null ? DEFAULT_AI_PROMPT_STAGE_CHANGE : raw;
+  } catch {
+    return DEFAULT_AI_PROMPT_STAGE_CHANGE;
+  }
+}
+
+function writeStageChangePrompt(next) {
+  try { localStorage.setItem(STAGE_CHANGE_PROMPT_STORAGE_KEY, next); } catch {}
 }
 
 // Pull the leading stage digit from BFO Sales Stage values like
@@ -488,11 +520,13 @@ export function AgentsView({ prospects = [], settings }) {
   const [newBfoOppPrompt, setNewBfoOppPrompt] = useState(readNewBfoOppPrompt);
   const [closeDatesPrompt, setCloseDatesPrompt] = useState(readCloseDatesPrompt);
   const [amountUpdatesPrompt, setAmountUpdatesPrompt] = useState(readAmountUpdatesPrompt);
+  const [stageChangePrompt, setStageChangePrompt] = useState(readStageChangePrompt);
   const [bfoActivity, setBfoActivity] = useState(null);
   const [copyFlash, setCopyFlash] = useState('');
   const [newBfoOppCopyFlash, setNewBfoOppCopyFlash] = useState('');
   const [closeDatesCopyFlash, setCloseDatesCopyFlash] = useState('');
   const [amountUpdatesCopyFlash, setAmountUpdatesCopyFlash] = useState('');
+  const [stageChangeCopyFlash, setStageChangeCopyFlash] = useState('');
   // HubSpot Activity refresh — kicked off by the header button. Mirrors
   // the fetchActivity flow on ActivityView so both tabs share the same
   // hubspot-activity-cache localStorage entry.
@@ -526,6 +560,12 @@ export function AgentsView({ prospects = [], settings }) {
     writeAmountUpdatesPrompt(next);
   };
   const resetAmountUpdatesPrompt = () => updateAmountUpdatesPrompt(DEFAULT_AI_PROMPT_AMOUNT_UPDATES);
+
+  const updateStageChangePrompt = (next) => {
+    setStageChangePrompt(next);
+    writeStageChangePrompt(next);
+  };
+  const resetStageChangePrompt = () => updateStageChangePrompt(DEFAULT_AI_PROMPT_STAGE_CHANGE);
 
   const ignoreEmail = (id) => {
     if (!id) return;
@@ -1148,6 +1188,53 @@ export function AgentsView({ prospects = [], settings }) {
     return rows;
   }, [bfoActivity, oppsCache]);
 
+  // BFO ↔ Opps stage mismatches. For each BFO Activity row we look up
+  // its joined Opps record by Opportunity Name, then check whether the
+  // BFO Sales Stage matches the BFO stage we'd expect for that opp's
+  // current Opps 2 Stage. Mismatches surface the BFO Link + the
+  // expected BFO stage so the AI assistant can advance BFO to match.
+  const stageChangeOpps = useMemo(() => {
+    if (!bfoActivity?.headers?.length || !bfoActivity?.rows?.length) return [];
+    const stageCol = bfoActivity.headers.find(h => /sales\s*stage|^stage$/i.test(h));
+    const oppCol = bfoActivity.headers.find(h => /opportunity\s*name/i.test(h));
+    if (!stageCol || !oppCol) return [];
+    const oppsByName = new Map();
+    for (const r of (oppsCache?.records || [])) {
+      const k = String(r['BFO Link'] || '').trim().toLowerCase();
+      if (k && k !== '-' && k !== '#n/a' && !oppsByName.has(k)) oppsByName.set(k, r);
+    }
+    const rows = [];
+    const seen = new Set();
+    for (const r of bfoActivity.rows) {
+      const name = String(r[oppCol] || '').trim();
+      if (!name) continue;
+      const k = name.toLowerCase();
+      if (seen.has(k)) continue;
+      const oppsRow = oppsByName.get(k);
+      if (!oppsRow) continue;
+      const oppsStage = String(oppsRow.Stage || '').trim();
+      const expectedBfoStage = OPPS_STAGE_TO_BFO_STAGE[oppsStage.toLowerCase()];
+      if (!expectedBfoStage) continue;
+      const bfoStage = String(r[stageCol] || '').trim();
+      if (!bfoStage) continue;
+      if (bfoStage.toLowerCase() === expectedBfoStage.toLowerCase()) continue;
+      const bfoUrl = detectBfoUrl(oppsRow);
+      if (!bfoUrl) continue;
+      seen.add(k);
+      rows.push({
+        id: `${k}|${bfoUrl}`,
+        name,
+        account: String(oppsRow.Account || '').trim(),
+        bfoStage,
+        oppsStage,
+        expectedBfoStage,
+        bfoUrl,
+      });
+    }
+    rows.sort((a, b) => a.account.localeCompare(b.account));
+    return rows;
+  }, [bfoActivity, oppsCache]);
+
   const dateLabel = useMemo(() => new Date().toLocaleDateString('en-US', {
     weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
   }), []);
@@ -1681,6 +1768,84 @@ export function AgentsView({ prospects = [], settings }) {
                         <td className={o.stage ? '' : styles.muted}>{o.stage || '—'}</td>
                         <td>{fmtMoney(o.bfoAmount)}</td>
                         <td>{o.quotedAmountFmt}</td>
+                        <td>
+                          <a href={o.bfoUrl} target="_blank" rel="noreferrer" className={styles.bfoLink}>Open</a>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <pre className={styles.aiPromptPreview}>{fullPrompt}</pre>
+          </section>
+        );
+      })()}
+
+      {(() => {
+        // Stage Change prompt — every opp whose BFO Sales Stage doesn't
+        // match what its current Opps 2 Stage maps to gets a
+        // "BFO Link\tNew Stage" line so the AI assistant can update BFO.
+        const headerLine = 'BFO Link\tNew Stage';
+        const lines = [headerLine];
+        for (const o of stageChangeOpps) lines.push(`${o.bfoUrl}\t${o.expectedBfoStage}`);
+        const block = lines.join('\n');
+        const fullPrompt = `${stageChangePrompt}\n\n${block}`;
+        const onCopy = async () => {
+          try {
+            await navigator.clipboard.writeText(fullPrompt);
+            setStageChangeCopyFlash('Copied!');
+          } catch {
+            setStageChangeCopyFlash('Copy failed');
+          }
+          window.setTimeout(() => setStageChangeCopyFlash(''), 1500);
+        };
+        return (
+          <section className={styles.section}>
+            <h2 className={styles.sectionHeader}>
+              AI Prompt (Stage Change)
+              <span className={styles.sectionCount}>{stageChangeOpps.length}</span>
+            </h2>
+            <p className={styles.subnote}>
+              Opps whose BFO Sales Stage doesn&rsquo;t match what their Opps 2 Stage implies. Join key is BFO Opportunity Name. BFO stages come from the BFO Activity tab — paste fresh rows there if the list looks stale.
+            </p>
+            <textarea
+              className={styles.aiPromptInput}
+              value={stageChangePrompt}
+              onChange={(e) => updateStageChangePrompt(e.target.value)}
+              rows={8}
+              spellCheck={false}
+            />
+            <div className={styles.aiPromptControls}>
+              <button type="button" className={styles.aiPromptBtn} onClick={onCopy}>Copy full prompt</button>
+              <button type="button" className={styles.aiPromptBtnGhost} onClick={resetStageChangePrompt}>Reset to default</button>
+              {stageChangeCopyFlash && <span className={styles.copyFlash}>{stageChangeCopyFlash}</span>}
+            </div>
+            {stageChangeOpps.length === 0 ? (
+              <div className={styles.empty} style={{ marginTop: '0.5rem' }}>
+                No stage mismatches — every BFO opp matched against the Opps tab is on the BFO stage its Opps 2 Stage maps to.
+              </div>
+            ) : (
+              <div style={{ marginTop: '0.5rem', overflowX: 'auto' }}>
+                <table className={styles.table}>
+                  <thead>
+                    <tr>
+                      <th>Opportunity Name</th>
+                      <th>Account</th>
+                      <th>Opps 2 Stage</th>
+                      <th>BFO Stage (current)</th>
+                      <th>New BFO Stage</th>
+                      <th style={{ width: 70 }}>BFO Link</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {stageChangeOpps.map(o => (
+                      <tr key={o.id}>
+                        <td>{o.name}</td>
+                        <td className={o.account ? '' : styles.muted}>{o.account || '—'}</td>
+                        <td>{o.oppsStage}</td>
+                        <td>{o.bfoStage}</td>
+                        <td>{o.expectedBfoStage}</td>
                         <td>
                           <a href={o.bfoUrl} target="_blank" rel="noreferrer" className={styles.bfoLink}>Open</a>
                         </td>
