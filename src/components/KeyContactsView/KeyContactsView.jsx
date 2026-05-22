@@ -4,6 +4,7 @@ import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotCache, updateHubspotCache } from '../../utils/hubspotContactsCache';
 import { dbGet } from '../../utils/db';
+import { loadOppsFromCache } from '../../utils/oppsCache';
 import { formatAum } from '../../utils/formatters';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
 import { buildCompanyGuessIndex, guessCompanyForContact } from '../../utils/companyGuess';
@@ -367,7 +368,7 @@ export function useOppsRecords(userId) {
   useEffect(() => {
     let cancelled = false;
     async function loadFromIndexedDB() {
-      try { const data = await dbGet('opps-cache', 'data'); return data?.records || null; } catch { return null; }
+      try { const data = await loadOppsFromCache(); return data?.records || null; } catch { return null; }
     }
     function loadFromLocalStorage() {
       try { const cache = JSON.parse(localStorage.getItem('opps-cache')); return cache?.records || null; } catch { return null; }

@@ -6,6 +6,7 @@ import { LineChart, Line, BarChart, Bar, AreaChart, Area, XAxis, YAxis, Cartesia
 import { buildCompanyIndex, hasMatchInIndex } from '../../utils/companyIndex';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { dbGet } from '../../utils/db';
+import { loadOppsFromCache } from '../../utils/oppsCache';
 import { matchesCdm } from '../../utils/cdmMatch';
 
 function EditableCell({ value, onCommit, color, suffix = '', bold = false }) {
@@ -171,7 +172,7 @@ function ProgressChart({ title, data, series, isPct, defaultView = 'line', secon
 
 async function loadOppsFromIndexedDB() {
   try {
-    const data = await dbGet('opps-cache', 'data');
+    const data = await loadOppsFromCache();
     return data?.records || [];
   } catch { return []; }
 }

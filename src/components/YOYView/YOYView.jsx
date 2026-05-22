@@ -8,11 +8,10 @@ import {
   Tooltip, Legend, ResponsiveContainer, LabelList, Cell,
 } from 'recharts';
 import { dbGet } from '../../utils/db';
+import { loadOppsFromCache } from '../../utils/oppsCache';
 import { loadCommissions, COMMISSION_MONTH_NAMES } from '../../utils/commissionsStore';
 import styles from './YOYView.module.css';
 
-const OPPS_STORE = 'opps-cache';
-const OPPS_KEY = 'data';
 const PIPELINE_STORE = 'pipeline-dashboard';
 const PIPELINE_KEY = 'current';
 const DEFAULT_ANNUAL_TARGET = 1325000;
@@ -111,7 +110,7 @@ export function YOYView() {
     let cancelled = false;
     (async () => {
       try {
-        const oppsSaved = await dbGet(OPPS_STORE, OPPS_KEY);
+        const oppsSaved = await loadOppsFromCache();
         if (!cancelled && oppsSaved) setOpps(oppsSaved);
       } catch (e) {
         console.warn('YOY opps hydrate failed', e);
@@ -126,7 +125,7 @@ export function YOYView() {
       }
     })();
     function onFocus() {
-      dbGet(OPPS_STORE, OPPS_KEY).then(o => setOpps(o || null)).catch(() => {});
+      loadOppsFromCache().then(o => setOpps(o || null)).catch(() => {});
       dbGet(PIPELINE_STORE, PIPELINE_KEY).then(p => {
         if (p && Number.isFinite(Number(p.target))) setTarget(Number(p.target));
       }).catch(() => {});

@@ -11,6 +11,7 @@ import {
   completionStats,
 } from './dailySuccessStore';
 import { dbGet } from '../../utils/db';
+import { loadOppsFromCache } from '../../utils/oppsCache';
 import { CoachingRulesPanel } from './CoachingRulesPanel';
 import { subscribeToCoachingRules, DEFAULT_COACHING_RULES } from './coachingRulesStore';
 
@@ -50,7 +51,7 @@ async function buildPipelineSummary() {
     // Load Opps cache early so we can cross-link each BFO opp to
     // per-deal data (next steps / notes the user keeps on the Opps
     // tab against the BFO Opportunity Name in the "BFO Link" column).
-    const opps = await dbGet('opps-cache', 'data');
+    const opps = await loadOppsFromCache();
     if (!pipeline && !bfo && !opps) return '';
 
     const oppsRecords = (opps && Array.isArray(opps.records)) ? opps.records : [];
