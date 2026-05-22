@@ -29,6 +29,7 @@ import { DraftEmailsPage } from './components/DraftEmailView/DraftEmailsPage';
 import { VibeProspecting } from './components/VibeProspecting/VibeProspecting';
 import { ProgressView } from './components/ProgressView/ProgressView';
 import { ListsView } from './components/ListsView/ListsView';
+import { UploadedListView } from './components/UploadedListView/UploadedListView';
 import { PEPortfolioView } from './components/PEPortfolioView/PEPortfolioView';
 import { PricingView } from './components/PricingView/PricingView';
 import { PipelineView } from './components/PipelineView/PipelineView';
@@ -336,6 +337,20 @@ function App() {
             />
           ) : view === 'lists' ? (
             <ListsView onTargetAccountsLoaded={setTargetAccountsData} prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} />
+          ) : view === 'strategic' ? (
+            <UploadedListView
+              storageKey="strategic-accounts-override"
+              tableIdPrefix="strategic-accounts"
+              title="Strategic Accounts"
+              singular="account"
+              plural="accounts"
+              prospects={prospects}
+              onSelectProspect={handleSelect}
+              cdmName={cdmName}
+              settings={settings}
+              updateSettings={updateSettings}
+              updateSettingsPath={updateSettingsPath}
+            />
           ) : view === 'clients' ? (
             <ClientsView prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} />
           ) : view === 'opps' ? (
