@@ -71,6 +71,24 @@ function isHeaderRow(row) {
   return hasType && hasCts;
 }
 
+// The Alternative Fee Structure table has its own header row — the
+// first cell says "Alternative Fee Structure/Schedule" and the row
+// carries Type / Fee / Unit / Unit Count / Fee Start Month columns
+// (but no CTS). Detect it so we can pull those rows into the alt-fee
+// schedule on the pricing page instead of treating them as line items.
+function isAltFeeHeaderRow(row) {
+  if (!Array.isArray(row)) return false;
+  let hasAltLabel = false, hasFeeCol = false, hasUnitCol = false;
+  for (const c of row) {
+    const s = cellStr(c);
+    if (!s) continue;
+    if (/alternative\s*fee\s*structure/i.test(s)) hasAltLabel = true;
+    if (/^fee$/i.test(s)) hasFeeCol = true;
+    if (/^unit$/i.test(s) || /unit\s*count/i.test(s)) hasUnitCol = true;
+  }
+  return hasAltLabel && hasFeeCol && hasUnitCol;
+}
+
 function classifyColumns(headerRow) {
   const map = {};
   headerRow.forEach((cell, i) => {
@@ -83,6 +101,25 @@ function classifyColumns(headerRow) {
     }
   });
   if (map.description === undefined) map.description = 0;
+  return map;
+}
+
+// Column map for an alt-fee table. Matches the SIA template's six
+// columns; falls back to sensible defaults so a partial header still
+// produces usable rows.
+function classifyAltFeeColumns(headerRow) {
+  const map = {};
+  headerRow.forEach((cell, i) => {
+    const s = cellStr(cell);
+    if (!s) return;
+    if (map.altItem === undefined && /alternative\s*fee\s*structure/i.test(s)) map.altItem = i;
+    if (map.type === undefined && /^type$/i.test(s)) map.type = i;
+    if (map.fee === undefined && /^fee$/i.test(s)) map.fee = i;
+    if (map.unitCount === undefined && /unit\s*count/i.test(s)) map.unitCount = i;
+    if (map.unit === undefined && /^unit$/i.test(s)) map.unit = i;
+    if (map.startMonth === undefined && /fee\s*start\s*month|^start\s*month$/i.test(s)) map.startMonth = i;
+  });
+  if (map.altItem === undefined) map.altItem = 0;
   return map;
 }
 
@@ -175,19 +212,64 @@ function parseOptionSheet(sheet, sheetName) {
   }
 
   const sections = [];
+  const altFees = [];
   {
     const stop = endIdx === -1 ? rows.length : endIdx;
-    // Find every header row inside the bounded range.
+    // Find every header row inside the bounded range. Two kinds:
+    // regular CTS sections, and the Alternative Fee table (which has
+    // its own header shape — no CTS column). They share the same
+    // "row index → next-row-index" segmentation so each block's
+    // items don't bleed into the next.
     const headerIdxs = [];
+    const altFeeHeaderIdxs = new Set();
     for (let i = startIdx; i < stop; i++) {
-      if (isHeaderRow(rows[i] || [])) headerIdxs.push(i);
+      const row = rows[i] || [];
+      if (isAltFeeHeaderRow(row)) {
+        headerIdxs.push(i);
+        altFeeHeaderIdxs.add(i);
+      } else if (isHeaderRow(row)) {
+        headerIdxs.push(i);
+      }
     }
 
     for (let hi = 0; hi < headerIdxs.length; hi++) {
       const idx = headerIdxs[hi];
+      const nextHeaderIdx = headerIdxs[hi + 1] ?? stop;
+      if (altFeeHeaderIdxs.has(idx)) {
+        // Alt-fee table — collect into altFees[] and continue. We
+        // skip the rest of the CTS-section logic for this block since
+        // it has no CTS column.
+        const headerRow = (rows[idx] || []).map(cellStr);
+        const cols = classifyAltFeeColumns(headerRow);
+        for (let r = idx + 1; r < nextHeaderIdx; r++) {
+          const row = rows[r] || [];
+          if (rowIsBlank(row)) continue;
+          const altItem = cellStr(row[cols.altItem]);
+          if (!altItem) continue;
+          if (/^enter\s+.+\s+here$/i.test(altItem)) continue;
+          // Stop the moment we hit a label that signals the table
+          // is over (defensive — usually the next header / blank row
+          // catches it first).
+          if (END_ANCHOR_RE.test(altItem)) break;
+          const typeStr = cols.type !== undefined ? cellStr(row[cols.type]) : '';
+          if (/^(description|type|comments?|fee|unit|cts|cost\s*to\s*serve|gm\s*%|individual\s*gm|start\s*month)$/i.test(typeStr)) continue;
+          const ucRaw = cols.unitCount !== undefined ? toNumber(row[cols.unitCount]) : null;
+          const smRaw = cols.startMonth !== undefined ? toNumber(row[cols.startMonth]) : null;
+          altFees.push({
+            altItem,
+            type: typeStr,
+            fee: cols.fee !== undefined ? toNumber(row[cols.fee]) : null,
+            unit: cols.unit !== undefined ? cellStr(row[cols.unit]) : '',
+            // Mirror altFeeStarter() defaults so an imported blank
+            // matches the in-app placeholder values.
+            unitCount: ucRaw == null ? 1 : ucRaw,
+            startMonth: smRaw == null ? 1 : smRaw,
+          });
+        }
+        continue;
+      }
       const headerRow = (rows[idx] || []).map(cellStr);
       const cols = classifyColumns(headerRow);
-      const nextHeaderIdx = headerIdxs[hi + 1] ?? stop;
 
       // Section title: nearest non-blank single-label row above the
       // header (e.g. "SB Services (CTS w/recommended GM%)"), bounded
@@ -272,6 +354,7 @@ function parseOptionSheet(sheet, sheetName) {
     siteCount,
     accountCount,
     sections,
+    altFees,
     rawSample,
     rawSampleOffset,
     totalRows: rows.length,
