@@ -1202,25 +1202,16 @@ export function AgentsView({ prospects = [], settings }) {
 
       {(() => {
         // New BFO Opp prompt — table of qualifying opps the AI assistant
-        // should create in BFO. Rendered as a pipe-delimited block so a
-        // plain-text paste keeps column alignment in most editors.
-        const header = 'Company | BFO Company Name | Lead Source | Current Customer | Scope | Stage | Project Name | Product Line | Local Project Name | Type | Region | Class | Years';
+        // should create in BFO. The user only needs BFO Company Name and
+        // Project Name in the pasted block; the rest of the fields stay
+        // on the New BFO Opp table for review but are dropped from the
+        // prompt to keep the AI focused.
+        const header = 'BFO Company Name | Project Name';
         const lines = ['BFO Opportunities to Create', header];
         for (const o of newBfoOpps) {
           lines.push([
-            o.company,
             o.bfoCompanyName,
-            o.leadSource,
-            o.currentCustomer ? 'Yes' : 'No',
-            o.scope,
-            o.stage,
             o.projectName,
-            o.productLine,
-            o.localProjectName,
-            o.type,
-            o.region,
-            o.class,
-            o.years,
           ].join(' | '));
         }
         const block = lines.join('\n');
