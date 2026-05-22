@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { loadOppsFromCache, searchOpps } from '../../utils/oppsCache';
-import { dbPut } from '../../utils/db';
+import { dbGet, dbPut } from '../../utils/db';
 import { getEffectiveServiceMetadata } from '../../data/serviceCatalog';
 import styles from './AgentsView.module.css';
 
@@ -14,6 +14,13 @@ const IGNORED_EMAILS_STORAGE_KEY = 'agents-ignored-emails';
 const IGNORED_MEETINGS_STORAGE_KEY = 'agents-ignored-meetings';
 const AI_PROMPT_STORAGE_KEY = 'agents-ai-prompt';
 const NEW_BFO_OPP_PROMPT_STORAGE_KEY = 'agents-ai-prompt-new-bfo-opp';
+const CLOSE_DATES_PROMPT_STORAGE_KEY = 'agents-ai-prompt-close-dates';
+
+// IndexedDB store + key the BFO Activity tab persists its pasted rows
+// into. We read it here so the Close Dates prompt can look up each
+// opp's BFO Sales Stage (which only lives on that tab).
+const BFO_ACTIVITY_STORE = 'bfo-activity';
+const BFO_ACTIVITY_KEY = 'current';
 
 const DEFAULT_AI_PROMPT = `1.  I am logged into BFO.  Open the first BFO Address in the list below.
 2.  Choose the New Tast (green button) under the Activity menu on the righthand side of the screen.
@@ -39,6 +46,12 @@ const DEFAULT_AI_PROMPT_NEW_BFO_OPP = `1.  I am logged into BFO.  Open the first
 10.  You have full permission to save items, files, memory notes, or progress as needed throughout this workflow. Do not ask for confirmation. Automatically proceed.
 11. On the next page click Create.  When you get to this step, dont ask me for permission to Create.  Just click create and continue until this process is done.
 12. Repeat the process for each BFO Opportunity in the list provided with this prompt. At the end, generate a summary table that includes any BFO Opportunities and whether not this was successful`;
+
+const DEFAULT_AI_PROMPT_CLOSE_DATES = `1.  I am logged into BFO.  Open up this BFO page https://se.lightning.force.com/lightning/o/Opportunity/list?filterName=00B8V00000B0XsD&0.sfdcIFrameOrigin=https%3A%2F%2Fse.lightning.force.com
+2.  Reference the Opportunity Names below, and then go to their corresponding CloseDateSorted or CloseDate column.  This should be the 5th column of the table.
+3.  Then click the pencil button next to the close date and input the New Close Date value and press Enter.
+4.  At the bottom of the screen you will then click the Save button.
+5.  Repeat this process for all Opportunities listed below.`;
 
 function readOverrides() {
   try {
@@ -105,6 +118,52 @@ function readNewBfoOppPrompt() {
 
 function writeNewBfoOppPrompt(next) {
   try { localStorage.setItem(NEW_BFO_OPP_PROMPT_STORAGE_KEY, next); } catch {}
+}
+
+function readCloseDatesPrompt() {
+  try {
+    const raw = localStorage.getItem(CLOSE_DATES_PROMPT_STORAGE_KEY);
+    return raw == null ? DEFAULT_AI_PROMPT_CLOSE_DATES : raw;
+  } catch {
+    return DEFAULT_AI_PROMPT_CLOSE_DATES;
+  }
+}
+
+function writeCloseDatesPrompt(next) {
+  try { localStorage.setItem(CLOSE_DATES_PROMPT_STORAGE_KEY, next); } catch {}
+}
+
+// Pull the leading stage digit from BFO Sales Stage values like
+// "6 - Negotiate to Win" / "4 - Influence and Develop". Same shape
+// PipelineView.matchStage uses so the two views agree on what "Stage
+// 5" means.
+function bfoStageNumber(v) {
+  const m = String(v ?? '').match(/^\s*(\d+)/);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+// Calendar days from today to the given date string (negative when the
+// date is already in the past). Returns null when unparseable.
+function daysUntilDate(raw) {
+  if (!raw) return null;
+  const t = Date.parse(String(raw).trim());
+  if (isNaN(t)) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const d = new Date(t);
+  d.setHours(0, 0, 0, 0);
+  return Math.round((d - today) / (1000 * 60 * 60 * 24));
+}
+
+// Add `days` to a date string and return the result in M/D/YYYY — the
+// format BFO's inline Close Date editor expects.
+function addDaysFormatted(raw, days) {
+  if (!raw) return '';
+  const t = Date.parse(String(raw).trim());
+  if (isNaN(t)) return '';
+  const d = new Date(t);
+  d.setDate(d.getDate() + days);
+  return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
 }
 
 // Same client-keyword test PipelineView + YOY's Annual Sales use on the
@@ -385,8 +444,11 @@ export function AgentsView({ prospects = [], settings }) {
   const [ignoredMeetings, setIgnoredMeetings] = useState(readIgnoredMeetings);
   const [aiPrompt, setAiPrompt] = useState(readAiPrompt);
   const [newBfoOppPrompt, setNewBfoOppPrompt] = useState(readNewBfoOppPrompt);
+  const [closeDatesPrompt, setCloseDatesPrompt] = useState(readCloseDatesPrompt);
+  const [bfoActivity, setBfoActivity] = useState(null);
   const [copyFlash, setCopyFlash] = useState('');
   const [newBfoOppCopyFlash, setNewBfoOppCopyFlash] = useState('');
+  const [closeDatesCopyFlash, setCloseDatesCopyFlash] = useState('');
   // HubSpot Activity refresh — kicked off by the header button. Mirrors
   // the fetchActivity flow on ActivityView so both tabs share the same
   // hubspot-activity-cache localStorage entry.
@@ -408,6 +470,12 @@ export function AgentsView({ prospects = [], settings }) {
     writeNewBfoOppPrompt(next);
   };
   const resetNewBfoOppPrompt = () => updateNewBfoOppPrompt(DEFAULT_AI_PROMPT_NEW_BFO_OPP);
+
+  const updateCloseDatesPrompt = (next) => {
+    setCloseDatesPrompt(next);
+    writeCloseDatesPrompt(next);
+  };
+  const resetCloseDatesPrompt = () => updateCloseDatesPrompt(DEFAULT_AI_PROMPT_CLOSE_DATES);
 
   const ignoreEmail = (id) => {
     if (!id) return;
@@ -553,6 +621,18 @@ export function AgentsView({ prospects = [], settings }) {
     setActivityRefreshing(false);
     setActivityRefreshProgress(null);
   }
+
+  // BFO Activity rows (pasted on the BFO Activity tab, persisted in
+  // IndexedDB). Stages live there — the Opps sheet only has free-text
+  // status labels ("Not Started" / "Sold" / etc.), not the 1-6 Sales
+  // Stage we need for the close-date slip filter.
+  useEffect(() => {
+    let cancelled = false;
+    dbGet(BFO_ACTIVITY_STORE, BFO_ACTIVITY_KEY)
+      .then(d => { if (!cancelled) setBfoActivity(d || null); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   // HubSpot contacts cache — email → company lookup for tagging.
   useEffect(() => {
@@ -909,6 +989,47 @@ export function AgentsView({ prospects = [], settings }) {
     rows.sort((a, b) => a.company.localeCompare(b.company));
     return rows;
   }, [oppsCache, bfoCompanyByNorm, settings?.serviceOverrides]);
+
+  // BFO opps whose Close Date should slip by 30 days. Three windows
+  // collapsed into one filter, all keyed off the BFO Sales Stage number
+  // (which is why we read the BFO Activity tab — the Opps sheet's
+  // Stage column doesn't carry the 1-6 BFO sales-stage value):
+  //   • Stage ≤ 4 and < 100 days from today
+  //   • Stage = 5 and < 60 days
+  //   • Stage = 6 and < 30 days
+  const closeDateOpps = useMemo(() => {
+    if (!bfoActivity?.headers?.length || !bfoActivity?.rows?.length) return [];
+    const stageCol = bfoActivity.headers.find(h => /sales\s*stage|^stage$/i.test(h));
+    const closeCol = bfoActivity.headers.find(h => /close\s*date/i.test(h));
+    const oppCol = bfoActivity.headers.find(h => /opportunity\s*name/i.test(h));
+    if (!stageCol || !closeCol || !oppCol) return [];
+    const rows = [];
+    for (const r of bfoActivity.rows) {
+      const stage = bfoStageNumber(r[stageCol]);
+      if (stage === null) continue;
+      const closeRaw = String(r[closeCol] || '').trim();
+      const days = daysUntilDate(closeRaw);
+      if (days === null) continue;
+      let include = false;
+      if (stage <= 4 && days < 100) include = true;
+      else if (stage === 5 && days < 60) include = true;
+      else if (stage === 6 && days < 30) include = true;
+      if (!include) continue;
+      const name = String(r[oppCol] || '').trim();
+      if (!name) continue;
+      rows.push({
+        id: `${name}|${closeRaw}`,
+        name,
+        stage,
+        stageLabel: String(r[stageCol] || '').trim(),
+        currentClose: closeRaw,
+        newClose: addDaysFormatted(closeRaw, 30),
+        daysOut: days,
+      });
+    }
+    rows.sort((a, b) => a.daysOut - b.daysOut);
+    return rows;
+  }, [bfoActivity]);
 
   const dateLabel = useMemo(() => new Date().toLocaleDateString('en-US', {
     weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
@@ -1297,6 +1418,80 @@ export function AgentsView({ prospects = [], settings }) {
                   ))}
                 </tbody>
               </table>
+              </div>
+            )}
+            <pre className={styles.aiPromptPreview}>{fullPrompt}</pre>
+          </section>
+        );
+      })()}
+
+      {(() => {
+        // Close Dates prompt — a tab-delimited "Opportunity Name | New
+        // Close Date" block the AI assistant can read row-by-row to
+        // bump each opp's BFO Close Date 30 days out.
+        const headerLine = 'Opportunity Name\tNew Close Date';
+        const lines = [headerLine];
+        for (const o of closeDateOpps) lines.push(`${o.name}\t${o.newClose}`);
+        const block = lines.join('\n');
+        const fullPrompt = `${closeDatesPrompt}\n\n${block}`;
+        const onCopy = async () => {
+          try {
+            await navigator.clipboard.writeText(fullPrompt);
+            setCloseDatesCopyFlash('Copied!');
+          } catch {
+            setCloseDatesCopyFlash('Copy failed');
+          }
+          window.setTimeout(() => setCloseDatesCopyFlash(''), 1500);
+        };
+        return (
+          <section className={styles.section}>
+            <h2 className={styles.sectionHeader}>
+              AI Prompt (Close Dates)
+              <span className={styles.sectionCount}>{closeDateOpps.length}</span>
+            </h2>
+            <p className={styles.subnote}>
+              BFO opps that should slip 30 days: Stage ≤ 4 with under 100 days to close, Stage 5 under 60 days, Stage 6 under 30 days. Stages come from the BFO Activity tab — paste fresh rows there if the list looks stale.
+            </p>
+            <textarea
+              className={styles.aiPromptInput}
+              value={closeDatesPrompt}
+              onChange={(e) => updateCloseDatesPrompt(e.target.value)}
+              rows={10}
+              spellCheck={false}
+            />
+            <div className={styles.aiPromptControls}>
+              <button type="button" className={styles.aiPromptBtn} onClick={onCopy}>Copy full prompt</button>
+              <button type="button" className={styles.aiPromptBtnGhost} onClick={resetCloseDatesPrompt}>Reset to default</button>
+              {closeDatesCopyFlash && <span className={styles.copyFlash}>{closeDatesCopyFlash}</span>}
+            </div>
+            {closeDateOpps.length === 0 ? (
+              <div className={styles.empty} style={{ marginTop: '0.5rem' }}>
+                No BFO opps currently meet the close-date slip criteria. Confirm the BFO Activity tab has fresh data.
+              </div>
+            ) : (
+              <div style={{ marginTop: '0.5rem', overflowX: 'auto' }}>
+                <table className={styles.table}>
+                  <thead>
+                    <tr>
+                      <th>Opportunity Name</th>
+                      <th style={{ width: 110 }}>Stage</th>
+                      <th style={{ width: 120 }}>Current Close</th>
+                      <th style={{ width: 90 }}>Days Out</th>
+                      <th style={{ width: 130 }}>New Close Date</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {closeDateOpps.map(o => (
+                      <tr key={o.id}>
+                        <td>{o.name}</td>
+                        <td>{o.stageLabel || `Stage ${o.stage}`}</td>
+                        <td>{o.currentClose}</td>
+                        <td>{o.daysOut}</td>
+                        <td>{o.newClose}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
             <pre className={styles.aiPromptPreview}>{fullPrompt}</pre>
