@@ -3085,6 +3085,18 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               emptyMessage="No opps yet — click + New Opp to create one."
               settings={settings}
               updateSettings={updateSettings}
+              rowStyle={(row) => {
+                // Tint closed opps so the table reads at a glance —
+                // light green for wins, light red for losses. Other
+                // stages keep the default surface colour. The style
+                // also lands on every <td> (including the sticky
+                // Account column) so the row is solidly coloured edge
+                // to edge.
+                const stage = String(row?.Stage || '').trim();
+                if (stage === 'Sold') return { background: '#DCFCE7' };
+                if (stage === 'Not Sold') return { background: '#FEE2E2' };
+                return undefined;
+              }}
             />
           )}
         </>
