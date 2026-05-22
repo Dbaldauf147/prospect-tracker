@@ -2082,6 +2082,349 @@ function MassEditBar({ selectedCount, headers, columnLinks, listRegistry, onAppl
   );
 }
 
+// Tab- or comma-separated value parser that handles quoted fields,
+// escaped quotes, and CRLF / LF endings. Same shape the Opps tab uses
+// — duplicated here to keep the bulk-import modal self-contained.
+function parseTabularText(text, delimiter) {
+  const rows = [];
+  let current = [];
+  let field = '';
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; }
+        else inQuotes = false;
+      } else field += ch;
+    } else {
+      if (ch === '"') inQuotes = true;
+      else if (ch === delimiter) { current.push(field); field = ''; }
+      else if (ch === '\n' || (ch === '\r' && text[i + 1] === '\n')) {
+        current.push(field); field = '';
+        if (ch === '\r') i++;
+        rows.push(current); current = [];
+      } else field += ch;
+    }
+  }
+  if (field || current.length > 0) { current.push(field); rows.push(current); }
+  return rows;
+}
+
+// Auto-detect whether a pasted blob is tab-separated (Google Sheets
+// copy) or comma-separated (downloaded CSV). The first newline's worth
+// of text is enough to decide reliably.
+function detectDelimiter(text) {
+  const firstLine = text.split(/\r?\n/, 1)[0] || '';
+  const tabs = (firstLine.match(/\t/g) || []).length;
+  const commas = (firstLine.match(/,/g) || []).length;
+  return tabs > commas ? '\t' : ',';
+}
+
+// Bulk Import modal — paste a Google-Sheet-shaped block, review the
+// column mapping the modal auto-detected (and adjust by hand), see
+// warnings about rows that won't import, and commit. The caller owns
+// the actual setData / persistence; we just hand back the additions.
+function BulkImportModal({ existingHeaders, existingRecords, dedupKeyFor, onClose, onImport }) {
+  const [text, setText] = useState('');
+  const [parsed, setParsed] = useState(null);
+  const [mapping, setMapping] = useState({});
+  const [importing, setImporting] = useState(false);
+  const targetOptions = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    for (const h of (existingHeaders || [])) {
+      if (h && !seen.has(h)) { seen.add(h); out.push(h); }
+    }
+    return out;
+  }, [existingHeaders]);
+
+  // Esc / backdrop closes (but not while a commit is mid-flight).
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape' && !importing) onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose, importing]);
+
+  function handleParse() {
+    const raw = String(text || '').trim();
+    if (!raw) { setParsed(null); return; }
+    const delimiter = detectDelimiter(raw);
+    const rows = parseTabularText(raw, delimiter);
+    if (!rows.length) { setParsed(null); return; }
+    const headers = rows[0].map(h => String(h || '').trim());
+    const dataRows = rows.slice(1).filter(r => r.some(c => String(c || '').trim() !== ''));
+    setParsed({ headers, rows: dataRows, delimiter });
+    // Auto-map: exact match (case-insensitive) to an existing Opps 2
+    // column, else "skip". User can override on any row.
+    const lowerTargets = new Map(targetOptions.map(t => [t.toLowerCase(), t]));
+    const auto = {};
+    for (const h of headers) {
+      if (!h) continue;
+      const hit = lowerTargets.get(h.toLowerCase());
+      auto[h] = hit || '';
+    }
+    setMapping(auto);
+  }
+
+  // Build the rows to insert + the list of skip reasons for each
+  // pasted row. Mapping decides which source columns flow through;
+  // duplicates are detected against existingRecords using the same
+  // dedup key the parent uses for the Opps-tab import.
+  const analysis = useMemo(() => {
+    if (!parsed) return null;
+    const additions = [];
+    const skipped = [];
+    const existingKeys = new Set();
+    for (const r of (existingRecords || [])) {
+      const k = dedupKeyFor(r);
+      if (k) existingKeys.add(k);
+    }
+    const seenInPaste = new Set();
+    for (let i = 0; i < parsed.rows.length; i++) {
+      const cells = parsed.rows[i];
+      const record = {};
+      let hasMappedData = false;
+      for (let j = 0; j < parsed.headers.length; j++) {
+        const src = parsed.headers[j];
+        const target = mapping[src];
+        if (!target) continue;
+        const val = String(cells[j] ?? '').trim();
+        record[target] = val;
+        if (val) hasMappedData = true;
+      }
+      const lineNo = i + 2; // +1 for header row, +1 for 1-indexed display
+      if (!hasMappedData) {
+        skipped.push({ lineNo, reason: 'Empty — every mapped column is blank.' });
+        continue;
+      }
+      const key = dedupKeyFor(record);
+      if (!key) {
+        skipped.push({ lineNo, reason: 'Could not build a dedup key (no BFO Link / Account / Open Year / Scope / Start Date).' });
+        continue;
+      }
+      if (existingKeys.has(key)) {
+        skipped.push({ lineNo, reason: `Duplicate of an existing Opps 2 row (key ${key}).` });
+        continue;
+      }
+      if (seenInPaste.has(key)) {
+        skipped.push({ lineNo, reason: `Duplicate of an earlier row in this paste (key ${key}).` });
+        continue;
+      }
+      seenInPaste.add(key);
+      additions.push(record);
+    }
+    return { additions, skipped };
+  }, [parsed, mapping, existingRecords, dedupKeyFor]);
+
+  async function handleImport() {
+    if (!analysis || analysis.additions.length === 0) return;
+    setImporting(true);
+    try {
+      await onImport(analysis.additions, parsed.headers, mapping);
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  const mappedCount = useMemo(() => {
+    if (!parsed) return 0;
+    return parsed.headers.reduce((n, h) => n + (mapping[h] ? 1 : 0), 0);
+  }, [parsed, mapping]);
+
+  return (
+    <div
+      onClick={importing ? undefined : onClose}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.5)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10001,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: '#fff', borderRadius: 8, padding: '1rem 1.25rem',
+          width: 'min(900px, 96vw)', maxHeight: '90vh', overflow: 'auto',
+          boxShadow: '0 18px 50px rgba(15, 23, 42, 0.32)',
+          display: 'flex', flexDirection: 'column', gap: '0.75rem',
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
+          <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: '#0f172a' }}>Bulk import from a Google Sheet</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={importing}
+            aria-label="Close"
+            style={{
+              background: 'transparent', border: 'none',
+              cursor: importing ? 'not-allowed' : 'pointer',
+              fontSize: '1.2rem', color: '#64748B', padding: '0 4px', lineHeight: 1,
+            }}
+          >×</button>
+        </div>
+        <p style={{ margin: 0, fontSize: '0.78rem', color: '#475569', lineHeight: 1.45 }}>
+          Copy a header row + data rows from your Google Sheet and paste below. The modal auto-detects tab or comma separation. Columns with the same name auto-map; tweak the dropdowns to point a source column at a different Opps 2 column, or set it to <em>Skip</em>. Duplicates against existing Opps 2 rows are skipped (same dedup as Import from Opps tab).
+        </p>
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="Paste here…"
+          rows={6}
+          spellCheck={false}
+          style={{
+            width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: '0.78rem',
+            padding: '0.5rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: 6,
+            boxSizing: 'border-box',
+          }}
+        />
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <button
+            type="button"
+            onClick={handleParse}
+            disabled={!text.trim() || importing}
+            style={{
+              padding: '0.4rem 0.85rem', fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+              background: '#fff', color: 'var(--color-accent)',
+              border: '1px solid var(--color-accent)', borderRadius: 6,
+              cursor: (!text.trim() || importing) ? 'not-allowed' : 'pointer',
+            }}
+          >Parse</button>
+          {parsed && (
+            <span style={{ fontSize: '0.72rem', color: '#64748B' }}>
+              {parsed.rows.length} data row{parsed.rows.length === 1 ? '' : 's'} · {parsed.headers.length} source column{parsed.headers.length === 1 ? '' : 's'} · {mappedCount} mapped · delimiter: {parsed.delimiter === '\t' ? 'tab' : 'comma'}
+            </span>
+          )}
+        </div>
+
+        {parsed && (
+          <>
+            <div>
+              <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#0f172a', marginBottom: '0.35rem' }}>Column mapping</div>
+              <div style={{ maxHeight: 200, overflow: 'auto', border: '1px solid var(--color-border)', borderRadius: 6 }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.74rem' }}>
+                  <thead>
+                    <tr style={{ background: '#F8FAFC' }}>
+                      <th style={{ textAlign: 'left', padding: '0.35rem 0.55rem', borderBottom: '1px solid var(--color-border-light)' }}>Source column</th>
+                      <th style={{ textAlign: 'left', padding: '0.35rem 0.55rem', borderBottom: '1px solid var(--color-border-light)' }}>→ Opps 2 column</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {parsed.headers.map((h, idx) => (
+                      <tr key={`${h}|${idx}`}>
+                        <td style={{ padding: '0.3rem 0.55rem', borderBottom: '1px solid var(--color-border-light)', color: '#0f172a' }}>{h || <span style={{ color: '#94A3B8' }}>(unnamed col {idx + 1})</span>}</td>
+                        <td style={{ padding: '0.3rem 0.55rem', borderBottom: '1px solid var(--color-border-light)' }}>
+                          <select
+                            value={mapping[h] || ''}
+                            onChange={(e) => setMapping(prev => ({ ...prev, [h]: e.target.value }))}
+                            style={{ width: '100%', fontFamily: 'inherit', fontSize: '0.74rem', padding: '2px 4px' }}
+                          >
+                            <option value="">— Skip this column —</option>
+                            {targetOptions.map(t => (
+                              <option key={t} value={t}>{t}</option>
+                            ))}
+                          </select>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {analysis && (
+              <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
+                <div style={{ flex: '1 1 220px', padding: '0.5rem 0.75rem', background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: 6 }}>
+                  <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#166534' }}>{analysis.additions.length} row{analysis.additions.length === 1 ? '' : 's'} will import</div>
+                </div>
+                <div style={{ flex: '1 1 220px', padding: '0.5rem 0.75rem', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 6 }}>
+                  <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#92400E' }}>{analysis.skipped.length} row{analysis.skipped.length === 1 ? '' : 's'} skipped</div>
+                </div>
+              </div>
+            )}
+
+            {analysis && analysis.skipped.length > 0 && (
+              <div>
+                <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#0f172a', marginBottom: '0.35rem' }}>Skipped rows</div>
+                <div style={{ maxHeight: 180, overflow: 'auto', border: '1px solid var(--color-border)', borderRadius: 6 }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.72rem' }}>
+                    <thead>
+                      <tr style={{ background: '#F8FAFC' }}>
+                        <th style={{ textAlign: 'left', padding: '0.3rem 0.55rem', width: 80 }}>Source line</th>
+                        <th style={{ textAlign: 'left', padding: '0.3rem 0.55rem' }}>Reason</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {analysis.skipped.map((s, i) => (
+                        <tr key={i}>
+                          <td style={{ padding: '0.25rem 0.55rem', borderBottom: '1px solid var(--color-border-light)', color: '#64748B' }}>{s.lineNo}</td>
+                          <td style={{ padding: '0.25rem 0.55rem', borderBottom: '1px solid var(--color-border-light)', color: '#0f172a' }}>{s.reason}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {analysis && analysis.additions.length > 0 && (
+              <div>
+                <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#0f172a', marginBottom: '0.35rem' }}>Preview (first 5)</div>
+                <div style={{ maxHeight: 200, overflow: 'auto', border: '1px solid var(--color-border)', borderRadius: 6 }}>
+                  <table style={{ borderCollapse: 'collapse', fontSize: '0.7rem', width: '100%' }}>
+                    <thead>
+                      <tr style={{ background: '#F8FAFC' }}>
+                        {targetOptions.filter(t => Object.values(mapping).includes(t)).map(t => (
+                          <th key={t} style={{ textAlign: 'left', padding: '0.3rem 0.55rem', whiteSpace: 'nowrap', borderBottom: '1px solid var(--color-border-light)' }}>{t}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {analysis.additions.slice(0, 5).map((row, i) => (
+                        <tr key={i}>
+                          {targetOptions.filter(t => Object.values(mapping).includes(t)).map(t => (
+                            <td key={t} style={{ padding: '0.25rem 0.55rem', borderBottom: '1px solid var(--color-border-light)', whiteSpace: 'nowrap', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis' }}>{String(row[t] ?? '')}</td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.5rem' }}>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={importing}
+            style={{
+              padding: '0.4rem 0.85rem', fontSize: '0.8rem', fontFamily: 'inherit',
+              background: '#fff', color: '#475569',
+              border: '1px solid var(--color-border)', borderRadius: 6,
+              cursor: importing ? 'not-allowed' : 'pointer',
+            }}
+          >Cancel</button>
+          <button
+            type="button"
+            onClick={handleImport}
+            disabled={importing || !analysis || analysis.additions.length === 0}
+            style={{
+              padding: '0.4rem 0.95rem', fontSize: '0.8rem', fontWeight: 600, fontFamily: 'inherit',
+              background: 'var(--color-accent)', color: '#fff',
+              border: '1px solid var(--color-accent)', borderRadius: 6,
+              cursor: (importing || !analysis || analysis.additions.length === 0) ? 'not-allowed' : 'pointer',
+              opacity: (importing || !analysis || analysis.additions.length === 0) ? 0.6 : 1,
+            }}
+          >{importing ? 'Importing…' : `Import ${analysis ? analysis.additions.length : 0} row${(analysis?.additions.length || 0) === 1 ? '' : 's'}`}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function OppsView2({ settings, updateSettings, prospects = [], updateProspect } = {}) {
   const { user } = useAuth();
   // Seeded with DEFAULT_HEADERS so the table renders columns immediately;
@@ -2257,6 +2600,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // the button locks out double-clicks and shows a "Importing…"
   // label.
   const [importingFromOpps, setImportingFromOpps] = useState(false);
+  const [bulkImportOpen, setBulkImportOpen] = useState(false);
 
   // Dedup key for the Opps → Opps 2 one-time import. BFO Link is the
   // natural unique id; for rows that lack one we fall back to a
@@ -2370,6 +2714,49 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       setImportingFromOpps(false);
     }
   }, [importingFromOpps, data, oppDedupKeyForImport, user?.uid]);
+
+  // Commit a batch of rows produced by the Bulk Import modal. The
+  // modal has already done dedup + column mapping; we just splice the
+  // additions into state and persist synchronously (same shape as the
+  // Import-from-Opps path so refresh / tab-switch can't drop the
+  // writes). New columns from the source paste merge into the Opps 2
+  // header set so they're selectable from the Columns toggle.
+  const commitBulkImport = useCallback(async (additions, sourceHeaders, mapping) => {
+    if (!Array.isArray(additions) || additions.length === 0) return;
+    const baseHeaders = data?.headers?.length ? data.headers : DEFAULT_HEADERS;
+    const baseRecords = data?.records || [];
+    const headerSet = new Set(baseHeaders);
+    const mergedHeaders = [...baseHeaders];
+    // The mapping values are the target Opps 2 columns; any new ones
+    // (e.g. a sheet column the user mapped to a custom Opps 2 column)
+    // get appended so they show up in the column toggle.
+    for (const target of Object.values(mapping || {})) {
+      if (target && !headerSet.has(target)) { headerSet.add(target); mergedHeaders.push(target); }
+    }
+    let nextId = baseRecords.reduce((m, r) => Math.max(m, Number(r?._id) || 0), 0);
+    const stamped = additions.map(r => ({ ...r, _id: ++nextId, id: nextId, _source: 'bulk-import' }));
+    const nextRecords = [...stamped, ...baseRecords];
+    const nextState = { ...(data || {}), headers: mergedHeaders, records: nextRecords };
+    setData(nextState);
+    if (firestoreSaveTimerRef.current) {
+      clearTimeout(firestoreSaveTimerRef.current);
+      firestoreSaveTimerRef.current = null;
+    }
+    await saveOpps2Cache(nextState);
+    let firestoreWarning = '';
+    if (user?.uid) {
+      try {
+        await saveOpps2ToFirestore(user.uid, nextState);
+      } catch (err) {
+        console.error('Bulk import: Firestore save failed:', err);
+        firestoreWarning = `\n\nWarning: cross-device sync failed (${err?.message || err}). Rows are safe on this device.`;
+      }
+    }
+    setBulkImportOpen(false);
+    // Suppress unused-arg lint — sourceHeaders is informational only.
+    void sourceHeaders;
+    window.alert(`Imported ${additions.length} row${additions.length === 1 ? '' : 's'} from the pasted sheet.${firestoreWarning}`);
+  }, [data, user?.uid]);
 
   // Look the tagged contact's full HubSpot record up by email (most
   // reliable) and fall back to a case-insensitive name match. When
@@ -3186,6 +3573,17 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             }}
             title="One-time copy of every row from the Opps tab cache that isn't already on Opps 2"
           >{importingFromOpps ? 'Importing…' : 'Import from Opps tab'}</button>
+          <button
+            type="button"
+            onClick={() => setBulkImportOpen(true)}
+            style={{
+              padding: '0.45rem 0.85rem', background: 'transparent',
+              border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)',
+              fontSize: 'var(--font-size-sm)', fontWeight: 600, fontFamily: 'inherit',
+              color: 'var(--color-text)', cursor: 'pointer',
+            }}
+            title="Paste data from a Google Sheet with the same columns and review the mapping before importing"
+          >Bulk import</button>
           <button className={styles.syncBtn} onClick={() => setPendingNewOpp({})}>+ New Opp</button>
         </div>
       </div>
@@ -3201,6 +3599,16 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           availableLists={availableLists}
           onChange={updateColumnLinks}
           onClose={() => setLinkModalOpen(false)}
+        />
+      )}
+
+      {bulkImportOpen && (
+        <BulkImportModal
+          existingHeaders={data?.headers?.length ? data.headers : DEFAULT_HEADERS}
+          existingRecords={data?.records || []}
+          dedupKeyFor={oppDedupKeyForImport}
+          onClose={() => setBulkImportOpen(false)}
+          onImport={commitBulkImport}
         />
       )}
 
