@@ -1028,6 +1028,10 @@ export function YOYView() {
         </div>
         <div className={styles.row}>
           <CommissionsCard data={commissionsData} hasCommissions={hasCommissions} onDownload={downloadCommissions} />
+          {/* Empty flex slots so the lone Commissions card sits at one-
+              third width, matching every other row's three-up layout. */}
+          <div style={{ flex: '1 1 0' }} aria-hidden />
+          <div style={{ flex: '1 1 0' }} aria-hidden />
         </div>
       </div>
     </div>
