@@ -625,7 +625,7 @@ export function OptionsTab({ options, setOptions }) {
   );
 }
 
-function OppPickerModal({ opps, optionName, onPick, onClose }) {
+export function OppPickerModal({ opps, optionName, onPick, onClose }) {
   const [query, setQuery] = useState('');
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

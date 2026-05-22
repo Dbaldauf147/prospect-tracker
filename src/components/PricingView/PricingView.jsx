@@ -5,11 +5,16 @@ import styles from './PricingView.module.css';
 import { parsePricingWorkbook, priceFromCostAndGm } from '../../utils/pricingParse';
 import { dbGet, dbPut, dbDelete } from '../../utils/db';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
-import { OptionsTab } from './OptionsTab';
+import { OptionsTab, OppPickerModal } from './OptionsTab';
 import { PricingConversions } from './PricingConversions';
 import { CompareTab } from './CompareTab';
 import { BrokerFeesTab } from './BrokerFeesTab';
 import { S2CTab } from './S2CTab';
+import {
+  loadOptionLinks,
+  setOppOptionLink,
+  OPTION_LINKS_EVENT,
+} from '../../utils/pricingOptionLinks';
 
 // Local-draft text input keyed off the upstream value. The parent
 // remounts the input (via React's `key` prop on the wrapping cell)
@@ -1227,6 +1232,13 @@ export function PricingView({ settings } = {}) {
   const [compareTabData, setCompareTabData] = useState(null); // CompareTab state: { currentLabel, nextLabel, current: [...], next: [...] }
   const [brokerFeesData, setBrokerFeesData] = useState(null); // BrokerFeesTab state: array of { company, loadEp, feeEp, rfps, loadNg, feeNg }
   const [s2cTabData, setS2cTabData] = useState(null); // S2CTab state: array of { costElement, setup, setupUom, ongoing, ongoingUom }
+  // Opps 2 records + Option ↔ Opp link map, shared with the Options
+  // sub-tab so saving from either tab updates the Opps 2 "Pricing
+  // Option" column. Loaded on mount and refreshed on the cross-tab
+  // event so a save anywhere shows up live.
+  const [opps2Records, setOpps2Records] = useState([]);
+  const [optionLinks, setOptionLinks] = useState({});
+  const [pricingPickerOpen, setPricingPickerOpen] = useState(false);
   const [error, setError] = useState('');
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef(null);
@@ -1629,6 +1641,27 @@ export function PricingView({ settings } = {}) {
     const exists = workbook.options.some(o => o.optionNumber === activeOption);
     if (!exists) setActiveOption(workbook.options[0].optionNumber);
   }, [workbook, activeOption]);
+
+  // Hydrate Opps 2 records + Option ↔ Opp link map for the per-option
+  // "Save to Opp" button on the Pricing sub-tab. Updates broadcast from
+  // the Options sub-tab (or another browser tab) flow back through the
+  // same cross-tab event used everywhere else.
+  useEffect(() => {
+    let cancelled = false;
+    dbGet('opps2-cache', 'data')
+      .then(val => { if (!cancelled && val && Array.isArray(val.records)) setOpps2Records(val.records); })
+      .catch(() => {});
+    loadOptionLinks().then(val => { if (!cancelled) setOptionLinks(val || {}); });
+    const onLinks = (e) => {
+      const detail = e?.detail;
+      if (detail && typeof detail === 'object') setOptionLinks(detail);
+    };
+    window.addEventListener(OPTION_LINKS_EVENT, onLinks);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(OPTION_LINKS_EVENT, onLinks);
+    };
+  }, []);
 
   // Pull the JSON snapshot out of a dropped Pricing-page export. The
   // state sheet stores the payload in chunked rows (column A, row 2+)
@@ -2463,6 +2496,21 @@ export function PricingView({ settings } = {}) {
         {workbook && workbook.options.length > 0 && (() => {
           const opt = workbook.options.find(o => o.optionNumber === activeOption) || workbook.options[0];
           const t = totals?.[opt.optionNumber];
+          // Sheet name doubles as the link label so the Pricing-subtab
+          // chip matches what Opps 2 displays under "Pricing Option".
+          const optionLabel = (opt.sheetName || '').trim();
+          let linkedOppId = null;
+          if (optionLabel) {
+            for (const [id, v] of Object.entries(optionLinks)) {
+              if (v === optionLabel) { linkedOppId = id; break; }
+            }
+          }
+          const linkedOpp = linkedOppId
+            ? opps2Records.find(r => String(r._id) === String(linkedOppId)) || null
+            : null;
+          const linkedLabel = linkedOpp
+            ? `${linkedOpp.Account || '(no Account)'}${linkedOpp.Scope ? ` · ${linkedOpp.Scope}` : ''}`
+            : (linkedOppId ? `(opp ${linkedOppId})` : null);
           return (
             <>
               <div className={styles.tabStrip}>
@@ -2520,6 +2568,35 @@ export function PricingView({ settings } = {}) {
                       onClick={cloneActiveOption}
                       title={`Clone "${opt.sheetName}" into a new Option on this workbook. The clone is temporary — it goes away when you remove or replace the file.`}
                     >Clone option</button>
+                    {linkedLabel ? (
+                      <span
+                        className={styles.savedChip}
+                        title={`Linked to Opps 2 row: ${linkedLabel}`}
+                      >
+                        Saved to: {linkedLabel}
+                        <button
+                          type="button"
+                          className={styles.savedChipClear}
+                          onClick={() => {
+                            if (linkedOppId) setOppOptionLink(linkedOppId, '').catch(() => {});
+                          }}
+                          title="Unlink from this Opp"
+                        >×</button>
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        className={styles.actionBtn}
+                        onClick={() => {
+                          if (!optionLabel) {
+                            window.alert('This Option has no sheet name to link.');
+                            return;
+                          }
+                          setPricingPickerOpen(true);
+                        }}
+                        title={`Save "${opt.sheetName}" to an Opps 2 row.`}
+                      >Save to Opp…</button>
+                    )}
                     <ColumnsMenu
                       open={colMenuOpen}
                       onToggle={() => setColMenuOpen(o => !o)}
@@ -3233,6 +3310,22 @@ export function PricingView({ settings } = {}) {
           );
         })()}
       </div>
+
+      {pricingPickerOpen && (() => {
+        const opt = workbook?.options.find(o => o.optionNumber === activeOption) || workbook?.options[0];
+        const label = (opt?.sheetName || '').trim();
+        return (
+          <OppPickerModal
+            opps={opps2Records}
+            optionName={label}
+            onPick={(oppId) => {
+              setOppOptionLink(oppId, label).catch(() => {});
+              setPricingPickerOpen(false);
+            }}
+            onClose={() => setPricingPickerOpen(false)}
+          />
+        );
+      })()}
     </div>
   );
 }
