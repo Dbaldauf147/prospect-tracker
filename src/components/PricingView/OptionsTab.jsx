@@ -36,14 +36,20 @@ const toNum = (v) => {
   return Number.isFinite(n) ? n : null;
 };
 
+// Est. Unit Count column treats a blank entry as 1 so a row with just a
+// fee still produces revenue. An explicit 0 is honored.
+const unitCountOrOne = (v) => {
+  const n = toNum(v);
+  return n == null ? 1 : n;
+};
+
 // Months a row is billed inside the requested year (1-indexed),
 // honoring the contract length. One-time and Setup hit a single
 // month (the start month); Recurring bills every month from start
 // through the end of the contract.
 function activeMonthsInYear(row, yearIdx, termYears) {
   const fee = toNum(row.fee);
-  const uc = toNum(row.unitCount);
-  if (fee == null || uc == null) return 0;
+  if (fee == null) return 0;
   const startMonth = toNum(row.startMonth);
   if (startMonth == null || startMonth < 1) return 0;
   const lastMonth = termYears * 12;
@@ -66,7 +72,7 @@ function rowYearRevenue(row, yearIdx, termYears, escPct) {
   const months = activeMonthsInYear(row, yearIdx, termYears);
   if (!months) return 0;
   const fee = toNum(row.fee) || 0;
-  const uc = toNum(row.unitCount) || 0;
+  const uc = unitCountOrOne(row.unitCount);
   const esc = Math.pow(1 + (escPct || 0) / 100, yearIdx - 1);
   return fee * uc * months * esc;
 }
@@ -78,8 +84,8 @@ function rowYearRevenue(row, yearIdx, termYears, escPct) {
 // year the revenue lands in.
 function rowMonthRevenue(row, month, termYears, escPct) {
   const fee = toNum(row.fee);
-  const uc = toNum(row.unitCount);
-  if (fee == null || uc == null) return 0;
+  if (fee == null) return 0;
+  const uc = unitCountOrOne(row.unitCount);
   const startMonth = toNum(row.startMonth);
   if (startMonth == null || startMonth < 1) return 0;
   const lastMonth = termYears * 12;
@@ -202,7 +208,7 @@ function OptionPanel({ opt, onChange, savedToLabel, onClickSave, onClearSave }) 
 
   const setupTotal = opt.rows
     .filter(r => (r.type || '').toLowerCase() === 'setup')
-    .reduce((s, r) => s + (toNum(r.fee) || 0) * (toNum(r.unitCount) || 0), 0);
+    .reduce((s, r) => s + (toNum(r.fee) || 0) * unitCountOrOne(r.unitCount), 0);
 
   // Year 1 monthly fee breakdown (12 numbers + a year-end total). Each
   // entry is the sum across every row in this option for that contract
