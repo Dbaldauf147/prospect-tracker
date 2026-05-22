@@ -6307,7 +6307,28 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // export knows which cells to plot. The chart is injected after
       // wb.xlsx.writeBuffer() (ExcelJS has no chart API), so we ferry
       // these bounds out via closure.
-      hedgingChartRange = { firstRow: FIRST_DATA_ROW, lastRow: LAST_DATA_ROW };
+      //
+      // For the % of Portfolio Hedged chart we also zoom the Y axis to
+      // 10 percentage points above the highest cumulative-hedge value
+      // and 10 below the lowest (clamped at 0 on the bottom so the
+      // axis never goes negative). With the linear ladder defaults
+      // (Current: 1/60 → 100 %, Example: 1/120 → 50 %) this lands at
+      // ~0 %–110 %; if the user re-shapes the ladders to a tighter
+      // range, the export captures that as a tighter axis on next
+      // export.
+      const hedgePctValues = hedges.flatMap((_, i) => [
+        (i + 1) * CURRENT_STEP,
+        (i + 1) * PROPOSED_STEP,
+      ]);
+      const minHedge = Math.min(...hedgePctValues);
+      const maxHedge = Math.max(...hedgePctValues);
+      const PAD = 0.10;
+      hedgingChartRange = {
+        firstRow: FIRST_DATA_ROW,
+        lastRow: LAST_DATA_ROW,
+        hedgePctYMin: Math.max(0, minHedge - PAD),
+        hedgePctYMax: maxHedge + PAD,
+      };
     }
 
     // ---- Floating vs Hedging Example sheet --------------------------
@@ -6991,7 +7012,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     // range automatically.
     if (hedgingChartRange) {
       const HSHEET = 'Hedging Analysis';
-      const { firstRow, lastRow } = hedgingChartRange;
+      const { firstRow, lastRow, hedgePctYMin, hedgePctYMax } = hedgingChartRange;
       buf = await injectLiveLineChart(buf, {
         sheetName: HSHEET,
         charts: [
@@ -7014,18 +7035,20 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           },
           {
             // % of portfolio hedged over time — cumulative hedge ratio
-            // from columns C (Current) and D (Example). Y axis stays
-            // 0%-100% so the two ladder lines read as ratios. Anchored
-            // immediately below the Spot Price chart (row 11 + ~18
-            // default-height rows ≈ row 29).
+            // from columns C (Current) and D (Example). The Y axis is
+            // zoomed to 10 percentage points above the highest hedge
+            // value and 10 below the lowest (clamped at 0) so the two
+            // ladder lines aren't squished against an unconditional
+            // 0–100 % frame. Anchored immediately below the Spot Price
+            // chart (row 11 + ~18 default-height rows ≈ row 29).
             title: '% of Portfolio Hedged Over Time',
             catRef: `'${HSHEET}'!$B$${firstRow}:$B$${lastRow}`,
             lineSeries: [
               { name: 'Current Hedge %', color: '1E40AF', dash: 'dash',  valRef: `'${HSHEET}'!$C$${firstRow}:$C$${lastRow}` },
               { name: 'Example Hedge %', color: '22C55E', marker: 'circle', markerSize: 4, valRef: `'${HSHEET}'!$D$${firstRow}:$D$${lastRow}` },
             ],
-            yMin: 0,
-            yMax: 1,
+            yMin: hedgePctYMin,
+            yMax: hedgePctYMax,
             numFmt: '0%',
             anchor: { col: 12, colOff: 0, row: 28, rowOff: 0, cx: 6858000, cy: 3429000 },
           },
