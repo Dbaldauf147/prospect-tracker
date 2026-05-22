@@ -7037,10 +7037,13 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             // % of portfolio hedged over time — cumulative hedge ratio
             // from columns C (Current) and D (Example). The Y axis is
             // zoomed to 10 percentage points above the highest hedge
-            // value and 10 below the lowest (clamped at 0) so the two
-            // ladder lines aren't squished against an unconditional
-            // 0–100 % frame. Anchored immediately below the Spot Price
-            // chart (row 11 + ~18 default-height rows ≈ row 29).
+            // value and 10 below the lowest (clamped at 0). Major unit
+            // is forced to 10 % so the new top tick label (e.g. 110 %)
+            // actually renders — without it Excel rounds to "nice"
+            // intervals and hides the extra padding in invisible
+            // whitespace above the 100 % tick. Anchored immediately
+            // below the Spot Price chart (row 11 + ~18 default-height
+            // rows ≈ row 29).
             title: '% of Portfolio Hedged Over Time',
             catRef: `'${HSHEET}'!$B$${firstRow}:$B$${lastRow}`,
             lineSeries: [
@@ -7049,6 +7052,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             ],
             yMin: hedgePctYMin,
             yMax: hedgePctYMax,
+            yMajorUnit: 0.10,
             numFmt: '0%',
             anchor: { col: 12, colOff: 0, row: 28, rowOff: 0, cx: 6858000, cy: 3429000 },
           },
