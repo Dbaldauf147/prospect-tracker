@@ -341,7 +341,7 @@ const BULK_EDITABLE_KEYS = buildBulkEditableKeys();
 // Bulk-edit toolbar. Pops in above the table whenever the user has
 // at least one row selected. Picks a target column, takes a value,
 // and routes the write through onApply / onDelete on the parent.
-function BulkEditBar({ selectedCount, onApply, onDelete, onClearSelection }) {
+function BulkEditBar({ selectedCount, onApply, onDelete, onSetIgnored, onClearSelection }) {
   const [field, setField] = useState(BULK_EDITABLE_KEYS[0]);
   const [value, setValue] = useState('');
   return (
@@ -384,6 +384,18 @@ function BulkEditBar({ selectedCount, onApply, onDelete, onClearSelection }) {
         style={{ padding: '0.3rem 0.7rem', border: '1px solid #93C5FD', borderRadius: 4, background: '#fff', color: '#1E3A8A', fontSize: '0.75rem', cursor: 'pointer', fontFamily: 'inherit' }}
       >Clear field</button>
       <span style={{ flex: 1 }} />
+      <button
+        type="button"
+        onClick={() => onSetIgnored?.(true)}
+        title="Grey out every selected row (excluded from YOY totals)"
+        style={{ padding: '0.3rem 0.7rem', border: '1px solid #CBD5E1', borderRadius: 4, background: '#fff', color: '#334155', fontSize: '0.75rem', cursor: 'pointer', fontFamily: 'inherit' }}
+      >Mark ignored</button>
+      <button
+        type="button"
+        onClick={() => onSetIgnored?.(false)}
+        title="Restore every selected row"
+        style={{ padding: '0.3rem 0.7rem', border: '1px solid #CBD5E1', borderRadius: 4, background: '#fff', color: '#334155', fontSize: '0.75rem', cursor: 'pointer', fontFamily: 'inherit' }}
+      >Unignore</button>
       <button
         type="button"
         onClick={onDelete}
@@ -525,7 +537,38 @@ function buildColumns(oppsCache, selectCol) {
     ),
     exportValue: () => '',
   };
-  return [selectCol, ...front, ...canonical, fyCommissionCol, paymentStatusCol, deleteCol];
+  // Per-row "ignore" toggle. Greys out the row everywhere it's rendered
+  // without affecting the underlying data — useful for parking
+  // intentionally-skipped projects (one-off corrections, refund rows,
+  // duplicates) where the user wants a visual mute, not a delete.
+  const ignoreCol = {
+    key: '__ignored',
+    label: '',
+    defaultWidth: 64,
+    render: (row) => {
+      const on = !!row.__ignored;
+      return (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            row.__onToggleIgnore?.(row.id);
+          }}
+          title={on ? 'Row is ignored — click to restore.' : 'Mark this row as ignored (greys it out).'}
+          style={{
+            background: on ? '#E2E8F0' : 'transparent',
+            border: '1px solid var(--color-border)',
+            color: on ? '#475569' : '#64748B',
+            borderRadius: 4, padding: '0 6px',
+            fontSize: '0.72rem', fontFamily: 'inherit', cursor: 'pointer', lineHeight: 1.4,
+            fontWeight: 600,
+          }}
+        >{on ? 'Ignored' : 'Ignore'}</button>
+      );
+    },
+    exportValue: (row) => (row.__ignored ? 'Ignored' : ''),
+  };
+  return [selectCol, ...front, ...canonical, fyCommissionCol, paymentStatusCol, ignoreCol, deleteCol];
 }
 
 export function CommissionsView({ settings, updateSettings, prospects = [] }) {
@@ -661,6 +704,41 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
     return out;
   }, [prospects]);
 
+  // Flip the __ignored flag on a row. A truthy flag greys the row out
+  // everywhere it's rendered (and excludes it from the YOY commission
+  // totals). Persisted via the same override store as every other
+  // cell edit.
+  function toggleIgnored(rowId) {
+    const idx = Number(rowId);
+    if (!Number.isFinite(idx)) return;
+    setStore(prev => {
+      const next = [...prev.data];
+      const current = { ...(next[idx] || {}) };
+      if (current.__ignored) delete current.__ignored;
+      else current.__ignored = true;
+      next[idx] = current;
+      try { saveCommissionsOverride(next); } catch (err) { console.warn('Save commissions failed', err); }
+      return { data: next, source: 'override' };
+    });
+  }
+
+  // Bulk version — set or clear __ignored on every selected row.
+  function bulkSetIgnored(flag) {
+    if (selectedIds.size === 0) return;
+    setStore(prev => {
+      const next = prev.data.map((row, i) => {
+        if (!selectedIds.has(i)) return row;
+        const out = { ...row };
+        if (flag) out.__ignored = true;
+        else delete out.__ignored;
+        return out;
+      });
+      try { saveCommissionsOverride(next); } catch (err) { console.warn('Save commissions failed', err); }
+      return { data: next, source: 'override' };
+    });
+    setSelectedIds(new Set());
+  }
+
   // Save a single cell back to localStorage / the in-memory data array.
   // Empty values delete the key entirely so empty cells render the muted
   // "—" placeholder. Mirrors the DealsView updateCell pattern.
@@ -700,6 +778,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
       id: i,
       __onUpdate: updateCell,
       __onDelete: deleteRow,
+      __onToggleIgnore: toggleIgnored,
       __isSelected: selectedIds.has(i),
       __onToggleSelect: toggleSelect,
     })),
@@ -827,6 +906,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
           selectedCount={selectedIds.size}
           onApply={bulkSet}
           onDelete={bulkDelete}
+          onSetIgnored={bulkSetIgnored}
           onClearSelection={() => setSelectedIds(new Set())}
         />
       )}
@@ -847,6 +927,7 @@ export function CommissionsView({ settings, updateSettings, prospects = [] }) {
             rows={filtered}
             emptyMessage={search ? `No rows match "${search}"` : 'No commissions to display'}
             enableColumnFilters
+            rowStyle={(row) => row.__ignored ? { opacity: 0.45, background: '#F8FAFC', color: '#64748B' } : undefined}
             settings={settings}
             updateSettings={updateSettings}
           />
