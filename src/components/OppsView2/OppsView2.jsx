@@ -717,7 +717,7 @@ function CellHoverPopover({ anchorRef, value, enabled }) {
   );
 }
 
-function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel, onDoubleClickValue }) {
+function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value ?? '');
   const [open, setOpen] = useState(false);
@@ -729,11 +729,6 @@ function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel, onD
   const wrapRef = useRef(null);
   const displayRef = useRef(null);
   const textareaRef = useRef(null);
-  // When `onDoubleClickValue` is wired up we delay the single-click
-  // edit-mode toggle by ~220ms so a follow-up dblclick can cancel it
-  // and open the popup instead. Other EditableCell consumers keep the
-  // original zero-delay behavior.
-  const clickTimerRef = useRef(null);
   useEffect(() => { if (!editing) setDraft(value ?? ''); }, [value, editing]);
 
   // Auto-grow the textarea to fit its contents so the user sees every
@@ -817,32 +812,11 @@ function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel, onD
   if (!editing) {
     const isEmpty = value === '' || value == null;
     const text = isEmpty ? '—' : String(value);
-    const enterEdit = () => { setEditing(true); setOpen(dropdownAvailable); };
-    const handleClick = (e) => {
-      e.stopPropagation();
-      if (!onDoubleClickValue) { enterEdit(); return; }
-      if (clickTimerRef.current) return;
-      clickTimerRef.current = setTimeout(() => {
-        clickTimerRef.current = null;
-        enterEdit();
-      }, 220);
-    };
-    const handleDoubleClick = (e) => {
-      if (!onDoubleClickValue) return;
-      e.stopPropagation();
-      e.preventDefault();
-      if (clickTimerRef.current) {
-        clearTimeout(clickTimerRef.current);
-        clickTimerRef.current = null;
-      }
-      onDoubleClickValue(value);
-    };
     return (
       <>
         <span
           ref={displayRef}
-          onClick={handleClick}
-          onDoubleClick={handleDoubleClick}
+          onClick={(e) => { e.stopPropagation(); setEditing(true); setOpen(dropdownAvailable); }}
           style={{
             // `white-space: pre` keeps Alt+Enter newlines on their own
             // line (so the row grows vertically to fit) while still
@@ -851,7 +825,7 @@ function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel, onD
             padding: '1px 2px', whiteSpace: 'pre', overflow: 'hidden',
             color: isEmpty ? 'var(--color-text-muted)' : 'inherit',
           }}
-          title={onDoubleClickValue ? 'Click to edit · Double-click to view full text' : 'Click to edit'}
+          title="Click to edit"
         >{text}</span>
         <CellHoverPopover anchorRef={displayRef} value={text} enabled={!isEmpty} />
       </>
@@ -986,6 +960,130 @@ function companyMatchKeys(name) {
     }
   }
   return keys;
+}
+
+// Editable modal for the Next Steps field — opens whenever the user
+// clicks a Next Steps cell. The textarea autosizes to fit the entry
+// and a Save button (or Ctrl/⌘+Enter) commits, while Cancel / Esc /
+// backdrop-click discard.
+function NextStepsEditModal({ initialValue, account, onSave, onClose }) {
+  const [draft, setDraft] = useState(initialValue ?? '');
+  const textareaRef = useRef(null);
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+      else if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        e.preventDefault();
+        onSave(draft);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [draft, onSave, onClose]);
+  useEffect(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.focus();
+    // Cursor at end so adding to an existing note is one click.
+    const end = ta.value.length;
+    ta.setSelectionRange(end, end);
+  }, []);
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.5)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10001,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: '#fff', borderRadius: 8, padding: '1rem 1.25rem',
+          width: 'min(560px, 92vw)', maxHeight: '80vh', overflow: 'auto',
+          boxShadow: '0 18px 50px rgba(15, 23, 42, 0.32)',
+          display: 'flex', flexDirection: 'column',
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem', gap: '1rem' }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            Next Steps — {account}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            style={{
+              background: 'transparent', border: 'none', cursor: 'pointer',
+              fontSize: '1.1rem', color: '#64748B', padding: '0 4px', lineHeight: 1,
+            }}
+          >×</button>
+        </div>
+        <textarea
+          ref={textareaRef}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          rows={10}
+          spellCheck={false}
+          style={{
+            width: '100%', minHeight: 180, resize: 'vertical',
+            fontFamily: 'inherit', fontSize: '0.88rem', lineHeight: 1.45,
+            padding: '0.55rem 0.7rem', border: '1px solid var(--color-border)',
+            borderRadius: 6, color: '#0f172a', background: '#fff',
+            boxSizing: 'border-box',
+          }}
+        />
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.75rem', gap: '0.5rem' }}>
+          <span style={{ fontSize: '0.7rem', color: '#94A3B8' }}>⌘/Ctrl + Enter to save · Esc to cancel</span>
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <button
+              type="button"
+              onClick={onClose}
+              style={{
+                padding: '0.4rem 0.85rem', fontSize: '0.8rem', fontFamily: 'inherit',
+                background: '#fff', color: '#475569',
+                border: '1px solid var(--color-border)', borderRadius: 6, cursor: 'pointer',
+              }}
+            >Cancel</button>
+            <button
+              type="button"
+              onClick={() => onSave(draft)}
+              style={{
+                padding: '0.4rem 0.95rem', fontSize: '0.8rem', fontWeight: 600, fontFamily: 'inherit',
+                background: 'var(--color-accent)', color: '#fff',
+                border: '1px solid var(--color-accent)', borderRadius: 6, cursor: 'pointer',
+              }}
+            >Save</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Next Steps cells short-circuit the inline-edit flow — every click on
+// the display opens an editable popup managed at the OppsView2 level.
+// The cell itself just renders the current text (and the same hover-
+// popover preview EditableCell uses) and calls onOpen on click.
+function NextStepsCell({ value, onOpen }) {
+  const displayRef = useRef(null);
+  const isEmpty = value === '' || value == null;
+  const text = isEmpty ? '—' : String(value);
+  return (
+    <>
+      <span
+        ref={displayRef}
+        onClick={(e) => { e.stopPropagation(); onOpen(); }}
+        style={{
+          display: 'block', cursor: 'text', minHeight: '1em',
+          padding: '1px 2px', whiteSpace: 'pre', overflow: 'hidden',
+          color: isEmpty ? 'var(--color-text-muted)' : 'inherit',
+        }}
+        title="Click to edit in a popup"
+      >{text}</span>
+      <CellHoverPopover anchorRef={displayRef} value={text} enabled={!isEmpty} />
+    </>
+  );
 }
 
 function ContactCell({ value, onChange, account, prospects, updateProspect, hubspotContacts, onOpenContact }) {
@@ -2172,16 +2270,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // is showing. Resolved against the live records list on render so
   // the popup always reflects the latest cell edits.
   const [infoOppId, setInfoOppId] = useState(null);
-  // Double-clicking the Next Steps cell opens a read-only popup showing
-  // the full value (useful when the column is narrow and the entry
-  // spans multiple Alt+Enter lines).
+  // Clicking a Next Steps cell opens an editable popup; the opp id
+  // tracks which row is currently being edited. Esc / Cancel / save
+  // all run through the modal's own callbacks.
   const [nextStepsPopupId, setNextStepsPopupId] = useState(null);
-  useEffect(() => {
-    if (nextStepsPopupId == null) return undefined;
-    const onKey = (e) => { if (e.key === 'Escape') setNextStepsPopupId(null); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [nextStepsPopupId]);
   // Mass-edit selection — set of row _id's the user has checked. The
   // mass-edit toolbar shows whenever this is non-empty.
   const [selectedIds, setSelectedIds] = useState(() => new Set());
@@ -2751,12 +2843,19 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               />
             );
           }
+          if (h === 'Next Steps') {
+            return (
+              <NextStepsCell
+                value={row[h]}
+                onOpen={() => setNextStepsPopupId(row._id)}
+              />
+            );
+          }
           return (
             <EditableCell
               value={row[h]}
               onChange={(v) => updateOppField(row._id, h, v)}
               suggestions={h === 'Account' ? companySuggestions : undefined}
-              onDoubleClickValue={h === 'Next Steps' ? () => setNextStepsPopupId(row._id) : undefined}
             />
           );
         },
@@ -3100,46 +3199,17 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       {nextStepsPopupId != null && (() => {
         const opp = records.find(r => r._id === nextStepsPopupId);
         if (!opp) return null;
-        const text = String(opp['Next Steps'] || '').trim();
         const account = String(opp['Account'] || '').trim() || '(no account)';
         return (
-          <div
-            onClick={() => setNextStepsPopupId(null)}
-            style={{
-              position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.5)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10001,
+          <NextStepsEditModal
+            initialValue={String(opp['Next Steps'] || '')}
+            account={account}
+            onSave={(v) => {
+              updateOppField(opp._id, 'Next Steps', v);
+              setNextStepsPopupId(null);
             }}
-          >
-            <div
-              onClick={(e) => e.stopPropagation()}
-              style={{
-                background: '#fff', borderRadius: 8, padding: '1rem 1.25rem',
-                width: 'min(560px, 92vw)', maxHeight: '80vh', overflow: 'auto',
-                boxShadow: '0 18px 50px rgba(15, 23, 42, 0.32)',
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem', gap: '1rem' }}>
-                <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  Next Steps — {account}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setNextStepsPopupId(null)}
-                  aria-label="Close"
-                  style={{
-                    background: 'transparent', border: 'none', cursor: 'pointer',
-                    fontSize: '1.1rem', color: '#64748B', padding: '0 4px', lineHeight: 1,
-                  }}
-                >×</button>
-              </div>
-              <div style={{
-                whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                fontSize: '0.85rem', lineHeight: 1.45, color: text ? '#0f172a' : '#94A3B8',
-              }}>
-                {text || '(no next steps recorded)'}
-              </div>
-            </div>
-          </div>
+            onClose={() => setNextStepsPopupId(null)}
+          />
         );
       })()}
 
