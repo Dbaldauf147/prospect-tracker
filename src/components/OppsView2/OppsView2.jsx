@@ -119,7 +119,7 @@ const DEFAULT_HEADERS = [
   'Account', 'Open Year', 'Contact', 'Stage', 'Scope', 'Source', 'Type',
   'Start Date', 'Status', 'Quoted Amount', 'Sites', 'Age',
   'Last Client Heard From Us', 'Last Spoke', 'Follow Up', 'Call In', 'Notes',
-  'Next Steps', 'Competition', 'Waiting On', 'Close Date', 'BFO Link',
+  'Next Steps', 'No Further Action Today', 'Competition', 'Waiting On', 'Close Date', 'BFO Link',
   'Pricing Option',
 ];
 
@@ -128,8 +128,14 @@ const KEY_COLS = [
   'Account', 'Contact', 'Stage', 'Scope', 'Source', 'Type',
   'Start Date', 'Status', 'Quoted Amount', 'Sites', 'Age',
   'Last Client Heard From Us', 'Last Spoke', 'Follow Up', 'Call In', 'Notes',
-  'Next Steps', 'Competition', 'Waiting On', 'Close Date',
+  'Next Steps', 'No Further Action Today', 'Competition', 'Waiting On', 'Close Date',
 ];
+
+// Three-state-checkbox columns. Each cell click cycles
+// blank → "Yes" (renders ✓) → "No" (renders ✗) → blank. Stored as
+// the literal string so existing string-based filters / exports /
+// downstream consumers still work without special handling.
+const TRISTATE_COLUMNS = new Set(['No Further Action Today']);
 
 // Columns the user wants treated as dates — rendered with a calendar
 // popup cell (HTML5 date input) and pre-populated with today on new
@@ -149,7 +155,7 @@ const COMPUTED_COLUMNS = ['Last Spoke', 'Call In'];
 // users who saved their layout before this column existed still pick
 // it up — and its "Find out the Story" default lands somewhere
 // visible on the next new opp.
-const ENSURED_COLUMNS = [...COMPUTED_COLUMNS, 'Next Steps', 'Pricing Option'];
+const ENSURED_COLUMNS = [...COMPUTED_COLUMNS, 'Next Steps', 'Pricing Option', 'No Further Action Today'];
 
 function todayISO() {
   const d = new Date();
@@ -414,6 +420,45 @@ function businessDaysSince(rawISO) {
     if (dow !== 0 && dow !== 6) count++;
   }
   return count;
+}
+
+// Three-state checkbox cell. Click cycles blank → ✓ ("Yes") → ✗ ("No")
+// → blank. The stored value is the string "Yes" / "No" / "" so it
+// round-trips through the same JSON persistence path as every other
+// Opps 2 cell — and falls through to the existing search / filter
+// machinery unchanged.
+function TristateCheckCell({ value, onChange, title }) {
+  const cur = String(value || '').trim().toLowerCase();
+  const state = cur === 'yes' || cur === 'true' || cur === '✓' ? 'yes'
+    : cur === 'no' || cur === 'false' || cur === '✗' ? 'no'
+    : 'blank';
+  const next = { blank: 'Yes', yes: 'No', no: '' };
+  const cycle = (e) => {
+    e.stopPropagation();
+    onChange?.(next[state]);
+  };
+  const glyph = state === 'yes' ? '✓' : state === 'no' ? '✗' : '';
+  const fg = state === 'yes' ? '#15803D' : state === 'no' ? '#B91C1C' : 'var(--color-text-muted)';
+  const bg = state === 'yes' ? '#DCFCE7' : state === 'no' ? '#FEE2E2' : '#fff';
+  return (
+    <span
+      role="checkbox"
+      aria-checked={state === 'yes' ? 'true' : state === 'no' ? 'false' : 'mixed'}
+      tabIndex={0}
+      onClick={cycle}
+      onKeyDown={(e) => {
+        if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); cycle(e); }
+      }}
+      title={title || 'Click to cycle: blank → ✓ → ✗ → blank'}
+      style={{
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        width: 20, height: 20, lineHeight: 1,
+        border: '1px solid var(--color-border)', borderRadius: 3,
+        background: bg, color: fg, cursor: 'pointer',
+        fontWeight: 700, fontSize: '0.95em', userSelect: 'none',
+      }}
+    >{glyph}</span>
+  );
 }
 
 // Read-only cell for a column whose value is derived from another cell.
@@ -1642,6 +1687,9 @@ function OppInfoModal({
     if (DATE_COLUMNS.has(h)) {
       return <DateCell value={value} onChange={onChange} />;
     }
+    if (TRISTATE_COLUMNS.has(h)) {
+      return <TristateCheckCell value={value} onChange={onChange} title={`${h}: blank → ✓ → ✗ → blank`} />;
+    }
     const link = columnLinks ? resolveColumnLink(h, columnLinks) : null;
     if (link && listRegistry) {
       const opts = listRegistry.get(link.listKey)?.options || [];
@@ -2459,7 +2507,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       .map(h => ({
         key: h,
         label: h === 'BFO Link' ? 'BFO Opportunity Name' : h,
-        defaultWidth: h === 'Notes' ? 250 : h === 'Next Steps' ? 240 : h === 'Account' ? 200 : h === 'BFO Link' ? 220 : h === 'Scope' ? 220 : h.length > 20 ? 160 : 120,
+        defaultWidth: h === 'Notes' ? 250 : h === 'Next Steps' ? 240 : h === 'Account' ? 200 : h === 'BFO Link' ? 220 : h === 'Scope' ? 220 : TRISTATE_COLUMNS.has(h) ? 90 : h.length > 20 ? 160 : 120,
         sticky: h === 'Account',
         // Every cell is click-to-edit so a freshly created opp can be
         // filled in directly. getFilterValue exposes the raw text to
@@ -2471,6 +2519,15 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             // Days until the Follow Up date (negative = overdue).
             const n = daysFromToday(row['Follow Up']);
             return <ComputedCell value={n == null ? '' : n} />;
+          }
+          if (TRISTATE_COLUMNS.has(h)) {
+            return (
+              <TristateCheckCell
+                value={row[h]}
+                onChange={(v) => updateOppField(row._id, h, v)}
+                title={`${h}: blank → ✓ → ✗ → blank`}
+              />
+            );
           }
           if (h === 'Pricing Option') {
             // Read-only column populated from the Pricing → Options tab.
