@@ -1715,10 +1715,11 @@ export function PricingView({ settings } = {}) {
   }
 
   function clearAll() {
-    if (!confirm('Clear the loaded workbook and all markup overrides? Saved Linked-To defaults are kept.')) return;
+    if (!confirm('Clear the loaded workbook, markup overrides, and the Alternative Fee schedule? Saved Linked-To defaults are kept.')) return;
     setWorkbook(null);
     setOverrides({});
     setActiveOption(null);
+    setAltFees({});
     setError('');
     // Linked-To defaults live under their own key (LINKED_TO_DEFAULTS_KEY)
     // and are intentionally preserved across Clear / file changes.
