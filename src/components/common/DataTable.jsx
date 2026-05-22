@@ -334,6 +334,10 @@ export function DataTable({
   // its header. Rows are filtered (substring, case-insensitive) by
   // the raw cell value for each column that has a non-empty filter.
   enableColumnFilters = false,
+  // Fires with the rows currently passing the in-table column filters,
+  // so a parent can sync its own "select all visible" / "rows on
+  // screen" UI against the same set the user sees.
+  onFilteredRowsChange,
   // Optional Firestore-backed settings store. When provided, column
   // prefs (widths, visibility, renames) persist to settings.tablePrefs[tableId]
   // in addition to localStorage so they survive a clear-site-data.
@@ -465,6 +469,13 @@ export function DataTable({
       return true;
     });
   }, [rows, colFilters, colByKey]);
+
+  // Notify the consumer whenever the filtered-row set changes so it can
+  // sync its own "select all visible" state against what's actually on
+  // screen. Skipped when the prop isn't provided.
+  useEffect(() => {
+    if (onFilteredRowsChange) onFilteredRowsChange(filteredRows);
+  }, [filteredRows, onFilteredRowsChange]);
 
   // Distinct values per column from the current row pool, used to feed
   // the column-filter autocomplete suggestions. Computed lazily and
