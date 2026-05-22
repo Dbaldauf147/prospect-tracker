@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useAuth } from '../../contexts/AuthContext';
 import { dbGet } from '../../utils/db';
 import {
   loadOptionLinks,
@@ -7,6 +8,11 @@ import {
   dropOptionFromLinks,
   OPTION_LINKS_EVENT,
 } from '../../utils/pricingOptionLinks';
+import { buildPricingOptionSnapshot } from '../../utils/pricingOptionCalc';
+import {
+  setOppPricingSnapshot,
+  clearOppPricingSnapshot,
+} from '../../utils/oppsPricingSnapshot';
 import styles from './OptionsTab.module.css';
 
 const TYPE_OPTIONS = ['Setup', 'One Time', 'Recurring (monthly)'];
@@ -481,6 +487,7 @@ function OptionPanel({ opt, onChange, savedToLabel, onClickSave, onClearSave }) 
 }
 
 export function OptionsTab({ options, setOptions }) {
+  const { user } = useAuth();
   const list = options && options.length ? options : [emptyOption(0)];
   const [activeIdx, setActiveIdx] = useState(0);
   const safeIdx = Math.min(activeIdx, list.length - 1);
@@ -526,6 +533,12 @@ export function OptionsTab({ options, setOptions }) {
     ? `${linkedOpp.Account || '(no Account)'}${linkedOpp.Scope ? ` · ${linkedOpp.Scope}` : ''}`
     : (linkedOppId ? `(opp ${linkedOppId})` : null);
 
+  // Note: the snapshot is intentionally frozen at "Save to Opp" time
+  // (see `onPickOpp` below) — it doesn't auto-refresh as the user keeps
+  // editing the option. The user can re-click Save to Opp to capture a
+  // fresh snapshot, which guarantees the opp's saved fees survive a
+  // Pricing-tab Clear or accidental row wipe.
+
   const updateOpt = (next) => {
     const copy = list.slice();
     copy[safeIdx] = next;
@@ -569,10 +582,22 @@ export function OptionsTab({ options, setOptions }) {
     setPickerOpen(true);
   };
   const onClearSave = () => {
-    if (linkedOppId) setOppOptionLink(linkedOppId, '').catch(() => {});
+    if (!linkedOppId) return;
+    setOppOptionLink(linkedOppId, '').catch(() => {});
+    // Also drop the frozen snapshot that was saved onto the opp so the
+    // Opps 2 row stops rendering the rich detail / Year 1 link.
+    clearOppPricingSnapshot(user?.uid, linkedOppId).catch(() => {});
   };
   const onPickOpp = (oppId) => {
-    setOppOptionLink(oppId, (opt?.name || '').trim()).catch(() => {});
+    const name = (opt?.name || '').trim();
+    setOppOptionLink(oppId, name).catch(() => {});
+    // Freeze a self-contained copy of this option onto the opp so it
+    // survives a Pricing-tab Clear. Also auto-fills the opp's Quoted
+    // Amount with the Year 1 total — the user can write over it later.
+    if (opt) {
+      const snapshot = buildPricingOptionSnapshot(opt);
+      setOppPricingSnapshot(user?.uid, oppId, snapshot).catch(() => {});
+    }
     setPickerOpen(false);
   };
 
