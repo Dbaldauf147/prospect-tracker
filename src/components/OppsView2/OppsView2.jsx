@@ -1609,6 +1609,7 @@ function OppInfoModal({
   updateProspect,
   hubspotContacts,
   pricingOptionServices,
+  pricingOptionLinkName,
 }) {
   if (!opp) return null;
   // Show every header column the row has a value for, in the same order
@@ -1733,7 +1734,7 @@ function OppInfoModal({
         </div>
 
         <div style={{ overflowY: 'auto', padding: '0.5rem 1rem 0.75rem' }}>
-          {opp._pricingOption && (
+          {opp._pricingOption ? (
             <div style={{ margin: '0.25rem 0 0.75rem' }}>
               <div style={{
                 fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.03em',
@@ -1741,7 +1742,27 @@ function OppInfoModal({
               }}>Pricing Option (saved snapshot)</div>
               <PricingOptionSnapshotView snapshot={opp._pricingOption} />
             </div>
-          )}
+          ) : pricingOptionLinkName ? (
+            // Linked to a Pricing Option by name, but no saved snapshot
+            // on the record yet — likely a link created before the
+            // snapshot feature shipped. Tell the user how to recapture.
+            <div style={{
+              margin: '0.25rem 0 0.75rem',
+              padding: '0.6rem 0.8rem',
+              border: '1px dashed var(--color-border)', borderRadius: 6,
+              background: '#fff8e1', fontSize: '0.8rem',
+              color: '#92400e', lineHeight: 1.4,
+            }}>
+              <div style={{ fontWeight: 600, marginBottom: 2 }}>
+                Linked to <em>{pricingOptionLinkName}</em>, but no saved snapshot here yet.
+              </div>
+              <div>
+                Open the Pricing tab, find that option, and click <strong>Save to Opp…</strong>
+                again to capture the rows + Year 1 fees onto this opp. The new save
+                will appear here.
+              </div>
+            </div>
+          ) : null}
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
             <tbody>
               {orderedFields.map(h => (
@@ -2863,6 +2884,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             updateProspect={updateProspect}
             hubspotContacts={hubspotContacts}
             pricingOptionServices={pricingOptionServices}
+            pricingOptionLinkName={optionLinks[String(opp._id)] || ''}
           />
         );
       })()}
