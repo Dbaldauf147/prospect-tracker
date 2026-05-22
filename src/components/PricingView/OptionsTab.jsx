@@ -573,6 +573,11 @@ export function OptionsTab({ options, setOptions }) {
   };
 
   const [pickerOpen, setPickerOpen] = useState(false);
+  // While the snapshot is being persisted (IDB + Firestore) we keep the
+  // picker open so the user can't navigate away mid-flight and miss the
+  // Firestore write (which would let Opps 2's next hydration overwrite
+  // the IDB snapshot with a pre-write Firestore copy).
+  const [saving, setSaving] = useState(false);
   const openPicker = () => {
     if (!(opt?.name || '').trim()) {
       // Linking by name only makes sense once the option has one.
@@ -581,24 +586,43 @@ export function OptionsTab({ options, setOptions }) {
     }
     setPickerOpen(true);
   };
-  const onClearSave = () => {
+  const onClearSave = async () => {
     if (!linkedOppId) return;
-    setOppOptionLink(linkedOppId, '').catch(() => {});
-    // Also drop the frozen snapshot that was saved onto the opp so the
-    // Opps 2 row stops rendering the rich detail / Year 1 link.
-    clearOppPricingSnapshot(user?.uid, linkedOppId).catch(() => {});
-  };
-  const onPickOpp = (oppId) => {
-    const name = (opt?.name || '').trim();
-    setOppOptionLink(oppId, name).catch(() => {});
-    // Freeze a self-contained copy of this option onto the opp so it
-    // survives a Pricing-tab Clear. Also auto-fills the opp's Quoted
-    // Amount with the Year 1 total — the user can write over it later.
-    if (opt) {
-      const snapshot = buildPricingOptionSnapshot(opt);
-      setOppPricingSnapshot(user?.uid, oppId, snapshot).catch(() => {});
+    try {
+      await setOppOptionLink(linkedOppId, '');
+      // Also drop the frozen snapshot that was saved onto the opp so the
+      // Opps 2 row stops rendering the rich detail / Year 1 link.
+      await clearOppPricingSnapshot(user?.uid, linkedOppId);
+    } catch (err) {
+      console.error('Save to Opp: clear failed', err);
     }
-    setPickerOpen(false);
+  };
+  const onPickOpp = async (oppId) => {
+    if (saving) return;
+    const name = (opt?.name || '').trim();
+    setSaving(true);
+    try {
+      await setOppOptionLink(oppId, name);
+      // Freeze a self-contained copy of this option onto the opp so it
+      // survives a Pricing-tab Clear. Also auto-fills Quoted Amount with
+      // Year 1 total — the user can write over it later. Await both so
+      // the Firestore write completes before the picker closes (and
+      // before the user can navigate to Opps 2).
+      if (opt) {
+        const snapshot = buildPricingOptionSnapshot(opt);
+        await setOppPricingSnapshot(user?.uid, oppId, snapshot);
+      }
+      setPickerOpen(false);
+    } catch (err) {
+      console.error('Save to Opp: snapshot save failed', err);
+      window.alert(
+        'Saved the link, but the Pricing Option snapshot failed to save to Firestore. ' +
+        'Year 1 fees and the saved details may not appear on the Opp. Check your network and try again.\n\n' +
+        (err?.message || String(err))
+      );
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
