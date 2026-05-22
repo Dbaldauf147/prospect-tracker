@@ -19,6 +19,7 @@ const STORES = [
   { name: 'settings-backups',    keyPath: null },
   { name: 'hubspot-contacts',    keyPath: null },
   { name: 'pricing-cache',       keyPath: null },
+  { name: 'pricing-source-files', keyPath: null },
   { name: 'daily-success-log',   keyPath: null },
   { name: 'daily-success-goals', keyPath: null },
   { name: 'pipeline-dashboard',  keyPath: null },
