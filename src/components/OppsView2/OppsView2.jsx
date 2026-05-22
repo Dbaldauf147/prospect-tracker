@@ -15,7 +15,7 @@ import {
 } from '../common/columnLinks';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { dbGet, dbPut } from '../../utils/db';
-import { loadOptionLinks, setOppOptionLink, OPTION_LINKS_EVENT } from '../../utils/pricingOptionLinks';
+import { loadOptionSnapshots, saveOppOptionSnapshot, OPTION_SNAPSHOTS_EVENT } from '../../utils/pricingOptionLinks';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { normalizeCompany } from '../../utils/companyNorm';
 import styles from './OppsView2.module.css';
@@ -379,12 +379,15 @@ function ComputedCell({ value }) {
   );
 }
 
-// Read-only "Pricing Option" cell: shows the option name linked to this
-// opp from the Pricing → Options tab. The user can't type into it — the
-// link is set from Pricing → Options ("Save to Opp…") and cleared with
-// the × that appears here when a value is present.
-function PricingOptionCell({ value, onClear }) {
-  const isEmpty = !value;
+// Read-only "Pricing Option" cell: shows the frozen Option snapshot
+// saved to this opp from the Pricing → Options tab. The user can't
+// type into it — snapshots come in via "Save to Opp…" on the Pricing
+// tab. The × clears the saved snapshot.
+function PricingOptionCell({ snapshot, onClear }) {
+  const isEmpty = !snapshot;
+  const name = snapshot?.optionName || '';
+  const savedAt = snapshot?.savedAt;
+  const savedLabel = savedAt ? new Date(savedAt).toLocaleString() : '';
   return (
     <span
       style={{
@@ -394,16 +397,16 @@ function PricingOptionCell({ value, onClear }) {
       }}
       title={isEmpty
         ? 'Set from the Pricing → Options tab: open an Option, then click “Save to Opp…”.'
-        : `Linked Pricing Option: ${value}`}
+        : `Saved Pricing Option: ${name}${savedLabel ? ` (saved ${savedLabel})` : ''}`}
     >
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        {isEmpty ? '—' : value}
+        {isEmpty ? '—' : name}
       </span>
       {!isEmpty && (
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); onClear?.(); }}
-          title="Clear pricing-option link"
+          title="Clear saved pricing option"
           style={{
             border: 'none', background: 'transparent', cursor: 'pointer',
             color: '#94a3b8', padding: '0 2px', fontSize: '0.85em', lineHeight: 1,
@@ -1610,22 +1613,22 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // from the raw cached workbook + Line Item → Services mapping —
   // otherwise the picker would be empty whenever the user lands on
   // Opps 2 without having opened the Pricing tab in this session.
-  // Map of `oppId → Pricing Option name` owned by the Pricing tab.
-  // We render the "Pricing Option" column from this map so the link
-  // lives in one place — saving from Pricing or clearing from here
-  // both go through `setOppOptionLink`.
-  const [optionLinks, setOptionLinks] = useState({});
+  // Map of `oppId → frozen Pricing Option snapshot` owned by the
+  // Pricing tab. The "Pricing Option" column on this view is computed
+  // from this map — the opp record itself never carries the option
+  // data, so the two tabs can't disagree about what was saved.
+  const [optionSnapshots, setOptionSnapshots] = useState({});
   useEffect(() => {
     let cancelled = false;
-    loadOptionLinks().then(val => { if (!cancelled) setOptionLinks(val || {}); });
+    loadOptionSnapshots().then(val => { if (!cancelled) setOptionSnapshots(val || {}); });
     const onChange = (e) => {
       const detail = e?.detail;
-      if (detail && typeof detail === 'object') setOptionLinks(detail);
+      if (detail && typeof detail === 'object') setOptionSnapshots(detail);
     };
-    window.addEventListener(OPTION_LINKS_EVENT, onChange);
+    window.addEventListener(OPTION_SNAPSHOTS_EVENT, onChange);
     return () => {
       cancelled = true;
-      window.removeEventListener(OPTION_LINKS_EVENT, onChange);
+      window.removeEventListener(OPTION_SNAPSHOTS_EVENT, onChange);
     };
   }, []);
   const [pricingOptionServicesCache, setPricingOptionServicesCache] = useState({});
@@ -1977,13 +1980,14 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           }
           if (h === 'Pricing Option') {
             // Read-only column populated from the Pricing → Options tab.
-            // The cell shows the linked option name (or em-dash). A
-            // small × button clears the link in place.
-            const linked = optionLinks[String(row._id)] || '';
+            // Each entry is a frozen snapshot — we show the saved
+            // optionName here; hovering reveals the savedAt timestamp.
+            // The × clears the snapshot from the opp.
+            const snap = optionSnapshots[String(row._id)] || null;
             return (
               <PricingOptionCell
-                value={linked}
-                onClear={() => setOppOptionLink(row._id, '')}
+                snapshot={snap}
+                onClear={() => saveOppOptionSnapshot(row._id, null)}
               />
             );
           }
@@ -2143,7 +2147,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       ? [...mapped.slice(0, nextStepsIdx), infoCol, ...mapped.slice(nextStepsIdx)]
       : [...mapped, infoCol];
     return [selectCol, ...withInfo, actions];
-  }, [headers, columnLinks, listRegistry, updateOppField, deleteOpp, companySuggestions, prospects, updateProspect, hubspotContacts, selectedIds, pricingOptionServices, optionLinks]);
+  }, [headers, columnLinks, listRegistry, updateOppField, deleteOpp, companySuggestions, prospects, updateProspect, hubspotContacts, selectedIds, pricingOptionServices, optionSnapshots]);
 
   const stageOrder = ['Lead', 'Not Started', 'Qualifying', 'Quoting', 'Quoted', 'Verbal', 'Sold', 'Not Sold'];
   const CLOSED_STAGES = useMemo(() => new Set(['Sold', 'Not Sold']), []);
