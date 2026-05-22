@@ -717,7 +717,7 @@ function CellHoverPopover({ anchorRef, value, enabled }) {
   );
 }
 
-function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel }) {
+function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel, onDoubleClickValue }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value ?? '');
   const [open, setOpen] = useState(false);
@@ -729,6 +729,11 @@ function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel }) {
   const wrapRef = useRef(null);
   const displayRef = useRef(null);
   const textareaRef = useRef(null);
+  // When `onDoubleClickValue` is wired up we delay the single-click
+  // edit-mode toggle by ~220ms so a follow-up dblclick can cancel it
+  // and open the popup instead. Other EditableCell consumers keep the
+  // original zero-delay behavior.
+  const clickTimerRef = useRef(null);
   useEffect(() => { if (!editing) setDraft(value ?? ''); }, [value, editing]);
 
   // Auto-grow the textarea to fit its contents so the user sees every
@@ -812,11 +817,32 @@ function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel }) {
   if (!editing) {
     const isEmpty = value === '' || value == null;
     const text = isEmpty ? '—' : String(value);
+    const enterEdit = () => { setEditing(true); setOpen(dropdownAvailable); };
+    const handleClick = (e) => {
+      e.stopPropagation();
+      if (!onDoubleClickValue) { enterEdit(); return; }
+      if (clickTimerRef.current) return;
+      clickTimerRef.current = setTimeout(() => {
+        clickTimerRef.current = null;
+        enterEdit();
+      }, 220);
+    };
+    const handleDoubleClick = (e) => {
+      if (!onDoubleClickValue) return;
+      e.stopPropagation();
+      e.preventDefault();
+      if (clickTimerRef.current) {
+        clearTimeout(clickTimerRef.current);
+        clickTimerRef.current = null;
+      }
+      onDoubleClickValue(value);
+    };
     return (
       <>
         <span
           ref={displayRef}
-          onClick={(e) => { e.stopPropagation(); setEditing(true); setOpen(dropdownAvailable); }}
+          onClick={handleClick}
+          onDoubleClick={handleDoubleClick}
           style={{
             // `white-space: pre` keeps Alt+Enter newlines on their own
             // line (so the row grows vertically to fit) while still
@@ -825,7 +851,7 @@ function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel }) {
             padding: '1px 2px', whiteSpace: 'pre', overflow: 'hidden',
             color: isEmpty ? 'var(--color-text-muted)' : 'inherit',
           }}
-          title="Click to edit"
+          title={onDoubleClickValue ? 'Click to edit · Double-click to view full text' : 'Click to edit'}
         >{text}</span>
         <CellHoverPopover anchorRef={displayRef} value={text} enabled={!isEmpty} />
       </>
@@ -2146,6 +2172,16 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // is showing. Resolved against the live records list on render so
   // the popup always reflects the latest cell edits.
   const [infoOppId, setInfoOppId] = useState(null);
+  // Double-clicking the Next Steps cell opens a read-only popup showing
+  // the full value (useful when the column is narrow and the entry
+  // spans multiple Alt+Enter lines).
+  const [nextStepsPopupId, setNextStepsPopupId] = useState(null);
+  useEffect(() => {
+    if (nextStepsPopupId == null) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') setNextStepsPopupId(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [nextStepsPopupId]);
   // Mass-edit selection — set of row _id's the user has checked. The
   // mass-edit toolbar shows whenever this is non-empty.
   const [selectedIds, setSelectedIds] = useState(() => new Set());
@@ -2720,6 +2756,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               value={row[h]}
               onChange={(v) => updateOppField(row._id, h, v)}
               suggestions={h === 'Account' ? companySuggestions : undefined}
+              onDoubleClickValue={h === 'Next Steps' ? () => setNextStepsPopupId(row._id) : undefined}
             />
           );
         },
@@ -3057,6 +3094,52 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             pricingOptionLinkName={optionLinks[String(opp._id)] || ''}
             onOpenContact={openContactDetails}
           />
+        );
+      })()}
+
+      {nextStepsPopupId != null && (() => {
+        const opp = records.find(r => r._id === nextStepsPopupId);
+        if (!opp) return null;
+        const text = String(opp['Next Steps'] || '').trim();
+        const account = String(opp['Account'] || '').trim() || '(no account)';
+        return (
+          <div
+            onClick={() => setNextStepsPopupId(null)}
+            style={{
+              position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.5)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10001,
+            }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                background: '#fff', borderRadius: 8, padding: '1rem 1.25rem',
+                width: 'min(560px, 92vw)', maxHeight: '80vh', overflow: 'auto',
+                boxShadow: '0 18px 50px rgba(15, 23, 42, 0.32)',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem', gap: '1rem' }}>
+                <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  Next Steps — {account}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setNextStepsPopupId(null)}
+                  aria-label="Close"
+                  style={{
+                    background: 'transparent', border: 'none', cursor: 'pointer',
+                    fontSize: '1.1rem', color: '#64748B', padding: '0 4px', lineHeight: 1,
+                  }}
+                >×</button>
+              </div>
+              <div style={{
+                whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                fontSize: '0.85rem', lineHeight: 1.45, color: text ? '#0f172a' : '#94A3B8',
+              }}>
+                {text || '(no next steps recorded)'}
+              </div>
+            </div>
+          </div>
         );
       })()}
 
