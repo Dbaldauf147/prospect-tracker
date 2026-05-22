@@ -2134,18 +2134,47 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     setLoading(true);
     (async () => {
       let next = null;
-      const fromFs = await loadOpps2FromFirestore(user.uid);
+      // Read both stores so we can carry over Pricing-Option snapshots
+      // written by the Pricing tab into IDB but not yet replicated to
+      // Firestore (e.g. the Firestore round-trip was still in flight
+      // when the user navigated here). Without this safety net, a stale
+      // Firestore copy would clobber the snapshot on `saveOpps2Cache`.
+      const [fromFs, fromIdb] = await Promise.all([
+        loadOpps2FromFirestore(user.uid),
+        loadOpps2Cache(),
+      ]);
       if (cancelled) return;
       if (fromFs && (Array.isArray(fromFs.records) || Array.isArray(fromFs.headers))) {
         next = fromFs;
-        // Cache the Firestore copy locally for the next reload.
-        saveOpps2Cache(fromFs);
-      } else {
-        const fromIdb = await loadOpps2Cache();
-        if (cancelled) return;
-        if (fromIdb && (Array.isArray(fromIdb.records) || Array.isArray(fromIdb.headers))) {
-          next = fromIdb;
+        // Reconcile: any record on IDB that already carries a
+        // `_pricingOption` snapshot wins over the Firestore version of
+        // that record, since the snapshot was likely written by the
+        // Pricing tab seconds before this hydration.
+        const idbById = new Map();
+        for (const r of (fromIdb?.records || [])) {
+          if (r?._id != null) idbById.set(String(r._id), r);
         }
+        let touched = false;
+        const reconciled = (next.records || []).map(r => {
+          const idbRow = idbById.get(String(r?._id));
+          if (idbRow?._pricingOption && !r?._pricingOption) {
+            touched = true;
+            return {
+              ...r,
+              _pricingOption: idbRow._pricingOption,
+              // Pair the Year 1 amount with the snapshot so the cell
+              // value matches what the user just saved.
+              'Quoted Amount': idbRow['Quoted Amount'] ?? r['Quoted Amount'],
+            };
+          }
+          return r;
+        });
+        if (touched) next = { ...next, records: reconciled };
+        // Cache the (possibly-reconciled) copy locally for the next
+        // reload.
+        saveOpps2Cache(next);
+      } else if (fromIdb && (Array.isArray(fromIdb.records) || Array.isArray(fromIdb.headers))) {
+        next = fromIdb;
       }
       if (!next) {
         // No saved opps yet — borrow header order from the live Opps
