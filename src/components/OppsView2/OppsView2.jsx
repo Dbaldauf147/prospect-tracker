@@ -404,6 +404,33 @@ function businessDaysSince(rawISO) {
   return count;
 }
 
+// Values the Opps Google sheet uses to mean "no data" in cells where
+// the cell otherwise carries a number — treat them as blank rather
+// than as a parseable string.
+const BLANK_SENTINELS = new Set(['', '-', '#N/A', '#n/a', 'N/A', 'n/a']);
+
+// Resolve the displayed value of a row's computed column. When the
+// sheet shipped a literal value for that column (imported rows carry
+// the Google Sheet's own formula output) we honor it — including
+// blank sentinels, so a row the sheet decided to hide stays hidden in
+// Opps 2. Hand-typed rows have no stored cell and fall through to a
+// live compute from the source date. Returns null for "show blank",
+// or a finite number for "show this".
+function resolveComputedDays(row, storedKey, sourceField, compute) {
+  if (row && storedKey in row) {
+    const raw = row[storedKey];
+    const s = raw == null ? '' : String(raw).trim();
+    if (BLANK_SENTINELS.has(s)) return null;
+    const n = parseFloat(s.replace(/[,$%]/g, ''));
+    if (Number.isFinite(n)) return n;
+    // Stored value isn't blank and isn't a number — fall through to
+    // compute so a stray text scribble doesn't break the cell.
+  }
+  return compute(row?.[sourceField]);
+}
+const resolveCallIn = (row) => resolveComputedDays(row, 'Call In', 'Follow Up', daysFromToday);
+const resolveLastSpoke = (row) => resolveComputedDays(row, 'Last Spoke', 'Last Client Heard From Us', businessDaysSince);
+
 // Three-state checkbox cell. Click cycles blank → ✓ ("Yes") → ✗ ("No")
 // → blank. The stored value is the string "Yes" / "No" / "" so it
 // round-trips through the same JSON persistence path as every other
@@ -2611,7 +2638,18 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       const records = prev?.records || [];
       return {
         ...prev,
-        records: records.map(r => r._id === id ? { ...r, [field]: value } : r),
+        records: records.map(r => {
+          if (r._id !== id) return r;
+          const next = { ...r, [field]: value };
+          // When the source date for a computed column changes, drop
+          // any sheet-imported stored value on the computed column so
+          // the render falls back to a live recompute. Without this, an
+          // imported row that arrived with a blank Call In would stay
+          // blank forever even after the user picks a new Follow Up.
+          if (field === 'Follow Up' && 'Call In' in next) delete next['Call In'];
+          if (field === 'Last Client Heard From Us' && 'Last Spoke' in next) delete next['Last Spoke'];
+          return next;
+        }),
       };
     });
   }, []);
@@ -2739,37 +2777,34 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         // filled in directly. getFilterValue exposes the raw text to
         // the per-column filter so search keeps working on the value
         // the user sees, not the rendered <input>.
+        // Computed columns derive from sibling fields (and may honor a
+        // sheet-imported literal); surface the live displayed value so
+        // search / filter match what the cell actually shows.
         getFilterValue: (row) => {
-          // Computed columns derive from sibling fields rather than a
-          // stored value — surface the live computation so the search
-          // box matches the number the user sees in the cell.
           if (h === 'Call In') {
-            const n = daysFromToday(row['Follow Up']);
+            const n = resolveCallIn(row);
             return n == null ? '' : String(n);
           }
           if (h === 'Last Spoke') {
-            const n = businessDaysSince(row['Last Client Heard From Us']);
+            const n = resolveLastSpoke(row);
             return n == null ? '' : String(n);
           }
           return row[h] ?? '';
         },
-        // Computed columns also need their own getSortValue, otherwise
-        // DataTable sorts by the stored row[h] (empty for new rows /
-        // stale for rows imported from the Opps tab) and the displayed
-        // order — including negative "overdue" days — doesn't match
-        // what the cells actually show.
+        // Sort by the same displayed value — without this, DataTable
+        // falls back to the stored (empty / stale) cell and the order
+        // doesn't match what you see (e.g. negative "overdue" days
+        // wouldn't lead an ascending sort).
         getSortValue: (h === 'Call In' || h === 'Last Spoke')
-          ? (row) => {
-              const n = h === 'Call In'
-                ? daysFromToday(row['Follow Up'])
-                : businessDaysSince(row['Last Client Heard From Us']);
-              return n == null ? null : n;
-            }
+          ? (row) => (h === 'Call In' ? resolveCallIn(row) : resolveLastSpoke(row))
           : undefined,
         render: (row) => {
           if (h === 'Call In') {
-            // Days until the Follow Up date (negative = overdue).
-            const n = daysFromToday(row['Follow Up']);
+            // Days until the Follow Up date (negative = overdue). When
+            // the row was imported from the Opps sheet and the sheet's
+            // own Call In formula returned blank (or another "no data"
+            // sentinel), honor that — see resolveCallIn.
+            const n = resolveCallIn(row);
             return <ComputedCell value={n == null ? '' : n} />;
           }
           if (TRISTATE_COLUMNS.has(h)) {
@@ -2808,8 +2843,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             );
           }
           if (h === 'Last Spoke') {
-            // Business days since the Last Client Heard From Us date.
-            const n = businessDaysSince(row['Last Client Heard From Us']);
+            // Business days since the Last Client Heard From Us date —
+            // mirrors the Call In logic above, honoring a sheet-imported
+            // blank when present.
+            const n = resolveLastSpoke(row);
             return <ComputedCell value={n == null ? '' : n} />;
           }
           if (DATE_COLUMNS.has(h)) {
@@ -3189,8 +3226,8 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         // the modal.
         const augmented = {
           ...opp,
-          'Call In': (() => { const n = daysFromToday(opp['Follow Up']); return n == null ? '' : n; })(),
-          'Last Spoke': (() => { const n = businessDaysSince(opp['Last Client Heard From Us']); return n == null ? '' : n; })(),
+          'Call In': (() => { const n = resolveCallIn(opp); return n == null ? '' : n; })(),
+          'Last Spoke': (() => { const n = resolveLastSpoke(opp); return n == null ? '' : n; })(),
         };
         return (
           <OppInfoModal
