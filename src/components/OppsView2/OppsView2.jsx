@@ -3492,6 +3492,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       defaultWidth: 70,
       getFilterValue: (row) => String(row._id ?? ''),
       getSortValue: (row) => Number(row._id) || 0,
+      // The id lives on `row._id`, not under the column's key, so
+      // DataTable's default export (which reads `row[col.key]`) would
+      // emit blanks. Map it through explicitly.
+      exportValue: (row) => row._id ?? '',
       render: (row) => (
         <span style={{ fontVariantNumeric: 'tabular-nums', color: '#475569' }}>
           {row._id ?? ''}
