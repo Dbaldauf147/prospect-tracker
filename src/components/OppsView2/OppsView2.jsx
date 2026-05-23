@@ -2155,6 +2155,29 @@ function detectDelimiter(text) {
   return tabs > commas ? '\t' : ',';
 }
 
+// Human-readable summary of an existing Opps 2 row, used in the
+// "Skipped rows" list so a dedup hit points at the row that's
+// blocking the paste instead of just an opaque key. Pulls the
+// columns most users orient by (Account, then Scope, then Year /
+// Start / BFO Link, then the row id so the user can hunt for it
+// in Firestore / IndexedDB if the table view doesn't show it).
+function describeMatch(rec) {
+  if (!rec) return '(unknown)';
+  const parts = [];
+  const acct = String(rec['Account'] || '').trim();
+  const scope = String(rec['Scope'] || '').trim();
+  const year = String(rec['Open Year'] || '').trim();
+  const start = String(rec['Start Date'] || '').trim();
+  const bfo = String(rec['BFO Link'] || '').trim();
+  parts.push(acct ? `Account="${acct}"` : 'Account=(blank)');
+  if (scope) parts.push(`Scope="${scope}"`);
+  if (year) parts.push(`Year=${year}`);
+  if (start) parts.push(`Start=${start}`);
+  if (bfo && bfo !== '-' && bfo !== '#N/A') parts.push(`BFO="${bfo}"`);
+  if (rec._id != null) parts.push(`id=${rec._id}`);
+  return parts.join(', ');
+}
+
 // Bulk Import modal — paste a Google-Sheet-shaped block, review the
 // column mapping the modal auto-detected (and adjust by hand), see
 // warnings about rows that won't import, and commit. The caller owns
@@ -2209,12 +2232,17 @@ function BulkImportModal({ existingHeaders, existingRecords, dedupKeyFor, onClos
     if (!parsed) return null;
     const additions = [];
     const skipped = [];
-    const existingKeys = new Set();
+    // Map of dedup-key → existing record so a "duplicate" skip can
+    // name the existing row, not just the opaque key. Without this,
+    // a phantom Opps 2 record (e.g. a row whose Account+Scope match
+    // but whose fields look blank in the table) blocks the paste with
+    // no breadcrumb back to whatever's matching.
+    const existingByKey = new Map();
     for (const r of (existingRecords || [])) {
       const k = dedupKeyFor(r);
-      if (k) existingKeys.add(k);
+      if (k && !existingByKey.has(k)) existingByKey.set(k, r);
     }
-    const seenInPaste = new Set();
+    const seenInPaste = new Map();
     for (let i = 0; i < parsed.rows.length; i++) {
       const cells = parsed.rows[i];
       const record = {};
@@ -2237,15 +2265,15 @@ function BulkImportModal({ existingHeaders, existingRecords, dedupKeyFor, onClos
         skipped.push({ lineNo, reason: 'Could not build a dedup key (no BFO Link / Account / Open Year / Scope / Start Date).' });
         continue;
       }
-      if (existingKeys.has(key)) {
-        skipped.push({ lineNo, reason: `Duplicate of an existing Opps 2 row (key ${key}).` });
+      if (existingByKey.has(key)) {
+        skipped.push({ lineNo, reason: `Duplicate of existing Opps 2 row: ${describeMatch(existingByKey.get(key))} [key ${key}]` });
         continue;
       }
       if (seenInPaste.has(key)) {
-        skipped.push({ lineNo, reason: `Duplicate of an earlier row in this paste (key ${key}).` });
+        skipped.push({ lineNo, reason: `Duplicate of an earlier row in this paste (line ${seenInPaste.get(key)}) — key ${key}` });
         continue;
       }
-      seenInPaste.add(key);
+      seenInPaste.set(key, lineNo);
       additions.push(record);
     }
     return { additions, skipped };
@@ -2392,7 +2420,7 @@ function BulkImportModal({ existingHeaders, existingRecords, dedupKeyFor, onClos
                       {analysis.skipped.map((s, i) => (
                         <tr key={i}>
                           <td style={{ padding: '0.25rem 0.55rem', borderBottom: '1px solid var(--color-border-light)', color: '#64748B' }}>{s.lineNo}</td>
-                          <td style={{ padding: '0.25rem 0.55rem', borderBottom: '1px solid var(--color-border-light)', color: '#0f172a' }}>{s.reason}</td>
+                          <td style={{ padding: '0.25rem 0.55rem', borderBottom: '1px solid var(--color-border-light)', color: '#0f172a', whiteSpace: 'normal', wordBreak: 'break-word' }}>{s.reason}</td>
                         </tr>
                       ))}
                     </tbody>
