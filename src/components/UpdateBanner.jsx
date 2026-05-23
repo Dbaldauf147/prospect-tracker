@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 
-const CHECK_INTERVAL = 30 * 1000; // check every 30 seconds
+const CHECK_INTERVAL = 30 * 1000; // poll the index hash every 30 seconds
 
 export function UpdateBanner() {
   const [updateAvailable, setUpdateAvailable] = useState(false);
