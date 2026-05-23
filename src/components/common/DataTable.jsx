@@ -1,5 +1,4 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import * as XLSX from 'xlsx';
 import styles from './DataTable.module.css';
 
 const COL_WIDTHS_PREFIX = 'prospect-col-widths-';
@@ -657,7 +656,7 @@ export function DataTable({
         <button className={styles.resetBtn} onClick={() => { setColWidths({}); persistPrefs(tableId, settings, updateSettings, { widths: {} }); }}>
           Reset widths
         </button>
-        <button className={styles.exportBtn} onClick={() => {
+        <button className={styles.exportBtn} onClick={async () => {
           if (typeof onExport === 'function') {
             onExport({
               columns: visibleColumns,
@@ -667,6 +666,7 @@ export function DataTable({
             });
             return;
           }
+          const XLSX = await import('xlsx');
           const exportCols = visibleColumns;
           const data = sortedRows.map(row => {
             const obj = {};

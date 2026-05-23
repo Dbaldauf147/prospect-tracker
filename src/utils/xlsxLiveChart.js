@@ -9,8 +9,6 @@
 // stacked area chart (for "fill between curves" effects) plus a line
 // chart. Both share the same category and value axes.
 
-import JSZip from 'jszip';
-
 const XML_HEADER = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
 
 const NS = {
@@ -271,6 +269,7 @@ export async function injectLiveLineChart(buffer, options) {
         anchor: options.anchor,
       }];
   try {
+    const { default: JSZip } = await import('jszip');
     const zip = await JSZip.loadAsync(buffer);
 
     const workbookXml = await zip.file('xl/workbook.xml').async('string');

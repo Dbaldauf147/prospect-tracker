@@ -1,10 +1,7 @@
 import { useState, useMemo, useEffect, useRef, useCallback, memo } from 'react';
 import { createPortal } from 'react-dom';
-import * as XLSX from 'xlsx';
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
-import { asBlob as htmlToDocxBlob } from 'html-docx-js-typescript';
-import mammoth from 'mammoth/mammoth.browser';
 import { OpportunityForm, DEFAULT_FORM_TEMPLATE } from './OpportunityForm';
 import { ScopingNotesEditor, harvestCompetitors } from './ScopingNotesEditor';
 import { loadEffectiveRaClients, raClientName, raClientCm } from '../../utils/raClientsStore';
@@ -2494,6 +2491,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const openPortfolioMappingForFile = useCallback(async (file) => {
     if (!file) return;
     try {
+      const XLSX = await import('xlsx');
       const buf = await file.arrayBuffer();
       const wb = XLSX.read(buf);
       const sheet = wb.Sheets[wb.SheetNames[0]];
@@ -2716,6 +2714,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     if (!file) return;
     if (!/\.xlsx?$/i.test(file.name)) { alert('Please drop an Excel file (.xlsx or .xls).'); return; }
     try {
+      const XLSX = await import('xlsx');
       const buf = await file.arrayBuffer();
       const wb = XLSX.read(buf);
       const sheet = wb.Sheets[wb.SheetNames[0]];
@@ -2993,6 +2992,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       .replace(/<ol>(\s*(?:<p>[☑☐][^<]*<\/p>\s*)+)<\/ol>/g, '$1');
     const fullHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Opportunity Template</title></head><body><h1>Opportunity Template</h1>${bodyHtml}</body></html>`;
     try {
+      const { asBlob: htmlToDocxBlob } = await import('html-docx-js-typescript');
       const result = await htmlToDocxBlob(fullHtml);
       const blob = result instanceof Blob ? result : new Blob([result], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
       const url = URL.createObjectURL(blob);
@@ -3015,6 +3015,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     if (!file) return;
     if (!/\.docx$/i.test(file.name)) { alert('Please choose a .docx file.'); return; }
     try {
+      const { default: mammoth } = await import('mammoth/mammoth.browser');
       const buf = await file.arrayBuffer();
       const result = await mammoth.convertToHtml({ arrayBuffer: buf });
       let html = result.value || '';
@@ -3258,6 +3259,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     const bodyHtml = oppNoteDraft && oppNoteDraft.trim() ? oppNoteDraft : '<p></p>';
     const fullHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${safeTitle}</title></head><body><h1>${safeCompany} — ${safeTitle}</h1>${bodyHtml}</body></html>`;
     try {
+      const { asBlob: htmlToDocxBlob } = await import('html-docx-js-typescript');
       const result = await htmlToDocxBlob(fullHtml);
       const blob = result instanceof Blob ? result : new Blob([result], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
       const url = URL.createObjectURL(blob);
@@ -3282,6 +3284,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       return;
     }
     try {
+      const { default: mammoth } = await import('mammoth/mammoth.browser');
       const buf = await file.arrayBuffer();
       const result = await mammoth.convertToHtml({ arrayBuffer: buf });
       const html = result.value || '';
@@ -5125,7 +5128,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   }
                   setResearchingPortfolio(false);
                 }
-                function downloadTemplate() {
+                async function downloadTemplate() {
+                  const XLSX = await import('xlsx');
                   const templateRows = [
                     {
                       'Company Name': 'Example Company',
