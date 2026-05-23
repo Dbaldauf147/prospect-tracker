@@ -1,8 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import * as XLSX from 'xlsx';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { db } from '../../firebase';
-import { useAuth } from '../../contexts/AuthContext';
 import { DataTable } from '../common/DataTable';
 import { dbGet, dbPut } from '../../utils/db';
 import styles from './OppsView.module.css';
@@ -59,27 +56,7 @@ function loadCacheLegacy() {
   try { return JSON.parse(localStorage.getItem('opps-cache')); } catch { return null; }
 }
 
-async function loadFromFirestore(userId) {
-  try {
-    const ref = doc(db, 'oppsData', userId);
-    const snap = await getDoc(ref);
-    if (snap.exists()) {
-      const raw = snap.data();
-      if (raw.json) return JSON.parse(raw.json);
-    }
-  } catch (err) { console.error('Failed to load opps from Firestore:', err); }
-  return null;
-}
-
-async function saveToFirestore(userId, data) {
-  try {
-    const ref = doc(db, 'oppsData', userId);
-    await setDoc(ref, { json: JSON.stringify(data), updatedAt: new Date().toISOString() });
-  } catch (err) { console.error('Failed to save opps to Firestore:', err); }
-}
-
 export function OppsView({ settings, updateSettings } = {}) {
-  const { user } = useAuth();
   const [data, setData] = useState(loadCacheLegacy);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -149,7 +126,6 @@ export function OppsView({ settings, updateSettings } = {}) {
       const result = { headers, records, fetchedAt: new Date().toISOString() };
       setData(result);
       saveCacheAsync(result);
-      if (user?.uid) saveToFirestore(user.uid, result);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -157,23 +133,15 @@ export function OppsView({ settings, updateSettings } = {}) {
     }
   }
 
-  // Load from Firestore (then IndexedDB fallback) on mount
+  // Hydrate from IndexedDB on mount. The legacy Opps tab is just a
+  // read-only mirror of a public Google Sheet, so the local cache is
+  // enough — the sheet auto-fetch below repopulates if it's stale.
   useEffect(() => {
     (async () => {
-      // Try Firestore first
-      if (user?.uid) {
-        const firestoreData = await loadFromFirestore(user.uid);
-        if (firestoreData) {
-          setData(firestoreData);
-          saveCacheAsync(firestoreData); // also cache locally
-          return;
-        }
-      }
-      // Fall back to IndexedDB
       const cached = await loadCacheAsync();
       if (cached) setData(cached);
     })();
-  }, [user]);
+  }, []);
 
   // Read frequency and paused state from sync settings
   function getOppsSettings() {
