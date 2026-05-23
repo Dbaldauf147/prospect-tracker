@@ -3239,6 +3239,23 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     return out;
   }, [prospects, data?.records]);
 
+  // Map of opp `_id` → 1..N display rank. Ranks by ascending `_id` so
+  // the relative creation order of surviving opps is preserved, but
+  // gaps from deleted rows are compacted out — the column reads as a
+  // simple count of opps on the page rather than as the raw internal
+  // id. Stays a stable per-opp value across sort/filter (it's a
+  // property of the row's `_id`, not the rendered position), but does
+  // shift when opps are added or deleted.
+  const oppNumberById = useMemo(() => {
+    const map = new Map();
+    const ids = (data?.records || [])
+      .map(r => r?._id)
+      .filter(id => id != null)
+      .sort((a, b) => (Number(a) || 0) - (Number(b) || 0));
+    ids.forEach((id, idx) => map.set(id, idx + 1));
+    return map;
+  }, [data?.records]);
+
   const columns = useMemo(() => {
     const seen = new Set();
     const mapped = headers
@@ -3480,32 +3497,32 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     const withInfo = nextStepsIdx >= 0
       ? [...mapped.slice(0, nextStepsIdx), infoCol, ...mapped.slice(nextStepsIdx)]
       : [...mapped, infoCol];
-    // Read-only unique number per opp — surfaces the same `_id` the
-    // app already assigns and persists across renames, sort, filter,
-    // and dedup. Lives leftmost (right after the mass-edit checkbox
-    // when that's on) so it's the first thing the user reads on each
-    // row. Non-sticky so the existing sticky Account column still
-    // acts as the horizontal-scroll anchor.
+    // Sequential 1..N display rank — ranks surviving opps by their
+    // underlying `_id` (which is still assigned monotonically), so the
+    // column always runs from 1 up over the current dataset rather than
+    // exposing gaps from deleted rows. Lives leftmost (right after the
+    // mass-edit checkbox when that's on). Non-sticky so the existing
+    // sticky Account column still acts as the horizontal-scroll anchor.
     const oppNumCol = {
       key: '_oppNum',
       label: 'Opp #',
       defaultWidth: 70,
-      getFilterValue: (row) => String(row._id ?? ''),
-      getSortValue: (row) => Number(row._id) || 0,
-      // The id lives on `row._id`, not under the column's key, so
-      // DataTable's default export (which reads `row[col.key]`) would
-      // emit blanks. Map it through explicitly.
-      exportValue: (row) => row._id ?? '',
+      getFilterValue: (row) => String(oppNumberById.get(row._id) ?? ''),
+      getSortValue: (row) => oppNumberById.get(row._id) ?? 0,
+      // The number lives in a derived map keyed by `_id`, not under the
+      // column's key, so DataTable's default export (which reads
+      // `row[col.key]`) would emit blanks. Map it through explicitly.
+      exportValue: (row) => oppNumberById.get(row._id) ?? '',
       render: (row) => (
         <span style={{ fontVariantNumeric: 'tabular-nums', color: '#475569' }}>
-          {row._id ?? ''}
+          {oppNumberById.get(row._id) ?? ''}
         </span>
       ),
     };
     return massEditOn
       ? [selectCol, oppNumCol, ...withInfo, actions]
       : [oppNumCol, ...withInfo, actions];
-  }, [headers, columnLinks, listRegistry, updateOppField, deleteOpp, companySuggestions, prospects, updateProspect, hubspotContacts, selectedIds, pricingOptionServices, optionLinks, massEditOn]);
+  }, [headers, columnLinks, listRegistry, updateOppField, deleteOpp, companySuggestions, prospects, updateProspect, hubspotContacts, selectedIds, pricingOptionServices, optionLinks, massEditOn, oppNumberById]);
 
   const stageOrder = ['Lead', 'Not Started', 'Qualifying', 'Quoting', 'Quoted', 'Verbal', 'Sold', 'Not Sold'];
   const CLOSED_STAGES = useMemo(() => new Set(['Sold', 'Not Sold']), []);
