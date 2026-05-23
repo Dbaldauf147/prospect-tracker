@@ -3480,9 +3480,27 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     const withInfo = nextStepsIdx >= 0
       ? [...mapped.slice(0, nextStepsIdx), infoCol, ...mapped.slice(nextStepsIdx)]
       : [...mapped, infoCol];
+    // Read-only unique number per opp — surfaces the same `_id` the
+    // app already assigns and persists across renames, sort, filter,
+    // and dedup. Lives leftmost (right after the mass-edit checkbox
+    // when that's on) so it's the first thing the user reads on each
+    // row. Non-sticky so the existing sticky Account column still
+    // acts as the horizontal-scroll anchor.
+    const oppNumCol = {
+      key: '_oppNum',
+      label: 'Opp #',
+      defaultWidth: 70,
+      getFilterValue: (row) => String(row._id ?? ''),
+      getSortValue: (row) => Number(row._id) || 0,
+      render: (row) => (
+        <span style={{ fontVariantNumeric: 'tabular-nums', color: '#475569' }}>
+          {row._id ?? ''}
+        </span>
+      ),
+    };
     return massEditOn
-      ? [selectCol, ...withInfo, actions]
-      : [...withInfo, actions];
+      ? [selectCol, oppNumCol, ...withInfo, actions]
+      : [oppNumCol, ...withInfo, actions];
   }, [headers, columnLinks, listRegistry, updateOppField, deleteOpp, companySuggestions, prospects, updateProspect, hubspotContacts, selectedIds, pricingOptionServices, optionLinks, massEditOn]);
 
   const stageOrder = ['Lead', 'Not Started', 'Qualifying', 'Quoting', 'Quoted', 'Verbal', 'Sold', 'Not Sold'];
@@ -3985,7 +4003,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               tableId="opps2"
               columns={columns}
               rows={filtered}
-              alwaysVisible={['Account', '_select', '_info']}
+              alwaysVisible={['Account', '_select', '_info', '_oppNum']}
               enableColumnFilters
               emptyMessage="No opps yet — click + New Opp to create one."
               settings={settings}
