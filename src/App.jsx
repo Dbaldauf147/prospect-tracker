@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react';
 import { getHubspotContacts } from './utils/hubspotContactsCache';
 import { useAuth } from './contexts/AuthContext';
 import { useProspects } from './hooks/useProspects';
@@ -27,12 +27,14 @@ import { AgentsView } from './components/AgentsView/AgentsView';
 import { loadTargetAccountsFromDB } from './components/TargetAccountsView/TargetAccountsView';
 import { DraftEmailsPage } from './components/DraftEmailView/DraftEmailsPage';
 import { VibeProspecting } from './components/VibeProspecting/VibeProspecting';
-import { ProgressView } from './components/ProgressView/ProgressView';
 import { ListsView } from './components/ListsView/ListsView';
 import { PEPortfolioView } from './components/PEPortfolioView/PEPortfolioView';
-import { PricingView } from './components/PricingView/PricingView';
 import { PipelineView } from './components/PipelineView/PipelineView';
-import { YOYView } from './components/YOYView/YOYView';
+// Chart-heavy views (recharts ~250 KB gz, plus their own xlsx usage)
+// are split out of the main chunk; each load on first navigation.
+const ProgressView = lazy(() => import('./components/ProgressView/ProgressView').then(m => ({ default: m.ProgressView })));
+const PricingView = lazy(() => import('./components/PricingView/PricingView').then(m => ({ default: m.PricingView })));
+const YOYView = lazy(() => import('./components/YOYView/YOYView').then(m => ({ default: m.YOYView })));
 import { BFOActivityView } from './components/BFOActivityView/BFOActivityView';
 import { DailySuccessManager } from './components/DailySuccess/DailySuccessManager';
 import { DailySuccessLogModal } from './components/DailySuccess/DailySuccessLogModal';
@@ -304,15 +306,21 @@ function App() {
           ) : view === 'drafts' || view === 'campaigns' ? (
             <DraftEmailsPage prospects={prospects} settings={settings} updateSettings={updateSettings} initialTab={view === 'campaigns' ? 'campaigns' : 'drafts'} />
           ) : view === 'progress' ? (
-            <ProgressView prospects={prospects} settings={settings} cdmName={cdmName} />
+            <Suspense fallback={<div className="loading">Loading view…</div>}>
+              <ProgressView prospects={prospects} settings={settings} cdmName={cdmName} />
+            </Suspense>
           ) : view === 'vibe' ? (
             <VibeProspecting prospects={prospects} onUpdate={updateProspect} cdmName={cdmName} />
           ) : view === 'pricing' ? (
-            <PricingView settings={settings} />
+            <Suspense fallback={<div className="loading">Loading view…</div>}>
+              <PricingView settings={settings} />
+            </Suspense>
           ) : view === 'pipeline' ? (
             <PipelineView />
           ) : view === 'yoy' ? (
-            <YOYView />
+            <Suspense fallback={<div className="loading">Loading view…</div>}>
+              <YOYView />
+            </Suspense>
           ) : view === 'bfo' ? (
             <BFOActivityView />
           ) : view === 'privacy' ? (
