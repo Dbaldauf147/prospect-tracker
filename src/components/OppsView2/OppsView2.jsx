@@ -3132,13 +3132,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   );
   const listRegistry = useMemo(() => buildListRegistry(dropdownLists), [dropdownLists]);
   const availableLists = useMemo(() => buildAvailableLists(dropdownLists), [dropdownLists]);
-  const records = useMemo(() => {
-    const raw = data?.records || [];
-    return raw.filter(r => {
-      const v = String(r['Open Year'] ?? '').trim();
-      return v && v !== '-' && v !== '#N/A';
-    });
-  }, [data]);
+  const records = useMemo(() => data?.records || [], [data]);
 
   // Drop any selection ids that no longer match a live record (e.g.
   // after a hydration that replaced records, or a delete that came in
