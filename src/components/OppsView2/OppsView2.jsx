@@ -2266,7 +2266,22 @@ function BulkImportModal({ existingHeaders, existingRecords, dedupKeyFor, onClos
         continue;
       }
       if (existingByKey.has(key)) {
-        skipped.push({ lineNo, reason: `Duplicate of existing Opps 2 row: ${describeMatch(existingByKey.get(key))} [key ${key}]` });
+        const existing = existingByKey.get(key);
+        // When BFO Link is the thing that matched, a different Account
+        // on the paste row almost always means the source columns
+        // shifted (e.g. an Account cell that belongs to a different
+        // BFO opportunity). Flag the row so the user can remap names
+        // or fix the source before re-pasting.
+        const pasteAcct = String(record['Account'] || '').trim().toLowerCase();
+        const existingAcct = String(existing['Account'] || '').trim().toLowerCase();
+        const accountMismatch = key.startsWith('bfo:') && !!pasteAcct && !!existingAcct && pasteAcct !== existingAcct;
+        skipped.push({
+          lineNo,
+          accountMismatch,
+          pasteAccount: record['Account'] || '',
+          existingAccount: existing['Account'] || '',
+          reason: `${accountMismatch ? '⚠ Account mismatch — ' : ''}Duplicate of existing Opps 2 row: ${describeMatch(existing)} [key ${key}]`,
+        });
         continue;
       }
       if (seenInPaste.has(key)) {
@@ -2394,35 +2409,57 @@ function BulkImportModal({ existingHeaders, existingRecords, dedupKeyFor, onClos
               </div>
             </div>
 
-            {analysis && (
-              <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
-                <div style={{ flex: '1 1 220px', padding: '0.5rem 0.75rem', background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: 6 }}>
-                  <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#166534' }}>{analysis.additions.length} row{analysis.additions.length === 1 ? '' : 's'} will import</div>
+            {analysis && (() => {
+              const mismatchCount = analysis.skipped.filter(s => s.accountMismatch).length;
+              return (
+                <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
+                  <div style={{ flex: '1 1 220px', padding: '0.5rem 0.75rem', background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: 6 }}>
+                    <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#166534' }}>{analysis.additions.length} row{analysis.additions.length === 1 ? '' : 's'} will import</div>
+                  </div>
+                  <div style={{ flex: '1 1 220px', padding: '0.5rem 0.75rem', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 6 }}>
+                    <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#92400E' }}>{analysis.skipped.length} row{analysis.skipped.length === 1 ? '' : 's'} skipped</div>
+                  </div>
+                  {mismatchCount > 0 && (
+                    <div style={{ flex: '1 1 220px', padding: '0.5rem 0.75rem', background: '#FEE2E2', border: '1px solid #FCA5A5', borderRadius: 6 }}>
+                      <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#991B1B' }}>⚠ {mismatchCount} account name mismatch{mismatchCount === 1 ? '' : 'es'}</div>
+                      <div style={{ fontSize: '0.7rem', color: '#7F1D1D', marginTop: 2 }}>BFO Link matched an existing row but the Account differs — check column alignment or remap the names.</div>
+                    </div>
+                  )}
                 </div>
-                <div style={{ flex: '1 1 220px', padding: '0.5rem 0.75rem', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 6 }}>
-                  <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#92400E' }}>{analysis.skipped.length} row{analysis.skipped.length === 1 ? '' : 's'} skipped</div>
-                </div>
-              </div>
-            )}
+              );
+            })()}
 
             {analysis && analysis.skipped.length > 0 && (
               <div>
                 <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#0f172a', marginBottom: '0.35rem' }}>Skipped rows</div>
-                <div style={{ maxHeight: 180, overflow: 'auto', border: '1px solid var(--color-border)', borderRadius: 6 }}>
+                <div style={{ maxHeight: 220, overflow: 'auto', border: '1px solid var(--color-border)', borderRadius: 6 }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.72rem' }}>
                     <thead>
                       <tr style={{ background: '#F8FAFC' }}>
                         <th style={{ textAlign: 'left', padding: '0.3rem 0.55rem', width: 80 }}>Source line</th>
+                        <th style={{ textAlign: 'left', padding: '0.3rem 0.55rem', width: 280 }}>Account (paste vs existing)</th>
                         <th style={{ textAlign: 'left', padding: '0.3rem 0.55rem' }}>Reason</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {analysis.skipped.map((s, i) => (
-                        <tr key={i}>
-                          <td style={{ padding: '0.25rem 0.55rem', borderBottom: '1px solid var(--color-border-light)', color: '#64748B' }}>{s.lineNo}</td>
-                          <td style={{ padding: '0.25rem 0.55rem', borderBottom: '1px solid var(--color-border-light)', color: '#0f172a', whiteSpace: 'normal', wordBreak: 'break-word' }}>{s.reason}</td>
-                        </tr>
-                      ))}
+                      {analysis.skipped.map((s, i) => {
+                        const rowBg = s.accountMismatch ? '#FEE2E2' : undefined;
+                        const showAccountCell = s.pasteAccount != null || s.existingAccount != null;
+                        return (
+                          <tr key={i} style={{ background: rowBg }}>
+                            <td style={{ padding: '0.25rem 0.55rem', borderBottom: '1px solid var(--color-border-light)', color: '#64748B' }}>{s.lineNo}</td>
+                            <td style={{ padding: '0.25rem 0.55rem', borderBottom: '1px solid var(--color-border-light)', color: '#0f172a', whiteSpace: 'normal', wordBreak: 'break-word' }}>
+                              {showAccountCell ? (
+                                <>
+                                  <div><strong>Paste:</strong> {s.pasteAccount || <em style={{ color: '#94A3B8' }}>(blank)</em>}</div>
+                                  <div><strong>Existing:</strong> {s.existingAccount || <em style={{ color: '#94A3B8' }}>(blank)</em>}</div>
+                                </>
+                              ) : <span style={{ color: '#94A3B8' }}>—</span>}
+                            </td>
+                            <td style={{ padding: '0.25rem 0.55rem', borderBottom: '1px solid var(--color-border-light)', color: '#0f172a', whiteSpace: 'normal', wordBreak: 'break-word' }}>{s.reason}</td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
