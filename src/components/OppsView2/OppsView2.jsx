@@ -2155,29 +2155,6 @@ function detectDelimiter(text) {
   return tabs > commas ? '\t' : ',';
 }
 
-// Human-readable summary of an existing Opps 2 row, used in the
-// "Skipped rows" list so a dedup hit points at the row that's
-// blocking the paste instead of just an opaque key. Pulls the
-// columns most users orient by (Account, then Scope, then Year /
-// Start / BFO Link, then the row id so the user can hunt for it
-// in Firestore / IndexedDB if the table view doesn't show it).
-function describeMatch(rec) {
-  if (!rec) return '(unknown)';
-  const parts = [];
-  const acct = String(rec['Account'] || '').trim();
-  const scope = String(rec['Scope'] || '').trim();
-  const year = String(rec['Open Year'] || '').trim();
-  const start = String(rec['Start Date'] || '').trim();
-  const bfo = String(rec['BFO Link'] || '').trim();
-  parts.push(acct ? `Account="${acct}"` : 'Account=(blank)');
-  if (scope) parts.push(`Scope="${scope}"`);
-  if (year) parts.push(`Year=${year}`);
-  if (start) parts.push(`Start=${start}`);
-  if (bfo && bfo !== '-' && bfo !== '#N/A') parts.push(`BFO="${bfo}"`);
-  if (rec._id != null) parts.push(`id=${rec._id}`);
-  return parts.join(', ');
-}
-
 // Bulk Import modal — paste a Google-Sheet-shaped block, review the
 // column mapping the modal auto-detected (and adjust by hand), see
 // warnings about rows that won't import, and commit. The caller owns
@@ -2195,6 +2172,20 @@ function BulkImportModal({ existingHeaders, existingRecords, dedupKeyFor, onClos
     }
     return out;
   }, [existingHeaders]);
+
+  // Map of existing opp `_id` → 1..N display rank (matches the Opp #
+  // column the parent table renders). Lets the dedup reasons and the
+  // Excel export name a colliding opp by its visible number rather
+  // than its raw internal id.
+  const rankById = useMemo(() => {
+    const map = new Map();
+    const ids = (existingRecords || [])
+      .map(r => r?._id)
+      .filter(id => id != null)
+      .sort((a, b) => (Number(a) || 0) - (Number(b) || 0));
+    ids.forEach((id, idx) => map.set(id, idx + 1));
+    return map;
+  }, [existingRecords]);
 
   // Esc / backdrop closes (but not while a commit is mid-flight).
   useEffect(() => {
@@ -2257,12 +2248,12 @@ function BulkImportModal({ existingHeaders, existingRecords, dedupKeyFor, onClos
       }
       const lineNo = i + 2; // +1 for header row, +1 for 1-indexed display
       if (!hasMappedData) {
-        skipped.push({ lineNo, pasteRecord: record, reason: 'Empty — every mapped column is blank.' });
+        skipped.push({ lineNo, pasteRecord: record, reason: 'Empty row' });
         continue;
       }
       const key = dedupKeyFor(record);
       if (!key) {
-        skipped.push({ lineNo, pasteRecord: record, reason: 'Could not build a dedup key (no BFO Link / Account / Open Year / Scope / Start Date).' });
+        skipped.push({ lineNo, pasteRecord: record, reason: 'Missing dedup key (need BFO Link or Account + Scope + Year)' });
         continue;
       }
       if (existingByKey.has(key)) {
@@ -2275,6 +2266,7 @@ function BulkImportModal({ existingHeaders, existingRecords, dedupKeyFor, onClos
         const pasteAcct = String(record['Account'] || '').trim().toLowerCase();
         const existingAcct = String(existing['Account'] || '').trim().toLowerCase();
         const accountMismatch = key.startsWith('bfo:') && !!pasteAcct && !!existingAcct && pasteAcct !== existingAcct;
+        const oppNum = rankById.get(existing._id) ?? existing._id;
         skipped.push({
           lineNo,
           accountMismatch,
@@ -2283,7 +2275,7 @@ function BulkImportModal({ existingHeaders, existingRecords, dedupKeyFor, onClos
           pasteRecord: record,
           existingRecord: existing,
           key,
-          reason: `${accountMismatch ? '⚠ Account mismatch — ' : ''}Duplicate of existing Opps 2 row: ${describeMatch(existing)} [key ${key}]`,
+          reason: `Duplicate opp (opp# ${oppNum})`,
         });
         continue;
       }
@@ -2292,7 +2284,7 @@ function BulkImportModal({ existingHeaders, existingRecords, dedupKeyFor, onClos
           lineNo,
           pasteRecord: record,
           key,
-          reason: `Duplicate of an earlier row in this paste (line ${seenInPaste.get(key)}) — key ${key}`,
+          reason: `Duplicate opp (paste line ${seenInPaste.get(key)})`,
         });
         continue;
       }
@@ -2326,9 +2318,8 @@ function BulkImportModal({ existingHeaders, existingRecords, dedupKeyFor, onClos
     ));
     const baseCols = [
       { header: 'Source line', key: '_lineNo', width: 12 },
-      { header: 'Reason', key: '_reason', width: 60 },
-      { header: 'Account mismatch', key: '_mismatch', width: 18 },
-      { header: 'Dedup key', key: '_key', width: 40 },
+      { header: 'Reason', key: '_reason', width: 28 },
+      { header: 'Account mismatch (existing)', key: '_mismatch', width: 36 },
     ];
     const pairCols = mappedTargets.flatMap(t => [
       { header: `Paste · ${t}`, key: `paste__${t}`, width: 22 },
@@ -2341,8 +2332,7 @@ function BulkImportModal({ existingHeaders, existingRecords, dedupKeyFor, onClos
       const row = {
         _lineNo: s.lineNo,
         _reason: s.reason,
-        _mismatch: s.accountMismatch ? 'Yes' : '',
-        _key: s.key || '',
+        _mismatch: s.accountMismatch ? (s.existingAccount || '(blank)') : '',
       };
       for (const t of mappedTargets) {
         row[`paste__${t}`] = s.pasteRecord ? (s.pasteRecord[t] ?? '') : '';
