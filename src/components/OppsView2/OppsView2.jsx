@@ -2257,12 +2257,12 @@ function BulkImportModal({ existingHeaders, existingRecords, dedupKeyFor, onClos
       }
       const lineNo = i + 2; // +1 for header row, +1 for 1-indexed display
       if (!hasMappedData) {
-        skipped.push({ lineNo, reason: 'Empty — every mapped column is blank.' });
+        skipped.push({ lineNo, pasteRecord: record, reason: 'Empty — every mapped column is blank.' });
         continue;
       }
       const key = dedupKeyFor(record);
       if (!key) {
-        skipped.push({ lineNo, reason: 'Could not build a dedup key (no BFO Link / Account / Open Year / Scope / Start Date).' });
+        skipped.push({ lineNo, pasteRecord: record, reason: 'Could not build a dedup key (no BFO Link / Account / Open Year / Scope / Start Date).' });
         continue;
       }
       if (existingByKey.has(key)) {
@@ -2280,12 +2280,20 @@ function BulkImportModal({ existingHeaders, existingRecords, dedupKeyFor, onClos
           accountMismatch,
           pasteAccount: record['Account'] || '',
           existingAccount: existing['Account'] || '',
+          pasteRecord: record,
+          existingRecord: existing,
+          key,
           reason: `${accountMismatch ? '⚠ Account mismatch — ' : ''}Duplicate of existing Opps 2 row: ${describeMatch(existing)} [key ${key}]`,
         });
         continue;
       }
       if (seenInPaste.has(key)) {
-        skipped.push({ lineNo, reason: `Duplicate of an earlier row in this paste (line ${seenInPaste.get(key)}) — key ${key}` });
+        skipped.push({
+          lineNo,
+          pasteRecord: record,
+          key,
+          reason: `Duplicate of an earlier row in this paste (line ${seenInPaste.get(key)}) — key ${key}`,
+        });
         continue;
       }
       seenInPaste.set(key, lineNo);
@@ -2302,6 +2310,66 @@ function BulkImportModal({ existingHeaders, existingRecords, dedupKeyFor, onClos
     } finally {
       setImporting(false);
     }
+  }
+
+  // Build an .xlsx of every skipped row so the user can investigate
+  // duplicates outside the modal. Columns: line / reason / dedup key
+  // / account mismatch flag, then a Paste vs Existing pair for each
+  // mapped target column so it's obvious which fields differ.
+  async function handleExportDuplicates() {
+    if (!analysis || analysis.skipped.length === 0) return;
+    const { Workbook } = await import('exceljs');
+    const wb = new Workbook();
+    const ws = wb.addWorksheet('Skipped rows');
+    const mappedTargets = Array.from(new Set(
+      Object.values(mapping || {}).filter(Boolean)
+    ));
+    const baseCols = [
+      { header: 'Source line', key: '_lineNo', width: 12 },
+      { header: 'Reason', key: '_reason', width: 60 },
+      { header: 'Account mismatch', key: '_mismatch', width: 18 },
+      { header: 'Dedup key', key: '_key', width: 40 },
+    ];
+    const pairCols = mappedTargets.flatMap(t => [
+      { header: `Paste · ${t}`, key: `paste__${t}`, width: 22 },
+      { header: `Existing · ${t}`, key: `existing__${t}`, width: 22 },
+    ]);
+    ws.columns = [...baseCols, ...pairCols];
+    ws.getRow(1).font = { bold: true };
+    ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
+    for (const s of analysis.skipped) {
+      const row = {
+        _lineNo: s.lineNo,
+        _reason: s.reason,
+        _mismatch: s.accountMismatch ? 'Yes' : '',
+        _key: s.key || '',
+      };
+      for (const t of mappedTargets) {
+        row[`paste__${t}`] = s.pasteRecord ? (s.pasteRecord[t] ?? '') : '';
+        row[`existing__${t}`] = s.existingRecord ? (s.existingRecord[t] ?? '') : '';
+      }
+      const added = ws.addRow(row);
+      if (s.accountMismatch) {
+        added.eachCell({ includeEmpty: true }, cell => {
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEE2E2' } };
+        });
+      }
+    }
+    ws.autoFilter = {
+      from: { row: 1, column: 1 },
+      to:   { row: 1 + analysis.skipped.length, column: ws.columns.length },
+    };
+    ws.views = [{ state: 'frozen', ySplit: 1 }];
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Opps2 bulk import - skipped rows - ${new Date().toISOString().slice(0, 10)}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   }
 
   const mappedCount = useMemo(() => {
@@ -2431,7 +2499,21 @@ function BulkImportModal({ existingHeaders, existingRecords, dedupKeyFor, onClos
 
             {analysis && analysis.skipped.length > 0 && (
               <div>
-                <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#0f172a', marginBottom: '0.35rem' }}>Skipped rows</div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem', gap: '0.5rem' }}>
+                  <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#0f172a' }}>
+                    Skipped rows — source line{analysis.skipped.length === 1 ? '' : 's'} {analysis.skipped.map(s => s.lineNo).join(', ')}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleExportDuplicates}
+                    title="Download an .xlsx of every skipped row with paste vs existing values"
+                    style={{
+                      padding: '0.3rem 0.7rem', fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit',
+                      background: '#fff', color: 'var(--color-accent)',
+                      border: '1px solid var(--color-accent)', borderRadius: 6, cursor: 'pointer',
+                    }}
+                  >Export to Excel</button>
+                </div>
                 <div style={{ maxHeight: 220, overflow: 'auto', border: '1px solid var(--color-border)', borderRadius: 6 }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.72rem' }}>
                     <thead>
