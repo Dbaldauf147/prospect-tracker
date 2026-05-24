@@ -811,7 +811,7 @@ function CellHoverPopover({ anchorRef, value, enabled }) {
   );
 }
 
-function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel, onDoubleClickValue }) {
+function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel, onDoubleClickValue, noTooltip }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value ?? '');
   const [open, setOpen] = useState(false);
@@ -945,7 +945,7 @@ function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel, onD
             padding: '1px 2px', whiteSpace: 'pre', overflow: 'hidden',
             color: isEmpty ? 'var(--color-text-muted)' : 'inherit',
           }}
-          title={onDoubleClickValue ? 'Click to edit · Double-click to view full text' : 'Click to edit'}
+          title={noTooltip ? undefined : (onDoubleClickValue ? 'Click to edit · Double-click to view full text' : 'Click to edit')}
         >{text}</span>
         <CellHoverPopover anchorRef={displayRef} value={text} enabled={!isEmpty} />
       </>
@@ -3477,6 +3477,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               onChange={(v) => updateOppField(row._id, h, v)}
               suggestions={h === 'Account' ? companySuggestions : undefined}
               onDoubleClickValue={h === 'Next Steps' ? () => setNextStepsPopupId(row._id) : undefined}
+              noTooltip={h === 'Next Steps'}
             />
           );
         },
