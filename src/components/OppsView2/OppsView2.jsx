@@ -2095,6 +2095,12 @@ function BulkImportModal({ existingHeaders, existingRecords, dedupKeyFor, onClos
   const [parsed, setParsed] = useState(null);
   const [mapping, setMapping] = useState({});
   const [importing, setImporting] = useState(false);
+  // When on, every formerly-skipped row gets imported anyway with a
+  // `Review` note explaining why it was flagged (and, for dupes of an
+  // existing row, the existing row gets a back-reference Review note
+  // too). Lets the user audit the collisions in-place on Opps2
+  // instead of fixing the source before re-pasting.
+  const [flagAndImportAll, setFlagAndImportAll] = useState(false);
   const targetOptions = useMemo(() => {
     const seen = new Set();
     const out = [];
@@ -2225,11 +2231,39 @@ function BulkImportModal({ existingHeaders, existingRecords, dedupKeyFor, onClos
     return { additions, skipped };
   }, [parsed, mapping, existingRecords, dedupKeyFor]);
 
+  // Convert a skipped entry into an addition with `_reviewReason` (and
+  // `_existingMatchId` when we know which existing row it collided
+  // with). Used in flag-and-import mode so the parent can stamp the
+  // Review column and back-reference the existing row.
+  function flagSkippedAsAddition(s) {
+    let reviewReason;
+    if (s.existingRecord) {
+      const accountSuffix = s.accountMismatch && s.existingAccount
+        ? ` (existing account: "${s.existingAccount}")`
+        : '';
+      reviewReason = `Possible duplicate of opp# ${rankById.get(s.existingRecord._id) ?? s.existingRecord._id}${accountSuffix}`;
+    } else if (s.reason.startsWith('Duplicate opp (paste line')) {
+      reviewReason = s.reason.replace(/^Duplicate opp/, 'Possible duplicate');
+    } else {
+      reviewReason = s.reason;
+    }
+    const out = { ...(s.pasteRecord || {}), _reviewReason: reviewReason };
+    if (s.existingRecord?._id != null) out._existingMatchId = s.existingRecord._id;
+    return out;
+  }
+
+  const importableCount = analysis
+    ? analysis.additions.length + (flagAndImportAll ? analysis.skipped.length : 0)
+    : 0;
+
   async function handleImport() {
-    if (!analysis || analysis.additions.length === 0) return;
+    if (!analysis || importableCount === 0) return;
     setImporting(true);
     try {
-      await onImport(analysis.additions, parsed.headers, mapping);
+      const toImport = flagAndImportAll
+        ? [...analysis.additions, ...analysis.skipped.map(flagSkippedAsAddition)]
+        : analysis.additions;
+      await onImport(toImport, parsed.headers, mapping);
     } finally {
       setImporting(false);
     }
@@ -2400,13 +2434,16 @@ function BulkImportModal({ existingHeaders, existingRecords, dedupKeyFor, onClos
 
             {analysis && (() => {
               const mismatchCount = analysis.skipped.filter(s => s.accountMismatch).length;
+              const flaggedLabel = flagAndImportAll ? 'flagged for review' : 'skipped';
+              const flaggedBg = flagAndImportAll ? '#FFFBEB' : '#FEF3C7';
+              const flaggedBorder = flagAndImportAll ? '#FCD34D' : '#FDE68A';
               return (
                 <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
                   <div style={{ flex: '1 1 220px', padding: '0.5rem 0.75rem', background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: 6 }}>
-                    <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#166534' }}>{analysis.additions.length} row{analysis.additions.length === 1 ? '' : 's'} will import</div>
+                    <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#166534' }}>{analysis.additions.length} clean row{analysis.additions.length === 1 ? '' : 's'} will import</div>
                   </div>
-                  <div style={{ flex: '1 1 220px', padding: '0.5rem 0.75rem', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 6 }}>
-                    <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#92400E' }}>{analysis.skipped.length} row{analysis.skipped.length === 1 ? '' : 's'} skipped</div>
+                  <div style={{ flex: '1 1 220px', padding: '0.5rem 0.75rem', background: flaggedBg, border: `1px solid ${flaggedBorder}`, borderRadius: 6 }}>
+                    <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#92400E' }}>{analysis.skipped.length} row{analysis.skipped.length === 1 ? '' : 's'} {flaggedLabel}</div>
                   </div>
                   {mismatchCount > 0 && (
                     <div style={{ flex: '1 1 220px', padding: '0.5rem 0.75rem', background: '#FEE2E2', border: '1px solid #FCA5A5', borderRadius: 6 }}>
@@ -2417,6 +2454,26 @@ function BulkImportModal({ existingHeaders, existingRecords, dedupKeyFor, onClos
                 </div>
               );
             })()}
+
+            {analysis && analysis.skipped.length > 0 && (
+              <label style={{
+                display: 'flex', alignItems: 'flex-start', gap: '0.5rem',
+                padding: '0.5rem 0.75rem', background: '#FFFBEB',
+                border: '1px solid #FCD34D', borderRadius: 6,
+                fontSize: '0.75rem', color: '#7C2D12', cursor: 'pointer',
+              }}>
+                <input
+                  type="checkbox"
+                  checked={flagAndImportAll}
+                  onChange={(e) => setFlagAndImportAll(e.target.checked)}
+                  style={{ marginTop: 2 }}
+                />
+                <span>
+                  <strong>Import the {analysis.skipped.length} skipped row{analysis.skipped.length === 1 ? '' : 's'} anyway and flag them for review.</strong>
+                  {' '}A <code>Review</code> column will be added (if it doesn't exist) and populated with the reason on each flagged row. Existing rows that look like duplicates of an imported row also get a back-reference note so you can audit them on Opps2. Clear the cell once you've checked it.
+                </span>
+              </label>
+            )}
 
             {analysis && analysis.skipped.length > 0 && (
               <div>
@@ -2512,15 +2569,15 @@ function BulkImportModal({ existingHeaders, existingRecords, dedupKeyFor, onClos
           <button
             type="button"
             onClick={handleImport}
-            disabled={importing || !analysis || analysis.additions.length === 0}
+            disabled={importing || importableCount === 0}
             style={{
               padding: '0.4rem 0.95rem', fontSize: '0.8rem', fontWeight: 600, fontFamily: 'inherit',
               background: 'var(--color-accent)', color: '#fff',
               border: '1px solid var(--color-accent)', borderRadius: 6,
-              cursor: (importing || !analysis || analysis.additions.length === 0) ? 'not-allowed' : 'pointer',
-              opacity: (importing || !analysis || analysis.additions.length === 0) ? 0.6 : 1,
+              cursor: (importing || importableCount === 0) ? 'not-allowed' : 'pointer',
+              opacity: (importing || importableCount === 0) ? 0.6 : 1,
             }}
-          >{importing ? 'Importing…' : `Import ${analysis ? analysis.additions.length : 0} row${(analysis?.additions.length || 0) === 1 ? '' : 's'}`}</button>
+          >{importing ? 'Importing…' : `Import ${importableCount} row${importableCount === 1 ? '' : 's'}`}</button>
         </div>
       </div>
     </div>
@@ -2836,9 +2893,52 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     for (const target of Object.values(mapping || {})) {
       if (target && !headerSet.has(target)) { headerSet.add(target); mergedHeaders.push(target); }
     }
+    // Flag-and-import mode: rows arrive carrying `_reviewReason` (and,
+    // for duplicate-of-existing rows, `_existingMatchId`). Stamp the
+    // Review column on the new rows and post a back-reference Review
+    // note on the existing rows so the user can audit collisions
+    // in-place.
+    const anyFlagged = additions.some(r => r?._reviewReason);
+    if (anyFlagged && !headerSet.has('Review')) {
+      headerSet.add('Review');
+      mergedHeaders.push('Review');
+    }
     let nextId = baseRecords.reduce((m, r) => Math.max(m, Number(r?._id) || 0), 0);
-    const stamped = additions.map(r => ({ ...r, _id: ++nextId, id: nextId, _source: 'bulk-import' }));
-    const nextRecords = [...stamped, ...baseRecords];
+    // Map of existing _id → list of new opp ranks that point at it,
+    // so a single existing row that collides with multiple imported
+    // rows lists every match instead of overwriting.
+    const existingFlagsByMatchId = new Map();
+    // Display rank = position in the ascending sort of all _ids
+    // (matches the Opp # column). After import: existing ranks stay
+    // the same; new ones get baseRecords.length + 1 onward (since
+    // they have the highest _ids).
+    const baseExistingCount = baseRecords.filter(r => r?._id != null).length;
+    const stamped = additions.map((r, idx) => {
+      const id = ++nextId;
+      const newRank = baseExistingCount + idx + 1;
+      const { _reviewReason, _existingMatchId, ...rest } = r;
+      const out = { ...rest, _id: id, id, _source: 'bulk-import' };
+      if (_reviewReason) out['Review'] = _reviewReason;
+      if (_existingMatchId != null) {
+        const list = existingFlagsByMatchId.get(_existingMatchId) || [];
+        list.push(newRank);
+        existingFlagsByMatchId.set(_existingMatchId, list);
+      }
+      return out;
+    });
+    const flaggedExistingRecords = existingFlagsByMatchId.size > 0
+      ? baseRecords.map(r => {
+          const matches = existingFlagsByMatchId.get(r?._id);
+          if (!matches?.length) return r;
+          const label = matches.length === 1
+            ? `Possible duplicate of imported opp# ${matches[0]}`
+            : `Possible duplicate of imported opps# ${matches.join(', ')}`;
+          const existing = String(r['Review'] || '').trim();
+          const next = existing ? `${existing} · ${label}` : label;
+          return { ...r, Review: next };
+        })
+      : baseRecords;
+    const nextRecords = [...stamped, ...flaggedExistingRecords];
     const nextState = { ...(data || {}), headers: mergedHeaders, records: nextRecords };
     setData(nextState);
     if (firestoreSaveTimerRef.current) {
@@ -2858,7 +2958,12 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     setBulkImportOpen(false);
     // Suppress unused-arg lint — sourceHeaders is informational only.
     void sourceHeaders;
-    window.alert(`Imported ${additions.length} row${additions.length === 1 ? '' : 's'} from the pasted sheet.${firestoreWarning}`);
+    const flaggedNewCount = additions.filter(r => r?._reviewReason).length;
+    const flaggedExistingCount = existingFlagsByMatchId.size;
+    const flagSuffix = flaggedNewCount > 0
+      ? `\n\nFlagged for review: ${flaggedNewCount} imported row${flaggedNewCount === 1 ? '' : 's'}${flaggedExistingCount > 0 ? ` + ${flaggedExistingCount} existing row${flaggedExistingCount === 1 ? '' : 's'}` : ''}. Look in the Review column.`
+      : '';
+    window.alert(`Imported ${additions.length} row${additions.length === 1 ? '' : 's'} from the pasted sheet.${flagSuffix}${firestoreWarning}`);
   }, [data, user?.uid]);
 
   // Look the tagged contact's full HubSpot record up by email (most
