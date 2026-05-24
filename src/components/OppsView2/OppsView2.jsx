@@ -2821,6 +2821,23 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // bulk toolbar is only available) while this is on, so the default
   // view is uncluttered.
   const [massEditOn, setMassEditOn] = useState(false);
+  // _ids of rows that DataTable is currently showing (after column
+  // filters / search). Lets the select-column header offer a
+  // "select all rows in the current filter" checkbox so the user
+  // can mass-edit a filtered subset without per-row clicking.
+  const [filteredRowIds, setFilteredRowIds] = useState(() => new Set());
+  const handleFilteredRowsChange = useCallback((rows) => {
+    setFilteredRowIds(prev => {
+      const next = new Set();
+      for (const r of (rows || [])) if (r?._id != null) next.add(r._id);
+      if (prev.size === next.size) {
+        let same = true;
+        for (const id of prev) if (!next.has(id)) { same = false; break; }
+        if (same) return prev;
+      }
+      return next;
+    });
+  }, []);
   // The HubSpot contact currently open in the rich ContactEditModal,
   // launched when the user clicks a tagged-contact name on the
   // Contact cell's popover. Null when no modal is open.
@@ -3619,13 +3636,47 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       ),
     };
     // Selection checkbox — prepended so the user can flip rows on/off
-    // for mass-edit. Header label is the count of selected so it
-    // signals state at a glance.
+    // for mass-edit. The header checkbox toggles every row in the
+    // current filter (so a user can filter to "Stage = Quoting" and
+    // mass-select with one click).
     const selectCol = {
       key: '_select',
       label: '',
       defaultWidth: 36,
       getFilterValue: () => '',
+      renderHeader: () => {
+        const filteredArr = Array.from(filteredRowIds);
+        let selectedInFilter = 0;
+        for (const id of filteredArr) if (selectedIds.has(id)) selectedInFilter += 1;
+        const allSelected = filteredArr.length > 0 && selectedInFilter === filteredArr.length;
+        const someSelected = selectedInFilter > 0 && !allSelected;
+        return (
+          <input
+            type="checkbox"
+            ref={(el) => { if (el) el.indeterminate = someSelected; }}
+            checked={allSelected}
+            disabled={filteredArr.length === 0}
+            onChange={(e) => {
+              const checked = e.target.checked;
+              setSelectedIds(prev => {
+                const next = new Set(prev);
+                if (checked) {
+                  for (const id of filteredArr) next.add(id);
+                } else {
+                  for (const id of filteredArr) next.delete(id);
+                }
+                return next;
+              });
+            }}
+            style={{ margin: 0, cursor: filteredArr.length === 0 ? 'not-allowed' : 'pointer' }}
+            title={filteredArr.length === 0
+              ? 'No filtered rows to select'
+              : allSelected
+                ? `Clear selection for all ${filteredArr.length} filtered row${filteredArr.length === 1 ? '' : 's'}`
+                : `Select all ${filteredArr.length} filtered row${filteredArr.length === 1 ? '' : 's'}`}
+          />
+        );
+      },
       render: (row) => (
         <input
           type="checkbox"
@@ -3700,7 +3751,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     return massEditOn
       ? [selectCol, oppNumCol, ...withInfo, actions]
       : [oppNumCol, ...withInfo, actions];
-  }, [headers, columnLinks, listRegistry, updateOppField, deleteOpp, companySuggestions, prospects, updateProspect, hubspotContacts, selectedIds, pricingOptionServices, optionLinks, massEditOn, oppNumberById]);
+  }, [headers, columnLinks, listRegistry, updateOppField, deleteOpp, companySuggestions, prospects, updateProspect, hubspotContacts, selectedIds, pricingOptionServices, optionLinks, massEditOn, oppNumberById, filteredRowIds]);
 
   const stageOrder = ['Lead', 'Not Started', 'Qualifying', 'Quoting', 'Quoted', 'Verbal', 'Sold', 'Not Sold'];
   const CLOSED_STAGES = useMemo(() => new Set(['Sold', 'Not Sold']), []);
@@ -4204,6 +4255,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               rows={filtered}
               alwaysVisible={['Account', '_select', '_info', '_oppNum']}
               enableColumnFilters
+              onFilteredRowsChange={handleFilteredRowsChange}
               emptyMessage="No opps yet — click + New Opp to create one."
               settings={settings}
               updateSettings={updateSettings}
