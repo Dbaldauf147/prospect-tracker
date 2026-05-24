@@ -746,7 +746,71 @@ function PricingOptionCell({ value, onClear }) {
   );
 }
 
-function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel, onDoubleClickValue }) {
+// Opt-in hover popover for long-text cells (Next Steps). Mirrors the
+// text in a portal-positioned dark box anchored to the cell so the
+// content isn't clipped by the column width or by the table's
+// horizontal scroll container. Only shows when the value would
+// otherwise be cut off — a newline that gets squashed by the cell's
+// single-line render, or text wider than the column.
+function CellHoverPopover({ anchorRef, value, enabled }) {
+  const [pos, setPos] = useState(null);
+  const timerRef = useRef(null);
+
+  useEffect(() => {
+    const el = anchorRef.current;
+    if (!el || !enabled) return undefined;
+    function onEnter() {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => {
+        const node = anchorRef.current;
+        if (!node) return;
+        const text = String(value ?? '');
+        if (!text) return;
+        const hasNewline = text.includes('\n');
+        const hasOverflow = node.scrollWidth > node.clientWidth + 1;
+        if (!hasNewline && !hasOverflow) return;
+        const rect = node.getBoundingClientRect();
+        const vh = window.innerHeight;
+        const flipAbove = rect.bottom + 220 > vh && rect.top > 220;
+        setPos({
+          top: flipAbove ? rect.top - 4 : rect.bottom + 4,
+          left: Math.min(rect.left, window.innerWidth - 500),
+          flipAbove,
+        });
+      }, 250);
+    }
+    function onLeave() {
+      if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+      setPos(null);
+    }
+    el.addEventListener('mouseenter', onEnter);
+    el.addEventListener('mouseleave', onLeave);
+    return () => {
+      el.removeEventListener('mouseenter', onEnter);
+      el.removeEventListener('mouseleave', onLeave);
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, [anchorRef, value, enabled]);
+
+  if (!pos || !enabled) return null;
+  return createPortal(
+    <div
+      style={{
+        position: 'fixed', top: pos.top, left: pos.left,
+        transform: pos.flipAbove ? 'translateY(-100%)' : 'none',
+        background: '#1e293b', color: '#f8fafc',
+        padding: '6px 10px', borderRadius: 4, fontSize: '0.78rem',
+        maxWidth: 480, maxHeight: 320, overflow: 'auto',
+        whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.35,
+        boxShadow: '0 8px 22px rgba(15, 23, 42, 0.28)',
+        zIndex: 10000, pointerEvents: 'none',
+      }}
+    >{String(value ?? '')}</div>,
+    document.body,
+  );
+}
+
+function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel, onDoubleClickValue, showHoverPopover }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value ?? '');
   const [open, setOpen] = useState(false);
@@ -867,19 +931,24 @@ function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel, onD
       onDoubleClickValue(value);
     };
     return (
-      <span
-        ref={displayRef}
-        onClick={handleClick}
-        onDoubleClick={handleDoubleClick}
-        style={{
-          // `white-space: pre` keeps Alt+Enter newlines on their own
-          // line (so the row grows vertically to fit) while still
-          // clipping anything wider than the column.
-          display: 'block', cursor: 'text', minHeight: '1em',
-          padding: '1px 2px', whiteSpace: 'pre', overflow: 'hidden',
-          color: isEmpty ? 'var(--color-text-muted)' : 'inherit',
-        }}
-      >{text}</span>
+      <>
+        <span
+          ref={displayRef}
+          onClick={handleClick}
+          onDoubleClick={handleDoubleClick}
+          style={{
+            // `white-space: pre` keeps Alt+Enter newlines on their own
+            // line (so the row grows vertically to fit) while still
+            // clipping anything wider than the column.
+            display: 'block', cursor: 'text', minHeight: '1em',
+            padding: '1px 2px', whiteSpace: 'pre', overflow: 'hidden',
+            color: isEmpty ? 'var(--color-text-muted)' : 'inherit',
+          }}
+        >{text}</span>
+        {showHoverPopover && (
+          <CellHoverPopover anchorRef={displayRef} value={text} enabled={!isEmpty} />
+        )}
+      </>
     );
   }
   return (
@@ -3513,6 +3582,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               onChange={(v) => updateOppField(row._id, h, v)}
               suggestions={h === 'Account' ? companySuggestions : undefined}
               onDoubleClickValue={h === 'Next Steps' ? () => setNextStepsPopupId(row._id) : undefined}
+              showHoverPopover={h === 'Next Steps'}
             />
           );
         },
