@@ -869,7 +869,18 @@ export function DataTable({
             </table>
           </div>
           {sortedRows.length === 0 ? (
-            <div className={styles.empty}>{emptyMessage}</div>
+            // Wrap the empty message in a scrollable container the
+            // same width as the column total so horizontal scrolling
+            // still works when a filter narrows the view to zero rows
+            // (the user can otherwise lose access to off-screen
+            // columns just because no rows match the current filter).
+            // Syncs scrollLeft to the header so the column titles
+            // track the user's pan even with no body rows.
+            <div className={styles.scrollWrap} ref={bodyRef} onScroll={handleBodyScroll}>
+              <div style={{ minWidth: visibleColumns.reduce((s, c) => s + getWidth(c), 0) }}>
+                <div className={styles.empty}>{emptyMessage}</div>
+              </div>
+            </div>
           ) : (() => {
             const total = sortedRows.length;
             const expandable = typeof renderExpansion === 'function';
