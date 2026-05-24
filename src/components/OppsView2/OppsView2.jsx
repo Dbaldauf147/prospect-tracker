@@ -2826,6 +2826,11 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // "select all rows in the current filter" checkbox so the user
   // can mass-edit a filtered subset without per-row clicking.
   const [filteredRowIds, setFilteredRowIds] = useState(() => new Set());
+  // When on, the table view is narrowed to just the rows the user has
+  // ticked. The button only renders when there's at least one
+  // selection, and we auto-flip back off as soon as the selection is
+  // cleared (so the table doesn't go empty under the user).
+  const [showOnlySelected, setShowOnlySelected] = useState(false);
   const handleFilteredRowsChange = useCallback((rows) => {
     setFilteredRowIds(prev => {
       const next = new Set();
@@ -2842,6 +2847,9 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // launched when the user clicks a tagged-contact name on the
   // Contact cell's popover. Null when no modal is open.
   const [editingContact, setEditingContact] = useState(null);
+  useEffect(() => {
+    if (showOnlySelected && selectedIds.size === 0) setShowOnlySelected(false);
+  }, [showOnlySelected, selectedIds]);
   // Set while the "Import from Opps tab" one-time copy is running so
   // the button locks out double-clicks and shows a "Importing…"
   // label.
@@ -3800,11 +3808,14 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // typed lines up with the stored cell text.
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
-    if (!term) return prefiltered;
-    return prefiltered.filter(r =>
+    const searched = !term ? prefiltered : prefiltered.filter(r =>
       Object.values(r).some(v => v != null && v !== '' && String(v).toLowerCase().includes(term))
     );
-  }, [prefiltered, search]);
+    if (showOnlySelected && selectedIds.size > 0) {
+      return searched.filter(r => selectedIds.has(r._id));
+    }
+    return searched;
+  }, [prefiltered, search, showOnlySelected, selectedIds]);
 
   const stageCounts = useMemo(() => {
     const counts = {};
@@ -4232,6 +4243,27 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                 cursor: 'pointer',
               }}
             >{massEditOn ? 'Exit Mass Edit' : 'Mass Edit'}</button>
+            {selectedIds.size > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowOnlySelected(v => !v)}
+                title={showOnlySelected
+                  ? 'Show every row again. Your selection is kept.'
+                  : 'Hide every row that isn\'t currently selected.'}
+                style={{
+                  marginLeft: '0.5rem',
+                  padding: '0.3rem 0.7rem',
+                  fontSize: '0.78rem',
+                  fontWeight: 600,
+                  fontFamily: 'inherit',
+                  color: showOnlySelected ? '#fff' : '#166534',
+                  background: showOnlySelected ? '#16A34A' : '#fff',
+                  border: `1px solid ${showOnlySelected ? '#16A34A' : '#86EFAC'}`,
+                  borderRadius: 6,
+                  cursor: 'pointer',
+                }}
+              >{showOnlySelected ? `Showing ${selectedIds.size} selected — Show all` : `Show ${selectedIds.size} selected only`}</button>
+            )}
           </div>
 
           {massEditOn && selectedIds.size > 0 && (
