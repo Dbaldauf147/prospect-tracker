@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import styles from './DataTable.module.css';
 
 const COL_WIDTHS_PREFIX = 'prospect-col-widths-';
@@ -52,6 +53,11 @@ function writeFilterValue(picks, draft) {
   return { picks, draft };
 }
 
+// Hard cap on the dropdown list so a column with thousands of unique
+// values doesn't ship a 10k-button popover. Past this, the footer
+// nudges the user to type to narrow.
+const FILTER_DROPDOWN_CAP = 500;
+
 function ColumnFilterCell({ value, onChange, suggestions }) {
   const { picks, draft: incomingDraft } = readFilterValue(value);
   // We mirror the parent-controlled draft so typing feels instant
@@ -60,28 +66,51 @@ function ColumnFilterCell({ value, onChange, suggestions }) {
   const [draft, setDraft] = useState(incomingDraft);
   useEffect(() => { setDraft(incomingDraft); }, [incomingDraft]);
   const [open, setOpen] = useState(false);
+  const [anchorRect, setAnchorRect] = useState(null);
   const wrapRef = useRef(null);
+  const dropdownRef = useRef(null);
   useEffect(() => {
-    if (!open) return;
-    function onDocClick(e) {
-      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    if (!open) return undefined;
+    function onDocMouseDown(e) {
+      // Closes when the click lands outside both the filter cell and
+      // the portal-rendered dropdown. Without checking the dropdown
+      // too, the mousedown on a value button would close the dropdown
+      // before the click reaches it.
+      const inWrap = wrapRef.current && wrapRef.current.contains(e.target);
+      const inDropdown = dropdownRef.current && dropdownRef.current.contains(e.target);
+      if (!inWrap && !inDropdown) setOpen(false);
     }
-    document.addEventListener('mousedown', onDocClick);
-    return () => document.removeEventListener('mousedown', onDocClick);
+    function reposition() {
+      if (wrapRef.current) setAnchorRect(wrapRef.current.getBoundingClientRect());
+    }
+    document.addEventListener('mousedown', onDocMouseDown);
+    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('resize', reposition);
+    return () => {
+      document.removeEventListener('mousedown', onDocMouseDown);
+      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('resize', reposition);
+    };
   }, [open]);
 
-  const matches = useMemo(() => {
+  function openDropdown() {
+    if (wrapRef.current) setAnchorRect(wrapRef.current.getBoundingClientRect());
+    setOpen(true);
+  }
+
+  const { matches, totalAvailable } = useMemo(() => {
     const q = draft.trim().toLowerCase();
     const seen = new Set(picks.map(p => p.toLowerCase()));
     const out = [];
+    let totalAvailable = 0;
     for (const s of suggestions) {
       const sl = s.toLowerCase();
       if (seen.has(sl)) continue;
       if (q && !sl.includes(q)) continue;
-      out.push(s);
-      if (out.length >= 30) break;
+      totalAvailable += 1;
+      if (out.length < FILTER_DROPDOWN_CAP) out.push(s);
     }
-    return out;
+    return { matches: out, totalAvailable };
   }, [suggestions, draft, picks]);
 
   function pushDraft(next) {
@@ -118,10 +147,37 @@ function ColumnFilterCell({ value, onChange, suggestions }) {
     }
   }
 
+  // Portal-rendered dropdown: the sticky table header / horizontal
+  // scroll container both clip absolutely-positioned children, so the
+  // list disappeared under the table body. Fixed-positioning against
+  // viewport coordinates side-steps that and lets the list be wider
+  // than the (often narrow) filter column.
+  const dropdownStyle = anchorRect ? (() => {
+    const minWidth = Math.max(anchorRect.width, 220);
+    const left = Math.min(anchorRect.left, window.innerWidth - minWidth - 8);
+    const spaceBelow = window.innerHeight - anchorRect.bottom;
+    const flipAbove = spaceBelow < 200 && anchorRect.top > spaceBelow;
+    return {
+      position: 'fixed',
+      top: flipAbove ? undefined : anchorRect.bottom + 1,
+      bottom: flipAbove ? window.innerHeight - anchorRect.top + 1 : undefined,
+      left,
+      minWidth,
+      maxWidth: Math.min(420, window.innerWidth - left - 8),
+      maxHeight: flipAbove ? Math.min(320, anchorRect.top - 8) : Math.min(320, spaceBelow - 8),
+      zIndex: 10000,
+      background: '#fff',
+      border: '1px solid var(--color-border)',
+      borderRadius: 4,
+      overflowY: 'auto',
+      boxShadow: '0 8px 24px rgba(15, 23, 42, 0.18)',
+    };
+  })() : null;
+
   return (
     <div ref={wrapRef} style={{ position: 'relative' }}>
       <div
-        onClick={() => setOpen(true)}
+        onClick={openDropdown}
         style={{
           display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'center',
           padding: '1px 3px',
@@ -147,29 +203,45 @@ function ColumnFilterCell({ value, onChange, suggestions }) {
         <input
           type="text"
           value={draft}
-          onChange={e => { pushDraft(e.target.value); setOpen(true); }}
-          onFocus={() => setOpen(true)}
+          onChange={e => { pushDraft(e.target.value); openDropdown(); }}
+          onFocus={openDropdown}
           onKeyDown={onKeyDown}
           placeholder={picks.length === 0 ? 'Filter…' : ''}
           style={{ border: 'none', outline: 'none', flex: '1 0 60px', minWidth: 40, fontSize: '0.68rem', fontFamily: 'inherit', padding: '1px 2px', background: 'transparent' }}
         />
       </div>
-      {open && matches.length > 0 && (
+      {open && dropdownStyle && createPortal(
         <div
-          style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 30, background: '#fff', border: '1px solid var(--color-border)', borderRadius: 4, marginTop: 1, maxHeight: 220, overflowY: 'auto', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
+          ref={dropdownRef}
+          style={dropdownStyle}
           onMouseDown={e => e.preventDefault() /* keep input focused */}
         >
-          {matches.map(s => (
-            <button
-              key={s}
-              type="button"
-              onClick={() => addPick(s)}
-              style={{ display: 'block', width: '100%', textAlign: 'left', padding: '3px 6px', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.7rem', color: 'var(--color-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
-              onMouseEnter={e => e.currentTarget.style.background = '#F1F5F9'}
-              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-            >{s}</button>
-          ))}
-        </div>
+          {matches.length === 0 ? (
+            <div style={{ padding: '6px 10px', fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
+              {suggestions.length === 0 ? 'No values to filter by.' : 'No match — keep typing to filter.'}
+            </div>
+          ) : (
+            <>
+              {matches.map(s => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => addPick(s)}
+                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '4px 8px', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.72rem', color: 'var(--color-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                  onMouseEnter={e => e.currentTarget.style.background = '#F1F5F9'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                  title={s}
+                >{s}</button>
+              ))}
+              {totalAvailable > matches.length && (
+                <div style={{ position: 'sticky', bottom: 0, padding: '4px 8px', fontSize: '0.65rem', color: 'var(--color-text-muted)', background: '#F8FAFC', borderTop: '1px solid var(--color-border-light)' }}>
+                  Showing {matches.length} of {totalAvailable} — type to narrow.
+                </div>
+              )}
+            </>
+          )}
+        </div>,
+        document.body,
       )}
     </div>
   );
