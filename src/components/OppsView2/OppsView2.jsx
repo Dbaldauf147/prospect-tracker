@@ -817,8 +817,11 @@ function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel, onD
   const [hoverIdx, setHoverIdx] = useState(0);
   // Dropdown is portaled to <body> so the table cell's overflow:hidden
   // can't clip it; position is recomputed from the wrapper's bounding
-  // rect whenever the dropdown opens.
-  const [dropPos, setDropPos] = useState({ top: 0, left: 0, width: 0 });
+  // rect whenever the dropdown opens. `placement` flips to 'above'
+  // when the cell sits too close to the viewport bottom for the
+  // dropdown to fit underneath without clipping; in that case the
+  // render anchors to `bottom` instead of `top`.
+  const [dropPos, setDropPos] = useState({ top: 0, left: 0, width: 0, maxHeight: 220, placement: 'below' });
   const wrapRef = useRef(null);
   const displayRef = useRef(null);
   const textareaRef = useRef(null);
@@ -904,7 +907,32 @@ function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel, onD
   useLayoutEffect(() => {
     if (!open || !wrapRef.current) return;
     const rect = wrapRef.current.getBoundingClientRect();
-    setDropPos({ top: rect.bottom + 2, left: rect.left, width: rect.width });
+    const margin = 8;
+    const gap = 2;
+    const spaceBelow = window.innerHeight - rect.bottom - margin;
+    const spaceAbove = rect.top - margin;
+    // Prefer below — that's the cell's natural drop direction — unless
+    // there's more vertical room above and not enough below for at
+    // least a short list (~120px). Without this, opening the dropdown
+    // on a row near the bottom of the viewport clips the suggestions.
+    const placeBelow = spaceBelow >= 160 || spaceBelow >= spaceAbove;
+    if (placeBelow) {
+      setDropPos({
+        top: rect.bottom + gap,
+        left: rect.left,
+        width: rect.width,
+        maxHeight: Math.max(120, Math.min(280, spaceBelow)),
+        placement: 'below',
+      });
+    } else {
+      setDropPos({
+        bottom: window.innerHeight - rect.top + gap,
+        left: rect.left,
+        width: rect.width,
+        maxHeight: Math.max(120, Math.min(280, spaceAbove)),
+        placement: 'above',
+      });
+    }
   }, [open, draft]);
 
   if (!editing) {
@@ -1003,11 +1031,15 @@ function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel, onD
         <div
           onMouseDown={(e) => e.preventDefault()}
           style={{
-            position: 'fixed', top: dropPos.top, left: dropPos.left,
+            position: 'fixed',
+            ...(dropPos.placement === 'above'
+              ? { bottom: dropPos.bottom }
+              : { top: dropPos.top }),
+            left: dropPos.left,
             minWidth: Math.max(dropPos.width, 160),
             zIndex: 9999, background: '#fff', border: '1px solid var(--color-border)',
             borderRadius: 4, boxShadow: '0 8px 20px rgba(15, 23, 42, 0.12)',
-            maxHeight: 220, overflowY: 'auto', fontSize: '0.78rem',
+            maxHeight: dropPos.maxHeight, overflowY: 'auto', fontSize: '0.78rem',
           }}
         >
           {matches.map((m, i) => {
