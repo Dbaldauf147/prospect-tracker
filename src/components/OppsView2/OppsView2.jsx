@@ -455,12 +455,21 @@ function resolveComputedDays(row, storedKey, sourceField, compute) {
     const raw = row[storedKey];
     const s = raw == null ? '' : String(raw).trim();
     if (BLANK_SENTINELS.has(s)) return null;
+  }
+  // Always prefer a live compute from the source date so the cell
+  // reflects today, not the stale snapshot the sheet shipped on
+  // import. Falls back to the stored number only when the source
+  // field is missing/unparseable (imported rows that arrived without
+  // a date).
+  const live = compute(row?.[sourceField]);
+  if (live != null) return live;
+  if (row && storedKey in row) {
+    const raw = row[storedKey];
+    const s = raw == null ? '' : String(raw).trim();
     const n = parseFloat(s.replace(/[,$%]/g, ''));
     if (Number.isFinite(n)) return n;
-    // Stored value isn't blank and isn't a number — fall through to
-    // compute so a stray text scribble doesn't break the cell.
   }
-  return compute(row?.[sourceField]);
+  return null;
 }
 const resolveCallIn = (row) => resolveComputedDays(row, 'Call In', 'Follow Up', daysFromToday);
 const resolveLastSpoke = (row) => resolveComputedDays(row, 'Last Spoke', 'Last Client Heard From Us', businessDaysSince);
