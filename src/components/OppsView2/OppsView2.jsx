@@ -373,7 +373,19 @@ function formatDateDisplay(raw) {
 
 function DateCell({ value, onChange }) {
   const [editing, setEditing] = useState(false);
+  const inputRef = useRef(null);
   const iso = toISODate(value);
+  // Pop the native calendar the moment the input mounts so the user
+  // doesn't have to hunt the picker icon or fight the text-typing
+  // mode. `showPicker()` needs a recent user activation, which the
+  // click that flipped `editing` to true still satisfies here.
+  useLayoutEffect(() => {
+    if (!editing) return;
+    const el = inputRef.current;
+    if (!el) return;
+    el.focus();
+    try { el.showPicker?.(); } catch { /* older browsers — fall back to the focused input */ }
+  }, [editing]);
   if (!editing) {
     const isEmpty = !value;
     return (
@@ -392,7 +404,7 @@ function DateCell({ value, onChange }) {
   }
   return (
     <input
-      autoFocus
+      ref={inputRef}
       type="date"
       value={iso}
       onChange={(e) => onChange(e.target.value)}
