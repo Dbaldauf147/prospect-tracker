@@ -1808,6 +1808,9 @@ export function PricingView({ settings } = {}) {
         loadedAt: Date.now(),
       });
       setOverrides({});
+      // Fresh file → reset the global margin to the 50% default so a
+      // stale saved value from a prior workbook doesn't carry over.
+      setGlobalGmPct(0.5);
       setActiveOption(parsed.options[0]?.optionNumber ?? null);
       // Seed the Alternative Fee schedule from the cost rows' Linked To
       // tags rather than the workbook's own alt-fee table. Every unique
@@ -1838,7 +1841,17 @@ export function PricingView({ settings } = {}) {
           } else if (unit === 'Per Account' && typeof opt.accountCount === 'number' && opt.accountCount > 0) {
             unitCount = opt.accountCount;
           }
-          return { altItem: tag, type: '', fee: null, unit, unitCount, startMonth: 1 };
+          // Map the cost item's type into one of the alt-fee dropdown
+          // values so the seeded row renders as selected. Rolled
+          // variants normalize to their base (Setup Rolled → Setup,
+          // One Time Rolled → One Time) since the alt-fee table doesn't
+          // expose Rolled types — the user can refine if needed.
+          const rawType = String(item.type || '').trim();
+          let type = '';
+          if (/recurring/i.test(rawType)) type = 'Recurring (monthly)';
+          else if (/^setup/i.test(rawType)) type = 'Setup';
+          else if (/^one\s*time/i.test(rawType)) type = 'One Time';
+          return { altItem: tag, type, fee: null, unit, unitCount, startMonth: 1 };
         });
         while (rows.length < 9) rows.push({ altItem: '', type: '', fee: null, unit: '', unitCount: 1, startMonth: 1 });
         seeded[opt.optionNumber] = rows;
