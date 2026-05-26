@@ -2755,6 +2755,31 @@ function BulkImportModal({ existingHeaders, existingRecords, dedupKeyFor, onClos
 // newline-joined string under 'Next Steps' (keeps search, sort, export,
 // and the in-table cell render working), and the parallel waiting-on
 // array is stored alongside under '_nextStepsWaiting'.
+// Textarea that grows to fit its content so long Next Step notes
+// aren't clipped to a single line. Resizes on every value change and
+// once on mount so existing rows render at their full height the
+// instant the popup opens.
+function AutoGrowTextarea({ value, onChange, onBlur, placeholder, style }) {
+  const ref = useRef(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [value]);
+  return (
+    <textarea
+      ref={ref}
+      style={style}
+      value={value}
+      onChange={onChange}
+      onBlur={onBlur}
+      placeholder={placeholder}
+      rows={2}
+    />
+  );
+}
+
 function NextStepsEditor({ opp, onClose, updateOppField }) {
   const noteLines = useMemo(() => textToBulletItems(opp?.['Next Steps']), [opp]);
   const storedWaiting = Array.isArray(opp?._nextStepsWaiting) ? opp._nextStepsWaiting : [];
@@ -2798,7 +2823,8 @@ function NextStepsEditor({ opp, onClose, updateOppField }) {
   const inputStyle = {
     width: '100%', padding: '0.4rem 0.5rem', border: '1px solid #CBD5E1',
     borderRadius: 4, fontSize: '0.85rem', fontFamily: 'inherit',
-    lineHeight: 1.4, resize: 'vertical', minHeight: 32, background: '#fff',
+    lineHeight: 1.4, resize: 'vertical', minHeight: 56, background: '#fff',
+    overflow: 'hidden',
   };
 
   return (
@@ -2813,7 +2839,7 @@ function NextStepsEditor({ opp, onClose, updateOppField }) {
         onClick={(e) => e.stopPropagation()}
         style={{
           background: '#fff', borderRadius: 8, padding: '1rem 1.25rem',
-          width: 'min(760px, 94vw)', maxHeight: '85vh', overflow: 'auto',
+          width: 'min(1100px, 96vw)', maxHeight: '88vh', overflow: 'auto',
           boxShadow: '0 18px 50px rgba(15, 23, 42, 0.32)',
         }}
       >
@@ -2843,9 +2869,8 @@ function NextStepsEditor({ opp, onClose, updateOppField }) {
             {rows.map((row, idx) => (
               <tr key={idx} style={{ verticalAlign: 'top' }}>
                 <td style={{ padding: '0.3rem 0.4rem 0.3rem 0', borderBottom: '1px solid #F1F5F9' }}>
-                  <textarea
+                  <AutoGrowTextarea
                     style={inputStyle}
-                    rows={1}
                     value={row.note}
                     onChange={(e) => updateRow(idx, 'note', e.target.value)}
                     onBlur={() => commit(rows)}
@@ -2853,7 +2878,7 @@ function NextStepsEditor({ opp, onClose, updateOppField }) {
                   />
                 </td>
                 <td style={{ padding: '0.3rem 0.4rem', borderBottom: '1px solid #F1F5F9' }}>
-                  <input
+                  <AutoGrowTextarea
                     style={inputStyle}
                     value={row.waitingOn}
                     onChange={(e) => updateRow(idx, 'waitingOn', e.target.value)}
