@@ -2693,6 +2693,150 @@ function BulkImportModal({ existingHeaders, existingRecords, dedupKeyFor, onClos
   );
 }
 
+// Modal opened on double-click of a Next Steps cell. Renders the
+// per-step rows as a two-column table (Next Step / Waiting On) so the
+// user can edit each entry in place. The notes are flattened back to a
+// newline-joined string under 'Next Steps' (keeps search, sort, export,
+// and the in-table cell render working), and the parallel waiting-on
+// array is stored alongside under '_nextStepsWaiting'.
+function NextStepsEditor({ opp, onClose, updateOppField }) {
+  const noteLines = useMemo(() => textToBulletItems(opp?.['Next Steps']), [opp]);
+  const storedWaiting = Array.isArray(opp?._nextStepsWaiting) ? opp._nextStepsWaiting : [];
+  const initialRows = useMemo(() => {
+    const rows = noteLines.map((note, i) => ({ note, waitingOn: String(storedWaiting[i] || '') }));
+    return rows.length > 0 ? rows : [{ note: '', waitingOn: '' }];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opp]);
+  const [rows, setRows] = useState(initialRows);
+
+  function commit(nextRows) {
+    const kept = nextRows.filter(r => (r.note || '').trim() || (r.waitingOn || '').trim());
+    const notesText = kept.map(r => (r.note || '').trim()).join('\n');
+    const waiting = kept.map(r => (r.waitingOn || '').trim());
+    updateOppField(opp._id, 'Next Steps', notesText);
+    updateOppField(opp._id, '_nextStepsWaiting', waiting);
+  }
+
+  function updateRow(idx, key, value) {
+    setRows(prev => prev.map((r, i) => i === idx ? { ...r, [key]: value } : r));
+  }
+
+  function addRow() {
+    setRows(prev => {
+      const next = [...prev, { note: '', waitingOn: '' }];
+      commit(next);
+      return next;
+    });
+  }
+
+  function deleteRow(idx) {
+    setRows(prev => {
+      const next = prev.filter((_, i) => i !== idx);
+      const safe = next.length > 0 ? next : [{ note: '', waitingOn: '' }];
+      commit(safe);
+      return safe;
+    });
+  }
+
+  const account = String(opp?.['Account'] || '').trim() || '(no account)';
+  const inputStyle = {
+    width: '100%', padding: '0.4rem 0.5rem', border: '1px solid #CBD5E1',
+    borderRadius: 4, fontSize: '0.85rem', fontFamily: 'inherit',
+    lineHeight: 1.4, resize: 'vertical', minHeight: 32, background: '#fff',
+  };
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.5)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10001,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: '#fff', borderRadius: 8, padding: '1rem 1.25rem',
+          width: 'min(760px, 94vw)', maxHeight: '85vh', overflow: 'auto',
+          boxShadow: '0 18px 50px rgba(15, 23, 42, 0.32)',
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem', gap: '1rem' }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            Next Steps — {account}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            style={{
+              background: 'transparent', border: 'none', cursor: 'pointer',
+              fontSize: '1.1rem', color: '#64748B', padding: '0 4px', lineHeight: 1,
+            }}
+          >×</button>
+        </div>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+          <thead>
+            <tr style={{ background: '#F1F5F9', textAlign: 'left', color: '#475569' }}>
+              <th style={{ padding: '0.4rem 0.5rem', fontWeight: 600, width: '55%', borderBottom: '1px solid #E2E8F0' }}>Next Step</th>
+              <th style={{ padding: '0.4rem 0.5rem', fontWeight: 600, width: '40%', borderBottom: '1px solid #E2E8F0' }}>Waiting On</th>
+              <th style={{ width: 32, borderBottom: '1px solid #E2E8F0' }} aria-label="" />
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, idx) => (
+              <tr key={idx} style={{ verticalAlign: 'top' }}>
+                <td style={{ padding: '0.3rem 0.4rem 0.3rem 0', borderBottom: '1px solid #F1F5F9' }}>
+                  <textarea
+                    style={inputStyle}
+                    rows={1}
+                    value={row.note}
+                    onChange={(e) => updateRow(idx, 'note', e.target.value)}
+                    onBlur={() => commit(rows)}
+                    placeholder="What needs to happen?"
+                  />
+                </td>
+                <td style={{ padding: '0.3rem 0.4rem', borderBottom: '1px solid #F1F5F9' }}>
+                  <input
+                    style={inputStyle}
+                    value={row.waitingOn}
+                    onChange={(e) => updateRow(idx, 'waitingOn', e.target.value)}
+                    onBlur={() => commit(rows)}
+                    placeholder="Who / what?"
+                  />
+                </td>
+                <td style={{ padding: '0.3rem 0 0.3rem 0.2rem', borderBottom: '1px solid #F1F5F9', textAlign: 'right' }}>
+                  <button
+                    type="button"
+                    onClick={() => deleteRow(idx)}
+                    aria-label="Delete step"
+                    title="Delete step"
+                    style={{
+                      background: 'transparent', border: 'none', cursor: 'pointer',
+                      color: '#94A3B8', fontSize: '1rem', padding: '0 4px', lineHeight: 1,
+                    }}
+                  >×</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div style={{ marginTop: '0.6rem' }}>
+          <button
+            type="button"
+            onClick={addRow}
+            style={{
+              padding: '0.35rem 0.7rem', border: '1px solid #BFDBFE', borderRadius: 4,
+              background: '#EFF6FF', color: '#1E40AF', fontSize: '0.75rem', fontWeight: 600,
+              cursor: 'pointer', fontFamily: 'inherit',
+            }}
+          >+ Add step</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function OppsView2({ settings, updateSettings, prospects = [], updateProspect } = {}) {
   const { user } = useAuth();
   // Seeded with DEFAULT_HEADERS so the table renders columns immediately;
@@ -4109,59 +4253,13 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       {nextStepsPopupId != null && (() => {
         const opp = records.find(r => r._id === nextStepsPopupId);
         if (!opp) return null;
-        const text = String(opp['Next Steps'] || '').trim();
-        const account = String(opp['Account'] || '').trim() || '(no account)';
         return (
-          <div
-            onClick={() => setNextStepsPopupId(null)}
-            style={{
-              position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.5)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10001,
-            }}
-          >
-            <div
-              onClick={(e) => e.stopPropagation()}
-              style={{
-                background: '#fff', borderRadius: 8, padding: '1rem 1.25rem',
-                width: 'min(560px, 92vw)', maxHeight: '80vh', overflow: 'auto',
-                boxShadow: '0 18px 50px rgba(15, 23, 42, 0.32)',
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem', gap: '1rem' }}>
-                <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  Next Steps — {account}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setNextStepsPopupId(null)}
-                  aria-label="Close"
-                  style={{
-                    background: 'transparent', border: 'none', cursor: 'pointer',
-                    fontSize: '1.1rem', color: '#64748B', padding: '0 4px', lineHeight: 1,
-                  }}
-                >×</button>
-              </div>
-              {(() => {
-                const items = textToBulletItems(text);
-                if (items.length === 0) {
-                  return (
-                    <div style={{ fontSize: '0.85rem', lineHeight: 1.45, color: '#94A3B8' }}>
-                      (no next steps recorded)
-                    </div>
-                  );
-                }
-                return (
-                  <ul style={{
-                    margin: 0, paddingLeft: '1.2rem',
-                    fontSize: '0.85rem', lineHeight: 1.5, color: '#0f172a',
-                    wordBreak: 'break-word',
-                  }}>
-                    {items.map((it, i) => <li key={i} style={{ margin: '3px 0' }}>{it}</li>)}
-                  </ul>
-                );
-              })()}
-            </div>
-          </div>
+          <NextStepsEditor
+            key={opp._id}
+            opp={opp}
+            onClose={() => setNextStepsPopupId(null)}
+            updateOppField={updateOppField}
+          />
         );
       })()}
 
