@@ -1167,22 +1167,32 @@ function LinkedToPanel({
 
 // Free-text per-row cell input. Local-draft like GmInput so typing
 // doesn't fight a re-rendered controlled value.
-function LinkedToInput({ initial, isDefault, onCommit }) {
+function LinkedToInput({ initial, isDefault, onCommit, suggestions = [] }) {
   const [draft, setDraft] = useState(initial || '');
+  const listId = useId();
   return (
-    <input
-      className={`${styles.linkedInput} ${isDefault ? styles.linkedDefault : ''}`}
-      type="text"
-      value={draft}
-      placeholder="Tie to…"
-      title={isDefault ? 'Auto-filled from saved default for this Line Item + Type. Edit to override.' : undefined}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={() => onCommit(draft)}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') e.currentTarget.blur();
-        if (e.key === 'Escape') { setDraft(initial || ''); e.currentTarget.blur(); }
-      }}
-    />
+    <>
+      <input
+        className={`${styles.linkedInput} ${isDefault ? styles.linkedDefault : ''}`}
+        type="text"
+        value={draft}
+        placeholder="Tie to…"
+        title={isDefault ? 'Auto-filled from saved default for this Line Item + Type. Edit to override.' : undefined}
+        list={suggestions.length > 0 ? listId : undefined}
+        autoComplete="off"
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => onCommit(draft)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur();
+          if (e.key === 'Escape') { setDraft(initial || ''); e.currentTarget.blur(); }
+        }}
+      />
+      {suggestions.length > 0 && (
+        <datalist id={listId}>
+          {suggestions.map(s => <option key={s} value={s} />)}
+        </datalist>
+      )}
+    </>
   );
 }
 
@@ -2819,6 +2829,25 @@ export function PricingView({ settings } = {}) {
                 {(() => {
                   const flatItems = opt.sections.flatMap(s => s.items);
                   if (flatItems.length === 0) return null;
+                  // Predictive-text suggestions for the per-row Linked
+                  // To input. Unions every tag the user has touched —
+                  // saved (Line Item, Type) defaults, alt-fee rows on
+                  // this option, and per-row overrides — deduped
+                  // case-insensitively while preserving the original
+                  // casing for display.
+                  const linkedToSuggestions = (() => {
+                    const seen = new Map();
+                    const add = (name) => {
+                      const trimmed = String(name || '').trim();
+                      if (!trimmed) return;
+                      const k = trimmed.toLowerCase();
+                      if (!seen.has(k)) seen.set(k, trimmed);
+                    };
+                    for (const v of Object.values(linkedToDefaults)) add(v);
+                    for (const r of (altFees[opt.optionNumber] || [])) add(r.altItem);
+                    for (const o of Object.values(overrides)) if (o?.linkedTo) add(o.linkedTo);
+                    return [...seen.values()].sort((a, b) => a.localeCompare(b));
+                  })();
                   const totalCost = flatItems.reduce((s, i) => s + (typeof i.cts === 'number' ? i.cts : 0), 0);
                   const totalPrice = flatItems.reduce((s, i) => {
                     const { price } = priceFor(i);
@@ -2995,6 +3024,7 @@ export function PricingView({ settings } = {}) {
                                             initial={currentVal}
                                             isDefault={isFromDefault}
                                             onCommit={(raw) => setItemLinkedTo(item, raw)}
+                                            suggestions={linkedToSuggestions}
                                           />
                                           <button
                                             type="button"
