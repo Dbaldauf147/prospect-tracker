@@ -4285,7 +4285,8 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               tableId="opps2"
               columns={columns}
               rows={filtered}
-              alwaysVisible={['Account', '_select', '_info', '_oppNum']}
+              alwaysVisible={['Account', '_select', '_info']}
+              defaultSort={{ key: 'Call In', direction: 'asc' }}
               enableColumnFilters
               onFilteredRowsChange={handleFilteredRowsChange}
               emptyMessage="No opps yet — click + New Opp to create one."
