@@ -3180,11 +3180,11 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     updateSettings({ contactFamilies: next });
   }, [settings?.contactFamilies, updateSettings]);
 
-  // Hydration — load the user's saved opps. Prefer Firestore (cross-
-  // device truth), fall back to the IndexedDB cache (last-known on
-  // this browser), fall back to the original Opps tab's header order
-  // so a brand-new Opps 2 user still sees the same column layout as
-  // the live Opps tab. Runs once per user change.
+  // Hydration — load the user's saved opps. Both stores are kicked off
+  // in parallel, but we paint whichever resolves first (IndexedDB
+  // almost always wins) so the table is visible before the Firestore
+  // round-trip lands. Once both are in we reconcile by `_updatedAt` and
+  // merge any IDB-only Pricing-Option snapshots, same as before.
   useEffect(() => {
     if (!user?.uid) {
       // Logged-out / pre-auth: keep the seed but don't enable saves
@@ -3193,42 +3193,49 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       return;
     }
     let cancelled = false;
+    let painted = false;
     hydratedRef.current = false;
     setLoading(true);
-    (async () => {
-      let next = null;
+
+    function applyResult(next) {
+      const headerSet = new Set((next.headers || []).map(h => String(h || '').trim()).filter(Boolean));
+      const extra = ENSURED_COLUMNS.filter(c => !headerSet.has(c));
+      const withCols = extra.length ? { ...next, headers: [...(next.headers || []), ...extra] } : next;
+      setData(withCols);
+      painted = true;
+    }
+
+    const fsPromise = loadOpps2FromFirestore(user.uid);
+    const idbPromise = loadOpps2Cache();
+
+    let fromFs = null;
+    let fromIdb = null;
+    let fsDone = false;
+    let idbDone = false;
+
+    function reconcile() {
+      if (cancelled || !fsDone || !idbDone) return;
       // Read both stores so we can carry over Pricing-Option snapshots
       // written by the Pricing tab into IDB but not yet replicated to
-      // Firestore (e.g. the Firestore round-trip was still in flight
-      // when the user navigated here). Without this safety net, a stale
-      // Firestore copy would clobber the snapshot on `saveOpps2Cache`.
-      const [fromFs, fromIdb] = await Promise.all([
-        loadOpps2FromFirestore(user.uid),
-        loadOpps2Cache(),
-      ]);
-      if (cancelled) return;
-      // Pick the strictly newer of Firestore vs IndexedDB so writes
-      // that didn't make it round-trip (a debounce cancelled by
-      // unmount, network glitch, Firestore 1 MB doc size cap, expired
-      // auth) don't clobber a fresh local cache on the next load.
-      // When both are present, compare _updatedAt and pick the newer;
-      // when only one has data, use it directly.
+      // Firestore. Without this safety net, a stale Firestore copy
+      // would clobber the snapshot on `saveOpps2Cache`.
       const fsHas = fromFs && (Array.isArray(fromFs.records) || Array.isArray(fromFs.headers));
       const idbHas = fromIdb && (Array.isArray(fromIdb.records) || Array.isArray(fromIdb.headers));
       const fsTs = Number(fromFs?._updatedAt) || 0;
       const idbTs = Number(fromIdb?._updatedAt) || 0;
       const preferIdb = idbHas && (!fsHas || idbTs > fsTs);
+      let next = null;
       if (preferIdb) {
         next = fromIdb;
         // Push the IDB copy back to Firestore so the cloud catches up
         // to whatever local writes never made the round trip.
-        if (user?.uid) trySaveOpps2ToFirestore(user.uid, next);
+        trySaveOpps2ToFirestore(user.uid, next);
       } else if (fsHas) {
         next = fromFs;
-        // Reconcile: any record on IDB that already carries a
-        // `_pricingOption` snapshot wins over the Firestore version of
-        // that record, since the snapshot was likely written by the
-        // Pricing tab seconds before this hydration.
+        // Any record on IDB that already carries a `_pricingOption`
+        // snapshot wins over the Firestore version of that record,
+        // since the snapshot was likely written by the Pricing tab
+        // seconds before this hydration.
         const idbById = new Map();
         for (const r of (fromIdb?.records || [])) {
           if (r?._id != null) idbById.set(String(r._id), r);
@@ -3241,31 +3248,47 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             return {
               ...r,
               _pricingOption: idbRow._pricingOption,
-              // Pair the Year 1 amount with the snapshot so the cell
-              // value matches what the user just saved.
               'Quoted Amount': idbRow['Quoted Amount'] ?? r['Quoted Amount'],
             };
           }
           return r;
         });
         if (touched) next = { ...next, records: reconciled };
-        // Cache the (possibly-reconciled) copy locally for the next
-        // reload.
         saveOpps2Cache(next);
       }
-      if (cancelled) return;
-      if (next) {
-        // Ensure the computed columns (Call In, Last Spoke) are present
-        // on any header set we hydrate from — Firestore or IndexedDB
-        // may predate them.
-        const headerSet = new Set((next.headers || []).map(h => String(h || '').trim()).filter(Boolean));
-        const extra = ENSURED_COLUMNS.filter(c => !headerSet.has(c));
-        if (extra.length) next = { ...next, headers: [...(next.headers || []), ...extra] };
-        setData(next);
-      }
+      if (next) applyResult(next);
       setLoading(false);
       hydratedRef.current = true;
-    })();
+    }
+
+    idbPromise.then(res => {
+      if (cancelled) return;
+      fromIdb = res;
+      idbDone = true;
+      // Render-while-fetching: paint the local cache the moment it
+      // lands so the user sees the table before Firestore resolves.
+      const idbHas = res && (Array.isArray(res.records) || Array.isArray(res.headers));
+      if (!painted && idbHas) {
+        applyResult(res);
+        setLoading(false);
+      }
+      reconcile();
+    }).catch(() => { idbDone = true; reconcile(); });
+
+    fsPromise.then(res => {
+      if (cancelled) return;
+      fromFs = res;
+      fsDone = true;
+      // Cold-cache case: IDB had nothing, FS arrived first. Paint it
+      // before the IDB read returns so we're not waiting on either.
+      const fsHas = res && (Array.isArray(res.records) || Array.isArray(res.headers));
+      if (!painted && fsHas) {
+        applyResult(res);
+        setLoading(false);
+      }
+      reconcile();
+    }).catch(() => { fsDone = true; reconcile(); });
+
     return () => { cancelled = true; };
   }, [user?.uid]);
 
@@ -3867,6 +3890,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   }, [prefiltered]);
 
   const serviceBreakdown = useMemo(() => {
+    // The breakdown only shows on the "By Service" tab. Skipping the
+    // O(N×services) work while the Opportunities tab is active shaves
+    // a noticeable chunk off the first render with large datasets.
+    if (activeTab !== 'services') return { rows: [], total: prefiltered.length };
     const stats = {};
     const totalOpps = prefiltered.length;
     for (const r of prefiltered) {
@@ -3901,7 +3928,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       })
       .sort((a, b) => b.count - a.count);
     return { rows, total: totalOpps };
-  }, [prefiltered]);
+  }, [prefiltered, activeTab]);
 
   const filtersActive = !!(dateFrom || dateTo || statusFilter !== 'all' || activityFilter !== 'all');
   const clearFilters = () => {
