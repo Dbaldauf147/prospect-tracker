@@ -132,7 +132,7 @@ function App() {
     };
   }, []);
 
-  const [view, setView] = useState('accounts');
+  const [view, setView] = useState('opps2');
   const [modal, setModal] = useState(null); // null | { prospect, isNew }
   const [showSync, setShowSync] = useState(false);
   const [showBackups, setShowBackups] = useState(false);
