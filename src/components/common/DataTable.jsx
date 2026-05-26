@@ -490,16 +490,48 @@ export function DataTable({
   }));
   const sortConfig = externalSortConfig || internalSort;
 
+  // Snapshot of row-id order captured when the user sorts by a column
+  // flagged `freezeSortOrder`. While the snapshot is active, sortedRows
+  // re-uses this order instead of re-running the comparator — so a
+  // value edit that would otherwise re-rank the row (e.g. typing into
+  // Follow Up while sorted by the computed Call In column) leaves the
+  // row in place. Clicking the same header again resnapshots.
+  const [sortSnapshot, setSortSnapshot] = useState(null);
+
   function handleSort(key) {
     if (externalSort) {
       externalSort(key);
-    } else {
-      setInternalSort(prev => {
-        if (prev.key === key) {
-          return { key, direction: prev.direction === 'asc' ? 'desc' : 'asc' };
+      return;
+    }
+    const isSame = internalSort.key === key;
+    const nextDirection = isSame && internalSort.direction === 'asc' ? 'desc' : 'asc';
+    setInternalSort({ key, direction: nextDirection });
+    const col = colByKey.get(key);
+    if (col?.freezeSortOrder) {
+      const sortGetter = col.getSortValue;
+      const sorted = [...filteredRows].sort((a, b) => {
+        let aVal = sortGetter ? sortGetter(a) : a[key];
+        let bVal = sortGetter ? sortGetter(b) : b[key];
+        if (aVal == null && bVal == null) return 0;
+        if (aVal == null) return 1;
+        if (bVal == null) return -1;
+        const aNum = parseFloat(String(aVal).replace(/[,$%]/g, ''));
+        const bNum = parseFloat(String(bVal).replace(/[,$%]/g, ''));
+        if (!isNaN(aNum) && !isNaN(bNum)) {
+          return nextDirection === 'asc' ? aNum - bNum : bNum - aNum;
         }
-        return { key, direction: 'asc' };
+        aVal = String(aVal).toLowerCase();
+        bVal = String(bVal).toLowerCase();
+        if (aVal < bVal) return nextDirection === 'asc' ? -1 : 1;
+        if (aVal > bVal) return nextDirection === 'asc' ? 1 : -1;
+        return 0;
       });
+      setSortSnapshot({
+        key, direction: nextDirection,
+        ids: sorted.map(r => (r?.id != null ? String(r.id) : null)).filter(Boolean),
+      });
+    } else {
+      setSortSnapshot(null);
     }
   }
 
@@ -584,6 +616,24 @@ export function DataTable({
 
   const sortedRows = useMemo(() => {
     if (externalSortConfig || !internalSort.key) return filteredRows;
+    // When the active sort was captured against a `freezeSortOrder`
+    // column, use the snapshotted ID order rather than re-running the
+    // comparator. New rows (not in the snapshot) tail the list so they
+    // remain visible until the next manual resort.
+    if (
+      sortSnapshot
+      && sortSnapshot.key === internalSort.key
+      && sortSnapshot.direction === internalSort.direction
+    ) {
+      const order = new Map();
+      sortSnapshot.ids.forEach((id, i) => order.set(id, i));
+      const fallback = sortSnapshot.ids.length;
+      return [...filteredRows].sort((a, b) => {
+        const ai = order.has(String(a?.id)) ? order.get(String(a.id)) : fallback;
+        const bi = order.has(String(b?.id)) ? order.get(String(b.id)) : fallback;
+        return ai - bi;
+      });
+    }
     // Columns can supply a getSortValue(row) that returns a number
     // (e.g. epoch ms for a date) — overrides the default raw-cell
     // numeric/string comparison so date columns sort chronologically
@@ -611,7 +661,7 @@ export function DataTable({
       return 0;
     });
     return sorted;
-  }, [filteredRows, internalSort, externalSortConfig, colByKey]);
+  }, [filteredRows, internalSort, externalSortConfig, colByKey, sortSnapshot]);
 
   const headerRef = useRef(null);
   const bodyRef = useRef(null);
