@@ -413,7 +413,14 @@ function DateCell({ value, onChange }) {
         if (e.key === 'Escape' || e.key === 'Enter') {
           e.preventDefault();
           setEditing(false);
+          return;
         }
+        // Calendar picker is the only entry path — block raw keyboard
+        // typing into the date input so the user can't free-form a
+        // value that bypasses the picker. Tab is left alone so focus
+        // can still move between cells.
+        if (e.key === 'Tab') return;
+        e.preventDefault();
       }}
       onClick={(e) => e.stopPropagation()}
       style={{
@@ -4604,7 +4611,11 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               columns={columns}
               rows={filtered}
               alwaysVisible={['Account', '_select', '_info']}
-              defaultSort={{ key: 'Call In', direction: 'asc' }}
+              // No default sort — editing Follow Up / Last Client Heard From
+              // Us would otherwise re-rank rows by Call In on every keystroke
+              // and yank the row out from under the cursor. The Call In
+              // header click still toggles a manual sort when the user
+              // actually wants to triage by urgency.
               enableColumnFilters
               onFilteredRowsChange={handleFilteredRowsChange}
               emptyMessage="No opps yet — click + New Opp to create one."
