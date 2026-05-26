@@ -3053,6 +3053,12 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   const [statusFilter, setStatusFilter] = useState('all');
   const [activityFilter, setActivityFilter] = useState('all');
   const [showHiddenByFilter, setShowHiddenByFilter] = useState(false);
+  // Rows that don't have an active Call In number (no Follow Up date,
+  // or the value was manually cleared) are treated as "history" — they
+  // aren't on a callback schedule and don't need to render alongside
+  // active opps. Hidden by default so the page loads fewer rows;
+  // surfaced on demand via the "Show history" button.
+  const [hideHistory, setHideHistory] = useState(true);
   const servicesDefaultAppliedRef = useRef(false);
   useEffect(() => {
     if (activeTab === 'services' && !servicesDefaultAppliedRef.current) {
@@ -4208,13 +4214,16 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     return Array.from(set).sort();
   }, [records]);
 
-  // Rows the current Date / Status / Show filters allow. Always
-  // computed so `hiddenByFilterCount` stays accurate even when the
-  // Show-hidden toggle is on.
+  // Rows the current Date / Status / Show / Hide-history filters allow.
+  // Always computed so `hiddenByFilterCount` stays accurate even when
+  // the Show-hidden toggle is on.
   const filteredByActiveFilters = useMemo(() => {
     const fromTs = dateFrom ? Date.parse(dateFrom) : null;
     const toTs = dateTo ? Date.parse(dateTo) + 86399999 : null;
     return records.filter(r => {
+      // History gate runs first so it short-circuits before the more
+      // expensive date / stage checks for the bulk of dormant rows.
+      if (hideHistory && resolveCallIn(r) == null) return false;
       if (fromTs != null || toTs != null) {
         const raw = r['Start Date'];
         const ts = raw ? Date.parse(raw) : NaN;
@@ -4228,7 +4237,15 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       if (activityFilter === 'closed' && !CLOSED_STAGES.has(stage)) return false;
       return true;
     });
-  }, [records, dateFrom, dateTo, statusFilter, activityFilter, CLOSED_STAGES]);
+  }, [records, dateFrom, dateTo, statusFilter, activityFilter, hideHistory, CLOSED_STAGES]);
+
+  // Standalone count of rows the Hide-history gate is suppressing, so
+  // the toggle button can show "Show history (N)" without depending on
+  // the rest of the filter chain.
+  const historyCount = useMemo(
+    () => records.reduce((n, r) => n + (resolveCallIn(r) == null ? 1 : 0), 0),
+    [records],
+  );
 
   // When the user clicks "Show hidden", bypass the active filters and
   // surface every row — the filter inputs are left untouched so a
@@ -4596,6 +4613,18 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         {filtersActive && (
           <button className={styles.clearFiltersBtn} onClick={clearFilters}>Clear filters</button>
         )}
+        <button
+          className={styles.clearFiltersBtn}
+          onClick={() => setHideHistory(v => !v)}
+          disabled={hideHistory && historyCount === 0}
+          title={hideHistory
+            ? 'Rows with no Call In number are hidden as history. Click to include them.'
+            : 'Hide rows with no Call In number — they aren’t on a callback schedule.'}
+        >
+          {hideHistory
+            ? `Show history${historyCount ? ` (${historyCount})` : ''}`
+            : 'Hide history'}
+        </button>
         <button
           className={styles.clearFiltersBtn}
           onClick={() => setShowHiddenByFilter(v => !v)}
