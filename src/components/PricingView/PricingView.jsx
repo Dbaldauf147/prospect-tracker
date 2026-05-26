@@ -848,6 +848,8 @@ function LinkedToPanel({
   setActiveOption,
   overrides,
   linkedToDefaults,
+  linkedToUnitDefaults,
+  setLinkedToUnitDefault,
   altFees,
   resolvedLinkedTo,
   effectiveType,
@@ -876,6 +878,23 @@ function LinkedToPanel({
   // unreachable defaults (or defaults shown without any workbook) fall
   // back to the stored lowercase key. Each row carries a delete button
   // so defaults can be cleaned up even when no file is loaded.
+  // Pick the active option's alt-fee rows so we can auto-fill the Unit
+  // column from whichever row carries the matching alt item. Lowercase
+  // match keeps "Network Services" / "network services" aligned with
+  // how Linked-To resolution works elsewhere on the page.
+  const activeAltRows = opt ? (altFees?.[opt.optionNumber] || []) : [];
+  const unitByAltItemLower = new Map();
+  for (const r of activeAltRows) {
+    const t = String(r.altItem || '').trim().toLowerCase();
+    if (!t) continue;
+    if (!unitByAltItemLower.has(t)) unitByAltItemLower.set(t, r.unit || '');
+  }
+  const unitCountForOption = (unit) => {
+    if (unit === 'Per Site' && typeof opt?.siteCount === 'number' && opt.siteCount > 0) return opt.siteCount;
+    if (unit === 'Per Account' && typeof opt?.accountCount === 'number' && opt.accountCount > 0) return opt.accountCount;
+    return null;
+  };
+
   const defaultEntries = (() => {
     const labelByKey = new Map();
     for (const item of flatItems) {
@@ -887,12 +906,19 @@ function LinkedToPanel({
       if (!value) continue;
       const labels = labelByKey.get(key);
       const [keyItem, keyType] = key.split('::');
+      const tagLower = String(value).trim().toLowerCase();
+      const autoUnit = tagLower ? (unitByAltItemLower.get(tagLower) || '') : '';
+      const overrideUnit = linkedToUnitDefaults?.[key] || '';
+      const effectiveUnit = overrideUnit || autoUnit;
       rows.push({
         key,
         value,
         lineItem: labels?.lineItem || keyItem || '',
         type: labels?.type ?? (keyType || ''),
         reachable: !!labels,
+        autoUnit,
+        overrideUnit,
+        effectiveUnit,
       });
     }
     rows.sort((a, b) => (a.lineItem || '').localeCompare(b.lineItem || ''));
@@ -966,29 +992,64 @@ function LinkedToPanel({
         ) : (
           <table className={styles.linkedTable}>
             <thead>
-              <tr><th>Line Item</th><th>Type</th><th>Default Linked To</th><th style={{ width: 32 }} /></tr>
+              <tr>
+                <th>Line Item</th>
+                <th>Type</th>
+                <th>Unit</th>
+                <th>Default Linked To</th>
+                <th style={{ width: 32 }} />
+              </tr>
             </thead>
             <tbody>
-              {defaultEntries.map(d => (
-                <tr key={d.key}>
-                  <td>
-                    {d.lineItem || <span className={styles.linkedMuted}>—</span>}
-                    {workbook && !d.reachable && <span className={styles.linkedMuted}> · not on this option</span>}
-                  </td>
-                  <td>{d.type || <span className={styles.linkedMuted}>—</span>}</td>
-                  <td><code>{d.value}</code></td>
-                  <td>
-                    {removeLinkedToDefault && (
-                      <button
-                        type="button"
-                        className={styles.rowDelBtn}
-                        title="Remove this saved default"
-                        onClick={() => removeLinkedToDefault(d.key)}
-                      >×</button>
-                    )}
-                  </td>
-                </tr>
-              ))}
+              {defaultEntries.map(d => {
+                const unitCount = unitCountForOption(d.effectiveUnit);
+                return (
+                  <tr key={d.key}>
+                    <td>
+                      {d.lineItem || <span className={styles.linkedMuted}>—</span>}
+                      {workbook && !d.reachable && <span className={styles.linkedMuted}> · not on this option</span>}
+                    </td>
+                    <td>{d.type || <span className={styles.linkedMuted}>—</span>}</td>
+                    <td>
+                      <select
+                        value={d.overrideUnit}
+                        onChange={(e) => setLinkedToUnitDefault && setLinkedToUnitDefault(d.key, e.target.value)}
+                        title={d.overrideUnit
+                          ? 'Override saved for this Line Item + Type. Clear to fall back to the matching alt-fee row.'
+                          : d.autoUnit
+                            ? `Auto-filled from the "${d.value}" alt-fee row. Pick a value to override.`
+                            : 'Pick a unit. Per Site / Per Account inherit the SIA count automatically.'}
+                        style={{
+                          padding: '1px 4px',
+                          border: '1px solid var(--color-border)', borderRadius: 3,
+                          fontSize: '0.78rem', fontFamily: 'inherit',
+                          background: '#fff', color: 'var(--color-text)',
+                        }}
+                      >
+                        <option value="">{d.autoUnit ? `Auto: ${d.autoUnit}` : '—'}</option>
+                        <option value="Fixed">Fixed</option>
+                        <option value="Per Site">Per Site</option>
+                        <option value="Per Account">Per Account</option>
+                        <option value="Per Meter">Per Meter</option>
+                      </select>
+                      {unitCount != null && (
+                        <span className={styles.linkedMuted} style={{ marginLeft: 6 }}>({unitCount})</span>
+                      )}
+                    </td>
+                    <td><code>{d.value}</code></td>
+                    <td>
+                      {removeLinkedToDefault && (
+                        <button
+                          type="button"
+                          className={styles.rowDelBtn}
+                          title="Remove this saved default"
+                          onClick={() => removeLinkedToDefault(d.key)}
+                        >×</button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
@@ -1153,6 +1214,12 @@ const KEY = 'current';
 // parser-version cache wipes, file removal, and switching to a new
 // SIA workbook. They're user-curated mappings, not parser output.
 const LINKED_TO_DEFAULTS_KEY = 'linkedToDefaults';
+// Per (Line Item, Type) Unit override for the Linked-To defaults
+// table. Same key shape as LINKED_TO_DEFAULTS_KEY ("lineitem::type",
+// lowercased) so a row can carry both a Default Linked To and a
+// Default Unit. Persisted on its own DB key for the same reason
+// linkedToDefaults are — these mappings outlive workbook reloads.
+const LINKED_TO_UNIT_DEFAULTS_KEY = 'linkedToUnitDefaults';
 // Line Item → Services catalog mapping. Keyed by lowercase line item
 // name; value is an array of service strings from the Dropdowns-tab
 // Solutions / Service Catalog. Persisted on its own key so it survives
@@ -1216,6 +1283,7 @@ export function PricingView({ settings } = {}) {
   const [colWidths, setColWidths] = useState({}); // { [colKey]: pixelWidth }
   const [altFees, setAltFees] = useState({}); // { [optionNumber]: [{ altItem, type, fee, unit, unitCount, startMonth }] }
   const [linkedToDefaults, setLinkedToDefaults] = useState({}); // { [`${lineItem}::${type}`]: 'value' }
+  const [linkedToUnitDefaults, setLinkedToUnitDefaults] = useState({}); // { [`${lineItem}::${type}`]: 'Per Site' | 'Per Account' | 'Fixed' | 'Per Meter' }
   const [lineItemServices, setLineItemServices] = useState({}); // { [lineItemKey]: string[] }
   const [termMonths, setTermMonths] = useState(36);
   const [annualEscalator, setAnnualEscalator] = useState(0.03);
@@ -1261,6 +1329,10 @@ export function PricingView({ settings } = {}) {
         if (!cancelled && savedDefaults && typeof savedDefaults === 'object') {
           setLinkedToDefaults(savedDefaults);
         }
+        const savedUnitDefaults = await dbGet(STORE, LINKED_TO_UNIT_DEFAULTS_KEY);
+        if (!cancelled && savedUnitDefaults && typeof savedUnitDefaults === 'object') {
+          setLinkedToUnitDefaults(savedUnitDefaults);
+        }
         const savedLineItemServices = await dbGet(STORE, LINE_ITEM_SERVICES_KEY);
         if (!cancelled && savedLineItemServices && typeof savedLineItemServices === 'object') {
           setLineItemServices(savedLineItemServices);
@@ -1273,6 +1345,7 @@ export function PricingView({ settings } = {}) {
         if (saved.parserVersion !== PARSER_VERSION) {
           await dbDelete(STORE, KEY).catch(() => {});
           if (!savedDefaults && saved.linkedToDefaults) setLinkedToDefaults(saved.linkedToDefaults);
+          if (!savedUnitDefaults && saved.linkedToUnitDefaults) setLinkedToUnitDefaults(saved.linkedToUnitDefaults);
           hydratedRef.current = true;
           return;
         }
@@ -1283,6 +1356,7 @@ export function PricingView({ settings } = {}) {
         if (saved.colWidths) setColWidths(saved.colWidths);
         if (saved.altFees) setAltFees(saved.altFees);
         if (!savedDefaults && saved.linkedToDefaults) setLinkedToDefaults(saved.linkedToDefaults);
+        if (!savedUnitDefaults && saved.linkedToUnitDefaults) setLinkedToUnitDefaults(saved.linkedToUnitDefaults);
         if (!savedLineItemServices && saved.lineItemServices && typeof saved.lineItemServices === 'object') setLineItemServices(saved.lineItemServices);
         if (typeof saved.termMonths === 'number') setTermMonths(saved.termMonths);
         if (typeof saved.annualEscalator === 'number') setAnnualEscalator(saved.annualEscalator);
@@ -1310,9 +1384,9 @@ export function PricingView({ settings } = {}) {
   // Persist on changes (skip the first render until hydration finishes).
   useEffect(() => {
     if (!hydratedRef.current) return;
-    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, lineItemServices, termMonths, annualEscalator, costEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData };
+    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, lineItemServices, termMonths, annualEscalator, costEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData };
     dbPut(STORE, payload, KEY).catch(err => console.warn('Failed to save pricing cache:', err));
-  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, lineItemServices, termMonths, annualEscalator, costEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData]);
+  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, lineItemServices, termMonths, annualEscalator, costEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData]);
 
   // Mirror Linked-To defaults under their dedicated key so they
   // outlive the main cache (parser-version bumps, Clear button,
@@ -1322,6 +1396,11 @@ export function PricingView({ settings } = {}) {
     if (!hydratedRef.current) return;
     dbPut(STORE, linkedToDefaults, LINKED_TO_DEFAULTS_KEY).catch(err => console.warn('Failed to save linked-to defaults:', err));
   }, [linkedToDefaults]);
+
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    dbPut(STORE, linkedToUnitDefaults, LINKED_TO_UNIT_DEFAULTS_KEY).catch(err => console.warn('Failed to save linked-to unit defaults:', err));
+  }, [linkedToUnitDefaults]);
 
   // Persist Line Item → Services mapping on its own key and broadcast
   // a custom event so other views (Opps 2's Scope cell) can refresh
@@ -1698,6 +1777,9 @@ export function PricingView({ settings } = {}) {
     if (s.linkedToDefaults && typeof s.linkedToDefaults === 'object') {
       setLinkedToDefaults(prev => ({ ...prev, ...s.linkedToDefaults }));
     }
+    if (s.linkedToUnitDefaults && typeof s.linkedToUnitDefaults === 'object') {
+      setLinkedToUnitDefaults(prev => ({ ...prev, ...s.linkedToUnitDefaults }));
+    }
     if (typeof s.termMonths === 'number') setTermMonths(s.termMonths);
     if (typeof s.annualEscalator === 'number') setAnnualEscalator(s.annualEscalator);
     if (typeof s.costEscalator === 'number') setCostEscalator(s.costEscalator);
@@ -1727,14 +1809,37 @@ export function PricingView({ settings } = {}) {
       });
       setOverrides({});
       setActiveOption(parsed.options[0]?.optionNumber ?? null);
-      // Seed the Alternative Fee schedule for each option from the
-      // workbook. The parser returns alt-fee rows that lived in the
-      // sheet's Alternative Fee Structure table; pad to 9 rows so the
-      // displayed grid still feels like the Excel template.
+      // Seed the Alternative Fee schedule from the cost rows' Linked To
+      // tags rather than the workbook's own alt-fee table. Every unique
+      // tag a cost row resolves to becomes one alt-fee row; the user
+      // fills the fee later. Unit pre-fills from linkedToUnitDefaults
+      // when set, and Per Site / Per Account inherit the SIA metadata
+      // count. Pad to 9 rows so the grid keeps its Excel-template feel.
       const seeded = {};
       for (const opt of parsed.options) {
-        if (!Array.isArray(opt.altFees) || opt.altFees.length === 0) continue;
-        const rows = opt.altFees.map(r => ({ ...r }));
+        const flatItems = (opt.sections || []).flatMap(s => s.items || []);
+        // Tag → first matching cost item, so we can pull a unit default
+        // off whichever (lineItem, type) pair produced the tag.
+        const firstItemByTag = new Map();
+        for (const item of flatItems) {
+          const k = linkedToDefaultKey(item.description, item.type || '');
+          const tag = (linkedToDefaults[k] || '').trim();
+          if (!tag || firstItemByTag.has(tag)) continue;
+          firstItemByTag.set(tag, item);
+        }
+        const tags = Array.from(firstItemByTag.keys()).sort((a, b) => a.localeCompare(b));
+        const rows = tags.map(tag => {
+          const item = firstItemByTag.get(tag);
+          const unitKey = linkedToDefaultKey(item.description, item.type || '');
+          const unit = linkedToUnitDefaults[unitKey] || '';
+          let unitCount = 1;
+          if (unit === 'Per Site' && typeof opt.siteCount === 'number' && opt.siteCount > 0) {
+            unitCount = opt.siteCount;
+          } else if (unit === 'Per Account' && typeof opt.accountCount === 'number' && opt.accountCount > 0) {
+            unitCount = opt.accountCount;
+          }
+          return { altItem: tag, type: '', fee: null, unit, unitCount, startMonth: 1 };
+        });
         while (rows.length < 9) rows.push({ altItem: '', type: '', fee: null, unit: '', unitCount: 1, startMonth: 1 });
         seeded[opt.optionNumber] = rows;
       }
@@ -1995,6 +2100,28 @@ export function PricingView({ settings } = {}) {
       if (!(key in prev)) return prev;
       const next = { ...prev };
       delete next[key];
+      return next;
+    });
+    setLinkedToUnitDefaults(prev => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  }
+
+  // Save / clear the Unit default for a (Line Item, Type) pair. Empty
+  // string drops the override so the auto-fill (matching alt-fee row's
+  // unit) takes back over.
+  function setLinkedToUnitDefault(key, unit) {
+    setLinkedToUnitDefaults(prev => {
+      const next = { ...prev };
+      if (!unit) {
+        if (key in next) delete next[key];
+        else return prev;
+      } else {
+        next[key] = unit;
+      }
       return next;
     });
   }
@@ -2460,6 +2587,8 @@ export function PricingView({ settings } = {}) {
           setActiveOption={setActiveOption}
           overrides={overrides}
           linkedToDefaults={linkedToDefaults}
+          linkedToUnitDefaults={linkedToUnitDefaults}
+          setLinkedToUnitDefault={setLinkedToUnitDefault}
           altFees={altFees}
           resolvedLinkedTo={resolvedLinkedTo}
           effectiveType={effectiveType}
