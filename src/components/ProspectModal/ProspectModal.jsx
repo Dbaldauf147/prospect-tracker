@@ -735,6 +735,19 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
 
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [emailCopied, setEmailCopied] = useState(false);
+
+  async function copyEmail() {
+    const e = (f.email || '').trim();
+    if (!e) return;
+    try {
+      await navigator.clipboard?.writeText(e);
+    } catch {
+      return;
+    }
+    setEmailCopied(true);
+    setTimeout(() => setEmailCopied(false), 1500);
+  }
   // Merge state. When `mergeOpen` is true, we show an inline picker
   // letting the user choose a second contact to merge INTO this one.
   // The current contact is always the primary (kept), the picked one
@@ -1091,7 +1104,15 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
           <div><label style={labelStyle}>Kids&apos; names <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(opt.)</span></label><input style={inputStyle} value={f.kids} onChange={e => set('kids', e.target.value)} placeholder="e.g. Sam (12), Riley (9)" /></div>
           <div style={{ gridColumn: 'span 2' }}>
             <label style={labelStyle}>Email <span style={{ fontWeight: 400, textTransform: 'none', color: '#DC2626' }}>*</span></label>
-            <input style={inputStyle} type="email" value={f.email} onChange={e => set('email', e.target.value)} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <input style={{ ...inputStyle, flex: 1 }} type="email" value={f.email} onChange={e => set('email', e.target.value)} />
+              <button
+                type="button"
+                onClick={copyEmail}
+                disabled={!f.email}
+                style={{ padding: '0.3rem 0.55rem', border: '1px solid #BFDBFE', borderRadius: 4, background: emailCopied ? '#DCFCE7' : '#EFF6FF', color: emailCopied ? '#166534' : '#1E40AF', fontSize: '0.68rem', fontWeight: 600, cursor: f.email ? 'pointer' : 'not-allowed', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+              >{emailCopied ? 'Copied!' : 'Copy'}</button>
+            </div>
             {(() => {
               const isNewContact = !contact.id && !contact.vid;
               if (!isNewContact) return null;
