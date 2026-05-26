@@ -3060,6 +3060,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // active opps. Hidden by default so the page loads fewer rows;
   // surfaced on demand via the "Show history" button.
   const [hideHistory, setHideHistory] = useState(true);
+  // Days-in-Stage kanban — Not Started rows are often noise (intake
+  // backlog), so we let the user hide that column without losing the
+  // data. Defaulted to visible so the column is discoverable.
+  const [hideNotStarted, setHideNotStarted] = useState(false);
   const servicesDefaultAppliedRef = useRef(false);
   useEffect(() => {
     if (activeTab === 'services' && !servicesDefaultAppliedRef.current) {
@@ -4361,8 +4365,13 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     for (const r of records) {
       const stage = String(r['Stage'] || '').trim();
       if (!TRACKED_STAGES_SET.has(stage)) continue;
+      // Mirror the Opportunities tab's history gate — opps with no
+      // Call In aren't on a callback schedule, so they shouldn't crowd
+      // the kanban either.
+      if (resolveCallIn(r) == null) continue;
       const enteredISO = toISODate(r._stageEnteredAt) || toISODate(r['Start Date']);
       const days = enteredISO ? -daysFromToday(enteredISO) : null;
+      const scope = String(r['Scope'] ?? '').trim();
       rows.push({
         id: r._id,
         Account: r['Account'] || '',
@@ -4370,6 +4379,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         days,
         enteredAt: enteredISO || '',
         startDate: toISODate(r['Start Date']) || '',
+        scope: scope && scope !== '-' && scope !== '#N/A' ? scope : '',
         _hasExplicitEntry: !!toISODate(r._stageEnteredAt),
       });
     }
@@ -4885,68 +4895,95 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       )}
 
       {activeTab === 'stageDays' && (
-        <div style={{
-          display: 'flex', gap: 12, overflowX: 'auto',
-          padding: '12px 0', alignItems: 'flex-start',
-        }}>
-          {TRACKED_STAGES.map(stage => {
-            const items = stageDaysByStage.get(stage) || [];
-            return (
-              <div key={stage} style={{
-                flex: '0 0 220px', width: 220,
-                background: '#F1F5F9', borderRadius: 6, padding: 8,
-                display: 'flex', flexDirection: 'column', gap: 8,
-              }}>
-                <div style={{
-                  display: 'flex', alignItems: 'baseline',
-                  justifyContent: 'space-between',
-                  padding: '2px 4px 6px',
-                  borderBottom: '1px solid #CBD5E1',
+        <>
+          <div className={styles.searchRow}>
+            <label className={styles.showHiddenLabel}>
+              <input
+                type="checkbox"
+                checked={hideNotStarted}
+                onChange={e => setHideNotStarted(e.target.checked)}
+              />
+              Hide Not Started ({(stageDaysByStage.get('Not Started') || []).length})
+            </label>
+          </div>
+          <div style={{
+            display: 'flex', gap: 12, overflowX: 'auto',
+            padding: '12px 0', alignItems: 'flex-start',
+          }}>
+            {TRACKED_STAGES.filter(s => !(hideNotStarted && s === 'Not Started')).map(stage => {
+              const items = stageDaysByStage.get(stage) || [];
+              return (
+                <div key={stage} style={{
+                  flex: '0 0 220px', width: 220,
+                  background: '#F1F5F9', borderRadius: 6, padding: 8,
+                  display: 'flex', flexDirection: 'column', gap: 8,
                 }}>
-                  <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>{stage}</span>
-                  <span style={{ fontSize: '0.72rem', color: '#64748B' }}>{items.length}</span>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {items.length === 0 ? (
-                    <div style={{
-                      color: '#94A3B8', fontSize: '0.72rem',
-                      textAlign: 'center', padding: '8px 0',
-                    }}>—</div>
-                  ) : items.map(row => (
-                    <div
-                      key={row.id}
-                      title={row.enteredAt
+                  <div style={{
+                    display: 'flex', alignItems: 'baseline',
+                    justifyContent: 'space-between',
+                    padding: '2px 4px 6px',
+                    borderBottom: '1px solid #CBD5E1',
+                  }}>
+                    <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>{stage}</span>
+                    <span style={{ fontSize: '0.72rem', color: '#64748B' }}>{items.length}</span>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {items.length === 0 ? (
+                      <div style={{
+                        color: '#94A3B8', fontSize: '0.72rem',
+                        textAlign: 'center', padding: '8px 0',
+                      }}>—</div>
+                    ) : items.map(row => {
+                      const dayBadgeTitle = row.enteredAt
                         ? `Stage entered ${formatDateDisplay(row.enteredAt)}${row._hasExplicitEntry ? '' : ' (fallback to Start Date)'}`
-                        : 'No entry date recorded.'}
-                      style={{
-                        background: '#FFFFFF', borderRadius: 4,
-                        border: '1px solid #E2E8F0',
-                        padding: '6px 8px',
-                        display: 'flex', alignItems: 'center',
-                        justifyContent: 'space-between', gap: 8,
-                      }}
-                    >
-                      <span style={{
-                        fontSize: '0.8rem', fontWeight: 500,
-                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                        minWidth: 0,
-                      }}>
-                        {row.Account || <span style={{ color: '#94A3B8' }}>(no account)</span>}
-                      </span>
-                      <span style={{
-                        fontSize: '0.72rem', fontWeight: 600,
-                        color: row.days != null && row.days > 30 ? '#DC2626' : '#475569',
-                        fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
-                      }}>
-                        {row.days == null ? '—' : `${row.days}d`}
-                      </span>
-                    </div>
-                  ))}
+                        : 'No entry date recorded.';
+                      // Account-name hover surfaces the row's Scope so
+                      // the kanban reads like a triage board — no need
+                      // to bounce back to the Opportunities tab to see
+                      // what the opp is actually selling.
+                      const accountTitle = row.scope
+                        ? `Scope: ${row.scope}`
+                        : 'No scope set on this opp.';
+                      return (
+                        <div
+                          key={row.id}
+                          style={{
+                            background: '#FFFFFF', borderRadius: 4,
+                            border: '1px solid #E2E8F0',
+                            padding: '6px 8px',
+                            display: 'flex', alignItems: 'center',
+                            justifyContent: 'space-between', gap: 8,
+                          }}
+                        >
+                          <span
+                            title={accountTitle}
+                            style={{
+                              fontSize: '0.8rem', fontWeight: 500,
+                              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                              minWidth: 0, cursor: 'help',
+                            }}
+                          >
+                            {row.Account || <span style={{ color: '#94A3B8' }}>(no account)</span>}
+                          </span>
+                          <span
+                            title={dayBadgeTitle}
+                            style={{
+                              fontSize: '0.72rem', fontWeight: 600,
+                              color: row.days != null && row.days > 30 ? '#DC2626' : '#475569',
+                              fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {row.days == null ? '—' : `${row.days}d`}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        </>
       )}
     </div>
   );
