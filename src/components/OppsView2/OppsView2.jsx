@@ -4385,43 +4385,17 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     return rows;
   }, [activeTab, records]);
 
-  const stageDaysColumns = useMemo(() => [
-    { key: 'Account', label: 'Account', defaultWidth: 260, sticky: true },
-    { key: 'Stage', label: 'Stage', defaultWidth: 140 },
-    {
-      key: 'days',
-      label: 'Days in Stage',
-      defaultWidth: 130,
-      getSortValue: (row) => row.days,
-      render: (row) => (
-        <div style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-          {row.days == null ? '—' : row.days}
-        </div>
-      ),
-    },
-    {
-      key: 'enteredAt',
-      label: 'Stage Entered',
-      defaultWidth: 140,
-      getSortValue: (row) => (row.enteredAt ? Date.parse(row.enteredAt) : 0),
-      render: (row) => (
-        <span style={{ color: row._hasExplicitEntry ? 'inherit' : 'var(--color-text-muted)' }}
-          title={row._hasExplicitEntry
-            ? 'Date this opp last moved into its current stage.'
-            : 'No stage change recorded — falling back to Start Date.'}
-        >
-          {row.enteredAt ? formatDateDisplay(row.enteredAt) : '—'}
-        </span>
-      ),
-    },
-    {
-      key: 'startDate',
-      label: 'Start Date',
-      defaultWidth: 130,
-      getSortValue: (row) => (row.startDate ? Date.parse(row.startDate) : 0),
-      render: (row) => row.startDate ? formatDateDisplay(row.startDate) : '—',
-    },
-  ], []);
+  // Group Days-in-Stage rows by stage so the Kanban view can render one
+  // column per stage with its cards stacked beneath. stageDaysRows is
+  // pre-sorted descending by days, so each bucket's order falls out for
+  // free — longest-stalling firms lead each column.
+  const stageDaysByStage = useMemo(() => {
+    const map = new Map(TRACKED_STAGES.map(s => [s, []]));
+    for (const r of stageDaysRows) {
+      if (map.has(r.Stage)) map.get(r.Stage).push(r);
+    }
+    return map;
+  }, [stageDaysRows]);
 
   const servicesColumns = useMemo(() => [
     { key: 'scope', label: 'Service (Scope)', defaultWidth: 260 },
@@ -4744,7 +4718,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         </button>
       </div>
 
-      {activeTab === 'opps' ? (
+      {activeTab === 'opps' && (
         <>
           <div className={styles.summary}>
             {stageOrder.filter(s => stageCounts[s]).map(stage => (
@@ -4874,7 +4848,9 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             />
           )}
         </>
-      ) : (
+      )}
+
+      {activeTab === 'services' && (
         <>
           <div className={styles.searchRow}>
             <span className={styles.resultCount}>
@@ -4910,23 +4886,68 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       )}
 
       {activeTab === 'stageDays' && (
-        <>
-          <div className={styles.searchRow}>
-            <span className={styles.resultCount}>
-              {stageDaysRows.length} opp{stageDaysRows.length === 1 ? '' : 's'} across {TRACKED_STAGES.join(' → ')}
-            </span>
-          </div>
-          <DataTable
-            tableId="opps2-stage-days"
-            columns={stageDaysColumns}
-            rows={stageDaysRows}
-            alwaysVisible={['Account', 'Stage', 'days']}
-            defaultSort={{ key: 'days', direction: 'desc' }}
-            emptyMessage="No active opps in the tracked stages yet."
-            settings={settings}
-            updateSettings={updateSettings}
-          />
-        </>
+        <div style={{
+          display: 'flex', gap: 12, overflowX: 'auto',
+          padding: '12px 0', alignItems: 'flex-start',
+        }}>
+          {TRACKED_STAGES.map(stage => {
+            const items = stageDaysByStage.get(stage) || [];
+            return (
+              <div key={stage} style={{
+                flex: '0 0 220px', width: 220,
+                background: '#F1F5F9', borderRadius: 6, padding: 8,
+                display: 'flex', flexDirection: 'column', gap: 8,
+              }}>
+                <div style={{
+                  display: 'flex', alignItems: 'baseline',
+                  justifyContent: 'space-between',
+                  padding: '2px 4px 6px',
+                  borderBottom: '1px solid #CBD5E1',
+                }}>
+                  <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>{stage}</span>
+                  <span style={{ fontSize: '0.72rem', color: '#64748B' }}>{items.length}</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {items.length === 0 ? (
+                    <div style={{
+                      color: '#94A3B8', fontSize: '0.72rem',
+                      textAlign: 'center', padding: '8px 0',
+                    }}>—</div>
+                  ) : items.map(row => (
+                    <div
+                      key={row.id}
+                      title={row.enteredAt
+                        ? `Stage entered ${formatDateDisplay(row.enteredAt)}${row._hasExplicitEntry ? '' : ' (fallback to Start Date)'}`
+                        : 'No entry date recorded.'}
+                      style={{
+                        background: '#FFFFFF', borderRadius: 4,
+                        border: '1px solid #E2E8F0',
+                        padding: '6px 8px',
+                        display: 'flex', alignItems: 'center',
+                        justifyContent: 'space-between', gap: 8,
+                      }}
+                    >
+                      <span style={{
+                        fontSize: '0.8rem', fontWeight: 500,
+                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        minWidth: 0,
+                      }}>
+                        {row.Account || <span style={{ color: '#94A3B8' }}>(no account)</span>}
+                      </span>
+                      <span style={{
+                        fontSize: '0.72rem', fontWeight: 600,
+                        color: row.days != null && row.days > 30 ? '#DC2626' : '#475569',
+                        fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
+                      }}>
+                        {row.days == null ? '—' : `${row.days}d`}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );
