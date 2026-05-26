@@ -73,6 +73,7 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
           <span className={styles.navIcon}>&#9776;</span>
           Lists
         </button>
+        {/* Opps nav hidden — uncomment to restore. Route is still wired up in App.jsx so the view is reachable manually if needed.
         <button
           className={view === 'opps' ? styles.navItemActive : styles.navItem}
           onClick={() => setView('opps')}
@@ -80,6 +81,7 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
           <span className={styles.navIcon}>&#36;</span>
           Opps
         </button>
+        */}
         <button
           className={view === 'opps2' ? styles.navItemActive : styles.navItem}
           onClick={() => setView('opps2')}
