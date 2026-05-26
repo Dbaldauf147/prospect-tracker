@@ -4380,11 +4380,14 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               variableRowHeight
               rowStyle={(row) => {
                 // Tint closed opps so the table reads at a glance —
-                // light green for wins, light red for losses. Other
-                // stages keep the default surface colour. The style
-                // also lands on every <td> (including the sticky
-                // Account column) so the row is solidly coloured edge
-                // to edge.
+                // light green for wins, light red for losses. Rows the
+                // user has marked "No Further Action Today" go light
+                // grey and win against the stage tint so today's
+                // do-nothing rows visibly recede. The style also lands
+                // on every <td> (including the sticky Account column)
+                // so the row is solidly coloured edge to edge.
+                const nfat = String(row?.['No Further Action Today'] || '').trim().toLowerCase();
+                if (nfat === 'yes') return { background: '#E5E7EB' };
                 const stage = String(row?.Stage || '').trim();
                 if (stage === 'Sold') return { background: '#DCFCE7' };
                 if (stage === 'Not Sold') return { background: '#FEE2E2' };
