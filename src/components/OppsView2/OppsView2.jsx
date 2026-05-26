@@ -372,65 +372,50 @@ function formatDateDisplay(raw) {
 }
 
 function DateCell({ value, onChange }) {
-  const [editing, setEditing] = useState(false);
+  // The native <input type="date"> is permanently mounted but visually
+  // hidden and not directly interactable (pointer-events: none, tab
+  // disabled). The only way to change the value is via the calendar
+  // popup, which we open programmatically from the visible span's
+  // click. This blocks every "edit the date itself" affordance the
+  // browser exposes on a focused date input — segment typing, arrow-
+  // key increments, and spin buttons — so the user can only pick a
+  // calendar day.
   const inputRef = useRef(null);
   const iso = toISODate(value);
-  // Pop the native calendar the moment the input mounts so the user
-  // doesn't have to hunt the picker icon or fight the text-typing
-  // mode. `showPicker()` needs a recent user activation, which the
-  // click that flipped `editing` to true still satisfies here.
-  useLayoutEffect(() => {
-    if (!editing) return;
-    const el = inputRef.current;
-    if (!el) return;
-    el.focus();
-    try { el.showPicker?.(); } catch { /* older browsers — fall back to the focused input */ }
-  }, [editing]);
-  if (!editing) {
-    const isEmpty = !value;
-    return (
-      <span
-        onClick={(e) => { e.stopPropagation(); setEditing(true); }}
-        style={{
-          display: 'block', cursor: 'pointer', minHeight: '1em',
-          padding: '1px 2px',
-          color: isEmpty ? 'var(--color-text-muted)' : 'inherit',
-        }}
-        title="Click to pick a date"
-      >
-        {isEmpty ? '—' : formatDateDisplay(value)}
-      </span>
-    );
-  }
+  const isEmpty = !value;
   return (
-    <input
-      ref={inputRef}
-      type="date"
-      value={iso}
-      onChange={(e) => onChange(e.target.value)}
-      onBlur={() => setEditing(false)}
-      onKeyDown={(e) => {
-        if (e.key === 'Escape' || e.key === 'Enter') {
-          e.preventDefault();
-          setEditing(false);
-          return;
-        }
-        // Calendar picker is the only entry path — block raw keyboard
-        // typing into the date input so the user can't free-form a
-        // value that bypasses the picker. Tab is left alone so focus
-        // can still move between cells.
-        if (e.key === 'Tab') return;
-        e.preventDefault();
+    <span
+      onClick={(e) => {
+        e.stopPropagation();
+        const el = inputRef.current;
+        if (!el) return;
+        try { el.showPicker?.(); } catch { /* older browser — no-op */ }
       }}
-      onClick={(e) => e.stopPropagation()}
       style={{
-        width: '100%', boxSizing: 'border-box',
-        border: '1px solid var(--color-accent)', borderRadius: 3,
-        padding: '1px 4px',
-        fontSize: 'inherit', fontFamily: 'inherit', color: 'var(--color-text)',
-        background: '#fff',
+        position: 'relative',
+        display: 'block', cursor: 'pointer', minHeight: '1em',
+        padding: '1px 2px',
+        color: isEmpty ? 'var(--color-text-muted)' : 'inherit',
       }}
-    />
+      title="Click to pick a date"
+    >
+      {isEmpty ? '—' : formatDateDisplay(value)}
+      <input
+        ref={inputRef}
+        type="date"
+        value={iso}
+        onChange={(e) => onChange(e.target.value)}
+        onClick={(e) => e.stopPropagation()}
+        tabIndex={-1}
+        aria-hidden="true"
+        style={{
+          position: 'absolute', left: 0, top: 0,
+          width: '100%', height: '100%',
+          opacity: 0, pointerEvents: 'none',
+          border: 0, padding: 0, margin: 0, background: 'transparent',
+        }}
+      />
+    </span>
   );
 }
 
@@ -3908,6 +3893,12 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         getSortValue: (h === 'Call In' || h === 'Last Spoke')
           ? (row) => (h === 'Call In' ? resolveCallIn(row) : resolveLastSpoke(row))
           : undefined,
+        // Call In is derived from Follow Up. If the table re-sorted on
+        // every edit, typing a new Follow Up date would yank the row out
+        // from under the cursor as its Call In recomputed. Freeze the
+        // order at click time so manual triage stays stable — the user
+        // re-clicks the header when they want a fresh ranking.
+        freezeSortOrder: h === 'Call In' ? true : undefined,
         render: (row) => {
           if (h === 'Call In') {
             // Click-to-clear / click-to-restore. The cell still
