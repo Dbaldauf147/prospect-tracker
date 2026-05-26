@@ -603,7 +603,18 @@ function CallInCell({ row, onClear, onRestore }) {
   if (n != null) {
     return (
       <span
-        onClick={(e) => { e.stopPropagation(); onClear(); }}
+        onClick={(e) => {
+          e.stopPropagation();
+          // Click-to-clear is destructive (it stamps the cell with the
+          // BLANK sentinel and you have to find the "+ add" affordance
+          // to undo it), and it's easy to brush this cell while
+          // scanning the column. Guard with a confirm so a stray click
+          // doesn't wipe the value.
+          const label = String(row?.['Account'] || '').trim() || 'this row';
+          if (window.confirm(`Remove the Call In value for ${label}?`)) {
+            onClear();
+          }
+        }}
         title="Click to clear Call In"
         style={{ display: 'block', cursor: 'pointer' }}
       >
