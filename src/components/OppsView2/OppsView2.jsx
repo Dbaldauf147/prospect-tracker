@@ -171,10 +171,9 @@ const DATE_COLUMNS = new Set(['Start Date', 'Last Client Heard From Us', 'Follow
 
 // Stages the Days-in-Stage tab reports on. Ordered to mirror the
 // pipeline progression so a row stays under one bucket as it moves
-// forward. Closed and pre-pipeline stages (Sold / Not Sold / Not
-// Started) are intentionally excluded — the tab tracks how long
-// active opps are stalling in each step.
-const TRACKED_STAGES = ['Lead', 'Qualifying', 'Quoting', 'Quoted', 'Contracting', 'Agreement Sent'];
+// forward. Closed stages (Sold / Not Sold) are intentionally excluded
+// — the tab tracks how long active opps are stalling in each step.
+const TRACKED_STAGES = ['Not Started', 'Lead', 'Qualifying', 'Quoting', 'Quoted', 'Contracting', 'Agreement Sent'];
 const TRACKED_STAGES_SET = new Set(TRACKED_STAGES);
 
 // Read-only columns whose value is derived from other cells.
