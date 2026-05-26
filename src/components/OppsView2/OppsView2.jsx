@@ -404,6 +404,17 @@ function DateCell({ value, onChange }) {
   );
 }
 
+// Break a free-text Next Steps cell into bullet items. Splits on
+// newlines, strips any leading marker the user typed (- * • 1. etc.),
+// and drops empty lines so the popup / hover render cleanly even when
+// the source was loose prose.
+function textToBulletItems(text) {
+  return String(text ?? '')
+    .split(/\r?\n+/)
+    .map(line => line.replace(/^\s*(?:[-*•·▪►]|\d+[.)])\s*/, '').trim())
+    .filter(Boolean);
+}
+
 // Calendar days from today to the given ISO date. Positive = future,
 // negative = past. Returns null for blank / unparseable dates.
 function daysFromToday(rawISO) {
@@ -793,6 +804,7 @@ function CellHoverPopover({ anchorRef, value, enabled }) {
   }, [anchorRef, value, enabled]);
 
   if (!pos || !enabled) return null;
+  const items = textToBulletItems(value);
   return createPortal(
     <div
       style={{
@@ -801,11 +813,19 @@ function CellHoverPopover({ anchorRef, value, enabled }) {
         background: '#1e293b', color: '#f8fafc',
         padding: '6px 10px', borderRadius: 4, fontSize: '0.78rem',
         maxWidth: 480, maxHeight: 320, overflow: 'auto',
-        whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.35,
+        wordBreak: 'break-word', lineHeight: 1.4,
         boxShadow: '0 8px 22px rgba(15, 23, 42, 0.28)',
         zIndex: 10000, pointerEvents: 'none',
       }}
-    >{String(value ?? '')}</div>,
+    >
+      {items.length > 0 ? (
+        <ul style={{ margin: 0, paddingLeft: '1.1rem' }}>
+          {items.map((it, i) => <li key={i} style={{ margin: '2px 0' }}>{it}</li>)}
+        </ul>
+      ) : (
+        <span style={{ whiteSpace: 'pre-wrap' }}>{String(value ?? '')}</span>
+      )}
+    </div>,
     document.body,
   );
 }
@@ -4074,12 +4094,25 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                   }}
                 >×</button>
               </div>
-              <div style={{
-                whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                fontSize: '0.85rem', lineHeight: 1.45, color: text ? '#0f172a' : '#94A3B8',
-              }}>
-                {text || '(no next steps recorded)'}
-              </div>
+              {(() => {
+                const items = textToBulletItems(text);
+                if (items.length === 0) {
+                  return (
+                    <div style={{ fontSize: '0.85rem', lineHeight: 1.45, color: '#94A3B8' }}>
+                      (no next steps recorded)
+                    </div>
+                  );
+                }
+                return (
+                  <ul style={{
+                    margin: 0, paddingLeft: '1.2rem',
+                    fontSize: '0.85rem', lineHeight: 1.5, color: '#0f172a',
+                    wordBreak: 'break-word',
+                  }}>
+                    {items.map((it, i) => <li key={i} style={{ margin: '3px 0' }}>{it}</li>)}
+                  </ul>
+                );
+              })()}
             </div>
           </div>
         );
