@@ -1125,35 +1125,51 @@ function LinkedToPanel({
             ) : (
               <table className={styles.linkedTable}>
                 <thead>
-                  <tr><th>Tag</th><th>Source</th><th>Linked CTS rows</th></tr>
+                  <tr>
+                    <th>Tag</th>
+                    <th>Source</th>
+                    <th>Linked CTS row</th>
+                    <th>Type</th>
+                    <th>Start Month</th>
+                  </tr>
                 </thead>
                 <tbody>
                   {tagEntries.map(([tag, items]) => {
                     const lower = tag.toLowerCase();
                     const altMatch = Array.from(altTags).some(t => t.toLowerCase() === lower);
-                    return (
-                      <tr key={tag}>
-                        <td><code>{tag}</code></td>
-                        <td>
-                          {altMatch && <span className={styles.linkedBadge}>alt-fee</span>}
-                          {!altMatch && <span className={styles.linkedMuted}>CTS only</span>}
-                        </td>
-                        <td>
-                          {items.length === 0
-                            ? <span className={styles.linkedMuted}>none — alt-fee tag with no CTS rows linked</span>
-                            : (
-                              <ul className={styles.linkedRowList}>
-                                {items.map(it => (
-                                  <li key={it.id}>
-                                    {it.description}
-                                    <span className={styles.linkedMuted}> · {effectiveType(it)}</span>
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-                        </td>
-                      </tr>
-                    );
+                    const sourceCell = altMatch
+                      ? <span className={styles.linkedBadge}>alt-fee</span>
+                      : <span className={styles.linkedMuted}>CTS only</span>;
+                    if (items.length === 0) {
+                      return (
+                        <tr key={tag}>
+                          <td><code>{tag}</code></td>
+                          <td>{sourceCell}</td>
+                          <td colSpan={3}>
+                            <span className={styles.linkedMuted}>none — alt-fee tag with no CTS rows linked</span>
+                          </td>
+                        </tr>
+                      );
+                    }
+                    return items.map((it, idx) => {
+                      const sm = Number(it.startMonth);
+                      const startMonthCell = Number.isFinite(sm) && sm > 0
+                        ? sm
+                        : <span className={styles.linkedMuted}>—</span>;
+                      return (
+                        <tr key={`${tag}-${it.id}`}>
+                          {idx === 0 && (
+                            <>
+                              <td rowSpan={items.length}><code>{tag}</code></td>
+                              <td rowSpan={items.length}>{sourceCell}</td>
+                            </>
+                          )}
+                          <td>{it.description}</td>
+                          <td>{effectiveType(it)}</td>
+                          <td>{startMonthCell}</td>
+                        </tr>
+                      );
+                    });
                   })}
                 </tbody>
               </table>
@@ -2202,7 +2218,12 @@ export function PricingView({ settings } = {}) {
     if (source === 'passThrough') {
       return { gm: 0, source, price: typeof item.cts === 'number' ? item.cts : null };
     }
-    const price = priceFromCostAndGm(item.cts ?? null, gm);
+    // Mark up against the effective cost (CTS + tech depr) so the
+    // displayed Deal margin equals the target GM exactly. Marking up
+    // against raw CTS leaves tech depr unrecovered and shows a margin
+    // ~techDeprPct below target.
+    const effCost = typeof item.cts === 'number' ? ctsItemEffectiveCost(item) : null;
+    const price = priceFromCostAndGm(effCost, gm);
     return { gm, source, price };
   }
 
