@@ -909,7 +909,33 @@ function CellHoverPopover({ anchorRef, value, enabled }) {
   );
 }
 
-function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel, onDoubleClickValue, showHoverPopover }) {
+// Next Steps cell — single click opens the bullet-list popup. Inline
+// editing isn't useful for this column because the editor in the popup
+// is purpose-built for it (per-step Waiting On, bullet reorder, etc.).
+// Hover still surfaces the full text via the shared popover so a quick
+// glance doesn't require opening the modal.
+function NextStepsCell({ value, onOpen }) {
+  const ref = useRef(null);
+  const isEmpty = value === '' || value == null;
+  const text = isEmpty ? '—' : String(value);
+  return (
+    <>
+      <span
+        ref={ref}
+        onClick={(e) => { e.stopPropagation(); onOpen(); }}
+        title="Click to edit in Next Steps"
+        style={{
+          display: 'block', cursor: 'pointer', minHeight: '1em',
+          padding: '1px 2px', whiteSpace: 'pre', overflow: 'hidden',
+          color: isEmpty ? 'var(--color-text-muted)' : 'inherit',
+        }}
+      >{text}</span>
+      <CellHoverPopover anchorRef={ref} value={text} enabled={!isEmpty} />
+    </>
+  );
+}
+
+function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value ?? '');
   const [open, setOpen] = useState(false);
@@ -919,13 +945,7 @@ function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel, onD
   // rect whenever the dropdown opens.
   const [dropPos, setDropPos] = useState({ top: 0, left: 0, width: 0 });
   const wrapRef = useRef(null);
-  const displayRef = useRef(null);
   const textareaRef = useRef(null);
-  // When `onDoubleClickValue` is wired up we delay the single-click
-  // edit-mode toggle by ~220ms so a follow-up dblclick can cancel it
-  // and open the popup instead. Other EditableCell consumers keep the
-  // original zero-delay behavior.
-  const clickTimerRef = useRef(null);
   useEffect(() => { if (!editing) setDraft(value ?? ''); }, [value, editing]);
 
   // Auto-grow the textarea to fit its contents so the user sees every
@@ -1010,44 +1030,18 @@ function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel, onD
     const isEmpty = value === '' || value == null;
     const text = isEmpty ? '—' : String(value);
     const enterEdit = () => { setEditing(true); setOpen(dropdownAvailable); };
-    const handleClick = (e) => {
-      e.stopPropagation();
-      if (!onDoubleClickValue) { enterEdit(); return; }
-      if (clickTimerRef.current) return;
-      clickTimerRef.current = setTimeout(() => {
-        clickTimerRef.current = null;
-        enterEdit();
-      }, 220);
-    };
-    const handleDoubleClick = (e) => {
-      if (!onDoubleClickValue) return;
-      e.stopPropagation();
-      e.preventDefault();
-      if (clickTimerRef.current) {
-        clearTimeout(clickTimerRef.current);
-        clickTimerRef.current = null;
-      }
-      onDoubleClickValue(value);
-    };
     return (
-      <>
-        <span
-          ref={displayRef}
-          onClick={handleClick}
-          onDoubleClick={handleDoubleClick}
-          style={{
-            // `white-space: pre` keeps Alt+Enter newlines on their own
-            // line (so the row grows vertically to fit) while still
-            // clipping anything wider than the column.
-            display: 'block', cursor: 'text', minHeight: '1em',
-            padding: '1px 2px', whiteSpace: 'pre', overflow: 'hidden',
-            color: isEmpty ? 'var(--color-text-muted)' : 'inherit',
-          }}
-        >{text}</span>
-        {showHoverPopover && (
-          <CellHoverPopover anchorRef={displayRef} value={text} enabled={!isEmpty} />
-        )}
-      </>
+      <span
+        onClick={(e) => { e.stopPropagation(); enterEdit(); }}
+        style={{
+          // `white-space: pre` keeps Alt+Enter newlines on their own
+          // line (so the row grows vertically to fit) while still
+          // clipping anything wider than the column.
+          display: 'block', cursor: 'text', minHeight: '1em',
+          padding: '1px 2px', whiteSpace: 'pre', overflow: 'hidden',
+          color: isEmpty ? 'var(--color-text-muted)' : 'inherit',
+        }}
+      >{text}</span>
     );
   }
   return (
@@ -4042,13 +4036,19 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               );
             }
           }
+          if (h === 'Next Steps') {
+            return (
+              <NextStepsCell
+                value={row[h]}
+                onOpen={() => setNextStepsPopupId(row._id)}
+              />
+            );
+          }
           return (
             <EditableCell
               value={row[h]}
               onChange={(v) => updateOppField(row._id, h, v)}
               suggestions={h === 'Account' ? companySuggestions : undefined}
-              onDoubleClickValue={h === 'Next Steps' ? () => setNextStepsPopupId(row._id) : undefined}
-              showHoverPopover={h === 'Next Steps'}
             />
           );
         },
