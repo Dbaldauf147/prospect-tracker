@@ -3626,7 +3626,82 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     });
   }, []);
 
+  // ---- Undo stack -------------------------------------------------
+  // In-memory history of the last UNDO_LIMIT cell mutations. Each
+  // updateOppField / deleteOppField call snapshots the prior value
+  // (including the sibling columns that get dropped as a side effect)
+  // and pushes it here; the Undo button + Ctrl/Cmd+Z pop the top
+  // entry and re-apply it via a private mutator that doesn't push
+  // back onto the stack. Resets on reload because it's React state
+  // only — Firestore + IndexedDB persist the *current* row state, not
+  // its history.
+  const UNDO_LIMIT = 50;
+  const dataRef = useRef(data);
+  useEffect(() => { dataRef.current = data; }, [data]);
+  const [undoStack, setUndoStack] = useState([]);
+  const pushUndoEntry = useCallback((entry) => {
+    if (!entry || !entry.fields?.length) return;
+    setUndoStack(prev => {
+      const next = [...prev, entry];
+      if (next.length > UNDO_LIMIT) next.shift();
+      return next;
+    });
+  }, []);
+  const undoLastChange = useCallback(() => {
+    setUndoStack(prev => {
+      if (!prev.length) return prev;
+      const entry = prev[prev.length - 1];
+      setData(d => {
+        const records = d?.records || [];
+        return {
+          ...d,
+          records: records.map(r => {
+            if (r._id !== entry.id) return r;
+            const next = { ...r };
+            for (const f of entry.fields) {
+              if (f.hadField) next[f.field] = f.prevValue;
+              else delete next[f.field];
+            }
+            return next;
+          }),
+        };
+      });
+      return prev.slice(0, -1);
+    });
+  }, []);
+  // Global Cmd/Ctrl+Z. Skipped when the user has an input/textarea
+  // focused so the browser's native text-undo still works mid-edit;
+  // the toolbar button stays available either way.
+  useEffect(() => {
+    function onKeyDown(e) {
+      const meta = e.ctrlKey || e.metaKey;
+      if (!meta || e.shiftKey || e.altKey) return;
+      if ((e.key || '').toLowerCase() !== 'z') return;
+      const ae = document.activeElement;
+      const tag = (ae?.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || ae?.isContentEditable) return;
+      e.preventDefault();
+      undoLastChange();
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [undoLastChange]);
+
   const updateOppField = useCallback((id, field, value) => {
+    // Snapshot the prior cell state before the mutation so the Undo
+    // stack can restore it. We also snapshot the sibling columns that
+    // are dropped as a side effect (Follow Up → Call In, Last Client
+    // Heard From Us → Last Spoke) so a single undo restores all of
+    // them in one step instead of leaving the user to chase the
+    // computed column back to life via "+ add".
+    const row = (dataRef.current?.records || []).find(r => r._id === id);
+    if (row) {
+      const snap = (f) => ({ field: f, hadField: f in row, prevValue: f in row ? row[f] : undefined });
+      const fields = [snap(field)];
+      if (field === 'Follow Up' && 'Call In' in row) fields.push(snap('Call In'));
+      if (field === 'Last Client Heard From Us' && 'Last Spoke' in row) fields.push(snap('Last Spoke'));
+      pushUndoEntry({ id, fields });
+    }
     setData(prev => {
       const records = prev?.records || [];
       return {
@@ -3645,13 +3720,17 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         }),
       };
     });
-  }, []);
+  }, [pushUndoEntry]);
 
   // Drop a field entirely from a row. Used to clear a user-set Call In
   // override so the live compute from Follow Up takes over again — the
   // sentinel-checking path in resolveComputedDays only ignores the
   // stored value when the key is missing, not just empty.
   const deleteOppField = useCallback((id, field) => {
+    const row = (dataRef.current?.records || []).find(r => r._id === id);
+    if (row && field in row) {
+      pushUndoEntry({ id, fields: [{ field, hadField: true, prevValue: row[field] }] });
+    }
     setData(prev => {
       const records = prev?.records || [];
       return {
@@ -3665,7 +3744,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         }),
       };
     });
-  }, []);
+  }, [pushUndoEntry]);
 
   const deleteOpp = useCallback((id) => {
     setData(prev => {
@@ -4337,6 +4416,22 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             }}
             title="Paste data from a Google Sheet with the same columns and review the mapping before importing"
           >Bulk import</button>
+          <button
+            type="button"
+            onClick={undoLastChange}
+            disabled={!undoStack.length}
+            style={{
+              padding: '0.45rem 0.85rem', background: 'transparent',
+              border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)',
+              fontSize: 'var(--font-size-sm)', fontWeight: 600, fontFamily: 'inherit',
+              color: undoStack.length ? 'var(--color-text)' : 'var(--color-text-muted)',
+              cursor: undoStack.length ? 'pointer' : 'not-allowed',
+              opacity: undoStack.length ? 1 : 0.6,
+            }}
+            title={undoStack.length
+              ? `Undo last change (${undoStack.length} in history) — Ctrl/Cmd+Z`
+              : 'No recent changes to undo'}
+          >↶ Undo</button>
           <button className={styles.syncBtn} onClick={() => setPendingNewOpp({})}>+ New Opp</button>
         </div>
       </div>
