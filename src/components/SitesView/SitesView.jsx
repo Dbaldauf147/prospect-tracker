@@ -3396,6 +3396,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     // Captured inside the Hedging Analysis sheet builder so the chart
     // injection at the end of the export knows which rows to plot.
     let hedgingChartRange = null;
+    // Same trick for the Gas Market Timing tab — its chart bounds get
+    // ferried out via closure to the injection block at the end of the
+    // export.
+    let gasTimingChartRange = null;
 
     // ---- Portfolio Overview sheet -----------------------------------
     // World map + per-bucket dot rendering. Each dot is split
@@ -6331,6 +6335,387 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       };
     }
 
+    // ---- Gas Market Timing sheet ------------------------------------
+    // Compares two natural-gas procurement strategies across 60 months:
+    //   1) "30-Day Arbitrary Buy" — equal 1/60 layering on a calendar
+    //      cadence, ignoring market signals (the baseline).
+    //   2) "Market-Timed Layered Hedge" — same total volume, but front-
+    //      loaded into months where the forward curve sits below its
+    //      long-run average and pulled back when it sits above.
+    // Both strategies execute at the prevailing forward price each
+    // month, so the savings story is purely "WHEN you buy" rather than
+    // "fixed vs float". Layout mirrors the Hedging Analysis tab: yellow
+    // editable cells for the cumulative allocation columns + forward
+    // price + adders, conditional formatting on the forward-price column
+    // (green below long-run average, red above), data-bar on the Saving
+    // column, year-by-year result block at cols M-P, and two live Excel
+    // charts (savings shading vs long-run average + cumulative
+    // allocation curve per strategy).
+    {
+      const ws = wb.addWorksheet('Gas Market Timing', {
+        properties: { tabColor: { argb: SE_GREEN_DARK } },
+        views: [{ showGridLines: false, state: 'frozen', ySplit: 6 }],
+      });
+
+      const TABLE_COLS = 11;
+      const RESULT_FIRST_COL = 13;
+      const RESULT_LAST_COL = 16;
+      const COLS = RESULT_LAST_COL;
+      // Column widths — width index matches column position 1..20.
+      //   A #          | B Date     | C Alloc%(Arb) | D Alloc%(MT)
+      //   E Vol(Arb)   | F Vol(MT)  | G Forward $   | H Adders
+      //   I Arb Cost   | J MT Cost  | K Saving
+      //   L gutter
+      //   M Year       | N Arbitrary | O Market-Timed | P Delta
+      // Cols Q-T (17-20) are chart-area padding so the charts anchored
+      // below the year-result block render over right-sized cells.
+      const widths = [10, 16, 14, 16, 16, 18, 16, 18, 18, 20, 18, 3, 10, 16, 18, 16, 12, 12, 12, 12];
+      ws.columns = widths.map(w => ({ width: w }));
+
+      const INPUT_FILL = 'FFFFF9C3';
+      const INPUT_BORDER = 'FFCA8A04';
+
+      ws.mergeCells(1, 1, 1, COLS);
+      const title = ws.getCell(1, 1);
+      title.value = 'Gas Market Timing Analysis';
+      title.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
+      title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+      title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(1).height = 30;
+
+      ws.mergeCells(2, 1, 2, COLS);
+      const sub = ws.getCell(2, 1);
+      sub.value = 'Layered hedging weighted toward low-price months (Market-Timed) vs. equal 1/60 monthly layering (30-Day Arbitrary Buy). Both strategies buy 100,000 Dth at the forward price prevailing in each execution month — the only difference is timing. Edit the yellow cells (cumulative allocation %, forward price, adders) to model your own curve.';
+      sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
+      sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+      ws.getRow(2).height = 42;
+
+      const HEADER_ROW = 3;
+      const headers = [
+        'Month', 'Execution Date',
+        'Allocation % (30-Day Arbitrary)', 'Allocation % (Market-Timed)',
+        'Volume Arbitrary (Dth)', 'Volume Market-Timed (Dth)',
+        'Forward Price ($/Dth)', 'Adders & Noncommodity ($/Dth)',
+        'Arbitrary Buy Cost', 'Market-Timed Buy Cost', 'Saving vs Arbitrary',
+      ];
+      const hr = ws.getRow(HEADER_ROW);
+      headers.forEach((h, i) => {
+        const c = hr.getCell(i + 1);
+        c.value = h;
+        c.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+        c.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+        c.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
+      });
+      hr.height = 45;
+
+      // Plausible 60-month Henry Hub-like forward curve. Strong winter
+      // peaks (Dec-Feb) and summer lows (May-Jul), trending mildly upward
+      // year over year. Average across the 60 months lands at ~$3.75/Dth
+      // — the value the Market-Timed strategy uses as its "buy more when
+      // we're under, less when we're over" pivot.
+      const gasHedges = [
+        { date: '2026-01-14', price: 4.80 }, { date: '2026-02-11', price: 4.65 },
+        { date: '2026-03-18', price: 3.85 }, { date: '2026-04-22', price: 3.20 },
+        { date: '2026-05-13', price: 2.75 }, { date: '2026-06-10', price: 2.70 },
+        { date: '2026-07-15', price: 2.85 }, { date: '2026-08-19', price: 3.05 },
+        { date: '2026-09-16', price: 3.20 }, { date: '2026-10-14', price: 3.45 },
+        { date: '2026-11-11', price: 4.10 }, { date: '2026-12-09', price: 4.75 },
+        { date: '2027-01-13', price: 4.85 }, { date: '2027-02-10', price: 4.70 },
+        { date: '2027-03-17', price: 3.90 }, { date: '2027-04-14', price: 3.25 },
+        { date: '2027-05-12', price: 2.80 }, { date: '2027-06-09', price: 2.75 },
+        { date: '2027-07-14', price: 2.90 }, { date: '2027-08-11', price: 3.10 },
+        { date: '2027-09-15', price: 3.25 }, { date: '2027-10-13', price: 3.50 },
+        { date: '2027-11-10', price: 4.15 }, { date: '2027-12-08', price: 4.80 },
+        { date: '2028-01-12', price: 4.90 }, { date: '2028-02-09', price: 4.75 },
+        { date: '2028-03-15', price: 3.95 }, { date: '2028-04-12', price: 3.30 },
+        { date: '2028-05-10', price: 2.85 }, { date: '2028-06-14', price: 2.80 },
+        { date: '2028-07-12', price: 2.95 }, { date: '2028-08-09', price: 3.15 },
+        { date: '2028-09-13', price: 3.30 }, { date: '2028-10-11', price: 3.55 },
+        { date: '2028-11-08', price: 4.20 }, { date: '2028-12-13', price: 4.85 },
+        { date: '2029-01-10', price: 4.95 }, { date: '2029-02-14', price: 4.80 },
+        { date: '2029-03-14', price: 4.00 }, { date: '2029-04-11', price: 3.35 },
+        { date: '2029-05-09', price: 2.90 }, { date: '2029-06-13', price: 2.85 },
+        { date: '2029-07-11', price: 3.00 }, { date: '2029-08-08', price: 3.20 },
+        { date: '2029-09-12', price: 3.35 }, { date: '2029-10-10', price: 3.60 },
+        { date: '2029-11-14', price: 4.25 }, { date: '2029-12-12', price: 4.90 },
+        { date: '2030-01-09', price: 5.00 }, { date: '2030-02-13', price: 4.85 },
+        { date: '2030-03-13', price: 4.05 }, { date: '2030-04-10', price: 3.40 },
+        { date: '2030-05-08', price: 2.95 }, { date: '2030-06-12', price: 2.90 },
+        { date: '2030-07-10', price: 3.05 }, { date: '2030-08-14', price: 3.25 },
+        { date: '2030-09-11', price: 3.40 }, { date: '2030-10-09', price: 3.65 },
+        { date: '2030-11-13', price: 4.30 }, { date: '2030-12-11', price: 4.95 },
+      ];
+      const TOTAL_VOLUME = 100000; // Dth
+      const ARB_STEP = 1 / gasHedges.length; // uniform 1/60 per month
+      const avgPrice = gasHedges.reduce((s, h) => s + h.price, 0) / gasHedges.length;
+      // Inverse-price weighting: months below the long-run average get
+      // a heavier allocation. Squaring sharpens the contrast so the
+      // story reads clearly in the chart — flat weights would visually
+      // collapse the two cumulative curves.
+      const mtWeights = gasHedges.map(h => Math.pow(avgPrice / h.price, 2));
+      const mtWeightSum = mtWeights.reduce((a, b) => a + b, 0);
+      const mtSteps = mtWeights.map(w => w / mtWeightSum);
+
+      // Precompute cumulative defaults so the closed-form row values
+      // can seed Excel's recompute on open.
+      const arbCum = gasHedges.map((_, i) => (i + 1) * ARB_STEP);
+      const mtCum = [];
+      let mtRun = 0;
+      for (const s of mtSteps) { mtRun += s; mtCum.push(mtRun); }
+
+      gasHedges.forEach((h, i) => {
+        const rowNum = HEADER_ROW + 1 + i;
+        const r = ws.getRow(rowNum);
+        r.getCell(1).value = i + 1;
+        r.getCell(2).value = new Date(h.date + 'T00:00:00Z');
+        // C/D — cumulative allocation %, user-editable.
+        r.getCell(3).value = arbCum[i];
+        r.getCell(4).value = mtCum[i];
+        // E/F — per-tranche volume = total × cumulative delta. First row
+        // is just total × C{first} since there's no prior row to subtract.
+        r.getCell(5).value = i === 0
+          ? { formula: `${TOTAL_VOLUME}*C${rowNum}`, result: TOTAL_VOLUME * arbCum[0] }
+          : { formula: `${TOTAL_VOLUME}*(C${rowNum}-C${rowNum - 1})`, result: TOTAL_VOLUME * ARB_STEP };
+        r.getCell(6).value = i === 0
+          ? { formula: `${TOTAL_VOLUME}*D${rowNum}`, result: TOTAL_VOLUME * mtCum[0] }
+          : { formula: `${TOTAL_VOLUME}*(D${rowNum}-D${rowNum - 1})`, result: TOTAL_VOLUME * mtSteps[i] };
+        r.getCell(7).value = h.price;
+        r.getCell(8).value = 0;
+        // Cost = volume × (forward price + adder). Same formula shape
+        // for both strategies; the difference is which volume column
+        // they reference.
+        r.getCell(9).value  = { formula: `E${rowNum}*(G${rowNum}+H${rowNum})`, result: TOTAL_VOLUME * ARB_STEP * h.price };
+        r.getCell(10).value = { formula: `F${rowNum}*(G${rowNum}+H${rowNum})`, result: TOTAL_VOLUME * mtSteps[i] * h.price };
+        r.getCell(11).value = { formula: `I${rowNum}-J${rowNum}`, result: (ARB_STEP - mtSteps[i]) * TOTAL_VOLUME * h.price };
+        // Helper columns for the savings chart's stacked-area shading.
+        // U is the invisible base (MIN of forward vs long-run average);
+        // V is the green band (positive when forward sits below average,
+        // i.e. a favorable buying window). W carries the long-run
+        // average as a horizontal reference line.
+        r.getCell(21).value = { formula: `MIN(G${rowNum},$W$${rowNum})`, result: Math.min(h.price, avgPrice) };
+        r.getCell(22).value = { formula: `MAX($W$${rowNum}-G${rowNum},0)`, result: Math.max(avgPrice - h.price, 0) };
+        r.getCell(23).value = { formula: `AVERAGE($G$${HEADER_ROW + 1}:$G$${HEADER_ROW + gasHedges.length})`, result: avgPrice };
+        r.getCell(21).numFmt = '"$"0.00';
+        r.getCell(22).numFmt = '"$"0.00';
+        r.getCell(23).numFmt = '"$"0.00';
+
+        for (let ci = 1; ci <= 11; ci++) {
+          const c = r.getCell(ci);
+          c.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+          c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          c.border = {
+            bottom: { style: 'hair', color: { argb: SE_BORDER } },
+            right:  { style: 'hair', color: { argb: SE_BORDER } },
+          };
+        }
+        r.getCell(2).numFmt = 'm/d/yyyy';
+        r.getCell(3).numFmt = '0.00%';
+        r.getCell(4).numFmt = '0.00%';
+        r.getCell(5).numFmt = '#,##0';
+        r.getCell(6).numFmt = '#,##0';
+        r.getCell(7).numFmt = '"$"0.00';
+        r.getCell(8).numFmt = '"$"0.00';
+        r.getCell(9).numFmt  = '"$"#,##0';
+        r.getCell(10).numFmt = '"$"#,##0';
+        r.getCell(11).numFmt = '"$"#,##0;[Red]("$"#,##0)';
+
+        // Yellow editable cells: both cumulative allocation columns
+        // plus forward price + adder.
+        for (const col of [3, 4, 7, 8]) {
+          const c = r.getCell(col);
+          c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: INPUT_FILL } };
+        }
+        r.height = 20;
+      });
+
+      const FIRST_DATA_ROW = HEADER_ROW + 1;
+      const TOTAL_ROW = FIRST_DATA_ROW + gasHedges.length;
+      const LAST_DATA_ROW = TOTAL_ROW - 1;
+      const dataRange = (col) => `${col}${FIRST_DATA_ROW}:${col}${LAST_DATA_ROW}`;
+      const sumArbCost = gasHedges.reduce((s, h) => s + h.price * ARB_STEP * TOTAL_VOLUME, 0);
+      const sumMtCost = gasHedges.reduce((s, h, i) => s + h.price * mtSteps[i] * TOTAL_VOLUME, 0);
+      const tr = ws.getRow(TOTAL_ROW);
+      tr.getCell(2).value = 'TOTAL';
+      tr.getCell(3).value = { formula: `C${LAST_DATA_ROW}`, result: 1.0 };
+      tr.getCell(4).value = { formula: `D${LAST_DATA_ROW}`, result: 1.0 };
+      tr.getCell(5).value = { formula: `SUM(${dataRange('E')})`, result: TOTAL_VOLUME };
+      tr.getCell(6).value = { formula: `SUM(${dataRange('F')})`, result: TOTAL_VOLUME };
+      // Volume-weighted average forward price + adder so the totals row
+      // reads as "$ per Dth across the portfolio" rather than a flat
+      // mean across the months.
+      tr.getCell(7).value = { formula: `SUMPRODUCT(${dataRange('G')},${dataRange('E')})/${`E${TOTAL_ROW}`}`, result: avgPrice };
+      tr.getCell(8).value = { formula: `SUMPRODUCT(${dataRange('H')},${dataRange('E')})/${`E${TOTAL_ROW}`}`, result: 0 };
+      tr.getCell(9).value  = { formula: `SUM(${dataRange('I')})`, result: sumArbCost };
+      tr.getCell(10).value = { formula: `SUM(${dataRange('J')})`, result: sumMtCost };
+      tr.getCell(11).value = { formula: `SUM(${dataRange('K')})`, result: sumArbCost - sumMtCost };
+      for (let ci = 1; ci <= 11; ci++) {
+        const c = tr.getCell(ci);
+        c.font = { name: 'Nunito Sans', size: 11, bold: true, color: { argb: SE_TEXT_DARK } };
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
+        c.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        c.border = {
+          top:    { style: 'thin', color: { argb: SE_GREEN_DARK } },
+          bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } },
+        };
+      }
+      tr.getCell(3).numFmt = '0.00%';
+      tr.getCell(4).numFmt = '0.00%';
+      tr.getCell(5).numFmt = '#,##0';
+      tr.getCell(6).numFmt = '#,##0';
+      tr.getCell(7).numFmt = '"$"0.00';
+      tr.getCell(8).numFmt = '"$"0.00';
+      tr.getCell(9).numFmt = '"$"#,##0';
+      tr.getCell(10).numFmt = '"$"#,##0';
+      tr.getCell(11).numFmt = '"$"#,##0;[Red]("$"#,##0)';
+      tr.height = 26;
+
+      // Forward-price color flips against the long-run average (col W).
+      // Green when the forward sits below the average → favorable
+      // buying window; red when it sits above → market timing pulls
+      // back. Comparison is against the per-row $W reference (a
+      // constant equal to AVERAGE(G:G)) so the cells recolor whenever
+      // the user edits the forward curve.
+      ws.addConditionalFormatting({
+        ref: `G${FIRST_DATA_ROW}:G${LAST_DATA_ROW}`,
+        rules: [
+          {
+            type: 'cellIs', operator: 'lessThan', formulae: [`$W$${FIRST_DATA_ROW}`], priority: 1,
+            style: {
+              fill: { type: 'pattern', pattern: 'solid', bgColor: { argb: 'FFDCFCE7' } },
+              font: { color: { argb: 'FF166534' }, bold: true },
+            },
+          },
+          {
+            type: 'cellIs', operator: 'greaterThanOrEqual', formulae: [`$W$${FIRST_DATA_ROW}`], priority: 2,
+            style: {
+              fill: { type: 'pattern', pattern: 'solid', bgColor: { argb: 'FFFEE2E2' } },
+              font: { color: { argb: 'FF991B1B' }, bold: true },
+            },
+          },
+        ],
+      });
+
+      ws.addConditionalFormatting({
+        ref: `K${FIRST_DATA_ROW}:K${LAST_DATA_ROW}`,
+        rules: [{
+          type: 'dataBar',
+          cfvo: [{ type: 'num', value: -5000 }, { type: 'num', value: 5000 }],
+          color: { argb: 'FF22C55E' },
+          showValue: true,
+          gradient: false,
+        }],
+      });
+
+      // Result block — year × {Arbitrary, Market-Timed, Delta}. Each
+      // value cell is a live SUM over the bucket's I / J / K slice so
+      // the grid updates whenever the user edits the tranche inputs.
+      const RESULT_HEADER_ROW = HEADER_ROW;
+      const resultHeaders = ['Year', 'Arbitrary', 'Market-Timed', 'Delta'];
+      const hr2 = ws.getRow(RESULT_HEADER_ROW);
+      resultHeaders.forEach((h, i) => {
+        const c = hr2.getCell(RESULT_FIRST_COL + i);
+        c.value = h;
+        c.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+        c.alignment = { vertical: 'middle', horizontal: i === 0 ? 'left' : 'right', wrapText: true, indent: 1 };
+        c.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
+      });
+
+      const MONTHS_PER_YEAR = 12;
+      const buckets = [];
+      for (let start = 0; start < gasHedges.length; start += MONTHS_PER_YEAR) {
+        const slice = gasHedges.slice(start, start + MONTHS_PER_YEAR);
+        let arb = 0;
+        let mt = 0;
+        for (let k = 0; k < slice.length; k++) {
+          arb += slice[k].price * ARB_STEP * TOTAL_VOLUME;
+          mt += slice[k].price * mtSteps[start + k] * TOTAL_VOLUME;
+        }
+        buckets.push({
+          label: `Year ${buckets.length + 1}`,
+          firstRow: FIRST_DATA_ROW + start,
+          lastRow: FIRST_DATA_ROW + start + slice.length - 1,
+          arb,
+          mt,
+        });
+      }
+
+      buckets.forEach((bucket, i) => {
+        const rowIdx = RESULT_HEADER_ROW + 1 + i;
+        const row = ws.getRow(rowIdx);
+        const rangeI = `$I$${bucket.firstRow}:$I$${bucket.lastRow}`;
+        const rangeJ = `$J$${bucket.firstRow}:$J$${bucket.lastRow}`;
+        const rangeK = `$K$${bucket.firstRow}:$K$${bucket.lastRow}`;
+        const yearCell = row.getCell(RESULT_FIRST_COL);
+        yearCell.value = bucket.label;
+        const arbCell = row.getCell(RESULT_FIRST_COL + 1);
+        arbCell.value = { formula: `SUM(${rangeI})`, result: bucket.arb };
+        const mtCell = row.getCell(RESULT_FIRST_COL + 2);
+        mtCell.value = { formula: `SUM(${rangeJ})`, result: bucket.mt };
+        const deltaCell = row.getCell(RESULT_FIRST_COL + 3);
+        deltaCell.value = { formula: `SUM(${rangeK})`, result: bucket.arb - bucket.mt };
+        for (let ci = 0; ci < 4; ci++) {
+          const c = row.getCell(RESULT_FIRST_COL + ci);
+          c.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+          c.alignment = { vertical: 'middle', horizontal: ci === 0 ? 'left' : 'right', indent: 1 };
+          c.border = { bottom: { style: 'hair', color: { argb: SE_BORDER } } };
+        }
+        arbCell.numFmt = '"$"#,##0';
+        mtCell.numFmt = '"$"#,##0';
+        deltaCell.numFmt = '"$"#,##0;[Red]("$"#,##0)';
+        row.height = 20;
+      });
+
+      const yearTotalRowIdx = RESULT_HEADER_ROW + 1 + buckets.length;
+      const yearTotalRow = ws.getRow(yearTotalRowIdx);
+      const totArbDefault = buckets.reduce((s, b) => s + b.arb, 0);
+      const totMtDefault = buckets.reduce((s, b) => s + b.mt, 0);
+      yearTotalRow.getCell(RESULT_FIRST_COL).value = 'TOTAL';
+      const totArbCell = yearTotalRow.getCell(RESULT_FIRST_COL + 1);
+      totArbCell.value = { formula: `SUM($I$${FIRST_DATA_ROW}:$I$${LAST_DATA_ROW})`, result: totArbDefault };
+      const totMtCell = yearTotalRow.getCell(RESULT_FIRST_COL + 2);
+      totMtCell.value = { formula: `SUM($J$${FIRST_DATA_ROW}:$J$${LAST_DATA_ROW})`, result: totMtDefault };
+      const totDeltaCell = yearTotalRow.getCell(RESULT_FIRST_COL + 3);
+      totDeltaCell.value = { formula: `K${TOTAL_ROW}`, result: totArbDefault - totMtDefault };
+      for (let ci = 0; ci < 4; ci++) {
+        const c = yearTotalRow.getCell(RESULT_FIRST_COL + ci);
+        c.font = { name: 'Nunito Sans', size: 11, bold: true, color: { argb: SE_GREEN_DARK } };
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+        c.alignment = { vertical: 'middle', horizontal: ci === 0 ? 'left' : 'right', indent: 1 };
+        c.border = {
+          top: { style: 'thin', color: { argb: SE_GREEN_DARK } },
+          bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } },
+        };
+      }
+      totArbCell.numFmt = '"$"#,##0';
+      totMtCell.numFmt = '"$"#,##0';
+      totDeltaCell.numFmt = '"$"#,##0;[Red]("$"#,##0)';
+      yearTotalRow.height = 26;
+
+      // Hide chart-helper columns U / V / W so they don't clutter the
+      // sheet but stay live for the chart (plotVisOnly=0 in the chart
+      // XML lets Excel keep plotting hidden ranges).
+      ws.getColumn(21).hidden = true;
+      ws.getColumn(22).hidden = true;
+      ws.getColumn(23).hidden = true;
+
+      // Y-axis bounds for the cumulative allocation chart — 10 pp above
+      // the highest and 10 pp below the lowest, clamped at 0. Both
+      // strategies converge at 100 % by the last row so max is always
+      // ≥1.0.
+      const allocValues = arbCum.concat(mtCum);
+      const minAlloc = Math.min(...allocValues);
+      const maxAlloc = Math.max(...allocValues);
+      const PAD = 0.10;
+      gasTimingChartRange = {
+        firstRow: FIRST_DATA_ROW,
+        lastRow: LAST_DATA_ROW,
+        allocYMin: Math.max(0, minAlloc - PAD),
+        allocYMax: maxAlloc + PAD,
+      };
+    }
+
     // ---- Floating vs Hedging Example sheet --------------------------
     // Interactive comparison of a fully-hedged annual contract vs a
     // pure float (index / spot) buy across 12 months. Inputs (yellow
@@ -7052,6 +7437,48 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             ],
             yMin: hedgePctYMin,
             yMax: hedgePctYMax,
+            yMajorUnit: 0.10,
+            numFmt: '0%',
+            anchor: { col: 12, colOff: 0, row: 28, rowOff: 0, cx: 6858000, cy: 3429000 },
+          },
+        ],
+      });
+    }
+    // Mirror the same two-chart layout onto the Gas Market Timing tab:
+    // savings shading (forward price vs long-run average) on top, and a
+    // cumulative allocation curve per strategy underneath. The savings
+    // chart's reference line is the AVERAGE() formula in hidden col W,
+    // so it tracks any edits to the forward-price column.
+    if (gasTimingChartRange) {
+      const GSHEET = 'Gas Market Timing';
+      const { firstRow, lastRow, allocYMin, allocYMax } = gasTimingChartRange;
+      buf = await injectLiveLineChart(buf, {
+        sheetName: GSHEET,
+        charts: [
+          {
+            title: 'Forward Curve vs Long-Run Average ($/Dth)',
+            catRef: `'${GSHEET}'!$B$${firstRow}:$B$${lastRow}`,
+            areaSeries: [
+              { name: '',        valRef: `'${GSHEET}'!$U$${firstRow}:$U$${lastRow}`, noFill: true },
+              { name: 'Favorable Buy Window', valRef: `'${GSHEET}'!$V$${firstRow}:$V$${lastRow}`, color: '22C55E', alpha: 40000 },
+            ],
+            lineSeries: [
+              { name: 'Forward Price',     color: 'F97316', marker: 'circle', markerSize: 4, valRef: `'${GSHEET}'!$G$${firstRow}:$G$${lastRow}` },
+              { name: 'Long-Run Average',  color: '1E40AF', dash: 'dash',                    valRef: `'${GSHEET}'!$W$${firstRow}:$W$${lastRow}` },
+            ],
+            hideLegendIndices: [0],
+            numFmt: '"$"0.00',
+            anchor: { col: 12, colOff: 0, row: 10, rowOff: 0, cx: 6858000, cy: 3429000 },
+          },
+          {
+            title: 'Cumulative Allocation % — Market Timing vs 30-Day Buy',
+            catRef: `'${GSHEET}'!$B$${firstRow}:$B$${lastRow}`,
+            lineSeries: [
+              { name: '30-Day Arbitrary Buy', color: '1E40AF', dash: 'dash',                    valRef: `'${GSHEET}'!$C$${firstRow}:$C$${lastRow}` },
+              { name: 'Market-Timed Hedge',   color: '22C55E', marker: 'circle', markerSize: 4, valRef: `'${GSHEET}'!$D$${firstRow}:$D$${lastRow}` },
+            ],
+            yMin: allocYMin,
+            yMax: allocYMax,
             yMajorUnit: 0.10,
             numFmt: '0%',
             anchor: { col: 12, colOff: 0, row: 28, rowOff: 0, cx: 6858000, cy: 3429000 },
