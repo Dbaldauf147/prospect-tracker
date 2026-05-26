@@ -169,6 +169,14 @@ const TRISTATE_COLUMNS = new Set(['No Further Action Today']);
 // opps so a fresh entry shows useful defaults instead of blanks.
 const DATE_COLUMNS = new Set(['Start Date', 'Last Client Heard From Us', 'Follow Up']);
 
+// Stages the Days-in-Stage tab reports on. Ordered to mirror the
+// pipeline progression so a row stays under one bucket as it moves
+// forward. Closed and pre-pipeline stages (Sold / Not Sold / Not
+// Started) are intentionally excluded — the tab tracks how long
+// active opps are stalling in each step.
+const TRACKED_STAGES = ['Lead', 'Qualifying', 'Quoting', 'Quoted', 'Contracting', 'Agreement Sent'];
+const TRACKED_STAGES_SET = new Set(TRACKED_STAGES);
+
 // Read-only columns whose value is derived from other cells.
 //   Call In    = calendar days from today to the Follow Up date
 //   Last Spoke = business days from Last Client Heard From Us to today
@@ -3680,11 +3688,15 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     // them in one step instead of leaving the user to chase the
     // computed column back to life via "+ add".
     const row = (dataRef.current?.records || []).find(r => r._id === id);
+    const stageChanged = !!row && field === 'Stage' && String(row[field] ?? '') !== String(value ?? '');
     if (row) {
       const snap = (f) => ({ field: f, hadField: f in row, prevValue: f in row ? row[f] : undefined });
       const fields = [snap(field)];
       if (field === 'Follow Up' && 'Call In' in row) fields.push(snap('Call In'));
       if (field === 'Last Client Heard From Us' && 'Last Spoke' in row) fields.push(snap('Last Spoke'));
+      // Days-in-Stage reads `_stageEnteredAt`; snapshot it alongside the
+      // Stage edit so an undo restores both in one step.
+      if (stageChanged) fields.push(snap('_stageEnteredAt'));
       pushUndoEntry({ id, fields });
     }
     setData(prev => {
@@ -3701,6 +3713,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           // blank forever even after the user picks a new Follow Up.
           if (field === 'Follow Up' && 'Call In' in next) delete next['Call In'];
           if (field === 'Last Client Heard From Us' && 'Last Spoke' in next) delete next['Last Spoke'];
+          // Stamp the stage-entry date whenever Stage flips to a new
+          // value so Days-in-Stage measures "time since the last move"
+          // rather than the row's age.
+          if (stageChanged) next._stageEnteredAt = todayISO();
           return next;
         }),
       };
@@ -3749,9 +3765,20 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     if (!idSet.size || !field) return;
     setData(prev => {
       const records = prev?.records || [];
+      const stamp = field === 'Stage' ? todayISO() : null;
       return {
         ...prev,
-        records: records.map(r => idSet.has(r._id) ? { ...r, [field]: value } : r),
+        records: records.map(r => {
+          if (!idSet.has(r._id)) return r;
+          const next = { ...r, [field]: value };
+          // Same stage-entry stamp the single-row path applies, so bulk
+          // moves through Days-in-Stage start the clock at the bulk
+          // edit instead of the rows' original Start Date.
+          if (stamp && String(r[field] ?? '') !== String(value ?? '')) {
+            next._stageEnteredAt = stamp;
+          }
+          return next;
+        }),
       };
     });
   }, []);
@@ -4324,6 +4351,78 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     setDateFrom(''); setDateTo(''); setStatusFilter('all'); setActivityFilter('all');
   };
 
+  // Rows for the Days-in-Stage tab. Reads `_stageEnteredAt` (stamped by
+  // updateOppField when Stage flips) and falls back to Start Date so
+  // pre-existing opps that have never had a stage change still
+  // contribute something instead of showing blank. Sorted descending by
+  // days so the longest-stalling opps lead the list.
+  const stageDaysRows = useMemo(() => {
+    if (activeTab !== 'stageDays') return [];
+    const rows = [];
+    for (const r of records) {
+      const stage = String(r['Stage'] || '').trim();
+      if (!TRACKED_STAGES_SET.has(stage)) continue;
+      const enteredISO = toISODate(r._stageEnteredAt) || toISODate(r['Start Date']);
+      const days = enteredISO ? -daysFromToday(enteredISO) : null;
+      rows.push({
+        id: r._id,
+        Account: r['Account'] || '',
+        Stage: stage,
+        days,
+        enteredAt: enteredISO || '',
+        startDate: toISODate(r['Start Date']) || '',
+        _hasExplicitEntry: !!toISODate(r._stageEnteredAt),
+      });
+    }
+    rows.sort((a, b) => {
+      // Null days (no Start Date either) settle at the bottom so the
+      // top of the list always shows real numbers.
+      if (a.days == null && b.days == null) return 0;
+      if (a.days == null) return 1;
+      if (b.days == null) return -1;
+      return b.days - a.days;
+    });
+    return rows;
+  }, [activeTab, records]);
+
+  const stageDaysColumns = useMemo(() => [
+    { key: 'Account', label: 'Account', defaultWidth: 260, sticky: true },
+    { key: 'Stage', label: 'Stage', defaultWidth: 140 },
+    {
+      key: 'days',
+      label: 'Days in Stage',
+      defaultWidth: 130,
+      getSortValue: (row) => row.days,
+      render: (row) => (
+        <div style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+          {row.days == null ? '—' : row.days}
+        </div>
+      ),
+    },
+    {
+      key: 'enteredAt',
+      label: 'Stage Entered',
+      defaultWidth: 140,
+      getSortValue: (row) => (row.enteredAt ? Date.parse(row.enteredAt) : 0),
+      render: (row) => (
+        <span style={{ color: row._hasExplicitEntry ? 'inherit' : 'var(--color-text-muted)' }}
+          title={row._hasExplicitEntry
+            ? 'Date this opp last moved into its current stage.'
+            : 'No stage change recorded — falling back to Start Date.'}
+        >
+          {row.enteredAt ? formatDateDisplay(row.enteredAt) : '—'}
+        </span>
+      ),
+    },
+    {
+      key: 'startDate',
+      label: 'Start Date',
+      defaultWidth: 130,
+      getSortValue: (row) => (row.startDate ? Date.parse(row.startDate) : 0),
+      render: (row) => row.startDate ? formatDateDisplay(row.startDate) : '—',
+    },
+  ], []);
+
   const servicesColumns = useMemo(() => [
     { key: 'scope', label: 'Service (Scope)', defaultWidth: 260 },
     {
@@ -4564,6 +4663,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           className={activeTab === 'services' ? styles.tabActive : styles.tab}
           onClick={() => setActiveTab('services')}
         >By Service</button>
+        <button
+          className={activeTab === 'stageDays' ? styles.tabActive : styles.tab}
+          onClick={() => setActiveTab('stageDays')}
+        >Days in Stage</button>
       </div>
 
       <div className={styles.filterRow}>
@@ -4800,6 +4903,26 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             alwaysVisible={['scope']}
             rowStyle={(row) => row._hidden ? { opacity: 0.5 } : undefined}
             emptyMessage="No services to display."
+            settings={settings}
+            updateSettings={updateSettings}
+          />
+        </>
+      )}
+
+      {activeTab === 'stageDays' && (
+        <>
+          <div className={styles.searchRow}>
+            <span className={styles.resultCount}>
+              {stageDaysRows.length} opp{stageDaysRows.length === 1 ? '' : 's'} across {TRACKED_STAGES.join(' → ')}
+            </span>
+          </div>
+          <DataTable
+            tableId="opps2-stage-days"
+            columns={stageDaysColumns}
+            rows={stageDaysRows}
+            alwaysVisible={['Account', 'Stage', 'days']}
+            defaultSort={{ key: 'days', direction: 'desc' }}
+            emptyMessage="No active opps in the tracked stages yet."
             settings={settings}
             updateSettings={updateSettings}
           />
