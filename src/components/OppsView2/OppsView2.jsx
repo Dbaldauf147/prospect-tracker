@@ -100,6 +100,13 @@ async function loadOpps2FromFirestore(userId) {
 async function saveOpps2ToFirestore(userId, data) {
   const stamped = stampUpdatedAt(data);
   const json = JSON.stringify(stamped);
+  // Refuse to push a payload the next device can't read back. A
+  // stringify result that fails its own parse would land in Firestore
+  // and then make every other laptop think the cloud is empty -- their
+  // load returns null, their IDB wins hydration, and the good cloud
+  // copy gets stomped.
+  try { JSON.parse(json); }
+  catch (err) { throw new Error(`opps2: refusing to save unparseable JSON (${err.message})`); }
   const ref = doc(db, OPPS2_FIRESTORE_COLLECTION, userId);
   const updatedAt = new Date(stamped._updatedAt).toISOString();
   const chunks = [];
@@ -110,7 +117,11 @@ async function saveOpps2ToFirestore(userId, data) {
   // shrinking dataset doesn't reassemble with stale tail data.
   const existing = await getDocs(collection(ref, 'chunks'));
   const batch = writeBatch(db);
-  batch.set(ref, { chunkCount: chunks.length, updatedAt, json: deleteField() });
+  // merge: true is required so deleteField() takes effect -- in a
+  // plain set() the Firestore SDK throws and the whole batch aborts,
+  // and trySaveOpps2ToFirestore's catch silently swallows the failure
+  // (which is how every chunked save was a no-op).
+  batch.set(ref, { chunkCount: chunks.length, updatedAt, json: deleteField() }, { merge: true });
   for (let i = 0; i < chunks.length; i++) {
     batch.set(doc(ref, 'chunks', String(i)), { json: chunks[i] });
   }
