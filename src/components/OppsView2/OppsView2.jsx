@@ -3795,6 +3795,13 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             const n = resolveLastSpoke(row);
             return n == null ? '' : String(n);
           }
+          if (h === 'Waiting On') {
+            const stacked = (Array.isArray(row._nextStepsWaiting) ? row._nextStepsWaiting : [])
+              .map(s => String(s || '').trim())
+              .filter(Boolean)
+              .join('\n');
+            return stacked || String(row[h] ?? '');
+          }
           return row[h] ?? '';
         },
         // Sort by the same displayed value — without this, DataTable
@@ -3913,6 +3920,33 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                 onOpenContact={openContactDetails}
               />
             );
+          }
+          if (h === 'Waiting On') {
+            // Mirror the popup's per-step Waiting On values into the
+            // table column. The Next Steps editor stores a parallel
+            // array (_nextStepsWaiting) aligned with each note line, so
+            // joining the non-empty entries with newlines stacks them
+            // visually in the cell (white-space: pre keeps each on its
+            // own row; auto-grow row heights handle vertical fit).
+            // When the popup hasn't been used yet, fall back to the
+            // legacy editable field so a manually-typed value still
+            // shows and stays editable.
+            const stacked = (Array.isArray(row._nextStepsWaiting) ? row._nextStepsWaiting : [])
+              .map(s => String(s || '').trim())
+              .filter(Boolean)
+              .join('\n');
+            if (stacked) {
+              return (
+                <span
+                  onDoubleClick={(e) => { e.stopPropagation(); e.preventDefault(); setNextStepsPopupId(row._id); }}
+                  title="Double-click to edit in Next Steps"
+                  style={{
+                    display: 'block', cursor: 'pointer', minHeight: '1em',
+                    padding: '1px 2px', whiteSpace: 'pre', overflow: 'hidden',
+                  }}
+                >{stacked}</span>
+              );
+            }
           }
           return (
             <EditableCell
