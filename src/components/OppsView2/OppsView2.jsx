@@ -564,6 +564,50 @@ function ComputedCell({ value }) {
   );
 }
 
+// Call In cell with a manual override. Clicking a populated cell
+// stores a blank sentinel under 'Call In' so the row reads empty even
+// though Follow Up still has a date; clicking the "+ add" affordance
+// on a cleared cell deletes that override so the live compute takes
+// over again. Falls through to the read-only ComputedCell when there's
+// nothing to toggle (no Follow Up, no stored override).
+function CallInCell({ row, onClear, onRestore }) {
+  const storedKey = 'Call In';
+  const hasStored = row && storedKey in row;
+  const rawStored = hasStored ? row[storedKey] : undefined;
+  const storedStr = rawStored == null ? '' : String(rawStored).trim();
+  const isCleared = hasStored && BLANK_SENTINELS.has(storedStr);
+  const live = daysFromToday(row?.['Follow Up']);
+  const n = resolveCallIn(row);
+
+  if (isCleared && live != null) {
+    return (
+      <span
+        onClick={(e) => { e.stopPropagation(); onRestore(); }}
+        title={`Restore Call In (${live})`}
+        style={{
+          display: 'block', cursor: 'pointer',
+          color: 'var(--color-text-muted)', fontStyle: 'italic',
+          textAlign: 'center', padding: '1px 2px',
+        }}
+      >+ add</span>
+    );
+  }
+
+  if (n != null) {
+    return (
+      <span
+        onClick={(e) => { e.stopPropagation(); onClear(); }}
+        title="Click to clear Call In"
+        style={{ display: 'block', cursor: 'pointer' }}
+      >
+        <ComputedCell value={n} />
+      </span>
+    );
+  }
+
+  return <ComputedCell value="" />;
+}
+
 // Renders a frozen Pricing → Options snapshot saved onto the opp.
 // Self-contained: doesn't read from Pricing's IndexedDB cache, so it
 // keeps working even after the Pricing tab has been cleared.
@@ -3560,6 +3604,26 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     });
   }, []);
 
+  // Drop a field entirely from a row. Used to clear a user-set Call In
+  // override so the live compute from Follow Up takes over again — the
+  // sentinel-checking path in resolveComputedDays only ignores the
+  // stored value when the key is missing, not just empty.
+  const deleteOppField = useCallback((id, field) => {
+    setData(prev => {
+      const records = prev?.records || [];
+      return {
+        ...prev,
+        records: records.map(r => {
+          if (r._id !== id) return r;
+          if (!(field in r)) return r;
+          const next = { ...r };
+          delete next[field];
+          return next;
+        }),
+      };
+    });
+  }, []);
+
   const deleteOpp = useCallback((id) => {
     setData(prev => {
       const records = prev?.records || [];
@@ -3717,12 +3781,17 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           : undefined,
         render: (row) => {
           if (h === 'Call In') {
-            // Days until the Follow Up date (negative = overdue). When
-            // the row was imported from the Opps sheet and the sheet's
-            // own Call In formula returned blank (or another "no data"
-            // sentinel), honor that — see resolveCallIn.
-            const n = resolveCallIn(row);
-            return <ComputedCell value={n == null ? '' : n} />;
+            // Click-to-clear / click-to-restore. The cell still
+            // computes live from Follow Up by default; the user can
+            // override to blank per opp (stores a sentinel) and undo
+            // that override with the "+ add" affordance.
+            return (
+              <CallInCell
+                row={row}
+                onClear={() => updateOppField(row._id, 'Call In', '-')}
+                onRestore={() => deleteOppField(row._id, 'Call In')}
+              />
+            );
           }
           if (TRISTATE_COLUMNS.has(h)) {
             return (
@@ -3978,7 +4047,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     return massEditOn
       ? [selectCol, oppNumCol, ...withInfo, actions]
       : [oppNumCol, ...withInfo, actions];
-  }, [headers, columnLinks, listRegistry, updateOppField, deleteOpp, companySuggestions, prospects, updateProspect, hubspotContacts, selectedIds, pricingOptionServices, optionLinks, massEditOn, oppNumberById, filteredRowIds]);
+  }, [headers, columnLinks, listRegistry, updateOppField, deleteOppField, deleteOpp, companySuggestions, prospects, updateProspect, hubspotContacts, selectedIds, pricingOptionServices, optionLinks, massEditOn, oppNumberById, filteredRowIds]);
 
   const stageOrder = ['Lead', 'Not Started', 'Qualifying', 'Quoting', 'Quoted', 'Verbal', 'Sold', 'Not Sold'];
   const CLOSED_STAGES = useMemo(() => new Set(['Sold', 'Not Sold']), []);
