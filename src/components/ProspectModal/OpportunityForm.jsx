@@ -714,7 +714,7 @@ function CallContextImportPicker({ candidates, onImport }) {
   );
 }
 
-export function OpportunityForm({ value, onChange, onLinkOpp, companyName, companyContacts = [], allHubspotContacts = [], contactNotes = {}, contactReportsTo = {}, contactNicknames = {}, prospects = [], onCreateContact, importableNotes = [], cdmName, competitorOptions = [], onMentionCompetitor, companyBackground = null }) {
+export function OpportunityForm({ value, onChange, onLinkOpp, companyName, companyContacts = [], allHubspotContacts = [], contactNotes = {}, contactReportsTo = {}, contactNicknames = {}, prospects = [], onCreateContact, onOpenContact, importableNotes = [], cdmName, competitorOptions = [], onMentionCompetitor, companyBackground = null }) {
   const template = DEFAULT_FORM_TEMPLATE;
 
   // Local mirror of the persisted value. All edits update localValue
@@ -3224,22 +3224,30 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                     }}
                   >
                     <span style={{ color: matched ? '#15803D' : '#B91C1C', fontWeight: 700, fontSize: '0.9rem', paddingTop: 2 }}>{matched ? '✓' : '✗'}</span>
-                    <div style={{ minWidth: 0 }}>
-                      {linkedinUrl ? (
+                    <div style={{ minWidth: 0, display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
+                      {matched && onOpenContact ? (
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); onOpenContact(a.match); }}
+                          style={{ background: 'transparent', border: 'none', padding: 0, fontFamily: 'inherit', fontWeight: 600, fontSize: '0.8rem', color: '#1D4ED8', cursor: 'pointer', textDecoration: 'underline', textAlign: 'left', ...wrap }}
+                          title="Open HubSpot contact details"
+                        >
+                          {displayAttendeeName(a, contactNicknames)}
+                        </button>
+                      ) : (
+                        <span style={{ fontWeight: 600, fontSize: '0.8rem', color: '#1E293B', ...wrap }}>
+                          {displayAttendeeName(a, contactNicknames)}
+                        </span>
+                      )}
+                      {linkedinUrl && (
                         <a
                           href={linkedinUrl}
                           target="_blank"
                           rel="noopener noreferrer"
                           onClick={(e) => e.stopPropagation()}
-                          style={{ fontWeight: 600, fontSize: '0.8rem', color: '#0A66C2', textDecoration: 'none', ...wrap }}
+                          style={{ fontSize: '0.7rem', color: '#0A66C2', textDecoration: 'none', fontWeight: 700 }}
                           title="Open LinkedIn profile"
-                        >
-                          {displayAttendeeName(a, contactNicknames)}
-                        </a>
-                      ) : (
-                        <span style={{ fontWeight: 600, fontSize: '0.8rem', color: '#1E293B', ...wrap }}>
-                          {displayAttendeeName(a, contactNicknames)}
-                        </span>
+                        >in↗</a>
                       )}
                     </div>
                     <div style={{ fontSize: '0.72rem', color: '#475569', paddingTop: 3, ...wrap }}>

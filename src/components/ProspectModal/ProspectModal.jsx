@@ -4400,6 +4400,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                             const next = cur ? `${cur}\n${candidate}` : candidate;
                             set('competitorsNotes', next);
                           }}
+                          onOpenContact={(contact) => { if (contact) setEditingContact(contact); }}
                           onCreateContact={async ({ email, firstname, lastname }) => {
                             try {
                               const properties = { email };
