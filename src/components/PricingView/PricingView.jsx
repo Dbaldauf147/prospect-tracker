@@ -123,7 +123,7 @@ function parseAltFeePaste(text) {
       fee: Number.isFinite(feeNum) ? feeNum : null,
       unit: cell(3),
       unitCount: Number.isFinite(ucNum) ? ucNum : cell(4),
-      startMonth: Number.isFinite(smNum) ? smNum : cell(5) || 1,
+      startMonth: cell(5) === '' ? null : (Number.isFinite(smNum) && smNum > 0 ? smNum : null),
       feeGmPct: Number.isFinite(gmNum) ? (gmNum > 1 ? gmNum / 100 : gmNum) : null,
       passThrough,
     });
@@ -131,7 +131,7 @@ function parseAltFeePaste(text) {
   return out;
 }
 
-function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onReplaceRows, onAppendRows, onClearRows, globalGmPct, marginFor, yearRevenue, autoFeeFor, siteCount, accountCount, altItemSuggestions = [], costByYear, passThroughByYear, passThroughRevenueByYear, numYears = 1 }) {
+function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onReplaceRows, onAppendRows, onClearRows, globalGmPct, marginFor, yearRevenue, autoFeeFor, autoStartMonthFor, siteCount, accountCount, altItemSuggestions = [], costByYear, passThroughByYear, passThroughRevenueByYear, numYears = 1 }) {
   const altItemListId = useId();
   const [dragFrom, setDragFrom] = useState(null); // row currently being dragged
   const [dragOverIdx, setDragOverIdx] = useState(null); // insertion point (0..rows.length)
@@ -200,13 +200,19 @@ function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onRepla
       const fee = hasManual ? manualFee : (typeof auto === 'number' ? auto : '');
       const feeCell = typeof fee === 'number' ? fee.toFixed(2) : '';
       const gmCell = typeof r.feeGmPct === 'number' ? (r.feeGmPct * 100).toFixed(1) + '%' : '';
+      const manualSm = Number(r.startMonth);
+      const hasManualSm = r.startMonth != null && r.startMonth !== '' && Number.isFinite(manualSm) && manualSm > 0;
+      const autoSm = !hasManualSm && autoStartMonthFor ? autoStartMonthFor(r) : null;
+      const smCell = hasManualSm
+        ? r.startMonth
+        : (typeof autoSm === 'number' && autoSm > 0 ? autoSm : '');
       lines.push([
         r.altItem || '',
         r.type || '',
         feeCell,
         r.unit || '',
         r.unitCount === '' || r.unitCount == null ? '' : r.unitCount,
-        r.startMonth === '' || r.startMonth == null ? '' : r.startMonth,
+        smCell,
         gmCell,
         r.passThrough ? 'yes' : '',
       ].join('\t'));
@@ -368,14 +374,26 @@ function AltFeeTable({ rows, onChange, onAddRow, onMoveRow, onRemoveRow, onRepla
                   onCommit={(v) => onChange(idx, 'unitCount', v)}
                 />
               </td>
-              <td className={styles.numCell}>
-                <CellTextInput
-                  key={`alt-${idx}-startMonth-${row.startMonth ?? ''}`}
-                  initial={row.startMonth}
-                  align="right"
-                  onCommit={(v) => onChange(idx, 'startMonth', v)}
-                />
-              </td>
+              {(() => {
+                const autoSm = autoStartMonthFor ? autoStartMonthFor(row) : null;
+                const manualSm = Number(row.startMonth);
+                const hasManualSm = row.startMonth != null && row.startMonth !== '' && Number.isFinite(manualSm) && manualSm > 0;
+                const placeholder = typeof autoSm === 'number' && autoSm > 0 ? String(autoSm) : '';
+                const title = typeof autoSm === 'number' && autoSm > 0
+                  ? `Auto-derived from linked CTS rows (month ${autoSm}). Type a value to override.`
+                  : 'Set the month this fee starts billing. Defaults to month 1 when no linked CTS row carries a start month.';
+                return (
+                  <td className={styles.numCell} title={title}>
+                    <CellTextInput
+                      key={`alt-${idx}-startMonth-${row.startMonth ?? ''}-${placeholder || 'n'}`}
+                      initial={hasManualSm ? row.startMonth : ''}
+                      placeholder={placeholder}
+                      align="right"
+                      onCommit={(v) => onChange(idx, 'startMonth', v)}
+                    />
+                  </td>
+                );
+              })()}
               {Array.from({ length: numYears }, (_, yi) => {
                 const rev = yearRevenue ? yearRevenue(row, yi + 1) : 0;
                 return (
@@ -897,9 +915,18 @@ function LinkedToPanel({
 
   const defaultEntries = (() => {
     const labelByKey = new Map();
+    // Earliest start month seen on any CTS row matching this
+    // (Line Item, Type) pair on the active option. Same value flows
+    // into the alt-fee row tagged with this default's Linked To.
+    const startMonthByKey = new Map();
     for (const item of flatItems) {
       const key = linkedToDefaultKey(item.description, effectiveType(item));
       if (!labelByKey.has(key)) labelByKey.set(key, { lineItem: item.description, type: effectiveType(item) });
+      const sm = Number(item.startMonth);
+      if (Number.isFinite(sm) && sm > 0) {
+        const prev = startMonthByKey.get(key);
+        if (prev == null || sm < prev) startMonthByKey.set(key, sm);
+      }
     }
     const rows = [];
     for (const [key, value] of Object.entries(linkedToDefaults)) {
@@ -919,6 +946,7 @@ function LinkedToPanel({
         autoUnit,
         overrideUnit,
         effectiveUnit,
+        startMonth: startMonthByKey.get(key) ?? null,
       });
     }
     rows.sort((a, b) => (a.lineItem || '').localeCompare(b.lineItem || ''));
@@ -997,6 +1025,7 @@ function LinkedToPanel({
                 <th>Type</th>
                 <th>Unit</th>
                 <th>Default Linked To</th>
+                <th>Fee Start Month</th>
                 <th style={{ width: 32 }} />
               </tr>
             </thead>
@@ -1037,6 +1066,11 @@ function LinkedToPanel({
                       )}
                     </td>
                     <td><code>{d.value}</code></td>
+                    <td title="Earliest start month from the CTS rows matching this Line Item + Type on the active option. Auto-fills the matching alt-fee row's Fee Start Month.">
+                      {d.startMonth != null
+                        ? d.startMonth
+                        : <span className={styles.linkedMuted}>—</span>}
+                    </td>
                     <td>
                       {removeLinkedToDefault && (
                         <button
@@ -1537,7 +1571,9 @@ export function PricingView({ settings } = {}) {
     const fee = hasManualFee ? manualFee : (autoFeePerUnitFor(row) ?? 0);
     const uc = Number(row.unitCount);
     if (!Number.isFinite(fee) || fee <= 0 || !Number.isFinite(uc) || uc <= 0) return 0;
-    const startMonth = Math.max(1, Math.round(Number(row.startMonth) || 1));
+    const manualSm = Number(row.startMonth);
+    const hasManualSm = row.startMonth != null && row.startMonth !== '' && Number.isFinite(manualSm) && manualSm > 0;
+    const startMonth = Math.max(1, Math.round(hasManualSm ? manualSm : (autoStartMonthFor(row) || 1)));
     const yearStart = (yearIndex - 1) * 12 + 1;
     const yearEnd = yearIndex * 12;
     const isRecurring = /recurring/i.test(row.type || '');
@@ -1606,6 +1642,42 @@ export function PricingView({ settings } = {}) {
     // calculation (year revenue, margin, totals). Without rounding,
     // a displayed $1.93 can multiply out from an underlying $1.9263.
     return Math.round((totalMarkup / uc) * 100) / 100;
+  }
+
+  // Earliest start month from CTS rows linked to this alt-fee row's
+  // tag. Falls back through type matching (Setup/One Time bucket vs
+  // Recurring incl. Rolled) so a Setup alt-fee row picks up the start
+  // month of the upfront CTS lines and a Recurring row picks up the
+  // monthly ones. Returns null if no linked rows carry a usable start
+  // month.
+  function autoStartMonthFor(row) {
+    if (!workbook) return null;
+    const target = String(row?.altItem || '').trim().toLowerCase();
+    if (!target) return null;
+    const opt = workbook.options.find(o => o.optionNumber === activeOption);
+    if (!opt) return null;
+    const rowType = String(row?.type || '').trim();
+    const isRecurringRow = /recurring/i.test(rowType);
+    const isSetupOrOneTimeRow = /^(setup|one\s*time)$/i.test(rowType);
+
+    let bestTyped = null;
+    let bestAny = null;
+    for (const sec of opt.sections) {
+      for (const item of sec.items) {
+        if (resolvedLinkedTo(item).trim().toLowerCase() !== target) continue;
+        const sm = Number(item.startMonth);
+        if (!Number.isFinite(sm) || sm <= 0) continue;
+        if (bestAny == null || sm < bestAny) bestAny = sm;
+        const t = effectiveType(item);
+        const itemIsRecurring = /recurring/i.test(t);
+        const itemIsRolled = /\brolled\b/i.test(t);
+        const itemIsSetupOrOneTime = /^(setup|one\s*time)$/i.test(t);
+        const typeMatches = (isRecurringRow && (itemIsRecurring || itemIsRolled))
+          || (isSetupOrOneTimeRow && itemIsSetupOrOneTime);
+        if (typeMatches && (bestTyped == null || sm < bestTyped)) bestTyped = sm;
+      }
+    }
+    return bestTyped ?? bestAny;
   }
 
   // For an Alt Fee tag, compute the total margin across ALL alt-fee
@@ -1877,9 +1949,11 @@ export function PricingView({ settings } = {}) {
           if (/recurring/i.test(rawType)) type = 'Recurring (monthly)';
           else if (/^setup/i.test(rawType)) type = 'Setup';
           else if (/^one\s*time/i.test(rawType)) type = 'One Time';
-          return { altItem: tag, type, fee: null, unit, unitCount, startMonth: 1 };
+          // Leave startMonth null so autoStartMonthFor derives it from
+          // the linked CTS rows; the user can type a value to override.
+          return { altItem: tag, type, fee: null, unit, unitCount, startMonth: null };
         });
-        while (rows.length < 9) rows.push({ altItem: '', type: '', fee: null, unit: '', unitCount: 1, startMonth: 1 });
+        while (rows.length < 9) rows.push({ altItem: '', type: '', fee: null, unit: '', unitCount: 1, startMonth: null });
         seeded[opt.optionNumber] = rows;
       }
       setAltFees(seeded);
@@ -2012,7 +2086,7 @@ export function PricingView({ settings } = {}) {
   // 9 empty starter rows that match the Excel template — used when
   // an option's alt-fee table hasn't been edited yet.
   const altFeeStarter = () => Array.from({ length: 9 }, () => ({
-    altItem: '', type: '', fee: null, unit: '', unitCount: 1, startMonth: 1,
+    altItem: '', type: '', fee: null, unit: '', unitCount: 1, startMonth: null,
   }));
 
   function updateAltFeeCell(optionNumber, idx, field, value) {
@@ -2027,7 +2101,7 @@ export function PricingView({ settings } = {}) {
   function addAltFeeRow(optionNumber) {
     setAltFees(prev => {
       const list = (prev[optionNumber] || altFeeStarter()).slice();
-      list.push({ altItem: '', type: '', fee: null, unit: '', unitCount: 1, startMonth: 1 });
+      list.push({ altItem: '', type: '', fee: null, unit: '', unitCount: 1, startMonth: null });
       return { ...prev, [optionNumber]: list };
     });
   }
@@ -2070,7 +2144,7 @@ export function PricingView({ settings } = {}) {
         const isEmpty = !r.altItem && !r.type && !r.unit &&
           (!r.unitCount || r.unitCount === 1 || r.unitCount === '1') &&
           (typeof r.fee !== 'number' || r.fee === 0) &&
-          (r.startMonth === '' || r.startMonth === 1);
+          (r.startMonth == null || r.startMonth === '' || r.startMonth === 1);
         if (!isEmpty) break;
         existing.pop();
       }
@@ -3370,6 +3444,7 @@ export function PricingView({ settings } = {}) {
                             marginFor={altFeeMarginFor}
                             yearRevenue={altFeeYearRevenue}
                             autoFeeFor={autoFeePerUnitFor}
+                            autoStartMonthFor={autoStartMonthFor}
                             siteCount={opt.siteCount}
                             accountCount={opt.accountCount}
                             altItemSuggestions={altItemSuggestions}
@@ -3539,13 +3614,17 @@ export function PricingView({ settings } = {}) {
                 const hasManualFee = r.fee != null && r.fee !== ''
                   && Number.isFinite(manualFee) && manualFee >= 0;
                 const resolvedFee = hasManualFee ? manualFee : (autoFeePerUnitFor(r) ?? 0);
+                const manualSm = Number(r.startMonth);
+                const hasManualSm = r.startMonth != null && r.startMonth !== ''
+                  && Number.isFinite(manualSm) && manualSm > 0;
+                const resolvedSm = hasManualSm ? manualSm : (autoStartMonthFor(r) || 1);
                 return {
                   feeSchedule: r.altItem || '',
                   type: r.type || '',
                   fee: resolvedFee,
                   unit: r.unit || '',
                   unitCount: r.unitCount,
-                  startMonth: r.startMonth,
+                  startMonth: resolvedSm,
                 };
               });
               const snapshot = buildPricingOptionSnapshot({
