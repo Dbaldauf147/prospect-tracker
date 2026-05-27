@@ -231,6 +231,13 @@ function makeBlankOpp(id, headers, accountOverride, sourceOverride) {
   for (const dateCol of DATE_COLUMNS) {
     if (cols.includes(dateCol)) row[dateCol] = today;
   }
+  // Seed Call In with an explicit 0 so a brand-new opp shows up
+  // in every Call-In-gated view (Days in Stage, Stage History) from
+  // the moment it's created. The first time the user picks a Follow
+  // Up date, updateOppField drops this stored value so the live
+  // compute (days from today to Follow Up) takes over — i.e. the
+  // 0 is a starting point, not a manual override that sticks around.
+  if (cols.includes('Call In')) row['Call In'] = 0;
   return row;
 }
 
