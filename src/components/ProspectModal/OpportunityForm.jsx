@@ -2037,6 +2037,39 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
   // selected.
   const [draftPicked, setDraftPicked] = useState(false);
 
+  // Per-column visibility for the customer (non-Schneider) attendee grid.
+  // Name is always shown; the rest can be toggled via the Columns ▾ menu
+  // above the grid. Persists in localStorage so the user's preference
+  // survives reloads.
+  const CUST_COL_DEFS = useMemo(() => ([
+    { key: 'nickname',    label: 'Nickname' },
+    { key: 'company',     label: 'Company' },
+    { key: 'title',       label: 'Title' },
+    { key: 'cityCountry', label: 'City, Country' },
+    { key: 'notes',       label: 'Notes' },
+  ]), []);
+  const [custColsVisible, setCustColsVisible] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('notes-customer-attendee-cols-visible'));
+      if (saved && typeof saved === 'object') return saved;
+    } catch { /* noop */ }
+    return { nickname: true, company: true, title: true, cityCountry: true, notes: true };
+  });
+  useEffect(() => {
+    try { localStorage.setItem('notes-customer-attendee-cols-visible', JSON.stringify(custColsVisible)); } catch { /* noop */ }
+  }, [custColsVisible]);
+  const [custColsMenuOpen, setCustColsMenuOpen] = useState(false);
+  useEffect(() => {
+    if (!custColsMenuOpen) return;
+    const h = e => {
+      const t = e.target;
+      if (t && t.closest && t.closest('[data-cust-cols-menu]')) return;
+      setCustColsMenuOpen(false);
+    };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [custColsMenuOpen]);
+
   function openAddAttendee(bucket) {
     setAddingTo(bucket);
     setDraftName('');
@@ -3188,7 +3221,17 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
               )}
             </div>
             {totalAttendees > 0 && (() => {
-              const GRID_COLS = 'auto minmax(0, 1fr) minmax(0, 0.9fr) minmax(0, 1fr) minmax(0, 0.8fr) minmax(0, 1.4fr) auto';
+              // Column track widths keyed off the toggleable column set,
+              // plus fixed check/remove slots on either end.
+              const CUST_TRACK = {
+                nickname:    'minmax(0, 0.8fr)',
+                company:     'minmax(0, 0.9fr)',
+                title:       'minmax(0, 1fr)',
+                cityCountry: 'minmax(0, 0.8fr)',
+                notes:       'minmax(0, 1.4fr)',
+              };
+              const visibleCustCols = CUST_COL_DEFS.filter(c => custColsVisible[c.key] !== false);
+              const GRID_COLS = ['auto', 'minmax(0, 1fr)', ...visibleCustCols.map(c => CUST_TRACK[c.key]), 'auto'].join(' ');
               const renderAttendee = (a, i) => {
                 const matched = !!a.match;
                 const rawSummary = a.rawParams
@@ -3198,6 +3241,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                 const title = a.match?.jobtitle || '';
                 const company = (a.match?.company || '').trim();
                 const contactId = a.match?.id || a.match?.vid;
+                const nickname = (contactId && contactNicknames[contactId] ? String(contactNicknames[contactId]).trim() : '');
                 const contactNote = (contactId && contactNotes[contactId])
                   || a.match?.notes
                   || a.match?.hs_content_membership_notes
@@ -3251,18 +3295,31 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                         >in↗</a>
                       )}
                     </div>
-                    <div style={{ fontSize: '0.72rem', color: '#475569', paddingTop: 3, ...wrap }}>
-                      {company || <span style={{ color: '#94A3B8' }}>—</span>}
-                    </div>
-                    <div style={{ fontSize: '0.72rem', color: '#475569', paddingTop: 3, ...wrap }}>
-                      {title || <span style={{ fontStyle: 'italic', color: '#94A3B8' }}>{matched ? '—' : 'not in HubSpot'}</span>}
-                    </div>
-                    <div style={{ fontSize: '0.72rem', color: '#475569', paddingTop: 3, ...wrap }}>
-                      {cityCountry || <span style={{ color: '#94A3B8' }}>—</span>}
-                    </div>
-                    <div style={{ fontSize: '0.72rem', color: '#334155', paddingTop: 3, ...wrap }}>
-                      {contactNote || <span style={{ color: '#94A3B8' }}>—</span>}
-                    </div>
+                    {custColsVisible.nickname !== false && (
+                      <div style={{ fontSize: '0.72rem', color: '#475569', paddingTop: 3, ...wrap }}>
+                        {nickname || <span style={{ color: '#94A3B8' }}>—</span>}
+                      </div>
+                    )}
+                    {custColsVisible.company !== false && (
+                      <div style={{ fontSize: '0.72rem', color: '#475569', paddingTop: 3, ...wrap }}>
+                        {company || <span style={{ color: '#94A3B8' }}>—</span>}
+                      </div>
+                    )}
+                    {custColsVisible.title !== false && (
+                      <div style={{ fontSize: '0.72rem', color: '#475569', paddingTop: 3, ...wrap }}>
+                        {title || <span style={{ fontStyle: 'italic', color: '#94A3B8' }}>{matched ? '—' : 'not in HubSpot'}</span>}
+                      </div>
+                    )}
+                    {custColsVisible.cityCountry !== false && (
+                      <div style={{ fontSize: '0.72rem', color: '#475569', paddingTop: 3, ...wrap }}>
+                        {cityCountry || <span style={{ color: '#94A3B8' }}>—</span>}
+                      </div>
+                    )}
+                    {custColsVisible.notes !== false && (
+                      <div style={{ fontSize: '0.72rem', color: '#334155', paddingTop: 3, ...wrap }}>
+                        {contactNote || <span style={{ color: '#94A3B8' }}>—</span>}
+                      </div>
+                    )}
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
                       {!matched && a.email && onCreateContact && (
                         <button
@@ -3302,10 +3359,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                 }}>
                   <span style={{ width: 12 }} />
                   <span>Name</span>
-                  <span>Company</span>
-                  <span>Title</span>
-                  <span>City, Country</span>
-                  <span>Notes</span>
+                  {visibleCustCols.map(c => <span key={c.key}>{c.label}</span>)}
                   <span />
                 </div>
               );
@@ -3781,8 +3835,49 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                       {addForm('se')}
                     </div>
                     <div>
-                      <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1E293B', marginBottom: '0.25rem' }}>
-                        {customerHeading} <span style={{ color: '#64748B', fontWeight: 500 }}>({customerAttendees.length})</span>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, marginBottom: '0.25rem', position: 'relative' }} data-cust-cols-menu>
+                        <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#1E293B' }}>
+                          {customerHeading} <span style={{ color: '#64748B', fontWeight: 500 }}>({customerAttendees.length})</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setCustColsMenuOpen(o => !o)}
+                          style={{ padding: '0.2rem 0.5rem', border: '1px solid #CBD5E1', borderRadius: 5, background: '#fff', fontSize: '0.65rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: '#475569' }}
+                          title="Show or hide columns on the customer attendee grid"
+                        >
+                          Columns ▾
+                        </button>
+                        {custColsMenuOpen && (
+                          <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 2, background: '#fff', border: '1px solid #CBD5E1', borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.08)', padding: '0.35rem', zIndex: 30, minWidth: 160 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 6, padding: '0 0.25rem 0.35rem', borderBottom: '1px solid #E2E8F0', marginBottom: '0.25rem' }}>
+                              <button
+                                type="button"
+                                onClick={() => setCustColsVisible(Object.fromEntries(CUST_COL_DEFS.map(c => [c.key, true])))}
+                                style={{ background: 'none', border: 'none', color: '#2563EB', fontSize: '0.65rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', padding: 0 }}
+                              >Show all</button>
+                              <button
+                                type="button"
+                                onClick={() => setCustColsVisible(Object.fromEntries(CUST_COL_DEFS.map(c => [c.key, false])))}
+                                style={{ background: 'none', border: 'none', color: '#64748B', fontSize: '0.65rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', padding: 0 }}
+                                title="Hide every toggleable column (Name stays visible)"
+                              >Hide all</button>
+                            </div>
+                            {CUST_COL_DEFS.map(({ key, label }) => {
+                              const checked = custColsVisible[key] !== false;
+                              return (
+                                <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '2px 4px', fontSize: '0.7rem', color: '#1E293B', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={e => setCustColsVisible(prev => ({ ...prev, [key]: e.target.checked }))}
+                                    style={{ accentColor: '#2563EB' }}
+                                  />
+                                  {label}
+                                </label>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                       {customerAttendees.length === 0
                         ? <div style={{ fontSize: '0.72rem', color: '#94A3B8', fontStyle: 'italic' }}>No {customerHeading} attendees</div>
