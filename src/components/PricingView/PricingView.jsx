@@ -857,6 +857,34 @@ function ServicesPicker({ selected, options, onChange }) {
   );
 }
 
+// Small numeric-ish input for the Linked To page's Fee Start Month
+// column. Local-draft pattern so re-renders don't fight typing. Empty
+// or non-positive commits drop the override; the placeholder shows the
+// auto-derived value from the CTS rows on the active option.
+function LinkedStartMonthInput({ initial, placeholder, onCommit }) {
+  const [draft, setDraft] = useState(initial === null || initial === undefined ? '' : String(initial));
+  return (
+    <input
+      type="text"
+      value={draft}
+      placeholder={placeholder || ''}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => onCommit(draft)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.currentTarget.blur();
+        if (e.key === 'Escape') { setDraft(initial === null || initial === undefined ? '' : String(initial)); e.currentTarget.blur(); }
+      }}
+      style={{
+        width: 60,
+        padding: '1px 4px',
+        border: '1px solid var(--color-border)', borderRadius: 3,
+        fontSize: '0.78rem', fontFamily: 'inherit', textAlign: 'right',
+        background: '#fff', color: 'var(--color-text)',
+      }}
+    />
+  );
+}
+
 // Read-only panel describing the existing Linked To logic and showing
 // the active relationships on the current workbook. Rendered on the
 // "Linked To" page subtab.
@@ -868,6 +896,8 @@ function LinkedToPanel({
   linkedToDefaults,
   linkedToUnitDefaults,
   setLinkedToUnitDefault,
+  linkedToStartMonthDefaults,
+  setLinkedToStartMonthDefault,
   altFees,
   resolvedLinkedTo,
   effectiveType,
@@ -937,6 +967,11 @@ function LinkedToPanel({
       const autoUnit = tagLower ? (unitByAltItemLower.get(tagLower) || '') : '';
       const overrideUnit = linkedToUnitDefaults?.[key] || '';
       const effectiveUnit = overrideUnit || autoUnit;
+      const autoStartMonth = startMonthByKey.get(key) ?? null;
+      const overrideStartMonthRaw = linkedToStartMonthDefaults?.[key];
+      const overrideStartMonth = Number.isFinite(Number(overrideStartMonthRaw)) && Number(overrideStartMonthRaw) > 0
+        ? Number(overrideStartMonthRaw)
+        : null;
       rows.push({
         key,
         value,
@@ -946,7 +981,9 @@ function LinkedToPanel({
         autoUnit,
         overrideUnit,
         effectiveUnit,
-        startMonth: startMonthByKey.get(key) ?? null,
+        autoStartMonth,
+        overrideStartMonth,
+        effectiveStartMonth: overrideStartMonth ?? autoStartMonth,
       });
     }
     rows.sort((a, b) => (a.lineItem || '').localeCompare(b.lineItem || ''));
@@ -1066,10 +1103,17 @@ function LinkedToPanel({
                       )}
                     </td>
                     <td><code>{d.value}</code></td>
-                    <td title="Earliest start month from the CTS rows matching this Line Item + Type on the active option. Auto-fills the matching alt-fee row's Fee Start Month.">
-                      {d.startMonth != null
-                        ? d.startMonth
-                        : <span className={styles.linkedMuted}>—</span>}
+                    <td title={d.overrideStartMonth != null
+                      ? `Override saved for this Line Item + Type. Auto would be ${d.autoStartMonth ?? '—'}. Clear to fall back to the CTS row's start month.`
+                      : (d.autoStartMonth != null
+                        ? `Auto-derived from the CTS rows matching this Line Item + Type on the active option (month ${d.autoStartMonth}). Type a value to override; the override flows into the matching alt-fee row's Fee Start Month.`
+                        : 'Type a value to set the Fee Start Month for any alt-fee row linked to this default.')}>
+                      <LinkedStartMonthInput
+                        key={`${d.key}-${d.overrideStartMonth ?? ''}-${d.autoStartMonth ?? ''}`}
+                        initial={d.overrideStartMonth ?? ''}
+                        placeholder={d.autoStartMonth != null ? String(d.autoStartMonth) : ''}
+                        onCommit={(v) => setLinkedToStartMonthDefault && setLinkedToStartMonthDefault(d.key, v)}
+                      />
                     </td>
                     <td>
                       {removeLinkedToDefault && (
@@ -1280,6 +1324,12 @@ const LINKED_TO_DEFAULTS_KEY = 'linkedToDefaults';
 // Default Unit. Persisted on its own DB key for the same reason
 // linkedToDefaults are — these mappings outlive workbook reloads.
 const LINKED_TO_UNIT_DEFAULTS_KEY = 'linkedToUnitDefaults';
+// Per (Line Item, Type) Fee Start Month override. Same key shape, kept
+// in its own DB key so it survives workbook reloads / parser bumps.
+// Overrides the CTS row's own startMonth when auto-deriving the alt-fee
+// row's Fee Start Month and when rendering the Linked To Saved defaults
+// table's Fee Start Month column.
+const LINKED_TO_START_MONTH_DEFAULTS_KEY = 'linkedToStartMonthDefaults';
 // Line Item → Services catalog mapping. Keyed by lowercase line item
 // name; value is an array of service strings from the Dropdowns-tab
 // Solutions / Service Catalog. Persisted on its own key so it survives
@@ -1344,6 +1394,7 @@ export function PricingView({ settings } = {}) {
   const [altFees, setAltFees] = useState({}); // { [optionNumber]: [{ altItem, type, fee, unit, unitCount, startMonth }] }
   const [linkedToDefaults, setLinkedToDefaults] = useState({}); // { [`${lineItem}::${type}`]: 'value' }
   const [linkedToUnitDefaults, setLinkedToUnitDefaults] = useState({}); // { [`${lineItem}::${type}`]: 'Per Site' | 'Per Account' | 'Fixed' | 'Per Meter' }
+  const [linkedToStartMonthDefaults, setLinkedToStartMonthDefaults] = useState({}); // { [`${lineItem}::${type}`]: number } — overrides the CTS row's startMonth for the auto-derive that feeds alt-fee rows
   const [lineItemServices, setLineItemServices] = useState({}); // { [lineItemKey]: string[] }
   const [termMonths, setTermMonths] = useState(36);
   const [annualEscalator, setAnnualEscalator] = useState(0.03);
@@ -1393,6 +1444,10 @@ export function PricingView({ settings } = {}) {
         if (!cancelled && savedUnitDefaults && typeof savedUnitDefaults === 'object') {
           setLinkedToUnitDefaults(savedUnitDefaults);
         }
+        const savedStartMonthDefaults = await dbGet(STORE, LINKED_TO_START_MONTH_DEFAULTS_KEY);
+        if (!cancelled && savedStartMonthDefaults && typeof savedStartMonthDefaults === 'object') {
+          setLinkedToStartMonthDefaults(savedStartMonthDefaults);
+        }
         const savedLineItemServices = await dbGet(STORE, LINE_ITEM_SERVICES_KEY);
         if (!cancelled && savedLineItemServices && typeof savedLineItemServices === 'object') {
           setLineItemServices(savedLineItemServices);
@@ -1406,6 +1461,7 @@ export function PricingView({ settings } = {}) {
           await dbDelete(STORE, KEY).catch(() => {});
           if (!savedDefaults && saved.linkedToDefaults) setLinkedToDefaults(saved.linkedToDefaults);
           if (!savedUnitDefaults && saved.linkedToUnitDefaults) setLinkedToUnitDefaults(saved.linkedToUnitDefaults);
+          if (!savedStartMonthDefaults && saved.linkedToStartMonthDefaults) setLinkedToStartMonthDefaults(saved.linkedToStartMonthDefaults);
           hydratedRef.current = true;
           return;
         }
@@ -1417,6 +1473,7 @@ export function PricingView({ settings } = {}) {
         if (saved.altFees) setAltFees(saved.altFees);
         if (!savedDefaults && saved.linkedToDefaults) setLinkedToDefaults(saved.linkedToDefaults);
         if (!savedUnitDefaults && saved.linkedToUnitDefaults) setLinkedToUnitDefaults(saved.linkedToUnitDefaults);
+        if (!savedStartMonthDefaults && saved.linkedToStartMonthDefaults) setLinkedToStartMonthDefaults(saved.linkedToStartMonthDefaults);
         if (!savedLineItemServices && saved.lineItemServices && typeof saved.lineItemServices === 'object') setLineItemServices(saved.lineItemServices);
         if (typeof saved.termMonths === 'number') setTermMonths(saved.termMonths);
         if (typeof saved.annualEscalator === 'number') setAnnualEscalator(saved.annualEscalator);
@@ -1444,9 +1501,9 @@ export function PricingView({ settings } = {}) {
   // Persist on changes (skip the first render until hydration finishes).
   useEffect(() => {
     if (!hydratedRef.current) return;
-    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, lineItemServices, termMonths, annualEscalator, costEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData };
+    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, lineItemServices, termMonths, annualEscalator, costEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData };
     dbPut(STORE, payload, KEY).catch(err => console.warn('Failed to save pricing cache:', err));
-  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, lineItemServices, termMonths, annualEscalator, costEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData]);
+  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, lineItemServices, termMonths, annualEscalator, costEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData]);
 
   // Mirror Linked-To defaults under their dedicated key so they
   // outlive the main cache (parser-version bumps, Clear button,
@@ -1461,6 +1518,11 @@ export function PricingView({ settings } = {}) {
     if (!hydratedRef.current) return;
     dbPut(STORE, linkedToUnitDefaults, LINKED_TO_UNIT_DEFAULTS_KEY).catch(err => console.warn('Failed to save linked-to unit defaults:', err));
   }, [linkedToUnitDefaults]);
+
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    dbPut(STORE, linkedToStartMonthDefaults, LINKED_TO_START_MONTH_DEFAULTS_KEY).catch(err => console.warn('Failed to save linked-to start-month defaults:', err));
+  }, [linkedToStartMonthDefaults]);
 
   // Persist Line Item → Services mapping on its own key and broadcast
   // a custom event so other views (Opps 2's Scope cell) can refresh
@@ -1665,7 +1727,7 @@ export function PricingView({ settings } = {}) {
     for (const sec of opt.sections) {
       for (const item of sec.items) {
         if (resolvedLinkedTo(item).trim().toLowerCase() !== target) continue;
-        const sm = Number(item.startMonth);
+        const sm = effectiveItemStartMonth(item);
         if (!Number.isFinite(sm) || sm <= 0) continue;
         if (bestAny == null || sm < bestAny) bestAny = sm;
         const t = effectiveType(item);
@@ -1783,6 +1845,19 @@ export function PricingView({ settings } = {}) {
     const ov = overrides[item.id]?.linkedTo;
     if (ov !== undefined) return ov;
     return linkedToDefaults[linkedToDefaultKey(item.description, effectiveType(item))] || '';
+  }
+
+  // Start month for a CTS item, honoring the per-(Line Item, Type)
+  // override saved on the Linked To page over the workbook value.
+  function effectiveItemStartMonth(item) {
+    const key = linkedToDefaultKey(item.description, effectiveType(item));
+    const ov = linkedToStartMonthDefaults[key];
+    if (ov != null) {
+      const n = Number(ov);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+    const sm = Number(item.startMonth);
+    return Number.isFinite(sm) && sm > 0 ? sm : null;
   }
 
   // Drag-to-resize for either the upper-table or summary-table cols.
@@ -2219,6 +2294,29 @@ export function PricingView({ settings } = {}) {
       if (!(key in prev)) return prev;
       const next = { ...prev };
       delete next[key];
+      return next;
+    });
+    setLinkedToStartMonthDefaults(prev => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  }
+
+  // Save / clear the Fee Start Month override for a (Line Item, Type)
+  // pair. A non-positive / non-numeric value drops the override so the
+  // CTS row's own startMonth (auto-derived) takes back over.
+  function setLinkedToStartMonthDefault(key, raw) {
+    setLinkedToStartMonthDefaults(prev => {
+      const next = { ...prev };
+      const n = Number(String(raw ?? '').replace(/[^\d.-]/g, ''));
+      if (!Number.isFinite(n) || n <= 0) {
+        if (key in next) delete next[key];
+        else return prev;
+      } else {
+        next[key] = Math.round(n);
+      }
       return next;
     });
   }
@@ -2707,6 +2805,8 @@ export function PricingView({ settings } = {}) {
           linkedToDefaults={linkedToDefaults}
           linkedToUnitDefaults={linkedToUnitDefaults}
           setLinkedToUnitDefault={setLinkedToUnitDefault}
+          linkedToStartMonthDefaults={linkedToStartMonthDefaults}
+          setLinkedToStartMonthDefault={setLinkedToStartMonthDefault}
           altFees={altFees}
           resolvedLinkedTo={resolvedLinkedTo}
           effectiveType={effectiveType}
