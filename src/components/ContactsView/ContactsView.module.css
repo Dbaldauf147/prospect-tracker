@@ -47,6 +47,40 @@
   border-bottom-color: var(--color-accent);
 }
 
+.refreshBlock {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0 0.5rem 0.4rem;
+}
+
+.refreshBtn {
+  padding: 0.35rem 0.75rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: #1E40AF;
+  background: #EFF6FF;
+  border: 1px solid #BFDBFE;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.refreshBtn:hover:not(:disabled) {
+  background: #DBEAFE;
+}
+
+.refreshBtn:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.refreshError {
+  font-size: 0.72rem;
+  color: #B91C1C;
+  font-weight: 600;
+}
+
 .content {
   flex: 1;
   min-height: 0;

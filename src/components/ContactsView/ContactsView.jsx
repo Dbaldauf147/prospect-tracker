@@ -10,6 +10,7 @@ import { DedupeView } from '../DedupeView/DedupeView';
 import { ZoomInfoView } from '../ZoomInfoView/ZoomInfoView';
 import { AllContactsView } from '../AllContactsView/AllContactsView';
 import { KeyProspectsView } from '../KeyProspectsView/KeyProspectsView';
+import { setHubspotCache } from '../../utils/hubspotContactsCache';
 
 const SUBTABS = [
   { key: 'hubspot',    label: 'HubSpot Contacts' },
@@ -46,10 +47,44 @@ export function ContactsView({
   targetAccountsData,
 }) {
   const [subtab, setSubtab] = useState(readSavedSubtab);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState('');
 
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, subtab); } catch {}
   }, [subtab]);
+
+  // Re-pull HubSpot contacts on demand. Same endpoint + slim shape the
+  // My Accounts view uses for its background refresh, so the cache the
+  // contact-page subtabs read from gets replaced wholesale. setHubspotCache
+  // dispatches `hubspot-cache-updated`, which App.jsx and the other consumer
+  // views listen for and re-read from IndexedDB.
+  async function refreshContacts() {
+    if (refreshing) return;
+    setRefreshing(true);
+    setRefreshError('');
+    try {
+      const res = await fetch('/api/hubspot?action=contacts');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      if (!json?.contacts) throw new Error('No contacts in response');
+      const slimContacts = json.contacts.map(c => ({
+        id: c.id, vid: c.vid, firstname: c.firstname, lastname: c.lastname,
+        email: c.email, phone: c.phone, jobtitle: c.jobtitle, company: c.company,
+        hs_linkedin_url: c.hs_linkedin_url, linkedin_url: c.linkedin_url, hs_linkedinid: c.hs_linkedinid,
+        city: c.city, state: c.state, country: c.country,
+        dans_tags: c.dans_tags, dan_s_tags: c.dan_s_tags, dans_tag: c.dans_tag,
+        decision_maker: c.decision_maker, role: c.role,
+        hs_sequences_is_enrolled: c.hs_sequences_is_enrolled,
+        notes_last_contacted: c.notes_last_contacted,
+      }));
+      await setHubspotCache({ ...json, contacts: slimContacts, syncedAt: new Date().toISOString() });
+    } catch (err) {
+      setRefreshError(err?.message || 'Refresh failed');
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   return (
     <div className={styles.wrapper}>
@@ -64,6 +99,20 @@ export function ContactsView({
               {t.label}
             </button>
           ))}
+        </div>
+        <div className={styles.refreshBlock}>
+          {refreshError && (
+            <span className={styles.refreshError} title={refreshError}>Refresh failed</span>
+          )}
+          <button
+            type="button"
+            className={styles.refreshBtn}
+            onClick={refreshContacts}
+            disabled={refreshing}
+            title="Re-pull every HubSpot contact and overwrite the local cache that the Contacts page subtabs read from."
+          >
+            {refreshing ? 'Refreshing…' : 'Refresh contacts'}
+          </button>
         </div>
       </div>
       <div className={styles.content}>
