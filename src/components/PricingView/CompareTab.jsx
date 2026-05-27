@@ -129,16 +129,33 @@ function CellInput({ value, onCommit, align, placeholder }) {
 }
 
 function CostTable({ title, rows, otherRows, otherLabel, onChange, onAddRow, onRemoveRow, onReplaceRows, onClear, tone, importOptions, onImportOption }) {
-  // Lookup map from the other side's category -> aggregate value, so
-  // each row can render its Compare cell as either a delta vs the
-  // matching row or a "missing" marker. Sums multiple rows under the
-  // same category (mirrors how the per-category roll-up below works).
-  const otherByCategory = new Map();
+  // Lookup map keyed by category + type so each row compares against
+  // the matching row(s) of the same type on the other side. Keying by
+  // category alone collapses rows like "Commercial Client Manager"
+  // across Setup / Recurring / One Time, which makes every one of
+  // them look off by the sum of the others. Multiple rows that share
+  // the same (category, type) are still summed under the key — when
+  // both sides carry the same set, the sums cancel and the row shows
+  // "=" as expected.
+  const compareKey = (r) => `${normalizeCategory(r.category)}||${(r.type || '').trim().toLowerCase()}`;
+  const otherByKey = new Map();
   for (const r of (otherRows || [])) {
     const cat = normalizeCategory(r.category);
     if (!cat) continue;
+    const key = compareKey(r);
     const v = toNum(r.cts) || 0;
-    otherByCategory.set(cat, (otherByCategory.get(cat) || 0) + v);
+    otherByKey.set(key, (otherByKey.get(key) || 0) + v);
+  }
+  // Sum this side's rows the same way so a row's delta is computed
+  // against the per-key total on each side — not its own single
+  // value against the other side's sum.
+  const thisByKey = new Map();
+  for (const r of rows) {
+    const cat = normalizeCategory(r.category);
+    if (!cat) continue;
+    const key = compareKey(r);
+    const v = toNum(r.cts) || 0;
+    thisByKey.set(key, (thisByKey.get(key) || 0) + v);
   }
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState('');
@@ -290,13 +307,14 @@ function CostTable({ title, rows, otherRows, otherLabel, onChange, onAddRow, onR
             {rows.map((row, idx) => {
               const k = `${idx}-${row.feeBucket}-${row.category}-${row.type}-${row.cts}-${row.startMonth}`;
               const cat = normalizeCategory(row.category);
-              const thisCts = toNum(row.cts) || 0;
+              const rowKey = compareKey(row);
               let compareCell;
               if (!cat) {
                 compareCell = <span className={styles.compareMuted}>—</span>;
-              } else if (otherByCategory.has(cat)) {
-                const otherCts = otherByCategory.get(cat) || 0;
-                const delta = otherCts - thisCts;
+              } else if (otherByKey.has(rowKey)) {
+                const otherSum = otherByKey.get(rowKey) || 0;
+                const thisSum = thisByKey.get(rowKey) || 0;
+                const delta = otherSum - thisSum;
                 if (delta === 0) {
                   compareCell = <span className={styles.compareMuted}>=</span>;
                 } else {
@@ -308,7 +326,7 @@ function CostTable({ title, rows, otherRows, otherLabel, onChange, onAddRow, onR
                 }
               } else {
                 compareCell = (
-                  <span className={styles.compareMissing} title={`No row with category "${row.category}" found in ${otherLabel || 'the other table'}.`}>
+                  <span className={styles.compareMissing} title={`No ${row.type || 'matching'} row with category "${row.category}" found in ${otherLabel || 'the other table'}.`}>
                     Missing in {otherLabel || 'other'}
                   </span>
                 );
