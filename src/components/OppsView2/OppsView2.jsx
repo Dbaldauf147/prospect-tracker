@@ -1199,7 +1199,7 @@ function companyMatchKeys(name) {
   return keys;
 }
 
-function ContactCell({ value, onChange, account, prospects, updateProspect, hubspotContacts, onOpenContact }) {
+function ContactCell({ value, onChange, account, prospects, updateProspect, hubspotContacts, onOpenContact, onOpenCompany }) {
   // Single boolean for popover state — the popover handles both
   // viewing currently tagged contacts and adding new ones (from the
   // company roster or as a custom one-off tag), so the picker/view
@@ -1462,7 +1462,20 @@ function ContactCell({ value, onChange, account, prospects, updateProspect, hubs
                 Tagged Contacts ({selected.length})
               </div>
               <div style={{ fontSize: '0.78rem', color: 'var(--color-text)', marginTop: 1 }}>
-                {matched?.company || account || '—'}
+                {onOpenCompany && matched ? (
+                  <button
+                    type="button"
+                    onClick={() => { onOpenCompany(matched); setOpen(false); }}
+                    title={`Open ${matched.company || account}'s company page`}
+                    style={{
+                      padding: 0, border: 'none', background: 'transparent',
+                      fontFamily: 'inherit', fontSize: 'inherit', color: '#2563EB',
+                      fontWeight: 600, cursor: 'pointer',
+                      textDecoration: 'underline', textDecorationColor: '#93C5FD',
+                      textUnderlineOffset: '2px',
+                    }}
+                  >{matched.company || account}</button>
+                ) : (matched?.company || account || '—')}
               </div>
             </div>
             {!isEmpty && (
@@ -1859,6 +1872,7 @@ function OppInfoModal({
   pricingOptionServices,
   pricingOptionLinkName,
   onOpenContact,
+  onOpenCompany,
 }) {
   if (!opp) return null;
   // Show every header column the row has a value for, in the same order
@@ -1931,6 +1945,7 @@ function OppInfoModal({
           updateProspect={updateProspect}
           hubspotContacts={hubspotContacts}
           onOpenContact={onOpenContact}
+          onOpenCompany={onOpenCompany}
         />
       );
     }
@@ -2939,7 +2954,7 @@ function NextStepsEditor({ opp, onClose, updateOppField }) {
   );
 }
 
-export function OppsView2({ settings, updateSettings, prospects = [], updateProspect } = {}) {
+export function OppsView2({ settings, updateSettings, prospects = [], updateProspect, onSelectProspect } = {}) {
   const { user } = useAuth();
   // Seeded with DEFAULT_HEADERS so the table renders columns immediately;
   // the hydration effect below replaces this with the user's saved
@@ -3383,6 +3398,15 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     }
     setEditingContact(found);
   }, [hubspotContacts]);
+
+  // Open the prospect record for a tagged contact's company. Caller
+  // hands us the already-resolved prospect (ContactCell has it via
+  // the same companyMatchKeys lookup that drives the contact roster),
+  // so we just hand it to the App-level handler that owns the modal.
+  const openCompanyDetails = useCallback((prospect) => {
+    if (!prospect || !onSelectProspect) return;
+    onSelectProspect(prospect);
+  }, [onSelectProspect]);
 
   // ContactEditModal saves through these handlers so per-contact
   // notes / nicknames / etc. land in the same Firestore settings
@@ -4060,6 +4084,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                 updateProspect={updateProspect}
                 hubspotContacts={hubspotContacts}
                 onOpenContact={openContactDetails}
+                onOpenCompany={openCompanyDetails}
               />
             );
           }
@@ -4613,6 +4638,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             pricingOptionServices={pricingOptionServices}
             pricingOptionLinkName={optionLinks[String(opp._id)] || ''}
             onOpenContact={openContactDetails}
+            onOpenCompany={openCompanyDetails}
           />
         );
       })()}
