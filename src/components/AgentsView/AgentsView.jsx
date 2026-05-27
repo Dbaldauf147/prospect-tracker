@@ -868,7 +868,13 @@ export function AgentsView({ prospects = [], settings }) {
     const byBfoOpp = new Map(); // lower-case opp name → opp
     const allOpps = [];
     for (const r of records) {
-      const bfoOpp = String(r['BFO Link'] || '').trim();
+      const rawBfoOpp = String(r['BFO Link'] || '').trim();
+      // The Opps tab uses "-" / "#N/A" as placeholders for rows that
+      // don't yet have a BFO Opportunity Name. Treat those as empty
+      // here so the Sent emails table renders the inline picker
+      // (instead of showing the literal "-") and the user can map
+      // the row to a real opportunity.
+      const bfoOpp = (rawBfoOpp && rawBfoOpp !== '-' && rawBfoOpp !== '#N/A') ? rawBfoOpp : '';
       const account = String(r['Account'] || '').trim();
       // Skip opps that don't carry the data we need to surface.
       if (!bfoOpp && !account) continue;
