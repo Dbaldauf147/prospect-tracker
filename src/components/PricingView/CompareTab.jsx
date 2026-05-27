@@ -124,7 +124,7 @@ function normalizeCategory(s) {
   return String(s).trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
-function CellInput({ value, onCommit, align, placeholder }) {
+function CellInput({ value, onCommit, align, placeholder, title }) {
   const initial = value == null ? '' : String(value);
   const [draft, setDraft] = useState(initial);
   return (
@@ -134,6 +134,7 @@ function CellInput({ value, onCommit, align, placeholder }) {
       style={align === 'right' ? { textAlign: 'right' } : undefined}
       value={draft}
       placeholder={placeholder || ''}
+      title={title || (draft ? draft : undefined)}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={() => { if (draft !== initial) onCommit(draft); }}
       onKeyDown={(e) => {
@@ -391,9 +392,17 @@ function CostTable({ title, rows, otherRows, otherLabel, onChange, onAddRow, onR
                 );
               }
               // Candidates for the link picker: rows on the other side
-              // with at least a category or CTS filled in. Filter by
-              // the popover search text against category / fee bucket.
-              const candidates = (otherRows || []).filter(r => r && r.id && (r.category || r.feeBucket || r.cts));
+              // with at least a category or CTS filled in, that aren't
+              // already tied to a different row on this side (so each
+              // other-side row only appears in one picker at a time).
+              // The currently linked row for THIS picker stays in the
+              // list so the user can confirm / re-pick it.
+              const candidates = (otherRows || []).filter(r => {
+                if (!r || !r.id) return false;
+                if (!(r.category || r.feeBucket || r.cts)) return false;
+                if (linkedOtherIds && linkedOtherIds.has(r.id) && r.id !== linkedOtherId) return false;
+                return true;
+              });
               const q = linkFilter.trim().toLowerCase();
               const visibleCandidates = q
                 ? candidates.filter(r =>
@@ -524,25 +533,29 @@ export function CompareTab({ state, setState, workbook, resolvedLinkedTo }) {
   const safe = state && state.current && state.next
     ? state
     : {
-        currentLabel: 'Current',
-        nextLabel: 'New',
+        currentLabel: 'Old',
+        nextLabel: 'Current',
         current: Array.from({ length: 10 }, EMPTY_ROW),
         next: Array.from({ length: 10 }, EMPTY_ROW),
         links: {},
       };
 
   // Backfill stable row ids and a links bag once, so legacy saved
-  // state immediately supports manual row-to-row tying. Only writes
-  // back when something is actually missing.
+  // state immediately supports manual row-to-row tying. Also migrate
+  // the previous default labels ("Current" / "New") to the new
+  // defaults ("Old" / "Current") so existing users see the rename
+  // automatically — user-edited labels are left alone.
   useEffect(() => {
     if (!state || !state.current || !state.next) return;
-    const needs = state.current.some(r => !r?.id) || state.next.some(r => !r?.id) || !state.links;
-    if (!needs) return;
+    const needsIds = state.current.some(r => !r?.id) || state.next.some(r => !r?.id) || !state.links;
+    const needsLabelMigration = state.currentLabel === 'Current' && state.nextLabel === 'New';
+    if (!needsIds && !needsLabelMigration) return;
     setState({
       ...state,
       current: ensureRowIds(state.current),
       next: ensureRowIds(state.next),
       links: state.links && typeof state.links === 'object' ? state.links : {},
+      ...(needsLabelMigration ? { currentLabel: 'Old', nextLabel: 'Current' } : {}),
     });
   }, [state, setState]);
 
@@ -709,23 +722,23 @@ export function CompareTab({ state, setState, workbook, resolvedLinkedTo }) {
     <div className={styles.wrapper}>
       <div className={styles.intro}>
         Compare two cost-to-serve scenarios side by side. Paste blocks from Excel into the
-        Current and New tables — totals, per-category deltas, and a first-year roll-up update
-        as you edit. Each row's <strong>Compare</strong> column shows the delta vs the matching
-        row on the other side, or a missing-row marker when the category isn't there. Click the
-        🔗 icon to manually tie a row to a specific row on the other side when the categories
-        don't match exactly.
+        {' '}{safe.currentLabel} and {safe.nextLabel} tables — totals, per-category deltas, and
+        a first-year roll-up update as you edit. Each row's <strong>Compare</strong> column shows
+        the delta vs the matching row on the other side, or a missing-row marker when the
+        category isn't there. Click the 🔗 icon to manually tie a row to a specific row on the
+        other side when the categories don't match exactly.
       </div>
 
       <div className={styles.labelRow}>
         <label className={styles.miniField}>
-          Current label
+          Left label
           <input
             value={safe.currentLabel}
             onChange={(e) => update({ ...safe, currentLabel: e.target.value })}
           />
         </label>
         <label className={styles.miniField}>
-          New label
+          Right label
           <input
             value={safe.nextLabel}
             onChange={(e) => update({ ...safe, nextLabel: e.target.value })}
@@ -753,7 +766,7 @@ export function CompareTab({ state, setState, workbook, resolvedLinkedTo }) {
           </div>
         </div>
         <div className={styles.summaryCard}>
-          <div className={styles.summaryHeader}>Delta (New − Current)</div>
+          <div className={styles.summaryHeader}>Delta ({safe.nextLabel} − {safe.currentLabel})</div>
           <div className={styles.summaryGrid}>
             <div>Recurring</div>
             <div className={`${styles.numCell} ${deltaMonthly > 0 ? styles.deltaUp : deltaMonthly < 0 ? styles.deltaDown : ''}`}>
