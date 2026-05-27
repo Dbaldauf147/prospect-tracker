@@ -493,6 +493,52 @@ function businessDaysSince(rawISO) {
   return count;
 }
 
+// Convert "wall time in America/New_York" to a UTC ms timestamp. Used
+// by the No-Further-Action-Today auto-clear so the cutoff lands at
+// 2 PM Eastern regardless of the user's local timezone, and it stays
+// correct across DST flips. One pass is enough — we compute the
+// observed Eastern wall time of our initial UTC guess, take the
+// difference, and apply it.
+function easternWallToUtcMs(year, month, day, hour, minute) {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  });
+  const guess = Date.UTC(year, month - 1, day, hour, minute);
+  const parts = {};
+  for (const p of fmt.formatToParts(new Date(guess))) {
+    if (p.type !== 'literal') parts[p.type] = p.value;
+  }
+  const obs = Date.UTC(
+    Number(parts.year), Number(parts.month) - 1, Number(parts.day),
+    Number(parts.hour) % 24, Number(parts.minute),
+  );
+  return guess + (guess - obs);
+}
+
+// The most recent 2:00 PM America/New_York instant. If `nowMs` is
+// still before today's 2 PM Eastern, returns yesterday's 2 PM Eastern.
+function lastEastern2pmMs(nowMs = Date.now()) {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  });
+  const parts = {};
+  for (const p of fmt.formatToParts(new Date(nowMs))) {
+    if (p.type !== 'literal') parts[p.type] = p.value;
+  }
+  let y = Number(parts.year), m = Number(parts.month), d = Number(parts.day);
+  const hourEastern = Number(parts.hour) % 24;
+  const minuteEastern = Number(parts.minute);
+  if (hourEastern < 14 || (hourEastern === 14 && minuteEastern < 0)) {
+    const yest = new Date(Date.UTC(y, m - 1, d) - 86400000);
+    y = yest.getUTCFullYear(); m = yest.getUTCMonth() + 1; d = yest.getUTCDate();
+  }
+  return easternWallToUtcMs(y, m, d, 14, 0);
+}
+
 // Values the Opps Google sheet uses to mean "no data" in cells where
 // the cell otherwise carries a number — treat them as blank rather
 // than as a parseable string.
@@ -3879,6 +3925,11 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         fields.push(snap('_stageEnteredAt'));
         fields.push(snap('_stageHistory'));
       }
+      // No Further Action Today flips track when the row was marked
+      // (see `_nfatSetAt`) so the daily 2 PM Eastern auto-clear can
+      // tell yesterday's leftovers from today's marks. Snapshot it
+      // for undo too.
+      if (field === 'No Further Action Today') fields.push(snap('_nfatSetAt'));
       pushUndoEntry({ id, fields });
     }
     setData(prev => {
@@ -3912,6 +3963,14 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               { stage: prevStage, enteredAt: prevEntered || '', exitedAt: today, days },
             ];
             next._stageEnteredAt = today;
+          }
+          // Track when the No-Further-Action-Today X was placed so the
+          // 2 PM Eastern sweep can clear stale ones without nuking a
+          // mark the user just made.
+          if (field === 'No Further Action Today') {
+            const norm = String(value ?? '').trim().toLowerCase();
+            if (norm === 'no') next._nfatSetAt = new Date().toISOString();
+            else delete next._nfatSetAt;
           }
           return next;
         }),
@@ -3985,6 +4044,14 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             ];
             next._stageEnteredAt = stamp;
           }
+          // Track when No-Further-Action-Today gets flipped via the
+          // mass-edit bar, same as the single-row updater. The 2 PM
+          // Eastern sweep needs the stamp to decide what to clear.
+          if (field === 'No Further Action Today') {
+            const norm = String(value ?? '').trim().toLowerCase();
+            if (norm === 'no') next._nfatSetAt = new Date().toISOString();
+            else delete next._nfatSetAt;
+          }
           return next;
         }),
       };
@@ -4011,6 +4078,40 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       if (next.has(scope)) next.delete(scope); else next.add(scope);
       return next;
     });
+  }, []);
+
+  // Sweep stale "No Further Action Today" X's. The rule is: at or
+  // after 2:00 PM America/New_York, every row whose NFAT was marked
+  // BEFORE today's 2 PM Eastern gets cleared back to blank. We re-run
+  // the sweep on mount and every minute the tab is open, so a tab
+  // left open across 2 PM still self-clears without a reload.
+  useEffect(() => {
+    const sweep = () => {
+      const cutoff = lastEastern2pmMs();
+      setData(prev => {
+        const records = prev?.records || [];
+        let touched = false;
+        const nextRecords = records.map(r => {
+          const nfat = String(r?.['No Further Action Today'] || '').trim().toLowerCase();
+          if (nfat !== 'no') return r;
+          const setAt = Date.parse(r?._nfatSetAt || '');
+          // Missing / unparseable stamp counts as old — that covers any
+          // X rows imported from the Google sheet before this field
+          // existed, and also any X set before this code shipped.
+          if (Number.isFinite(setAt) && setAt >= cutoff) return r;
+          touched = true;
+          const copy = { ...r };
+          copy['No Further Action Today'] = '';
+          delete copy._nfatSetAt;
+          return copy;
+        });
+        if (!touched) return prev;
+        return { ...prev, records: nextRecords };
+      });
+    };
+    sweep();
+    const t = window.setInterval(sweep, 60_000);
+    return () => window.clearInterval(t);
   }, []);
 
   const headers = data?.headers || [];
@@ -5130,12 +5231,14 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                 // Tint closed opps so the table reads at a glance —
                 // light green for wins, light red for losses. Rows the
                 // user has marked "No Further Action Today" go light
-                // grey and win against the stage tint so today's
-                // do-nothing rows visibly recede. The style also lands
-                // on every <td> (including the sticky Account column)
-                // so the row is solidly coloured edge to edge.
+                // grey ("Yes") or light yellow ("No" / X) and win
+                // against the stage tint so today's do-nothing rows
+                // visibly recede. The style also lands on every <td>
+                // (including the sticky Account column) so the row
+                // is solidly coloured edge to edge.
                 const nfat = String(row?.['No Further Action Today'] || '').trim().toLowerCase();
                 if (nfat === 'yes') return { background: '#E5E7EB' };
+                if (nfat === 'no') return { background: '#FEF9C3' };
                 const stage = String(row?.Stage || '').trim();
                 if (stage === 'Sold') return { background: '#DCFCE7' };
                 if (stage === 'Not Sold') return { background: '#FEE2E2' };
