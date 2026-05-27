@@ -450,6 +450,21 @@ function daysFromToday(rawISO) {
   return Math.round((target - today) / 86400000);
 }
 
+// Whole calendar days between two ISO dates (b minus a). Negative when
+// b is before a; null when either side is blank/unparseable.
+function daysBetween(isoA, isoB) {
+  const a = toISODate(isoA);
+  const b = toISODate(isoB);
+  if (!a || !b) return null;
+  const [ay, am, ad] = a.split('-').map(n => parseInt(n, 10));
+  const [by, bm, bd] = b.split('-').map(n => parseInt(n, 10));
+  const da = new Date(ay, am - 1, ad);
+  const db = new Date(by, bm - 1, bd);
+  da.setHours(0, 0, 0, 0);
+  db.setHours(0, 0, 0, 0);
+  return Math.round((db - da) / 86400000);
+}
+
 // Whole business days (Mon–Fri) elapsed from the given ISO date to
 // today. 0 when the date is today or in the future; null when blank.
 function businessDaysSince(rawISO) {
@@ -3722,8 +3737,12 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       if (field === 'Follow Up' && 'Call In' in row) fields.push(snap('Call In'));
       if (field === 'Last Client Heard From Us' && 'Last Spoke' in row) fields.push(snap('Last Spoke'));
       // Days-in-Stage reads `_stageEnteredAt`; snapshot it alongside the
-      // Stage edit so an undo restores both in one step.
-      if (stageChanged) fields.push(snap('_stageEnteredAt'));
+      // Stage edit so an undo restores both in one step. The Stage
+      // History tab reads `_stageHistory`, so we snapshot that too.
+      if (stageChanged) {
+        fields.push(snap('_stageEnteredAt'));
+        fields.push(snap('_stageHistory'));
+      }
       pushUndoEntry({ id, fields });
     }
     setData(prev => {
@@ -3742,8 +3761,22 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           if (field === 'Last Client Heard From Us' && 'Last Spoke' in next) delete next['Last Spoke'];
           // Stamp the stage-entry date whenever Stage flips to a new
           // value so Days-in-Stage measures "time since the last move"
-          // rather than the row's age.
-          if (stageChanged) next._stageEnteredAt = todayISO();
+          // rather than the row's age. We also push a history entry
+          // for the stage being left so the Stage History tab can
+          // report per-stage days for each opp.
+          if (stageChanged) {
+            const today = todayISO();
+            const prevStage = String(r['Stage'] ?? '').trim();
+            const prevEntered = toISODate(r._stageEnteredAt) || toISODate(r['Start Date']);
+            const dur = prevEntered ? daysBetween(prevEntered, today) : null;
+            const days = dur == null ? null : Math.max(0, dur);
+            const prior = Array.isArray(r._stageHistory) ? r._stageHistory : [];
+            next._stageHistory = [
+              ...prior,
+              { stage: prevStage, enteredAt: prevEntered || '', exitedAt: today, days },
+            ];
+            next._stageEnteredAt = today;
+          }
           return next;
         }),
       };
@@ -3800,8 +3833,20 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           const next = { ...r, [field]: value };
           // Same stage-entry stamp the single-row path applies, so bulk
           // moves through Days-in-Stage start the clock at the bulk
-          // edit instead of the rows' original Start Date.
+          // edit instead of the rows' original Start Date. Also append
+          // a stage-history entry for the stage being left so the
+          // Stage History tab matches what the single-row updater
+          // produces.
           if (stamp && String(r[field] ?? '') !== String(value ?? '')) {
+            const prevStage = String(r[field] ?? '').trim();
+            const prevEntered = toISODate(r._stageEnteredAt) || toISODate(r['Start Date']);
+            const dur = prevEntered ? daysBetween(prevEntered, stamp) : null;
+            const days = dur == null ? null : Math.max(0, dur);
+            const prior = Array.isArray(r._stageHistory) ? r._stageHistory : [];
+            next._stageHistory = [
+              ...prior,
+              { stage: prevStage, enteredAt: prevEntered || '', exitedAt: stamp, days },
+            ];
             next._stageEnteredAt = stamp;
           }
           return next;
@@ -4430,6 +4475,82 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     return map;
   }, [stageDaysRows]);
 
+  // Rows for the Stage History tab. Same gate as the Days-in-Stage tab
+  // so the two tabs cover the same set of opps. For each row we sum
+  // historical days per TRACKED_STAGE from `_stageHistory` (an opp can
+  // revisit a stage, in which case its entries add up) and add the
+  // live days-so-far against the row's current stage. Rows that haven't
+  // moved stages since this feature shipped will only have a value in
+  // their current-stage column — that's expected (we can only report
+  // history we've actually captured).
+  const stageHistoryRows = useMemo(() => {
+    if (activeTab !== 'stageHistory') return [];
+    const rows = [];
+    for (const r of records) {
+      const stage = String(r['Stage'] || '').trim();
+      if (!TRACKED_STAGES_SET.has(stage)) continue;
+      if (resolveCallIn(r) == null) continue;
+      const daysByStage = Object.fromEntries(TRACKED_STAGES.map(s => [s, 0]));
+      const visited = new Set();
+      for (const h of (Array.isArray(r._stageHistory) ? r._stageHistory : [])) {
+        const s = String(h?.stage || '').trim();
+        if (!TRACKED_STAGES_SET.has(s)) continue;
+        const d = Number(h?.days);
+        if (!Number.isFinite(d) || d < 0) continue;
+        daysByStage[s] += d;
+        visited.add(s);
+      }
+      const enteredISO = toISODate(r._stageEnteredAt) || toISODate(r['Start Date']);
+      const currentDays = enteredISO ? Math.max(0, -daysFromToday(enteredISO)) : null;
+      if (currentDays != null) {
+        daysByStage[stage] += currentDays;
+        visited.add(stage);
+      }
+      const total = TRACKED_STAGES.reduce((s, k) => s + (daysByStage[k] || 0), 0);
+      const scope = String(r['Scope'] ?? '').trim();
+      rows.push({
+        id: r._id,
+        Account: r['Account'] || '',
+        Scope: scope && scope !== '-' && scope !== '#N/A' ? scope : '',
+        currentStage: stage,
+        daysByStage,
+        visitedStages: visited,
+        total,
+      });
+    }
+    rows.sort((a, b) => b.total - a.total || a.Account.localeCompare(b.Account));
+    return rows;
+  }, [activeTab, records]);
+
+  const stageHistoryColumns = useMemo(() => {
+    const num = (v) => (typeof v === 'number' && v > 0) ? v : '';
+    const numCell = (v) => (
+      <div style={{ textAlign: 'right' }}>{num(v)}</div>
+    );
+    const cols = [
+      { key: 'Account', label: 'Account', defaultWidth: 220 },
+      { key: 'Scope', label: 'Scope', defaultWidth: 180 },
+      { key: 'currentStage', label: 'Current Stage', defaultWidth: 140 },
+    ];
+    for (const stage of TRACKED_STAGES) {
+      cols.push({
+        key: `stage:${stage}`,
+        label: stage,
+        defaultWidth: 110,
+        getSortValue: (row) => row.daysByStage?.[stage] || 0,
+        render: (row) => numCell(row.daysByStage?.[stage]),
+      });
+    }
+    cols.push({
+      key: 'total',
+      label: 'Total days',
+      defaultWidth: 110,
+      getSortValue: (row) => row.total || 0,
+      render: (row) => <div style={{ textAlign: 'right', fontWeight: 600 }}>{num(row.total)}</div>,
+    });
+    return cols;
+  }, []);
+
   const servicesColumns = useMemo(() => [
     { key: 'scope', label: 'Service (Scope)', defaultWidth: 260 },
     {
@@ -4674,6 +4795,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           className={activeTab === 'stageDays' ? styles.tabActive : styles.tab}
           onClick={() => setActiveTab('stageDays')}
         >Days in Stage</button>
+        <button
+          className={activeTab === 'stageHistory' ? styles.tabActive : styles.tab}
+          onClick={() => setActiveTab('stageHistory')}
+        >Stage History</button>
       </div>
 
       <div className={styles.filterRow}>
@@ -5007,6 +5132,30 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               );
             })}
           </div>
+        </>
+      )}
+
+      {activeTab === 'stageHistory' && (
+        <>
+          <div className={styles.searchRow}>
+            <span className={styles.resultCount}>
+              {stageHistoryRows.length} opp{stageHistoryRows.length === 1 ? '' : 's'}
+            </span>
+            <span style={{ fontSize: '0.72rem', color: '#64748B' }}>
+              Per-stage days come from each Stage change you log. The current stage&rsquo;s
+              column also includes the time since the last move. Opps that haven&rsquo;t
+              moved stages yet will only have a value in their current-stage column.
+            </span>
+          </div>
+          <DataTable
+            tableId="opps2-stage-history"
+            columns={stageHistoryColumns}
+            rows={stageHistoryRows}
+            alwaysVisible={['Account']}
+            emptyMessage="No tracked opps to show."
+            settings={settings}
+            updateSettings={updateSettings}
+          />
         </>
       )}
     </div>
