@@ -2655,6 +2655,7 @@ export function PricingView({ settings } = {}) {
         <CompareTab
           state={compareTabData}
           setState={setCompareTabData}
+          workbook={workbook}
         />
       )}
 

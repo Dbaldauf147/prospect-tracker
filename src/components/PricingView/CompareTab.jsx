@@ -1,5 +1,31 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import styles from './CompareTab.module.css';
+
+// Map a workbook Option's CTS rows into the Compare tab's row shape.
+// Fee Bucket comes from the section title (Sourcing / Onboarding /
+// Ongoing-monthly / etc.), Category from the line item description.
+// Numeric fields are kept as numbers — the existing toNum() handles
+// them downstream.
+function optionToCompareRows(opt, withCombine) {
+  if (!opt || !Array.isArray(opt.sections)) return [];
+  const rows = [];
+  for (const sec of opt.sections) {
+    for (const item of (sec.items || [])) {
+      if (typeof item.cts !== 'number') continue;
+      const row = {
+        feeBucket: sec.title || '',
+        category: item.description || '',
+        type: item.type || '',
+        cts: item.cts,
+        startMonth: item.startMonth ?? '',
+        combine: '',
+      };
+      if (!withCombine) delete row.combine;
+      rows.push(row);
+    }
+  }
+  return rows;
+}
 
 const TYPE_OPTIONS = ['Setup', 'One Time', 'Recurring (monthly)'];
 
@@ -108,10 +134,23 @@ function CellInput({ value, onCommit, align, placeholder }) {
   );
 }
 
-function CostTable({ title, rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onClear, withCombine, tone }) {
+function CostTable({ title, rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onClear, withCombine, tone, importOptions, onImportOption }) {
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState('');
   const [flash, setFlash] = useState('');
+  const [importOpen, setImportOpen] = useState(false);
+  const importMenuRef = useRef(null);
+
+  useEffect(() => {
+    if (!importOpen) return;
+    const handler = (e) => {
+      if (importMenuRef.current && !importMenuRef.current.contains(e.target)) {
+        setImportOpen(false);
+      }
+    };
+    window.addEventListener('mousedown', handler);
+    return () => window.removeEventListener('mousedown', handler);
+  }, [importOpen]);
 
   function handleTablePaste(e) {
     const cd = e.clipboardData;
@@ -139,6 +178,41 @@ function CostTable({ title, rows, onChange, onAddRow, onRemoveRow, onReplaceRows
     <div className={styles.tablePanel} onPaste={handleTablePaste}>
       <div className={styles.tableHeader}>
         <div className={styles.tableTitle}>{title}</div>
+        {importOptions && (
+          <div className={styles.importWrap} ref={importMenuRef}>
+            <button
+              type="button"
+              className={styles.btn}
+              onClick={() => setImportOpen(o => !o)}
+              title="Replace these rows with the CTS items from a Pricing Option."
+            >
+              Import from Option ▾
+            </button>
+            {importOpen && (
+              <div className={styles.importMenu}>
+                {importOptions.length === 0 ? (
+                  <div className={styles.importMenuEmpty}>No options loaded. Upload a workbook on the Pricing subtab.</div>
+                ) : importOptions.map(opt => (
+                  <button
+                    key={opt.optionNumber}
+                    type="button"
+                    className={styles.importMenuItem}
+                    onClick={() => {
+                      const hasData = rows.some(r => r.feeBucket || r.category || r.type || r.cts || r.startMonth || r.combine);
+                      if (hasData && !window.confirm(`Replace the rows in "${title}" with the CTS items from "${opt.sheetName}"?`)) return;
+                      onImportOption(opt);
+                      setImportOpen(false);
+                      setFlash(`Imported from "${opt.sheetName}".`);
+                      window.setTimeout(() => setFlash(''), 2500);
+                    }}
+                  >
+                    {opt.sheetName}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         <button type="button" className={styles.btn} onClick={() => setPasteOpen(o => !o)}>
           {pasteOpen ? 'Close paste' : 'Paste from Excel'}
         </button>
@@ -275,7 +349,8 @@ function CostTable({ title, rows, onChange, onAddRow, onRemoveRow, onReplaceRows
   );
 }
 
-export function CompareTab({ state, setState }) {
+export function CompareTab({ state, setState, workbook }) {
+  const importOptions = Array.isArray(workbook?.options) ? workbook.options : [];
   const safe = state && state.current && state.next
     ? state
     : {
@@ -299,6 +374,14 @@ export function CompareTab({ state, setState }) {
     update({ ...safe, [side]: rows.length ? rows : [EMPTY_ROW()] });
   };
   const replaceRows = (side) => (rows) => update({ ...safe, [side]: rows });
+  const importOption = (side) => (opt) => {
+    const withCombine = side === 'next';
+    const imported = optionToCompareRows(opt, withCombine);
+    const padded = imported.length < 10
+      ? imported.concat(Array.from({ length: 10 - imported.length }, EMPTY_ROW))
+      : imported;
+    update({ ...safe, [side]: padded });
+  };
   // Reset a side back to the empty 10-row template (mirrors the
   // initial state so totals + the per-category compare also reset).
   const clearSide = (side) => () => update({ ...safe, [side]: Array.from({ length: 10 }, EMPTY_ROW) });
@@ -430,6 +513,8 @@ export function CompareTab({ state, setState }) {
           onReplaceRows={replaceRows('current')}
           onClear={clearSide('current')}
           withCombine={false}
+          importOptions={importOptions}
+          onImportOption={importOption('current')}
         />
         <CostTable
           title={safe.nextLabel}
@@ -441,6 +526,8 @@ export function CompareTab({ state, setState }) {
           onReplaceRows={replaceRows('next')}
           onClear={clearSide('next')}
           withCombine
+          importOptions={importOptions}
+          onImportOption={importOption('next')}
         />
       </div>
 
