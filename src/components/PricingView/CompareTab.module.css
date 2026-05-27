@@ -418,3 +418,121 @@
   border-radius: 999px;
   font-size: 0.7rem;
 }
+
+.linkBtn {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #475569;
+  cursor: pointer;
+  font-size: 0.72rem;
+  line-height: 1;
+  padding: 0;
+  font-family: inherit;
+}
+
+.linkBtn:hover {
+  border-color: #cbd5e1;
+  background: #f1f5f9;
+}
+
+.linkMenu {
+  position: absolute;
+  top: calc(100% + 2px);
+  right: 0;
+  z-index: 30;
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+  padding: 0.4rem;
+  width: 280px;
+  max-width: 90vw;
+  text-align: left;
+}
+
+.linkMenuHeader {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0 0.2rem 0.3rem;
+}
+
+.linkMenuSearch {
+  width: 100%;
+  padding: 0.3rem 0.45rem;
+  font-size: 0.78rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  margin-bottom: 0.35rem;
+}
+
+.linkMenuClear {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.3rem 0.45rem;
+  margin-bottom: 0.35rem;
+  font-size: 0.72rem;
+  font-family: inherit;
+  color: #b91c1c;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.linkMenuClear:hover {
+  background: #fee2e2;
+}
+
+.linkMenuList {
+  max-height: 240px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.linkMenuItem {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.35rem 0.45rem;
+  font-size: 0.78rem;
+  font-family: inherit;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--color-text);
+}
+
+.linkMenuItem:hover {
+  background: #f1f5f9;
+}
+
+.linkMenuItemActive {
+  background: #dbeafe;
+}
+
+.linkMenuItemTitle {
+  font-weight: 600;
+}
+
+.linkMenuItemMeta {
+  font-size: 0.68rem;
+  color: var(--color-text-muted);
+  margin-top: 1px;
+}
+
+.linkMenuEmpty {
+  padding: 0.5rem 0.45rem;
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+  font-style: italic;
+}
