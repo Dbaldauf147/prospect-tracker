@@ -597,6 +597,13 @@ export function AgentsView({ prospects = [], settings }) {
   // are scoped to. Defaults to today; the picker in the header lets the
   // user review what was logged on any past calendar day.
   const [referenceDate, setReferenceDate] = useState(todayIso);
+  // Per-section reveal flags for the AI prompt editors. Hidden by
+  // default — the user copies prompts far more often than they edit
+  // them, so the textareas just take up screen space. Click "Edit
+  // prompt" to expand the textarea + reset button for that section.
+  const [revealedPrompts, setRevealedPrompts] = useState({});
+  const togglePrompt = (key) =>
+    setRevealedPrompts(prev => ({ ...prev, [key]: !prev[key] }));
 
   const ignoredEmailIds = useMemo(() => new Set(ignoredEmails), [ignoredEmails]);
   const ignoredMeetingIds = useMemo(() => new Set(ignoredMeetings), [ignoredMeetings]);
@@ -1657,21 +1664,30 @@ export function AgentsView({ prospects = [], settings }) {
           <section className={styles.section}>
             <h2 className={styles.sectionHeader}>AI Prompt (Activity)</h2>
             <p className={styles.subnote}>
-              Edit the prompt below — today&rsquo;s BFO addresses are appended automatically. Click Copy to grab the full prompt for your AI assistant.
+              Today&rsquo;s BFO addresses are appended automatically. Click Copy to grab the full prompt for your AI assistant, or Edit prompt to tweak the wording.
             </p>
-            <textarea
-              className={styles.aiPromptInput}
-              value={aiPrompt}
-              onChange={(e) => updateAiPrompt(e.target.value)}
-              rows={12}
-              spellCheck={false}
-            />
+            {revealedPrompts.activity && (
+              <textarea
+                className={styles.aiPromptInput}
+                value={aiPrompt}
+                onChange={(e) => updateAiPrompt(e.target.value)}
+                rows={12}
+                spellCheck={false}
+              />
+            )}
             <div className={styles.aiPromptControls}>
               <button type="button" className={styles.aiPromptBtn} onClick={onCopy}>Copy full prompt</button>
-              <button type="button" className={styles.aiPromptBtnGhost} onClick={resetAiPrompt}>Reset to default</button>
+              <button type="button" className={styles.aiPromptBtnGhost} onClick={() => togglePrompt('activity')}>
+                {revealedPrompts.activity ? 'Hide prompt' : 'Edit prompt'}
+              </button>
+              {revealedPrompts.activity && (
+                <button type="button" className={styles.aiPromptBtnGhost} onClick={resetAiPrompt}>Reset to default</button>
+              )}
               {copyFlash && <span className={styles.copyFlash}>{copyFlash}</span>}
             </div>
-            <pre className={styles.aiPromptPreview}>{fullPrompt}</pre>
+            {revealedPrompts.activity && (
+              <pre className={styles.aiPromptPreview}>{fullPrompt}</pre>
+            )}
           </section>
         );
       })()}
@@ -1710,16 +1726,23 @@ export function AgentsView({ prospects = [], settings }) {
             <p className={styles.subnote}>
               Lists Opps with Stage of that is Not Started / Not Sold / Sold, BFO Link of &ldquo;-&rdquo;, and a non-blank Call In cell on the Opps sheet.
             </p>
-            <textarea
-              className={styles.aiPromptInput}
-              value={newBfoOppPrompt}
-              onChange={(e) => updateNewBfoOppPrompt(e.target.value)}
-              rows={12}
-              spellCheck={false}
-            />
+            {revealedPrompts.newBfoOpp && (
+              <textarea
+                className={styles.aiPromptInput}
+                value={newBfoOppPrompt}
+                onChange={(e) => updateNewBfoOppPrompt(e.target.value)}
+                rows={12}
+                spellCheck={false}
+              />
+            )}
             <div className={styles.aiPromptControls}>
               <button type="button" className={styles.aiPromptBtn} onClick={onCopy}>Copy full prompt</button>
-              <button type="button" className={styles.aiPromptBtnGhost} onClick={resetNewBfoOppPrompt}>Reset to default</button>
+              <button type="button" className={styles.aiPromptBtnGhost} onClick={() => togglePrompt('newBfoOpp')}>
+                {revealedPrompts.newBfoOpp ? 'Hide prompt' : 'Edit prompt'}
+              </button>
+              {revealedPrompts.newBfoOpp && (
+                <button type="button" className={styles.aiPromptBtnGhost} onClick={resetNewBfoOppPrompt}>Reset to default</button>
+              )}
               {newBfoOppCopyFlash && <span className={styles.copyFlash}>{newBfoOppCopyFlash}</span>}
             </div>
             <div style={{ marginTop: '0.5rem', overflowX: 'auto' }}>
@@ -1805,16 +1828,23 @@ export function AgentsView({ prospects = [], settings }) {
             <p className={styles.subnote}>
               BFO opps that should slip 30 days: Stage ≤ 4 with under 100 days to close, Stage 5 under 60 days, Stage 6 under 30 days. Stages come from the BFO Activity tab — paste fresh rows there if the list looks stale.
             </p>
-            <textarea
-              className={styles.aiPromptInput}
-              value={closeDatesPrompt}
-              onChange={(e) => updateCloseDatesPrompt(e.target.value)}
-              rows={10}
-              spellCheck={false}
-            />
+            {revealedPrompts.closeDates && (
+              <textarea
+                className={styles.aiPromptInput}
+                value={closeDatesPrompt}
+                onChange={(e) => updateCloseDatesPrompt(e.target.value)}
+                rows={10}
+                spellCheck={false}
+              />
+            )}
             <div className={styles.aiPromptControls}>
               <button type="button" className={styles.aiPromptBtn} onClick={onCopy}>Copy full prompt</button>
-              <button type="button" className={styles.aiPromptBtnGhost} onClick={resetCloseDatesPrompt}>Reset to default</button>
+              <button type="button" className={styles.aiPromptBtnGhost} onClick={() => togglePrompt('closeDates')}>
+                {revealedPrompts.closeDates ? 'Hide prompt' : 'Edit prompt'}
+              </button>
+              {revealedPrompts.closeDates && (
+                <button type="button" className={styles.aiPromptBtnGhost} onClick={resetCloseDatesPrompt}>Reset to default</button>
+              )}
               {closeDatesCopyFlash && <span className={styles.copyFlash}>{closeDatesCopyFlash}</span>}
             </div>
             <div style={{ marginTop: '0.5rem', overflowX: 'auto' }}>
@@ -1878,16 +1908,23 @@ export function AgentsView({ prospects = [], settings }) {
             <p className={styles.subnote}>
               Opps whose BFO Amount disagrees with the Opps tab&rsquo;s Quoted Amount. Join key is BFO Opportunity Name. BFO amounts come from the BFO Activity tab — paste fresh rows there if the list looks stale.
             </p>
-            <textarea
-              className={styles.aiPromptInput}
-              value={amountUpdatesPrompt}
-              onChange={(e) => updateAmountUpdatesPrompt(e.target.value)}
-              rows={10}
-              spellCheck={false}
-            />
+            {revealedPrompts.amountUpdates && (
+              <textarea
+                className={styles.aiPromptInput}
+                value={amountUpdatesPrompt}
+                onChange={(e) => updateAmountUpdatesPrompt(e.target.value)}
+                rows={10}
+                spellCheck={false}
+              />
+            )}
             <div className={styles.aiPromptControls}>
               <button type="button" className={styles.aiPromptBtn} onClick={onCopy}>Copy full prompt</button>
-              <button type="button" className={styles.aiPromptBtnGhost} onClick={resetAmountUpdatesPrompt}>Reset to default</button>
+              <button type="button" className={styles.aiPromptBtnGhost} onClick={() => togglePrompt('amountUpdates')}>
+                {revealedPrompts.amountUpdates ? 'Hide prompt' : 'Edit prompt'}
+              </button>
+              {revealedPrompts.amountUpdates && (
+                <button type="button" className={styles.aiPromptBtnGhost} onClick={resetAmountUpdatesPrompt}>Reset to default</button>
+              )}
               {amountUpdatesCopyFlash && <span className={styles.copyFlash}>{amountUpdatesCopyFlash}</span>}
             </div>
             <div style={{ marginTop: '0.5rem', overflowX: 'auto' }}>
@@ -1954,16 +1991,23 @@ export function AgentsView({ prospects = [], settings }) {
             <p className={styles.subnote}>
               Opps whose BFO Sales Stage doesn&rsquo;t match what their Opps 2 Stage implies. Join key is BFO Opportunity Name. BFO stages come from the BFO Activity tab — paste fresh rows there if the list looks stale.
             </p>
-            <textarea
-              className={styles.aiPromptInput}
-              value={stageChangePrompt}
-              onChange={(e) => updateStageChangePrompt(e.target.value)}
-              rows={8}
-              spellCheck={false}
-            />
+            {revealedPrompts.stageChange && (
+              <textarea
+                className={styles.aiPromptInput}
+                value={stageChangePrompt}
+                onChange={(e) => updateStageChangePrompt(e.target.value)}
+                rows={8}
+                spellCheck={false}
+              />
+            )}
             <div className={styles.aiPromptControls}>
               <button type="button" className={styles.aiPromptBtn} onClick={onCopy}>Copy full prompt</button>
-              <button type="button" className={styles.aiPromptBtnGhost} onClick={resetStageChangePrompt}>Reset to default</button>
+              <button type="button" className={styles.aiPromptBtnGhost} onClick={() => togglePrompt('stageChange')}>
+                {revealedPrompts.stageChange ? 'Hide prompt' : 'Edit prompt'}
+              </button>
+              {revealedPrompts.stageChange && (
+                <button type="button" className={styles.aiPromptBtnGhost} onClick={resetStageChangePrompt}>Reset to default</button>
+              )}
               {stageChangeCopyFlash && <span className={styles.copyFlash}>{stageChangeCopyFlash}</span>}
             </div>
             <div style={{ marginTop: '0.5rem', overflowX: 'auto' }}>
@@ -2038,16 +2082,23 @@ export function AgentsView({ prospects = [], settings }) {
             <p className={styles.subnote}>
               Not-Sold Opps 2 rows that still have a matching BFO Activity row. Status + Reason come from the Reason Not Sold → BFO mapping. Rows whose Reason Not Sold isn&rsquo;t in the mapping table are listed (highlighted) so you can update them on Opps 2 or extend the mapping.
             </p>
-            <textarea
-              className={styles.aiPromptInput}
-              value={closeNotSoldsPrompt}
-              onChange={(e) => updateCloseNotSoldsPrompt(e.target.value)}
-              rows={10}
-              spellCheck={false}
-            />
+            {revealedPrompts.closeNotSolds && (
+              <textarea
+                className={styles.aiPromptInput}
+                value={closeNotSoldsPrompt}
+                onChange={(e) => updateCloseNotSoldsPrompt(e.target.value)}
+                rows={10}
+                spellCheck={false}
+              />
+            )}
             <div className={styles.aiPromptControls}>
               <button type="button" className={styles.aiPromptBtn} onClick={onCopy}>Copy full prompt</button>
-              <button type="button" className={styles.aiPromptBtnGhost} onClick={resetCloseNotSoldsPrompt}>Reset to default</button>
+              <button type="button" className={styles.aiPromptBtnGhost} onClick={() => togglePrompt('closeNotSolds')}>
+                {revealedPrompts.closeNotSolds ? 'Hide prompt' : 'Edit prompt'}
+              </button>
+              {revealedPrompts.closeNotSolds && (
+                <button type="button" className={styles.aiPromptBtnGhost} onClick={resetCloseNotSoldsPrompt}>Reset to default</button>
+              )}
               {closeNotSoldsCopyFlash && <span className={styles.copyFlash}>{closeNotSoldsCopyFlash}</span>}
             </div>
             {closeNotSoldOpps.length > 0 && (
