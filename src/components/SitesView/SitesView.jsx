@@ -166,7 +166,7 @@ const REGULATED_PATTERNS = [
 const REGULATED_OVERRIDES = [
   /^austin energy\b/i,
   /^ladwp\b/i,
-  /\bdepartment of water( and|&) power\b/i,
+  /\b(department|dept\.?) of water\s*(and|&)\s*power\b/i,
   /^smud\b/i,
   /^sacramento municipal/i,
   /^seattle city light\b/i,
@@ -5364,17 +5364,23 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           ? (!!electricUtility && isRegulatedRateOpportunity(stateCode, electricUtility))
           : countryHasRegulatedRateOpportunity(rawCountry);
         const country = rawCountry;
-        // Per-commodity Regulated / Deregulated status. US/CA: pull
-        // from the NA deregulation map (state-level). Other countries:
-        // fall back to COUNTRY_DEREGULATION's electric / gas values.
-        // Stays blank when neither source has an entry so the column
-        // doesn't pretend to know.
+        // Per-commodity Regulated / Deregulated status. When we know
+        // the utility (US/CA), use the same per-utility classification
+        // the Utility Lookup page renders — so e.g. LADWP and Roseville
+        // Electric come through as Regulated even though California is
+        // a Direct Access state overall. When the utility isn't known
+        // (or for international sites), fall back to the state-level
+        // NA deregulation map / COUNTRY_DEREGULATION reference.
         const isUSSite = /^(united states|usa|us)$/i.test(rawCountry);
         const isCASite = /^(canada|ca)$/i.test(rawCountry);
         const naCat = (isUSSite || isCASite) ? naCategoryFor(stateCode, isUSSite, isCASite) : null;
         const countryDereg = (!isUSSite && !isCASite) ? COUNTRY_DEREGULATION[normalizeCountryName(rawCountry) || rawCountry] : null;
-        const electricMarket = naCat ? (naCat.ep || '') : (countryDereg?.electric || '');
-        const gasMarket      = naCat ? (naCat.ng || '') : (countryDereg?.gas || '');
+        const electricMarket = electricUtility
+          ? (classifyUtility(electricUtility) || '')
+          : (naCat ? (naCat.ep || '') : (countryDereg?.electric || ''));
+        const gasMarket = gasUtility
+          ? (classifyUtility(gasUtility) || '')
+          : (naCat ? (naCat.ng || '') : (countryDereg?.gas || ''));
         const kwh = typeof r.__kwh__ === 'number' ? Math.round(r.__kwh__) : null;
         // Mexico flag: Baja sites are off CFE's grid so they don't
         // get tagged at all. Other Mexican sites get either the
