@@ -1380,6 +1380,83 @@ export function AgentsView({ prospects = [], settings }) {
   const fetchedLabel = fmtFetchedAt(cache?.fetchedAt);
   const oppsLoaded = (oppsCache?.records?.length || 0) > 0;
 
+  // Single master prompt that bundles every AI Prompt section on the
+  // page so the user can paste one block into their assistant instead
+  // of copying each section one at a time. Each section keeps the
+  // same prompt + appended data block its individual Copy button
+  // would produce; sections are separated by a heading rule so the
+  // assistant can still tell them apart.
+  const masterPromptBundle = useMemo(() => {
+    const activityLines = ['BFO Address'];
+    {
+      const seen = new Set();
+      for (const e of todaysOutbound) {
+        if (!e.bfoUrl || seen.has(e.bfoUrl)) continue;
+        activityLines.push(`${e.bfoUrl}: Type ${e.nextStepsType}`);
+        seen.add(e.bfoUrl);
+      }
+      for (const o of calledOpps) {
+        if (!o.bfoUrl || seen.has(o.bfoUrl)) continue;
+        activityLines.push(`${o.bfoUrl}: Type called`);
+        seen.add(o.bfoUrl);
+      }
+    }
+    const activityBlock = activityLines.join('\n');
+
+    const newBfoLines = ['BFO Opportunities to Create', 'BFO Company Name | Project Name'];
+    for (const o of newBfoOpps) {
+      newBfoLines.push([o.bfoCompanyName, o.projectName].join(' | '));
+    }
+    const newBfoBlock = newBfoLines.join('\n');
+
+    const closeDatesLines = ['Opportunity Name\tNew Close Date'];
+    for (const o of closeDateOpps) closeDatesLines.push(`${o.name}\t${o.newClose}`);
+    const closeDatesBlock = closeDatesLines.join('\n');
+
+    const amountLines = ['BFO Address\tQuoted Amount'];
+    for (const o of amountUpdateOpps) amountLines.push(`${o.bfoUrl}\t${o.quotedAmountFmt}`);
+    const amountBlock = amountLines.join('\n');
+
+    const stageLines = ['BFO Link\tNew Stage'];
+    for (const o of stageChangeOpps) stageLines.push(`${o.bfoUrl}\t${o.expectedBfoStage}`);
+    const stageBlock = stageLines.join('\n');
+
+    const closeNotSoldLines = ['BFO Link\tStatus\tReason'];
+    for (const o of closeNotSoldOpps) {
+      if (o.unmapped) continue;
+      closeNotSoldLines.push(`${o.bfoUrl}\t${o.status}\t${o.reason}`);
+    }
+    const closeNotSoldBlock = closeNotSoldLines.join('\n');
+
+    const sections = [
+      { title: 'Activity', prompt: aiPrompt, block: activityBlock },
+      { title: 'New BFO Opp', prompt: newBfoOppPrompt, block: newBfoBlock },
+      { title: 'Close Dates', prompt: closeDatesPrompt, block: closeDatesBlock },
+      { title: 'Amount Updates', prompt: amountUpdatesPrompt, block: amountBlock },
+      { title: 'Stage Change', prompt: stageChangePrompt, block: stageBlock },
+      { title: 'Close Not Solds', prompt: closeNotSoldsPrompt, block: closeNotSoldBlock },
+    ];
+    return sections
+      .map(s => `===== ${s.title} =====\n${s.prompt}\n\n${s.block}`)
+      .join('\n\n');
+  }, [
+    aiPrompt, newBfoOppPrompt, closeDatesPrompt, amountUpdatesPrompt,
+    stageChangePrompt, closeNotSoldsPrompt,
+    todaysOutbound, calledOpps, newBfoOpps, closeDateOpps,
+    amountUpdateOpps, stageChangeOpps, closeNotSoldOpps,
+  ]);
+
+  const [copyAllFlash, setCopyAllFlash] = useState('');
+  const onCopyAll = async () => {
+    try {
+      await navigator.clipboard.writeText(masterPromptBundle);
+      setCopyAllFlash('Copied all!');
+    } catch {
+      setCopyAllFlash('Copy failed');
+    }
+    window.setTimeout(() => setCopyAllFlash(''), 1500);
+  };
+
   return (
     <div className={styles.wrap}>
       <div className={styles.header}>
@@ -1416,6 +1493,13 @@ export function AgentsView({ prospects = [], settings }) {
                 : 'Refreshing…')
             : 'Refresh Activity & Opps'}
         </button>
+        <button
+          type="button"
+          className={styles.refreshActivityBtn}
+          onClick={onCopyAll}
+          title="Copy every AI Prompt section on this page into one master prompt, ready to paste into an assistant."
+        >Copy all prompts</button>
+        {copyAllFlash && <span className={styles.copyFlash}>{copyAllFlash}</span>}
       </div>
       {activityRefreshError && (
         <div className={styles.staleBanner}>
