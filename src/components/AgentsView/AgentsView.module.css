@@ -27,6 +27,46 @@
   font-weight: 600;
 }
 
+.dateField {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #475569;
+}
+
+.dateInput {
+  padding: 0.25rem 0.4rem;
+  font-size: 0.8rem;
+  font-family: inherit;
+  border: 1px solid #CBD5E1;
+  border-radius: 6px;
+  background: #FFFFFF;
+  color: #0F172A;
+}
+
+.dateInput:focus {
+  outline: 2px solid #93C5FD;
+  outline-offset: 1px;
+}
+
+.dateResetBtn {
+  padding: 0.2rem 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: #1E40AF;
+  background: #EFF6FF;
+  border: 1px solid #BFDBFE;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.dateResetBtn:hover {
+  background: #DBEAFE;
+}
+
 .refreshActivityBtn {
   margin-left: auto;
   padding: 0.35rem 0.75rem;
