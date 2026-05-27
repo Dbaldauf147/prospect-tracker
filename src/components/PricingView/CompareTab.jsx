@@ -314,7 +314,12 @@ function CostTable({ title, rows, otherRows, otherLabel, onChange, onAddRow, onR
               } else if (otherByKey.has(rowKey)) {
                 const otherSum = otherByKey.get(rowKey) || 0;
                 const thisSum = thisByKey.get(rowKey) || 0;
-                const delta = otherSum - thisSum;
+                // Sign convention: positive means THIS side is more
+                // expensive than the other. So the more expensive side
+                // reads "+$X" (red), the cheaper side reads "−$X"
+                // (green) — intuitively "this row costs more / less
+                // than its match on the other side".
+                const delta = thisSum - otherSum;
                 if (delta === 0) {
                   compareCell = <span className={styles.compareMuted}>=</span>;
                 } else {
