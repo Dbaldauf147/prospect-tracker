@@ -3290,14 +3290,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   const [infoOppId, setInfoOppId] = useState(null);
   // Double-clicking the Next Steps cell opens a read-only popup showing
   // the full value (useful when the column is narrow and the entry
-  // spans multiple Alt+Enter lines).
+  // spans multiple Alt+Enter lines). Closing is via the modal's own
+  // Close / × buttons — Esc is intentionally not wired so accidental
+  // presses don't blow away an in-flight edit.
   const [nextStepsPopupId, setNextStepsPopupId] = useState(null);
-  useEffect(() => {
-    if (nextStepsPopupId == null) return undefined;
-    const onKey = (e) => { if (e.key === 'Escape') setNextStepsPopupId(null); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [nextStepsPopupId]);
   // Mass-edit selection — set of row _id's the user has checked. The
   // mass-edit toolbar shows whenever this is non-empty.
   const [selectedIds, setSelectedIds] = useState(() => new Set());
