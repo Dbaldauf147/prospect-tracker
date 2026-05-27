@@ -8,7 +8,7 @@ import { loadEffectiveRaClients, raClientName, raClientCm } from '../../utils/ra
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES, COUNTRIES, US_STATES } from '../../data/enums';
 import { CITY_OPTIONS, matchCities, getStateForCity } from '../../data/cities';
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
-import { saveSourceFile as savePortfolioSourceFileToIDB, loadSourceFile as loadPortfolioSourceFileFromIDB, clearSourceFile as clearPortfolioSourceFileFromIDB } from '../../utils/portfolioSourceFileStore';
+import { saveSourceFile as savePortfolioSourceFileToIDB, loadSourceFile as loadPortfolioSourceFileFromIDB, clearSourceFile as clearPortfolioSourceFileFromIDB, renameSourceFile as renamePortfolioSourceFile } from '../../utils/portfolioSourceFileStore';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { getHubspotCache, updateHubspotCache, notifyCacheUpdated } from '../../utils/hubspotContactsCache';
@@ -3607,6 +3607,61 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     setFields(prev => ({ ...prev, [key]: value }));
   }
 
+  // When the user renames the company, the per-company data buckets
+  // (Notes / Deals / Research / portfolio source file) all key off a
+  // slug derived from the company name. Copy them under the new slug
+  // so nothing gets stranded. If another prospect still references
+  // the old name, the original entries stay in place to keep that
+  // prospect's view intact; otherwise the old slug is cleared. Skips
+  // when the slug doesn't actually change (case-only edits) or when
+  // the destination slug already has data (don't clobber).
+  function migrateCompanyData(oldName, newName) {
+    const slugify = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '-');
+    const oldSlug = slugify(oldName);
+    const newSlug = slugify(newName);
+    if (!oldSlug || !newSlug || oldSlug === newSlug) return;
+    const patches = {};
+    const oldOpps = (settings.companyOpportunities || {})[oldSlug];
+    const newOpps = (settings.companyOpportunities || {})[newSlug];
+    const hasOldOpps = oldOpps && (
+      (Array.isArray(oldOpps.opportunities) && oldOpps.opportunities.length > 0)
+      || (Array.isArray(oldOpps.buckets) && oldOpps.buckets.length > 0)
+    );
+    const hasNewOpps = newOpps && (
+      (Array.isArray(newOpps.opportunities) && newOpps.opportunities.length > 0)
+      || (Array.isArray(newOpps.buckets) && newOpps.buckets.length > 0)
+    );
+    if (hasOldOpps && !hasNewOpps) patches[`companyOpportunities.${newSlug}`] = oldOpps;
+
+    const oldDeals = (settings.companyDeals || {})[oldSlug];
+    const newDeals = (settings.companyDeals || {})[newSlug];
+    if (Array.isArray(oldDeals) && oldDeals.length > 0 && !(Array.isArray(newDeals) && newDeals.length > 0)) {
+      patches[`companyDeals.${newSlug}`] = oldDeals;
+    }
+
+    const oldResearch = (settings.companyResearch || {})[oldSlug];
+    const newResearch = (settings.companyResearch || {})[newSlug];
+    if (oldResearch && !newResearch) patches[`companyResearch.${newSlug}`] = oldResearch;
+
+    // Drop the old slug entries when no other prospect still maps to
+    // the old company name — otherwise leave them so the other record
+    // keeps working.
+    const stillReferenced = (prospects || []).some(p => {
+      if (!p || p.id === prospect?.id) return false;
+      return slugify(p.company) === oldSlug;
+    });
+    if (!stillReferenced) {
+      if (hasOldOpps) patches[`companyOpportunities.${oldSlug}`] = null;
+      if (Array.isArray(oldDeals) && oldDeals.length > 0) patches[`companyDeals.${oldSlug}`] = null;
+      if (oldResearch) patches[`companyResearch.${oldSlug}`] = null;
+    }
+
+    if (Object.keys(patches).length > 0) updateSettingsPath(patches);
+    // Rename the IDB portfolio source file in step. Fire-and-forget;
+    // load paths fall back gracefully if it hasn't landed yet.
+    renamePortfolioSourceFile(oldName, newName).catch(() => {});
+  }
+
   function toggleArrayField(key, value) {
     setFields(prev => {
       const arr = prev[key] || [];
@@ -3834,7 +3889,19 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
           <div className={styles.grid}>
             <div style={{ gridColumn: 'span 2' }}>
               <label className={styles.label}>Company</label>
-              <CommitOnBlurInput className={styles.input} value={fields.company} onCommit={v => set('company', v)} placeholder="Company name" />
+              <CommitOnBlurInput
+                className={styles.input}
+                value={fields.company}
+                onCommit={v => {
+                  const oldName = fields.company || '';
+                  const newName = (v || '').trim();
+                  if (oldName && newName && oldName.trim() !== newName) {
+                    migrateCompanyData(oldName, newName);
+                  }
+                  set('company', v);
+                }}
+                placeholder="Company name"
+              />
             </div>
 
             <div>

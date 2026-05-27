@@ -96,6 +96,44 @@ export async function loadSourceFile(companyName) {
   }
 }
 
+// Move a stored source file from one company slug to another. Used by
+// the prospect-rename flow so an uploaded portfolio file follows the
+// company when its display name changes. Best-effort: silently no-ops
+// if there's nothing under the old slug or the slugs are identical.
+export async function renameSourceFile(oldCompanyName, newCompanyName) {
+  const oldKey = slugKey(oldCompanyName);
+  const newKey = slugKey(newCompanyName);
+  if (!oldKey || !newKey || oldKey === newKey) return false;
+  try {
+    const db = await openDB();
+    const rec = await new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readonly');
+      const req = tx.objectStore(STORE).get(oldKey);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+    if (!rec) return false;
+    // Don't clobber a file already saved under the new name.
+    const existingNew = await new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readonly');
+      const req = tx.objectStore(STORE).get(newKey);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+    if (existingNew) return false;
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readwrite');
+      tx.objectStore(STORE).put({ ...rec, key: newKey });
+      tx.objectStore(STORE).delete(oldKey);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function clearSourceFile(companyName) {
   const key = slugKey(companyName);
   if (!key) return;
