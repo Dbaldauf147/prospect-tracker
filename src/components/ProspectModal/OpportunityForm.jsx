@@ -3188,7 +3188,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
               )}
             </div>
             {totalAttendees > 0 && (() => {
-              const GRID_COLS = 'auto minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.8fr) minmax(0, 1.4fr) auto';
+              const GRID_COLS = 'auto minmax(0, 1fr) minmax(0, 0.9fr) minmax(0, 1fr) minmax(0, 0.8fr) minmax(0, 1.4fr) auto';
               const renderAttendee = (a, i) => {
                 const matched = !!a.match;
                 const rawSummary = a.rawParams
@@ -3196,6 +3196,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                   : '';
                 const tooltip = `${a.email}${a.role ? ' · ROLE=' + a.role : ''}${rawSummary ? ' · ' + rawSummary : ''}`;
                 const title = a.match?.jobtitle || '';
+                const company = (a.match?.company || '').trim();
                 const contactId = a.match?.id || a.match?.vid;
                 const contactNote = (contactId && contactNotes[contactId])
                   || a.match?.notes
@@ -3251,6 +3252,9 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                       )}
                     </div>
                     <div style={{ fontSize: '0.72rem', color: '#475569', paddingTop: 3, ...wrap }}>
+                      {company || <span style={{ color: '#94A3B8' }}>—</span>}
+                    </div>
+                    <div style={{ fontSize: '0.72rem', color: '#475569', paddingTop: 3, ...wrap }}>
                       {title || <span style={{ fontStyle: 'italic', color: '#94A3B8' }}>{matched ? '—' : 'not in HubSpot'}</span>}
                     </div>
                     <div style={{ fontSize: '0.72rem', color: '#475569', paddingTop: 3, ...wrap }}>
@@ -3290,7 +3294,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
               const columnHeader = (
                 <div style={{
                   display: 'grid',
-                  gridTemplateColumns: 'auto minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.8fr) minmax(0, 1.4fr) auto',
+                  gridTemplateColumns: GRID_COLS,
                   columnGap: '0.5rem',
                   padding: '0 0.5rem 0.25rem',
                   fontSize: '0.62rem', fontWeight: 700,
@@ -3298,6 +3302,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                 }}>
                   <span style={{ width: 12 }} />
                   <span>Name</span>
+                  <span>Company</span>
                   <span>Title</span>
                   <span>City, Country</span>
                   <span>Notes</span>
