@@ -898,6 +898,8 @@ function LinkedToPanel({
   setLinkedToUnitDefault,
   linkedToStartMonthDefaults,
   setLinkedToStartMonthDefault,
+  linkedToPassThroughDefaults,
+  setLinkedToPassThroughDefault,
   altFees,
   resolvedLinkedTo,
   effectiveType,
@@ -984,6 +986,7 @@ function LinkedToPanel({
         autoStartMonth,
         overrideStartMonth,
         effectiveStartMonth: overrideStartMonth ?? autoStartMonth,
+        passThrough: linkedToPassThroughDefaults?.[key] === true,
       });
     }
     rows.sort((a, b) => (a.lineItem || '').localeCompare(b.lineItem || ''));
@@ -1063,6 +1066,7 @@ function LinkedToPanel({
                 <th>Unit</th>
                 <th>Default Linked To</th>
                 <th>Fee Start Month</th>
+                <th>Pass-through</th>
                 <th style={{ width: 32 }} />
               </tr>
             </thead>
@@ -1114,6 +1118,16 @@ function LinkedToPanel({
                         placeholder={d.autoStartMonth != null ? String(d.autoStartMonth) : ''}
                         onCommit={(v) => setLinkedToStartMonthDefault && setLinkedToStartMonthDefault(d.key, v)}
                       />
+                    </td>
+                    <td title="Bill every CTS row matching this Line Item + Type at cost (no markup). Per-row checkboxes on the pricing table still override.">
+                      <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.78rem' }}>
+                        <input
+                          type="checkbox"
+                          checked={d.passThrough}
+                          onChange={(e) => setLinkedToPassThroughDefault && setLinkedToPassThroughDefault(d.key, e.target.checked)}
+                        />
+                        {d.passThrough ? 'Yes' : 'No'}
+                      </label>
                     </td>
                     <td>
                       {removeLinkedToDefault && (
@@ -1330,6 +1344,10 @@ const LINKED_TO_UNIT_DEFAULTS_KEY = 'linkedToUnitDefaults';
 // row's Fee Start Month and when rendering the Linked To Saved defaults
 // table's Fee Start Month column.
 const LINKED_TO_START_MONTH_DEFAULTS_KEY = 'linkedToStartMonthDefaults';
+// Per (Line Item, Type) Pass-through default. CTS rows matching the
+// pair are billed at cost (no markup) unless a per-row override on the
+// pricing table says otherwise. Persisted on its own DB key.
+const LINKED_TO_PASS_THROUGH_DEFAULTS_KEY = 'linkedToPassThroughDefaults';
 // Line Item → Services catalog mapping. Keyed by lowercase line item
 // name; value is an array of service strings from the Dropdowns-tab
 // Solutions / Service Catalog. Persisted on its own key so it survives
@@ -1395,6 +1413,7 @@ export function PricingView({ settings } = {}) {
   const [linkedToDefaults, setLinkedToDefaults] = useState({}); // { [`${lineItem}::${type}`]: 'value' }
   const [linkedToUnitDefaults, setLinkedToUnitDefaults] = useState({}); // { [`${lineItem}::${type}`]: 'Per Site' | 'Per Account' | 'Fixed' | 'Per Meter' }
   const [linkedToStartMonthDefaults, setLinkedToStartMonthDefaults] = useState({}); // { [`${lineItem}::${type}`]: number } — overrides the CTS row's startMonth for the auto-derive that feeds alt-fee rows
+  const [linkedToPassThroughDefaults, setLinkedToPassThroughDefaults] = useState({}); // { [`${lineItem}::${type}`]: true } — sets pass-through for every CTS row matching the pair, unless the per-row override says otherwise
   const [lineItemServices, setLineItemServices] = useState({}); // { [lineItemKey]: string[] }
   const [termMonths, setTermMonths] = useState(36);
   const [annualEscalator, setAnnualEscalator] = useState(0.03);
@@ -1448,6 +1467,10 @@ export function PricingView({ settings } = {}) {
         if (!cancelled && savedStartMonthDefaults && typeof savedStartMonthDefaults === 'object') {
           setLinkedToStartMonthDefaults(savedStartMonthDefaults);
         }
+        const savedPassThroughDefaults = await dbGet(STORE, LINKED_TO_PASS_THROUGH_DEFAULTS_KEY);
+        if (!cancelled && savedPassThroughDefaults && typeof savedPassThroughDefaults === 'object') {
+          setLinkedToPassThroughDefaults(savedPassThroughDefaults);
+        }
         const savedLineItemServices = await dbGet(STORE, LINE_ITEM_SERVICES_KEY);
         if (!cancelled && savedLineItemServices && typeof savedLineItemServices === 'object') {
           setLineItemServices(savedLineItemServices);
@@ -1462,6 +1485,7 @@ export function PricingView({ settings } = {}) {
           if (!savedDefaults && saved.linkedToDefaults) setLinkedToDefaults(saved.linkedToDefaults);
           if (!savedUnitDefaults && saved.linkedToUnitDefaults) setLinkedToUnitDefaults(saved.linkedToUnitDefaults);
           if (!savedStartMonthDefaults && saved.linkedToStartMonthDefaults) setLinkedToStartMonthDefaults(saved.linkedToStartMonthDefaults);
+          if (!savedPassThroughDefaults && saved.linkedToPassThroughDefaults) setLinkedToPassThroughDefaults(saved.linkedToPassThroughDefaults);
           hydratedRef.current = true;
           return;
         }
@@ -1474,6 +1498,7 @@ export function PricingView({ settings } = {}) {
         if (!savedDefaults && saved.linkedToDefaults) setLinkedToDefaults(saved.linkedToDefaults);
         if (!savedUnitDefaults && saved.linkedToUnitDefaults) setLinkedToUnitDefaults(saved.linkedToUnitDefaults);
         if (!savedStartMonthDefaults && saved.linkedToStartMonthDefaults) setLinkedToStartMonthDefaults(saved.linkedToStartMonthDefaults);
+        if (!savedPassThroughDefaults && saved.linkedToPassThroughDefaults) setLinkedToPassThroughDefaults(saved.linkedToPassThroughDefaults);
         if (!savedLineItemServices && saved.lineItemServices && typeof saved.lineItemServices === 'object') setLineItemServices(saved.lineItemServices);
         if (typeof saved.termMonths === 'number') setTermMonths(saved.termMonths);
         if (typeof saved.annualEscalator === 'number') setAnnualEscalator(saved.annualEscalator);
@@ -1501,9 +1526,9 @@ export function PricingView({ settings } = {}) {
   // Persist on changes (skip the first render until hydration finishes).
   useEffect(() => {
     if (!hydratedRef.current) return;
-    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, lineItemServices, termMonths, annualEscalator, costEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData };
+    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, lineItemServices, termMonths, annualEscalator, costEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData };
     dbPut(STORE, payload, KEY).catch(err => console.warn('Failed to save pricing cache:', err));
-  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, lineItemServices, termMonths, annualEscalator, costEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData]);
+  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, lineItemServices, termMonths, annualEscalator, costEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData]);
 
   // Mirror Linked-To defaults under their dedicated key so they
   // outlive the main cache (parser-version bumps, Clear button,
@@ -1523,6 +1548,11 @@ export function PricingView({ settings } = {}) {
     if (!hydratedRef.current) return;
     dbPut(STORE, linkedToStartMonthDefaults, LINKED_TO_START_MONTH_DEFAULTS_KEY).catch(err => console.warn('Failed to save linked-to start-month defaults:', err));
   }, [linkedToStartMonthDefaults]);
+
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    dbPut(STORE, linkedToPassThroughDefaults, LINKED_TO_PASS_THROUGH_DEFAULTS_KEY).catch(err => console.warn('Failed to save linked-to pass-through defaults:', err));
+  }, [linkedToPassThroughDefaults]);
 
   // Persist Line Item → Services mapping on its own key and broadcast
   // a custom event so other views (Opps 2's Scope cell) can refresh
@@ -2302,6 +2332,12 @@ export function PricingView({ settings } = {}) {
       delete next[key];
       return next;
     });
+    setLinkedToPassThroughDefaults(prev => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
   }
 
   // Save / clear the Fee Start Month override for a (Line Item, Type)
@@ -2357,21 +2393,43 @@ export function PricingView({ settings } = {}) {
   }
 
   function isPassThrough(item) {
-    return overrides[item.id]?.passThrough === true;
+    const ov = overrides[item.id]?.passThrough;
+    if (ov === true) return true;
+    if (ov === false) return false;
+    const key = linkedToDefaultKey(item.description, effectiveType(item));
+    return linkedToPassThroughDefaults[key] === true;
   }
 
-  function setItemPassThrough(itemId, on) {
+  // Per-row pass-through toggle. Stores an explicit boolean so the row
+  // can also mute a Linked-To default (toggle off when the (Line Item,
+  // Type) default is on). If the toggled value matches the default,
+  // we drop the per-row override so the default flows through cleanly.
+  function setItemPassThrough(itemId, on, item) {
+    const defaultIsOn = !!(item
+      && linkedToPassThroughDefaults[linkedToDefaultKey(item.description, effectiveType(item))] === true);
     setOverrides(prev => {
       const next = { ...prev };
-      if (!on) {
+      if (Boolean(on) === defaultIsOn) {
         if (next[itemId]) {
           const { passThrough: _drop, ...rest } = next[itemId];
           if (Object.keys(rest).length === 0) delete next[itemId];
           else next[itemId] = rest;
         }
       } else {
-        next[itemId] = { ...next[itemId], passThrough: true };
+        next[itemId] = { ...next[itemId], passThrough: !!on };
       }
+      return next;
+    });
+  }
+
+  // Save / clear the Pass-through default for a (Line Item, Type) pair.
+  // Falsy drops the key so the default no longer applies.
+  function setLinkedToPassThroughDefault(key, on) {
+    setLinkedToPassThroughDefaults(prev => {
+      const next = { ...prev };
+      if (on) next[key] = true;
+      else if (key in next) delete next[key];
+      else return prev;
       return next;
     });
   }
@@ -2807,6 +2865,8 @@ export function PricingView({ settings } = {}) {
           setLinkedToUnitDefault={setLinkedToUnitDefault}
           linkedToStartMonthDefaults={linkedToStartMonthDefaults}
           setLinkedToStartMonthDefault={setLinkedToStartMonthDefault}
+          linkedToPassThroughDefaults={linkedToPassThroughDefaults}
+          setLinkedToPassThroughDefault={setLinkedToPassThroughDefault}
           altFees={altFees}
           resolvedLinkedTo={resolvedLinkedTo}
           effectiveType={effectiveType}
@@ -3198,7 +3258,7 @@ export function PricingView({ settings } = {}) {
                                       <input
                                         type="checkbox"
                                         checked={passThrough}
-                                        onChange={(e) => setItemPassThrough(item.id, e.target.checked)}
+                                        onChange={(e) => setItemPassThrough(item.id, e.target.checked, item)}
                                       />
                                       <span>Pass-through</span>
                                     </label>
