@@ -507,6 +507,23 @@ function resolveComputedDays(row, storedKey, sourceField, compute) {
 const resolveCallIn = (row) => resolveComputedDays(row, 'Call In', 'Follow Up', daysFromToday);
 const resolveLastSpoke = (row) => resolveComputedDays(row, 'Last Spoke', 'Last Client Heard From Us', businessDaysSince);
 
+// One-shot Call-In ascending sort used during initial hydration. Rows
+// without a resolvable Call In sink to the bottom. A stable tiebreaker
+// (original index) keeps the order deterministic when many rows share
+// the same Call In value. Continuous re-sorting during editing would
+// yank rows out from under the cursor — that's why this runs only on
+// load and not in any update path.
+function sortRecordsByCallInAsc(records) {
+  if (!Array.isArray(records)) return records;
+  const tagged = records.map((r, i) => {
+    const n = resolveCallIn(r);
+    const key = typeof n === 'number' && Number.isFinite(n) ? n : Number.POSITIVE_INFINITY;
+    return { r, i, key };
+  });
+  tagged.sort((a, b) => (a.key - b.key) || (a.i - b.i));
+  return tagged.map(x => x.r);
+}
+
 // Three-state checkbox cell. Click cycles blank → ✓ ("Yes") → ✗ ("No")
 // → blank. The stored value is the string "Yes" / "No" / "" so it
 // round-trips through the same JSON persistence path as every other
@@ -3439,7 +3456,14 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     function applyResult(next) {
       const headerSet = new Set((next.headers || []).map(h => String(h || '').trim()).filter(Boolean));
       const extra = ENSURED_COLUMNS.filter(c => !headerSet.has(c));
-      const withCols = extra.length ? { ...next, headers: [...(next.headers || []), ...extra] } : next;
+      let withCols = extra.length ? { ...next, headers: [...(next.headers || []), ...extra] } : next;
+      // Initial-load only: order rows by Call In ascending so the most
+      // urgent rows land at the top. Once hydratedRef flips true (after
+      // reconcile finishes), every later setData skips this branch so
+      // edits don't reorder rows mid-keystroke.
+      if (!hydratedRef.current) {
+        withCols = { ...withCols, records: sortRecordsByCallInAsc(withCols.records || []) };
+      }
       setData(withCols);
       painted = true;
     }
