@@ -1181,6 +1181,84 @@ function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel }) {
 // the same if their key sets intersect. This lets "Unibail-Rodamco-
 // Westfield (URW)" match contact records stored under either the long
 // form or just "URW".
+
+// Free-mail providers we skip when matching contacts by email domain.
+// Mirrors the FREE list inside ProspectModal so an @gmail.com contact
+// doesn't match every Opp at every account.
+const FREE_EMAIL_DOMAINS = new Set([
+  'gmail.com', 'outlook.com', 'hotmail.com', 'yahoo.com', 'icloud.com',
+  'aol.com', 'me.com', 'proton.me', 'protonmail.com', 'live.com', 'msn.com',
+]);
+
+// Fuzzy company-name match used by the tagged-contacts roster, mirroring
+// the looser equality the ProspectModal's contacts panel uses (incl. the
+// acronym / single-token branch). Without this, an Opps 2 account like
+// "Brookfield (NAM Multifamily)" can't see HubSpot contacts whose
+// Company is just "Brookfield" — even though the prospect popup does.
+function companyNameMatches(a, b) {
+  const na = (a || '').toLowerCase().trim();
+  const nb = (b || '').toLowerCase().trim();
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  const flatten = (s) => String(s || '')
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+  const fa = flatten(na);
+  const fb = flatten(nb);
+  if (fa && fb && fa === fb) return true;
+  const longer = na.length >= nb.length ? na : nb;
+  const shorter = na.length >= nb.length ? nb : na;
+  if (shorter.length >= 4 && shorter.length >= longer.length * 0.6 && longer.includes(shorter)) return true;
+  const strip = s => s.replace(/\b(inc|llc|ltd|corp|co|lp)\b\.?/gi, '').replace(/[^a-z0-9 ]/g, '').trim();
+  const sa = strip(na);
+  const sb = strip(nb);
+  if (sa === sb) return true;
+  const sLonger = sa.length >= sb.length ? sa : sb;
+  const sShorter = sa.length >= sb.length ? sb : sa;
+  if (sShorter.length >= 4 && sShorter.length >= sLonger.length * 0.6 && sLonger.includes(sShorter)) return true;
+  // Acronym / single-token branch: contact "Brookfield" matches Account
+  // "Brookfield (NAM Multifamily)" because parens count as separators.
+  const tokensOf = (s) => s.replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
+  const sTokens = tokensOf(shorter);
+  if (sTokens.length === 1 && sTokens[0].length >= 3) {
+    if (tokensOf(longer).includes(sTokens[0])) return true;
+  }
+  return false;
+}
+
+// Email domains tied to a prospect record — used as a fallback so a
+// HubSpot contact whose Company text doesn't match the Account still
+// shows up when their email sits on a known domain. Mirrors how the
+// ProspectModal builds its baseContacts list.
+function prospectEmailDomains(prospect) {
+  const domains = new Set();
+  if (!prospect) return domains;
+  if (prospect.emailDomain) {
+    for (const entry of String(prospect.emailDomain).split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)) {
+      const at = entry.lastIndexOf('@');
+      const d = (at >= 0 ? entry.slice(at + 1) : entry).toLowerCase().trim();
+      if (d) domains.add(d);
+    }
+  }
+  if (prospect.website) {
+    const d = String(prospect.website).replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '').toLowerCase().trim();
+    if (d) domains.add(d);
+  }
+  return domains;
+}
+
+function contactEmailDomain(email) {
+  if (!email) return '';
+  const at = String(email).lastIndexOf('@');
+  if (at < 0) return '';
+  const d = email.slice(at + 1).toLowerCase().trim();
+  return (d && !FREE_EMAIL_DOMAINS.has(d)) ? d : '';
+}
+
 function companyMatchKeys(name) {
   const s = String(name || '').trim();
   const keys = new Set();
@@ -1239,8 +1317,10 @@ function ContactCell({ value, onChange, account, prospects, updateProspect, hubs
   // contacts live there); prospect.contacts is a fallback for
   // accounts that were curated manually.
   const contactOptions = useMemo(() => {
+    if (!account && !matched) return [];
     const accountKeys = companyMatchKeys(account);
-    if (accountKeys.size === 0) return [];
+    const matchedKeys = matched ? companyMatchKeys(matched.company) : new Set();
+    const domains = prospectEmailDomains(matched);
     const seen = new Set();
     const out = [];
     const pushContact = (raw) => {
@@ -1258,10 +1338,35 @@ function ContactCell({ value, onChange, account, prospects, updateProspect, hubs
       });
     };
     for (const c of (hubspotContacts || [])) {
+      // Three ways a HubSpot contact qualifies:
+      //   1. Their Company key intersects the Account or matched-prospect
+      //      key sets (fast path, catches the URW-style aliases).
+      //   2. The fuzzy companyNameMatches helper (acronym / containment)
+      //      pairs the contact's Company with either the Account string
+      //      or the matched prospect's name — this is what catches
+      //      "Brookfield" contacts against an Account of "Brookfield
+      //      (NAM Multifamily)".
+      //   3. Their email domain matches one of the matched prospect's
+      //      registered domains (emailDomain field + website), which
+      //      is exactly the fallback the ProspectModal's contacts panel
+      //      uses.
       const ck = companyMatchKeys(c?.company);
-      if (ck.size === 0) continue;
       let hit = false;
-      for (const k of ck) { if (accountKeys.has(k)) { hit = true; break; } }
+      if (ck.size > 0) {
+        for (const k of ck) {
+          if (accountKeys.has(k) || matchedKeys.has(k)) { hit = true; break; }
+        }
+      }
+      if (!hit && c?.company) {
+        if (companyNameMatches(c.company, account) ||
+            (matched?.company && companyNameMatches(c.company, matched.company))) {
+          hit = true;
+        }
+      }
+      if (!hit && domains.size > 0) {
+        const d = contactEmailDomain(c?.email);
+        if (d && domains.has(d)) hit = true;
+      }
       if (!hit) continue;
       pushContact(c);
     }
