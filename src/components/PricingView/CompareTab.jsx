@@ -6,23 +6,20 @@ import styles from './CompareTab.module.css';
 // or saved default for its Line Item + Type) so the comparison groups
 // by the same buckets the Linked To page wires up. Category is the
 // line item description; numeric fields are kept as numbers.
-function optionToCompareRows(opt, withCombine, resolvedLinkedTo) {
+function optionToCompareRows(opt, resolvedLinkedTo) {
   if (!opt || !Array.isArray(opt.sections)) return [];
   const rows = [];
   for (const sec of opt.sections) {
     for (const item of (sec.items || [])) {
       if (typeof item.cts !== 'number') continue;
       const linked = resolvedLinkedTo ? String(resolvedLinkedTo(item) || '').trim() : '';
-      const row = {
+      rows.push({
         feeBucket: linked,
         category: item.description || '',
         type: item.type || '',
         cts: item.cts,
         startMonth: item.startMonth ?? '',
-        combine: '',
-      };
-      if (!withCombine) delete row.combine;
-      rows.push(row);
+      });
     }
   }
   return rows;
@@ -31,7 +28,7 @@ function optionToCompareRows(opt, withCombine, resolvedLinkedTo) {
 const TYPE_OPTIONS = ['Setup', 'One Time', 'Recurring (monthly)'];
 
 const EMPTY_ROW = () => ({
-  feeBucket: '', category: '', type: '', cts: '', startMonth: '', combine: '',
+  feeBucket: '', category: '', type: '', cts: '', startMonth: '',
 });
 
 const fmtMoney = (n) => {
@@ -80,11 +77,10 @@ function summarize(rows) {
   };
 }
 
-// Parse tab- or comma-separated text from Excel into rows. The
-// 7-column layout is: Fee Bucket / Category / Type / CTS / Start Month
-// / (optional CM CTS — ignored) / (optional Combine label). The 5-col
-// short form drops the trailing two.
-function parseRowsFromText(text, withCombine) {
+// Parse tab- or comma-separated text from Excel into rows. Columns:
+// Fee Bucket / CTS Category / Type / CTS / Start Month. Extra columns
+// are ignored.
+function parseRowsFromText(text) {
   if (!text) return [];
   const lines = text.replace(/\r\n?/g, '\n').split('\n');
   const out = [];
@@ -93,16 +89,13 @@ function parseRowsFromText(text, withCombine) {
     if (!line.trim()) continue;
     const cols = line.includes('\t') ? line.split('\t') : line.split(/\s*,\s*/);
     const cell = (i) => (cols[i] ?? '').trim();
-    const r = {
+    out.push({
       feeBucket: cell(0),
       category: cell(1),
       type: cell(2),
       cts: cell(3),
       startMonth: cell(4),
-      combine: '',
-    };
-    if (withCombine) r.combine = cell(5);
-    out.push(r);
+    });
   }
   return out;
 }
@@ -135,7 +128,18 @@ function CellInput({ value, onCommit, align, placeholder }) {
   );
 }
 
-function CostTable({ title, rows, onChange, onAddRow, onRemoveRow, onReplaceRows, onClear, withCombine, tone, importOptions, onImportOption }) {
+function CostTable({ title, rows, otherRows, otherLabel, onChange, onAddRow, onRemoveRow, onReplaceRows, onClear, tone, importOptions, onImportOption }) {
+  // Lookup map from the other side's category -> aggregate value, so
+  // each row can render its Compare cell as either a delta vs the
+  // matching row or a "missing" marker. Sums multiple rows under the
+  // same category (mirrors how the per-category roll-up below works).
+  const otherByCategory = new Map();
+  for (const r of (otherRows || [])) {
+    const cat = normalizeCategory(r.category);
+    if (!cat) continue;
+    const v = toNum(r.cts) || 0;
+    otherByCategory.set(cat, (otherByCategory.get(cat) || 0) + v);
+  }
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState('');
   const [flash, setFlash] = useState('');
@@ -162,7 +166,7 @@ function CostTable({ title, rows, onChange, onAddRow, onRemoveRow, onReplaceRows
     if (!looksTabular) return;
     e.preventDefault();
     e.stopPropagation();
-    const newRows = parseRowsFromText(text, withCombine);
+    const newRows = parseRowsFromText(text);
     if (!newRows.length) return;
     const padded = newRows.length < 10
       ? newRows.concat(Array.from({ length: 10 - newRows.length }, EMPTY_ROW))
@@ -199,7 +203,7 @@ function CostTable({ title, rows, onChange, onAddRow, onRemoveRow, onReplaceRows
                     type="button"
                     className={styles.importMenuItem}
                     onClick={() => {
-                      const hasData = rows.some(r => r.feeBucket || r.category || r.type || r.cts || r.startMonth || r.combine);
+                      const hasData = rows.some(r => r.feeBucket || r.category || r.type || r.cts || r.startMonth);
                       if (hasData && !window.confirm(`Replace the rows in "${title}" with the CTS items from "${opt.sheetName}"?`)) return;
                       onImportOption(opt);
                       setImportOpen(false);
@@ -222,7 +226,7 @@ function CostTable({ title, rows, onChange, onAddRow, onRemoveRow, onReplaceRows
           type="button"
           className={styles.btnDanger}
           onClick={() => {
-            if (rows.every(r => !r.feeBucket && !r.category && !r.type && !r.cts && !r.startMonth && !r.combine)) {
+            if (rows.every(r => !r.feeBucket && !r.category && !r.type && !r.cts && !r.startMonth)) {
               onClear();
               return;
             }
@@ -235,8 +239,7 @@ function CostTable({ title, rows, onChange, onAddRow, onRemoveRow, onReplaceRows
       {pasteOpen && (
         <div className={styles.pasteBox}>
           <div className={styles.pasteHint}>
-            Tab-separated rows: Fee Bucket · CTS Category · Type · CTS · Start Month
-            {withCombine ? ' · (CM CTS — optional, ignored) · Combine (optional)' : ''}.
+            Tab-separated rows: Fee Bucket · CTS Category · Type · CTS · Start Month.
             You can also click into the table and paste directly.
           </div>
           <textarea
@@ -251,7 +254,7 @@ function CostTable({ title, rows, onChange, onAddRow, onRemoveRow, onReplaceRows
               type="button"
               className={styles.btn}
               onClick={() => {
-                const newRows = parseRowsFromText(pasteText, withCombine);
+                const newRows = parseRowsFromText(pasteText);
                 if (!newRows.length) return;
                 const padded = newRows.length < 10
                   ? newRows.concat(Array.from({ length: 10 - newRows.length }, EMPTY_ROW))
@@ -279,13 +282,37 @@ function CostTable({ title, rows, onChange, onAddRow, onRemoveRow, onReplaceRows
               <th className={styles.colType}>Type</th>
               <th className={`${styles.colCts} ${styles.numCell}`}>CTS</th>
               <th className={`${styles.colStart} ${styles.numCell}`}>Start Month</th>
-              {withCombine && <th className={styles.colCombine}>Combine</th>}
+              <th className={styles.colCombine} title={`Δ vs the matching row in ${otherLabel || 'the other table'}, or a missing-row marker.`}>Compare</th>
               <th className={styles.actionCol} />
             </tr>
           </thead>
           <tbody>
             {rows.map((row, idx) => {
-              const k = `${idx}-${row.feeBucket}-${row.category}-${row.type}-${row.cts}-${row.startMonth}-${row.combine}`;
+              const k = `${idx}-${row.feeBucket}-${row.category}-${row.type}-${row.cts}-${row.startMonth}`;
+              const cat = normalizeCategory(row.category);
+              const thisCts = toNum(row.cts) || 0;
+              let compareCell;
+              if (!cat) {
+                compareCell = <span className={styles.compareMuted}>—</span>;
+              } else if (otherByCategory.has(cat)) {
+                const otherCts = otherByCategory.get(cat) || 0;
+                const delta = otherCts - thisCts;
+                if (delta === 0) {
+                  compareCell = <span className={styles.compareMuted}>=</span>;
+                } else {
+                  compareCell = (
+                    <span className={delta > 0 ? styles.deltaUp : styles.deltaDown}>
+                      {fmtMoneySigned(delta)}
+                    </span>
+                  );
+                }
+              } else {
+                compareCell = (
+                  <span className={styles.compareMissing} title={`No row with category "${row.category}" found in ${otherLabel || 'the other table'}.`}>
+                    Missing in {otherLabel || 'other'}
+                  </span>
+                );
+              }
               return (
                 <tr key={idx}>
                   <td className={cellClass}>
@@ -320,11 +347,9 @@ function CostTable({ title, rows, onChange, onAddRow, onRemoveRow, onReplaceRows
                   <td className={`${cellClass} ${styles.numCell}`}>
                     <CellInput key={`sm-${k}`} value={row.startMonth} align="right" onCommit={(v) => onChange(idx, 'startMonth', v)} />
                   </td>
-                  {withCombine && (
-                    <td className={cellClass}>
-                      <CellInput key={`cm-${k}`} value={row.combine} onCommit={(v) => onChange(idx, 'combine', v)} />
-                    </td>
-                  )}
+                  <td className={`${cellClass} ${styles.compareCell}`}>
+                    {compareCell}
+                  </td>
                   <td className={styles.actionCell}>
                     <button
                       type="button"
@@ -340,7 +365,7 @@ function CostTable({ title, rows, onChange, onAddRow, onRemoveRow, onReplaceRows
               <td colSpan={3} style={{ textAlign: 'right' }}>Totals</td>
               <td className={styles.numCell}>{fmtMoney(totals.recurringMonthly)}<span className={styles.unitTag}>/mo</span></td>
               <td className={styles.numCell}>{fmtMoney(totals.setupTotal + totals.oneTimeTotal)}<span className={styles.unitTag}>setup</span></td>
-              {withCombine && <td />}
+              <td />
               <td />
             </tr>
           </tbody>
@@ -376,8 +401,7 @@ export function CompareTab({ state, setState, workbook, resolvedLinkedTo }) {
   };
   const replaceRows = (side) => (rows) => update({ ...safe, [side]: rows });
   const importOption = (side) => (opt) => {
-    const withCombine = side === 'next';
-    const imported = optionToCompareRows(opt, withCombine, resolvedLinkedTo);
+    const imported = optionToCompareRows(opt, resolvedLinkedTo);
     const padded = imported.length < 10
       ? imported.concat(Array.from({ length: 10 - imported.length }, EMPTY_ROW))
       : imported;
@@ -393,8 +417,8 @@ export function CompareTab({ state, setState, workbook, resolvedLinkedTo }) {
   // Build a side-by-side comparison: every distinct CTS Category that
   // appears on either side becomes a row, paired with its monthly
   // recurring on each side (the dominant cost type for these tables).
-  // Rows on the "new" side carrying a Combine value are bucketed
-  // under that combine key on the current side.
+  // Categories are matched purely by normalized text — the Compare
+  // column on each table renders per-row deltas / missing markers.
   const compareRows = (() => {
     const byKey = new Map();
     const keyFor = (s) => normalizeCategory(s);
@@ -417,9 +441,8 @@ export function CompareTab({ state, setState, workbook, resolvedLinkedTo }) {
     for (const r of safe.next) {
       const cat = (r.category || '').trim();
       if (!cat) continue;
-      const combineKey = r.combine && r.combine.trim() ? keyFor(r.combine) : keyFor(cat);
       const v = toNum(r.cts) || 0;
-      const ent = ensure(combineKey, r.combine?.trim() || cat);
+      const ent = ensure(keyFor(cat), cat);
       if (isRecurring(r.type)) ent.newMonthly += v;
       else ent.newSetup += v;
     }
@@ -440,8 +463,8 @@ export function CompareTab({ state, setState, workbook, resolvedLinkedTo }) {
       <div className={styles.intro}>
         Compare two cost-to-serve scenarios side by side. Paste blocks from Excel into the
         Current and New tables — totals, per-category deltas, and a first-year roll-up update
-        as you edit. Use the <strong>Combine</strong> column on the New side to merge multiple
-        new categories into a single current-side bucket.
+        as you edit. Each row's <strong>Compare</strong> column shows the delta vs the matching
+        row on the other side, or a missing-row marker when the category isn't there.
       </div>
 
       <div className={styles.labelRow}>
@@ -508,12 +531,13 @@ export function CompareTab({ state, setState, workbook, resolvedLinkedTo }) {
           title={safe.currentLabel}
           tone="current"
           rows={safe.current}
+          otherRows={safe.next}
+          otherLabel={safe.nextLabel}
           onChange={updateRow('current')}
           onAddRow={addRow('current')}
           onRemoveRow={removeRow('current')}
           onReplaceRows={replaceRows('current')}
           onClear={clearSide('current')}
-          withCombine={false}
           importOptions={importOptions}
           onImportOption={importOption('current')}
         />
@@ -521,12 +545,13 @@ export function CompareTab({ state, setState, workbook, resolvedLinkedTo }) {
           title={safe.nextLabel}
           tone="new"
           rows={safe.next}
+          otherRows={safe.current}
+          otherLabel={safe.currentLabel}
           onChange={updateRow('next')}
           onAddRow={addRow('next')}
           onRemoveRow={removeRow('next')}
           onReplaceRows={replaceRows('next')}
           onClear={clearSide('next')}
-          withCombine
           importOptions={importOptions}
           onImportOption={importOption('next')}
         />
@@ -536,8 +561,7 @@ export function CompareTab({ state, setState, workbook, resolvedLinkedTo }) {
         <div className={styles.compareHeader}>
           Per-category comparison
           <span className={styles.compareHint}>
-            Sorted by largest monthly delta. Categories are matched on the New side's
-            Combine value when present, otherwise on CTS Category.
+            Sorted by largest monthly delta. Categories are matched by CTS Category text.
           </span>
         </div>
         <div className={styles.compareTableWrap}>
