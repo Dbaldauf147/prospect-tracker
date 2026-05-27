@@ -2025,6 +2025,13 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
   // Optional sub-sections (and within a sub-section).
   const [seDragKey, setSeDragKey] = useState(null);   // unique id of the row being dragged
   const [seDragOverIdx, setSeDragOverIdx] = useState(null); // current drop target index in the displayed SE list
+  // Customer-side drag state. Custom groups live on the meeting object
+  // under `customerGroups: string[]`; each attendee may carry a free-
+  // text `group` field that places them under that custom group. Empty
+  // group falls back to Required / Optional bucketing.
+  const [custDragKey, setCustDragKey] = useState(null);
+  const [newGroupOpen, setNewGroupOpen] = useState(false);
+  const [newGroupName, setNewGroupName] = useState('');
   // Once the user picks a contact from the dropdown we hide the list until
   // they edit the name again — avoids re-showing the suggestion they just
   // selected.
@@ -2116,6 +2123,52 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     const next = [...(mt[found.source] || [])];
     next[found.index] = { ...next[found.index], required: !!required };
     set({ meeting: { ...mt, [found.source]: next } });
+  }
+
+  // Move an attendee to a different customer-side bucket. `group` is a
+  // free-text custom group label, or '' to fall back to Required /
+  // Optional. `required` overrides the required flag when supplied.
+  function setAttendeeCustomGroup(a, group, required) {
+    const mt = formData.meeting || {};
+    const found = findAttendeeIn(mt, a);
+    if (!found) return;
+    const next = [...(mt[found.source] || [])];
+    const patch = { group: group || '' };
+    if (typeof required === 'boolean') patch.required = required;
+    next[found.index] = { ...next[found.index], ...patch };
+    set({ meeting: { ...mt, [found.source]: next } });
+  }
+
+  function addCustomerGroup(name) {
+    const trimmed = (name || '').trim();
+    if (!trimmed) return;
+    const mt = formData.meeting || {};
+    const existing = Array.isArray(mt.customerGroups) ? mt.customerGroups : [];
+    if (existing.some(g => g.toLowerCase() === trimmed.toLowerCase())) return;
+    set({ meeting: { ...mt, customerGroups: [...existing, trimmed] } });
+  }
+
+  function removeCustomerGroup(name) {
+    const mt = formData.meeting || {};
+    const existing = Array.isArray(mt.customerGroups) ? mt.customerGroups : [];
+    const trimmed = (name || '').trim();
+    const nextGroups = existing.filter(g => g.toLowerCase() !== trimmed.toLowerCase());
+    // Any attendees pointing at the removed group fall back to Required
+    // / Optional bucketing.
+    const stripGroup = (arr) => (arr || []).map(x => {
+      if (!x?.group) return x;
+      if (String(x.group).toLowerCase() === trimmed.toLowerCase()) {
+        const { group: _drop, ...rest } = x;
+        return rest;
+      }
+      return x;
+    });
+    set({ meeting: {
+      ...mt,
+      customerGroups: nextGroups,
+      attendees: stripGroup(mt.attendees),
+      manualAttendees: stripGroup(mt.manualAttendees),
+    } });
   }
 
   // Reorder a displayed list (the SE-only or Customer-only bucket, in
@@ -3456,37 +3509,159 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                   </div>
                 );
               };
-              const renderGroupedList = (list) => {
-                const req = list.filter(a => a.required);
-                const opt = list.filter(a => !a.required);
-                const subHeader = (label, count, color, bg) => (
-                  <div style={{
+              const customerGroups = Array.isArray(formData.meeting?.customerGroups)
+                ? formData.meeting.customerGroups
+                : [];
+              const custKey = (a) => (a.email || '').toLowerCase() || (a.name || '');
+              // Make a customer attendee row draggable so it can be
+              // moved between custom groups / Required / Optional. The
+              // drop targets sit on the section headers.
+              const renderCustomerAttendee = (a) => {
+                const myKey = custKey(a);
+                return (
+                  <div
+                    key={myKey || JSON.stringify(a)}
+                    draggable
+                    onDragStart={() => setCustDragKey(myKey)}
+                    onDragEnd={() => setCustDragKey(null)}
+                    style={{
+                      opacity: custDragKey === myKey ? 0.5 : 1,
+                      cursor: 'grab',
+                    }}
+                  >
+                    {renderAttendee(a)}
+                  </div>
+                );
+              };
+              const dropOnGroupHeader = (e, targetGroup, targetRequired) => {
+                if (!custDragKey) return;
+                e.preventDefault();
+                const all = [...customerAttendees];
+                const dragged = all.find(x => custKey(x) === custDragKey);
+                if (!dragged) { setCustDragKey(null); return; }
+                setAttendeeCustomGroup(dragged, targetGroup || '', targetRequired);
+                setCustDragKey(null);
+              };
+              const groupHeader = (label, count, color, bg, opts = {}) => (
+                <div
+                  onDragOver={(e) => { if (custDragKey) { e.preventDefault(); try { e.dataTransfer.dropEffect = 'move'; } catch { /* ignore */ } } }}
+                  onDrop={(e) => dropOnGroupHeader(e, opts.targetGroup ?? '', opts.targetRequired)}
+                  style={{
                     marginTop: '0.35rem', marginBottom: '0.25rem',
                     fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.04em',
                     textTransform: 'uppercase',
                     color, background: bg, padding: '2px 8px', borderRadius: 4,
-                    display: 'inline-block',
-                  }}>{label} · {count}</div>
-                );
+                    display: 'inline-flex', alignItems: 'center', gap: 6,
+                    border: custDragKey ? '1px dashed #2563EB' : '1px solid transparent',
+                  }}
+                  title={custDragKey ? `Drop here to move into "${label}"` : undefined}
+                >
+                  <span>{label} · {count}</span>
+                  {opts.onRemove && (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); opts.onRemove(); }}
+                      style={{ background: 'transparent', border: 'none', cursor: 'pointer', color, fontWeight: 700, fontSize: '0.75rem', lineHeight: 1, padding: 0 }}
+                      title={`Remove the "${label}" group`}
+                    >×</button>
+                  )}
+                </div>
+              );
+              const renderGroupedList = (list) => {
+                // Custom groups first (in user-defined order), then
+                // Required / Optional as the fallback buckets for
+                // attendees with no custom group.
+                const byGroupKey = new Map(); // lowerCase -> list
+                for (const g of customerGroups) byGroupKey.set(g.toLowerCase(), []);
+                const ungrouped = [];
+                for (const a of list) {
+                  const g = (a.group || '').trim();
+                  if (g && byGroupKey.has(g.toLowerCase())) {
+                    byGroupKey.get(g.toLowerCase()).push(a);
+                  } else if (g) {
+                    // Orphaned custom group label (group was removed
+                    // but the attendee still points at it) — surface a
+                    // bucket for it so the user can drag them out.
+                    if (!byGroupKey.has(g.toLowerCase())) byGroupKey.set(g.toLowerCase(), []);
+                    byGroupKey.get(g.toLowerCase()).push(a);
+                  } else {
+                    ungrouped.push(a);
+                  }
+                }
+                const req = ungrouped.filter(a => a.required);
+                const opt = ungrouped.filter(a => !a.required);
                 return (
                   <div>
                     {columnHeader}
-                    {req.length > 0 && (
+                    {Array.from(byGroupKey.entries()).map(([lcName, members]) => {
+                      // Preserve the original-case label by looking it
+                      // up in the meeting's list, falling back to the
+                      // first matching attendee's stored value.
+                      const displayName = customerGroups.find(g => g.toLowerCase() === lcName)
+                        || members[0]?.group
+                        || lcName;
+                      return (
+                        <div key={`grp-${lcName}`}>
+                          {groupHeader(
+                            displayName,
+                            members.length,
+                            '#0F766E',
+                            '#CCFBF1',
+                            { targetGroup: displayName, onRemove: () => removeCustomerGroup(displayName) },
+                          )}
+                          {members.length > 0 ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                              {members.map(renderCustomerAttendee)}
+                            </div>
+                          ) : (
+                            <div style={{ fontSize: '0.7rem', color: '#94A3B8', fontStyle: 'italic', padding: '0.2rem 0.5rem' }}>
+                              Drop attendees here.
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                    {(req.length > 0 || custDragKey) && (
                       <>
-                        {subHeader('Required', req.length, '#B91C1C', '#FEE2E2')}
+                        {groupHeader('Required', req.length, '#B91C1C', '#FEE2E2', { targetGroup: '', targetRequired: true })}
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                          {req.map(renderAttendee)}
+                          {req.map(renderCustomerAttendee)}
                         </div>
                       </>
                     )}
-                    {opt.length > 0 && (
+                    {(opt.length > 0 || custDragKey) && (
                       <>
-                        {subHeader('Optional', opt.length, '#3730A3', '#E0E7FF')}
+                        {groupHeader('Optional', opt.length, '#3730A3', '#E0E7FF', { targetGroup: '', targetRequired: false })}
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                          {opt.map(renderAttendee)}
+                          {opt.map(renderCustomerAttendee)}
                         </div>
                       </>
                     )}
+                    <div style={{ marginTop: '0.5rem' }}>
+                      {newGroupOpen ? (
+                        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                          <input
+                            autoFocus
+                            value={newGroupName}
+                            onChange={(e) => setNewGroupName(e.target.value)}
+                            placeholder="Group name"
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') { addCustomerGroup(newGroupName); setNewGroupName(''); setNewGroupOpen(false); }
+                              if (e.key === 'Escape') { setNewGroupName(''); setNewGroupOpen(false); }
+                            }}
+                            style={{ fontSize: '0.76rem', padding: '0.2rem 0.4rem', border: '1px solid #CBD5E1', borderRadius: 3 }}
+                          />
+                          <button type="button" style={{ ...sx.primaryBtn, fontSize: '0.7rem', padding: '0.2rem 0.55rem' }} onClick={() => { addCustomerGroup(newGroupName); setNewGroupName(''); setNewGroupOpen(false); }}>Add</button>
+                          <button type="button" style={{ ...sx.btn, fontSize: '0.7rem', padding: '0.2rem 0.55rem' }} onClick={() => { setNewGroupName(''); setNewGroupOpen(false); }}>Cancel</button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setNewGroupOpen(true)}
+                          style={{ ...sx.btn, fontSize: '0.68rem', padding: '0.2rem 0.5rem' }}
+                        >+ Add group</button>
+                      )}
+                    </div>
                   </div>
                 );
               };
