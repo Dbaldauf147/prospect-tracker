@@ -392,20 +392,21 @@ function toISODate(raw) {
 }
 
 // Business days between the Opps "Last Client Heard From Us" date and
-// today — same formula OppsView2 uses for its computed "Last Spoke"
-// column. Returns null when the field is empty or unparseable.
-function lastSpokeBusinessDays(rawOpp) {
+// the supplied reference date (defaults to today) — same formula
+// OppsView2 uses for its computed "Last Spoke" column. Returns null
+// when the field is empty or unparseable.
+function lastSpokeBusinessDays(rawOpp, referenceIso) {
   const iso = toISODate(rawOpp?.['Last Client Heard From Us']);
   if (!iso) return null;
   const [y, m, d] = iso.split('-').map(n => parseInt(n, 10));
   const start = new Date(y, m - 1, d);
   start.setHours(0, 0, 0, 0);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  if (today <= start) return 0;
+  const ref = referenceIso ? parseIsoDate(referenceIso) : new Date();
+  ref.setHours(0, 0, 0, 0);
+  if (ref <= start) return 0;
   let count = 0;
   const cur = new Date(start);
-  while (cur < today) {
+  while (cur < ref) {
     cur.setDate(cur.getDate() + 1);
     const dow = cur.getDay();
     if (dow !== 0 && dow !== 6) count++;
@@ -413,9 +414,23 @@ function lastSpokeBusinessDays(rawOpp) {
   return count;
 }
 
-function todayBounds() {
-  const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+function todayIso() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function parseIsoDate(iso) {
+  const [y, m, d] = String(iso || '').split('-').map(n => parseInt(n, 10));
+  if (!y || !m || !d) return new Date();
+  return new Date(y, m - 1, d);
+}
+
+function boundsForDate(iso) {
+  const d = parseIsoDate(iso);
+  const start = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   return { start, end: start + 24 * 60 * 60 * 1000 };
 }
 
@@ -578,6 +593,10 @@ export function AgentsView({ prospects = [], settings }) {
   const [activityRefreshing, setActivityRefreshing] = useState(false);
   const [activityRefreshError, setActivityRefreshError] = useState(null);
   const [activityRefreshProgress, setActivityRefreshProgress] = useState(null);
+  // ISO date the activity sections (sent emails / meetings / called)
+  // are scoped to. Defaults to today; the picker in the header lets the
+  // user review what was logged on any past calendar day.
+  const [referenceDate, setReferenceDate] = useState(todayIso);
 
   const ignoredEmailIds = useMemo(() => new Set(ignoredEmails), [ignoredEmails]);
   const ignoredMeetingIds = useMemo(() => new Set(ignoredMeetings), [ignoredMeetings]);
@@ -880,7 +899,7 @@ export function AgentsView({ prospects = [], settings }) {
   };
 
   const { todaysOutbound, todaysMeetings } = useMemo(() => {
-    const bounds = todayBounds();
+    const bounds = boundsForDate(referenceDate);
     const inToday = (ts) => {
       const t = new Date(ts || 0).getTime();
       return Number.isFinite(t) && t >= bounds.start && t < bounds.end;
@@ -1017,18 +1036,19 @@ export function AgentsView({ prospects = [], settings }) {
     // dependency set as cache + hubspotCache + oppIndex + overrides,
     // so they don't need their own entries here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cache, hubspotCache, oppIndex, overrides, ignoredEmailIds, ignoredMeetingIds]);
+  }, [cache, hubspotCache, oppIndex, overrides, ignoredEmailIds, ignoredMeetingIds, referenceDate]);
 
   // Opps where the user logged a phone touch in Next Steps and the
   // Last Spoke column (business days since Last Client Heard From Us)
-  // computes to 0 — i.e. the client touched the conversation today.
+  // computes to 0 relative to the picked reference date — i.e. the
+  // client touched the conversation on that day.
   const calledOpps = useMemo(() => {
     const records = oppsCache?.records || [];
     const rows = [];
     for (const r of records) {
       const nextSteps = String(r['Next Steps'] || '');
       if (!CALLED_NEXT_STEPS_RE.test(nextSteps)) continue;
-      if (lastSpokeBusinessDays(r) !== 0) continue;
+      if (lastSpokeBusinessDays(r, referenceDate) !== 0) continue;
       const account = String(r.Account || '').trim();
       const bfoOpp = String(r['BFO Link'] || '').trim();
       rows.push({
@@ -1041,7 +1061,7 @@ export function AgentsView({ prospects = [], settings }) {
     }
     rows.sort((a, b) => a.company.localeCompare(b.company));
     return rows;
-  }, [oppsCache]);
+  }, [oppsCache, referenceDate]);
 
   // Opps that don't yet exist in BFO and need a fresh Guided Opportunity
   // created. Filter mirrors the user's spec:
@@ -1345,9 +1365,10 @@ export function AgentsView({ prospects = [], settings }) {
     return rows;
   }, [oppsCache, bfoActivity]);
 
-  const dateLabel = useMemo(() => new Date().toLocaleDateString('en-US', {
+  const dateLabel = useMemo(() => parseIsoDate(referenceDate).toLocaleDateString('en-US', {
     weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
-  }), []);
+  }), [referenceDate]);
+  const isToday = referenceDate === todayIso();
 
   const fetchedLabel = fmtFetchedAt(cache?.fetchedAt);
   const oppsLoaded = (oppsCache?.records?.length || 0) > 0;
@@ -1357,6 +1378,24 @@ export function AgentsView({ prospects = [], settings }) {
       <div className={styles.header}>
         <h1 className={styles.title}>Agents</h1>
         <span className={styles.dateline}>{dateLabel}</span>
+        <label className={styles.dateField} title="Pick the date the activity sections (sent emails, meetings, called opps) should reference.">
+          Activity date
+          <input
+            type="date"
+            className={styles.dateInput}
+            value={referenceDate}
+            max={todayIso()}
+            onChange={(e) => setReferenceDate(e.target.value || todayIso())}
+          />
+          {!isToday && (
+            <button
+              type="button"
+              className={styles.dateResetBtn}
+              onClick={() => setReferenceDate(todayIso())}
+              title="Jump back to today"
+            >Today</button>
+          )}
+        </label>
         <button
           type="button"
           className={styles.refreshActivityBtn}
@@ -1377,13 +1416,13 @@ export function AgentsView({ prospects = [], settings }) {
         </div>
       )}
       <p className={styles.subnote}>
-        Today&rsquo;s outbound emails from <strong>{SENDER_EMAIL}</strong> to non-SE recipients, plus any meetings on today&rsquo;s calendar. BFO Opportunity tagging walks each recipient&rsquo;s email against the Opps tab&rsquo;s Contact field first, then falls back to fuzzy-matching the HubSpot company against the Opps tab&rsquo;s Account field. When neither matches, use the inline picker to search the Opps tab — your selection is remembered for that recipient on future emails. The Company column falls back to HubSpot&rsquo;s contact record when no Opp is matched.
+        {isToday ? 'Today’s' : `${dateLabel}’s`} outbound emails from <strong>{SENDER_EMAIL}</strong> to non-SE recipients, plus any meetings on that day&rsquo;s calendar. BFO Opportunity tagging walks each recipient&rsquo;s email against the Opps tab&rsquo;s Contact field first, then falls back to fuzzy-matching the HubSpot company against the Opps tab&rsquo;s Account field. When neither matches, use the inline picker to search the Opps tab — your selection is remembered for that recipient on future emails. The Company column falls back to HubSpot&rsquo;s contact record when no Opp is matched.
       </p>
 
       <div className={styles.tallies}>
-        <div className={styles.tally}><strong>{todaysOutbound.length}</strong>sent emails today</div>
+        <div className={styles.tally}><strong>{todaysOutbound.length}</strong>sent emails {isToday ? 'today' : 'that day'}</div>
         {todaysMeetings.length > 0 && (
-          <div className={styles.tally}><strong>{todaysMeetings.length}</strong>meeting{todaysMeetings.length === 1 ? '' : 's'} today</div>
+          <div className={styles.tally}><strong>{todaysMeetings.length}</strong>meeting{todaysMeetings.length === 1 ? '' : 's'} {isToday ? 'today' : 'that day'}</div>
         )}
       </div>
 
@@ -1465,7 +1504,7 @@ export function AgentsView({ prospects = [], settings }) {
           <tbody>
             {todaysOutbound.length === 0 ? (
               <tr className={styles.emptyRow}>
-                <td colSpan={9}>No outbound emails to external recipients today.</td>
+                <td colSpan={9}>No outbound emails to external recipients on {dateLabel}.</td>
               </tr>
             ) : todaysOutbound.map(e => (
                 <tr key={e.id}>
@@ -1541,7 +1580,7 @@ export function AgentsView({ prospects = [], settings }) {
           <tbody>
             {todaysMeetings.length === 0 ? (
               <tr className={styles.emptyRow}>
-                <td colSpan={7}>No meetings on today&rsquo;s calendar.</td>
+                <td colSpan={7}>No meetings on {dateLabel}&rsquo;s calendar.</td>
               </tr>
             ) : todaysMeetings.map(m => (
               <tr key={m.id}>
