@@ -14,6 +14,7 @@ function optionToCompareRows(opt, resolvedLinkedTo) {
       if (typeof item.cts !== 'number') continue;
       const linked = resolvedLinkedTo ? String(resolvedLinkedTo(item) || '').trim() : '';
       rows.push({
+        id: newRowId(),
         feeBucket: linked,
         category: item.description || '',
         type: item.type || '',
@@ -27,9 +28,23 @@ function optionToCompareRows(opt, resolvedLinkedTo) {
 
 const TYPE_OPTIONS = ['Setup', 'One Time', 'Recurring (monthly)'];
 
+// Stable per-row id so manual links between Current ↔ New rows survive
+// edits / reorders. Rows that came from older state without an id get
+// one backfilled on mount (see ensureRowIds below).
+const newRowId = () => {
+  try {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+  } catch { /* noop */ }
+  return `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+};
+
 const EMPTY_ROW = () => ({
+  id: newRowId(),
   feeBucket: '', category: '', type: '', cts: '', startMonth: '',
 });
+
+const ensureRowIds = (rows) =>
+  (Array.isArray(rows) ? rows : []).map(r => (r && r.id ? r : { ...(r || {}), id: newRowId() }));
 
 const fmtMoney = (n) => {
   if (typeof n !== 'number' || !Number.isFinite(n)) return '';
@@ -90,6 +105,7 @@ function parseRowsFromText(text) {
     const cols = line.includes('\t') ? line.split('\t') : line.split(/\s*,\s*/);
     const cell = (i) => (cols[i] ?? '').trim();
     out.push({
+      id: newRowId(),
       feeBucket: cell(0),
       category: cell(1),
       type: cell(2),
@@ -128,7 +144,7 @@ function CellInput({ value, onCommit, align, placeholder }) {
   );
 }
 
-function CostTable({ title, rows, otherRows, otherLabel, onChange, onAddRow, onRemoveRow, onReplaceRows, onClear, tone, importOptions, onImportOption }) {
+function CostTable({ title, rows, otherRows, otherLabel, onChange, onAddRow, onRemoveRow, onReplaceRows, onClear, tone, importOptions, onImportOption, getLinkedOtherId, setLink, clearLink, linkedOtherIds, linkedThisIds }) {
   // Lookup map keyed by category + type so each row compares against
   // the matching row(s) of the same type on the other side. Keying by
   // category alone collapses rows like "Commercial Client Manager"
@@ -136,12 +152,18 @@ function CostTable({ title, rows, otherRows, otherLabel, onChange, onAddRow, onR
   // them look off by the sum of the others. Multiple rows that share
   // the same (category, type) are still summed under the key — when
   // both sides carry the same set, the sums cancel and the row shows
-  // "=" as expected.
+  // "=" as expected. Rows explicitly tied via the link button are
+  // handled separately below and excluded from these sums.
   const compareKey = (r) => `${normalizeCategory(r.category)}||${(r.type || '').trim().toLowerCase()}`;
+  const otherById = new Map();
+  for (const r of (otherRows || [])) {
+    if (r && r.id) otherById.set(r.id, r);
+  }
   const otherByKey = new Map();
   for (const r of (otherRows || [])) {
     const cat = normalizeCategory(r.category);
     if (!cat) continue;
+    if (linkedOtherIds && linkedOtherIds.has(r.id)) continue; // counted via its link, not auto-match
     const key = compareKey(r);
     const v = toNum(r.cts) || 0;
     otherByKey.set(key, (otherByKey.get(key) || 0) + v);
@@ -153,10 +175,26 @@ function CostTable({ title, rows, otherRows, otherLabel, onChange, onAddRow, onR
   for (const r of rows) {
     const cat = normalizeCategory(r.category);
     if (!cat) continue;
+    if (linkedThisIds && linkedThisIds.has(r.id)) continue;
     const key = compareKey(r);
     const v = toNum(r.cts) || 0;
     thisByKey.set(key, (thisByKey.get(key) || 0) + v);
   }
+  // Popover state for the per-row link picker. One open at a time.
+  const [linkMenuFor, setLinkMenuFor] = useState(null); // row id whose menu is open
+  const [linkFilter, setLinkFilter] = useState('');
+  const linkMenuRef = useRef(null);
+  useEffect(() => {
+    if (!linkMenuFor) return;
+    const handler = (e) => {
+      if (linkMenuRef.current && !linkMenuRef.current.contains(e.target)) {
+        setLinkMenuFor(null);
+        setLinkFilter('');
+      }
+    };
+    window.addEventListener('mousedown', handler);
+    return () => window.removeEventListener('mousedown', handler);
+  }, [linkMenuFor]);
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState('');
   const [flash, setFlash] = useState('');
@@ -308,13 +346,34 @@ function CostTable({ title, rows, otherRows, otherLabel, onChange, onAddRow, onR
               const k = `${idx}-${row.feeBucket}-${row.category}-${row.type}-${row.cts}-${row.startMonth}`;
               const cat = normalizeCategory(row.category);
               const rowKey = compareKey(row);
+              const linkedOtherId = getLinkedOtherId ? getLinkedOtherId(row.id) : null;
+              const linkedOther = linkedOtherId ? otherById.get(linkedOtherId) : null;
               let compareCell;
-              if (!cat) {
+              if (linkedOther) {
+                const thisSum = toNum(row.cts) || 0;
+                const otherSum = toNum(linkedOther.cts) || 0;
+                const delta = thisSum - otherSum;
+                const linkLabel = (linkedOther.category || '').trim() || '(blank)';
+                const sign = delta === 0
+                  ? <span className={styles.compareMuted}>=</span>
+                  : <span className={delta > 0 ? styles.deltaUp : styles.deltaDown}>{fmtMoneySigned(delta)}</span>;
+                compareCell = (
+                  <span title={`Tied to "${linkLabel}" in ${otherLabel || 'the other table'}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                    <span aria-hidden="true" style={{ fontSize: '0.7rem' }}>🔗</span>
+                    {sign}
+                  </span>
+                );
+              } else if (!cat) {
                 compareCell = <span className={styles.compareMuted}>—</span>;
               } else if (otherByKey.has(rowKey)) {
                 const otherSum = otherByKey.get(rowKey) || 0;
                 const thisSum = thisByKey.get(rowKey) || 0;
-                const delta = otherSum - thisSum;
+                // Sign convention: positive means THIS side is more
+                // expensive than the other. So the more expensive side
+                // reads "+$X" (red), the cheaper side reads "−$X"
+                // (green) — intuitively "this row costs more / less
+                // than its match on the other side".
+                const delta = thisSum - otherSum;
                 if (delta === 0) {
                   compareCell = <span className={styles.compareMuted}>=</span>;
                 } else {
@@ -331,8 +390,19 @@ function CostTable({ title, rows, otherRows, otherLabel, onChange, onAddRow, onR
                   </span>
                 );
               }
+              // Candidates for the link picker: rows on the other side
+              // with at least a category or CTS filled in. Filter by
+              // the popover search text against category / fee bucket.
+              const candidates = (otherRows || []).filter(r => r && r.id && (r.category || r.feeBucket || r.cts));
+              const q = linkFilter.trim().toLowerCase();
+              const visibleCandidates = q
+                ? candidates.filter(r =>
+                    (r.category || '').toLowerCase().includes(q)
+                    || (r.feeBucket || '').toLowerCase().includes(q)
+                    || (r.type || '').toLowerCase().includes(q))
+                : candidates;
               return (
-                <tr key={idx}>
+                <tr key={row.id || idx}>
                   <td className={cellClass}>
                     <CellInput key={`fb-${k}`} value={row.feeBucket} onCommit={(v) => onChange(idx, 'feeBucket', v)} />
                   </td>
@@ -365,8 +435,64 @@ function CostTable({ title, rows, otherRows, otherLabel, onChange, onAddRow, onR
                   <td className={`${cellClass} ${styles.numCell}`}>
                     <CellInput key={`sm-${k}`} value={row.startMonth} align="right" onCommit={(v) => onChange(idx, 'startMonth', v)} />
                   </td>
-                  <td className={`${cellClass} ${styles.compareCell}`}>
-                    {compareCell}
+                  <td className={`${cellClass} ${styles.compareCell}`} style={{ position: 'relative' }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      {compareCell}
+                      <button
+                        type="button"
+                        className={styles.linkBtn}
+                        onClick={() => {
+                          if (linkMenuFor === row.id) { setLinkMenuFor(null); setLinkFilter(''); }
+                          else { setLinkMenuFor(row.id); setLinkFilter(''); }
+                        }}
+                        title={linkedOther
+                          ? `Tied to "${(linkedOther.category || '(blank)').trim()}" in ${otherLabel || 'the other table'}. Click to change or unlink.`
+                          : `Tie this row to a specific row in ${otherLabel || 'the other table'}`}
+                      >
+                        {linkedOther ? '⛓' : '🔗'}
+                      </button>
+                    </span>
+                    {linkMenuFor === row.id && (
+                      <div ref={linkMenuRef} className={styles.linkMenu}>
+                        <div className={styles.linkMenuHeader}>
+                          Tie to a row in {otherLabel || 'the other table'}
+                        </div>
+                        <input
+                          autoFocus
+                          value={linkFilter}
+                          onChange={(e) => setLinkFilter(e.target.value)}
+                          placeholder="Search category, fee bucket, type…"
+                          className={styles.linkMenuSearch}
+                        />
+                        {linkedOther && (
+                          <button
+                            type="button"
+                            className={styles.linkMenuClear}
+                            onClick={() => { if (clearLink) clearLink(row.id); setLinkMenuFor(null); setLinkFilter(''); }}
+                          >Unlink (currently tied to "{(linkedOther.category || '(blank)').trim()}")</button>
+                        )}
+                        <div className={styles.linkMenuList}>
+                          {visibleCandidates.length === 0 ? (
+                            <div className={styles.linkMenuEmpty}>No rows match.</div>
+                          ) : visibleCandidates.map(r => {
+                            const ctsTxt = toNum(r.cts) != null ? fmtMoney(toNum(r.cts) || 0) : '';
+                            const tag = [r.feeBucket, r.type, ctsTxt].filter(Boolean).join(' · ');
+                            const isCurrent = linkedOther && linkedOther.id === r.id;
+                            return (
+                              <button
+                                key={r.id}
+                                type="button"
+                                className={`${styles.linkMenuItem} ${isCurrent ? styles.linkMenuItemActive : ''}`}
+                                onClick={() => { if (setLink) setLink(row.id, r.id); setLinkMenuFor(null); setLinkFilter(''); }}
+                              >
+                                <div className={styles.linkMenuItemTitle}>{(r.category || '').trim() || '(blank category)'}</div>
+                                {tag && <div className={styles.linkMenuItemMeta}>{tag}</div>}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
                   </td>
                   <td className={styles.actionCell}>
                     <button
@@ -402,7 +528,23 @@ export function CompareTab({ state, setState, workbook, resolvedLinkedTo }) {
         nextLabel: 'New',
         current: Array.from({ length: 10 }, EMPTY_ROW),
         next: Array.from({ length: 10 }, EMPTY_ROW),
+        links: {},
       };
+
+  // Backfill stable row ids and a links bag once, so legacy saved
+  // state immediately supports manual row-to-row tying. Only writes
+  // back when something is actually missing.
+  useEffect(() => {
+    if (!state || !state.current || !state.next) return;
+    const needs = state.current.some(r => !r?.id) || state.next.some(r => !r?.id) || !state.links;
+    if (!needs) return;
+    setState({
+      ...state,
+      current: ensureRowIds(state.current),
+      next: ensureRowIds(state.next),
+      links: state.links && typeof state.links === 'object' ? state.links : {},
+    });
+  }, [state, setState]);
 
   const update = (next) => setState(next);
 
@@ -412,22 +554,86 @@ export function CompareTab({ state, setState, workbook, resolvedLinkedTo }) {
     update({ ...safe, [side]: rows });
   };
   const addRow = (side) => () => update({ ...safe, [side]: [...safe[side], EMPTY_ROW()] });
+  // Drop any explicit row link that references ids no longer present
+  // on either side. Prevents the link map from holding dangling rows
+  // after deletions / clears / re-imports.
+  const pruneLinks = (links, currentRows, nextRows) => {
+    const curIds = new Set((currentRows || []).map(r => r?.id).filter(Boolean));
+    const nxtIds = new Set((nextRows || []).map(r => r?.id).filter(Boolean));
+    const out = {};
+    for (const [cid, nid] of Object.entries(links || {})) {
+      if (curIds.has(cid) && nxtIds.has(nid)) out[cid] = nid;
+    }
+    return out;
+  };
   const removeRow = (side) => (idx) => {
     const rows = safe[side].slice();
     rows.splice(idx, 1);
-    update({ ...safe, [side]: rows.length ? rows : [EMPTY_ROW()] });
+    const finalRows = rows.length ? rows : [EMPTY_ROW()];
+    const nextState = { ...safe, [side]: finalRows };
+    nextState.links = pruneLinks(safe.links, nextState.current, nextState.next);
+    update(nextState);
   };
-  const replaceRows = (side) => (rows) => update({ ...safe, [side]: rows });
+  const replaceRows = (side) => (rows) => {
+    const nextState = { ...safe, [side]: rows };
+    nextState.links = pruneLinks(safe.links, nextState.current, nextState.next);
+    update(nextState);
+  };
   const importOption = (side) => (opt) => {
     const imported = optionToCompareRows(opt, resolvedLinkedTo);
     const padded = imported.length < 10
       ? imported.concat(Array.from({ length: 10 - imported.length }, EMPTY_ROW))
       : imported;
-    update({ ...safe, [side]: padded });
+    const nextState = { ...safe, [side]: padded };
+    nextState.links = pruneLinks(safe.links, nextState.current, nextState.next);
+    update(nextState);
   };
   // Reset a side back to the empty 10-row template (mirrors the
   // initial state so totals + the per-category compare also reset).
-  const clearSide = (side) => () => update({ ...safe, [side]: Array.from({ length: 10 }, EMPTY_ROW) });
+  const clearSide = (side) => () => {
+    const fresh = Array.from({ length: 10 }, EMPTY_ROW);
+    const nextState = { ...safe, [side]: fresh };
+    nextState.links = pruneLinks(safe.links, nextState.current, nextState.next);
+    update(nextState);
+  };
+
+  // Row-link helpers. `links` is keyed by Current row id → Next row id;
+  // both setLink callers normalize their (this, other) ids into that
+  // canonical orientation. Linking either row replaces any prior link
+  // either of them was part of.
+  const links = (safe.links && typeof safe.links === 'object') ? safe.links : {};
+  const setLinkFor = (side) => (thisId, otherId) => {
+    if (!thisId || !otherId) return;
+    const currentId = side === 'current' ? thisId : otherId;
+    const nextId = side === 'current' ? otherId : thisId;
+    const out = {};
+    for (const [cid, nid] of Object.entries(links)) {
+      if (cid === currentId) continue;
+      if (nid === nextId) continue;
+      out[cid] = nid;
+    }
+    out[currentId] = nextId;
+    update({ ...safe, links: out });
+  };
+  const clearLinkFor = (side) => (thisId) => {
+    if (!thisId) return;
+    const out = {};
+    for (const [cid, nid] of Object.entries(links)) {
+      if (side === 'current' && cid === thisId) continue;
+      if (side === 'next' && nid === thisId) continue;
+      out[cid] = nid;
+    }
+    update({ ...safe, links: out });
+  };
+  const linkedFromCurrent = new Map(Object.entries(links));
+  const linkedFromNext = new Map();
+  for (const [cid, nid] of Object.entries(links)) linkedFromNext.set(nid, cid);
+  const getLinkedOtherIdFor = (side) => (thisId) => {
+    if (!thisId) return null;
+    return side === 'current' ? (linkedFromCurrent.get(thisId) || null) : (linkedFromNext.get(thisId) || null);
+  };
+  const linkedCurrentIds = new Set(linkedFromCurrent.keys());
+  const linkedNextIds = new Set(linkedFromNext.keys());
 
   const currentTotals = summarize(safe.current);
   const nextTotals = summarize(safe.next);
@@ -435,8 +641,10 @@ export function CompareTab({ state, setState, workbook, resolvedLinkedTo }) {
   // Build a side-by-side comparison: every distinct CTS Category that
   // appears on either side becomes a row, paired with its monthly
   // recurring on each side (the dominant cost type for these tables).
-  // Categories are matched purely by normalized text — the Compare
-  // column on each table renders per-row deltas / missing markers.
+  // Explicit row links collapse a Current row + a New row into a
+  // single entry (labeled with the New side's category, falling back
+  // to Current's) regardless of category text. Unlinked rows still
+  // match by normalized category as before.
   const compareRows = (() => {
     const byKey = new Map();
     const keyFor = (s) => normalizeCategory(s);
@@ -448,7 +656,27 @@ export function CompareTab({ state, setState, workbook, resolvedLinkedTo }) {
       }
       return byKey.get(key);
     };
+    const currentById = new Map(safe.current.map(r => [r?.id, r]).filter(([id]) => id));
+    const nextById = new Map(safe.next.map(r => [r?.id, r]).filter(([id]) => id));
+    // Linked pairs first — each pair gets its own synthetic key so the
+    // two rows always roll up together even if their categories differ.
+    for (const [cid, nid] of Object.entries(links)) {
+      const cur = currentById.get(cid);
+      const nxt = nextById.get(nid);
+      if (!cur && !nxt) continue;
+      const label = (nxt?.category || cur?.category || '').trim() || '(blank)';
+      const ent = ensure(`__link__:${cid}|${nid}`, label);
+      const cv = toNum(cur?.cts) || 0;
+      const nv = toNum(nxt?.cts) || 0;
+      if (cur) {
+        if (isRecurring(cur.type)) ent.oldMonthly += cv; else ent.oldSetup += cv;
+      }
+      if (nxt) {
+        if (isRecurring(nxt.type)) ent.newMonthly += nv; else ent.newSetup += nv;
+      }
+    }
     for (const r of safe.current) {
+      if (r && r.id && linkedCurrentIds.has(r.id)) continue;
       const cat = (r.category || '').trim();
       if (!cat) continue;
       const v = toNum(r.cts) || 0;
@@ -457,6 +685,7 @@ export function CompareTab({ state, setState, workbook, resolvedLinkedTo }) {
       else ent.oldSetup += v;
     }
     for (const r of safe.next) {
+      if (r && r.id && linkedNextIds.has(r.id)) continue;
       const cat = (r.category || '').trim();
       if (!cat) continue;
       const v = toNum(r.cts) || 0;
@@ -482,7 +711,9 @@ export function CompareTab({ state, setState, workbook, resolvedLinkedTo }) {
         Compare two cost-to-serve scenarios side by side. Paste blocks from Excel into the
         Current and New tables — totals, per-category deltas, and a first-year roll-up update
         as you edit. Each row's <strong>Compare</strong> column shows the delta vs the matching
-        row on the other side, or a missing-row marker when the category isn't there.
+        row on the other side, or a missing-row marker when the category isn't there. Click the
+        🔗 icon to manually tie a row to a specific row on the other side when the categories
+        don't match exactly.
       </div>
 
       <div className={styles.labelRow}>
@@ -558,6 +789,11 @@ export function CompareTab({ state, setState, workbook, resolvedLinkedTo }) {
           onClear={clearSide('current')}
           importOptions={importOptions}
           onImportOption={importOption('current')}
+          getLinkedOtherId={getLinkedOtherIdFor('current')}
+          setLink={setLinkFor('current')}
+          clearLink={clearLinkFor('current')}
+          linkedThisIds={linkedCurrentIds}
+          linkedOtherIds={linkedNextIds}
         />
         <CostTable
           title={safe.nextLabel}
@@ -572,6 +808,11 @@ export function CompareTab({ state, setState, workbook, resolvedLinkedTo }) {
           onClear={clearSide('next')}
           importOptions={importOptions}
           onImportOption={importOption('next')}
+          getLinkedOtherId={getLinkedOtherIdFor('next')}
+          setLink={setLinkFor('next')}
+          clearLink={clearLinkFor('next')}
+          linkedThisIds={linkedNextIds}
+          linkedOtherIds={linkedCurrentIds}
         />
       </div>
 
@@ -579,7 +820,8 @@ export function CompareTab({ state, setState, workbook, resolvedLinkedTo }) {
         <div className={styles.compareHeader}>
           Per-category comparison
           <span className={styles.compareHint}>
-            Sorted by largest monthly delta. Categories are matched by CTS Category text.
+            Sorted by largest monthly delta. Matched by CTS Category text, plus any pairs you
+            tied manually with the 🔗 icon.
           </span>
         </div>
         <div className={styles.compareTableWrap}>
