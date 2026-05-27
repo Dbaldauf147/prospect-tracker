@@ -283,9 +283,11 @@ function parseOptionSheet(sheet, sheetName) {
             fee: cols.fee !== undefined ? toNumber(row[cols.fee]) : null,
             unit: cols.unit !== undefined ? cellStr(row[cols.unit]) : '',
             // Mirror altFeeStarter() defaults so an imported blank
-            // matches the in-app placeholder values.
+            // matches the in-app placeholder values. startMonth stays
+            // null when the workbook doesn't supply one so the alt-fee
+            // table can auto-derive it from linked CTS rows.
             unitCount: ucRaw == null ? 1 : ucRaw,
-            startMonth: smRaw == null ? 1 : smRaw,
+            startMonth: smRaw == null ? null : smRaw,
           });
         }
         continue;
