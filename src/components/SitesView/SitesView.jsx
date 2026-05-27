@@ -50,6 +50,7 @@ import {
   NA_CATEGORIES,
   US_MARKETS,
   CA_MARKETS,
+  naCategoryFor,
 } from '../../data/naMarkets';
 import {
   COUNTRY_CENTERS,
@@ -5279,6 +5280,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       { label: 'Property Type', get: (s) => s.propertyType, width: 22 },
       { label: 'Electric Utility', get: (s) => s.electricUtility, width: 22 },
       { label: 'Electric Supplier', get: (s) => s.electricSupplier, width: 22 },
+      { label: 'Electric Market', get: (s) => s.electricMarket, width: 18 },
       { label: 'Reg. Rate Savings Opportunity', get: (s) => s.regRateOpportunity, width: 28 },
       { label: 'Annual Electric (kWh)', get: (s) => s.kwh, numFmt: '#,##0', width: 18 },
       { label: 'Total Electric Cost', get: (s) => s.electricCost, numFmt: '"$"#,##0', width: 16 },
@@ -5286,6 +5288,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       { label: 'Electric Contract End', get: (s) => s.electricEnd, width: 18, numFmt: 'm/d/yyyy', dateColumn: true },
       { label: 'Gas Utility', get: (s) => s.gasUtility, width: 22 },
       { label: 'Gas Supplier', get: (s) => s.gasSupplier, width: 22 },
+      { label: 'Gas Market', get: (s) => s.gasMarket, width: 18 },
       { label: 'Annual Gas (Dth)', get: (s) => s.dth, numFmt: '#,##0', width: 16 },
       { label: 'Total Natural Gas Cost', get: (s) => s.gasCost, numFmt: '"$"#,##0', width: 18 },
       { label: 'Gas Contract Start', get: (s) => s.gasStart, width: 18, numFmt: 'm/d/yyyy', dateColumn: true },
@@ -5361,6 +5364,17 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           ? (!!electricUtility && isRegulatedRateOpportunity(stateCode, electricUtility))
           : countryHasRegulatedRateOpportunity(rawCountry);
         const country = rawCountry;
+        // Per-commodity Regulated / Deregulated status. US/CA: pull
+        // from the NA deregulation map (state-level). Other countries:
+        // fall back to COUNTRY_DEREGULATION's electric / gas values.
+        // Stays blank when neither source has an entry so the column
+        // doesn't pretend to know.
+        const isUSSite = /^(united states|usa|us)$/i.test(rawCountry);
+        const isCASite = /^(canada|ca)$/i.test(rawCountry);
+        const naCat = (isUSSite || isCASite) ? naCategoryFor(stateCode, isUSSite, isCASite) : null;
+        const countryDereg = (!isUSSite && !isCASite) ? COUNTRY_DEREGULATION[normalizeCountryName(rawCountry) || rawCountry] : null;
+        const electricMarket = naCat ? (naCat.ep || '') : (countryDereg?.electric || '');
+        const gasMarket      = naCat ? (naCat.ng || '') : (countryDereg?.gas || '');
         const kwh = typeof r.__kwh__ === 'number' ? Math.round(r.__kwh__) : null;
         // Mexico flag: Baja sites are off CFE's grid so they don't
         // get tagged at all. Other Mexican sites get either the
@@ -5390,6 +5404,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           propertyType: r.__propertyType__ || r.__propertyTypeRaw__ || '',
           electricUtility,
           electricSupplier,
+          electricMarket,
           regRateOpportunity: isRegRateOpportunity ? 'Yes' : '',
           kwh,
           electricCost: typeof r.__electricCost__ === 'number' ? Math.round(r.__electricCost__) : null,
@@ -5397,6 +5412,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           electricEnd: tbdIfMissing(r.__electricEnd__, !!electricSupplier),
           gasUtility,
           gasSupplier,
+          gasMarket,
           dth,
           gasCost: typeof r.__gasCost__ === 'number' ? Math.round(r.__gasCost__) : null,
           gasStart: tbdIfMissing(r.__gasStart__, !!gasSupplier),
