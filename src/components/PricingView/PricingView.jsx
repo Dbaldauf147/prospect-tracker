@@ -2730,6 +2730,8 @@ export function PricingView({ settings } = {}) {
           state={compareTabData}
           setState={setCompareTabData}
           workbook={workbook}
+          resolvedLinkedTo={resolvedLinkedTo}
+          effectiveType={effectiveType}
         />
       )}
 

@@ -2,18 +2,19 @@ import { useEffect, useRef, useState } from 'react';
 import styles from './CompareTab.module.css';
 
 // Map a workbook Option's CTS rows into the Compare tab's row shape.
-// Fee Bucket comes from the section title (Sourcing / Onboarding /
-// Ongoing-monthly / etc.), Category from the line item description.
-// Numeric fields are kept as numbers — the existing toNum() handles
-// them downstream.
-function optionToCompareRows(opt, withCombine) {
+// Fee Bucket pulls the row's resolved Linked To tag (per-row override
+// or saved default for its Line Item + Type) so the comparison groups
+// by the same buckets the Linked To page wires up. Category is the
+// line item description; numeric fields are kept as numbers.
+function optionToCompareRows(opt, withCombine, resolvedLinkedTo) {
   if (!opt || !Array.isArray(opt.sections)) return [];
   const rows = [];
   for (const sec of opt.sections) {
     for (const item of (sec.items || [])) {
       if (typeof item.cts !== 'number') continue;
+      const linked = resolvedLinkedTo ? String(resolvedLinkedTo(item) || '').trim() : '';
       const row = {
-        feeBucket: sec.title || '',
+        feeBucket: linked,
         category: item.description || '',
         type: item.type || '',
         cts: item.cts,
@@ -349,7 +350,7 @@ function CostTable({ title, rows, onChange, onAddRow, onRemoveRow, onReplaceRows
   );
 }
 
-export function CompareTab({ state, setState, workbook }) {
+export function CompareTab({ state, setState, workbook, resolvedLinkedTo }) {
   const importOptions = Array.isArray(workbook?.options) ? workbook.options : [];
   const safe = state && state.current && state.next
     ? state
@@ -376,7 +377,7 @@ export function CompareTab({ state, setState, workbook }) {
   const replaceRows = (side) => (rows) => update({ ...safe, [side]: rows });
   const importOption = (side) => (opt) => {
     const withCombine = side === 'next';
-    const imported = optionToCompareRows(opt, withCombine);
+    const imported = optionToCompareRows(opt, withCombine, resolvedLinkedTo);
     const padded = imported.length < 10
       ? imported.concat(Array.from({ length: 10 - imported.length }, EMPTY_ROW))
       : imported;
