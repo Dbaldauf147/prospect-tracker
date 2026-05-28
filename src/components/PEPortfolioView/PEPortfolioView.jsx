@@ -129,9 +129,9 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
   // Persisted column widths + sort so the layout survives reloads.
-  const DEFAULT_COL_WIDTHS = { company: 240, peAum: 110, geography: 110, dm: 170, met: 170, mapping: 110, opps: 100, ratio: 120, clients: 110, keyContacts: 120, caseStudy: 110 };
+  const DEFAULT_COL_WIDTHS = { company: 240, peStage: 150, peAum: 110, geography: 110, dm: 170, met: 170, mapping: 110, opps: 100, ratio: 120, clients: 110, keyContacts: 120, caseStudy: 110 };
   // company is sticky and always shown — every other column is opt-in.
-  const ALL_COL_KEYS = ['company', 'peAum', 'geography', 'dm', 'met', 'mapping', 'opps', 'ratio', 'clients', 'keyContacts', 'caseStudy'];
+  const ALL_COL_KEYS = ['company', 'peStage', 'peAum', 'geography', 'dm', 'met', 'mapping', 'opps', 'ratio', 'clients', 'keyContacts', 'caseStudy'];
   const [colWidths, setColWidths] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('pe-portfolio:col-widths')) || {};
@@ -465,6 +465,9 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
         case 'company':
           cmp = (a.company || '').localeCompare(b.company || '');
           break;
+        case 'peStage':
+          cmp = (a.peStage || '').localeCompare(b.peStage || '');
+          break;
         case 'peAum':
           cmp = (a.peAum || 0) - (b.peAum || 0);
           break;
@@ -609,7 +612,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
           >Columns ({visibleCols.size}/{ALL_COL_KEYS.length})</button>
           {colMenuOpen && (() => {
             const COL_LABELS = {
-              company: 'PE firm', peAum: 'PE AUM', geography: 'Geography', dm: 'Decision Maker Found?',
+              company: 'PE firm', peStage: 'PE Stage', peAum: 'PE AUM', geography: 'Geography', dm: 'Decision Maker Found?',
               met: 'Met in Person', mapping: 'PC Mapping', opps: 'PC Opps', ratio: 'PC Opps 2/4',
               clients: 'PC Clients', keyContacts: 'Key Contacts', caseStudy: 'Case Study',
             };
@@ -664,6 +667,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
         ) : (() => {
           const ALL_HEADER_COLUMNS = [
             { key: 'company', label: 'PE firm', align: 'left',   tip: 'Sort by company name' },
+            { key: 'peStage', label: 'PE Stage', align: 'left', tip: 'Partnership stage set on the PE firm\'s company page (Discovery / Piloting / Existing Partnership)' },
             { key: 'peAum',   label: 'PE AUM', align: 'right', tip: 'AUM (in billions) pulled from each PE firm\'s Table View record. Sort by AUM.' },
             { key: 'geography', label: 'Geography', align: 'left', tip: 'Geography from the PE firm\'s prospect record (Global / NAM / State-Regional)' },
             { key: 'dm',      label: 'Decision Maker Found?', align: 'left', tip: 'Sort by number of decision makers found on HubSpot' },
@@ -745,6 +749,24 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
                         title={pe.company}
                         onClick={e => { e.stopPropagation(); onSelectProspect?.(pe); }}
                       >{pe.company}</div>
+
+                      {visibleCols.has('peStage') && (
+                      <div style={{ padding: '0.55rem 0.6rem' }} title={pe.peStage ? `PE Stage: ${pe.peStage}` : 'No PE Stage set on this firm\'s company page'}>
+                        {pe.peStage ? (() => {
+                          const PE_STAGE_COLORS = {
+                            'Discovery': { bg: '#EFF6FF', border: '#BFDBFE', fg: '#1D4ED8' },
+                            'Piloting': { bg: '#FEF3C7', border: '#FDE68A', fg: '#92400E' },
+                            'Existing Partnership': { bg: '#DCFCE7', border: '#86EFAC', fg: '#166534' },
+                          };
+                          const c = PE_STAGE_COLORS[pe.peStage] || { bg: '#F1F5F9', border: '#CBD5E1', fg: '#475569' };
+                          return (
+                            <span style={{ padding: '1px 8px', borderRadius: 999, fontSize: '0.65rem', fontWeight: 700, background: c.bg, border: `1px solid ${c.border}`, color: c.fg, whiteSpace: 'nowrap' }}>{pe.peStage}</span>
+                          );
+                        })() : (
+                          <span style={{ fontSize: '0.72rem', color: '#CBD5E1' }}>—</span>
+                        )}
+                      </div>
+                      )}
 
                       {visibleCols.has('peAum') && (
                       <div

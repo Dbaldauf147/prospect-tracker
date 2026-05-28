@@ -390,7 +390,7 @@ const EMPTY = {
   company: '', cdm: '', status: 'Inside Sales', type: '', geography: '', publicPrivate: '',
   assetTypes: [], peAum: null, reAum: null, numberOfSites: null, rank: '', tier: 'Tier 2',
   hqRegion: '', frameworks: [], notes: '', website: '', emailDomain: '', servicesExplored: {}, serviceNotes: {}, competitors: {}, portfolioCompanies: [],
-  peOwner: '', sustainabilityTargets: '', caseStudyCreated: false,
+  peOwner: '', sustainabilityTargets: '', caseStudyCreated: false, peStage: '',
 };
 
 // Company-name normalizer shared with the list tabs so fuzzy matching
