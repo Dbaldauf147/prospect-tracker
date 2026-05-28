@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
-  watchSchedules, createSchedule, updateSchedule, removeSchedule, setEnabled,
+  listSchedules, createSchedule, updateSchedule, removeSchedule, setEnabled,
   describeSchedule, normalizeRecipients, isValidEmail, FREQUENCIES, WEEKDAYS,
 } from '../../utils/peOppsSchedulesStore';
 import { apiFetch } from '../../utils/apiFetch';
@@ -42,10 +42,20 @@ export function PEOppsScheduleModal({ open, onClose, uid, email, allColumns, def
   const [error, setError] = useState('');
   const [busyId, setBusyId] = useState(null);
   const [toast, setToast] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const reload = async () => {
+    if (!uid) { setSchedules([]); return; }
+    setLoading(true);
+    try { setSchedules(await listSchedules()); }
+    catch (err) { setError(String(err.message || err)); }
+    finally { setLoading(false); }
+  };
 
   useEffect(() => {
-    if (!open || !uid) return undefined;
-    return watchSchedules(uid, setSchedules);
+    if (!open) return;
+    reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, uid]);
 
   useEffect(() => {
@@ -98,6 +108,7 @@ export function PEOppsScheduleModal({ open, onClose, uid, email, allColumns, def
       else await createSchedule(uid, email, form);
       setEditing(false);
       setToast('Schedule saved.');
+      await reload();
     } catch (err) {
       setError(String(err.message || err));
     } finally {
@@ -107,12 +118,12 @@ export function PEOppsScheduleModal({ open, onClose, uid, email, allColumns, def
 
   const handleDelete = async (s) => {
     if (!window.confirm(`Delete this schedule? "${describeSchedule(s)}" to ${(s.recipients || []).length} recipient(s).`)) return;
-    try { await removeSchedule(s.id); setToast('Schedule deleted.'); }
+    try { await removeSchedule(s.id); setToast('Schedule deleted.'); await reload(); }
     catch (err) { setToast(`Delete failed: ${err.message || err}`); }
   };
 
   const handleToggle = async (s) => {
-    try { await setEnabled(s.id, !(s.enabled !== false)); }
+    try { await setEnabled(s.id, !(s.enabled !== false)); await reload(); }
     catch (err) { setToast(`Update failed: ${err.message || err}`); }
   };
 
@@ -173,7 +184,7 @@ export function PEOppsScheduleModal({ open, onClose, uid, email, allColumns, def
             <>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.6rem' }}>
                 <div style={{ fontSize: '0.78rem', color: '#64748B' }}>
-                  {schedules.length === 0 ? 'No schedules yet.' : `${schedules.length} schedule${schedules.length === 1 ? '' : 's'}`}
+                  {loading ? 'Loading…' : schedules.length === 0 ? 'No schedules yet.' : `${schedules.length} schedule${schedules.length === 1 ? '' : 's'}`}
                 </div>
                 <button type="button" onClick={startNew} style={btnPrimary}>+ New schedule</button>
               </div>

@@ -1,7 +1,7 @@
-// Client-side CRUD for PE Opps email schedules. Schedules live in the
-// top-level `peOppsEmailSchedules` Firestore collection, one doc per
-// schedule, owned by `ownerUid`. The hourly cron (api/pe-opps-scheduler)
-// reads them with the admin SDK and sends the due ones.
+// Client helpers for PE Opps email schedules. CRUD goes through the
+// authenticated /api/pe-opps-schedules route (admin SDK on the server) so
+// the feature works without deploying client-side Firestore rules. The
+// hourly cron (api/pe-opps-scheduler) reads the same collection.
 //
 // Scheduling is anchored in UTC. The user picks a *local* hour/day in the
 // UI; we resolve the first concrete run instant in local time, then derive
@@ -9,15 +9,21 @@
 // same instant so the server's recurrence math (api/_lib/peOppsSchedule)
 // lines up with what the user intended.
 
-import {
-  collection, query, where, onSnapshot, addDoc, updateDoc, deleteDoc, doc, getDocs,
-} from 'firebase/firestore';
-import { db } from '../firebase';
-
-const COLLECTION = 'peOppsEmailSchedules';
+import { apiFetch } from './apiFetch';
 
 export const FREQUENCIES = ['daily', 'weekly', 'monthly'];
 export const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+async function call(action, payload = {}) {
+  const res = await apiFetch('/api/pe-opps-schedules', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, ...payload }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  return data;
+}
 
 // First concrete run at/after `from`, computed in the browser's local
 // timezone, as a Date.
@@ -67,74 +73,36 @@ export function describeSchedule(s) {
   return `Daily at ${time}`;
 }
 
-export function watchSchedules(uid, cb) {
-  if (!uid) { cb([]); return () => {}; }
-  const q = query(collection(db, COLLECTION), where('ownerUid', '==', uid));
-  return onSnapshot(
-    q,
-    (snap) => {
-      const out = [];
-      snap.forEach((d) => out.push({ id: d.id, ...d.data() }));
-      out.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
-      cb(out);
-    },
-    (err) => { console.error('peOppsSchedules watch failed', err); cb([]); },
-  );
+export async function listSchedules() {
+  const data = await call('list');
+  return data.schedules || [];
 }
 
-export async function listSchedules(uid) {
-  if (!uid) return [];
-  const q = query(collection(db, COLLECTION), where('ownerUid', '==', uid));
-  const snap = await getDocs(q);
-  const out = [];
-  snap.forEach((d) => out.push({ id: d.id, ...d.data() }));
-  return out;
-}
-
-export async function createSchedule(uid, email, input) {
-  const recurrence = buildRecurrenceFields(input);
-  const now = Date.now();
-  const docData = {
-    ownerUid: uid,
-    ownerEmail: email || '',
-    name: (input.name || '').trim(),
+export async function createSchedule(_uid, _email, input) {
+  const schedule = {
+    ...input,
+    ...buildRecurrenceFields(input),
     recipients: normalizeRecipients(input.recipients),
-    subject: (input.subject || 'PE Opportunities').trim(),
-    message: (input.message || '').trim(),
-    columns: Array.isArray(input.columns) ? input.columns : [],
-    skipWhenEmpty: !!input.skipWhenEmpty,
-    enabled: input.enabled !== false,
-    createdAt: now,
-    updatedAt: now,
-    lastStatus: null,
-    lastSentAt: null,
-    ...recurrence,
   };
-  const ref = await addDoc(collection(db, COLLECTION), docData);
-  return ref.id;
+  const data = await call('create', { schedule });
+  return data.id;
 }
 
 export async function updateSchedule(id, input) {
-  const recurrence = buildRecurrenceFields(input);
-  await updateDoc(doc(db, COLLECTION, id), {
-    name: (input.name || '').trim(),
+  const schedule = {
+    ...input,
+    ...buildRecurrenceFields(input),
     recipients: normalizeRecipients(input.recipients),
-    subject: (input.subject || 'PE Opportunities').trim(),
-    message: (input.message || '').trim(),
-    columns: Array.isArray(input.columns) ? input.columns : [],
-    skipWhenEmpty: !!input.skipWhenEmpty,
-    enabled: input.enabled !== false,
-    updatedAt: Date.now(),
-    ...recurrence,
-  });
+  };
+  await call('update', { id, schedule });
 }
 
 export async function setEnabled(id, enabled) {
-  await updateDoc(doc(db, COLLECTION, id), { enabled: !!enabled, updatedAt: Date.now() });
+  await call('setEnabled', { id, enabled: !!enabled });
 }
 
 export async function removeSchedule(id) {
-  await deleteDoc(doc(db, COLLECTION, id));
+  await call('delete', { id });
 }
 
 export function normalizeRecipients(raw) {
