@@ -7,6 +7,7 @@ import { buildCompanyIndex, hasMatchInIndex } from '../../utils/companyIndex';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { dbGet } from '../../utils/db';
 import { userLsGet } from '../../utils/userLs';
+import { getOppsSheetCsvUrl } from '../../utils/oppsSheetUrl';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { matchesCdm } from '../../utils/cdmMatch';
 
@@ -247,7 +248,7 @@ function persistChartTitles(map) {
 }
 
 export function ProgressView({ prospects, settings, cdmName }) {
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   const [history, setHistory] = useState([]);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [oppsRecordsState, setOppsRecordsState] = useState([]);
@@ -308,11 +309,15 @@ export function ProgressView({ prospects, settings, cdmName }) {
         console.error('[ProgressView] Failed to load progress — auto-save disabled to avoid overwrite:', err);
       }
 
-      // Load opps: try Google Sheet directly, then Firestore, then IndexedDB, then localStorage
+      // Load opps: try the user's configured Opps sheet first, then
+      // Firestore, then IndexedDB, then localStorage. When the user
+      // hasn't configured a sheet (and isn't admin), skip the network
+      // fetch entirely so we don't pull another user's data.
       let records = [];
       try {
-        const sheetRes = await fetch('https://docs.google.com/spreadsheets/d/1ee0OREqA25jzDaR6xRDSrj_ZIZDymQjf1k2Z2_ajVKw/export?format=csv&gid=0');
-        if (sheetRes.ok) {
+        const oppsSheetUrl = getOppsSheetCsvUrl({ isAdmin, settings });
+        const sheetRes = oppsSheetUrl ? await fetch(oppsSheetUrl) : null;
+        if (sheetRes && sheetRes.ok) {
           const csvText = await sheetRes.text();
           const lines = csvText.split('\n');
           if (lines.length > 1) {

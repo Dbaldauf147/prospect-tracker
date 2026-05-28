@@ -33,12 +33,23 @@ service cloud.firestore {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
 
-    // Per-user uploaded list backups (CSRD / CDP / GRESB / RECA / etc.).
-    // Each doc holds one list keyed by its storageKey, chunked as
-    // necessary to stay under Firestore's 1MB-per-doc limit. Allows
-    // restore-on-load after a browser "Clear site data."
+    // Per-user uploaded list backups (legacy path). Kept readable so
+    // listBackupSync can fall back to a user's existing backup when the
+    // shared listBackups doc is missing — this is how the admin's
+    // existing lists get promoted into the shared collection without a
+    // manual migration step.
     match /users/{userId}/listBackups/{storageKey} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Shared uploaded list backups. The Lists tab is the same set of
+    // rows for every signed-in user (see CLAUDE.md), so the Firestore
+    // mirror lives in a shared collection. Any authenticated user can
+    // read; writes are also open so a user re-uploading a list (or
+    // promoting the legacy per-user copy via listBackupSync) refreshes
+    // the canonical store.
+    match /listBackups/{storageKey} {
+      allow read, write: if request.auth != null;
     }
 
     // User settings: users can only read/write their own settings

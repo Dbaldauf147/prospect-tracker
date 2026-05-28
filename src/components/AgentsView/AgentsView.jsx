@@ -3,6 +3,8 @@ import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { loadOppsFromCache, searchOpps } from '../../utils/oppsCache';
 import { dbGet, dbPut } from '../../utils/db';
 import { userLsGet, userLsSet } from '../../utils/userLs';
+import { getOppsSheetCsvUrl } from '../../utils/oppsSheetUrl';
+import { useAuth } from '../../contexts/AuthContext';
 import { getEffectiveServiceMetadata } from '../../data/serviceCatalog';
 import styles from './AgentsView.module.css';
 
@@ -294,10 +296,9 @@ const CURRENT_CUSTOMER_LEAD_SOURCE_RE = /client|existing|renewal|cross[\s-]?sell
 // views never disagree about what happened today.
 const ACTIVITY_CACHE_KEY = 'hubspot-activity-cache';
 
-// Same Google Sheet + IndexedDB store the Opps tab pulls from. Mirrored
-// here so the Refresh button on this view can re-pull Opps without
-// requiring a trip to the Opps tab.
-const OPPS_SHEET_URL = 'https://docs.google.com/spreadsheets/d/1ee0OREqA25jzDaR6xRDSrj_ZIZDymQjf1k2Z2_ajVKw/export?format=csv&gid=0';
+// Resolved at fetch time via getOppsSheetCsvUrl below — admin falls
+// back to the legacy bundled sheet so existing behavior is unchanged;
+// other users opt in by setting settings.oppsSheetUrl.
 const OPPS_DB_STORE = 'opps-cache';
 
 // Same CSV parser OppsView uses — handles quoted fields, escaped quotes,
@@ -569,6 +570,7 @@ function OppPicker({ oppsCache, onSelect }) {
 }
 
 export function AgentsView({ prospects = [], settings }) {
+  const { isAdmin } = useAuth();
   // Configured per-user via Settings → CDM Name. The Sent emails section
   // matches HubSpot's hs_email_from_email against this address; blank
   // means "no outbound to show yet — set your work email in Settings".
@@ -736,7 +738,13 @@ export function AgentsView({ prospects = [], settings }) {
       return all;
     }
     async function fetchOpps() {
-      const res = await fetch(OPPS_SHEET_URL);
+      const url = getOppsSheetCsvUrl({ isAdmin, settings });
+      if (!url) {
+        // No sheet configured for this user — leave the existing
+        // oppsCache (if any) untouched and skip the Opps refresh half.
+        return;
+      }
+      const res = await fetch(url);
       if (!res.ok) throw new Error(`Opps HTTP ${res.status}`);
       const csvText = await res.text();
       const rows = parseOppsCsv(csvText);

@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { collection, writeBatch, doc, getDocs, deleteDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { userLsGet, userLsSet } from '../utils/userLs';
+import { getOppsSheetDisplayUrl } from '../utils/oppsSheetUrl';
+import { useAuth } from '../contexts/AuthContext';
 import styles from './SyncPanel.module.css';
 
 const SYNC_SETTINGS_KEY = 'prospect-sync-settings';
@@ -48,10 +50,13 @@ function csvFromProspects(prospects) {
   return rows.join('\n');
 }
 
-const OPPS_SHEET_URL = 'https://docs.google.com/spreadsheets/d/1ee0OREqA25jzDaR6xRDSrj_ZIZDymQjf1k2Z2_ajVKw/edit?gid=0#gid=0';
-
 export function SyncPanel({ prospects, onClose }) {
+  const { isAdmin } = useAuth();
   const [settings, setSettings] = useState(loadSettings);
+  // The OppsView/AgentsView/ProgressView Opps sheet URL is resolved
+  // via getOppsSheetCsvUrl elsewhere — here we just display it so the
+  // user can see what's being pulled.
+  const oppsSheetDisplayUrl = getOppsSheetDisplayUrl({ isAdmin, settings });
   const [url, setUrl] = useState(settings.sheetsUrl || '');
   const [sheetName, setSheetName] = useState(settings.sheetName || 'Accounts');
   const [status, setStatus] = useState(null);
@@ -81,15 +86,15 @@ export function SyncPanel({ prospects, onClose }) {
       freq: settings.mainFreq ?? 5,
       paused: !!settings.mainPaused,
     }] : []),
-    {
+    ...(oppsSheetDisplayUrl ? [{
       label: 'Opps',
-      url: OPPS_SHEET_URL,
+      url: oppsSheetDisplayUrl,
       sheetName: 'Opps',
       lastSync: userLsGet('opps-cache') ? (() => { try { return JSON.parse(userLsGet('opps-cache'))?.fetchedAt; } catch { return null; } })() : null,
       type: 'opps',
       freq: settings.oppsFreq ?? 5,
       paused: !!settings.oppsPaused,
-    },
+    }] : []),
     ...(settings.extraSheets || []).map(s => ({ ...s, type: 'extra' })),
   ];
 

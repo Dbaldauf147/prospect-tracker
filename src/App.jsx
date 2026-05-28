@@ -432,8 +432,10 @@ function App() {
         user={user}
       />
       {isAdmin && <DailySuccessManager user={user} />}
-      {/* One-time migration button */}
-      {!settings.clientsServicesMigrated && (
+      {/* One-time migration button — admin-only. The migration fetches
+          the admin's Clients sheet, so non-admin users would pull the
+          wrong data even if they ran it. */}
+      {isAdmin && !settings.clientsServicesMigrated && (
         <div style={{ position: 'fixed', bottom: '1rem', right: '1rem', zIndex: 300, background: '#fff', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '0.75rem 1rem', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', maxWidth: '320px' }}>
           <div style={{ fontSize: '0.75rem', fontWeight: 700, marginBottom: '0.3rem' }}>Import Services from Clients Tab</div>
           <div style={{ fontSize: '0.68rem', color: '#64748B', marginBottom: '0.5rem' }}>One-time import of N/A, Sold, Not Sold, Renewal, and In Progress statuses into Services Explored for all matching prospects.</div>

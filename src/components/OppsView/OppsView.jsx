@@ -3,9 +3,10 @@ import * as XLSX from 'xlsx';
 import { DataTable } from '../common/DataTable';
 import { dbGet, dbPut } from '../../utils/db';
 import { userLsGet } from '../../utils/userLs';
+import { getOppsSheetCsvUrl } from '../../utils/oppsSheetUrl';
+import { useAuth } from '../../contexts/AuthContext';
 import styles from './OppsView.module.css';
 
-const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1ee0OREqA25jzDaR6xRDSrj_ZIZDymQjf1k2Z2_ajVKw/export?format=csv&gid=0';
 const DB_STORE = 'opps-cache';
 
 async function loadCacheAsync() {
@@ -59,6 +60,7 @@ function loadCacheLegacy() {
 }
 
 export function OppsView({ settings, updateSettings } = {}) {
+  const { isAdmin } = useAuth();
   const [data, setData] = useState(loadCacheLegacy);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -94,10 +96,15 @@ export function OppsView({ settings, updateSettings } = {}) {
   }, []);
 
   async function fetchOpps() {
+    const sheetUrl = getOppsSheetCsvUrl({ isAdmin, settings });
+    if (!sheetUrl) {
+      setError('No Opps sheet configured. Set settings.oppsSheetUrl to enable.');
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(SHEET_URL);
+      const res = await fetch(sheetUrl);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const csvText = await res.text();
       const rows = parseCsv(csvText);
@@ -153,22 +160,25 @@ export function OppsView({ settings, updateSettings } = {}) {
     } catch { return { freq: 5, paused: false }; }
   }
 
-  // Auto-fetch on mount if stale
+  // Auto-fetch on mount if stale. Skip silently when no Opps sheet
+  // URL is configured for this user (non-admin without an opts-in).
   useEffect(() => {
+    if (!getOppsSheetCsvUrl({ isAdmin, settings })) return;
     const { freq: freqMin, paused } = getOppsSettings();
     if (paused || freqMin === 0) return;
     const staleMs = freqMin * 60 * 1000;
     const isStale = !data?.fetchedAt || (Date.now() - new Date(data.fetchedAt).getTime()) > staleMs;
     if (isStale) fetchOpps();
-  }, []);
+  }, [isAdmin, settings?.oppsSheetUrl]);
 
   // Poll at configured frequency
   useEffect(() => {
+    if (!getOppsSheetCsvUrl({ isAdmin, settings })) return undefined;
     const { freq: freqMin, paused } = getOppsSettings();
-    if (paused || freqMin === 0) return;
+    if (paused || freqMin === 0) return undefined;
     const interval = setInterval(fetchOpps, freqMin * 60 * 1000);
     return () => clearInterval(interval);
-  }, []);
+  }, [isAdmin, settings?.oppsSheetUrl]);
 
   const headers = data?.headers || [];
   // Ignore any opp row that doesn't have an Open Year value.
