@@ -232,7 +232,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
     const q = oppsQuery.trim().toLowerCase();
     if (!q) return peOpps;
     return peOpps.filter(r =>
-      [r['Account'], r['Contact'], r['Stage'], r['Scope'], r['Source'], r['Type'], r['Sales Partner'], r['Status'], r['Next Steps']]
+      [r['Account'], r['Contact'], r['Stage'], r['Scope'], r['Source'], r['Type'], r['Sales Partner'], r['Status'], r['BFO Link'], r['Next Steps']]
         .some(v => String(v || '').toLowerCase().includes(q))
     );
   }, [peOpps, oppsQuery]);
@@ -999,6 +999,7 @@ function PEOppsTab({ opps, totalOpps, query, setQuery, oppsLoaded, prospects, on
     { key: 'Scope', label: 'Scope', width: '0.9fr' },
     { key: 'Quoted Amount', label: 'Quoted Amount', width: '1fr', align: 'right' },
     { key: 'Status', label: 'Status', width: '1.4fr' },
+    { key: 'BFO Link', label: 'BFO Opportunity Name', width: '1.6fr' },
     { key: 'Next Steps', label: 'Next Steps', width: '1.8fr' },
     { key: 'Last Client Heard From Us', label: 'Last Client Heard From Us', width: '1.3fr' },
     { key: 'Call In', label: 'Call In', width: '0.8fr', align: 'right', value: r => { const n = resolveCallIn(r); return n == null ? '' : String(n); } },
