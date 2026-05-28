@@ -1148,7 +1148,7 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
 }
 
 export function HubSpotView({ prospects, settings, updateSettings, emailFilterMode = 'exclude-se' }) {
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   const [data, setData] = useState(null);
   useEffect(() => {
     let cancelled = false;
@@ -1583,14 +1583,16 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
       if (localSaved > 0) parts.push(`${localSaved} saved locally (no email)`);
       setPushStatus({ type: allErrors.length > 0 ? 'error' : 'success', message: `Bulk upload complete: ${parts.join(', ')}` });
 
-      // Auto-email the error report if there are failures
-      if (allErrors.length > 0) {
+      // Auto-email the error report if there are failures. Only the
+      // admin gets the auto-mailed report; other users see the on-screen
+      // error list but don't trigger a server-side send.
+      if (allErrors.length > 0 && isAdmin) {
         try {
           await fetch('/api/send-report', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              to: 'baldaufdan@gmail.com',
+              to: user?.email,
               subject: `Bulk Upload Report — ${totalErrors} Failed out of ${contacts.length}`,
               errors: allErrors,
               totalUploaded: contacts.length,

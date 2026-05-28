@@ -14,6 +14,7 @@ import { dbGet } from '../../utils/db';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { CoachingRulesPanel } from './CoachingRulesPanel';
 import { subscribeToCoachingRules, DEFAULT_COACHING_RULES } from './coachingRulesStore';
+import { useAuth } from '../../contexts/AuthContext';
 
 const STAGE_LABEL = {
   6: /^\s*6\s*-\s*negotiate\s*to\s*win\b/i,
@@ -304,9 +305,8 @@ async function buildPipelineSummary() {
   }
 }
 
-const TARGET_EMAIL = 'baldaufdan@gmail.com';
-
 export function DailySuccessManager({ user }) {
+  const { isAdmin } = useAuth();
   const [phase, setPhase] = useState(null); // 'morning' | 'mid' | 'end' | null
   const [entry, setEntry] = useState(null);
   const [morningText, setMorningText] = useState('');
@@ -317,7 +317,7 @@ export function DailySuccessManager({ user }) {
   const [rules, setRules] = useState(DEFAULT_COACHING_RULES);
   const tickerRef = useRef(null);
 
-  const enabled = (user?.email || '').toLowerCase() === TARGET_EMAIL;
+  const enabled = isAdmin;
 
   useEffect(() => {
     if (!enabled || !user?.uid) return undefined;

@@ -67,7 +67,7 @@ function fmtDuration(ms) {
 }
 
 export function ActivityView({ prospects = [], settings, updateSettings }) {
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   const [data, setData] = useState(loadCache);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -124,15 +124,17 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
   }
 
   useEffect(() => {
+    if (!isAdmin) return;
     const STALE_MS = 30 * 60 * 1000; // 30 min stale for full history
     const isStale = !data?.fetchedAt || (Date.now() - new Date(data.fetchedAt).getTime()) > STALE_MS;
     if (isStale) fetchActivity();
-  }, []);
+  }, [isAdmin]);
 
   useEffect(() => {
+    if (!isAdmin) return undefined;
     const interval = setInterval(fetchActivity, 30 * 60 * 1000);
     return () => clearInterval(interval);
-  }, []);
+  }, [isAdmin]);
 
   // Combine and sort all activities by timestamp
   // Build email domain → company map from prospects
@@ -284,9 +286,14 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
     });
     const combined = [
       ...filteredEmails.map(e => {
-        // Determine direction: if from is @se.com, it's outbound
+        // Determine direction: anything from @se.com (all SE users share
+        // the domain) or the current user's configured work email is
+        // outbound; everything else with a sender is inbound.
         const from = (e.hs_email_from_email || '').toLowerCase();
-        const direction = from.includes('@se.com') || from.includes('daniel.baldauf') ? 'Outbound' : from ? 'Inbound' : e.hs_email_direction || '';
+        const workEmail = (settings?.workEmail || '').toLowerCase();
+        const direction = from.includes('@se.com') || (workEmail && from === workEmail)
+          ? 'Outbound'
+          : from ? 'Inbound' : e.hs_email_direction || '';
         // Look up phone from associated contacts or email match
         let emailPhone = '';
         const emailContactIds = e._contactIds || [];
@@ -386,7 +393,7 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
     ];
     combined.sort((a, b) => new Date(b._timestamp || 0) - new Date(a._timestamp || 0));
     return combined;
-  }, [data]);
+  }, [data, settings?.workEmail]);
 
   const emailCount = allActivities.filter(a => a._type === 'email').length;
   const callCount = allActivities.filter(a => a._type === 'call').length;

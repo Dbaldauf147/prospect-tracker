@@ -935,7 +935,7 @@ function parseXlsx(file) {
 }
 
 export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd, targetAccountsData, settings, updateSettings, cdmName }) {
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   const savedView = settings?.viewFilters?.myAccounts;
   const [search, setSearch] = useState(savedView?.search || '');
   const [filters, setFilters] = useState(savedView?.filters || {});
@@ -1529,7 +1529,11 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   const BUCKET_TAGS = ['esg', 'procurement', 'utilities', 'climate risk', 'capital planning'];
 
   // Background-refresh contacts from HubSpot when My Accounts loads.
+  // /api/hubspot uses a single server-side token tied to the admin's
+  // portal, so non-admins can't usefully populate the cache — skip the
+  // call rather than thrash a 401.
   useEffect(() => {
+    if (!isAdmin) return;
     (async () => {
       try {
         const res = await fetch('/api/hubspot?action=contacts');
@@ -1554,7 +1558,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
         }
       } catch {}
     })();
-  }, []);
+  }, [isAdmin]);
 
   const { hubspotCompanies, decisionMakerByCompany, contactsByCompany, bucketsByCompany, contactsByEmailDomain, bucketsByEmailDomain } = useMemo(() => {
     const list = [];

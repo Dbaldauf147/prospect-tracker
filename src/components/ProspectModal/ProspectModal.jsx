@@ -8,6 +8,7 @@ import { loadEffectiveRaClients, raClientName, raClientCm } from '../../utils/ra
 import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES, COUNTRIES, US_STATES } from '../../data/enums';
 import { CITY_OPTIONS, matchCities, getStateForCity } from '../../data/cities';
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
+import { useAuth } from '../../contexts/AuthContext';
 import { saveSourceFile as savePortfolioSourceFileToIDB, loadSourceFile as loadPortfolioSourceFileFromIDB, clearSourceFile as clearPortfolioSourceFileFromIDB, renameSourceFile as renamePortfolioSourceFile } from '../../utils/portfolioSourceFileStore';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
@@ -2009,6 +2010,7 @@ function SustainabilityResearchPanel({ state, onClear, onUseTargets, onMergeFram
 }
 
 export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew, onDeleteProspect, onUpdateProspect, hubspotContacts = [], onDeleteContact, orgCharts = {}, onUpdateOrgChart = () => {}, settings = {}, updateSettings = () => {}, updateSettingsPath = () => {}, targetAccountsData = null, cdmName = '' }) {
+  const { isAdmin } = useAuth();
   const [fields, setFields] = useState(() => {
     if (prospect) return { ...EMPTY, ...prospect };
     return { ...EMPTY };
@@ -2120,7 +2122,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     for (const e of emails) {
       if ((e.hs_email_subject || '').toLowerCase().includes('(sample email)')) continue;
       const from = (e.hs_email_from_email || '').toLowerCase();
-      const direction = from.includes('@se.com') || from.includes('daniel.baldauf')
+      const workEmail = (settings?.workEmail || '').toLowerCase();
+      const direction = from.includes('@se.com') || (workEmail && from === workEmail)
         ? 'Outbound'
         : from ? 'Inbound' : (e.hs_email_direction || '');
       if (direction !== 'Outbound' && direction !== 'Inbound') continue;
@@ -3226,10 +3229,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
       ? items.map(i => `<div style="margin: 4px 0; line-height: 1.45;">&#8226;&nbsp;&nbsp;${esc(i.text)}${i.owner ? ` &mdash; <span style="color:#64748B;"><strong>Owner:</strong> ${esc(i.owner)}</span>` : ''}</div>`).join('')
       : '<p><em>(No Action Items / Next Steps captured on the form yet.)</em></p>';
     // Append the saved email signature (from the Draft Emails page /
-    // settings.emailSignature). Fall back to the shared default so users
-    // who never edited their signature still get one.
+    // settings.emailSignature). The bundled default is the admin's
+    // personal signature, so only fall back to it for the admin
+    // account — other users get no signature until they save one.
     const storedSig = String(settings?.emailSignature || '').trim();
-    const signatureHtml = storedSig || DEFAULT_EMAIL_SIGNATURE;
+    const signatureHtml = storedSig || (isAdmin ? DEFAULT_EMAIL_SIGNATURE : '');
     const sigBlock = signatureHtml ? `\n<br>\n<div>\n${signatureHtml}\n</div>` : '';
     // Mirror DraftEmailView's proven .eml body byte-for-byte so the draft
     // renders identically (including the signature). Outlook-friendly:

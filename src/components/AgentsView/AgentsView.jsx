@@ -327,10 +327,10 @@ function parseOppsCsv(text) {
   return rows;
 }
 
-// "Did I send this?" is keyed off the work email on HubSpot, not the
-// Google auth address — the user signs in as baldaufdan@gmail.com but
-// HubSpot threads always carry the @se.com from-address.
-const SENDER_EMAIL = 'daniel.baldauf@se.com';
+// "Did I send this?" is keyed off the per-user work email on HubSpot,
+// not the Google auth address — the user signs in (e.g.) with a Gmail
+// address but HubSpot threads always carry the @se.com from-address.
+// Stored per-user in userSettings.workEmail, set via the CDM Name modal.
 
 // Extract every email-shaped token from an Opps "Contact" cell, which
 // can hold a single email, a name + email pair, or a comma/semicolon
@@ -568,6 +568,10 @@ function OppPicker({ oppsCache, onSelect }) {
 }
 
 export function AgentsView({ prospects = [], settings }) {
+  // Configured per-user via Settings → CDM Name. The Sent emails section
+  // matches HubSpot's hs_email_from_email against this address; blank
+  // means "no outbound to show yet — set your work email in Settings".
+  const senderEmail = String(settings?.workEmail || '').toLowerCase().trim();
   const [cache, setCache] = useState(() => readActivityCache());
   const [hubspotCache, setHubspotCache] = useState(null);
   const [oppsCache, setOppsCache] = useState(null);
@@ -918,10 +922,11 @@ export function AgentsView({ prospects = [], settings }) {
       return Number.isFinite(t) && t >= bounds.start && t < bounds.end;
     };
     const sentByMe = (e) => {
+      if (!senderEmail) return false;
       const from = String(e.hs_email_from_email || '').toLowerCase().trim();
-      return from === SENDER_EMAIL;
+      return from === senderEmail;
     };
-    const outbound = (cache?.emails || [])
+    const outbound = senderEmail ? (cache?.emails || [])
       .filter(e => !(e.hs_email_subject || '').toLowerCase().includes('(sample email)'))
       .filter(e => inToday(e.hs_timestamp))
       .filter(sentByMe)
@@ -975,7 +980,7 @@ export function AgentsView({ prospects = [], settings }) {
           isManual: Boolean(override),
         };
       })
-      .sort((a, b) => new Date(b.ts) - new Date(a.ts));
+      .sort((a, b) => new Date(b.ts) - new Date(a.ts)) : [];
 
     const meetings = (cache?.meetings || [])
       .filter(m => inToday(m.hs_meeting_start_time || m.hs_timestamp))
@@ -1049,7 +1054,7 @@ export function AgentsView({ prospects = [], settings }) {
     // dependency set as cache + hubspotCache + oppIndex + overrides,
     // so they don't need their own entries here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cache, hubspotCache, oppIndex, overrides, ignoredEmailIds, ignoredMeetingIds, referenceDate]);
+  }, [cache, hubspotCache, oppIndex, overrides, ignoredEmailIds, ignoredMeetingIds, referenceDate, senderEmail]);
 
   // Opps where the user logged a phone touch in Next Steps and the
   // Last Spoke column (business days since Last Client Heard From Us)
@@ -1512,9 +1517,15 @@ export function AgentsView({ prospects = [], settings }) {
           Refresh failed: {activityRefreshError}
         </div>
       )}
-      <p className={styles.subnote}>
-        {isToday ? 'Today’s' : `${dateLabel}’s`} outbound emails from <strong>{SENDER_EMAIL}</strong> to non-SE recipients, plus any meetings on that day&rsquo;s calendar. BFO Opportunity tagging walks each recipient&rsquo;s email against the Opps tab&rsquo;s Contact field first, then falls back to fuzzy-matching the HubSpot company against the Opps tab&rsquo;s Account field. When neither matches, use the inline picker to search the Opps tab — your selection is remembered for that recipient on future emails. The Company column falls back to HubSpot&rsquo;s contact record when no Opp is matched.
-      </p>
+      {senderEmail ? (
+        <p className={styles.subnote}>
+          {isToday ? 'Today’s' : `${dateLabel}’s`} outbound emails from <strong>{senderEmail}</strong> to non-SE recipients, plus any meetings on that day&rsquo;s calendar. BFO Opportunity tagging walks each recipient&rsquo;s email against the Opps tab&rsquo;s Contact field first, then falls back to fuzzy-matching the HubSpot company against the Opps tab&rsquo;s Account field. When neither matches, use the inline picker to search the Opps tab — your selection is remembered for that recipient on future emails. The Company column falls back to HubSpot&rsquo;s contact record when no Opp is matched.
+        </p>
+      ) : (
+        <div className={styles.staleBanner}>
+          Set your work email in Settings → CDM Name so this section can match your outbound HubSpot emails. Until then, no Sent emails will appear.
+        </div>
+      )}
 
       <div className={styles.tallies}>
         <div className={styles.tally}><strong>{todaysOutbound.length}</strong>sent emails {isToday ? 'today' : 'that day'}</div>
