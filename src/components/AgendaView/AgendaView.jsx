@@ -206,6 +206,25 @@ function parseEmailHeaders(text) {
   return blocks.length ? parseDroppedText(blocks.join('; ')) : parseDroppedText(text);
 }
 
+// Compose a row's full name from its firstname + lastname halves, and
+// the inverse split (used by the editable Full Name cell). Mirrors the
+// "Last, First" handling in parseDroppedText so a paste from Outlook
+// works the same whether the user dumps it into the Full Name cell or
+// into the bulk-paste box at the top of the page.
+function composeFullName(r) {
+  return `${r?.firstname || ''} ${r?.lastname || ''}`.trim();
+}
+function splitFullName(input) {
+  const name = String(input || '').trim();
+  if (!name) return { firstname: '', lastname: '' };
+  if (name.includes(',')) {
+    const [lastPart, firstPart = ''] = name.split(',').map(s => s.trim());
+    return { firstname: firstPart, lastname: lastPart };
+  }
+  const parts = name.split(/\s+/);
+  return { firstname: parts[0] || '', lastname: parts.slice(1).join(' ') || '' };
+}
+
 // Saved "when a contact's parsed Company matches X, auto-apply Y"
 // rules. Persisted to localStorage so the user doesn't have to keep
 // re-clicking the same Suggested Company pill across imports.
@@ -220,6 +239,7 @@ const BULK_COLS = [
   { key: '_remove',          label: '',                    w: 36,  fixed: true, toggleable: false },
   { key: 'email',            label: 'Email',               w: 230 },
   { key: 'status',           label: 'HubSpot Status',      w: 120 },
+  { key: 'fullName',         label: 'Full Name',           w: 180 },
   { key: 'firstname',        label: 'First',               w: 110 },
   { key: 'lastname',         label: 'Last',                w: 130 },
   { key: 'jobtitle',         label: 'Job title',           w: 140 },
@@ -457,7 +477,14 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
   }, []);
   const [bulkColVisible, setBulkColVisible] = useState(() => {
     const saved = loadBulkColVisible();
-    return saved || new Set(BULK_COLS.map(c => c.key));
+    if (saved) {
+      // Auto-enable new columns added since the user's last visit so
+      // they appear without a manual Columns-menu toggle. (Today: the
+      // Full Name composite cell.)
+      if (!saved.has('fullName')) saved.add('fullName');
+      return saved;
+    }
+    return new Set(BULK_COLS.map(c => c.key));
   });
   // BULK_COLS filtered by visibility, with a dynamically-injected
   // _select checkbox column at the left edge when mass-edit mode is on.
@@ -1655,6 +1682,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
         switch (key) {
           case 'email':            return r.email || '';
           case 'status':           return hubspotByEmail.has(r.email) ? 'in hubspot' : 'new';
+          case 'fullName':         return composeFullName(r);
           case 'firstname':        return r.firstname || '';
           case 'lastname':         return r.lastname || '';
           case 'company':          return r.company || '';
@@ -1698,6 +1726,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
         switch (sortKey) {
           case 'email':            return r.email || '';
           case 'status':           return hubspotByEmail.has(r.email) ? 'In HubSpot' : 'New';
+          case 'fullName':         return composeFullName(r);
           case 'firstname':        return r.firstname || '';
           case 'lastname':         return r.lastname || '';
           case 'company':          return r.company || '';
@@ -2600,6 +2629,12 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
                       {bulkColVisible.has('_remove') && <td><button className={styles.rowRemove} onClick={() => removeRow(r.email)} title="Remove row">×</button></td>}
                       {bulkColVisible.has('email') && <td className={styles.emailCell}>{r.email}</td>}
                       {bulkColVisible.has('status') && <td><span className={`${styles.statusPill} ${statusClass}`}>{statusLabel}</span></td>}
+                      {bulkColVisible.has('fullName') && <td><input
+                        className={styles.cellInput}
+                        value={composeFullName(r)}
+                        onChange={e => updateRow(r.email, splitFullName(e.target.value))}
+                        title='Editing splits on the first space ("Last, First" also supported) and updates the First / Last cells.'
+                      /></td>}
                       {bulkColVisible.has('firstname') && <td><input className={styles.cellInput} value={r.firstname} onChange={e => updateRow(r.email, { firstname: e.target.value })} /></td>}
                       {bulkColVisible.has('lastname') && <td><input className={styles.cellInput} value={r.lastname} onChange={e => updateRow(r.email, { lastname: e.target.value })} /></td>}
                       {bulkColVisible.has('jobtitle') && <td><input className={styles.cellInput} value={r.jobtitle} onChange={e => updateRow(r.email, { jobtitle: e.target.value })} /></td>}
