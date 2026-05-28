@@ -1086,6 +1086,23 @@ function PEOppsTab({ opps, totalOpps, query, setQuery, oppsLoaded, prospects, on
   const COLUMNS = ALL_COLUMNS.filter(c => visibleCols.has(c.key));
   const GRID = COLUMNS.map(c => c.width).join(' ');
 
+  // Default ordering: Sales Partner first, then Stage. Blanks sort last so
+  // populated rows group at the top; Account breaks any remaining ties.
+  // Drives both the on-screen rows and the Excel export so they match.
+  const sortedOpps = useMemo(() => {
+    const val = (r, k) => String(r[k] ?? '').trim().toLowerCase();
+    const cmp = (a, b, k) => {
+      const va = val(a, k), vb = val(b, k);
+      if (!va && vb) return 1;
+      if (va && !vb) return -1;
+      return va.localeCompare(vb);
+    };
+    return [...opps].sort((a, b) =>
+      cmp(a, b, 'Sales Partner')
+      || cmp(a, b, 'Stage')
+      || String(a['Account'] || '').localeCompare(String(b['Account'] || '')));
+  }, [opps]);
+
   // SE-formatted (Schneider-branded) XLSX export of the rows shown,
   // limited to the visible columns. Mirrors the green palette / layout
   // of the Key Contacts export so SE collateral stays consistent.
@@ -1127,7 +1144,7 @@ function PEOppsTab({ opps, totalOpps, query, setQuery, oppsLoaded, prospects, on
     headerRow.height = 22;
 
     // Data rows with subtle alternating green banding.
-    opps.forEach((r, idx) => {
+    sortedOpps.forEach((r, idx) => {
       const row = ws.getRow(4 + idx);
       COLUMNS.forEach((col, i) => {
         const cell = row.getCell(i + 1);
@@ -1255,7 +1272,7 @@ function PEOppsTab({ opps, totalOpps, query, setQuery, oppsLoaded, prospects, on
                 >{c.label}</div>
               ))}
             </div>
-            {opps.map((r, idx) => {
+            {sortedOpps.map((r, idx) => {
               const parent = findProspect(r['Account']);
               return (
                 <div
