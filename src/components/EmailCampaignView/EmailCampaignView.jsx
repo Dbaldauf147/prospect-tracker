@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { apiFetch } from '../../utils/apiFetch';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -55,7 +56,7 @@ export function EmailCampaignView() {
     setResults(null);
     setViewingSaved(null);
     try {
-      const res = await fetch('/api/email-campaign', {
+      const res = await apiFetch('/api/email-campaign', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ subject: subject.trim() }),

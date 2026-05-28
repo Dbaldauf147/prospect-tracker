@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { apiFetch } from '../utils/apiFetch';
 import { collection, writeBatch, doc, getDocs, deleteDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { userLsGet, userLsSet } from '../utils/userLs';
@@ -185,7 +186,7 @@ export function SyncPanel({ prospects, onClose }) {
 
     try {
       // 1. Read from Google Sheets
-      const readRes = await fetch(`/api/sheets-sync?spreadsheetId=${spreadsheetId}&sheetName=${encodeURIComponent(sheetName)}&_t=${Date.now()}`);
+      const readRes = await apiFetch(`/api/sheets-sync?spreadsheetId=${spreadsheetId}&sheetName=${encodeURIComponent(sheetName)}&_t=${Date.now()}`);
       if (!readRes.ok) {
         const text = await readRes.text();
         throw new Error(`Sheets API returned ${readRes.status}: ${text.slice(0, 200)}`);
@@ -248,7 +249,7 @@ export function SyncPanel({ prospects, onClose }) {
       // pulling from Sheets into Firestore on its own schedule. Writing 4000+
       // docs in batch triggers the real-time listener and freezes the browser.
       setStatus({ type: 'loading', message: `Step 3/3: Writing ${mergedList.length} prospects back to Google Sheets...` });
-      const writeRes = await fetch('/api/sheets-sync', {
+      const writeRes = await apiFetch('/api/sheets-sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -290,7 +291,7 @@ export function SyncPanel({ prospects, onClose }) {
     setStatus({ type: 'loading', message: 'Pushing website data to Google Sheets...' });
 
     try {
-      const res = await fetch('/api/sheets-sync', {
+      const res = await apiFetch('/api/sheets-sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -325,7 +326,7 @@ export function SyncPanel({ prospects, onClose }) {
     setStatus({ type: 'loading', message: 'Pulling data from Google Sheets...' });
 
     try {
-      const res = await fetch(`/api/sheets-sync?spreadsheetId=${spreadsheetId}&sheetName=${encodeURIComponent(sheetName)}&_t=${Date.now()}`);
+      const res = await apiFetch(`/api/sheets-sync?spreadsheetId=${spreadsheetId}&sheetName=${encodeURIComponent(sheetName)}&_t=${Date.now()}`);
       const data = await res.json();
       if (data.error) throw new Error(data.error);
 

@@ -1,11 +1,15 @@
 // Research a company's sustainability program using Claude with web search.
 // Returns a structured JSON object summarizing programs, targets, frameworks,
 // and links to public ESG reports / sustainability disclosures.
+import { withAuth } from './_lib/http.js';
+import { enforceRateLimit } from './_lib/rateLimit.js';
 
-export default async function handler(req, res) {
+async function handler(req, res, auth) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
+
+  if (!(await enforceRateLimit(res, auth.uid, 'research-sustainability', 30, 5 * 60 * 1000))) return;
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
@@ -94,3 +98,5 @@ If no public sustainability information surfaces, return the JSON object with su
     return res.status(500).json({ error: err.message || 'Unknown error' });
   }
 }
+
+export default withAuth(handler);

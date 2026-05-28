@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import { apiFetch } from '../../utils/apiFetch';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { DataTable } from '../common/DataTable';
@@ -234,7 +235,7 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
     setAddingContact(true);
     setAddResult(null);
     try {
-      const res = await fetch('/api/hubspot?action=create-contact', {
+      const res = await apiFetch('/api/hubspot?action=create-contact', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

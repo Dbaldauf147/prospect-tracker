@@ -1,4 +1,5 @@
 import { useMemo, useState, useCallback, useRef, useEffect, Fragment } from 'react';
+import { apiFetch } from '../../utils/apiFetch';
 import * as XLSX from 'xlsx';
 import { logAction } from '../../utils/auditLog';
 import { useAuth } from '../../contexts/AuthContext';
@@ -1243,7 +1244,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
     const text = String(body || '').trim();
     if (!contactId || !text) return null;
     try {
-      const res = await fetch('/api/hubspot?action=create-contact-note', {
+      const res = await apiFetch('/api/hubspot?action=create-contact-note', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contactId, body: text }),
@@ -1290,7 +1291,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
       if (row.state && row.state.trim()) properties.state = row.state.trim();
       if (row.country && row.country.trim()) properties.country = row.country.trim();
       if (row.dans_tags && row.dans_tags.trim()) properties.dans_tags = row.dans_tags.trim();
-      const res = await fetch('/api/hubspot?action=create-contact', {
+      const res = await apiFetch('/api/hubspot?action=create-contact', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ properties }),
@@ -1332,7 +1333,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
       // user has typed a fresh note for them).
       const hasPatch = patch && Object.keys(patch).length > 0;
       if (hasPatch) {
-        const res = await fetch('/api/hubspot?action=update-contact', {
+        const res = await apiFetch('/api/hubspot?action=update-contact', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ contactId: existing.id, properties: patch }),

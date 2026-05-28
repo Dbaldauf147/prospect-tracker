@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { apiFetch } from '../../utils/apiFetch';
 import { createPortal } from 'react-dom';
 import * as XLSX from 'xlsx';
 import { DataTable } from '../common/DataTable';
@@ -689,7 +690,7 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
     if (!cid) return; // new contact — will be saved when user clicks Save
     setTagsSaveStatus('Saving tag…');
     try {
-      const res = await fetch(`/api/hubspot?action=update-contact`, {
+      const res = await apiFetch(`/api/hubspot?action=update-contact`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contactId: cid, properties: { dans_tags: tagsStr } }),
@@ -1280,7 +1281,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
       // Only call HubSpot API if there are real HubSpot properties to update
       let companyOverrideSetTo = undefined; // undefined = no change · null = clear · string = set
       if (Object.keys(hubspotProps).length > 0) {
-        const res = await fetch('/api/hubspot?action=update-contact', {
+        const res = await apiFetch('/api/hubspot?action=update-contact', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ contactId, properties: hubspotProps }),
@@ -1377,7 +1378,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
     }
     setReassigningId(contactId);
     try {
-      const res = await fetch('/api/hubspot?action=update-contact', {
+      const res = await apiFetch('/api/hubspot?action=update-contact', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contactId, properties: { company: name } }),
@@ -1438,7 +1439,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
   const handleDeleteContact = useCallback(async (contactId, name) => {
     if (!confirm(`Delete "${name}" from HubSpot? This cannot be undone.`)) return;
     try {
-      const res = await fetch('/api/hubspot?action=delete-contact', {
+      const res = await apiFetch('/api/hubspot?action=delete-contact', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contactId }),
@@ -1547,7 +1548,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
         try {
           // Send contacts with notes intact — the API creates the note server-side after a successful create/update,
           // which it can do because it already has the contact id from HubSpot's response.
-          const res = await fetch('/api/hubspot?action=push-contacts', {
+          const res = await apiFetch('/api/hubspot?action=push-contacts', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ contacts: batch }),
@@ -1588,7 +1589,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
       // error list but don't trigger a server-side send.
       if (allErrors.length > 0 && isAdmin) {
         try {
-          await fetch('/api/send-report', {
+          await apiFetch('/api/send-report', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1631,7 +1632,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
       let reqBody = existingId
         ? { contactId: existingId, properties: contactProps }
         : { properties: contactProps };
-      let res = await fetch(`/api/hubspot?action=${action}`, {
+      let res = await apiFetch(`/api/hubspot?action=${action}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(reqBody),
@@ -1646,7 +1647,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
           resolvedId = existingIdMatch[1];
           action = 'update-contact';
           reqBody = { contactId: resolvedId, properties: contactProps };
-          res = await fetch(`/api/hubspot?action=${action}`, {
+          res = await apiFetch(`/api/hubspot?action=${action}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(reqBody),
@@ -1659,7 +1660,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
       const contactId = resolvedId || json.id;
       if (notes?.trim() && contactId) {
         try {
-          await fetch(`/api/hubspot?action=create-note`, {
+          await apiFetch(`/api/hubspot?action=create-note`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ contactId, body: notes.trim() }),
@@ -1692,7 +1693,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
     if (!background) setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/hubspot?action=full-sync');
+      const res = await apiFetch('/api/hubspot?action=full-sync');
       const json = await res.json();
       if (json.error) throw new Error(json.error);
       // Preserve local-only contacts (created from bulk upload rows without email) across syncs
@@ -1752,7 +1753,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
     // Also try HubSpot property options as supplement
     (async () => {
       try {
-        const res = await fetch('/api/hubspot?action=properties');
+        const res = await apiFetch('/api/hubspot?action=properties');
         const json = await res.json();
         if (json.properties) {
           const prop = json.properties.find(p =>
@@ -1760,7 +1761,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
             ((p.label || '').toLowerCase().includes('dan') && (p.label || '').toLowerCase().includes('tag'))
           );
           if (prop) {
-            const detailRes = await fetch(`/api/hubspot?action=property-detail&name=${prop.name}`);
+            const detailRes = await apiFetch(`/api/hubspot?action=property-detail&name=${prop.name}`);
             const detail = await detailRes.json();
             if (detail.options?.length) {
               const propVals = detail.options.map(o => typeof o === 'string' ? o : (o.label || o.value || '')).filter(Boolean);
@@ -2247,7 +2248,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
     let updated = 0, errors = 0;
     for (const id of selected) {
       try {
-        const res = await fetch('/api/hubspot?action=update-contact', {
+        const res = await apiFetch('/api/hubspot?action=update-contact', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ contactId: id, properties: { [massField]: massValue.trim() } }),
@@ -2372,7 +2373,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
         if (c.guessedFirstName && !c.firstname) props.firstname = c.guessedFirstName;
         if (c.guessedLastName && !c.lastname) props.lastname = c.guessedLastName;
         if (Object.keys(props).length === 0) continue;
-        const res = await fetch('/api/hubspot?action=update-contact', {
+        const res = await apiFetch('/api/hubspot?action=update-contact', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ contactId: c.id, properties: props }),
@@ -2405,7 +2406,7 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
     let deleted = 0, errors = 0;
     for (const id of selected) {
       try {
-        const res = await fetch('/api/hubspot?action=delete-contact', {
+        const res = await apiFetch('/api/hubspot?action=delete-contact', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ contactId: id }),

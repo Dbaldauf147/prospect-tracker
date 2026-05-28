@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { apiFetch } from '../../utils/apiFetch';
 import styles from './DailySuccess.module.css';
 import {
   todayKey,
@@ -419,7 +420,7 @@ export function DailySuccessManager({ user }) {
         .filter(e => e.date < todayKey())
         .slice(0, 7);
       const pipelineSummary = await buildPipelineSummary();
-      const resp = await fetch('/api/daily-goals', {
+      const resp = await apiFetch('/api/daily-goals', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

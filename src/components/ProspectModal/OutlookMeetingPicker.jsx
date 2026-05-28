@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { apiFetch } from '../../utils/apiFetch';
 import { secureGet, secureSet } from '../../utils/secureStorage';
 
 // Pulls last 7d + today + next 7d. Tweak here if the user later wants
@@ -82,7 +83,7 @@ export function OutlookMeetingPicker({ open, onClose, onPick, companyName, compa
 
       setPhase('loading');
       try {
-        const r = await fetch(`/api/outlook-calendar?startDays=${START_DAYS}&endDays=${END_DAYS}`, {
+        const r = await apiFetch(`/api/outlook-calendar?startDays=${START_DAYS}&endDays=${END_DAYS}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (r.status === 401) { setPhase('auth'); return; }
@@ -122,7 +123,7 @@ export function OutlookMeetingPicker({ open, onClose, onPick, companyName, compa
           const token = e.data.accessToken;
           setPhase('loading');
           try {
-            const r = await fetch(`/api/outlook-calendar?startDays=${START_DAYS}&endDays=${END_DAYS}`, {
+            const r = await apiFetch(`/api/outlook-calendar?startDays=${START_DAYS}&endDays=${END_DAYS}`, {
               headers: { Authorization: `Bearer ${token}` },
             });
             if (!r.ok) { setErrorMsg(await r.text()); setPhase('error'); return; }

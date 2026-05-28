@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef, useCallback, memo } from 'react';
+import { apiFetch } from '../../utils/apiFetch';
 import { createPortal } from 'react-dom';
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
@@ -765,7 +766,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     setMergeProcessing(true);
     setMergeError('');
     try {
-      const res = await fetch('/api/hubspot?action=merge-contacts', {
+      const res = await apiFetch('/api/hubspot?action=merge-contacts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ primaryObjectId: primaryId, objectIdToMerge: secondaryId }),
@@ -932,7 +933,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
     const tagsStr = buildTagsStringFrom(nextSet);
     setTagsSaveStatus('Saving tag…');
     try {
-      const res = await fetch(`/api/hubspot?action=update-contact`, {
+      const res = await apiFetch(`/api/hubspot?action=update-contact`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contactId: cid, properties: { dans_tags: tagsStr } }),
@@ -986,7 +987,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
       let body = isNew
         ? { properties: hsProps }
         : { contactId: contact.id || contact.vid, properties: hsProps };
-      let res = await fetch(`/api/hubspot?action=${action}`, {
+      let res = await apiFetch(`/api/hubspot?action=${action}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -1000,7 +1001,7 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
           const dupId = existingIdMatch[1];
           action = 'update-contact';
           body = { contactId: dupId, properties: hsProps };
-          res = await fetch(`/api/hubspot?action=${action}`, {
+          res = await apiFetch(`/api/hubspot?action=${action}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
@@ -2339,7 +2340,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     if (!company) return;
     setSustainResearch({ loading: true, data: null, error: null });
     try {
-      const r = await fetch('/api/research-sustainability', {
+      const r = await apiFetch('/api/research-sustainability', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ company }),
@@ -2802,7 +2803,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     for (const c of existingToDelete) {
       const cid = c.id || c.vid;
       try {
-        const res = await fetch('/api/hubspot?action=delete-contact', {
+        const res = await apiFetch('/api/hubspot?action=delete-contact', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ contactId: cid }),
@@ -2827,7 +2828,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     for (const row of parsed) {
       const { teamName, notes: noteText, ...hsProps } = row;
       try {
-        const res = await fetch('/api/hubspot?action=create-contact', {
+        const res = await apiFetch('/api/hubspot?action=create-contact', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ properties: hsProps }),
@@ -3462,7 +3463,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     if (!cid) return;
     setDeletingContact(cid);
     try {
-      const res = await fetch(`/api/hubspot?action=delete-contact`, {
+      const res = await apiFetch(`/api/hubspot?action=delete-contact`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contactId: cid }),
@@ -3537,7 +3538,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         continue;
       }
       try {
-        const res = await fetch('/api/hubspot?action=update-contact', {
+        const res = await apiFetch('/api/hubspot?action=update-contact', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ contactId: cid, properties }),
@@ -3580,7 +3581,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
         continue;
       }
       try {
-        const res = await fetch('/api/hubspot?action=delete-contact', {
+        const res = await apiFetch('/api/hubspot?action=delete-contact', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ contactId: cid }),
@@ -4412,7 +4413,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                               if (firstname) properties.firstname = firstname;
                               if (lastname) properties.lastname = lastname;
                               if (fields.company) properties.company = fields.company;
-                              const res = await fetch('/api/hubspot?action=create-contact', {
+                              const res = await apiFetch('/api/hubspot?action=create-contact', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({ properties }),
@@ -5208,7 +5209,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   setResearchingPortfolio(true);
                   setPortfolioResearchError(null);
                   try {
-                    const res = await fetch('/api/research-portfolio', {
+                    const res = await apiFetch('/api/research-portfolio', {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ company: fields.company }),
