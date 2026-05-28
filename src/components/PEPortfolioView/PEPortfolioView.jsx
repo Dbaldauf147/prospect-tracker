@@ -129,9 +129,9 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
   // Persisted column widths + sort so the layout survives reloads.
-  const DEFAULT_COL_WIDTHS = { company: 240, peAum: 110, geography: 110, dm: 170, met: 170, mapping: 110, opps: 100, ratio: 120, clients: 110, keyContacts: 120, caseStudy: 110 };
+  const DEFAULT_COL_WIDTHS = { company: 240, peAum: 110, geography: 110, dm: 170, met: 170, mapping: 110, opps: 100, ratio: 120, clients: 110, keyContacts: 120, caseStudy: 110, discovery: 100, piloting: 100, existingPartnership: 150 };
   // company is sticky and always shown — every other column is opt-in.
-  const ALL_COL_KEYS = ['company', 'peAum', 'geography', 'dm', 'met', 'mapping', 'opps', 'ratio', 'clients', 'keyContacts', 'caseStudy'];
+  const ALL_COL_KEYS = ['company', 'peAum', 'geography', 'dm', 'met', 'mapping', 'opps', 'ratio', 'clients', 'keyContacts', 'caseStudy', 'discovery', 'piloting', 'existingPartnership'];
   const [colWidths, setColWidths] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('pe-portfolio:col-widths')) || {};
@@ -143,7 +143,16 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
   const [visibleCols, setVisibleCols] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('pe-portfolio:visible-cols'));
-      if (Array.isArray(saved)) return new Set([...saved, 'company']);
+      if (Array.isArray(saved)) {
+        const next = new Set([...saved, 'company']);
+        // One-time migration: reveal the PE Stage columns for users whose
+        // saved set predates them, so they show up without a manual opt-in.
+        if (!localStorage.getItem('pe-portfolio:cols-pe-stage')) {
+          next.add('discovery'); next.add('piloting'); next.add('existingPartnership');
+          try { localStorage.setItem('pe-portfolio:cols-pe-stage', '1'); } catch {}
+        }
+        return next;
+      }
     } catch {}
     return new Set(ALL_COL_KEYS);
   });
@@ -497,6 +506,15 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
         case 'caseStudy':
           cmp = (sa.caseStudyYes ? 1 : 0) - (sb.caseStudyYes ? 1 : 0);
           break;
+        case 'discovery':
+          cmp = (a.peStage === 'Discovery' ? 1 : 0) - (b.peStage === 'Discovery' ? 1 : 0);
+          break;
+        case 'piloting':
+          cmp = (a.peStage === 'Piloting' ? 1 : 0) - (b.peStage === 'Piloting' ? 1 : 0);
+          break;
+        case 'existingPartnership':
+          cmp = (a.peStage === 'Existing Partnership' ? 1 : 0) - (b.peStage === 'Existing Partnership' ? 1 : 0);
+          break;
         default:
           cmp = 0;
       }
@@ -612,6 +630,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
               company: 'PE firm', peAum: 'PE AUM', geography: 'Geography', dm: 'Decision Maker Found?',
               met: 'Met in Person', mapping: 'PC Mapping', opps: 'PC Opps', ratio: 'PC Opps 2/4',
               clients: 'PC Clients', keyContacts: 'Key Contacts', caseStudy: 'Case Study',
+              discovery: 'Discovery', piloting: 'Piloting', existingPartnership: 'Existing Partnership',
             };
             return (
               <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, background: '#fff', border: '1px solid #E2E8F0', borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.12)', zIndex: 100, minWidth: 200, padding: '0.3rem 0' }}>
@@ -674,6 +693,9 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
             { key: 'clients', label: 'PC Clients', align: 'center',  tip: 'Portfolio companies currently set to status = Client' },
             { key: 'keyContacts', label: 'Key Contacts', align: 'center', tip: 'Count of HubSpot contacts tagged "Dan Key Target" across the PE firm plus its portfolio companies' },
             { key: 'caseStudy', label: 'Case Study', align: 'center', tip: 'Yes when the PE firm or any of its portfolio companies has "Case Study Created?" set to Yes on its company page' },
+            { key: 'discovery', label: 'Discovery', align: 'center', tip: 'Checked when this PE firm\'s PE Stage (set in its company popup) is Discovery' },
+            { key: 'piloting', label: 'Piloting', align: 'center', tip: 'Checked when this PE firm\'s PE Stage (set in its company popup) is Piloting' },
+            { key: 'existingPartnership', label: 'Existing Partnership', align: 'center', tip: 'Checked when this PE firm\'s PE Stage (set in its company popup) is Existing Partnership' },
           ];
           const HEADER_COLUMNS = ALL_HEADER_COLUMNS.filter(c => visibleCols.has(c.key));
           const GRID = `${HEADER_COLUMNS.map(c => `${colWidths[c.key] || DEFAULT_COL_WIDTHS[c.key] || 110}px`).join(' ')} 28px`;
@@ -900,6 +922,24 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
                         )}
                       </div>
                       )}
+
+                      {[
+                        { key: 'discovery', stage: 'Discovery' },
+                        { key: 'piloting', stage: 'Piloting' },
+                        { key: 'existingPartnership', stage: 'Existing Partnership' },
+                      ].map(({ key, stage }) => visibleCols.has(key) && (
+                        <div
+                          key={key}
+                          title={pe.peStage === stage
+                            ? `PE Stage set to "${stage}" in this firm's company popup`
+                            : pe.peStage
+                              ? `PE Stage is "${pe.peStage}", not "${stage}"`
+                              : 'No PE Stage set on this firm\'s company popup'}
+                          style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.78rem', fontWeight: 700, color: pe.peStage === stage ? '#7C3AED' : '#CBD5E1' }}
+                        >
+                          {pe.peStage === stage ? '✓' : '—'}
+                        </div>
+                      ))}
 
                       <div style={{ padding: '0.55rem 0.2rem', textAlign: 'center', color: '#94A3B8', fontSize: '0.8rem' }}>
                         {isExpanded ? '▾' : '▸'}

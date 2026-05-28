@@ -6,7 +6,7 @@ import 'react-quill-new/dist/quill.snow.css';
 import { OpportunityForm, DEFAULT_FORM_TEMPLATE } from './OpportunityForm';
 import { ScopingNotesEditor, harvestCompetitors } from './ScopingNotesEditor';
 import { loadEffectiveRaClients, raClientName, raClientCm } from '../../utils/raClientsStore';
-import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES, COUNTRIES, US_STATES } from '../../data/enums';
+import { STATUSES, TYPES, TIERS, GEOGRAPHIES, PUBLIC_PRIVATE, ASSET_TYPES, FRAMEWORKS, SERVICE_CATEGORIES, SERVICE_STATUSES, COUNTRIES, US_STATES, PE_STAGES } from '../../data/enums';
 import { CITY_OPTIONS, matchCities, getStateForCity } from '../../data/cities';
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { useAuth } from '../../contexts/AuthContext';
@@ -390,7 +390,7 @@ const EMPTY = {
   company: '', cdm: '', status: 'Inside Sales', type: '', geography: '', publicPrivate: '',
   assetTypes: [], peAum: null, reAum: null, numberOfSites: null, rank: '', tier: 'Tier 2',
   hqRegion: '', frameworks: [], notes: '', website: '', emailDomain: '', servicesExplored: {}, serviceNotes: {}, competitors: {}, portfolioCompanies: [],
-  peOwner: '', sustainabilityTargets: '', caseStudyCreated: false,
+  peOwner: '', sustainabilityTargets: '', caseStudyCreated: false, peStage: '',
 };
 
 // Company-name normalizer shared with the list tabs so fuzzy matching
@@ -3932,6 +3932,16 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                 {TYPES.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
+
+            {fields.type === 'Private Equity' && (
+              <div>
+                <label className={styles.label}>PE Stage</label>
+                <select className={styles.select} value={fields.peStage || ''} onChange={e => set('peStage', e.target.value)}>
+                  <option value="">—</option>
+                  {PE_STAGES.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+            )}
 
             <div>
               <label className={styles.label}>Geography</label>

@@ -28,6 +28,15 @@ export const TYPES = [
   'Other',
 ];
 
+// PE engagement stages — only relevant when a prospect's Type is
+// "Private Equity". Surfaced as a dropdown in the company popup and as
+// three columns on the PE Portfolio → Portfolio sub-tab.
+export const PE_STAGES = [
+  'Discovery',
+  'Piloting',
+  'Existing Partnership',
+];
+
 export const GEOGRAPHIES = [
   'Global',
   'NAM',
