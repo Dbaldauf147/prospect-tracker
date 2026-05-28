@@ -5,6 +5,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotContacts, updateHubspotCache } from '../../utils/hubspotContactsCache';
 import { matchesCdm } from '../../utils/cdmMatch';
 import { getQueuedContactIds, setQueuedContactIds } from '../../utils/draftCampaignQueue';
+import { userLsGet, userLsSet, userLsRemove } from '../../utils/userLs';
 import styles from './AgendaView.module.css';
 
 const STORAGE_KEY = 'bulk-contacts-cache';
@@ -260,17 +261,17 @@ function persistBulkColVisible(set) {
 
 const companyRuleKey = s => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
 function loadCompanyRules() {
-  try { return JSON.parse(localStorage.getItem(COMPANY_RULES_KEY)) || {}; } catch { return {}; }
+  try { return JSON.parse(userLsGet(COMPANY_RULES_KEY)) || {}; } catch { return {}; }
 }
 function persistCompanyRules(map) {
-  try { localStorage.setItem(COMPANY_RULES_KEY, JSON.stringify(map)); } catch { /* ignore */ }
+  try { userLsSet(COMPANY_RULES_KEY, JSON.stringify(map)); } catch { /* ignore */ }
 }
 
 function loadCache() {
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; } catch { return []; }
+  try { return JSON.parse(userLsGet(STORAGE_KEY)) || []; } catch { return []; }
 }
 function saveCache(rows) {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(rows)); } catch { /* ignore */ }
+  try { userLsSet(STORAGE_KEY, JSON.stringify(rows)); } catch { /* ignore */ }
 }
 
 async function loadHubSpotByEmail() {
@@ -994,7 +995,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
     if (!confirm('Clear all rows?')) return;
     setRows([]);
     setResults({});
-    try { localStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
+    try { userLsRemove(STORAGE_KEY); } catch { /* ignore */ }
   }
 
   // Snapshot every row in the grid into a Schneider-styled .xlsx

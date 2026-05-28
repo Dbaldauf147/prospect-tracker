@@ -11,6 +11,7 @@ import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { buildCompanyIndex, findMatchesInIndex, hasMatchInIndex } from '../../utils/companyIndex';
 import { getHubspotCache, setHubspotCache } from '../../utils/hubspotContactsCache';
 import { dbGet } from '../../utils/db';
+import { userLsGet, userLsSet } from '../../utils/userLs';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { matchesCdm } from '../../utils/cdmMatch';
 import * as XLSX from 'xlsx';
@@ -1272,7 +1273,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   const activityByCompany = useMemo(() => {
     const counts = {};
     try {
-      const cache = JSON.parse(localStorage.getItem('hubspot-activity-cache'));
+      const cache = JSON.parse(userLsGet('hubspot-activity-cache'));
       if (!cache) return counts;
 
       // Build domain→company map from prospects
@@ -2029,7 +2030,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   useEffect(() => {
     try {
       const names = allAccounts.map(a => (a.company || '').trim()).filter(Boolean);
-      localStorage.setItem('my-accounts:active-names', JSON.stringify(names));
+      userLsSet('my-accounts:active-names', JSON.stringify(names));
     } catch {}
   }, [allAccounts]);
 
@@ -2138,7 +2139,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
       // the initial render of this tab can have an empty
       // filteredAccounts before prospects load.
       if (names.length === 0) return;
-      localStorage.setItem('my-accounts:filtered-names', JSON.stringify(names));
+      userLsSet('my-accounts:filtered-names', JSON.stringify(names));
     } catch {}
   }, [filteredAccounts]);
 

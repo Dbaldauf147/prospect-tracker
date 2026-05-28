@@ -5,6 +5,7 @@ import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { DataTable } from '../common/DataTable';
 import { dbGet, dbPut } from '../../utils/db';
+import { userLsGet, userLsSet } from '../../utils/userLs';
 import { CompareTab } from './CompareTab';
 import styles from './TargetAccountsView.module.css';
 
@@ -107,7 +108,7 @@ const BLOCKED_EVENT = 'target-accounts:blocked-changed';
 
 function loadBlockedAccountNames() {
   try {
-    const raw = localStorage.getItem(BLOCKED_KEY);
+    const raw = userLsGet(BLOCKED_KEY);
     const arr = raw ? JSON.parse(raw) : [];
     return new Set(Array.isArray(arr) ? arr.map(s => String(s).toLowerCase().trim()).filter(Boolean) : []);
   } catch { return new Set(); }
@@ -115,7 +116,7 @@ function loadBlockedAccountNames() {
 
 function persistBlockedAccountNames(set) {
   try {
-    localStorage.setItem(BLOCKED_KEY, JSON.stringify([...set]));
+    userLsSet(BLOCKED_KEY, JSON.stringify([...set]));
   } catch { /* noop */ }
   try { window.dispatchEvent(new Event(BLOCKED_EVENT)); } catch { /* noop */ }
 }

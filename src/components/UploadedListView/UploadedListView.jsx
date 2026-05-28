@@ -5,12 +5,13 @@ import { saveList as saveListToIDB, loadList as loadListFromIDB, clearList as cl
 import { parseBestSheet } from '../../utils/xlsxParse';
 import { matchesCdm } from '../../utils/cdmMatch';
 import { normalizeCompany, pickNameKey } from '../../utils/companyNorm';
+import { userLsGet, userLsSet, userLsRemove } from '../../utils/userLs';
 import styles from './UploadedListView.module.css';
 
 function loadMapping(key) {
   if (!key) return {};
   try {
-    const raw = localStorage.getItem(key);
+    const raw = userLsGet(key);
     return raw ? (JSON.parse(raw) || {}) : {};
   } catch { return {}; }
 }
@@ -427,8 +428,8 @@ export function UploadedListView({
   // settings snapshot is stale.
   function persistMapping(field, lsKey, value) {
     try {
-      if (Object.keys(value).length === 0) localStorage.removeItem(lsKey);
-      else localStorage.setItem(lsKey, JSON.stringify(value));
+      if (Object.keys(value).length === 0) userLsRemove(lsKey);
+      else userLsSet(lsKey, JSON.stringify(value));
     } catch {}
     if (!storageKey) return;
     if (updateSettingsPath) {
@@ -445,8 +446,8 @@ export function UploadedListView({
   }
   function persistTextValues(value) {
     try {
-      if (Object.keys(value).length === 0 && textValuesKey) localStorage.removeItem(textValuesKey);
-      else if (textValuesKey) localStorage.setItem(textValuesKey, JSON.stringify(value));
+      if (Object.keys(value).length === 0 && textValuesKey) userLsRemove(textValuesKey);
+      else if (textValuesKey) userLsSet(textValuesKey, JSON.stringify(value));
     } catch {}
     if (!storageKey || !textColumn) return;
     if (updateSettingsPath) {
@@ -644,15 +645,15 @@ export function UploadedListView({
   // had both tabs open sees fresh data.
   const [myAccountNames, setMyAccountNames] = useState(() => {
     try {
-      const raw = localStorage.getItem('my-accounts:active-names');
+      const raw = userLsGet('my-accounts:active-names');
       return raw ? (JSON.parse(raw) || null) : null;
     } catch { return null; }
   });
   useEffect(() => {
     function onStorage(e) {
-      if (e.key === 'my-accounts:active-names') {
+      if (e.key && e.key.endsWith(':my-accounts:active-names')) {
         try {
-          const raw = localStorage.getItem('my-accounts:active-names');
+          const raw = userLsGet('my-accounts:active-names');
           setMyAccountNames(raw ? (JSON.parse(raw) || null) : null);
         } catch { setMyAccountNames(null); }
       }
@@ -667,7 +668,7 @@ export function UploadedListView({
   // (cross-window) so toggling a block updates suggestions live.
   const [blockedAccountNames, setBlockedAccountNames] = useState(() => {
     try {
-      const raw = localStorage.getItem('target-accounts:blocked-names');
+      const raw = userLsGet('target-accounts:blocked-names');
       const arr = raw ? JSON.parse(raw) : [];
       return new Set(Array.isArray(arr) ? arr.map(s => String(s).toLowerCase().trim()).filter(Boolean) : []);
     } catch { return new Set(); }
@@ -675,12 +676,12 @@ export function UploadedListView({
   useEffect(() => {
     function refresh() {
       try {
-        const raw = localStorage.getItem('target-accounts:blocked-names');
+        const raw = userLsGet('target-accounts:blocked-names');
         const arr = raw ? JSON.parse(raw) : [];
         setBlockedAccountNames(new Set(Array.isArray(arr) ? arr.map(s => String(s).toLowerCase().trim()).filter(Boolean) : []));
       } catch { setBlockedAccountNames(new Set()); }
     }
-    function onStorage(e) { if (e.key === 'target-accounts:blocked-names') refresh(); }
+    function onStorage(e) { if (e.key && e.key.endsWith(':target-accounts:blocked-names')) refresh(); }
     window.addEventListener('target-accounts:blocked-changed', refresh);
     window.addEventListener('storage', onStorage);
     return () => {

@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { matchesCdm } from '../../utils/cdmMatch';
+import { userLsGet, userLsSet } from '../../utils/userLs';
 import styles from './VibeProspecting.module.css';
 
 const INDUSTRY_OPTIONS = [
@@ -61,12 +62,12 @@ function filtersToLabel(f) {
 
 function loadHistory() {
   try {
-    return JSON.parse(localStorage.getItem(HISTORY_KEY)) || [];
+    return JSON.parse(userLsGet(HISTORY_KEY)) || [];
   } catch { return []; }
 }
 
 function saveHistory(history) {
-  localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(0, MAX_HISTORY)));
+  userLsSet(HISTORY_KEY, JSON.stringify(history.slice(0, MAX_HISTORY)));
 }
 
 function toggleArrayValue(arr, val) {
@@ -84,10 +85,10 @@ const ACCOUNT_LIST_OPTIONS = [
 
 const TITLE_PRESETS_KEY = 'vibe-title-presets';
 function loadTitlePresets() {
-  try { return JSON.parse(localStorage.getItem(TITLE_PRESETS_KEY)) || []; } catch { return []; }
+  try { return JSON.parse(userLsGet(TITLE_PRESETS_KEY)) || []; } catch { return []; }
 }
 function saveTitlePresets(presets) {
-  localStorage.setItem(TITLE_PRESETS_KEY, JSON.stringify(presets));
+  userLsSet(TITLE_PRESETS_KEY, JSON.stringify(presets));
 }
 
 function companiesMatch(a, b) {

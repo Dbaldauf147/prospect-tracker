@@ -1,15 +1,16 @@
 import { useState, useEffect } from 'react';
 import { collection, writeBatch, doc, getDocs, deleteDoc } from 'firebase/firestore';
 import { db } from '../firebase';
+import { userLsGet, userLsSet } from '../utils/userLs';
 import styles from './SyncPanel.module.css';
 
 const SYNC_SETTINGS_KEY = 'prospect-sync-settings';
 
 function loadSettings() {
-  try { return JSON.parse(localStorage.getItem(SYNC_SETTINGS_KEY)) || {}; } catch { return {}; }
+  try { return JSON.parse(userLsGet(SYNC_SETTINGS_KEY)) || {}; } catch { return {}; }
 }
 function saveSettings(s) {
-  localStorage.setItem(SYNC_SETTINGS_KEY, JSON.stringify(s));
+  userLsSet(SYNC_SETTINGS_KEY, JSON.stringify(s));
 }
 
 function extractSpreadsheetId(url) {
@@ -84,7 +85,7 @@ export function SyncPanel({ prospects, onClose }) {
       label: 'Opps',
       url: OPPS_SHEET_URL,
       sheetName: 'Opps',
-      lastSync: localStorage.getItem('opps-cache') ? (() => { try { return JSON.parse(localStorage.getItem('opps-cache'))?.fetchedAt; } catch { return null; } })() : null,
+      lastSync: userLsGet('opps-cache') ? (() => { try { return JSON.parse(userLsGet('opps-cache'))?.fetchedAt; } catch { return null; } })() : null,
       type: 'opps',
       freq: settings.oppsFreq ?? 5,
       paused: !!settings.oppsPaused,

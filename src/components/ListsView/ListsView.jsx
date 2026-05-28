@@ -7,6 +7,7 @@ import { SitesView } from '../SitesView/SitesView';
 import { UploadedListView } from '../UploadedListView/UploadedListView';
 import { loadList as loadListFromIDB } from '../../utils/uploadedListStore';
 import { matchesCdm } from '../../utils/cdmMatch';
+import { userLsGet } from '../../utils/userLs';
 import styles from './ListsView.module.css';
 
 const SUBTABS = [
@@ -41,7 +42,7 @@ function pickListNameKey(headers) {
 }
 function safeReadMap(key) {
   try {
-    const raw = localStorage.getItem(key);
+    const raw = userLsGet(key);
     return raw ? (JSON.parse(raw) || {}) : {};
   } catch { return {}; }
 }
@@ -200,7 +201,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
       // signal before My Accounts is opened.
       let myAccountNames = null;
       try {
-        const raw = localStorage.getItem('my-accounts:active-names');
+        const raw = userLsGet('my-accounts:active-names');
         myAccountNames = raw ? JSON.parse(raw) : null;
       } catch {}
       // Globally-blocked Target Accounts are excluded from
@@ -209,7 +210,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
       // can't see or resolve.
       const blockedAccountNames = new Set();
       try {
-        const raw = localStorage.getItem('target-accounts:blocked-names');
+        const raw = userLsGet('target-accounts:blocked-names');
         const arr = raw ? JSON.parse(raw) : [];
         if (Array.isArray(arr)) {
           for (const s of arr) {

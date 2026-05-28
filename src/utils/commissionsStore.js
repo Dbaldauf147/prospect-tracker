@@ -1,6 +1,10 @@
-// Persists the user's pasted Commissions table in localStorage. Empty
-// until the first paste-import — the Commissions subtab on the
-// Clients view greets a blank slate with a Paste-from-Sheets prompt.
+// Persists the user's pasted Commissions table in localStorage, scoped
+// per user so accounts sharing a browser don't inherit each other's
+// roster. Empty until the first paste-import — the Commissions subtab
+// on the Clients view greets a blank slate with a Paste-from-Sheets
+// prompt.
+
+import { userLsGet, userLsSet, userLsRemove } from './userLs';
 
 const KEY = 'commissions-list-override';
 
@@ -62,7 +66,7 @@ function migrateAllRows(rows) {
 
 export function loadCommissions() {
   try {
-    const raw = localStorage.getItem(KEY);
+    const raw = userLsGet(KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
@@ -70,7 +74,7 @@ export function loadCommissions() {
         // Persist the migrated keys so the next load doesn't have to
         // translate again — and so other tabs see the new shape too.
         if (changed) {
-          try { localStorage.setItem(KEY, JSON.stringify(rows)); } catch { /* ignore */ }
+          try { userLsSet(KEY, JSON.stringify(rows)); } catch { /* ignore */ }
         }
         return { data: rows, source: 'override', count: rows.length };
       }
@@ -83,9 +87,9 @@ export function loadCommissions() {
 
 export function saveCommissionsOverride(arr) {
   if (!Array.isArray(arr)) throw new Error('Commissions override must be an array');
-  localStorage.setItem(KEY, JSON.stringify(arr));
+  userLsSet(KEY, JSON.stringify(arr));
 }
 
 export function clearCommissionsOverride() {
-  localStorage.removeItem(KEY);
+  userLsRemove(KEY);
 }

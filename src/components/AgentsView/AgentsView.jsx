@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { loadOppsFromCache, searchOpps } from '../../utils/oppsCache';
 import { dbGet, dbPut } from '../../utils/db';
+import { userLsGet, userLsSet } from '../../utils/userLs';
 import { getEffectiveServiceMetadata } from '../../data/serviceCatalog';
 import styles from './AgentsView.module.css';
 
@@ -114,7 +115,7 @@ const REASON_NOT_SOLD_TO_BFO = {
 
 function readOverrides() {
   try {
-    const raw = localStorage.getItem(OVERRIDE_STORAGE_KEY);
+    const raw = userLsGet(OVERRIDE_STORAGE_KEY);
     return raw ? JSON.parse(raw) : {};
   } catch {
     return {};
@@ -122,12 +123,12 @@ function readOverrides() {
 }
 
 function writeOverrides(next) {
-  try { localStorage.setItem(OVERRIDE_STORAGE_KEY, JSON.stringify(next)); } catch {}
+  try { userLsSet(OVERRIDE_STORAGE_KEY, JSON.stringify(next)); } catch {}
 }
 
 function readIgnoredEmails() {
   try {
-    const raw = localStorage.getItem(IGNORED_EMAILS_STORAGE_KEY);
+    const raw = userLsGet(IGNORED_EMAILS_STORAGE_KEY);
     const arr = raw ? JSON.parse(raw) : [];
     return Array.isArray(arr) ? arr.map(String) : [];
   } catch {
@@ -136,12 +137,12 @@ function readIgnoredEmails() {
 }
 
 function writeIgnoredEmails(next) {
-  try { localStorage.setItem(IGNORED_EMAILS_STORAGE_KEY, JSON.stringify(next)); } catch {}
+  try { userLsSet(IGNORED_EMAILS_STORAGE_KEY, JSON.stringify(next)); } catch {}
 }
 
 function readIgnoredMeetings() {
   try {
-    const raw = localStorage.getItem(IGNORED_MEETINGS_STORAGE_KEY);
+    const raw = userLsGet(IGNORED_MEETINGS_STORAGE_KEY);
     const arr = raw ? JSON.parse(raw) : [];
     return Array.isArray(arr) ? arr.map(String) : [];
   } catch {
@@ -150,12 +151,12 @@ function readIgnoredMeetings() {
 }
 
 function writeIgnoredMeetings(next) {
-  try { localStorage.setItem(IGNORED_MEETINGS_STORAGE_KEY, JSON.stringify(next)); } catch {}
+  try { userLsSet(IGNORED_MEETINGS_STORAGE_KEY, JSON.stringify(next)); } catch {}
 }
 
 function readAiPrompt() {
   try {
-    const raw = localStorage.getItem(AI_PROMPT_STORAGE_KEY);
+    const raw = userLsGet(AI_PROMPT_STORAGE_KEY);
     return raw == null ? DEFAULT_AI_PROMPT : raw;
   } catch {
     return DEFAULT_AI_PROMPT;
@@ -163,12 +164,12 @@ function readAiPrompt() {
 }
 
 function writeAiPrompt(next) {
-  try { localStorage.setItem(AI_PROMPT_STORAGE_KEY, next); } catch {}
+  try { userLsSet(AI_PROMPT_STORAGE_KEY, next); } catch {}
 }
 
 function readNewBfoOppPrompt() {
   try {
-    const raw = localStorage.getItem(NEW_BFO_OPP_PROMPT_STORAGE_KEY);
+    const raw = userLsGet(NEW_BFO_OPP_PROMPT_STORAGE_KEY);
     return raw == null ? DEFAULT_AI_PROMPT_NEW_BFO_OPP : raw;
   } catch {
     return DEFAULT_AI_PROMPT_NEW_BFO_OPP;
@@ -176,12 +177,12 @@ function readNewBfoOppPrompt() {
 }
 
 function writeNewBfoOppPrompt(next) {
-  try { localStorage.setItem(NEW_BFO_OPP_PROMPT_STORAGE_KEY, next); } catch {}
+  try { userLsSet(NEW_BFO_OPP_PROMPT_STORAGE_KEY, next); } catch {}
 }
 
 function readCloseDatesPrompt() {
   try {
-    const raw = localStorage.getItem(CLOSE_DATES_PROMPT_STORAGE_KEY);
+    const raw = userLsGet(CLOSE_DATES_PROMPT_STORAGE_KEY);
     return raw == null ? DEFAULT_AI_PROMPT_CLOSE_DATES : raw;
   } catch {
     return DEFAULT_AI_PROMPT_CLOSE_DATES;
@@ -189,12 +190,12 @@ function readCloseDatesPrompt() {
 }
 
 function writeCloseDatesPrompt(next) {
-  try { localStorage.setItem(CLOSE_DATES_PROMPT_STORAGE_KEY, next); } catch {}
+  try { userLsSet(CLOSE_DATES_PROMPT_STORAGE_KEY, next); } catch {}
 }
 
 function readAmountUpdatesPrompt() {
   try {
-    const raw = localStorage.getItem(AMOUNT_UPDATES_PROMPT_STORAGE_KEY);
+    const raw = userLsGet(AMOUNT_UPDATES_PROMPT_STORAGE_KEY);
     return raw == null ? DEFAULT_AI_PROMPT_AMOUNT_UPDATES : raw;
   } catch {
     return DEFAULT_AI_PROMPT_AMOUNT_UPDATES;
@@ -202,12 +203,12 @@ function readAmountUpdatesPrompt() {
 }
 
 function writeAmountUpdatesPrompt(next) {
-  try { localStorage.setItem(AMOUNT_UPDATES_PROMPT_STORAGE_KEY, next); } catch {}
+  try { userLsSet(AMOUNT_UPDATES_PROMPT_STORAGE_KEY, next); } catch {}
 }
 
 function readStageChangePrompt() {
   try {
-    const raw = localStorage.getItem(STAGE_CHANGE_PROMPT_STORAGE_KEY);
+    const raw = userLsGet(STAGE_CHANGE_PROMPT_STORAGE_KEY);
     return raw == null ? DEFAULT_AI_PROMPT_STAGE_CHANGE : raw;
   } catch {
     return DEFAULT_AI_PROMPT_STAGE_CHANGE;
@@ -215,12 +216,12 @@ function readStageChangePrompt() {
 }
 
 function writeStageChangePrompt(next) {
-  try { localStorage.setItem(STAGE_CHANGE_PROMPT_STORAGE_KEY, next); } catch {}
+  try { userLsSet(STAGE_CHANGE_PROMPT_STORAGE_KEY, next); } catch {}
 }
 
 function readCloseNotSoldsPrompt() {
   try {
-    const raw = localStorage.getItem(CLOSE_NOT_SOLDS_PROMPT_STORAGE_KEY);
+    const raw = userLsGet(CLOSE_NOT_SOLDS_PROMPT_STORAGE_KEY);
     return raw == null ? DEFAULT_AI_PROMPT_CLOSE_NOT_SOLDS : raw;
   } catch {
     return DEFAULT_AI_PROMPT_CLOSE_NOT_SOLDS;
@@ -228,7 +229,7 @@ function readCloseNotSoldsPrompt() {
 }
 
 function writeCloseNotSoldsPrompt(next) {
-  try { localStorage.setItem(CLOSE_NOT_SOLDS_PROMPT_STORAGE_KEY, next); } catch {}
+  try { userLsSet(CLOSE_NOT_SOLDS_PROMPT_STORAGE_KEY, next); } catch {}
 }
 
 // Pull the leading stage digit from BFO Sales Stage values like
@@ -339,7 +340,7 @@ const EMAIL_RE = /[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}/g;
 
 function readActivityCache() {
   try {
-    const raw = localStorage.getItem(ACTIVITY_CACHE_KEY);
+    const raw = userLsGet(ACTIVITY_CACHE_KEY);
     return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
@@ -772,7 +773,7 @@ export function AgentsView({ prospects = [], settings }) {
       const meetings = await fetchAllPages('meeting');
       const result = { emails, calls, meetings, fetchedAt: new Date().toISOString() };
       try {
-        localStorage.setItem(ACTIVITY_CACHE_KEY, JSON.stringify(result));
+        userLsSet(ACTIVITY_CACHE_KEY, JSON.stringify(result));
         window.dispatchEvent(new CustomEvent('hubspot-activity-cache-updated'));
       } catch (err) {
         console.warn('Agents activity cache write skipped (quota):', err?.message || err);

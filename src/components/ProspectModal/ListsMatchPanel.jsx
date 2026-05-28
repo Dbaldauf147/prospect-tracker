@@ -3,11 +3,12 @@ import { createPortal } from 'react-dom';
 import { loadList as loadListFromIDB } from '../../utils/uploadedListStore';
 import { normalizeCompany, pickNameKey } from '../../utils/companyNorm';
 import { UPLOADED_LISTS } from '../../utils/uploadedListsRegistry';
+import { userLsGet, userLsSet, userLsRemove } from '../../utils/userLs';
 
 function loadMapping(key) {
   if (!key) return {};
   try {
-    const raw = localStorage.getItem(key);
+    const raw = userLsGet(key);
     return raw ? (JSON.parse(raw) || {}) : {};
   } catch { return {}; }
 }
@@ -129,8 +130,8 @@ export function ListsMatchPanel({ anchorRef, prospectCompany, settings, updateSe
     })();
     const next = mutate({ ...current });
     try {
-      if (Object.keys(next).length === 0) localStorage.removeItem(lsKey);
-      else localStorage.setItem(lsKey, JSON.stringify(next));
+      if (Object.keys(next).length === 0) userLsRemove(lsKey);
+      else userLsSet(lsKey, JSON.stringify(next));
     } catch {}
     updateSettingsPath?.({ [`listMappings.${storageKey}.${field}`]: next });
     return next;

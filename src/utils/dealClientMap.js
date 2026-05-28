@@ -1,7 +1,10 @@
 // Persists user-confirmed mappings from a deal-row Client Name to a
 // canonical client (prospect company name). Keyed by the lowercased
 // trimmed source name so casing / whitespace drift in the pasted data
-// doesn't fragment the map across imports of the same tracker.
+// doesn't fragment the map across imports of the same tracker. Scoped
+// per user so accounts sharing a browser don't share mapping state.
+
+import { userLsGet, userLsSet } from './userLs';
 
 const KEY = 'deals-client-map';
 const IGNORE_KEY = 'deals-client-ignore';
@@ -9,7 +12,7 @@ export const DEALS_CLIENT_MAP_EVENT = 'deals-client-map-changed';
 
 export function loadDealClientMap() {
   try {
-    const raw = localStorage.getItem(KEY);
+    const raw = userLsGet(KEY);
     return raw ? (JSON.parse(raw) || {}) : {};
   } catch { return {}; }
 }
@@ -20,7 +23,7 @@ export function loadDealClientMap() {
 // unmapped tally.
 export function loadDealClientIgnore() {
   try {
-    const raw = localStorage.getItem(IGNORE_KEY);
+    const raw = userLsGet(IGNORE_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
     return new Set(Array.isArray(parsed) ? parsed.map(s => String(s || '').toLowerCase().trim()).filter(Boolean) : []);
   } catch { return new Set(); }
@@ -28,7 +31,7 @@ export function loadDealClientIgnore() {
 
 function persistMap(map) {
   try {
-    localStorage.setItem(KEY, JSON.stringify(map || {}));
+    userLsSet(KEY, JSON.stringify(map || {}));
     window.dispatchEvent(new Event(DEALS_CLIENT_MAP_EVENT));
   } catch (err) {
     console.warn('Failed to persist deal client map', err);
@@ -37,7 +40,7 @@ function persistMap(map) {
 
 function persistIgnore(set) {
   try {
-    localStorage.setItem(IGNORE_KEY, JSON.stringify([...set]));
+    userLsSet(IGNORE_KEY, JSON.stringify([...set]));
     window.dispatchEvent(new Event(DEALS_CLIENT_MAP_EVENT));
   } catch (err) {
     console.warn('Failed to persist deal client ignore set', err);

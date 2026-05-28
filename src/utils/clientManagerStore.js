@@ -3,6 +3,10 @@
 // lives in its own localStorage key so a missing field doesn't blow
 // away the others, and each is keyed by the normalized company name so
 // casing / whitespace drift doesn't fragment the data across imports.
+// All keys are scoped per user so accounts sharing a browser don't
+// share client-tab notes / statuses.
+
+import { userLsGet, userLsSet } from './userLs';
 
 const MANAGER_KEY = 'clients-manager-map';
 const IN_PERSON_KEY = 'clients-inperson-map';
@@ -19,14 +23,14 @@ function normKey(s) { return String(s || '').trim().toLowerCase(); }
 
 function loadMap(key) {
   try {
-    const raw = localStorage.getItem(key);
+    const raw = userLsGet(key);
     return raw ? (JSON.parse(raw) || {}) : {};
   } catch { return {}; }
 }
 
 function persistMap(key, map, eventName) {
   try {
-    localStorage.setItem(key, JSON.stringify(map || {}));
+    userLsSet(key, JSON.stringify(map || {}));
     window.dispatchEvent(new Event(eventName));
   } catch (err) {
     console.warn(`Failed to persist ${key}`, err);

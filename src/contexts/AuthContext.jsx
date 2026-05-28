@@ -57,6 +57,14 @@ export function AuthProvider({ children }) {
       } catch (err) {
         console.warn('Failed to set IndexedDB user scope', err);
       }
+      // Same partitioning for localStorage-backed stores (deals roster,
+      // commissions, AgentsView overrides, HubSpot activity cache, etc.).
+      try {
+        const { setUserLsUserId } = await import('../utils/userLs');
+        setUserLsUserId(firebaseUser?.uid || null);
+      } catch (err) {
+        console.warn('Failed to set localStorage user scope', err);
+      }
       setUser(firebaseUser);
       await resolveRole(firebaseUser);
       setLoading(false);

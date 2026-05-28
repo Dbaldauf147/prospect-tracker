@@ -1,3 +1,5 @@
+import { userLsGet } from './userLs';
+
 // Shared helper for computing "which Lists-tab lists is this company
 // flagged on" across the app. Used by MyAccountsView's List Flags
 // column and the Portfolio Companies table / export.
@@ -67,9 +69,12 @@ export function pickListNameKey(headers) {
   return headers.find(k => /company|name|organi[sz]ation|signatory|entity/i.test(k)) || headers[0];
 }
 
+// List mappings (which row maps to which prospect/portfolio company)
+// are personal salesperson curation, so they're scoped per user via
+// userLs. The lists themselves stay shared per CLAUDE.md.
 export function safeReadListMapping(storageKey) {
   try {
-    const raw = localStorage.getItem(storageKey);
+    const raw = userLsGet(storageKey);
     return raw ? (JSON.parse(raw) || {}) : {};
   } catch { return {}; }
 }
