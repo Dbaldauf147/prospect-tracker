@@ -77,7 +77,9 @@ function useOppsRecords(userId) {
 
 export function PEPortfolioView({ prospects = [], onSelectProspect }) {
   const { user } = useAuth();
+  const [subtab, setSubtab] = useState('portfolio');
   const [showClosed, setShowClosed] = useState(false);
+  const [oppsQuery, setOppsQuery] = useState('');
   const [expanded, setExpanded] = useState(() => new Set());
   const [query, setQuery] = useState('');
   const [hubspotCache, setHubspotCacheState] = useState(null);
@@ -163,6 +165,29 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
     setSortKey(key);
   }
   const oppsRecords = useOppsRecords(user?.uid);
+
+  // PE Opps sub-tab: every Opps 2 row whose Type is "Private Equity"
+  // OR whose Source is "PE partner" (case/space-insensitive so minor
+  // data-entry variants still match). These are the deals tied to the
+  // PE channel regardless of whether the account is mapped to a PE firm
+  // on the Portfolio tab.
+  const peOpps = useMemo(() => {
+    const norm = s => String(s || '').trim().toLowerCase();
+    return oppsRecords.filter(r => {
+      const type = norm(r['Type']);
+      const source = norm(r['Source']);
+      return type === 'private equity' || source === 'pe partner';
+    });
+  }, [oppsRecords]);
+
+  const filteredPeOpps = useMemo(() => {
+    const q = oppsQuery.trim().toLowerCase();
+    if (!q) return peOpps;
+    return peOpps.filter(r =>
+      [r['Account'], r['Contact'], r['Stage'], r['Scope'], r['Source'], r['Type'], r['Status']]
+        .some(v => String(v || '').toLowerCase().includes(q))
+    );
+  }, [peOpps, oppsQuery]);
 
   const peFirms = useMemo(() => (
     prospects
@@ -454,15 +479,72 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
         <div>
           <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#1E293B', margin: 0 }}>PE Portfolio</h2>
           <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2, maxWidth: 640 }}>
-            Every prospect with Type = <code>Private Equity</code>, sorted by pipeline from their portfolio companies. Opportunity counts come from the <strong>Opps</strong> tab (same as the Opps column in My Accounts).
+            {subtab === 'portfolio'
+              ? <>Every prospect with Type = <code>Private Equity</code>, sorted by pipeline from their portfolio companies. Opportunity counts come from the <strong>Opps</strong> tab (same as the Opps column in My Accounts).</>
+              : <>Every opportunity from the <strong>Opps 2</strong> tab with Type = <code>Private Equity</code> or Source = <code>PE partner</code>.</>}
           </div>
         </div>
-        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.72rem', color: '#475569', cursor: 'pointer' }}>
-          <input type="checkbox" checked={showClosed} onChange={e => setShowClosed(e.target.checked)} />
-          <span>Include closed (Sold / Not Sold / Lost)</span>
-        </label>
+        {subtab === 'portfolio' && (
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.72rem', color: '#475569', cursor: 'pointer' }}>
+            <input type="checkbox" checked={showClosed} onChange={e => setShowClosed(e.target.checked)} />
+            <span>Include closed (Sold / Not Sold / Lost)</span>
+          </label>
+        )}
       </div>
 
+      {/* Sub-tab bar — Portfolio firms vs. the flat PE Opps list. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderBottom: '1px solid #E2E8F0', margin: '0 1.25rem 0.5rem', flexShrink: 0 }}>
+        {[
+          { key: 'portfolio', label: 'Portfolio', count: peFirms.length },
+          { key: 'opps', label: 'PE Opps', count: peOpps.length },
+        ].map(t => {
+          const isActive = subtab === t.key;
+          return (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setSubtab(t.key)}
+              style={{
+                background: 'none',
+                border: 'none',
+                borderBottom: isActive ? '2px solid #7C3AED' : '2px solid transparent',
+                color: isActive ? '#7C3AED' : '#64748B',
+                fontSize: '0.78rem',
+                fontWeight: 700,
+                padding: '0.5rem 0.75rem',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+              }}
+            >
+              {t.label}
+              <span style={{
+                fontSize: '0.65rem',
+                fontWeight: 700,
+                padding: '1px 6px',
+                borderRadius: 999,
+                background: isActive ? '#7C3AED' : '#E2E8F0',
+                color: isActive ? '#fff' : '#475569',
+              }}>{t.count}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {subtab === 'opps' ? (
+        <PEOppsTab
+          opps={filteredPeOpps}
+          totalOpps={peOpps.length}
+          query={oppsQuery}
+          setQuery={setOppsQuery}
+          oppsLoaded={oppsRecords.length > 0}
+          prospects={prospects}
+          onSelectProspect={onSelectProspect}
+        />
+      ) : (
+      <>
       <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
         <input
           type="text"
@@ -849,6 +931,101 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
           );
         })()}
       </div>
+      </>
+      )}
     </div>
+  );
+}
+
+// Flat table of PE-channel opportunities pulled straight from the
+// Opps 2 store — anything with Type = "Private Equity" or Source =
+// "PE partner". Rows link back to the matching prospect when one
+// exists so the user can jump into the company popup.
+function PEOppsTab({ opps, totalOpps, query, setQuery, oppsLoaded, prospects, onSelectProspect }) {
+  const COLUMNS = [
+    { key: 'Account', label: 'Account', width: '1.6fr' },
+    { key: 'Stage', label: 'Stage', width: '1fr' },
+    { key: 'Type', label: 'Type', width: '1fr' },
+    { key: 'Source', label: 'Source', width: '1fr' },
+    { key: 'Scope', label: 'Scope', width: '0.9fr' },
+    { key: 'Quoted Amount', label: 'Quoted Amount', width: '1fr', align: 'right' },
+    { key: 'Status', label: 'Status', width: '1.4fr' },
+    { key: 'Close Date', label: 'Close Date', width: '1fr' },
+  ];
+  const GRID = COLUMNS.map(c => c.width).join(' ');
+
+  const findProspect = (account) => {
+    const name = (account || '').toLowerCase();
+    if (!name) return null;
+    return prospects.find(p => companiesMatch((p.company || '').toLowerCase(), name)) || null;
+  };
+
+  return (
+    <>
+      <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <input
+          type="text"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder={`Search ${totalOpps} PE opp${totalOpps === 1 ? '' : 's'}…`}
+          style={{ flex: 1, maxWidth: 400, padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
+        />
+      </div>
+
+      <div style={{ flex: 1, overflowY: 'auto', padding: '0 1.25rem 1.25rem', minHeight: 0 }}>
+        {!oppsLoaded && (
+          <div style={{ padding: '0.6rem 0.8rem', marginBottom: '0.5rem', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 6, fontSize: '0.72rem', color: '#92400E' }}>
+            No Opps data loaded. Open the <strong>Opps 2</strong> tab once to sync it; PE opps will populate here afterwards.
+          </div>
+        )}
+        {opps.length === 0 ? (
+          <div style={{ padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
+            <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>
+              {totalOpps === 0 ? 'No PE opps found' : `No opps match "${query}"`}
+            </div>
+            <div style={{ fontSize: '0.78rem' }}>
+              {totalOpps === 0
+                ? <>No Opps 2 rows have Type = <code>Private Equity</code> or Source = <code>PE partner</code>.</>
+                : `${totalOpps} total PE opps loaded — adjust your search.`}
+            </div>
+          </div>
+        ) : (
+          <div style={{ background: '#fff', border: '1px solid #CBD5E1', borderRadius: 8, overflow: 'hidden' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: GRID, background: '#F1F5F9', borderBottom: '1px solid #CBD5E1', position: 'sticky', top: 0, zIndex: 1 }}>
+              {COLUMNS.map(c => (
+                <div
+                  key={c.key}
+                  style={{ padding: '0.4rem 0.6rem', fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#475569', textAlign: c.align || 'left', borderRight: '1px solid #E2E8F0' }}
+                >{c.label}</div>
+              ))}
+            </div>
+            {opps.map((r, idx) => {
+              const parent = findProspect(r['Account']);
+              return (
+                <div
+                  key={r._id || r.id || idx}
+                  onClick={() => parent && onSelectProspect?.(parent)}
+                  style={{ display: 'grid', gridTemplateColumns: GRID, borderTop: idx === 0 ? 'none' : '1px solid #E2E8F0', cursor: parent ? 'pointer' : 'default', background: '#fff' }}
+                  onMouseEnter={e => { if (parent) e.currentTarget.style.background = '#F8FAFC'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = '#fff'; }}
+                >
+                  {COLUMNS.map(c => {
+                    const val = r[c.key] || '';
+                    const isAccount = c.key === 'Account';
+                    return (
+                      <div
+                        key={c.key}
+                        title={String(val)}
+                        style={{ padding: '0.5rem 0.6rem', fontSize: '0.74rem', fontWeight: isAccount ? 700 : 500, color: isAccount ? '#1E293B' : '#334155', textAlign: c.align || 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', borderRight: '1px solid #F1F5F9' }}
+                      >{val || '—'}</div>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </>
   );
 }
