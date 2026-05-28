@@ -114,7 +114,11 @@ export async function loadPeOpps(db, uid) {
 // Returns a Node Buffer of the .xlsx file. `columnKeys` selects/orders the
 // columns; unknown keys are ignored and an empty list falls back to all.
 export async function buildPeOppsWorkbook(records, columnKeys) {
-  const { Workbook } = await import('exceljs');
+  // exceljs is CommonJS; under Node's ESM loader its classes may sit on
+  // `.default` rather than as named exports, so resolve defensively.
+  const exceljs = await import('exceljs');
+  const Workbook = exceljs.Workbook || exceljs.default?.Workbook;
+  if (typeof Workbook !== 'function') throw new Error('exceljs Workbook unavailable');
   const keys = Array.isArray(columnKeys) && columnKeys.length ? columnKeys : PE_OPPS_COLUMN_KEYS;
   const byKey = new Map(PE_OPPS_COLUMNS.map((c) => [c.key, c]));
   // Account is the row anchor — always keep it, and preserve canonical order.
@@ -199,7 +203,8 @@ export async function sendPeOppsEmail({ to, subject, message, buffer, filename, 
     </div>
   `;
 
-  const { default: nodemailer } = await import('nodemailer');
+  const nm = await import('nodemailer');
+  const nodemailer = nm.default || nm;
   const transporter = nodemailer.createTransport({
     host: 'smtp.gmail.com',
     port: 465,
