@@ -230,6 +230,9 @@ export function PEOppsScheduleModal({ open, onClose, uid, email, allColumns, def
               <Field label="Recipients (one per line or comma-separated)">
                 <textarea style={{ ...inp, minHeight: 64, resize: 'vertical' }} value={form.recipients} onChange={(e) => set('recipients', e.target.value)} placeholder="alice@example.com, bob@example.com" />
               </Field>
+              <div style={{ fontSize: '0.68rem', color: '#92400E', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 6, padding: '0.45rem 0.6rem', marginTop: '-0.3rem' }}>
+                Delivery depends on the verified sending domain (Resend). Until a domain is verified, emails may only reach the sender&apos;s own address. Use <strong>Send test now</strong> to confirm a recipient receives it.
+              </div>
 
               <Field label="Subject">
                 <input style={inp} value={form.subject} onChange={(e) => set('subject', e.target.value)} />
