@@ -990,7 +990,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
 // "PE partner". Rows link back to the matching prospect when one
 // exists so the user can jump into the company popup.
 function PEOppsTab({ opps, totalOpps, query, setQuery, oppsLoaded, prospects, onSelectProspect }) {
-  const COLUMNS = [
+  const ALL_COLUMNS = [
     { key: 'Account', label: 'Account', width: '1.6fr' },
     { key: 'Stage', label: 'Stage', width: '1fr' },
     { key: 'Type', label: 'Type', width: '1fr' },
@@ -1005,23 +1005,110 @@ function PEOppsTab({ opps, totalOpps, query, setQuery, oppsLoaded, prospects, on
     { key: 'Call In', label: 'Call In', width: '0.8fr', align: 'right', value: r => { const n = resolveCallIn(r); return n == null ? '' : String(n); } },
     { key: 'Close Date', label: 'Close Date', width: '1fr' },
   ];
-  const GRID = COLUMNS.map(c => c.width).join(' ');
+  const ALL_KEYS = ALL_COLUMNS.map(c => c.key);
   const cellValue = (r, c) => (c.value ? c.value(r) : (r[c.key] ?? ''));
 
-  const handleExport = async () => {
-    const XLSX = await import('xlsx');
-    const header = COLUMNS.map(c => c.label);
-    const rows = opps.map(r => {
-      const obj = {};
-      for (const c of COLUMNS) obj[c.label] = cellValue(r, c);
-      return obj;
+  // Column chooser — drives both the on-screen table and the export.
+  // Account always stays on (it's the row anchor). Persisted so the
+  // chosen layout survives reloads.
+  const [visibleCols, setVisibleCols] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('pe-opps:visible-cols'));
+      if (Array.isArray(saved)) return new Set([...saved, 'Account']);
+    } catch { /* fall through to default */ }
+    return new Set(ALL_KEYS);
+  });
+  useEffect(() => {
+    try { localStorage.setItem('pe-opps:visible-cols', JSON.stringify([...visibleCols])); } catch { /* ignore */ }
+  }, [visibleCols]);
+  const [colMenuOpen, setColMenuOpen] = useState(false);
+  const colMenuRef = useRef(null);
+  useEffect(() => {
+    if (!colMenuOpen) return;
+    function handleClick(e) {
+      if (colMenuRef.current && !colMenuRef.current.contains(e.target)) setColMenuOpen(false);
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [colMenuOpen]);
+  function toggleCol(key) {
+    if (key === 'Account') return;
+    setVisibleCols(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
     });
-    const ws = XLSX.utils.json_to_sheet(rows, { header });
-    ws['!cols'] = header.map(h => ({ wch: Math.max(String(h).length + 2, 14) }));
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'PE Opps');
-    const stamp = new Date().toISOString().slice(0, 10);
-    XLSX.writeFile(wb, `pe-opps-${stamp}.xlsx`);
+  }
+
+  const COLUMNS = ALL_COLUMNS.filter(c => visibleCols.has(c.key));
+  const GRID = COLUMNS.map(c => c.width).join(' ');
+
+  // SE-formatted (Schneider-branded) XLSX export of the rows shown,
+  // limited to the visible columns. Mirrors the green palette / layout
+  // of the Key Contacts export so SE collateral stays consistent.
+  const handleExport = async () => {
+    if (opps.length === 0) return;
+    const { Workbook } = await import('exceljs');
+    const SE_GREEN_DARK = 'FF009530';
+    const SE_GREEN_LIGHT = 'FFE6F7EC';
+    const SE_GREEN = 'FF3DCD58';
+    const wb = new Workbook();
+    wb.creator = 'Schneider Electric · Prospect Tracker';
+    wb.created = new Date();
+    const ws = wb.addWorksheet('PE Opps', {
+      properties: { tabColor: { argb: SE_GREEN } },
+      views: [{ showGridLines: false, state: 'frozen', ySplit: 3 }],
+    });
+    ws.columns = COLUMNS.map(c => ({ width: Math.min(Math.max(c.label.length + 4, 16), 40) }));
+
+    // Title row — Schneider green band, white text.
+    ws.mergeCells(1, 1, 1, COLUMNS.length);
+    const title = ws.getCell(1, 1);
+    title.value = `PE Opportunities · ${opps.length} opp${opps.length === 1 ? '' : 's'}`;
+    title.font = { name: 'Nunito Sans', bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
+    title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+    title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    ws.getRow(1).height = 28;
+    ws.getRow(2).height = 6; // spacer
+
+    // Header row 3 — light-green wash, dark-green bold text.
+    const headerRow = ws.getRow(3);
+    COLUMNS.forEach((col, i) => {
+      const cell = headerRow.getCell(i + 1);
+      cell.value = col.label;
+      cell.font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: SE_GREEN_DARK } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+      cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      cell.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
+    });
+    headerRow.height = 22;
+
+    // Data rows with subtle alternating green banding.
+    opps.forEach((r, idx) => {
+      const row = ws.getRow(4 + idx);
+      COLUMNS.forEach((col, i) => {
+        const cell = row.getCell(i + 1);
+        cell.value = cellValue(r, col);
+        cell.font = { name: 'Nunito Sans', size: 10 };
+        cell.alignment = { vertical: 'middle', horizontal: col.align === 'right' ? 'right' : 'left', indent: 1, wrapText: false };
+        if (idx % 2 === 1) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF6FCF8' } };
+      });
+      row.height = 18;
+    });
+
+    ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: COLUMNS.length } };
+
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const date = new Date().toISOString().slice(0, 10);
+    a.download = `pe-opps-${date}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   const findProspect = (account) => {
@@ -1040,12 +1127,46 @@ function PEOppsTab({ opps, totalOpps, query, setQuery, oppsLoaded, prospects, on
           placeholder={`Search ${totalOpps} PE opp${totalOpps === 1 ? '' : 's'}…`}
           style={{ flex: 1, maxWidth: 400, padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
         />
+        <div ref={colMenuRef} style={{ position: 'relative' }}>
+          <button
+            type="button"
+            onClick={() => setColMenuOpen(o => !o)}
+            style={{ padding: '0.4rem 0.7rem', border: '1px solid #E2E8F0', borderRadius: 6, background: '#fff', fontSize: '0.72rem', fontWeight: 600, color: '#334155', cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+          >Columns ({visibleCols.size}/{ALL_KEYS.length})</button>
+          {colMenuOpen && (
+            <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, background: '#fff', border: '1px solid #E2E8F0', borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.12)', zIndex: 100, minWidth: 220, padding: '0.3rem 0' }}>
+              {ALL_COLUMNS.map(c => (
+                <label key={c.key} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.3rem 0.6rem', fontSize: '0.75rem', color: c.key === 'Account' ? '#94A3B8' : '#334155', cursor: c.key === 'Account' ? 'not-allowed' : 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={visibleCols.has(c.key)}
+                    disabled={c.key === 'Account'}
+                    onChange={() => toggleCol(c.key)}
+                  />
+                  <span style={{ flex: 1 }}>{c.label}</span>
+                </label>
+              ))}
+              <div style={{ borderTop: '1px solid #F1F5F9', marginTop: '0.3rem', padding: '0.3rem 0.6rem', display: 'flex', gap: '0.4rem' }}>
+                <button
+                  type="button"
+                  onClick={() => setVisibleCols(new Set(ALL_KEYS))}
+                  style={{ flex: 1, padding: '0.25rem 0.4rem', border: '1px solid #E2E8F0', borderRadius: 4, background: '#fff', fontSize: '0.68rem', fontWeight: 600, color: '#334155', cursor: 'pointer', fontFamily: 'inherit' }}
+                >Show all</button>
+                <button
+                  type="button"
+                  onClick={() => setVisibleCols(new Set(['Account']))}
+                  style={{ flex: 1, padding: '0.25rem 0.4rem', border: '1px solid #E2E8F0', borderRadius: 4, background: '#fff', fontSize: '0.68rem', fontWeight: 600, color: '#334155', cursor: 'pointer', fontFamily: 'inherit' }}
+                >Hide all</button>
+              </div>
+            </div>
+          )}
+        </div>
         <button
           type="button"
           onClick={handleExport}
           disabled={opps.length === 0}
-          title={opps.length ? 'Download the PE opps shown below as an Excel file' : 'No PE opps to export'}
-          style={{ padding: '0.4rem 0.8rem', border: '1px solid #7C3AED', borderRadius: 6, background: opps.length ? '#7C3AED' : '#E2E8F0', color: opps.length ? '#fff' : '#94A3B8', fontSize: '0.72rem', fontWeight: 700, cursor: opps.length ? 'pointer' : 'not-allowed', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+          title={opps.length ? 'Download the visible columns of the PE opps shown below as an SE-formatted Excel file' : 'No PE opps to export'}
+          style={{ padding: '0.4rem 0.8rem', border: '1px solid #009530', borderRadius: 6, background: opps.length ? '#009530' : '#E2E8F0', color: opps.length ? '#fff' : '#94A3B8', fontSize: '0.72rem', fontWeight: 700, cursor: opps.length ? 'pointer' : 'not-allowed', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
         >Export to Excel</button>
       </div>
 
