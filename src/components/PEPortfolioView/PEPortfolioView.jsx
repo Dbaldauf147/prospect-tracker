@@ -11,6 +11,16 @@ import { formatAum } from '../../utils/formatters';
 const CLOSED_STAGES = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
 const INVALID_STAGES = new Set(['#N/A', '#REF!', '#VALUE!', '#ERROR!', 'N/A', 'n/a', '-', '']);
 
+// Parse an Opps date cell (ISO or anything Date.parse handles) into a
+// Date, or null when it's blank/unparseable. Mirrors Opps 2's toISODate
+// so the PE Opps tab agrees with how dates are stored there.
+function parseOppsDate(raw) {
+  if (!raw) return null;
+  const s = String(raw).trim();
+  const t = Date.parse(/^\d{4}-\d{2}-\d{2}$/.test(s) ? `${s}T00:00:00` : s);
+  return isNaN(t) ? null : new Date(t);
+}
+
 // Same fuzzy match the My Accounts table uses, so the Opps column here agrees with that one.
 function companiesMatch(a, b) {
   const na = (a || '').toLowerCase().trim();
@@ -171,12 +181,24 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
   // data-entry variants still match). These are the deals tied to the
   // PE channel regardless of whether the account is mapped to a PE firm
   // on the Portfolio tab.
+  //
+  // Opps closed (Sold / Not Sold) more than a month ago are dropped so
+  // the list stays focused on live + recently-closed deals. A closed
+  // opp with no parseable Close Date is kept (we can't prove it's old).
   const peOpps = useMemo(() => {
     const norm = s => String(s || '').trim().toLowerCase();
+    const cutoff = new Date();
+    cutoff.setMonth(cutoff.getMonth() - 1);
     return oppsRecords.filter(r => {
       const type = norm(r['Type']);
       const source = norm(r['Source']);
-      return type === 'private equity' || source === 'pe partner';
+      if (type !== 'private equity' && source !== 'pe partner') return false;
+      const stage = norm(r['Stage']);
+      if (stage === 'sold' || stage === 'not sold') {
+        const closed = parseOppsDate(r['Close Date']);
+        if (closed && closed < cutoff) return false;
+      }
+      return true;
     });
   }, [oppsRecords]);
 
@@ -184,7 +206,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
     const q = oppsQuery.trim().toLowerCase();
     if (!q) return peOpps;
     return peOpps.filter(r =>
-      [r['Account'], r['Contact'], r['Stage'], r['Scope'], r['Source'], r['Type'], r['Status']]
+      [r['Account'], r['Contact'], r['Stage'], r['Scope'], r['Source'], r['Type'], r['Status'], r['Next Steps']]
         .some(v => String(v || '').toLowerCase().includes(q))
     );
   }, [peOpps, oppsQuery]);
@@ -950,6 +972,7 @@ function PEOppsTab({ opps, totalOpps, query, setQuery, oppsLoaded, prospects, on
     { key: 'Scope', label: 'Scope', width: '0.9fr' },
     { key: 'Quoted Amount', label: 'Quoted Amount', width: '1fr', align: 'right' },
     { key: 'Status', label: 'Status', width: '1.4fr' },
+    { key: 'Next Steps', label: 'Next Steps', width: '1.8fr' },
     { key: 'Close Date', label: 'Close Date', width: '1fr' },
   ];
   const GRID = COLUMNS.map(c => c.width).join(' ');
