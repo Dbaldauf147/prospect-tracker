@@ -4,10 +4,19 @@
 // object { zipMap, meta } so it round-trips through structured clone
 // without any surprises.
 
+import { getDbUserId } from './db';
+
 const DB_NAME = 'prospect-tracker-files';
 const STORE = 'uploaded-lists';
 const DB_VERSION = 2;
-const KEY = '__utility-rates__';
+const BASE_KEY = '__utility-rates__';
+
+// Per-user record key so two accounts on the same browser don't share
+// one cached rate table. Pre-auth callers fall back to the bare key.
+function ratesKey() {
+  const uid = getDbUserId();
+  return uid ? `${uid}:${BASE_KEY}` : BASE_KEY;
+}
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -44,7 +53,7 @@ export async function saveUtilityRates(zipMap, meta = {}) {
   await new Promise((resolve, reject) => {
     const tx = db.transaction(STORE, 'readwrite');
     tx.objectStore(STORE).put({
-      key: KEY,
+      key: ratesKey(),
       data: { zipMap, meta },
       savedAt: Date.now(),
     });
@@ -58,7 +67,7 @@ export async function loadUtilityRates() {
     const db = await openDB();
     const rec = await new Promise((resolve, reject) => {
       const tx = db.transaction(STORE, 'readonly');
-      const req = tx.objectStore(STORE).get(KEY);
+      const req = tx.objectStore(STORE).get(ratesKey());
       req.onsuccess = () => resolve(req.result || null);
       req.onerror = () => reject(req.error);
     });
@@ -74,7 +83,7 @@ export async function clearUtilityRates() {
     const db = await openDB();
     await new Promise((resolve, reject) => {
       const tx = db.transaction(STORE, 'readwrite');
-      tx.objectStore(STORE).delete(KEY);
+      tx.objectStore(STORE).delete(ratesKey());
       tx.oncomplete = resolve;
       tx.onerror = () => reject(tx.error);
     });

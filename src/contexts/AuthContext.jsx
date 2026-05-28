@@ -74,6 +74,13 @@ export function AuthProvider({ children }) {
       } catch (err) {
         console.warn('Failed to set localStorage user scope', err);
       }
+      // Partition encrypted token storage (Outlook OAuth tokens, etc.).
+      try {
+        const { setSecureUserId } = await import('../utils/secureStorage');
+        setSecureUserId(firebaseUser?.uid || null);
+      } catch (err) {
+        console.warn('Failed to set secure storage user scope', err);
+      }
       setUser(firebaseUser);
       await resolveRole(firebaseUser);
       setLoading(false);
