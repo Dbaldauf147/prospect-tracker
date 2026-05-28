@@ -670,11 +670,12 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
   // Also build a token → prospect map from company-name words (e.g. "URW" from
   // "Unibail-Rodamco-Westfield (URW)") so we can fuzzy-match when the domain
   // itself isn't registered on the prospect.
-  const { domainToProspect, prospectDomains, tokenToProspect, prospectCompactPrefixMap, prospectCompactPrefixesDesc } = useMemo(() => {
+  const { domainToProspect, prospectDomains, tokenToProspect, prospectByCompanyKey, prospectCompactPrefixMap, prospectCompactPrefixesDesc } = useMemo(() => {
     const dToP = new Map();
     const pDoms = new Map();
     const tToP = new Map();
     const compactToP = new Map();
+    const byCompanyKey = new Map();
     function recordDomain(p, domain) {
       if (!domain || !p.company) return;
       dToP.set(domain, p);
@@ -683,6 +684,13 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
       pDoms.get(key).add(domain);
     }
     for (const p of prospects) {
+      // Exact-name lookup so a typed-Company / HubSpot-company string
+      // can land on a canonical TV prospect without going through the
+      // brand-token fuzz.
+      if (p.company) {
+        const key = p.company.toLowerCase().trim();
+        if (key && !byCompanyKey.has(key)) byCompanyKey.set(key, p);
+      }
       if (p.emailDomain) {
         p.emailDomain.split(/[\n;,]+/).map(s => s.trim()).filter(Boolean).forEach(entry => {
           const at = entry.lastIndexOf('@');
@@ -719,6 +727,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
       domainToProspect: dToP,
       prospectDomains: pDoms,
       tokenToProspect: tToP,
+      prospectByCompanyKey: byCompanyKey,
       prospectCompactPrefixMap: compactToP,
       prospectCompactPrefixesDesc: compactDesc,
     };
@@ -742,17 +751,74 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
     return names;
   }, [prospects]);
 
+  // Fuzzy-match an arbitrary company string against the TV prospect
+  // pool. Same vocabulary the domain-brand path uses (token map +
+  // compact-prefix map) plus an exact normalized name lookup at the
+  // top so typed-canonical-name inputs short-circuit before tokenizing.
+  const GENERIC_COMPANY_TOKENS = useMemo(() => new Set([
+    'inc', 'llc', 'ltd', 'corp', 'group', 'holdings', 'plc',
+    'the', 'and', 'company', 'co',
+  ]), []);
+  const matchProspectByCompanyName = useCallback((name) => {
+    const norm = String(name || '').toLowerCase().trim();
+    if (!norm || norm.length < 2) return null;
+    const exact = prospectByCompanyKey.get(norm);
+    if (exact) return exact;
+    const tokens = norm.split(/[^a-z0-9]+/).filter(t => t.length >= 3 && !GENERIC_COMPANY_TOKENS.has(t));
+    if (tokens.length === 0) return null;
+    for (const t of tokens) {
+      const hit = tokenToProspect.get(t);
+      if (hit) return hit;
+    }
+    const compact = tokens.join('');
+    if (compact && prospectCompactPrefixMap.has(compact)) return prospectCompactPrefixMap.get(compact);
+    if (compact && compact.length >= 5) {
+      for (const key of prospectCompactPrefixesDesc) {
+        if (key.length < 5) break;
+        if (compact.startsWith(key) || key.startsWith(compact)) return prospectCompactPrefixMap.get(key);
+      }
+    }
+    return null;
+  }, [prospectByCompanyKey, tokenToProspect, prospectCompactPrefixMap, prospectCompactPrefixesDesc, GENERIC_COMPANY_TOKENS]);
+
   // Look up match details for a single row based on the current prospects snapshot.
   // Used both during initial enrichment AND at render time so the columns refresh
-  // after the prospect's emailDomain is auto-patched.
-  const lookupMatch = useCallback((email) => {
+  // after the prospect's emailDomain is auto-patched. Optionally accepts the
+  // row object so the matcher can fall through to non-email signals
+  // (HubSpot contact company, the user's typed Company cell) when the
+  // email's domain doesn't resolve to a known TV prospect.
+  const lookupMatch = useCallback((email, row = null) => {
     const at = email.lastIndexOf('@');
     const domain = at >= 0 ? email.slice(at + 1).toLowerCase() : '';
     let matched = domain ? domainToProspect.get(domain) : null;
     const wasExactMatch = !!matched;
+    let source = matched ? 'domain-exact' : '';
+    // Layer 2: non-email signals. The HubSpot contact record is
+    // typically curated (a real person typed it) and the user's typed
+    // Company cell is even more deliberate, so both signals beat the
+    // brand-token fuzz on the email domain. HubSpot wins when both
+    // exist because the typed cell might be a draft mid-edit.
+    if (!matched) {
+      const hsCompany = String(hubspotByEmail.get(email)?.company || '').trim();
+      if (hsCompany) {
+        const m = matchProspectByCompanyName(hsCompany);
+        if (m) { matched = m; source = 'hubspot-company'; }
+      }
+    }
+    if (!matched) {
+      const typedCompany = String(row?.company || '').trim();
+      if (typedCompany) {
+        const m = matchProspectByCompanyName(typedCompany);
+        if (m) { matched = m; source = 'typed-company'; }
+      }
+    }
+    // Layer 3: domain brand-token / compact-prefix fuzz (legacy path).
     if (!matched && domain) {
       const token = extractBrandToken(domain);
-      if (token && token.length >= 3) matched = tokenToProspect.get(token) || null;
+      if (token && token.length >= 3) {
+        const hit = tokenToProspect.get(token);
+        if (hit) { matched = hit; source = 'domain-token'; }
+      }
       // Still no hit? Try the compact-prefix map so "lplfinancial"
       // (domain brand) resolves to "LPL Financial" (prospect whose
       // first-two-token compact form is "lplfinancial"). Supports
@@ -760,11 +826,13 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
       if (!matched && token && token.length >= 3) {
         if (prospectCompactPrefixMap.has(token)) {
           matched = prospectCompactPrefixMap.get(token);
+          source = 'domain-compact';
         } else {
           for (const key of prospectCompactPrefixesDesc) {
             if (key.length < 5) break;
             if (token.startsWith(key) || key.startsWith(token)) {
               matched = prospectCompactPrefixMap.get(key);
+              source = 'domain-compact';
               break;
             }
           }
@@ -776,11 +844,11 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
     const suggestedCompany = matched?.company || '';
     const domainSet = matched ? prospectDomains.get(matched.company.toLowerCase()) : null;
     const companyDomains = domainSet ? Array.from(domainSet).sort() : (domain ? [domain] : []);
-    return { domain, matched, wasExactMatch, suggestedCompany, companyDomains };
-  }, [domainToProspect, prospectDomains, tokenToProspect, prospectCompactPrefixMap, prospectCompactPrefixesDesc]);
+    return { domain, matched, wasExactMatch, suggestedCompany, companyDomains, suggestSource: source };
+  }, [domainToProspect, prospectDomains, tokenToProspect, prospectCompactPrefixMap, prospectCompactPrefixesDesc, hubspotByEmail, matchProspectByCompanyName]);
 
   const enrichRow = useCallback((r) => {
-    const { domain, matched, wasExactMatch } = lookupMatch(r.email);
+    const { domain, matched, wasExactMatch } = lookupMatch(r.email, r);
     // Only guess name parts if the parsed row didn't already carry them from "Name <email>" drops.
     const nameGuess = (!r.firstname && !r.lastname) ? guessNameFromEmail(r.email) : { firstname: '', lastname: '' };
     // Initial Company value: match HubSpot's current value when the contact already exists
@@ -1116,7 +1184,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
       else if (typeof outcome === 'string' && outcome.startsWith('error')) {
         statusLabel = outcome.replace(/^error: /, '');
       }
-      const live = lookupMatch(r.email);
+      const live = lookupMatch(r.email, r);
       const prospect = r._matchedProspectId
         ? prospects.find(p => p.id === r._matchedProspectId)
         : null;
@@ -1665,7 +1733,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
     }
     if (columnFilters.suggestedCompany) {
       out = out.filter(r => {
-        const live = lookupMatch(r.email);
+        const live = lookupMatch(r.email, r);
         return live.suggestedCompany
           && r.company !== live.suggestedCompany
           && !dismissedSuggestedCompanies.has(r.email);
@@ -1687,7 +1755,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
           case 'lastname':         return r.lastname || '';
           case 'company':          return r.company || '';
           case 'jobtitle':         return r.jobtitle || '';
-          case 'suggestedCompany': return lookupMatch(r.email).suggestedCompany || '';
+          case 'suggestedCompany': return lookupMatch(r.email, r).suggestedCompany || '';
           case 'website':
           case 'zoomCompanyId':
           case 'zoomCompanyName':
@@ -1730,7 +1798,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
           case 'firstname':        return r.firstname || '';
           case 'lastname':         return r.lastname || '';
           case 'company':          return r.company || '';
-          case 'suggestedCompany': return lookupMatch(r.email).suggestedCompany || '';
+          case 'suggestedCompany': return lookupMatch(r.email, r).suggestedCompany || '';
           case 'website':
           case 'zoomCompanyId':
           case 'zoomCompanyName':
@@ -2460,7 +2528,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
                     statusLabel = 'Update pending';
                     statusClass = styles.statusUpdatePending;
                   }
-                  const live = lookupMatch(r.email);
+                  const live = lookupMatch(r.email, r);
                   const currentHsCompany = hubspotContact?.company?.trim() || '';
                   const tvState = rowTableViewState(r);
                   const prospect = r._matchedProspectId ? prospects.find(p => p.id === r._matchedProspectId) : null;
@@ -2778,9 +2846,16 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
                               </span>
                             );
                           }
+                          const sourceLabel = ({
+                            'domain-exact':    'matched by email domain (exact)',
+                            'hubspot-company': "matched by HubSpot contact's Company",
+                            'typed-company':   'matched against the Company you typed',
+                            'domain-token':    'matched by email domain brand token',
+                            'domain-compact':  'matched by email domain compact prefix',
+                          })[live.suggestSource] || 'matched';
                           return (
                             <span
-                              title={sc}
+                              title={`${sc} — ${sourceLabel}`}
                               style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 6px 1px 8px', background: '#FEF9C3', border: '1px solid #FACC15', borderRadius: 999, fontSize: '0.68rem', fontWeight: 600, color: '#854D0E', maxWidth: '100%' }}
                             >
                               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{sc}</span>
