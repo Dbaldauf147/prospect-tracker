@@ -4,6 +4,7 @@ import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotCache, updateHubspotCache } from '../../utils/hubspotContactsCache';
 import { dbGet } from '../../utils/db';
+import { userLsGet } from '../../utils/userLs';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { formatAum } from '../../utils/formatters';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
@@ -1270,13 +1271,13 @@ function KeyContactsViewInner({
   // mount and refreshed on the custom event from ActivityView's
   // saveCache plus the cross-tab `storage` event.
   const [activityCache, setActivityCache] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('hubspot-activity-cache')); } catch { return null; }
+    try { return JSON.parse(userLsGet('hubspot-activity-cache')); } catch { return null; }
   });
   useEffect(() => {
     const reload = () => {
-      try { setActivityCache(JSON.parse(localStorage.getItem('hubspot-activity-cache'))); } catch { setActivityCache(null); }
+      try { setActivityCache(JSON.parse(userLsGet('hubspot-activity-cache'))); } catch { setActivityCache(null); }
     };
-    const onStorage = (e) => { if (e.key === 'hubspot-activity-cache') reload(); };
+    const onStorage = (e) => { if (e.key && e.key.endsWith(':hubspot-activity-cache')) reload(); };
     window.addEventListener('hubspot-activity-cache-updated', reload);
     window.addEventListener('storage', onStorage);
     return () => {

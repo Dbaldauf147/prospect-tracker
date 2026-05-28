@@ -5,6 +5,7 @@ import { DataTable } from '../common/DataTable';
 import { logAction } from '../../utils/auditLog';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotCache, updateHubspotCache } from '../../utils/hubspotContactsCache';
+import { userLsGet, userLsSet, userLsRemove } from '../../utils/userLs';
 import { useOppsRecords } from '../KeyContactsView/KeyContactsView';
 import styles from './ActivityView.module.css';
 
@@ -31,11 +32,11 @@ function companiesMatchFuzz(a, b) {
 }
 
 function loadCache() {
-  try { return JSON.parse(localStorage.getItem(CACHE_KEY)); } catch { return null; }
+  try { return JSON.parse(userLsGet(CACHE_KEY)); } catch { return null; }
 }
 function saveCache(data) {
   try {
-    localStorage.setItem(CACHE_KEY, JSON.stringify(data));
+    userLsSet(CACHE_KEY, JSON.stringify(data));
     // Notify in-tab consumers (e.g. the Last Outreach column on
     // KeyContactsView) since the `storage` event only fires across tabs.
     window.dispatchEvent(new CustomEvent('hubspot-activity-cache-updated'));
@@ -421,7 +422,7 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
   const [showWebhookSetup, setShowWebhookSetup] = useState(false);
 
   const webhookStorageKey = 'outlook-webhook-token';
-  const savedWebhookToken = (() => { try { return localStorage.getItem(webhookStorageKey) || ''; } catch { return ''; } })();
+  const savedWebhookToken = (() => { try { return userLsGet(webhookStorageKey) || ''; } catch { return ''; } })();
   const hasWebhookToken = !!savedWebhookToken;
   const [webhookToken, setWebhookToken] = useState(savedWebhookToken);
   const outlookLoading = false;
@@ -434,7 +435,7 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
   function setupWebhook() {
     const token = savedWebhookToken || generateToken();
     if (!savedWebhookToken) {
-      try { localStorage.setItem(webhookStorageKey, token); } catch {}
+      try { userLsSet(webhookStorageKey, token); } catch {}
       setWebhookToken(token);
     }
     setShowWebhookSetup(true);
@@ -442,7 +443,7 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
 
   function removeWebhook() {
     if (!window.confirm('Disconnect Outlook calendar? Your Power Automate flow will keep running but meetings will stop showing here.')) return;
-    try { localStorage.removeItem(webhookStorageKey); } catch {}
+    try { userLsRemove(webhookStorageKey); } catch {}
     setWebhookToken('');
     setOutlookEvents([]);
     setShowWebhookSetup(false);

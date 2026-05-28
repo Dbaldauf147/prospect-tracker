@@ -6,6 +6,7 @@ import { LineChart, Line, BarChart, Bar, AreaChart, Area, XAxis, YAxis, Cartesia
 import { buildCompanyIndex, hasMatchInIndex } from '../../utils/companyIndex';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { dbGet } from '../../utils/db';
+import { userLsGet } from '../../utils/userLs';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { matchesCdm } from '../../utils/cdmMatch';
 
@@ -474,7 +475,7 @@ export function ProgressView({ prospects, settings, cdmName }) {
     const activityByCompany = (() => {
       const counts = {};
       let cache = null;
-      try { cache = JSON.parse(localStorage.getItem('hubspot-activity-cache')); } catch {}
+      try { cache = JSON.parse(userLsGet('hubspot-activity-cache')); } catch {}
       if (!cache) return counts;
       const domainMap = new Map();
       const contactMap = new Map();

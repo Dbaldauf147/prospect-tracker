@@ -13,6 +13,7 @@ import { saveSourceFile as savePortfolioSourceFileToIDB, loadSourceFile as loadP
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { getHubspotCache, updateHubspotCache, notifyCacheUpdated } from '../../utils/hubspotContactsCache';
+import { userLsGet } from '../../utils/userLs';
 import { dbGet } from '../../utils/db';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { subscribeIndicativeAnalysis } from '../../utils/firestoreSync';
@@ -2102,7 +2103,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
     const out = new Map(); // contactKey -> { sent, received }
     if (!companyContacts || companyContacts.length === 0) return out;
     let raw;
-    try { raw = JSON.parse(localStorage.getItem('hubspot-activity-cache') || 'null'); } catch { raw = null; }
+    try { raw = JSON.parse(userLsGet('hubspot-activity-cache') || 'null'); } catch { raw = null; }
     const emails = raw?.emails || [];
     if (emails.length === 0) return out;
 
@@ -2438,7 +2439,7 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // TargetAccountsView dispatches when the user toggles a row.
   const [blockedTargetAccounts, setBlockedTargetAccounts] = useState(() => {
     try {
-      const raw = localStorage.getItem('target-accounts:blocked-names');
+      const raw = userLsGet('target-accounts:blocked-names');
       const arr = raw ? JSON.parse(raw) : [];
       return new Set(Array.isArray(arr) ? arr.map(s => String(s).toLowerCase().trim()).filter(Boolean) : []);
     } catch { return new Set(); }
@@ -2446,12 +2447,12 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   useEffect(() => {
     function refresh() {
       try {
-        const raw = localStorage.getItem('target-accounts:blocked-names');
+        const raw = userLsGet('target-accounts:blocked-names');
         const arr = raw ? JSON.parse(raw) : [];
         setBlockedTargetAccounts(new Set(Array.isArray(arr) ? arr.map(s => String(s).toLowerCase().trim()).filter(Boolean) : []));
       } catch { setBlockedTargetAccounts(new Set()); }
     }
-    function onStorage(e) { if (e.key === 'target-accounts:blocked-names') refresh(); }
+    function onStorage(e) { if (e.key && e.key.endsWith(':target-accounts:blocked-names')) refresh(); }
     window.addEventListener('target-accounts:blocked-changed', refresh);
     window.addEventListener('storage', onStorage);
     return () => {

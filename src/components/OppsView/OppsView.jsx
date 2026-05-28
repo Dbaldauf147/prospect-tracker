@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { DataTable } from '../common/DataTable';
 import { dbGet, dbPut } from '../../utils/db';
+import { userLsGet } from '../../utils/userLs';
 import styles from './OppsView.module.css';
 
 const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1ee0OREqA25jzDaR6xRDSrj_ZIZDymQjf1k2Z2_ajVKw/export?format=csv&gid=0';
@@ -51,9 +52,10 @@ const KEY_COLS = [
   'Competition', 'Waiting On', 'Close Date',
 ];
 
-// Legacy localStorage fallback for reading old cache
+// Legacy localStorage fallback for reading old cache. Per-user scoped
+// so a fresh non-admin doesn't inherit the admin's Opps sheet snapshot.
 function loadCacheLegacy() {
-  try { return JSON.parse(localStorage.getItem('opps-cache')); } catch { return null; }
+  try { return JSON.parse(userLsGet('opps-cache')); } catch { return null; }
 }
 
 export function OppsView({ settings, updateSettings } = {}) {
@@ -146,7 +148,7 @@ export function OppsView({ settings, updateSettings } = {}) {
   // Read frequency and paused state from sync settings
   function getOppsSettings() {
     try {
-      const s = JSON.parse(localStorage.getItem('prospect-sync-settings'));
+      const s = JSON.parse(userLsGet('prospect-sync-settings'));
       return { freq: s?.oppsFreq ?? 5, paused: !!s?.oppsPaused };
     } catch { return { freq: 5, paused: false }; }
   }

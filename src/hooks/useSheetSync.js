@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { collection, writeBatch, doc, getDocs } from 'firebase/firestore';
 import { db } from '../firebase';
+import { userLsGet, userLsSet } from '../utils/userLs';
 
 const SYNC_SETTINGS_KEY = 'prospect-sync-settings';
 const LAST_AUTO_SYNC_KEY = 'prospect-last-auto-sync';
@@ -8,7 +9,7 @@ const DEFAULT_INTERVAL = 5 * 60 * 1000; // 5 minutes
 const VALID_FRAMEWORKS = new Set(['RECA', 'CSRD', 'CDP', 'GRESB', 'SBT', 'Ecovadis', 'UN PRI', 'CA SB', 'NZAM']);
 
 function loadSettings() {
-  try { return JSON.parse(localStorage.getItem(SYNC_SETTINGS_KEY)) || {}; } catch { return {}; }
+  try { return JSON.parse(userLsGet(SYNC_SETTINGS_KEY)) || {}; } catch { return {}; }
 }
 
 function parseCsv(text) {
@@ -126,7 +127,7 @@ export function useSheetSync(user) {
       const intervalMs = freqMin * 60 * 1000;
 
       // Check if enough time has passed
-      const lastSync = localStorage.getItem(LAST_AUTO_SYNC_KEY);
+      const lastSync = userLsGet(LAST_AUTO_SYNC_KEY);
       if (lastSync && (Date.now() - parseInt(lastSync)) < intervalMs) return;
 
       if (syncingRef.current) return;
@@ -176,7 +177,7 @@ export function useSheetSync(user) {
           if (inBatch > 0) await batch.commit();
         }
 
-        localStorage.setItem(LAST_AUTO_SYNC_KEY, String(Date.now()));
+        userLsSet(LAST_AUTO_SYNC_KEY, String(Date.now()));
         console.log(`Auto-sync from Google Sheets (additive-only): ${added} added, ${skipped} existing rows preserved`);
       } catch (err) {
         console.error('Auto-sync error:', err);

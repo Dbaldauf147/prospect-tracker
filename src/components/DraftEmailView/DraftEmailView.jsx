@@ -6,6 +6,7 @@ import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { useDraftCampaignQueue, clearQueuedContacts, setQueuedContactIds } from '../../utils/draftCampaignQueue';
+import { userLsGet, userLsSet } from '../../utils/userLs';
 import styles from './DraftEmailView.module.css';
 
 // Pulls contacts whose notes (HubSpot's `notes` / `hs_content_membership_notes`
@@ -577,13 +578,13 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
   const { isAdmin } = useAuth();
   // Restore auto-saved compose state
   const [subject, setSubject] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(AUTOSAVE_KEY))?.subject || ''; } catch { return ''; }
+    try { return JSON.parse(userLsGet(AUTOSAVE_KEY))?.subject || ''; } catch { return ''; }
   });
   const [body, setBody] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(AUTOSAVE_KEY))?.body || ''; } catch { return ''; }
+    try { return JSON.parse(userLsGet(AUTOSAVE_KEY))?.body || ''; } catch { return ''; }
   });
   const [selectedContacts, setSelectedContacts] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(AUTOSAVE_KEY))?.contacts || []; } catch { return []; }
+    try { return JSON.parse(userLsGet(AUTOSAVE_KEY))?.contacts || []; } catch { return []; }
   });
   const [contactSearch, setContactSearch] = useState('');
   const [showSearch, setShowSearch] = useState(false);
@@ -629,7 +630,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
   const [lastFocused, setLastFocused] = useState('body'); // 'subject' or 'body'
   const [attachments, setAttachments] = useState([]);
   const [draftCc, setDraftCc] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(AUTOSAVE_KEY))?.cc || []; } catch { return []; }
+    try { return JSON.parse(userLsGet(AUTOSAVE_KEY))?.cc || []; } catch { return []; }
   });
   const [draftCcInput, setDraftCcInput] = useState('');
   const [showDraftCcSuggestions, setShowDraftCcSuggestions] = useState(false);
@@ -655,7 +656,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
   // Auto-save compose state so it's never lost
   useEffect(() => {
     const timer = setTimeout(() => {
-      localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({ subject, body, contacts: selectedContacts, cc: draftCc }));
+      userLsSet(AUTOSAVE_KEY, JSON.stringify({ subject, body, contacts: selectedContacts, cc: draftCc }));
     }, 500);
     return () => clearTimeout(timer);
   }, [subject, body, selectedContacts, draftCc]);
