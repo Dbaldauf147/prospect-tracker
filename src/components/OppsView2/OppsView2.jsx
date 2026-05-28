@@ -2083,6 +2083,140 @@ function NewOppSourceModal({ account, options, onCreate, onCancel }) {
   );
 }
 
+// Popup that fires after Stage flips to "Not Sold". Prompts the user to
+// fill in the three close-out columns (Close Date, Reason Not Sold,
+// Final Margin) so the downstream reporting tabs (AgentsView's
+// Not-Sold BFO Status block + PipelineView's Final Margin table) have
+// what they need without the user having to remember to hunt for the
+// columns after the stage change.
+//
+// The modal pre-populates with whatever the row already has. Save
+// applies the three values via updateOppField (skipping fields the
+// user left untouched). Skip leaves the row as-is — Stage is still
+// set to Not Sold.
+function NotSoldFollowUpModal({ opp, reasonOptions, onSave, onClose }) {
+  const [closeDate, setCloseDate] = useState(toISODate(opp?.['Close Date']) || '');
+  const [reason, setReason] = useState(String(opp?.['Reason Not Sold'] ?? ''));
+  const [finalMargin, setFinalMargin] = useState(String(opp?.['Final Margin'] ?? ''));
+
+  function handleSave() {
+    onSave({
+      closeDate,
+      reason,
+      finalMargin: finalMargin.trim(),
+    });
+  }
+
+  const labelStyle = { fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text)', display: 'block', marginBottom: 4 };
+  const inputStyle = {
+    width: '100%', boxSizing: 'border-box',
+    padding: '0.45rem 0.55rem',
+    border: '1px solid var(--color-border)', borderRadius: 4,
+    fontSize: '0.85rem', fontFamily: 'inherit',
+    background: '#fff', color: 'var(--color-text)',
+  };
+
+  return createPortal(
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)',
+        zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+        }}
+        style={{
+          width: 460, maxWidth: '92vw',
+          background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)',
+          display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        }}
+      >
+        <div style={{ padding: '0.85rem 1rem', borderBottom: '1px solid var(--color-border-light)' }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)' }}>
+            Close out this opportunity
+          </div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
+            <strong>{opp?.['Account'] || 'This opp'}</strong>
+            {opp?.['Scope'] ? <> &middot; {opp['Scope']}</> : null}
+            {' '}is now marked <strong>Not Sold</strong>. Fill in the close-out details below.
+          </div>
+        </div>
+
+        <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.7rem' }}>
+          <div>
+            <label style={labelStyle}>Close Date</label>
+            <input
+              type="date"
+              autoFocus
+              value={closeDate}
+              onChange={(e) => setCloseDate(e.target.value)}
+              style={inputStyle}
+            />
+          </div>
+          <div>
+            <label style={labelStyle}>Reason Not Sold</label>
+            <select
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              style={inputStyle}
+            >
+              <option value="">— Select a reason —</option>
+              {reasonOptions.map(o => (
+                <option key={o} value={o}>{o}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style={labelStyle}>Final Margin</label>
+            <input
+              type="text"
+              value={finalMargin}
+              onChange={(e) => setFinalMargin(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); handleSave(); }
+              }}
+              placeholder="e.g. 22% or $4,500"
+              style={inputStyle}
+            />
+          </div>
+        </div>
+
+        <div style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          padding: '0.6rem 1rem',
+          borderTop: '1px solid var(--color-border-light)', background: 'var(--color-bg)',
+        }}>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              padding: '0.35rem 0.7rem', background: 'transparent',
+              border: '1px solid var(--color-border)', borderRadius: 4,
+              fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+              color: 'var(--color-text-muted)', cursor: 'pointer',
+            }}
+          >Skip for now</button>
+          <button
+            type="button"
+            onClick={handleSave}
+            style={{
+              padding: '0.35rem 0.85rem', background: 'var(--color-accent)',
+              border: '1px solid var(--color-accent)', borderRadius: 4,
+              fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+              color: '#fff', cursor: 'pointer',
+            }}
+          >Save</button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 // Popup that shows the basic info for one opp + a Delete button. Opened
 // from the row-level info button so the user can eyeball the full record
 // without having to hunt through the (often horizontally scrolled) row.
@@ -3340,6 +3474,11 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // is open. Account flows through so the modal can show "Adding
   // <company>" when the company is already known.
   const [pendingNewOpp, setPendingNewOpp] = useState(null);
+  // _id of the opp that just had its Stage flipped to "Not Sold". When
+  // set, the NotSoldFollowUpModal asks the user to fill in Close Date,
+  // Reason Not Sold, and Final Margin so the close-out reporting views
+  // have what they need. Cleared on Save or Skip.
+  const [notSoldPromptId, setNotSoldPromptId] = useState(null);
   // _id of the opp whose info popup is open, or null when no popup
   // is showing. Resolved against the live records list on render so
   // the popup always reflects the latest cell edits.
@@ -4028,6 +4167,13 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         }),
       };
     });
+    // Prompt for the close-out details (Close Date / Reason Not Sold /
+    // Final Margin) whenever the Stage flips TO "Not Sold". Skipped on
+    // bulk mass-edits — those run through the bulk path below and we
+    // don't want to multi-modal across selections.
+    if (stageChanged && String(value ?? '').trim().toLowerCase() === 'not sold') {
+      setNotSoldPromptId(id);
+    }
   }, [pushUndoEntry]);
 
   // Drop a field entirely from a row. Used to clear a user-set Call In
@@ -5000,6 +5146,32 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           onCancel={() => setPendingNewOpp(null)}
         />
       )}
+
+      {notSoldPromptId != null && (() => {
+        const opp = records.find(r => r._id === notSoldPromptId);
+        if (!opp) return null;
+        return (
+          <NotSoldFollowUpModal
+            opp={opp}
+            reasonOptions={listRegistry.get('reasonNotSold')?.options || []}
+            onSave={({ closeDate, reason, finalMargin }) => {
+              // Only push fields whose value actually changed so the
+              // undo stack stays uncluttered with no-op snapshots.
+              if (closeDate !== (toISODate(opp['Close Date']) || '')) {
+                updateOppField(opp._id, 'Close Date', closeDate);
+              }
+              if (reason !== String(opp['Reason Not Sold'] ?? '')) {
+                updateOppField(opp._id, 'Reason Not Sold', reason);
+              }
+              if (finalMargin !== String(opp['Final Margin'] ?? '').trim()) {
+                updateOppField(opp._id, 'Final Margin', finalMargin);
+              }
+              setNotSoldPromptId(null);
+            }}
+            onClose={() => setNotSoldPromptId(null)}
+          />
+        );
+      })()}
 
       {infoOppId != null && (() => {
         const opp = records.find(r => r._id === infoOppId);
