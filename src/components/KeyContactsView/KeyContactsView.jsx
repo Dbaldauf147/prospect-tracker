@@ -1,4 +1,5 @@
 import { Component, useEffect, useMemo, useState, useRef, useCallback } from 'react';
+import { apiFetch } from '../../utils/apiFetch';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -572,7 +573,7 @@ function KeyContactsViewInner({
     const next = (value ?? '').trim();
     let companyAssignment = null;
     try {
-      const res = await fetch('/api/hubspot?action=update-contact', {
+      const res = await apiFetch('/api/hubspot?action=update-contact', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contactId: id, properties: { [field]: next } }),
@@ -643,7 +644,7 @@ function KeyContactsViewInner({
       // whitespace on values.
       const nextTags = parts.join(';');
       try {
-        const res = await fetch('/api/hubspot?action=update-contact', {
+        const res = await apiFetch('/api/hubspot?action=update-contact', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ contactId: id, properties: { dans_tags: nextTags } }),
@@ -690,7 +691,7 @@ function KeyContactsViewInner({
     setMassStatus(null);
     let ok = false;
     try {
-      const res = await fetch('/api/hubspot?action=update-contact', {
+      const res = await apiFetch('/api/hubspot?action=update-contact', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contactId: id, properties: { company: suggested } }),
@@ -1084,7 +1085,7 @@ function KeyContactsViewInner({
     const value = massValue.trim();
     for (const id of massSelected) {
       try {
-        const res = await fetch('/api/hubspot?action=update-contact', {
+        const res = await apiFetch('/api/hubspot?action=update-contact', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ contactId: id, properties: { [massField]: value } }),

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
+import { apiFetch } from '../../utils/apiFetch';
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
 import { secureSet, secureGet, secureClear } from '../../utils/secureStorage';
@@ -610,7 +611,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     setCritique(null);
     setCritiqueBusy(true);
     try {
-      const res = await fetch('/api/critique-email', {
+      const res = await apiFetch('/api/critique-email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ subject, body }),
@@ -931,7 +932,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
             return `Prospect Tracker · ${stamp} · ${slug || 'untitled'}`;
           })()
         : null;
-      const res = await fetch('/api/outlook-draft', {
+      const res = await apiFetch('/api/outlook-draft', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ accessToken, drafts, folderName }),

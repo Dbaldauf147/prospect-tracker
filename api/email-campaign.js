@@ -5,10 +5,14 @@
  * Body: { subject: "Your subject line" }
  */
 
+import { withAuth } from './_lib/http.js';
+import { enforceRateLimit } from './_lib/rateLimit.js';
+
 const BASE = 'https://api.hubapi.com';
 
-export default async function handler(req, res) {
+async function handler(req, res, auth) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  if (!(await enforceRateLimit(res, auth.uid, 'email-campaign', 30, 5 * 60 * 1000))) return;
 
   const token = process.env.HUBSPOT_ACCESS_TOKEN;
   if (!token) return res.status(500).json({ error: 'HubSpot token not configured' });
@@ -165,3 +169,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: err.message });
   }
 }
+
+export default withAuth(handler);

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { apiFetch } from '../../utils/apiFetch';
 import { useAuth } from '../../contexts/AuthContext';
 import styles from './ContactsView.module.css';
 import { HubSpotView } from '../HubSpotView/HubSpotView';
@@ -84,7 +85,7 @@ export function ContactsView({
     setRefreshing(true);
     setRefreshError('');
     try {
-      const res = await fetch('/api/hubspot?action=contacts');
+      const res = await apiFetch('/api/hubspot?action=contacts');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
       if (!json?.contacts) throw new Error('No contacts in response');

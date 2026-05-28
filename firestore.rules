@@ -3,34 +3,59 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Shared prospects collection: only the admin account. Other authenticated
+    // ---- Access control helpers ---------------------------------------
+    // Keep this domain list in sync with VITE_ALLOWED_EMAIL_DOMAINS (client)
+    // and ALLOWED_EMAIL_DOMAINS (server). Firestore rules can't read env
+    // vars, so the allowlist is encoded here and must be edited on deploy.
+    function isAdmin() {
+      return request.auth != null && request.auth.token.email == "baldaufdan@gmail.com";
+    }
+    function allowedDomains() {
+      // EDIT ME: the email domains permitted to use the app.
+      return ["example.com"];
+    }
+    function emailDomain() {
+      return request.auth.token.email.split("@")[1];
+    }
+    // An authorized caller: signed in AND either the admin or on an
+    // allowed domain. Verified-email requirement keeps spoofed custom
+    // tokens out (Google/password sign-in both set email_verified).
+    function isAuthorized() {
+      return request.auth != null
+        && (isAdmin() || emailDomain() in allowedDomains());
+    }
+
+    // Shared prospects collection: only the admin account. Other authorized
     // users use their per-user collection at /users/{uid}/prospects.
     match /prospects/{prospectId} {
-      allow read, write: if request.auth != null
-        && request.auth.token.email == "baldaufdan@gmail.com";
+      allow read, write: if isAdmin();
+    }
+
+    // True when the caller owns this document path AND is authorized.
+    function owns(userId) {
+      return isAuthorized() && request.auth.uid == userId;
     }
 
     // Indicative Savings analyses saved against a prospect from the
     // Utility Lookup page. Lives in a subcollection so the bulk
     // /prospects query doesn't have to fetch the base64 XLSX blob.
     match /prospects/{prospectId}/analyses/{analysisId} {
-      allow read, write: if request.auth != null
-        && request.auth.token.email == "baldaufdan@gmail.com";
+      allow read, write: if isAdmin();
     }
 
     // Users collection: users can only read/write their own document
     match /users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read, write: if owns(userId);
     }
 
     // Per-user prospects: users can only access their own prospects
     match /users/{userId}/prospects/{prospectId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read, write: if owns(userId);
     }
 
     // Per-user analyses subcollection (Indicative Savings blobs).
     match /users/{userId}/prospects/{prospectId}/analyses/{analysisId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read, write: if owns(userId);
     }
 
     // Per-user uploaded list backups (legacy path). Kept readable so
@@ -39,62 +64,74 @@ service cloud.firestore {
     // existing lists get promoted into the shared collection without a
     // manual migration step.
     match /users/{userId}/listBackups/{storageKey} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read, write: if owns(userId);
     }
 
-    // Shared uploaded list backups. The Lists tab is the same set of
-    // rows for every signed-in user (see CLAUDE.md), so the Firestore
-    // mirror lives in a shared collection. Any authenticated user can
-    // read; writes are also open so a user re-uploading a list (or
-    // promoting the legacy per-user copy via listBackupSync) refreshes
-    // the canonical store.
+    // Shared uploaded list backups. The Lists tab is the same canonical
+    // set of rows for every signed-in user (see CLAUDE.md). Authorized
+    // users may READ it, but only the admin may WRITE — otherwise any
+    // user re-uploading or clearing a list would clobber the shared
+    // store for everyone.
     match /listBackups/{storageKey} {
-      allow read, write: if request.auth != null;
+      allow read: if isAuthorized();
+      allow write: if isAdmin();
+    }
+
+    // Per-user integration OAuth tokens (HubSpot/Google/Microsoft) are
+    // written and read ONLY by the server (firebase-admin bypasses
+    // rules). Clients must never touch them.
+    match /integrationTokens/{userId} {
+      allow read, write: if false;
+    }
+
+    // Per-user API rate-limit counters — server-only.
+    match /rateLimits/{docId} {
+      allow read, write: if false;
     }
 
     // User settings: users can only read/write their own settings
     match /userSettings/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read, write: if owns(userId);
     }
 
     // Target accounts: users can only read/write their own data
     match /targetAccounts/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read, write: if owns(userId);
     }
 
     // Opps data: users can only read/write their own data
     match /oppsData/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read, write: if owns(userId);
     }
 
     // Opps 2 data: user-entered opps from the Opps 2 tab. Same per-user
     // scoping as oppsData.
     match /opps2Data/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read, write: if owns(userId);
     }
 
     // Opps 2 payload chunks: the JSON blob is split across this
     // subcollection so the dataset can grow past Firestore's 1 MB
     // per-document cap.
     match /opps2Data/{userId}/chunks/{chunkId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read, write: if owns(userId);
     }
 
     // Email campaigns: users can only read/write their own data
     match /emailCampaigns/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read, write: if owns(userId);
     }
 
     // Progress history: users can only read/write their own data
     match /progressHistory/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read, write: if owns(userId);
     }
 
     // Audit log: append-only. Authenticated users may create entries
     // stamped with their own uid. No read/update/delete from the client;
     // admin inspection goes through Firebase Console.
     match /auditLog/{docId} {
-      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow create: if isAuthorized() && request.resource.data.userId == request.auth.uid;
       allow read, update, delete: if false;
     }
 

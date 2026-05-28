@@ -4,6 +4,8 @@
 // dataURL storage, adding ~33% overhead). IDB typically allows hundreds
 // of MB per origin without prompting the user.
 
+import { getDbUserId } from './db';
+
 const DB_NAME = 'prospect-tracker-files';
 const STORE = 'portfolio-source-files';
 // Version 2 added the uploaded-lists object store. Kept in sync with
@@ -27,9 +29,29 @@ function openDB() {
   });
 }
 
-function slugKey(companyName) {
+// Legacy (un-scoped) record key — kept for one-time migration.
+function legacySlugKey(companyName) {
   const slug = String(companyName || '').toLowerCase().replace(/[^a-z0-9]/g, '-');
   return slug ? `portfolioUploadFile:${slug}` : '';
+}
+
+// Per-user record key so uploaded portfolio files don't leak between
+// accounts sharing a browser. Pre-auth callers fall back to the legacy
+// un-scoped key.
+function slugKey(companyName) {
+  const base = legacySlugKey(companyName);
+  if (!base) return '';
+  const uid = getDbUserId();
+  return uid ? `${uid}:${base}` : base;
+}
+
+function idbGet(db, key) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readonly');
+    const req = tx.objectStore(STORE).get(key);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => reject(req.error);
+  });
 }
 
 export async function saveSourceFile(companyName, file) {
@@ -53,19 +75,32 @@ export async function saveSourceFile(companyName, file) {
 
 export async function loadSourceFile(companyName) {
   const key = slugKey(companyName);
+  const legacyKey = legacySlugKey(companyName);
   if (!key) return null;
   try {
     const db = await openDB();
-    const rec = await new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE, 'readonly');
-      const req = tx.objectStore(STORE).get(key);
-      req.onsuccess = () => resolve(req.result || null);
-      req.onerror = () => reject(req.error);
-    });
+    const rec = await idbGet(db, key);
     if (rec) return rec;
+    // Claim a legacy un-scoped IDB record for the current user (covers
+    // the admin's files uploaded before per-user scoping). Skip when the
+    // scoped key already equals the legacy key (pre-auth).
+    if (legacyKey !== key) {
+      const legacyRec = await idbGet(db, legacyKey);
+      if (legacyRec) {
+        const claimed = { ...legacyRec, key };
+        await new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE, 'readwrite');
+          tx.objectStore(STORE).put(claimed);
+          tx.objectStore(STORE).delete(legacyKey);
+          tx.oncomplete = resolve;
+          tx.onerror = () => reject(tx.error);
+        });
+        return claimed;
+      }
+    }
     // One-time migration from the legacy localStorage entry.
     try {
-      const raw = localStorage.getItem(key);
+      const raw = localStorage.getItem(legacyKey);
       if (raw) {
         const parsed = JSON.parse(raw);
         if (parsed?.dataUrl) {
@@ -85,7 +120,7 @@ export async function loadSourceFile(companyName) {
             tx.oncomplete = resolve;
             tx.onerror = () => reject(tx.error);
           });
-          try { localStorage.removeItem(key); } catch {}
+          try { localStorage.removeItem(legacyKey); } catch {}
           return migrated;
         }
       }
@@ -147,4 +182,5 @@ export async function clearSourceFile(companyName) {
     });
   } catch {}
   try { localStorage.removeItem(key); } catch {}
+  try { localStorage.removeItem(legacySlugKey(companyName)); } catch {}
 }

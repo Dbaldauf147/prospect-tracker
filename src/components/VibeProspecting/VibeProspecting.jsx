@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
+import { apiFetch } from '../../utils/apiFetch';
 import * as XLSX from 'xlsx';
 import { matchesCdm } from '../../utils/cdmMatch';
 import { userLsGet, userLsSet } from '../../utils/userLs';
@@ -146,7 +147,7 @@ export function VibeProspecting({ prospects = [], onUpdate, cdmName }) {
     setLoading(true);
     setSelected(new Set());
     try {
-      const res = await fetch('/api/vibe-prospect', {
+      const res = await apiFetch('/api/vibe-prospect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(filters),
@@ -189,7 +190,7 @@ export function VibeProspecting({ prospects = [], onUpdate, cdmName }) {
       let existingEmails = new Set();
       let existingNames = new Set();
       try {
-        const hubRes = await fetch('/api/hubspot?action=contacts');
+        const hubRes = await apiFetch('/api/hubspot?action=contacts');
         const hubData = await hubRes.json();
         for (const c of (hubData.contacts || [])) {
           if (c.email) existingEmails.add(c.email.toLowerCase().trim());
@@ -231,7 +232,7 @@ export function VibeProspecting({ prospects = [], onUpdate, cdmName }) {
       let created = 0;
       const failed = [];
       if (toCreate.length > 0) {
-        const res = await fetch('/api/hubspot?action=push-contacts', {
+        const res = await apiFetch('/api/hubspot?action=push-contacts', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ contacts: toCreate }),

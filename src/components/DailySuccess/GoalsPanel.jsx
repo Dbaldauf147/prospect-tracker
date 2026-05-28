@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { apiFetch } from '../../utils/apiFetch';
 import styles from './DailySuccess.module.css';
 import {
   loadGoals,
@@ -161,7 +162,7 @@ export function GoalsPanel({ user }) {
     setStatus('Asking Claude to prioritize and draft tasks…');
     try {
       const pipelineSummary = await buildPipelineSummary();
-      const resp = await fetch('/api/prioritize-goals', {
+      const resp = await apiFetch('/api/prioritize-goals', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef, useEffect, useLayoutEffect } from 'react';
+import { apiFetch } from '../../utils/apiFetch';
 import { createPortal } from 'react-dom';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
@@ -1007,7 +1008,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     if (companies.length === 0) return;
     setHqLookupRunning(true);
     try {
-      const res = await fetch('/api/hq-lookup', {
+      const res = await apiFetch('/api/hq-lookup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ companies }),
@@ -1537,7 +1538,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
     if (!isAdmin) return;
     (async () => {
       try {
-        const res = await fetch('/api/hubspot?action=contacts');
+        const res = await apiFetch('/api/hubspot?action=contacts');
         const json = await res.json();
         if (json.contacts) {
           // Slim each contact to essential fields to keep the cache compact.
