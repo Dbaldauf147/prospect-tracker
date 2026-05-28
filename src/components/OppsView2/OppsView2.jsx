@@ -822,7 +822,9 @@ function PricingOptionSnapshotView({ snapshot }) {
 // rendered as a hyperlink that calls `onViewSnapshot` (which the
 // parent wires to the Opp details popup), with a small ✎ icon to
 // switch to inline edit mode so the user can write over the value.
-function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot }) {
+// A manual URL set via the 🔗 button takes precedence over the
+// snapshot link so users can attach a quote PDF / BFO doc / etc.
+function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onChangeUrl }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value ?? '');
   useEffect(() => { if (!editing) setDraft(value ?? ''); }, [value, editing]);
@@ -832,6 +834,28 @@ function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot }) {
     if (draft !== (value ?? '')) onChange?.(draft);
   };
   const cancel = () => { setDraft(value ?? ''); setEditing(false); };
+
+  const editUrl = () => {
+    const next = window.prompt(
+      'Hyperlink URL for this Quoted Amount (leave blank to clear):',
+      url || '',
+    );
+    if (next == null) return; // cancelled
+    const trimmed = next.trim();
+    const normalized = trimmed && !/^https?:\/\//i.test(trimmed) ? `https://${trimmed}` : trimmed;
+    onChangeUrl?.(normalized);
+  };
+  const linkBtn = (
+    <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); editUrl(); }}
+      title={url ? `Edit or clear hyperlink (${url})` : 'Add a hyperlink to this Quoted Amount'}
+      style={{
+        border: 'none', background: 'transparent', cursor: 'pointer',
+        color: url ? '#2563eb' : '#94a3b8', padding: '0 2px', fontSize: '0.85em', lineHeight: 1,
+      }}
+    >🔗</button>
+  );
 
   if (editing) {
     return (
@@ -853,16 +877,54 @@ function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot }) {
       />
     );
   }
+  // Manual URL takes precedence — opens in a new tab.
+  if (url) {
+    return (
+      <span style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '1px 2px' }}>
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          title={`Open ${url}`}
+          style={{
+            color: '#2563eb', textDecoration: 'underline', cursor: 'pointer',
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            flex: 1,
+          }}
+        >{value || (snapshot ? fmtMoneyWhole(snapshot.year1Total || 0) : '') || '—'}</a>
+        {linkBtn}
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); setEditing(true); }}
+          title="Write over the Quoted Amount"
+          style={{
+            border: 'none', background: 'transparent', cursor: 'pointer',
+            color: '#94a3b8', padding: '0 2px', fontSize: '0.85em', lineHeight: 1,
+          }}
+        >✎</button>
+      </span>
+    );
+  }
   if (!snapshot) {
     return (
       <span
-        onClick={(e) => { e.stopPropagation(); setEditing(true); }}
         style={{
-          display: 'block', cursor: 'text', minHeight: '1em', padding: '1px 2px',
-          color: value ? 'inherit' : 'var(--color-text-muted)',
+          display: 'flex', alignItems: 'center', gap: 4, padding: '1px 2px',
+          minHeight: '1em',
         }}
-        title="Click to edit"
-      >{value || '—'}</span>
+      >
+        <span
+          onClick={(e) => { e.stopPropagation(); setEditing(true); }}
+          style={{
+            flex: 1, cursor: 'text',
+            color: value ? 'inherit' : 'var(--color-text-muted)',
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}
+          title="Click to edit"
+        >{value || '—'}</span>
+        {linkBtn}
+      </span>
     );
   }
   // Snapshot attached: value is a hyperlink to the Opp's Pricing
@@ -880,6 +942,7 @@ function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot }) {
           flex: 1,
         }}
       >{value || fmtMoneyWhole(snapshot.year1Total || 0) || '—'}</a>
+      {linkBtn}
       <button
         type="button"
         onClick={(e) => { e.stopPropagation(); setEditing(true); }}
@@ -4270,13 +4333,17 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             // When the opp has a Pricing-Option snapshot attached, the
             // cell renders as a hyperlink that opens the Opp details
             // popup (where the snapshot detail lives) and exposes a
-            // small ✎ for inline override edits.
+            // small ✎ for inline override edits. A manual URL on
+            // `_quotedAmountUrl` takes precedence so users can attach
+            // a quote PDF / BFO doc / etc.
             return (
               <QuotedAmountCell
                 value={row[h]}
                 snapshot={row._pricingOption || null}
                 onChange={(v) => updateOppField(row._id, h, v)}
                 onViewSnapshot={() => setInfoOppId(row._id)}
+                url={row._quotedAmountUrl || ''}
+                onChangeUrl={(u) => updateOppField(row._id, '_quotedAmountUrl', u)}
               />
             );
           }
