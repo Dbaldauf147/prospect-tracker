@@ -21,6 +21,32 @@ function parseOppsDate(raw) {
   return isNaN(t) ? null : new Date(t);
 }
 
+// Values Opps 2 treats as "no data" in a numeric cell.
+const BLANK_SENTINELS = new Set(['', '-', '#N/A', '#n/a', 'N/A', 'n/a']);
+
+// Resolve a row's "Call In" the same way Opps 2 does: a blank-sentinel
+// stored value wins (the cell was deliberately cleared); otherwise it's
+// the live calendar-day count from today to the Follow Up date, falling
+// back to the stored number when there's no parseable Follow Up.
+function resolveCallIn(r) {
+  if (r && 'Call In' in r) {
+    const s = r['Call In'] == null ? '' : String(r['Call In']).trim();
+    if (BLANK_SENTINELS.has(s)) return null;
+  }
+  const followUp = parseOppsDate(r['Follow Up']);
+  if (followUp) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    followUp.setHours(0, 0, 0, 0);
+    return Math.round((followUp - today) / 86400000);
+  }
+  if (r && 'Call In' in r) {
+    const n = parseFloat(String(r['Call In']).replace(/[,$%]/g, ''));
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
 // Same fuzzy match the My Accounts table uses, so the Opps column here agrees with that one.
 function companiesMatch(a, b) {
   const na = (a || '').toLowerCase().trim();
@@ -206,7 +232,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
     const q = oppsQuery.trim().toLowerCase();
     if (!q) return peOpps;
     return peOpps.filter(r =>
-      [r['Account'], r['Contact'], r['Stage'], r['Scope'], r['Source'], r['Type'], r['Status'], r['Next Steps']]
+      [r['Account'], r['Contact'], r['Stage'], r['Scope'], r['Source'], r['Type'], r['Sales Partner'], r['Status'], r['Next Steps']]
         .some(v => String(v || '').toLowerCase().includes(q))
     );
   }, [peOpps, oppsQuery]);
@@ -969,13 +995,33 @@ function PEOppsTab({ opps, totalOpps, query, setQuery, oppsLoaded, prospects, on
     { key: 'Stage', label: 'Stage', width: '1fr' },
     { key: 'Type', label: 'Type', width: '1fr' },
     { key: 'Source', label: 'Source', width: '1fr' },
+    { key: 'Sales Partner', label: 'Sales Partner', width: '1.2fr' },
     { key: 'Scope', label: 'Scope', width: '0.9fr' },
     { key: 'Quoted Amount', label: 'Quoted Amount', width: '1fr', align: 'right' },
     { key: 'Status', label: 'Status', width: '1.4fr' },
     { key: 'Next Steps', label: 'Next Steps', width: '1.8fr' },
+    { key: 'Last Client Heard From Us', label: 'Last Client Heard From Us', width: '1.3fr' },
+    { key: 'Call In', label: 'Call In', width: '0.8fr', align: 'right', value: r => { const n = resolveCallIn(r); return n == null ? '' : String(n); } },
     { key: 'Close Date', label: 'Close Date', width: '1fr' },
   ];
   const GRID = COLUMNS.map(c => c.width).join(' ');
+  const cellValue = (r, c) => (c.value ? c.value(r) : (r[c.key] ?? ''));
+
+  const handleExport = async () => {
+    const XLSX = await import('xlsx');
+    const header = COLUMNS.map(c => c.label);
+    const rows = opps.map(r => {
+      const obj = {};
+      for (const c of COLUMNS) obj[c.label] = cellValue(r, c);
+      return obj;
+    });
+    const ws = XLSX.utils.json_to_sheet(rows, { header });
+    ws['!cols'] = header.map(h => ({ wch: Math.max(String(h).length + 2, 14) }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'PE Opps');
+    const stamp = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(wb, `pe-opps-${stamp}.xlsx`);
+  };
 
   const findProspect = (account) => {
     const name = (account || '').toLowerCase();
@@ -993,6 +1039,13 @@ function PEOppsTab({ opps, totalOpps, query, setQuery, oppsLoaded, prospects, on
           placeholder={`Search ${totalOpps} PE opp${totalOpps === 1 ? '' : 's'}…`}
           style={{ flex: 1, maxWidth: 400, padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
         />
+        <button
+          type="button"
+          onClick={handleExport}
+          disabled={opps.length === 0}
+          title={opps.length ? 'Download the PE opps shown below as an Excel file' : 'No PE opps to export'}
+          style={{ padding: '0.4rem 0.8rem', border: '1px solid #7C3AED', borderRadius: 6, background: opps.length ? '#7C3AED' : '#E2E8F0', color: opps.length ? '#fff' : '#94A3B8', fontSize: '0.72rem', fontWeight: 700, cursor: opps.length ? 'pointer' : 'not-allowed', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+        >Export to Excel</button>
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '0 1.25rem 1.25rem', minHeight: 0 }}>
@@ -1033,7 +1086,7 @@ function PEOppsTab({ opps, totalOpps, query, setQuery, oppsLoaded, prospects, on
                   onMouseLeave={e => { e.currentTarget.style.background = '#fff'; }}
                 >
                   {COLUMNS.map(c => {
-                    const val = r[c.key] || '';
+                    const val = cellValue(r, c) || '';
                     const isAccount = c.key === 'Account';
                     return (
                       <div
