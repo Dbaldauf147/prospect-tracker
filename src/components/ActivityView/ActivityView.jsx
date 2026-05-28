@@ -89,7 +89,7 @@ export function ActivityView({ prospects = [], settings, updateSettings }) {
     let after = '';
     while (true) {
       const url = `/api/hubspot?action=activity&type=${type}${after ? `&after=${after}` : ''}`;
-      const res = await fetch(url);
+      const res = await apiFetch(url);
       const json = await res.json();
       if (json.error) throw new Error(json.error);
       all.push(...(json.results || []));

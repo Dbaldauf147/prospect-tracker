@@ -4,6 +4,7 @@ import { loadOppsFromCache, searchOpps } from '../../utils/oppsCache';
 import { dbGet, dbPut } from '../../utils/db';
 import { userLsGet, userLsSet } from '../../utils/userLs';
 import { getOppsSheetCsvUrl } from '../../utils/oppsSheetUrl';
+import { apiFetch } from '../../utils/apiFetch';
 import { useAuth } from '../../contexts/AuthContext';
 import { getEffectiveServiceMetadata } from '../../data/serviceCatalog';
 import styles from './AgentsView.module.css';
@@ -726,7 +727,7 @@ export function AgentsView({ prospects = [], settings }) {
       let after = '';
       while (true) {
         const url = `/api/hubspot?action=activity&type=${type}${after ? `&after=${after}` : ''}`;
-        const res = await fetch(url);
+        const res = await apiFetch(url);
         const json = await res.json();
         if (json.error) throw new Error(json.error);
         all.push(...(json.results || []));
