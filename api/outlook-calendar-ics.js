@@ -1,10 +1,13 @@
 // Fetches an Outlook ICS calendar feed, parses today's events + attendees.
 // No OAuth needed — just the private ICS URL the user gets from Outlook Web.
+import { withAuth } from './_lib/http.js';
+import { enforceRateLimit } from './_lib/rateLimit.js';
 
-export default async function handler(req, res) {
+async function handler(req, res, auth) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
+  if (!(await enforceRateLimit(res, auth.uid, 'outlook-ics', 60, 5 * 60 * 1000))) return;
 
   const { icsUrl } = req.body || {};
   if (!icsUrl || typeof icsUrl !== 'string' || !icsUrl.startsWith('https://')) {
@@ -132,3 +135,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: err.message || 'Unknown error' });
   }
 }
+
+export default withAuth(handler);

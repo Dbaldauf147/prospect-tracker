@@ -6,7 +6,9 @@
 // passes this for any batch that produces more than 3 drafts so the
 // user's main Drafts folder doesn't get flooded.
 
-export default async function handler(req, res) {
+import { withAuth } from './_lib/http.js';
+
+async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   const { accessToken, drafts, folderName } = req.body;
@@ -85,6 +87,8 @@ export default async function handler(req, res) {
     folderError,
   });
 }
+
+export default withAuth(handler);
 
 // Look up or create a subfolder of the named parent (e.g. "drafts")
 // by displayName. Returns the folder id.

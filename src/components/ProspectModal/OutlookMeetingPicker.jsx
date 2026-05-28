@@ -84,7 +84,7 @@ export function OutlookMeetingPicker({ open, onClose, onPick, companyName, compa
       setPhase('loading');
       try {
         const r = await apiFetch(`/api/outlook-calendar?startDays=${START_DAYS}&endDays=${END_DAYS}`, {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: { 'X-MS-Token': token },
         });
         if (r.status === 401) { setPhase('auth'); return; }
         if (!r.ok) {
@@ -124,7 +124,7 @@ export function OutlookMeetingPicker({ open, onClose, onPick, companyName, compa
           setPhase('loading');
           try {
             const r = await apiFetch(`/api/outlook-calendar?startDays=${START_DAYS}&endDays=${END_DAYS}`, {
-              headers: { Authorization: `Bearer ${token}` },
+              headers: { 'X-MS-Token': token },
             });
             if (!r.ok) { setErrorMsg(await r.text()); setPhase('error'); return; }
             const data = await r.json();
