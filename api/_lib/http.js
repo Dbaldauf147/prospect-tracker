@@ -54,11 +54,25 @@ export async function requireAuth(req, res) {
     res.status(401).json({ error: 'Missing Authorization bearer token' });
     return null;
   }
+  // Initialise the admin SDK separately so a missing/invalid service
+  // account surfaces as a clear config error instead of masquerading as
+  // an expired token.
+  let adminAuthInstance;
+  try {
+    adminAuthInstance = adminAuth();
+  } catch (err) {
+    console.error('requireAuth: admin SDK init failed:', err);
+    res.status(500).json({ error: 'Server auth not configured (FIREBASE_SERVICE_ACCOUNT_KEY missing or invalid)' });
+    return null;
+  }
   let decoded;
   try {
-    decoded = await adminAuth().verifyIdToken(token);
-  } catch {
-    res.status(401).json({ error: 'Invalid or expired token' });
+    decoded = await adminAuthInstance.verifyIdToken(token);
+  } catch (err) {
+    // err.code distinguishes the common cases: auth/id-token-expired,
+    // auth/argument-error (malformed / wrong project), etc.
+    console.error('requireAuth: verifyIdToken failed:', err?.code || err?.message || err);
+    res.status(401).json({ error: 'Invalid or expired token', code: err?.code || null });
     return null;
   }
   if (!isEmailAllowed(decoded.email)) {

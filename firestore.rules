@@ -127,17 +127,11 @@ service cloud.firestore {
       allow read, write: if owns(userId);
     }
 
-    // PE Opps email schedules: each doc is a recurring email owned by one
-    // user (ownerUid). The owner may read/write/delete their own; the
-    // hourly cron reads them with the admin SDK (which bypasses rules).
-    // A user may only create/own docs stamped with their own uid.
-    match /peOppsEmailSchedules/{scheduleId} {
-      allow read, delete: if isAuthorized() && resource.data.ownerUid == request.auth.uid;
-      allow create: if isAuthorized() && request.resource.data.ownerUid == request.auth.uid;
-      allow update: if isAuthorized()
-        && resource.data.ownerUid == request.auth.uid
-        && request.resource.data.ownerUid == request.auth.uid;
-    }
+    // PE Opps email schedules (peOppsEmailSchedules) are read/written ONLY
+    // by the server: the authenticated CRUD route (api/pe-opps-schedules)
+    // and the hourly cron (api/pe-opps-scheduler) both use the admin SDK,
+    // which bypasses these rules. Clients never touch the collection
+    // directly, so it stays default-deny here.
 
     // Audit log: append-only. Authenticated users may create entries
     // stamped with their own uid. No read/update/delete from the client;
