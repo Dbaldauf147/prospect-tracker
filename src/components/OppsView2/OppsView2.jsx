@@ -817,142 +817,135 @@ function PricingOptionSnapshotView({ snapshot }) {
   );
 }
 
-// Quoted Amount cell. Behaves like a plain editable cell unless the
-// opp has a Pricing-Option snapshot attached — then the value is
-// rendered as a hyperlink that calls `onViewSnapshot` (which the
-// parent wires to the Opp details popup), with a small ✎ icon to
-// switch to inline edit mode so the user can write over the value.
-// A manual URL set via the 🔗 button takes precedence over the
-// snapshot link so users can attach a quote PDF / BFO doc / etc.
+// Quoted Amount cell. Clicking the value opens a small editor popup
+// with two fields — the dollar amount and an optional hyperlink. The
+// cell itself stays icon-free: when a hyperlink is set the amount
+// renders as a link to it, and a Pricing-Option snapshot still falls
+// back to the existing "open the Opp details popup" affordance when
+// no manual URL is set. All edits happen inside the popup.
 function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onChangeUrl }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(value ?? '');
-  useEffect(() => { if (!editing) setDraft(value ?? ''); }, [value, editing]);
+  const [open, setOpen] = useState(false);
+  const [draftAmount, setDraftAmount] = useState(value ?? '');
+  const [draftUrl, setDraftUrl] = useState(url ?? '');
+  useEffect(() => { if (!open) setDraftAmount(value ?? ''); }, [value, open]);
+  useEffect(() => { if (!open) setDraftUrl(url ?? ''); }, [url, open]);
 
-  const commit = () => {
-    setEditing(false);
-    if (draft !== (value ?? '')) onChange?.(draft);
+  const closePopup = () => setOpen(false);
+  const openPopup = (e) => {
+    if (e) e.stopPropagation();
+    setDraftAmount(value ?? '');
+    setDraftUrl(url ?? '');
+    setOpen(true);
   };
-  const cancel = () => { setDraft(value ?? ''); setEditing(false); };
-
-  const editUrl = () => {
-    const next = window.prompt(
-      'Hyperlink URL for this Quoted Amount (leave blank to clear):',
-      url || '',
-    );
-    if (next == null) return; // cancelled
-    const trimmed = next.trim();
-    const normalized = trimmed && !/^https?:\/\//i.test(trimmed) ? `https://${trimmed}` : trimmed;
-    onChangeUrl?.(normalized);
+  const save = () => {
+    const nextAmount = draftAmount;
+    const trimmedUrl = (draftUrl || '').trim();
+    const nextUrl = trimmedUrl && !/^https?:\/\//i.test(trimmedUrl) ? `https://${trimmedUrl}` : trimmedUrl;
+    if (nextAmount !== (value ?? '')) onChange?.(nextAmount);
+    if (nextUrl !== (url ?? '')) onChangeUrl?.(nextUrl);
+    setOpen(false);
   };
-  const linkBtn = (
-    <button
-      type="button"
-      onClick={(e) => { e.stopPropagation(); editUrl(); }}
-      title={url ? `Edit or clear hyperlink (${url})` : 'Add a hyperlink to this Quoted Amount'}
-      style={{
-        border: 'none', background: 'transparent', cursor: 'pointer',
-        color: url ? '#2563eb' : '#94a3b8', padding: '0 2px', fontSize: '0.85em', lineHeight: 1,
-      }}
-    >🔗</button>
-  );
 
-  if (editing) {
-    return (
-      <input
-        type="text"
-        autoFocus
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') { e.preventDefault(); commit(); }
-          else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
-        }}
-        style={{
-          width: '100%', border: '1px solid var(--color-border)',
-          borderRadius: 3, padding: '1px 4px', font: 'inherit',
-          background: '#fff',
-        }}
-      />
-    );
-  }
-  // Manual URL takes precedence — opens in a new tab.
-  if (url) {
-    return (
-      <span style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '1px 2px' }}>
-        <a
-          href={url}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={(e) => e.stopPropagation()}
-          title={`Open ${url}`}
-          style={{
-            color: '#2563eb', textDecoration: 'underline', cursor: 'pointer',
-            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-            flex: 1,
-          }}
-        >{value || (snapshot ? fmtMoneyWhole(snapshot.year1Total || 0) : '') || '—'}</a>
-        {linkBtn}
-        <button
-          type="button"
-          onClick={(e) => { e.stopPropagation(); setEditing(true); }}
-          title="Write over the Quoted Amount"
-          style={{
-            border: 'none', background: 'transparent', cursor: 'pointer',
-            color: '#94a3b8', padding: '0 2px', fontSize: '0.85em', lineHeight: 1,
-          }}
-        >✎</button>
-      </span>
-    );
-  }
-  if (!snapshot) {
-    return (
-      <span
-        style={{
-          display: 'flex', alignItems: 'center', gap: 4, padding: '1px 2px',
-          minHeight: '1em',
-        }}
-      >
-        <span
-          onClick={(e) => { e.stopPropagation(); setEditing(true); }}
-          style={{
-            flex: 1, cursor: 'text',
-            color: value ? 'inherit' : 'var(--color-text-muted)',
-            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          }}
-          title="Click to edit"
-        >{value || '—'}</span>
-        {linkBtn}
-      </span>
-    );
-  }
-  // Snapshot attached: value is a hyperlink to the Opp's Pricing
-  // Option detail (rendered inside the Opp details popup), with a
-  // pencil affordance to switch to inline edit.
+  // Cell display — no inline action buttons. The whole cell is the
+  // click target for the editor popup; when a URL or snapshot is set
+  // the value is styled as a link for affordance.
+  const hasLink = !!url || !!snapshot;
+  const display = value || (url ? '—' : (snapshot ? fmtMoneyWhole(snapshot.year1Total || 0) || '—' : '—'));
   return (
-    <span style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '1px 2px' }}>
-      <a
-        href="#"
-        onClick={(e) => { e.preventDefault(); e.stopPropagation(); onViewSnapshot?.(); }}
-        title={`Year 1 from Pricing Option: ${snapshot.name || '(unnamed)'} — click to view the saved snapshot`}
+    <>
+      <span
+        onClick={openPopup}
+        title="Click to edit the Quoted Amount and hyperlink"
         style={{
-          color: '#2563eb', textDecoration: 'underline', cursor: 'pointer',
+          display: 'block', cursor: 'pointer', minHeight: '1em', padding: '1px 2px',
+          color: hasLink ? '#2563eb' : (value ? 'inherit' : 'var(--color-text-muted)'),
+          textDecoration: hasLink ? 'underline' : 'none',
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          flex: 1,
         }}
-      >{value || fmtMoneyWhole(snapshot.year1Total || 0) || '—'}</a>
-      {linkBtn}
-      <button
-        type="button"
-        onClick={(e) => { e.stopPropagation(); setEditing(true); }}
-        title="Write over the Quoted Amount"
-        style={{
-          border: 'none', background: 'transparent', cursor: 'pointer',
-          color: '#94a3b8', padding: '0 2px', fontSize: '0.85em', lineHeight: 1,
-        }}
-      >✎</button>
-    </span>
+      >{display}</span>
+      {open && (
+        <div
+          onMouseDown={(e) => { if (e.target === e.currentTarget) closePopup(); }}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 100,
+            background: 'rgba(15, 23, 42, 0.35)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
+        >
+          <div
+            onMouseDown={(e) => e.stopPropagation()}
+            style={{
+              background: '#fff', borderRadius: 8, padding: '1rem 1.25rem',
+              minWidth: 360, maxWidth: 480, boxShadow: '0 10px 30px rgba(0,0,0,0.18)',
+              display: 'flex', flexDirection: 'column', gap: '0.75rem',
+            }}
+          >
+            <div style={{ fontWeight: 700, fontSize: '0.95rem', color: '#1E293B' }}>Quoted Amount</div>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: '0.78rem', color: '#475569' }}>
+              Amount
+              <input
+                autoFocus
+                type="text"
+                value={draftAmount}
+                onChange={(e) => setDraftAmount(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') { e.preventDefault(); save(); }
+                  else if (e.key === 'Escape') { e.preventDefault(); closePopup(); }
+                }}
+                placeholder="$0"
+                style={{ padding: '0.4rem 0.55rem', border: '1px solid var(--color-border)', borderRadius: 4, fontFamily: 'inherit', fontSize: '0.88rem' }}
+              />
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: '0.78rem', color: '#475569' }}>
+              Hyperlink
+              <input
+                type="text"
+                value={draftUrl}
+                onChange={(e) => setDraftUrl(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') { e.preventDefault(); save(); }
+                  else if (e.key === 'Escape') { e.preventDefault(); closePopup(); }
+                }}
+                placeholder="https://…"
+                style={{ padding: '0.4rem 0.55rem', border: '1px solid var(--color-border)', borderRadius: 4, fontFamily: 'inherit', fontSize: '0.82rem' }}
+              />
+            </label>
+            {(url || snapshot) && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, fontSize: '0.78rem' }}>
+                {url && (
+                  <a
+                    href={url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ color: '#2563eb', textDecoration: 'underline' }}
+                    onClick={(e) => e.stopPropagation()}
+                  >Open hyperlink ↗</a>
+                )}
+                {snapshot && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setOpen(false); onViewSnapshot?.(); }}
+                    style={{ background: 'none', border: 'none', color: '#2563eb', textDecoration: 'underline', cursor: 'pointer', padding: 0, font: 'inherit' }}
+                  >View saved Pricing Option snapshot</button>
+                )}
+              </div>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
+              <button
+                type="button"
+                onClick={closePopup}
+                style={{ padding: '0.35rem 0.8rem', border: '1px solid var(--color-border)', background: '#fff', borderRadius: 4, cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.82rem' }}
+              >Cancel</button>
+              <button
+                type="button"
+                onClick={save}
+                style={{ padding: '0.35rem 0.95rem', border: 'none', background: '#2563eb', color: '#fff', borderRadius: 4, cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.82rem', fontWeight: 600 }}
+              >Save</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
