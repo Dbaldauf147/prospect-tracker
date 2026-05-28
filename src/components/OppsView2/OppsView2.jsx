@@ -143,7 +143,7 @@ async function trySaveOpps2ToFirestore(userId, data) {
 // Default column set, seeded so the table has columns to show / sort /
 // filter / hide / resize even before any data exists.
 const DEFAULT_HEADERS = [
-  'Account', 'Open Year', 'Contact', 'Stage', 'Scope', 'Source', 'Type',
+  'Account', 'Open Year', 'Contact', 'Stage', 'Scope', 'Source', 'Type', 'Sales Partner',
   'Start Date', 'Status', 'Quoted Amount', 'Sites', 'Age',
   'Last Client Heard From Us', 'Last Spoke', 'Follow Up', 'Call In', 'Notes',
   'Next Steps', 'No Further Action Today', 'Competition', 'Waiting On', 'Close Date', 'BFO Link',
@@ -152,7 +152,7 @@ const DEFAULT_HEADERS = [
 
 // Key columns to show by default (the rest are available via Columns toggle)
 const KEY_COLS = [
-  'Account', 'Contact', 'Stage', 'Scope', 'Source', 'Type',
+  'Account', 'Contact', 'Stage', 'Scope', 'Source', 'Type', 'Sales Partner',
   'Start Date', 'Status', 'Quoted Amount', 'Sites', 'Age',
   'Last Client Heard From Us', 'Last Spoke', 'Follow Up', 'Call In', 'Notes',
   'Next Steps', 'No Further Action Today', 'Competition', 'Waiting On', 'Close Date',
@@ -189,7 +189,7 @@ const COMPUTED_COLUMNS = ['Last Spoke', 'Call In'];
 // users who saved their layout before this column existed still pick
 // it up — and its "Find out the Story" default lands somewhere
 // visible on the next new opp.
-const ENSURED_COLUMNS = [...COMPUTED_COLUMNS, 'Next Steps', 'Pricing Option', 'No Further Action Today'];
+const ENSURED_COLUMNS = [...COMPUTED_COLUMNS, 'Next Steps', 'Pricing Option', 'No Further Action Today', 'Sales Partner'];
 
 function todayISO() {
   const d = new Date();
