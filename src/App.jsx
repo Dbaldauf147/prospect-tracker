@@ -81,7 +81,7 @@ function parseCsvRow(line) {
 }
 
 function App() {
-  const { user, loading: authLoading, authError, signInWithEmail, createAccount, resetPassword, logout } = useAuth();
+  const { user, isAdmin, loading: authLoading, authError, signInWithEmail, createAccount, resetPassword, logout } = useAuth();
   const { prospects, loading: dataLoading, addProspect, updateProspect, deleteProspect, replaceAll } = useProspects(user);
   const { settings, updateSettings, updateSettingsPath } = useUserSettings(user);
 
@@ -278,7 +278,7 @@ function App() {
         onOpenBackups={() => setShowBackups(true)}
         onOpenCdmName={() => setShowCdmName(true)}
         onOpenDailyLog={() => setShowDailyLog(true)}
-        userEmail={user?.email}
+        isAdmin={isAdmin}
       />
       <div className="main">
         {(view === 'table' || view === 'kanban') && (
@@ -414,7 +414,8 @@ function App() {
         open={showCdmName}
         onClose={() => setShowCdmName(false)}
         currentName={cdmName}
-        onSave={(next) => updateSettings({ cdmName: next })}
+        currentWorkEmail={settings.workEmail || ''}
+        onSave={(next) => updateSettings(next)}
       />
       <SettingsBackupsModal
         open={showBackups}
@@ -430,7 +431,7 @@ function App() {
         onClose={() => setShowDailyLog(false)}
         user={user}
       />
-      <DailySuccessManager user={user} />
+      {isAdmin && <DailySuccessManager user={user} />}
       {/* One-time migration button */}
       {!settings.clientsServicesMigrated && (
         <div style={{ position: 'fixed', bottom: '1rem', right: '1rem', zIndex: 300, background: '#fff', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '0.75rem 1rem', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', maxWidth: '320px' }}>

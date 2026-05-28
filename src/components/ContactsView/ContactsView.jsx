@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useAuth } from '../../contexts/AuthContext';
 import styles from './ContactsView.module.css';
 import { HubSpotView } from '../HubSpotView/HubSpotView';
 import { AgendaView } from '../AgendaView/AgendaView';
@@ -12,9 +13,9 @@ import { AllContactsView } from '../AllContactsView/AllContactsView';
 import { KeyProspectsView } from '../KeyProspectsView/KeyProspectsView';
 import { setHubspotCache } from '../../utils/hubspotContactsCache';
 
-const SUBTABS = [
-  { key: 'hubspot',    label: 'HubSpot Contacts' },
-  { key: 'se',         label: 'SE Contacts' },
+const ALL_SUBTABS = [
+  { key: 'hubspot',    label: 'HubSpot Contacts', adminOnly: true },
+  { key: 'se',         label: 'SE Contacts',      adminOnly: true },
   { key: 'bulk',       label: 'Bulk Add Contacts' },
   { key: 'all',        label: 'All Contacts' },
   { key: 'key',        label: 'Key Contacts' },
@@ -28,12 +29,12 @@ const SUBTABS = [
 
 const STORAGE_KEY = 'contacts-view:active-subtab';
 
-function readSavedSubtab() {
+function readSavedSubtab(visibleKeys) {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
-    if (SUBTABS.some(t => t.key === saved)) return saved;
+    if (visibleKeys.includes(saved)) return saved;
   } catch {}
-  return 'key';
+  return visibleKeys.includes('key') ? 'key' : visibleKeys[0];
 }
 
 export function ContactsView({
@@ -46,9 +47,27 @@ export function ContactsView({
   updateSettings,
   targetAccountsData,
 }) {
-  const [subtab, setSubtab] = useState(readSavedSubtab);
+  const { isAdmin } = useAuth();
+  // The HubSpot Contacts and SE Contacts subtabs both hit /api/hubspot,
+  // which uses a single server-side token tied to the admin's portal —
+  // hide them for everyone else so non-admin users don't see empty or
+  // permission-error views.
+  const SUBTABS = useMemo(
+    () => ALL_SUBTABS.filter(t => isAdmin || !t.adminOnly),
+    [isAdmin],
+  );
+  const visibleKeys = useMemo(() => SUBTABS.map(t => t.key), [SUBTABS]);
+  const [subtab, setSubtab] = useState(() => readSavedSubtab(visibleKeys));
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState('');
+
+  // If the active subtab disappears (e.g. a non-admin loaded with the
+  // admin-only key saved), snap to a visible one.
+  useEffect(() => {
+    if (!visibleKeys.includes(subtab)) {
+      setSubtab(visibleKeys.includes('key') ? 'key' : visibleKeys[0]);
+    }
+  }, [subtab, visibleKeys]);
 
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, subtab); } catch {}
@@ -61,6 +80,7 @@ export function ContactsView({
   // views listen for and re-read from IndexedDB.
   async function refreshContacts() {
     if (refreshing) return;
+    if (!isAdmin) return;
     setRefreshing(true);
     setRefreshError('');
     try {
@@ -108,8 +128,10 @@ export function ContactsView({
             type="button"
             className={styles.refreshBtn}
             onClick={refreshContacts}
-            disabled={refreshing}
-            title="Re-pull every HubSpot contact and overwrite the local cache that the Contacts page subtabs read from."
+            disabled={refreshing || !isAdmin}
+            title={isAdmin
+              ? 'Re-pull every HubSpot contact and overwrite the local cache that the Contacts page subtabs read from.'
+              : 'HubSpot refresh is restricted to the admin account.'}
           >
             {refreshing ? 'Refreshing…' : 'Refresh contacts'}
           </button>

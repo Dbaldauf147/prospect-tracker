@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import styles from './Sidebar.module.css';
 
-export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, onOpenCdmName, onOpenDailyLog, userEmail }) {
+export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, onOpenCdmName, onOpenDailyLog, isAdmin = false }) {
   const initials = user?.displayName
     ? user.displayName.split(' ').map(n => n[0]).join('').toUpperCase()
     : user?.email?.[0]?.toUpperCase() || '?';
@@ -37,7 +37,7 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
     { kind: 'action',  key: 'sync',    label: 'Sync Google Sheets', icon: '↻',          onClick: () => { onSync?.(); setSettingsOpen(false); } },
     { kind: 'action',  key: 'cdm',     label: 'CDM Name',           icon: '\u{1F464}',   onClick: () => { onOpenCdmName?.(); setSettingsOpen(false); } },
     { kind: 'action',  key: 'backups', label: 'Backups',            icon: '\u{1F4BE}',   onClick: () => { onOpenBackups?.(); setSettingsOpen(false); } },
-    ...((userEmail || '').toLowerCase() === 'baldaufdan@gmail.com' ? [
+    ...(isAdmin ? [
       { kind: 'action', key: 'dailyLog', label: 'Daily Success Log', icon: '\u{1F4DD}', onClick: () => { onOpenDailyLog?.(); setSettingsOpen(false); } },
     ] : []),
     { kind: 'view',    key: 'privacy', label: 'Privacy & Security', icon: '\u{1F512}' },

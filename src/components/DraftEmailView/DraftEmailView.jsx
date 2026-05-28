@@ -3,6 +3,7 @@ import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
 import { secureSet, secureGet, secureClear } from '../../utils/secureStorage';
 import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
+import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { useDraftCampaignQueue, clearQueuedContacts, setQueuedContactIds } from '../../utils/draftCampaignQueue';
 import styles from './DraftEmailView.module.css';
@@ -573,6 +574,7 @@ function PreviewTabs({ contacts, subject, body, personalizeForContact, draftCc, 
 const AUTOSAVE_KEY = 'prospect-draft-autosave';
 
 export function DraftEmailView({ prospects, settings, updateSettings }) {
+  const { isAdmin } = useAuth();
   // Restore auto-saved compose state
   const [subject, setSubject] = useState(() => {
     try { return JSON.parse(localStorage.getItem(AUTOSAVE_KEY))?.subject || ''; } catch { return ''; }
@@ -631,7 +633,11 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
   });
   const [draftCcInput, setDraftCcInput] = useState('');
   const [showDraftCcSuggestions, setShowDraftCcSuggestions] = useState(false);
-  const DEFAULT_SIGNATURE = DEFAULT_EMAIL_SIGNATURE;
+  // The bundled DEFAULT_EMAIL_SIGNATURE is Dan's personal signature
+  // (name, phone, address). Only auto-apply it for the admin account —
+  // every other user starts with no signature until they save one in
+  // the editor below.
+  const DEFAULT_SIGNATURE = isAdmin ? DEFAULT_EMAIL_SIGNATURE : '';
   const [signature, setSignature] = useState(() => DEFAULT_SIGNATURE);
   // Sync signature from Firestore when settings load
   useEffect(() => {
