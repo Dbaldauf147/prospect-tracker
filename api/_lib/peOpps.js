@@ -171,12 +171,17 @@ export async function buildPeOppsWorkbook(records, columnKeys) {
   return Buffer.from(arrayBuffer);
 }
 
-// ---- Send via Resend with the workbook attached -------------------------
+// ---- Send via Gmail (SMTP + App Password) with the workbook attached ----
+// Uses a Gmail account + App Password (GMAIL_USER / GMAIL_APP_PASSWORD) so
+// the digest can be sent to any recipient for free, without a paid email
+// domain. The message is sent from — and replies go to — the Gmail account.
 export async function sendPeOppsEmail({ to, subject, message, buffer, filename, replyTo }) {
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) throw new Error('Email service not configured (RESEND_API_KEY missing)');
+  const user = process.env.GMAIL_USER;
+  const pass = process.env.GMAIL_APP_PASSWORD;
+  if (!user || !pass) {
+    throw new Error('Email not configured (set GMAIL_USER and GMAIL_APP_PASSWORD)');
+  }
 
-  const from = process.env.RESEND_FROM || 'Prospect Tracker <onboarding@resend.dev>';
   const recipients = (Array.isArray(to) ? to : [to])
     .map((e) => String(e || '').trim())
     .filter(Boolean);
@@ -194,23 +199,28 @@ export async function sendPeOppsEmail({ to, subject, message, buffer, filename, 
     </div>
   `;
 
-  const body = {
-    from,
+  const { default: nodemailer } = await import('nodemailer');
+  const transporter = nodemailer.createTransport({
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true,
+    auth: { user, pass },
+  });
+
+  const fromName = process.env.GMAIL_FROM_NAME || 'Prospect Tracker';
+  const result = await transporter.sendMail({
+    from: `${fromName} <${user}>`,
     to: recipients,
+    replyTo: replyTo || user,
     subject: subject || 'PE Opportunities',
     html,
-    attachments: [{ filename: filename || 'pe-opps.xlsx', content: buffer.toString('base64') }],
-  };
-  if (replyTo) body.reply_to = replyTo;
-
-  const emailRes = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    attachments: [{
+      filename: filename || 'pe-opps.xlsx',
+      content: buffer,
+      contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    }],
   });
-  const result = await emailRes.json().catch(() => ({}));
-  if (!emailRes.ok) throw new Error(result.message || `Resend error ${emailRes.status}`);
-  return result;
+  return { id: result.messageId };
 }
 
 function escapeHtml(s) {
