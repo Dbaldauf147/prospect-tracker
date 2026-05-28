@@ -2628,6 +2628,197 @@ export function PricingView({ settings } = {}) {
     XLSX.writeFile(wb, `Monthly-Costs-${slug}-${new Date().toISOString().slice(0, 10)}.xlsx`);
   }
 
+  // Margin Request Template export — fills the standard SE template
+  // with one block per loaded Pricing Option. Services come from the
+  // per-option services bundle, Fee Structure is the option's Alt Fee
+  // table summarized, Margin is the term-projected option margin
+  // rounded to a whole percent, and Escalator is the annual revenue
+  // escalator. Customer Name / SIA Link / RFP fields are left blank
+  // for the user to fill in.
+  async function exportMarginRequest() {
+    if (!workbook || !Array.isArray(workbook.options) || workbook.options.length === 0) return;
+    const { Workbook } = await import('exceljs');
+
+    const SE_GREEN_DARK = 'FF009530';
+    const LABEL_BG     = 'FFF1F5F9';
+    const VALUE_BG     = 'FFFFFFFF';
+    const OPTION_BG    = 'FFE5E7EB';
+    const TEXT_DARK    = 'FF1E293B';
+    const TEXT_MUTED   = 'FF64748B';
+    const BORDER       = 'FFD4DDE1';
+
+    const wb = new Workbook();
+    wb.creator = 'Schneider Electric · Prospect Tracker';
+    const ws = wb.addWorksheet('Margin Request', {
+      properties: { tabColor: { argb: SE_GREEN_DARK } },
+      views: [{ showGridLines: false }],
+    });
+    ws.columns = [
+      { width: 24 }, // A: row labels / "Option N"
+      { width: 32 }, // B: services / term value / Yes/No value
+      { width: 14 }, // C: "Fee Structure" label
+      { width: 44 }, // D: Fee Structure value
+      { width: 14 }, // E: Margin / Escalator labels
+      { width: 14 }, // F: Margin / Escalator values
+    ];
+    const SPAN = 6;
+    const thinBorder = { style: 'thin', color: { argb: BORDER } };
+    const allBorders = { top: thinBorder, bottom: thinBorder, left: thinBorder, right: thinBorder };
+    const setBordered = (cell) => { cell.border = allBorders; };
+    const greenBanner = (cellRange, text) => {
+      const [r1, c1, r2, c2] = cellRange;
+      ws.mergeCells(r1, c1, r2, c2);
+      const cell = ws.getCell(r1, c1);
+      cell.value = text;
+      cell.font = { name: 'Calibri', bold: true, size: 12, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+      cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      for (let c = c1; c <= c2; c++) setBordered(ws.getCell(r1, c));
+      ws.getRow(r1).height = 22;
+    };
+    const setLabel = (cell, text, opts = {}) => {
+      cell.value = text;
+      cell.font = { name: 'Calibri', bold: !opts.italic, italic: !!opts.italic, size: 11, color: { argb: opts.italic ? TEXT_MUTED : TEXT_DARK } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: LABEL_BG } };
+      cell.alignment = { vertical: 'middle', horizontal: opts.italic ? 'right' : 'left', indent: 1, wrapText: true };
+      setBordered(cell);
+    };
+    const setValue = (cell, value, opts = {}) => {
+      if (value !== undefined && value !== null) cell.value = value;
+      cell.font = { name: 'Calibri', size: 11, color: { argb: TEXT_DARK } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: opts.bg || VALUE_BG } };
+      cell.alignment = { vertical: 'middle', horizontal: opts.align || 'left', indent: 1, wrapText: true };
+      if (opts.numFmt) cell.numFmt = opts.numFmt;
+      setBordered(cell);
+    };
+
+    // --- Header block --------------------------------------------------
+    greenBanner([1, 1, 1, SPAN], 'Margin Request Template');
+
+    setLabel(ws.getCell(2, 1), 'Customer Name');
+    ws.mergeCells(2, 2, 2, SPAN);
+    setValue(ws.getCell(2, 2), '');
+
+    setLabel(ws.getCell(3, 1), 'Sales Investment Analyzer (SIA) Link');
+    ws.mergeCells(3, 2, 3, SPAN);
+    setValue(ws.getCell(3, 2), '');
+
+    setLabel(ws.getCell(4, 1), 'Is this an RFP?');
+    setLabel(ws.getCell(4, 2), 'Yes/No', { italic: true });
+    ws.mergeCells(4, 3, 4, 4);
+    setValue(ws.getCell(4, 3), 'No');
+    setLabel(ws.getCell(4, 5), 'Due Date', { italic: true });
+    setValue(ws.getCell(4, 6), 'N/A');
+
+    // --- Options ------------------------------------------------------
+    greenBanner([5, 1, 5, SPAN], 'SIA Options Seeking Approval');
+
+    // Per-option margin: (termPrice − termCost) / termPrice, projecting
+    // recurring revenue + cost over the term with the active escalators
+    // (mirrors the per-option roll-up on the Pricing page).
+    const computeOptionMargin = (opt) => {
+      let termCost = 0, termPrice = 0;
+      for (const sec of (opt.sections || [])) {
+        for (const item of (sec.items || [])) {
+          const { price } = priceFor(item);
+          const t = effectiveType(item);
+          const isRecurring = /^recurring/i.test(t);
+          const isRolled = /\brolled\b/i.test(t);
+          if (isRecurring) {
+            termCost += projectMonthlyOverTerm(item.cts ?? null, costEscalator, termMonths);
+            termPrice += projectMonthlyOverTerm(price ?? null, annualEscalator, termMonths);
+          } else if (isRolled && termMonths > 0) {
+            if (typeof item.cts === 'number') termCost += item.cts;
+            const monthlyPrice = typeof price === 'number' ? price / termMonths : null;
+            termPrice += projectMonthlyOverTerm(monthlyPrice, annualEscalator, termMonths);
+          } else {
+            if (typeof item.cts === 'number') termCost += item.cts;
+            if (typeof price === 'number') termPrice += price;
+          }
+        }
+      }
+      if (!Number.isFinite(termPrice) || termPrice <= 0) return null;
+      return (termPrice - termCost) / termPrice;
+    };
+
+    // Compact summary of an option's Alt Fee rows. Empty rows are
+    // dropped; each kept row reads as "{altItem}: ${fee}/{unit}" plus
+    // a "({type})" qualifier when the row has one. Falls back to a
+    // dash so the cell isn't ambiguous when no alt fees are entered.
+    const summarizeAltFees = (opt) => {
+      const list = altFees?.[opt.optionNumber] || [];
+      const lines = [];
+      for (const r of list) {
+        const item = String(r?.altItem || '').trim();
+        const feeNum = Number(r?.fee);
+        if (!item && !Number.isFinite(feeNum)) continue;
+        const unit = String(r?.unit || '').trim();
+        const type = String(r?.type || '').trim();
+        const feeTxt = Number.isFinite(feeNum)
+          ? `$${feeNum.toLocaleString('en-US', { maximumFractionDigits: 2 })}${unit ? `/${unit}` : ''}`
+          : '';
+        const main = [item, feeTxt].filter(Boolean).join(': ');
+        lines.push(type ? `${main} (${type})` : main);
+      }
+      return lines.length > 0 ? lines.join('\n') : '—';
+    };
+
+    let row = 6;
+    const escPct = Math.round((annualEscalator || 0) * 100);
+    const termYrs = termMonths ? termMonths / 12 : 0;
+    workbook.options.forEach((opt, idx) => {
+      const optionLabel = `Option ${idx + 1}`;
+      // Row 1 of the block — option header strip.
+      setLabel(ws.getCell(row, 1), optionLabel);
+      ws.mergeCells(row, 2, row, SPAN);
+      setValue(ws.getCell(row, 2), opt.sheetName || '', { bg: OPTION_BG });
+      ws.getCell(row, 2).font = { name: 'Calibri', bold: true, size: 11, color: { argb: TEXT_DARK } };
+      ws.getRow(row).height = 20;
+
+      // Row 2 — Services | (Fee Structure label) | (Fee Structure value, merged with row 3) | Margin label/value
+      setLabel(ws.getCell(row + 1, 1), 'Services', { italic: true });
+      const services = (pricingOptionServices?.[opt.sheetName] || []).filter(Boolean);
+      setValue(ws.getCell(row + 1, 2), services.length > 0 ? services.join('\n') : '—');
+      setLabel(ws.getCell(row + 1, 3), 'Fee Structure', { italic: true });
+      // Merge Fee Structure value across rows 2 and 3 of the block.
+      ws.mergeCells(row + 1, 4, row + 2, 4);
+      setValue(ws.getCell(row + 1, 4), summarizeAltFees(opt));
+      setLabel(ws.getCell(row + 1, 5), 'Margin', { italic: true });
+      const margin = computeOptionMargin(opt);
+      if (margin == null) {
+        setValue(ws.getCell(row + 1, 6), '—', { align: 'right' });
+      } else {
+        setValue(ws.getCell(row + 1, 6), Math.round(margin * 100) / 100, { align: 'right', numFmt: '0%' });
+      }
+
+      // Row 3 — Term | Term value | (Fee Structure value continues) | Escalator label/value
+      setLabel(ws.getCell(row + 2, 1), 'Term', { italic: true });
+      setValue(ws.getCell(row + 2, 2), termYrs || '—', termYrs ? { numFmt: '0.##" yrs"' } : {});
+      // Fee Structure label cell on row 3 stays empty (the value spans
+      // from row 2). Tag it with the label-styled empty cell so the
+      // border lines up with its row neighbours.
+      setLabel(ws.getCell(row + 2, 3), '', { italic: true });
+      setLabel(ws.getCell(row + 2, 5), 'Escalator', { italic: true });
+      setValue(ws.getCell(row + 2, 6), escPct / 100, { align: 'right', numFmt: '0%' });
+
+      ws.getRow(row + 1).height = Math.max(22, services.length * 14);
+      ws.getRow(row + 2).height = 22;
+      row += 3;
+    });
+
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const fileSlug = (workbook.fileName || 'Pricing').replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9-]+/g, '-');
+    a.download = `Margin-Request-${fileSlug}-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
   const totals = useMemo(() => {
     if (!workbook) return null;
     const perOption = {};
@@ -2775,6 +2966,13 @@ export function PricingView({ settings } = {}) {
                 title="Excel export of monthly CTS cost for every line item on the active Option, across the full term, with a totals row at the bottom."
               >
                 Monthly costs ⇩
+              </button>
+              <button
+                className={styles.actionBtn}
+                onClick={exportMarginRequest}
+                title="Fill the SE Margin Request Template with one block per Pricing Option: Services, Term, Alt Fee Structure, Margin, and Escalator."
+              >
+                Margin Request ⇩
               </button>
               <button className={styles.actionBtnDanger} onClick={clearAll}>Clear</button>
             </>
