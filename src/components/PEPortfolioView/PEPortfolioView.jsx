@@ -6,6 +6,7 @@ import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { dbGet } from '../../utils/db';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { formatAum } from '../../utils/formatters';
+import { PEOppsScheduleModal } from './PEOppsScheduleModal';
 
 // Closed/invalid stages from the Opps tab — these shouldn't count toward "active pipeline".
 const CLOSED_STAGES = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
@@ -608,6 +609,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
           oppsLoaded={oppsRecords.length > 0}
           prospects={prospects}
           onSelectProspect={onSelectProspect}
+          user={user}
         />
       ) : (
       <>
@@ -1029,7 +1031,8 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
 // Opps 2 store — anything with Type = "Private Equity" or Source =
 // "PE partner". Rows link back to the matching prospect when one
 // exists so the user can jump into the company popup.
-function PEOppsTab({ opps, totalOpps, query, setQuery, oppsLoaded, prospects, onSelectProspect }) {
+function PEOppsTab({ opps, totalOpps, query, setQuery, oppsLoaded, prospects, onSelectProspect, user }) {
+  const [scheduleOpen, setScheduleOpen] = useState(false);
   const ALL_COLUMNS = [
     { key: 'Account', label: 'Account', width: '1.6fr' },
     { key: 'Stage', label: 'Stage', width: '1fr' },
@@ -1208,7 +1211,22 @@ function PEOppsTab({ opps, totalOpps, query, setQuery, oppsLoaded, prospects, on
           title={opps.length ? 'Download the visible columns of the PE opps shown below as an SE-formatted Excel file' : 'No PE opps to export'}
           style={{ padding: '0.4rem 0.8rem', border: '1px solid #009530', borderRadius: 6, background: opps.length ? '#009530' : '#E2E8F0', color: opps.length ? '#fff' : '#94A3B8', fontSize: '0.72rem', fontWeight: 700, cursor: opps.length ? 'pointer' : 'not-allowed', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
         >Export to Excel</button>
+        <button
+          type="button"
+          onClick={() => setScheduleOpen(true)}
+          title="Schedule a recurring email that sends this PE Opps Excel file to a list of recipients"
+          style={{ padding: '0.4rem 0.8rem', border: '1px solid #009530', borderRadius: 6, background: '#fff', color: '#009530', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+        >Schedule email</button>
       </div>
+
+      <PEOppsScheduleModal
+        open={scheduleOpen}
+        onClose={() => setScheduleOpen(false)}
+        uid={user?.uid}
+        email={user?.email}
+        allColumns={ALL_COLUMNS.map(c => ({ key: c.key, label: c.label }))}
+        defaultColumns={[...visibleCols]}
+      />
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '0 1.25rem 1.25rem', minHeight: 0 }}>
         {!oppsLoaded && (
