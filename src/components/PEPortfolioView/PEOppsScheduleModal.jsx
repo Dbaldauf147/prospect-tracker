@@ -150,7 +150,10 @@ export function PEOppsScheduleModal({ open, onClose, uid, email, allColumns, def
         body: JSON.stringify(body),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || `Send failed (${res.status})`);
+      if (!res.ok) {
+        const detail = data.code ? ` [${data.code}]` : '';
+        throw new Error(`${data.error || `Send failed (${res.status})`}${detail}`);
+      }
       setToast(`Sent ${data.opps ?? ''} opps to ${data.recipients ?? ''} recipient(s).`);
     } catch (err) {
       setError(String(err.message || err));
