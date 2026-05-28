@@ -219,8 +219,8 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
   // on the Portfolio tab.
   //
   // Opps closed (Sold / Not Sold) more than a month ago are dropped so
-  // the list stays focused on live + recently-closed deals. A closed
-  // opp with no parseable Close Date is kept (we can't prove it's old).
+  // the list stays focused on live + recently-closed deals. A closed opp
+  // with no parseable Close Date is also dropped (treated as stale).
   const peOpps = useMemo(() => {
     const norm = s => String(s || '').trim().toLowerCase();
     const cutoff = new Date();
@@ -232,7 +232,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
       const stage = norm(r['Stage']);
       if (stage === 'sold' || stage === 'not sold') {
         const closed = parseOppsDate(r['Close Date']);
-        if (closed && closed < cutoff) return false;
+        if (!closed || closed < cutoff) return false;
       }
       return true;
     });

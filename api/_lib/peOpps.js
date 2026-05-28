@@ -103,8 +103,9 @@ export async function loadPeOpps(db, uid) {
     if (type !== 'private equity' && source !== 'pe partner') return false;
     const stage = norm(r['Stage']);
     if (stage === 'sold' || stage === 'not sold') {
+      // Drop closed opps with no close date, or closed over a month ago.
       const closed = parseOppsDate(r['Close Date']);
-      if (closed && closed < cutoff) return false;
+      if (!closed || closed < cutoff) return false;
     }
     return true;
   });
