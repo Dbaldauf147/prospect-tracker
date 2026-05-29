@@ -1083,7 +1083,7 @@ function NextStepsCell({ value, onOpen }) {
   );
 }
 
-function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel }) {
+function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel, renderDisplay }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value ?? '');
   const [open, setOpen] = useState(false);
@@ -1178,6 +1178,11 @@ function EditableCell({ value, onChange, suggestions, onAddNew, addNewLabel }) {
     const isEmpty = value === '' || value == null;
     const text = isEmpty ? '—' : String(value);
     const enterEdit = () => { setEditing(true); setOpen(dropdownAvailable); };
+    // Let callers (e.g. the Account column) render a custom non-editing
+    // display — such as a clickable company link — while keeping all of
+    // EditableCell's editing/autocomplete behavior. `enterEdit` lets the
+    // custom display drop back into the normal text editor.
+    if (renderDisplay) return renderDisplay({ enterEdit, value, isEmpty, text });
     return (
       <span
         onClick={(e) => { e.stopPropagation(); enterEdit(); }}
@@ -1401,6 +1406,26 @@ function companyMatchKeys(name) {
   return keys;
 }
 
+// Find the prospect record whose company best matches an opp's Account
+// name. Prefer an exact normalized match over an alias-only match so
+// "URW" on an opp doesn't accidentally pull from a prospect that happens
+// to share an alias. Shared by the Contact and Account columns.
+function findProspectForAccount(account, prospects) {
+  const accountKeys = companyMatchKeys(account);
+  if (accountKeys.size === 0) return null;
+  let exact = null;
+  let alias = null;
+  const accountFull = normalizeCompany(account);
+  for (const p of (prospects || [])) {
+    const pk = companyMatchKeys(p?.company);
+    if (pk.size === 0) continue;
+    const full = normalizeCompany(p?.company);
+    if (full && accountFull && full === accountFull) { exact = p; break; }
+    for (const k of pk) { if (accountKeys.has(k)) { alias = alias || p; break; } }
+  }
+  return exact || alias;
+}
+
 function ContactCell({ value, onChange, account, prospects, updateProspect, hubspotContacts, onOpenContact, onOpenCompany }) {
   // Single boolean for popover state — the popover handles both
   // viewing currently tagged contacts and adding new ones (from the
@@ -1414,24 +1439,7 @@ function ContactCell({ value, onChange, account, prospects, updateProspect, hubs
   const popRef = useRef(null);
   const [copied, setCopied] = useState(null); // key of the last button that flashed "Copied!"
 
-  const matched = useMemo(() => {
-    const accountKeys = companyMatchKeys(account);
-    if (accountKeys.size === 0) return null;
-    // Prefer an exact normalized match over an alias-only match so
-    // "URW" on an opp doesn't accidentally pull from a prospect that
-    // happens to share an alias.
-    let exact = null;
-    let alias = null;
-    for (const p of (prospects || [])) {
-      const pk = companyMatchKeys(p?.company);
-      if (pk.size === 0) continue;
-      const full = normalizeCompany(p?.company);
-      const accountFull = normalizeCompany(account);
-      if (full && accountFull && full === accountFull) { exact = p; break; }
-      for (const k of pk) { if (accountKeys.has(k)) { alias = alias || p; break; } }
-    }
-    return exact || alias;
-  }, [account, prospects]);
+  const matched = useMemo(() => findProspectForAccount(account, prospects), [account, prospects]);
 
   // Build the contact roster for this opp's company. Pull from two
   // sources and dedupe by name (case-insensitive):
@@ -4588,6 +4596,47 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               value={row[h]}
               onChange={(v) => updateOppField(row._id, h, v)}
               suggestions={h === 'Account' ? companySuggestions : undefined}
+              renderDisplay={h === 'Account' ? ({ enterEdit, isEmpty, text }) => {
+                const matched = isEmpty ? null : findProspectForAccount(row[h], prospects);
+                // No matching prospect — fall back to the normal
+                // click-to-edit text cell.
+                if (!matched) {
+                  return (
+                    <span
+                      onClick={(e) => { e.stopPropagation(); enterEdit(); }}
+                      style={{
+                        display: 'block', cursor: 'text', minHeight: '1em',
+                        padding: '1px 2px', whiteSpace: 'pre', overflow: 'hidden',
+                        color: isEmpty ? 'var(--color-text-muted)' : 'inherit',
+                      }}
+                    >{text}</span>
+                  );
+                }
+                // Matched a prospect — render the company name as a link
+                // that opens the company popup. Double-click still edits.
+                return (
+                  <span
+                    onDoubleClick={(e) => { e.stopPropagation(); e.preventDefault(); enterEdit(); }}
+                    style={{
+                      display: 'block', minHeight: '1em',
+                      padding: '1px 2px', whiteSpace: 'pre', overflow: 'hidden',
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); openCompanyDetails(matched); }}
+                      title={`Open ${matched.company || row[h]}'s company page (double-click to edit)`}
+                      style={{
+                        padding: 0, border: 'none', background: 'transparent',
+                        fontFamily: 'inherit', fontSize: 'inherit', color: '#2563EB',
+                        fontWeight: 600, cursor: 'pointer',
+                        textDecoration: 'underline', textDecorationColor: '#93C5FD',
+                        textUnderlineOffset: '2px',
+                      }}
+                    >{text}</button>
+                  </span>
+                );
+              } : undefined}
             />
           );
         },
