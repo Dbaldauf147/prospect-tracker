@@ -1211,11 +1211,25 @@ function KeyContactsViewInner({
         // users whose saved visibility predates it. Migration flag is
         // sticky so we don't re-add the column if the user hides it.
         const migKey = lsKey('visible-cols-mig-lastOutreach');
-        if (!localStorage.getItem(migKey) && !saved.includes('lastOutreach')) {
+        let next = saved;
+        if (!localStorage.getItem(migKey) && !next.includes('lastOutreach')) {
           try { localStorage.setItem(migKey, '1'); } catch {}
-          return [...saved, 'lastOutreach'];
+          next = [...next, 'lastOutreach'];
         }
-        return saved;
+        // Same one-time migration for the All Contacts "custom" column —
+        // existing users have a saved set that predates it, so inject it
+        // once (just before tags, to match DEFAULT_VISIBLE_COLS order).
+        if (storagePrefix === 'all-contacts') {
+          const customMigKey = lsKey('visible-cols-mig-custom');
+          if (!localStorage.getItem(customMigKey) && !next.includes('custom')) {
+            try { localStorage.setItem(customMigKey, '1'); } catch {}
+            const tagsIdx = next.indexOf('tags');
+            next = tagsIdx >= 0
+              ? [...next.slice(0, tagsIdx), 'custom', ...next.slice(tagsIdx)]
+              : [...next, 'custom'];
+          }
+        }
+        return next;
       }
     } catch {}
     return DEFAULT_VISIBLE_COLS;
