@@ -7,6 +7,7 @@ import { getOppsSheetCsvUrl } from '../../utils/oppsSheetUrl';
 import { apiFetch } from '../../utils/apiFetch';
 import { useAuth } from '../../contexts/AuthContext';
 import { getEffectiveServiceMetadata } from '../../data/serviceCatalog';
+import { OppInfoModal } from '../OppsView2/OppsView2';
 import styles from './AgentsView.module.css';
 
 // Manual BFO Opportunity tags the user picked for an email recipient
@@ -579,6 +580,9 @@ export function AgentsView({ prospects = [], settings }) {
   const [cache, setCache] = useState(() => readActivityCache());
   const [hubspotCache, setHubspotCache] = useState(null);
   const [oppsCache, setOppsCache] = useState(null);
+  // Raw Opps record shown in the read-only Opp info modal (New BFO Opp
+  // table "i" button). null = closed.
+  const [infoOpp, setInfoOpp] = useState(null);
   const [overrides, setOverrides] = useState(readOverrides);
   const [ignoredEmails, setIgnoredEmails] = useState(readIgnoredEmails);
   const [ignoredMeetings, setIgnoredMeetings] = useState(readIgnoredMeetings);
@@ -1124,11 +1128,11 @@ export function AgentsView({ prospects = [], settings }) {
     for (const r of records) {
       const stage = String(r.Stage || '').trim();
       if (!stage || EXCLUDED_STAGES.has(stage)) continue;
-      // No BFO Opportunity Name: only a truly blank value qualifies the
-      // row for creation in BFO. "-" and "#N/A" are treated as having a
-      // name (they're deliberate placeholders) and are excluded.
+      // Only list opps whose BFO Opportunity Name is exactly "-" — the
+      // deliberate placeholder for "needs a BFO opp created". Blank and
+      // "#N/A" do not qualify.
       const bfoLink = String(r['BFO Link'] ?? '').trim();
-      if (bfoLink) continue;
+      if (bfoLink !== '-') continue;
       const callInRaw = String(r['Call In'] ?? '').trim();
       const account = String(r.Account || '').trim();
       const leadSource = String(r['Lead Source'] || r['Source'] || '').trim();
@@ -1172,6 +1176,9 @@ export function AgentsView({ prospects = [], settings }) {
       const projectName = projectNameParts.join(' - ');
       rows.push({
         id: r._id ?? `${account}|${scope}`,
+        // Raw Opps-tab record, so the table can open the same Opp info
+        // modal Opps 2 uses (read-only here).
+        raw: r,
         company: account || '—',
         bfoCompanyName,
         leadSource: leadSource || '—',
@@ -1831,7 +1838,7 @@ export function AgentsView({ prospects = [], settings }) {
               <span className={styles.sectionCount}>{newBfoOpps.length}</span>
             </h2>
             <p className={styles.subnote}>
-              Lists Opps whose Stage is not Not Started / Not Sold / Sold and that have a blank BFO Opportunity Name (BFO Link empty). Rows with a value &mdash; including &ldquo;-&rdquo; or &ldquo;#N/A&rdquo; &mdash; are excluded.
+              Lists Opps whose Stage is not Not Started / Not Sold / Sold and whose BFO Opportunity Name is &ldquo;-&rdquo; (the placeholder for opps that still need a BFO opp created). Blank or &ldquo;#N/A&rdquo; values are excluded.
             </p>
             {revealedPrompts.newBfoOpp && (
               <textarea
@@ -1856,6 +1863,7 @@ export function AgentsView({ prospects = [], settings }) {
               <table className={styles.table}>
                 <thead>
                   <tr>
+                    <th style={{ width: 36 }}></th>
                     <th>Company</th>
                     <th>BFO Company Name</th>
                     <th>Lead Source</th>
@@ -1874,10 +1882,26 @@ export function AgentsView({ prospects = [], settings }) {
                 <tbody>
                   {newBfoOpps.length === 0 ? (
                     <tr className={styles.emptyRow}>
-                      <td colSpan={13}>No Opps currently match (Stage ≠ Not Started / Not Sold / Sold and no BFO Opportunity Name).</td>
+                      <td colSpan={14}>No Opps currently match (Stage ≠ Not Started / Not Sold / Sold and BFO Opportunity Name is &ldquo;-&rdquo;).</td>
                     </tr>
                   ) : newBfoOpps.map(o => (
                     <tr key={o.id}>
+                      <td>
+                        {o.raw && (
+                          <button
+                            type="button"
+                            onClick={() => setInfoOpp(o.raw)}
+                            title="Show opp info"
+                            style={{
+                              padding: 0, width: 22, height: 22, lineHeight: 1,
+                              fontSize: '0.85rem', fontWeight: 700, fontFamily: 'inherit',
+                              color: 'var(--color-accent)', background: '#fff',
+                              border: '1px solid var(--color-accent)', borderRadius: '50%',
+                              cursor: 'pointer',
+                            }}
+                          >i</button>
+                        )}
+                      </td>
                       <td className={o.company && o.company !== '—' ? '' : styles.muted}>{o.company || '—'}</td>
                       <td className={o.bfoCompanyName ? '' : styles.muted}>{o.bfoCompanyName || '—'}</td>
                       <td className={o.leadSource && o.leadSource !== '—' ? '' : styles.muted}>{o.leadSource || '—'}</td>
@@ -1904,6 +1928,13 @@ export function AgentsView({ prospects = [], settings }) {
               </table>
             </div>
             <pre className={styles.aiPromptPreview}>{fullPrompt}</pre>
+            {infoOpp && (
+              <OppInfoModal
+                opp={infoOpp}
+                headers={oppsCache?.headers || []}
+                onClose={() => setInfoOpp(null)}
+              />
+            )}
           </section>
         );
       })()}
