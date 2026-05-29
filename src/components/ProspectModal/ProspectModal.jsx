@@ -13,7 +13,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { saveSourceFile as savePortfolioSourceFileToIDB, loadSourceFile as loadPortfolioSourceFileFromIDB, clearSourceFile as clearPortfolioSourceFileFromIDB, renameSourceFile as renamePortfolioSourceFile } from '../../utils/portfolioSourceFileStore';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
-import { getHubspotCache, updateHubspotCache, notifyCacheUpdated } from '../../utils/hubspotContactsCache';
+import { getHubspotCache, updateHubspotCache, notifyCacheUpdated, setHubspotCache } from '../../utils/hubspotContactsCache';
 import { userLsGet } from '../../utils/userLs';
 import { dbGet } from '../../utils/db';
 import { loadOppsFromCache } from '../../utils/oppsCache';
@@ -2432,6 +2432,41 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   const [contactsDragging, setContactsDragging] = useState(false);
   const [contactsUploadPreview, setContactsUploadPreview] = useState(null); // { fileName, headers, rows, mapping }
   const [contactsImporting, setContactsImporting] = useState(false);
+  const [refreshingHubspot, setRefreshingHubspot] = useState(false);
+  const [refreshHubspotError, setRefreshHubspotError] = useState('');
+
+  // Re-pull every HubSpot contact and overwrite the local cache, mirroring
+  // the Contacts page's "Refresh contacts" button. setHubspotCache dispatches
+  // `hubspot-cache-updated`, which App re-reads from IndexedDB and pushes back
+  // down as the `hubspotContacts` prop — so this company's roster refreshes in
+  // place without reopening the popup. Admin-only: the endpoint uses a single
+  // server-side token tied to the admin portal.
+  const refreshHubspotContacts = useCallback(async () => {
+    if (refreshingHubspot || !isAdmin) return;
+    setRefreshingHubspot(true);
+    setRefreshHubspotError('');
+    try {
+      const res = await apiFetch('/api/hubspot?action=contacts');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      if (!json?.contacts) throw new Error('No contacts in response');
+      const slimContacts = json.contacts.map(c => ({
+        id: c.id, vid: c.vid, firstname: c.firstname, lastname: c.lastname,
+        email: c.email, phone: c.phone, jobtitle: c.jobtitle, company: c.company,
+        hs_linkedin_url: c.hs_linkedin_url, linkedin_url: c.linkedin_url, hs_linkedinid: c.hs_linkedinid,
+        city: c.city, state: c.state, country: c.country,
+        dans_tags: c.dans_tags, dan_s_tags: c.dan_s_tags, dans_tag: c.dans_tag,
+        decision_maker: c.decision_maker, role: c.role,
+        hs_sequences_is_enrolled: c.hs_sequences_is_enrolled,
+        notes_last_contacted: c.notes_last_contacted,
+      }));
+      await setHubspotCache({ ...json, contacts: slimContacts, syncedAt: new Date().toISOString() });
+    } catch (err) {
+      setRefreshHubspotError(err?.message || 'Refresh failed');
+    } finally {
+      setRefreshingHubspot(false);
+    }
+  }, [refreshingHubspot, isAdmin]);
 
   // Set of lowercased-trimmed account names the user has blocked from
   // fuzzy-match suggestions on the Target Accounts page. The Portfolio
@@ -6954,6 +6989,20 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
                   onClick={() => contactsImportRef.current?.click()}
                   style={{ marginLeft: '0.4rem', padding: '0.2rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '4px', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', background: '#fff', color: '#7C3AED' }}
                 >Import Excel</button>
+                {isAdmin && (
+                  <>
+                    {refreshHubspotError && (
+                      <span title={refreshHubspotError} style={{ marginLeft: '0.4rem', fontSize: '0.68rem', fontWeight: 600, color: '#DC2626' }}>Refresh failed</span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={refreshHubspotContacts}
+                      disabled={refreshingHubspot}
+                      title="Re-pull every HubSpot contact and overwrite the local cache. This company's roster refreshes in place."
+                      style={{ marginLeft: '0.4rem', padding: '0.2rem 0.6rem', border: '1px solid var(--color-border)', borderRadius: '4px', fontSize: '0.68rem', fontWeight: 600, cursor: refreshingHubspot ? 'default' : 'pointer', fontFamily: 'inherit', background: '#fff', color: '#0891B2', opacity: refreshingHubspot ? 0.6 : 1 }}
+                    >{refreshingHubspot ? 'Refreshing…' : 'Refresh HubSpot Contacts'}</button>
+                  </>
+                )}
                 <button
                   onClick={() => { setAddingContact(true); setEditingContact({ company: fields.company, firstname: '', lastname: '', email: '', phone: '', mobilephone: '', jobtitle: '', hs_linkedin_url: '', dans_tags: '' }); }}
                   style={{ marginLeft: '0.4rem', padding: '0.2rem 0.6rem', border: 'none', borderRadius: '4px', fontSize: '0.68rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', background: 'var(--color-accent)', color: '#fff' }}
