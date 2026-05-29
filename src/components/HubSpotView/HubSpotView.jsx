@@ -246,6 +246,79 @@ function HubSpotNotesCell({ contact, savedNote, onSave }) {
   );
 }
 
+// Inline editor for the app-side "Custom" field. Unlike the Notes cell
+// it has no HubSpot fallbacks — the only source is the manually-typed
+// value stored in settings.customField (keyed by contact id), which the
+// Draft Email page reads for the {custom} variable.
+function HubSpotCustomFieldCell({ contact, savedValue, onSave }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+  const taRef = useRef(null);
+  const display = (savedValue || '').trim();
+
+  function start(e) {
+    e.stopPropagation();
+    setDraft(savedValue ?? '');
+    setEditing(true);
+  }
+  async function commit(next) {
+    setEditing(false);
+    const nextVal = (next ?? draft);
+    if ((nextVal || '').trim() === (savedValue || '').trim()) return;
+    setSaving(true);
+    try { await onSave(contact.id, nextVal); } finally { setSaving(false); }
+  }
+
+  useEffect(() => {
+    if (!editing) return;
+    const el = taRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(160, el.scrollHeight)}px`;
+  }, [editing, draft]);
+
+  if (editing) {
+    return (
+      <textarea
+        ref={taRef}
+        value={draft}
+        autoFocus
+        onChange={e => setDraft(e.target.value)}
+        onClick={e => e.stopPropagation()}
+        onBlur={() => commit()}
+        onKeyDown={e => {
+          if (e.key === 'Escape') { e.preventDefault(); setEditing(false); }
+          else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); commit(); }
+        }}
+        rows={3}
+        className={styles.inlineInput}
+        style={{
+          width: '100%', minHeight: 56, maxHeight: 160,
+          resize: 'vertical', lineHeight: 1.4,
+          fontFamily: 'inherit', fontSize: '0.78rem',
+          padding: '0.35rem 0.5rem',
+        }}
+      />
+    );
+  }
+  return (
+    <span
+      className={saving ? styles.cellSaving : styles.cellEditable}
+      onClick={start}
+      title={display ? `${display}\n\n(Used for the {custom} email variable. Click to edit. ⌘/Ctrl+Enter saves, Esc cancels.)` : 'Click to add a custom value for the {custom} email variable. ⌘/Ctrl+Enter saves, Esc cancels.'}
+      style={{
+        display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+        overflow: 'hidden', textOverflow: 'ellipsis',
+        whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+        lineHeight: 1.3, fontSize: '0.74rem',
+      }}
+    >
+      {saving ? 'Saving…' : (display || <span style={{ color: '#CBD5E1', fontStyle: 'italic' }}>—</span>)}
+    </span>
+  );
+}
+
 // Fire-and-forget cache write for cases where we don't care to block on
 // the IDB transaction. Use saveCacheAwait when the caller needs the
 // write to land before unmount / navigation can race it.
@@ -1262,6 +1335,17 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
     else delete next[cid];
     updateSettings({ contactNotes: next });
   }, [settings?.contactNotes, updateSettings]);
+
+  // App-side "Custom" field — stored in settings.customField keyed by
+  // contact id, the same Firestore-synced pattern as contactNotes. The
+  // Draft Email page reads this map for the {custom} variable.
+  const handleSaveCustomField = useCallback((cid, value) => {
+    const cur = settings?.customField || {};
+    const next = { ...cur };
+    if (value && String(value).trim()) next[cid] = value;
+    else delete next[cid];
+    updateSettings({ customField: next });
+  }, [settings?.customField, updateSettings]);
 
   const handleInlineUpdate = useCallback(async (contactId, properties) => {
     try {
@@ -2828,6 +2912,13 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
                   contact={c}
                   savedNote={(settings?.contactNotes || {})[c.id] || ''}
                   onSave={handleSaveContactNote}
+                />
+              ) },
+              { key: 'customField', label: 'Custom', defaultWidth: 200, render: (c) => (
+                <HubSpotCustomFieldCell
+                  contact={c}
+                  savedValue={(settings?.customField || {})[c.id] || ''}
+                  onSave={handleSaveCustomField}
                 />
               ) },
               { key: '_zoomCompanyName', label: 'Zoom Company', defaultWidth: 160, render: (c) => <HubSpotInlineCell contact={c} field="_zoomCompanyName" value={c._zoomCompanyName} onSave={handleInlineUpdate} /> },
