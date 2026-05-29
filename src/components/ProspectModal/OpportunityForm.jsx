@@ -780,6 +780,12 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       linkedBfoLink: src.linkedBfoLink || null,
       linkedOppName: src.linkedOppName || null,
       meeting: src.meeting || null,
+      // Carry the per-form seed record through so the question auto-fill
+      // effects can tell which services were already imported. Without
+      // this, formData.seededScopeServices is always undefined and the
+      // effects fall back to inferring seeds from populated rows — which
+      // resurrects questions the user deleted after a page refresh.
+      seededScopeServices: src.seededScopeServices || null,
     };
   }, [localValue, template, cdmName]);
 
