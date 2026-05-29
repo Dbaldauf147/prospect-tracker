@@ -877,6 +877,14 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     setDrafts(drafts.filter(d => d.id !== id));
   }
 
+  function clearAllDrafts() {
+    if (drafts.length === 0) return;
+    const ok = window.confirm(`Delete all ${drafts.length} saved draft${drafts.length === 1 ? '' : 's'}? This cannot be undone.`);
+    if (!ok) return;
+    setDrafts([]);
+    setResult({ type: 'success', message: 'All drafts cleared' });
+  }
+
   async function createOutlookDrafts() {
     if (selectedContacts.length === 0) {
       setResult({ type: 'error', message: 'Add at least one contact' });
@@ -1561,7 +1569,14 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
 
           {/* Saved drafts */}
           <div className={`${styles.draftsCard} ${styles.coverageCard}`}>
-            <h3 className={styles.cardTitle}>Saved Drafts ({drafts.length})</h3>
+            <div className={styles.draftsHeader}>
+              <h3 className={styles.cardTitle}>Saved Drafts ({drafts.length})</h3>
+              {drafts.length > 0 && (
+                <button className={styles.clearAllDrafts} onClick={clearAllDrafts} title="Delete all saved drafts">
+                  Clear all
+                </button>
+              )}
+            </div>
             {drafts.length === 0 ? (
               <p className={styles.emptyDrafts}>No saved drafts yet</p>
             ) : (
