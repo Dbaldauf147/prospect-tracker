@@ -1094,11 +1094,8 @@ export function AgentsView({ prospects = [], settings }) {
   // Opps that don't yet exist in BFO and need a fresh Guided Opportunity
   // created. Filter mirrors the user's spec:
   //   • Stage NOT in {Not Started, Not Sold, Sold}
-  //   • BFO Link is literally "-" (the Opps tab's placeholder for "no
-  //     link yet")
-  //   • The literal Call In cell on the Opps sheet is non-blank (we
-  //     read it directly rather than computing it from Follow Up — the
-  //     user wants the sheet value to gate inclusion).
+  //   • No BFO Opportunity Name — the Opps tab's "BFO Link" column is
+  //     blank, "-", or "#N/A" (all treated as "no link yet").
   // Output carries Company (Account), Lead Source + a current-customer
   // boolean, and Scope so the appended block reads as the table the
   // user described.
@@ -1127,13 +1124,11 @@ export function AgentsView({ prospects = [], settings }) {
     for (const r of records) {
       const stage = String(r.Stage || '').trim();
       if (!stage || EXCLUDED_STAGES.has(stage)) continue;
+      // No BFO Opportunity Name: blank, "-", or "#N/A" all count as
+      // "no link yet" and qualify the row for creation in BFO.
       const bfoLink = String(r['BFO Link'] ?? '').trim();
-      if (bfoLink !== '-') continue;
-      // Use the literal Call In cell from the Opps sheet (not the
-      // Follow-Up-derived computation). Blank / "-" / "#N/A" all count
-      // as missing.
+      if (bfoLink && bfoLink !== '-' && bfoLink !== '#N/A') continue;
       const callInRaw = String(r['Call In'] ?? '').trim();
-      if (!callInRaw || callInRaw === '-' || callInRaw === '#N/A') continue;
       const account = String(r.Account || '').trim();
       const leadSource = String(r['Lead Source'] || r['Source'] || '').trim();
       const scope = String(r.Scope || '').trim();
@@ -1835,7 +1830,7 @@ export function AgentsView({ prospects = [], settings }) {
               <span className={styles.sectionCount}>{newBfoOpps.length}</span>
             </h2>
             <p className={styles.subnote}>
-              Lists Opps with Stage of that is Not Started / Not Sold / Sold, BFO Link of &ldquo;-&rdquo;, and a non-blank Call In cell on the Opps sheet.
+              Lists Opps whose Stage is not Not Started / Not Sold / Sold and that have no BFO Opportunity Name (BFO Link blank, &ldquo;-&rdquo;, or &ldquo;#N/A&rdquo;).
             </p>
             {revealedPrompts.newBfoOpp && (
               <textarea
@@ -1878,7 +1873,7 @@ export function AgentsView({ prospects = [], settings }) {
                 <tbody>
                   {newBfoOpps.length === 0 ? (
                     <tr className={styles.emptyRow}>
-                      <td colSpan={13}>No Opps currently match (Stage ≠ Not Started / Not Sold / Sold, BFO Link = &ldquo;-&rdquo;, Call In cell not blank).</td>
+                      <td colSpan={13}>No Opps currently match (Stage ≠ Not Started / Not Sold / Sold and no BFO Opportunity Name).</td>
                     </tr>
                   ) : newBfoOpps.map(o => (
                     <tr key={o.id}>
