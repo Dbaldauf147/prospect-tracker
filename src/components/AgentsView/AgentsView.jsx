@@ -16,6 +16,11 @@ import styles from './AgentsView.module.css';
 const OVERRIDE_STORAGE_KEY = 'agents-bfo-overrides';
 const IGNORED_EMAILS_STORAGE_KEY = 'agents-ignored-emails';
 const IGNORED_MEETINGS_STORAGE_KEY = 'agents-ignored-meetings';
+// External recipient addresses the user has chosen to permanently
+// exclude from the Sent emails table. Unlike IGNORED_EMAILS (one
+// message at a time), this hides every current and future email sent
+// to that recipient.
+const EXCLUDED_RECIPIENTS_STORAGE_KEY = 'agents-excluded-recipients';
 const AI_PROMPT_STORAGE_KEY = 'agents-ai-prompt';
 const NEW_BFO_OPP_PROMPT_STORAGE_KEY = 'agents-ai-prompt-new-bfo-opp';
 const CLOSE_DATES_PROMPT_STORAGE_KEY = 'agents-ai-prompt-close-dates';
@@ -155,6 +160,28 @@ function readIgnoredMeetings() {
 
 function writeIgnoredMeetings(next) {
   try { userLsSet(IGNORED_MEETINGS_STORAGE_KEY, JSON.stringify(next)); } catch {}
+}
+
+function readExcludedRecipients() {
+  try {
+    const raw = userLsGet(EXCLUDED_RECIPIENTS_STORAGE_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr.map(a => String(a).toLowerCase()) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeExcludedRecipients(next) {
+  try { userLsSet(EXCLUDED_RECIPIENTS_STORAGE_KEY, JSON.stringify(next)); } catch {}
+}
+
+// Normalize a BFO Opportunity Name for matching the Opps tab's "BFO
+// Link" value against the BFO Activity tab's "Opportunity Name" column:
+// trim, lower-case, and collapse internal whitespace so a stray double
+// space on either side doesn't drop the match.
+function normalizeBfoOppName(s) {
+  return String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
 function readAiPrompt() {
@@ -582,6 +609,7 @@ export function AgentsView({ prospects = [], settings }) {
   const [overrides, setOverrides] = useState(readOverrides);
   const [ignoredEmails, setIgnoredEmails] = useState(readIgnoredEmails);
   const [ignoredMeetings, setIgnoredMeetings] = useState(readIgnoredMeetings);
+  const [excludedRecipients, setExcludedRecipients] = useState(readExcludedRecipients);
   const [aiPrompt, setAiPrompt] = useState(readAiPrompt);
   const [newBfoOppPrompt, setNewBfoOppPrompt] = useState(readNewBfoOppPrompt);
   const [closeDatesPrompt, setCloseDatesPrompt] = useState(readCloseDatesPrompt);
@@ -615,6 +643,7 @@ export function AgentsView({ prospects = [], settings }) {
 
   const ignoredEmailIds = useMemo(() => new Set(ignoredEmails), [ignoredEmails]);
   const ignoredMeetingIds = useMemo(() => new Set(ignoredMeetings), [ignoredMeetings]);
+  const excludedRecipientSet = useMemo(() => new Set(excludedRecipients), [excludedRecipients]);
 
   const updateAiPrompt = (next) => {
     setAiPrompt(next);
@@ -660,6 +689,32 @@ export function AgentsView({ prospects = [], settings }) {
       const next = [...prev, key];
       writeIgnoredEmails(next);
       return next;
+    });
+  };
+
+  // Permanently exclude the given external recipient address(es) from
+  // the Sent emails table — hides this email and any future email sent
+  // to the same recipient.
+  const excludeRecipient = (addrs) => {
+    const list = (Array.isArray(addrs) ? addrs : [addrs])
+      .map(a => String(a || '').toLowerCase().trim())
+      .filter(Boolean);
+    if (!list.length) return;
+    setExcludedRecipients(prev => {
+      const next = [...prev];
+      for (const a of list) if (!next.includes(a)) next.push(a);
+      if (next.length === prev.length) return prev;
+      writeExcludedRecipients(next);
+      return next;
+    });
+  };
+
+  // Re-include every previously excluded recipient.
+  const clearExcludedRecipients = () => {
+    setExcludedRecipients(prev => {
+      if (!prev.length) return prev;
+      writeExcludedRecipients([]);
+      return [];
     });
   };
 
@@ -942,6 +997,10 @@ export function AgentsView({ prospects = [], settings }) {
       .filter(sentByMe)
       .filter(e => hasExternalRecipient(e.hs_email_to_email))
       .filter(e => !ignoredEmailIds.has(String(e.id || e.hs_object_id)))
+      // Drop emails whose external recipients have all been excluded
+      // by the user ("don't include moving forward").
+      .filter(e => externalRecipientList(e.hs_email_to_email)
+        .some(addr => !excludedRecipientSet.has(addr.toLowerCase())))
       .map(e => {
         const recipients = externalRecipientList(e.hs_email_to_email);
         // Pick the HubSpot-company off the first recipient we have a
@@ -980,6 +1039,7 @@ export function AgentsView({ prospects = [], settings }) {
           ts: e.hs_timestamp,
           subject: e.hs_email_subject || '(no subject)',
           to: recipients.join(', '),
+          recipients,
           rawTo: e.hs_email_to_email || '',
           status: e.hs_email_status || '',
           company,
@@ -1064,7 +1124,7 @@ export function AgentsView({ prospects = [], settings }) {
     // dependency set as cache + hubspotCache + oppIndex + overrides,
     // so they don't need their own entries here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cache, hubspotCache, oppIndex, overrides, ignoredEmailIds, ignoredMeetingIds, referenceDate, senderEmail]);
+  }, [cache, hubspotCache, oppIndex, overrides, ignoredEmailIds, ignoredMeetingIds, excludedRecipientSet, referenceDate, senderEmail]);
 
   // Opps where the user logged a phone touch in Next Steps and the
   // Last Spoke column (business days since Last Client Heard From Us)
@@ -1196,6 +1256,32 @@ export function AgentsView({ prospects = [], settings }) {
     rows.sort((a, b) => a.company.localeCompare(b.company));
     return rows;
   }, [oppsCache, bfoCompanyByNorm, settings?.serviceOverrides]);
+
+  // BFO Opportunity Name → Last Activity date from the BFO Activity tab.
+  // Lets the Called and Sent emails tables show how long it's been since
+  // anything happened on the matched BFO opp. Keyed by normalized
+  // opportunity name (== the Opps tab's "BFO Link").
+  const bfoLastActivityByName = useMemo(() => {
+    const map = new Map();
+    const headers = bfoActivity?.headers || [];
+    const oppCol = headers.find(h => /opportunity\s*name/i.test(h));
+    const actCol = headers.find(h => /last\s*activity/i.test(h));
+    if (!oppCol || !actCol) return map;
+    for (const r of (bfoActivity?.rows || [])) {
+      const k = normalizeBfoOppName(r[oppCol]);
+      if (!k || map.has(k)) continue;
+      const v = String(r[actCol] ?? '').trim();
+      if (v) map.set(k, v);
+    }
+    return map;
+  }, [bfoActivity]);
+
+  // Look up the BFO Last Activity date for a given BFO Opportunity Name
+  // (blank when there's no opp or no matching BFO Activity row).
+  const lastActivityFor = (bfoOpp) => {
+    const k = normalizeBfoOppName(bfoOpp);
+    return k ? (bfoLastActivityByName.get(k) || '') : '';
+  };
 
   // BFO opps whose Close Date should slip by 30 days. Three windows
   // collapsed into one filter, all keyed off the BFO Sales Stage number
@@ -1567,6 +1653,7 @@ export function AgentsView({ prospects = [], settings }) {
             <tr>
               <th>Company</th>
               <th>BFO Opportunity</th>
+              <th style={{ width: 110 }}>Last Activity</th>
               <th style={{ width: 70 }}>BFO Link</th>
               <th style={{ width: 70 }}>Type</th>
             </tr>
@@ -1574,14 +1661,17 @@ export function AgentsView({ prospects = [], settings }) {
           <tbody>
             {calledOpps.length === 0 ? (
               <tr className={styles.emptyRow}>
-                <td colSpan={4}>No Opps with a phone touch logged in Next Steps and Last Spoke = 0.</td>
+                <td colSpan={5}>No Opps with a phone touch logged in Next Steps and Last Spoke = 0.</td>
               </tr>
-            ) : calledOpps.map(o => (
+            ) : calledOpps.map(o => {
+              const lastActivity = lastActivityFor(o.bfoOpp);
+              return (
               <tr key={o.id}>
                 <td className={o.company && o.company !== '—' ? '' : styles.muted}>{o.company || '—'}</td>
                 <td className={o.bfoOpp ? '' : styles.muted} title={o.nextSteps}>
                   {o.bfoOpp || '—'}
                 </td>
+                <td className={lastActivity ? '' : styles.muted}>{lastActivity || '—'}</td>
                 <td>
                   {o.bfoUrl ? (
                     <a
@@ -1596,7 +1686,8 @@ export function AgentsView({ prospects = [], settings }) {
                 </td>
                 <td>called</td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </section>
@@ -1613,18 +1704,21 @@ export function AgentsView({ prospects = [], settings }) {
               <th>To (external)</th>
               <th>Company</th>
               <th>BFO Opportunity</th>
+              <th style={{ width: 110 }}>Last Activity</th>
               <th style={{ width: 70 }}>BFO Link</th>
               <th style={{ width: 70 }}>Type</th>
               <th style={{ width: 130 }}>Status</th>
-              <th style={{ width: 40 }} aria-label="Actions" />
+              <th style={{ width: 64 }} aria-label="Actions" />
             </tr>
           </thead>
           <tbody>
             {todaysOutbound.length === 0 ? (
               <tr className={styles.emptyRow}>
-                <td colSpan={9}>No outbound emails to external recipients on {dateLabel}.</td>
+                <td colSpan={10}>No outbound emails to external recipients on {dateLabel}.</td>
               </tr>
-            ) : todaysOutbound.map(e => (
+            ) : todaysOutbound.map(e => {
+                const lastActivity = lastActivityFor(e.bfoOpp);
+                return (
                 <tr key={e.id}>
                   <td>{fmtTime(e.ts)}</td>
                   <td>{e.subject}</td>
@@ -1650,6 +1744,7 @@ export function AgentsView({ prospects = [], settings }) {
                       />
                     )}
                   </td>
+                  <td className={lastActivity ? '' : styles.muted}>{lastActivity || '—'}</td>
                   <td>
                     {e.bfoUrl ? (
                       <a
@@ -1664,19 +1759,36 @@ export function AgentsView({ prospects = [], settings }) {
                   </td>
                   <td>{e.nextStepsType}</td>
                   <td className={e.status ? '' : styles.muted}>{e.status || '—'}</td>
-                  <td>
+                  <td className={styles.actionsCell}>
                     <button
                       type="button"
                       className={styles.ignoreBtn}
                       onClick={() => ignoreEmail(e.id)}
-                      title="Hide this email from the Sent emails table"
+                      title="Hide just this email from the Sent emails table"
                       aria-label="Ignore email"
                     >✕</button>
+                    <button
+                      type="button"
+                      className={styles.ignoreBtn}
+                      onClick={() => excludeRecipient(e.recipients)}
+                      disabled={!e.recipients?.length}
+                      title={e.recipients?.length
+                        ? `Don't include emails to ${e.recipients.join(', ')} moving forward`
+                        : 'No external recipient to exclude'}
+                      aria-label="Exclude recipient from future Sent emails"
+                    >🚫</button>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
           </tbody>
         </table>
+        {excludedRecipients.length > 0 && (
+          <p className={styles.subnote}>
+            Hiding emails to {excludedRecipients.length} excluded recipient{excludedRecipients.length === 1 ? '' : 's'} ({excludedRecipients.join(', ')}).{' '}
+            <button type="button" className={styles.linkBtn} onClick={clearExcludedRecipients}>Restore all</button>
+          </p>
+        )}
       </section>
 
       <section className={styles.section}>
