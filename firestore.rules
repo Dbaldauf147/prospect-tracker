@@ -4,25 +4,16 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // ---- Access control helpers ---------------------------------------
-    // Keep this domain list in sync with VITE_ALLOWED_EMAIL_DOMAINS (client)
-    // and ALLOWED_EMAIL_DOMAINS (server). Firestore rules can't read env
-    // vars, so the allowlist is encoded here and must be edited on deploy.
     function isAdmin() {
       return request.auth != null && request.auth.token.email == "baldaufdan@gmail.com";
     }
-    function allowedDomains() {
-      // EDIT ME: the email domains permitted to use the app.
-      return ["example.com"];
-    }
-    function emailDomain() {
-      return request.auth.token.email.split("@")[1];
-    }
-    // An authorized caller: signed in AND either the admin or on an
-    // allowed domain. Verified-email requirement keeps spoofed custom
-    // tokens out (Google/password sign-in both set email_verified).
+    // Registration is open: any signed-in user is authorized and gets
+    // their own isolated workspace (per-user collections below). The
+    // shared prospects/lists collections remain admin-only for writes.
+    // To re-restrict sign-up to specific domains, reintroduce a domain
+    // check here (and keep it in sync with the client allowlist).
     function isAuthorized() {
-      return request.auth != null
-        && (isAdmin() || emailDomain() in allowedDomains());
+      return request.auth != null;
     }
 
     // Shared prospects collection: only the admin account. Other authorized
