@@ -2635,9 +2635,6 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
           addFieldRow('Duration', m === 0 ? `${h}h` : h === 0 ? `${m} min` : `${h}h ${m}m`);
         }
         if (formData.meeting.location) addFieldRow('Location', formData.meeting.location);
-        if (formData.meeting.organizer) addFieldRow('Organizer',
-          [formData.meeting.organizer.name, formData.meeting.organizer.email && `<${formData.meeting.organizer.email}>`].filter(Boolean).join(' ')
-        );
 
         // Side-by-side attendee tables mirroring the on-screen form. SE
         // uses cols 1-4 (Name, Required, Dan's Ask, filler); col 5 is the
