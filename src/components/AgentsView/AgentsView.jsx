@@ -2098,7 +2098,9 @@ export function AgentsView({ prospects = [], settings }) {
                 </tbody>
               </table>
             </div>
-            <pre className={styles.aiPromptPreview}>{fullPrompt}</pre>
+            {revealedPrompts.newBfoOpp && (
+              <pre className={styles.aiPromptPreview}>{fullPrompt}</pre>
+            )}
             {infoOpp && (
               <OppInfoModal
                 opp={infoOpp}
@@ -2184,7 +2186,9 @@ export function AgentsView({ prospects = [], settings }) {
                 </tbody>
               </table>
             </div>
-            <pre className={styles.aiPromptPreview}>{fullPrompt}</pre>
+            {revealedPrompts.closeDates && (
+              <pre className={styles.aiPromptPreview}>{fullPrompt}</pre>
+            )}
           </section>
         );
       })()}
@@ -2268,7 +2272,9 @@ export function AgentsView({ prospects = [], settings }) {
                 </tbody>
               </table>
             </div>
-            <pre className={styles.aiPromptPreview}>{fullPrompt}</pre>
+            {revealedPrompts.amountUpdates && (
+              <pre className={styles.aiPromptPreview}>{fullPrompt}</pre>
+            )}
           </section>
         );
       })()}
@@ -2351,7 +2357,9 @@ export function AgentsView({ prospects = [], settings }) {
                 </tbody>
               </table>
             </div>
-            <pre className={styles.aiPromptPreview}>{fullPrompt}</pre>
+            {revealedPrompts.stageChange && (
+              <pre className={styles.aiPromptPreview}>{fullPrompt}</pre>
+            )}
           </section>
         );
       })()}
@@ -2449,7 +2457,9 @@ export function AgentsView({ prospects = [], settings }) {
                 </tbody>
               </table>
             </div>
-            <pre className={styles.aiPromptPreview}>{fullPrompt}</pre>
+            {revealedPrompts.closeNotSolds && (
+              <pre className={styles.aiPromptPreview}>{fullPrompt}</pre>
+            )}
           </section>
         );
       })()}
