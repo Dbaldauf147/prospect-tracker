@@ -1871,6 +1871,7 @@ function KeyContactsViewInner({
 
   const contactFieldGetters = {
     name:     c => c.name || '',
+    category: c => (categorizeContact ? (categorizeContact(c.raw || c) || []) : []).join(' '),
     title:    c => c.jobtitle || '',
     company:  c => c.companyName || '',
     suggestedCompany: c => c.suggestedCompany || '',
