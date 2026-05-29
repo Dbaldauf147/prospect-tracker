@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { loadOppsFromCache, searchOpps } from '../../utils/oppsCache';
 import { dbGet, dbPut } from '../../utils/db';
@@ -508,20 +509,64 @@ function OppPicker({ oppsCache, onSelect }) {
   const [open, setOpen] = useState(false);
   const [term, setTerm] = useState('');
   const wrapRef = useRef(null);
-
-  // Close on outside click. The picker mounts only when the cell is
-  // empty so there's typically one per row at most.
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e) => { if (!wrapRef.current?.contains(e.target)) setOpen(false); };
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, [open]);
+  const menuRef = useRef(null);
+  // The dropdown is rendered in a portal with fixed positioning so it
+  // floats above the page instead of being clipped by the table's
+  // horizontal-scroll wrapper (which previously cut it off at the
+  // bottom edge of the table). Position is measured from the input.
+  const [menuPos, setMenuPos] = useState(null);
 
   const matches = useMemo(() => {
     if (!oppsCache?.records?.length) return [];
     return searchOpps(oppsCache, term).slice(0, 12);
   }, [oppsCache, term]);
+
+  // Recompute the fixed-position coordinates from the input's rect,
+  // flipping above the field when there isn't room below it.
+  const updatePosition = () => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const rect = wrap.getBoundingClientRect();
+    const MENU_MAX = 260;
+    const GAP = 2;
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const flipUp = spaceBelow < MENU_MAX + GAP && rect.top > spaceBelow;
+    setMenuPos({
+      left: rect.left,
+      width: rect.width,
+      ...(flipUp
+        ? { bottom: window.innerHeight - rect.top + GAP }
+        : { top: rect.bottom + GAP }),
+      maxHeight: Math.min(MENU_MAX, Math.max(120, (flipUp ? rect.top : spaceBelow) - GAP - 4)),
+    });
+  };
+
+  // Measure once the input mounts, then keep the menu pinned to the
+  // input as the user scrolls or resizes the window.
+  useLayoutEffect(() => {
+    if (!open) return;
+    updatePosition();
+    const onMove = () => updatePosition();
+    window.addEventListener('scroll', onMove, true);
+    window.addEventListener('resize', onMove);
+    return () => {
+      window.removeEventListener('scroll', onMove, true);
+      window.removeEventListener('resize', onMove);
+    };
+  }, [open]);
+
+  // Close on outside click. The menu lives in a portal, so check both
+  // the trigger wrapper and the floating menu before closing.
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => {
+      if (wrapRef.current?.contains(e.target)) return;
+      if (menuRef.current?.contains(e.target)) return;
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
 
   if (!open) {
     return (
@@ -547,25 +592,39 @@ function OppPicker({ oppsCache, onSelect }) {
         onChange={e => setTerm(e.target.value)}
         onKeyDown={e => { if (e.key === 'Escape') { setOpen(false); setTerm(''); } }}
       />
-      <div className={styles.pickerMenu}>
-        {matches.length === 0 ? (
-          <div className={styles.pickerEmpty}>No matching opps. Try a different search term.</div>
-        ) : matches.map((opp, i) => {
-          const bfoOpp = opp['BFO Link'] || '(no opportunity name)';
-          const account = opp['Account'] || '';
-          return (
-            <button
-              key={i}
-              type="button"
-              className={styles.pickerOption}
-              onClick={() => { onSelect(opp); setOpen(false); setTerm(''); }}
-            >
-              {bfoOpp}
-              {account && <span className={styles.pickerOptionAccount}>{account}</span>}
-            </button>
-          );
-        })}
-      </div>
+      {menuPos && createPortal(
+        <div
+          ref={menuRef}
+          className={styles.pickerMenu}
+          style={{
+            position: 'fixed',
+            left: menuPos.left,
+            width: menuPos.width,
+            top: menuPos.top,
+            bottom: menuPos.bottom,
+            maxHeight: menuPos.maxHeight,
+          }}
+        >
+          {matches.length === 0 ? (
+            <div className={styles.pickerEmpty}>No matching opps. Try a different search term.</div>
+          ) : matches.map((opp, i) => {
+            const bfoOpp = opp['BFO Link'] || '(no opportunity name)';
+            const account = opp['Account'] || '';
+            return (
+              <button
+                key={i}
+                type="button"
+                className={styles.pickerOption}
+                onClick={() => { onSelect(opp); setOpen(false); setTerm(''); }}
+              >
+                {bfoOpp}
+                {account && <span className={styles.pickerOptionAccount}>{account}</span>}
+              </button>
+            );
+          })}
+        </div>,
+        document.body,
+      )}
     </div>
   );
 }
