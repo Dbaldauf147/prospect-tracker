@@ -272,16 +272,14 @@
 }
 
 .pickerMenu {
-  position: absolute;
-  top: calc(100% + 2px);
-  left: 0;
-  right: 0;
-  z-index: 50;
+  /* Rendered in a portal with fixed positioning (top/left/width set
+     inline) so it floats above the page and isn't clipped by the
+     table's scroll wrapper. */
+  z-index: 1000;
   background: #fff;
   border: 1px solid #CBD5E1;
   border-radius: 6px;
   box-shadow: 0 6px 20px rgba(15, 23, 42, 0.12);
-  max-height: 260px;
   overflow-y: auto;
   padding: 0.2rem 0;
 }
