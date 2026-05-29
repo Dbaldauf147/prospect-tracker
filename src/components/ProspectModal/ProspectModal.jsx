@@ -1231,30 +1231,44 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
               <label style={labelStyle}>LinkedIn URL</label>
               {(() => {
-                // Two deep links: regular LinkedIn (best for grabbing
-                // the canonical linkedin.com/in/ URL) and Sales Nav
-                // (the rich-data view). Both pre-filtered with name +
-                // company. Hidden if the popup has neither.
+                // Three deep links: "View on LinkedIn" when a stored URL
+                // exists, plus "Find on LinkedIn" / "Find on Sales Nav"
+                // search links pre-filtered to name + company.
                 const parts = [f.firstname, f.lastname, f.company].map(s => String(s || '').trim()).filter(Boolean);
                 const keywords = parts.join(' ');
-                if (!keywords) return null;
-                const encoded = encodeURIComponent(keywords);
+                const encoded = keywords ? encodeURIComponent(keywords) : null;
+                const storedUrl = (f.hs_linkedin_url || '').trim();
+                const viewHref = storedUrl ? (storedUrl.startsWith('http') ? storedUrl : `https://linkedin.com/in/${storedUrl}`) : null;
+                if (!viewHref && !encoded) return null;
                 return (
                   <span style={{ display: 'inline-flex', gap: 10 }}>
-                    <a
-                      href={`https://www.linkedin.com/search/results/people/?keywords=${encoded}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      title="Open regular LinkedIn people search pre-filtered to this name + company. Find the profile, copy the linkedin.com/in/ URL from their public profile, and paste it into the field below."
-                      style={{ fontSize: '0.65rem', color: '#0A66C2', textDecoration: 'none', fontWeight: 600 }}
-                    >Find on LinkedIn ↗</a>
-                    <a
-                      href={`https://www.linkedin.com/sales/search/people?keywords=${encoded}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      title="Open Sales Navigator people-search pre-filtered to this name + company."
-                      style={{ fontSize: '0.65rem', color: '#0A66C2', textDecoration: 'none', fontWeight: 600 }}
-                    >Find on Sales Nav ↗</a>
+                    {viewHref && (
+                      <a
+                        href={viewHref}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title="Open this contact's LinkedIn profile."
+                        style={{ fontSize: '0.65rem', color: '#0A66C2', textDecoration: 'none', fontWeight: 600 }}
+                      >View on LinkedIn ↗</a>
+                    )}
+                    {encoded && (
+                      <a
+                        href={`https://www.linkedin.com/search/results/people/?keywords=${encoded}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title="Open regular LinkedIn people search pre-filtered to this name + company. Find the profile, copy the linkedin.com/in/ URL from their public profile, and paste it into the field below."
+                        style={{ fontSize: '0.65rem', color: '#0A66C2', textDecoration: 'none', fontWeight: 600 }}
+                      >Find on LinkedIn ↗</a>
+                    )}
+                    {encoded && (
+                      <a
+                        href={`https://www.linkedin.com/sales/search/people?keywords=${encoded}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title="Open Sales Navigator people-search pre-filtered to this name + company."
+                        style={{ fontSize: '0.65rem', color: '#0A66C2', textDecoration: 'none', fontWeight: 600 }}
+                      >Find on Sales Nav ↗</a>
+                    )}
                   </span>
                 );
               })()}
