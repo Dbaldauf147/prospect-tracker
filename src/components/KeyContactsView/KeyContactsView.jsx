@@ -509,6 +509,11 @@ function KeyContactsViewInner({
   // each label the function returns. Used by All Contacts to mark
   // each row as Key / Active / Client (or any combination thereof).
   categorizeContact = null,
+  // Optional controlled category filter. When set to a label (e.g.
+  // 'Key'), the flat contacts list is narrowed to rows whose
+  // categorizeContact() output includes that label. Driven by the
+  // clickable Totals pills on the All Contacts page. null = no filter.
+  categoryFilter = null,
   // Default view mode when no per-page localStorage entry exists yet.
   // 'contacts' (the default) lands the user on the flat name-by-name
   // table; 'companies' lands them on the By Company rollup. Used by
@@ -1891,6 +1896,10 @@ function KeyContactsViewInner({
     .map(([k, v]) => [k, String(v || '').trim().toLowerCase()])
     .filter(([, v]) => v.length > 0);
   const filteredContacts = sortedContacts.filter(c => {
+    if (categoryFilter && categorizeContact) {
+      const cats = categorizeContact(c.raw || c) || [];
+      if (!cats.includes(categoryFilter)) return false;
+    }
     if (q) {
       const blob = (c.name || '') + ' ' + (c.companyName || '') + ' '
         + (c.email || '') + ' ' + (c.jobtitle || '');
@@ -2704,7 +2713,7 @@ function KeyContactsViewInner({
                     )}
                     {storagePrefix === 'all-contacts' && visibleSet.has('custom') && (
                     <InlineCell
-                      value={(settings?.customField || {})[c.id] || ''}
+                      value={(settings?.customField || {})[String(c.id || '')] || ''}
                       onCommit={v => handleSaveContactCustom(String(c.id || ''), v)}
                       placeholder="—"
                       title="Click to edit this contact's Custom field (used by the {custom} email variable)"

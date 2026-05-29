@@ -114,6 +114,11 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
   const [showHidden, setShowHidden] = useState(() => {
     try { return localStorage.getItem('all-contacts:show-hidden') === '1'; } catch { return false; }
   });
+
+  // Clickable category filter driven by the Totals pills. null = show
+  // all; otherwise narrow to 'Key' / 'Active' / 'Client'. Clicking the
+  // active pill again clears it.
+  const [categoryFilter, setCategoryFilter] = useState(null);
   useEffect(() => {
     try { localStorage.setItem('all-contacts:show-hidden', showHidden ? '1' : '0'); } catch {}
   }, [showHidden]);
@@ -321,18 +326,34 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
       Every HubSpot contact that lands on at least one of the dedicated <strong>Key</strong>, <strong>Active</strong>, or <strong>Client</strong> rosters — same selectors and filters those tabs run, rolled up into a single list. Click a name to open <strong>Edit HubSpot Contact</strong>. Toggle <strong>All Contacts</strong> for a flat name-by-name table or <strong>By Company</strong> to roll them up by account with opportunities and decision-maker stats. Use the per-row <strong>Hide</strong> button to suppress contacts you don't want in the rosters.
       <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <span style={{ fontSize: '0.7rem', color: '#475569', fontWeight: 700 }}>Totals:</span>
-        <span title="Total unique contacts on this page (de-duped across categories)" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 8px', borderRadius: 999, background: '#F1F5F9', border: '1px solid #CBD5E1', color: '#334155', fontSize: '0.68rem', fontWeight: 700 }}>
-          All <span style={{ fontWeight: 800 }}>{categoryCounts.total}</span>
-        </span>
-        <span title="Contacts tagged Dan Key Target (excluding hide / left / Schneider)" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 8px', borderRadius: 999, background: '#FEF3C7', border: '1px solid #FCD34D', color: '#92400E', fontSize: '0.68rem', fontWeight: 700 }}>
-          Key <span style={{ fontWeight: 800 }}>{categoryCounts.key}</span>
-        </span>
-        <span title="Contacts in the active window with at least one open opp on the company (mirrors the Active Contacts page)" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 8px', borderRadius: 999, background: '#DCFCE7', border: '1px solid #86EFAC', color: '#166534', fontSize: '0.68rem', fontWeight: 700 }}>
-          Active <span style={{ fontWeight: 800 }}>{categoryCounts.active}</span>
-        </span>
-        <span title="Contacts whose company is a current Client on your CDM (mirrors the Client Contacts page)" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 8px', borderRadius: 999, background: '#DBEAFE', border: '1px solid #93C5FD', color: '#1E3A8A', fontSize: '0.68rem', fontWeight: 700 }}>
-          Client <span style={{ fontWeight: 800 }}>{categoryCounts.client}</span>
-        </span>
+        {[
+          { cat: null,     label: 'All',    count: categoryCounts.total,  bg: '#F1F5F9', border: '#CBD5E1', color: '#334155', tip: 'Show all contacts (clear the category filter)' },
+          { cat: 'Key',    label: 'Key',    count: categoryCounts.key,    bg: '#FEF3C7', border: '#FCD34D', color: '#92400E', tip: 'Click to show only contacts tagged Dan Key Target' },
+          { cat: 'Active', label: 'Active', count: categoryCounts.active, bg: '#DCFCE7', border: '#86EFAC', color: '#166534', tip: 'Click to show only contacts in the active window with an open opp (mirrors the Active Contacts page)' },
+          { cat: 'Client', label: 'Client', count: categoryCounts.client, bg: '#DBEAFE', border: '#93C5FD', color: '#1E3A8A', tip: 'Click to show only contacts whose company is a current Client on your CDM (mirrors the Client Contacts page)' },
+        ].map(({ cat, label, count, bg, border, color, tip }) => {
+          const selected = categoryFilter === cat;
+          return (
+            <button
+              key={label}
+              type="button"
+              onClick={() => setCategoryFilter(cat)}
+              title={tip}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+                padding: '1px 8px', borderRadius: 999,
+                background: selected ? color : bg,
+                border: `1px solid ${selected ? color : border}`,
+                color: selected ? '#fff' : color,
+                fontSize: '0.68rem', fontWeight: 700,
+                fontFamily: 'inherit', cursor: 'pointer',
+                boxShadow: selected ? `0 0 0 2px ${border}` : 'none',
+              }}
+            >
+              {label} <span style={{ fontWeight: 800 }}>{count}</span>
+            </button>
+          );
+        })}
       </div>
       <div style={{ marginTop: 4 }}>
         <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', color: '#475569', cursor: 'pointer' }}>
@@ -374,6 +395,7 @@ export function AllContactsView({ prospects = [], onSelectProspect, settings, up
       }
       contactSelector={combinedSelector}
       categorizeContact={categorizeContact}
+      categoryFilter={categoryFilter}
     />
   );
 }
