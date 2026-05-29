@@ -767,6 +767,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
     { token: '{phone}', label: 'Phone', example: '555-0100' },
     { token: '{city}', label: 'City', example: 'Denver' },
     { token: '{state}', label: 'State', example: 'CO' },
+    { token: '{custom}', label: 'Custom', example: 'great meeting you at the conference' },
   ];
 
   // Lookup map: lower-cased company name → matched prospect's `type`
@@ -982,6 +983,10 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
   function personalizeForContact(text, c) {
     const toAlsoMap = settings?.toAlsoMap || {};
     const hasToAlso = (toAlsoMap[c.email] || []).length > 0;
+    // {custom} pulls from settings.customField — a per-contact value
+    // typed manually in the "Custom" column on the Contacts page,
+    // keyed by HubSpot contact id.
+    const customField = (settings?.customField || {})[c.id] || '';
     return text
       .replace(/\{firstName\}/gi, hasToAlso ? 'Team' : (c.firstName || c.name.split(' ')[0] || ''))
       .replace(/\{lastName\}/gi, hasToAlso ? '' : (c.lastName || ''))
@@ -992,7 +997,8 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
       .replace(/\{title\}/gi, c.title || '')
       .replace(/\{phone\}/gi, c.phone || '')
       .replace(/\{city\}/gi, c.city || '')
-      .replace(/\{state\}/gi, c.state || '');
+      .replace(/\{state\}/gi, c.state || '')
+      .replace(/\{custom\}/gi, customField);
   }
 
   function openDraftForContact(c) {
@@ -1604,6 +1610,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
                   case '{phone}':     return c.phone || '';
                   case '{city}':      return c.city || '';
                   case '{state}':     return c.state || '';
+                  case '{custom}':    return (settings?.customField || {})[c.id] || '';
                   default:            return '';
                 }
               }}
