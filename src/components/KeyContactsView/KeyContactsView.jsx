@@ -1143,6 +1143,18 @@ function KeyContactsViewInner({
     if (v) next[cid] = v; else delete next[cid];
     updateSettings({ contactEvents: next });
   }, [settings?.contactEvents, updateSettings]);
+  // Per-contact "Custom" free-text field, stored in Firestore settings
+  // under `customField` keyed by HubSpot contact id. Shared with the
+  // {custom} email variable (DraftEmailView) and the HubSpot Contacts
+  // grid's Custom column. Mirrors handleSaveContactEvents — an
+  // empty / whitespace value deletes the key (same as contactNotes).
+  const handleSaveContactCustom = useCallback((cid, val) => {
+    const cur = settings?.customField || {};
+    const next = { ...cur };
+    const v = String(val || '').trim();
+    if (v) next[cid] = v; else delete next[cid];
+    updateSettings({ customField: next });
+  }, [settings?.customField, updateSettings]);
   const handleSaveContactOldEmails = useCallback((cid, val) => {
     const cur = settings?.contactOldEmails || {};
     const next = { ...cur };
@@ -1182,7 +1194,7 @@ function KeyContactsViewInner({
   }
 
   const DEFAULT_CONTACT_COL_WIDTHS = {
-    name: 180, category: 160, title: 200, company: 200, suggestedCompany: 220, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, tags: 200, lastOutreach: 160,
+    name: 180, category: 160, title: 200, company: 200, suggestedCompany: 220, email: 240, phone: 140, location: 140, city: 120, state: 80, country: 120, linkedin: 90, salesNav: 110, met: 80, events: 220, custom: 200, tags: 200, lastOutreach: 160,
   };
   // Column visibility — every contact column except Name (always
   // shown; it's the primary identifier). Stored per-page so the Key,
@@ -1190,7 +1202,7 @@ function KeyContactsViewInner({
   // State sit alongside Location so a user who wants the combined
   // "City, State" string keeps it, while the separate columns are
   // available for filtering / sorting on either field independently.
-  const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', 'events', 'tags', 'lastOutreach'];
+  const DEFAULT_VISIBLE_COLS = ['category', 'title', 'company', 'email', 'phone', 'location', 'city', 'state', 'country', 'linkedin', 'salesNav', 'met', 'events', ...(storagePrefix === 'all-contacts' ? ['custom'] : []), 'tags', 'lastOutreach'];
   const [visibleCols, setVisibleCols] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(lsKey('visible-cols')));
@@ -2301,9 +2313,13 @@ function KeyContactsViewInner({
               { key: 'salesNav', label: 'LinkedIn Search', sortable: false },
               { key: 'met',      label: 'Met' },
               { key: 'events',   label: 'Events' },
+              // Custom free-text column — only on the All Contacts page.
+              // Reads/writes the same per-contact `settings.customField`
+              // value used by the {custom} email variable.
+              ...(storagePrefix === 'all-contacts' ? [{ key: 'custom', label: 'Custom', sortable: false }] : []),
               { key: 'tags',     label: 'Tags', sortable: false },
               { key: 'lastOutreach', label: 'Last Outreach' },
-            ];
+            ].filter(Boolean);
             const visibleSet = new Set(visibleCols);
             const CONTACT_COLS = ALL_CONTACT_COLS.filter(c => c.alwaysOn || visibleSet.has(c.key));
             // Single 32px checkbox column at the front. When Mass Edit
@@ -2667,6 +2683,16 @@ function KeyContactsViewInner({
                       onCommit={v => handleSaveContactEvents(String(c.id || ''), v)}
                       placeholder="—"
                       title="Click to log events for this contact (conferences, meetings, etc.)"
+                      fontSize="0.7rem"
+                      textColor="#475569"
+                    />
+                    )}
+                    {storagePrefix === 'all-contacts' && visibleSet.has('custom') && (
+                    <InlineCell
+                      value={(settings?.customField || {})[c.id] || ''}
+                      onCommit={v => handleSaveContactCustom(String(c.id || ''), v)}
+                      placeholder="—"
+                      title="Click to edit this contact's Custom field (used by the {custom} email variable)"
                       fontSize="0.7rem"
                       textColor="#475569"
                     />
