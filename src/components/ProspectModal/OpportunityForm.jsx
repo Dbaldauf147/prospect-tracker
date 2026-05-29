@@ -993,19 +993,29 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
     set(patch);
   }, [formData.fieldValues?.scope]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Always keep at least one empty row at the bottom of Questions to
-  // Ask Them so the user can always type a new question without having
-  // to go find an 'add row' button.
-  useEffect(() => {
-    const rows = formData.tables?.ourQuestions || [];
-    const last = rows[rows.length - 1];
-    const lastIsEmpty = !last || (!(last.service || '').trim() && !(last.question || '').trim());
-    if (lastIsEmpty) return;
-    const def = template.tables.find(t => t.key === 'ourQuestions');
+  // Always keep at least one empty row at the bottom of the Questions
+  // tables so the user can always type a new question without having to
+  // go find an 'add row' button — including after every row is cleared.
+  const ensureTrailingEmptyRow = (key) => {
+    const def = template.tables.find(t => t.key === key);
     if (!def) return;
+    const rows = formData.tables?.[key] || [];
+    const isRowEmpty = (r) => def.columns.every(c => !(r?.[c.key] || '').toString().trim());
+    const last = rows[rows.length - 1];
+    // Append a fresh empty row when the table is empty or the last row
+    // already has content; do nothing if a trailing empty row exists.
+    if (rows.length > 0 && isRowEmpty(last)) return;
     const empty = Object.fromEntries(def.columns.map(c => [c.key, '']));
-    set({ tables: { ...formData.tables, ourQuestions: [...rows, empty] } });
+    set({ tables: { ...formData.tables, [key]: [...rows, empty] } });
+  };
+
+  useEffect(() => {
+    ensureTrailingEmptyRow('ourQuestions');
   }, [formData.tables?.ourQuestions]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    ensureTrailingEmptyRow('theirQuestions');
+  }, [formData.tables?.theirQuestions]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const updateTableCell = (tableKey, rowIdx, colKey, val) => {
     const rows = [...(formData.tables[tableKey] || [])];
