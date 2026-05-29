@@ -1,6 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { doc, getDoc, collection, getDocs, writeBatch, deleteField } from 'firebase/firestore';
+import { doc, getDoc, collection, getDocs, writeBatch, deleteField, onSnapshot } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
@@ -130,14 +130,15 @@ async function saveOpps2ToFirestore(userId, data) {
     if (!Number.isFinite(idx) || idx >= chunks.length) batch.delete(d.ref);
   });
   await batch.commit();
+  return stamped._updatedAt;
 }
 
 // Non-throwing wrapper for the auto-save / unmount / beforeunload
 // callers that don't have a UI surface for failures — they just want
 // best-effort durability and a console error on failure.
 async function trySaveOpps2ToFirestore(userId, data) {
-  try { await saveOpps2ToFirestore(userId, data); }
-  catch (err) { console.error('opps2: Firestore save failed', err); }
+  try { return await saveOpps2ToFirestore(userId, data); }
+  catch (err) { console.error('opps2: Firestore save failed', err); return null; }
 }
 
 // Default column set, seeded so the table has columns to show / sort /
@@ -204,6 +205,58 @@ const COMPUTED_COLUMNS = ['Last Spoke', 'Call In'];
 const ENSURED_COLUMNS = [...COMPUTED_COLUMNS, 'Next Steps', 'Pricing Option', 'No Further Action Today', 'Sales Partner',
   'Quoted On', 'Chance?', 'Margin Email Date - Sales Leader Review Date'];
 
+// Merge a remote Firestore snapshot into local React state at the record
+// level so two browsers open on the same page stay in sync without full
+// overwrites. Called from the onSnapshot listener.
+// Strategy:
+//   • Rows only in local  → keep (conservative; prevents in-flight new
+//     rows from disappearing before the debounced save lands).
+//   • Rows only in remote → add (new opp created in the other browser).
+//   • Rows in both        → whichever has the newer _rowUpdatedAt wins.
+//   • Headers             → union (local order preserved).
+//   • Column links / dropdown lists → prefer local (user may be editing).
+function mergeOpps2Data(local, remote) {
+  const localById = new Map();
+  for (const r of (local?.records || [])) {
+    if (r?._id != null) localById.set(String(r._id), r);
+  }
+  const remoteById = new Map();
+  for (const r of (remote?.records || [])) {
+    if (r?._id != null) remoteById.set(String(r._id), r);
+  }
+
+  const merged = [];
+  const seen = new Set();
+
+  for (const [id, localRow] of localById) {
+    seen.add(id);
+    const remoteRow = remoteById.get(id);
+    if (!remoteRow) {
+      merged.push(localRow);
+    } else {
+      const localTs = Number(localRow._rowUpdatedAt) || 0;
+      const remoteTs = Number(remoteRow._rowUpdatedAt) || 0;
+      merged.push(remoteTs > localTs ? remoteRow : localRow);
+    }
+  }
+  for (const [id, remoteRow] of remoteById) {
+    if (!seen.has(id)) merged.push(remoteRow);
+  }
+
+  const localHeaders = local?.headers || DEFAULT_HEADERS;
+  const localHeaderSet = new Set(localHeaders);
+  const extraHeaders = (remote?.headers || []).filter(h => h && !localHeaderSet.has(h));
+  const headers = extraHeaders.length ? [...localHeaders, ...extraHeaders] : localHeaders;
+
+  return {
+    ...local,
+    headers,
+    records: merged,
+    columnLinks: local?.columnLinks ?? remote?.columnLinks,
+    dropdownLists: local?.dropdownLists ?? remote?.dropdownLists,
+  };
+}
+
 function todayISO() {
   const d = new Date();
   const y = d.getFullYear();
@@ -213,7 +266,7 @@ function todayISO() {
 }
 
 function makeBlankOpp(id, headers, accountOverride, sourceOverride) {
-  const row = { _id: id, id }; // id mirrored so DataTable's row key stays stable across edits
+  const row = { _id: id, id, _rowUpdatedAt: Date.now() }; // id mirrored so DataTable's row key stays stable across edits
   const cols = (Array.isArray(headers) && headers.length) ? headers : DEFAULT_HEADERS;
   for (const h of cols) row[h] = '';
   // Leave Account blank when there's no override so the inline cell
@@ -3611,6 +3664,9 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // resolves.
   const hydratedRef = useRef(false);
   const firestoreSaveTimerRef = useRef(null);
+  // _updatedAt timestamp of the most recent blob we wrote to Firestore.
+  // The onSnapshot listener compares against this to skip our own echoes.
+  const lastFsSavedAtRef = useRef(null);
   const [search, setSearch] = useState('');
   const [activeTab, setActiveTab] = useState('opps');
   const [dateFrom, setDateFrom] = useState('');
@@ -3800,7 +3856,8 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       let firestoreWarning = '';
       if (user?.uid) {
         try {
-          await saveOpps2ToFirestore(user.uid, nextState);
+          const ts = await saveOpps2ToFirestore(user.uid, nextState);
+          if (ts != null) lastFsSavedAtRef.current = ts;
         } catch (err) {
           console.error('Import from Opps tab: Firestore save failed:', err);
           firestoreWarning = `\n\nWarning: cross-device sync failed (${err?.message || err}). Rows are safe on this device — hydration now picks the newer of IndexedDB vs Firestore, so a refresh here will keep them.`;
@@ -3892,7 +3949,8 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     let firestoreWarning = '';
     if (user?.uid) {
       try {
-        await saveOpps2ToFirestore(user.uid, nextState);
+        const ts = await saveOpps2ToFirestore(user.uid, nextState);
+        if (ts != null) lastFsSavedAtRef.current = ts;
       } catch (err) {
         console.error('Bulk import: Firestore save failed:', err);
         firestoreWarning = `\n\nWarning: cross-device sync failed (${err?.message || err}). Rows are safe on this device.`;
@@ -4054,7 +4112,8 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         next = fromIdb;
         // Push the IDB copy back to Firestore so the cloud catches up
         // to whatever local writes never made the round trip.
-        trySaveOpps2ToFirestore(user.uid, next);
+        trySaveOpps2ToFirestore(user.uid, next)
+          .then(ts => { if (ts != null) lastFsSavedAtRef.current = ts; });
       } else if (fsHas) {
         next = fromFs;
         // Any record on IDB that already carries a `_pricingOption`
@@ -4145,6 +4204,54 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     return () => window.removeEventListener(OPPS_PRICING_SNAPSHOT_EVENT, onSnapshotChanged);
   }, [user?.uid]);
 
+  // Real-time sync — subscribe to Firestore changes on the opps2 document
+  // so edits from another browser (or device) arrive within ~500ms without
+  // a page reload. The listener skips our own saves (identified by
+  // lastFsSavedAtRef) and the initial snapshot that fires before hydration
+  // completes. Incoming data is merged at the record level via
+  // mergeOpps2Data so in-flight local edits are never overwritten by a
+  // stale remote value for the same row.
+  useEffect(() => {
+    if (!user?.uid) return;
+    const parentRef = doc(db, OPPS2_FIRESTORE_COLLECTION, user.uid);
+    const unsub = onSnapshot(parentRef, async (snap) => {
+      // Skip until our own initial load (getDoc + reconcile) is done.
+      if (!hydratedRef.current) return;
+      if (!snap.exists()) return;
+      const raw = snap.data() || {};
+      // Convert the ISO updatedAt field on the Firestore doc to ms so we
+      // can compare it against lastFsSavedAtRef (also in ms).
+      const remoteTs = raw.updatedAt ? Date.parse(raw.updatedAt) : 0;
+      // Skip echoes of our own writes.
+      if (remoteTs > 0 && remoteTs === lastFsSavedAtRef.current) return;
+      // Reassemble the chunked JSON.
+      try {
+        let json = null;
+        if (Number.isFinite(raw.chunkCount) && raw.chunkCount > 0) {
+          const parts = new Array(raw.chunkCount).fill('');
+          const chunksSnap = await getDocs(collection(parentRef, 'chunks'));
+          chunksSnap.forEach((d) => {
+            const idx = Number(d.id);
+            if (Number.isFinite(idx) && idx >= 0 && idx < parts.length) {
+              parts[idx] = String(d.data()?.json || '');
+            }
+          });
+          json = parts.join('');
+        } else if (raw.json) {
+          json = raw.json;
+        }
+        if (!json) return;
+        const remote = JSON.parse(json);
+        setData(local => mergeOpps2Data(local, remote));
+      } catch (err) {
+        console.error('opps2: real-time sync failed to apply remote update', err);
+      }
+    }, (err) => {
+      console.error('opps2: real-time listener error', err);
+    });
+    return () => unsub();
+  }, [user?.uid]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Track the latest data + uid in refs so the unmount-flush effect
   // (which only runs on mount/unmount) can read the most recent values
   // without re-subscribing on every keystroke.
@@ -4155,14 +4262,16 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
 
   // Persistence — IndexedDB writes immediately (cheap, survives
   // reload), Firestore writes are debounced 1.5s so a flurry of cell
-  // edits collapses into a single round-trip.
+  // edits collapses into a single round-trip. The saved _updatedAt is
+  // captured so the real-time listener can skip our own echoes.
   useEffect(() => {
     if (!hydratedRef.current) return;
     saveOpps2Cache(data);
     if (!user?.uid) return;
     if (firestoreSaveTimerRef.current) clearTimeout(firestoreSaveTimerRef.current);
-    firestoreSaveTimerRef.current = setTimeout(() => {
-      trySaveOpps2ToFirestore(user.uid, data);
+    firestoreSaveTimerRef.current = setTimeout(async () => {
+      const ts = await trySaveOpps2ToFirestore(user.uid, data);
+      if (ts != null) lastFsSavedAtRef.current = ts;
     }, 1500);
     return () => {
       if (firestoreSaveTimerRef.current) clearTimeout(firestoreSaveTimerRef.current);
@@ -4179,7 +4288,8 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       if (firestoreSaveTimerRef.current && latestUidRef.current) {
         clearTimeout(firestoreSaveTimerRef.current);
         firestoreSaveTimerRef.current = null;
-        trySaveOpps2ToFirestore(latestUidRef.current, latestDataRef.current);
+        trySaveOpps2ToFirestore(latestUidRef.current, latestDataRef.current)
+          .then(ts => { if (ts != null) lastFsSavedAtRef.current = ts; });
       }
     };
   }, []);
@@ -4303,7 +4413,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         ...prev,
         records: records.map(r => {
           if (r._id !== id) return r;
-          const next = { ...r, [field]: value };
+          const next = { ...r, [field]: value, _rowUpdatedAt: Date.now() };
           // When the source date for a computed column changes, drop
           // any sheet-imported stored value on the computed column so
           // the render falls back to a live recompute. Without this, an
@@ -4403,7 +4513,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         ...prev,
         records: records.map(r => {
           if (!idSet.has(r._id)) return r;
-          const next = { ...r, [field]: value };
+          const next = { ...r, [field]: value, _rowUpdatedAt: Date.now() };
           // Same stage-entry stamp the single-row path applies, so bulk
           // moves through Days-in-Stage start the clock at the bulk
           // edit instead of the rows' original Start Date. Also append
