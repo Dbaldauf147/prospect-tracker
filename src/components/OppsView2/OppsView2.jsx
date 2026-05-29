@@ -150,7 +150,7 @@ const DEFAULT_HEADERS = [
   'Pricing Option',
   // Quote-stage detail columns. Captured via the QuotedFollowUpModal that
   // pops when an opp moves into the "Quoted" stage.
-  'Quoted On', 'Chance?', 'Margin Email Date', 'Sales Leader Review Date',
+  'Quoted On', 'Chance?', 'Margin Email Date - Sales Leader Review Date',
 ];
 
 // Key columns to show by default (the rest are available via Columns toggle)
@@ -173,7 +173,7 @@ const TRISTATE_COLUMNS = new Set(['No Further Action Today']);
 const DATE_COLUMNS = new Set([
   'Start Date', 'Last Client Heard From Us', 'Follow Up',
   // Quote-stage dates, filled from the QuotedFollowUpModal.
-  'Quoted On', 'Margin Email Date', 'Sales Leader Review Date',
+  'Quoted On', 'Margin Email Date - Sales Leader Review Date',
 ]);
 
 // Date columns that should be pre-seeded with today's date on a brand-new
@@ -202,7 +202,7 @@ const COMPUTED_COLUMNS = ['Last Spoke', 'Call In'];
 // it up — and its "Find out the Story" default lands somewhere
 // visible on the next new opp.
 const ENSURED_COLUMNS = [...COMPUTED_COLUMNS, 'Next Steps', 'Pricing Option', 'No Further Action Today', 'Sales Partner',
-  'Quoted On', 'Chance?', 'Margin Email Date', 'Sales Leader Review Date'];
+  'Quoted On', 'Chance?', 'Margin Email Date - Sales Leader Review Date'];
 
 function todayISO() {
   const d = new Date();
@@ -2241,18 +2241,38 @@ function NotSoldFollowUpModal({ opp, reasonOptions, onSave, onClose }) {
 
 // Prompt shown whenever an opp moves into the "Quoted" stage so the user
 // can enter / review the quote-tracking data points (Quoted On, Chance?,
-// Margin Email Date, Sales Leader Review Date). Pre-populated with the
-// opp's current values so it doubles as a review screen. Mirrors the
-// NotSoldFollowUpModal pattern.
+// Margin Email Date - Sales Leader Review Date). Pre-populated with the
+// opp's current values (with fallbacks to alternate key names) so it
+// doubles as a review screen. Mirrors the NotSoldFollowUpModal pattern.
 function QuotedFollowUpModal({ opp, chanceOptions, onSave, onClose }) {
-  const [quotedOn, setQuotedOn] = useState(toISODate(opp?.['Quoted On']) || '');
-  const [chance, setChance] = useState(String(opp?.['Chance?'] ?? opp?.['Chance'] ?? ''));
-  const [marginEmailDate, setMarginEmailDate] = useState(toISODate(opp?.['Margin Email Date']) || '');
-  const [salesLeaderReviewDate, setSalesLeaderReviewDate] = useState(toISODate(opp?.['Sales Leader Review Date']) || '');
+  // Read current values with fallbacks to the alternate key names other
+  // views / imported sheets use, so existing data shows up here instead
+  // of looking blank. The combined margin/review field also absorbs the
+  // two legacy split columns if a row was saved before they merged.
+  const curQuotedOn = opp?.['Quoted On'] ?? opp?.['Quoted Date'] ?? '';
+  const curChance = opp?.['Chance?'] ?? opp?.['Chance'] ?? '';
+  const curMarginReview = opp?.['Margin Email Date - Sales Leader Review Date']
+    ?? opp?.['Margin Email Date'] ?? opp?.['Sales Leader Review Date'] ?? '';
+
+  const [quotedOn, setQuotedOn] = useState(toISODate(curQuotedOn) || '');
+  const [chance, setChance] = useState(String(curChance ?? ''));
+  const [marginReviewDate, setMarginReviewDate] = useState(toISODate(curMarginReview) || '');
 
   function handleSave() {
-    onSave({ quotedOn, chance, marginEmailDate, salesLeaderReviewDate });
+    onSave({ quotedOn, chance, marginReviewDate });
   }
+
+  // Shows the value already stored on the opp so the user reviews what's
+  // there rather than entering blind. Hidden when there's nothing yet.
+  const hintStyle = { fontSize: '0.68rem', color: 'var(--color-text-muted)', marginTop: 3 };
+  const dateHint = (raw) => {
+    const v = (raw ?? '').toString().trim();
+    return v ? <div style={hintStyle}>Currently: {formatDateDisplay(v)}</div> : null;
+  };
+  const textHint = (raw) => {
+    const v = (raw ?? '').toString().trim();
+    return v ? <div style={hintStyle}>Currently: {v}</div> : null;
+  };
 
   const labelStyle = { fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text)', display: 'block', marginBottom: 4 };
   const inputStyle = {
@@ -2303,6 +2323,7 @@ function QuotedFollowUpModal({ opp, chanceOptions, onSave, onClose }) {
               onChange={(e) => setQuotedOn(e.target.value)}
               style={inputStyle}
             />
+            {dateHint(curQuotedOn)}
           </div>
           <div>
             <label style={labelStyle}>Chance?</label>
@@ -2316,27 +2337,20 @@ function QuotedFollowUpModal({ opp, chanceOptions, onSave, onClose }) {
                 <option key={o} value={o}>{o}</option>
               ))}
             </select>
+            {textHint(curChance)}
           </div>
           <div>
-            <label style={labelStyle}>Margin Email Date</label>
+            <label style={labelStyle}>Margin Email Date - Sales Leader Review Date</label>
             <input
               type="date"
-              value={marginEmailDate}
-              onChange={(e) => setMarginEmailDate(e.target.value)}
-              style={inputStyle}
-            />
-          </div>
-          <div>
-            <label style={labelStyle}>Sales Leader Review Date</label>
-            <input
-              type="date"
-              value={salesLeaderReviewDate}
-              onChange={(e) => setSalesLeaderReviewDate(e.target.value)}
+              value={marginReviewDate}
+              onChange={(e) => setMarginReviewDate(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') { e.preventDefault(); handleSave(); }
               }}
               style={inputStyle}
             />
+            {dateHint(curMarginReview)}
           </div>
         </div>
 
@@ -3636,7 +3650,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   const [notSoldPromptId, setNotSoldPromptId] = useState(null);
   // _id of the opp that just moved into the "Quoted" stage. When set,
   // the QuotedFollowUpModal asks the user to enter / review Quoted On,
-  // Chance?, Margin Email Date, and Sales Leader Review Date. Cleared on
+  // Chance?, and Margin Email Date - Sales Leader Review Date. Cleared on
   // Save or Skip.
   const [quotedPromptId, setQuotedPromptId] = useState(null);
   // _id of the opp whose info popup is open, or null when no popup
@@ -4335,7 +4349,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       setNotSoldPromptId(id);
     }
     // Prompt for the quote-tracking data points (Quoted On / Chance? /
-    // Margin Email Date / Sales Leader Review Date) whenever the Stage
+    // Margin Email Date - Sales Leader Review Date) whenever the Stage
     // flips TO "Quoted" so they can be entered or reviewed on the spot.
     if (stageChanged && String(value ?? '').trim().toLowerCase() === 'quoted') {
       setQuotedPromptId(id);
@@ -5387,20 +5401,22 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           <QuotedFollowUpModal
             opp={opp}
             chanceOptions={listRegistry.get('chance')?.options || []}
-            onSave={({ quotedOn, chance, marginEmailDate, salesLeaderReviewDate }) => {
+            onSave={({ quotedOn, chance, marginReviewDate }) => {
               // Only push fields whose value actually changed so the
               // undo stack stays uncluttered with no-op snapshots.
-              if (quotedOn !== (toISODate(opp['Quoted On']) || '')) {
+              const curQuotedOn = toISODate(opp['Quoted On'] ?? opp['Quoted Date']) || '';
+              if (quotedOn !== curQuotedOn) {
                 updateOppField(opp._id, 'Quoted On', quotedOn);
               }
               if (chance !== String(opp['Chance?'] ?? opp['Chance'] ?? '')) {
                 updateOppField(opp._id, 'Chance?', chance);
               }
-              if (marginEmailDate !== (toISODate(opp['Margin Email Date']) || '')) {
-                updateOppField(opp._id, 'Margin Email Date', marginEmailDate);
-              }
-              if (salesLeaderReviewDate !== (toISODate(opp['Sales Leader Review Date']) || '')) {
-                updateOppField(opp._id, 'Sales Leader Review Date', salesLeaderReviewDate);
+              const curMarginReview = toISODate(
+                opp['Margin Email Date - Sales Leader Review Date']
+                ?? opp['Margin Email Date'] ?? opp['Sales Leader Review Date']
+              ) || '';
+              if (marginReviewDate !== curMarginReview) {
+                updateOppField(opp._id, 'Margin Email Date - Sales Leader Review Date', marginReviewDate);
               }
               setQuotedPromptId(null);
             }}
