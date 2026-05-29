@@ -1,8 +1,11 @@
 // Email-domain allowlist for who may register / sign in.
 //
-// Configure the allowed domains via the Vite env var
-// VITE_ALLOWED_EMAIL_DOMAINS — a comma-separated list, e.g.
-//   VITE_ALLOWED_EMAIL_DOMAINS="acme.com,acme.co.uk"
+// Registration is currently OPEN: anyone with a syntactically valid
+// email may sign up and gets their own isolated workspace. The optional
+// Vite env var VITE_ALLOWED_EMAIL_DOMAINS is still parsed (and kept for
+// reference / future re-locking) but is no longer enforced by
+// isEmailAllowed. To re-restrict sign-up to specific domains, set that
+// env var AND switch isEmailAllowed back to the domain check below.
 //
 // The admin account is always allowed regardless of the list so the
 // owner can never lock themselves out.
@@ -26,21 +29,20 @@ export function emailDomain(email) {
 }
 
 /**
- * True if `email` may use the app. The admin is always allowed. When no
- * allowlist is configured we fail CLOSED (deny everyone but the admin)
- * so a missing env var can't silently re-open public registration.
+ * True if `email` may use the app. Registration is open, so any
+ * syntactically valid email address is allowed (the admin is always
+ * allowed too). Each user gets their own isolated workspace; only the
+ * admin can touch the shared prospects/lists collections.
  */
 export function isEmailAllowed(email) {
   const e = String(email || '').trim().toLowerCase();
   if (!e) return false;
   if (e === ADMIN_EMAIL) return true;
-  if (ALLOWED_EMAIL_DOMAINS.length === 0) return false;
-  return ALLOWED_EMAIL_DOMAINS.includes(emailDomain(e));
+  // Basic shape check: something@something.tld with no whitespace.
+  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e);
 }
 
 /** Human-readable description of who can sign up, for the login screen. */
 export function allowlistDescription() {
-  if (ALLOWED_EMAIL_DOMAINS.length === 0) return 'Access is currently restricted.';
-  const list = ALLOWED_EMAIL_DOMAINS.map((d) => `@${d}`).join(', ');
-  return `Sign-up is limited to ${list} email addresses.`;
+  return 'Sign up with any email address to get your own private workspace.';
 }
