@@ -2442,7 +2442,7 @@ function QuotedFollowUpModal({ opp, chanceOptions, onSave, onClose }) {
 // Popup that shows the basic info for one opp + a Delete button. Opened
 // from the row-level info button so the user can eyeball the full record
 // without having to hunt through the (often horizontally scrolled) row.
-function OppInfoModal({
+export function OppInfoModal({
   opp,
   headers,
   onClose,
@@ -2642,22 +2642,24 @@ function OppInfoModal({
           padding: '0.6rem 1rem', borderTop: '1px solid var(--color-border-light)',
           background: 'var(--color-bg)',
         }}>
-          <button
-            type="button"
-            onClick={() => {
-              const label = String(opp['Account'] || '').trim() || 'this opp';
-              if (window.confirm(`Delete ${label}? This can't be undone.`)) {
-                onDelete(opp._id);
-                onClose();
-              }
-            }}
-            style={{
-              padding: '0.4rem 0.85rem', background: '#FEE2E2',
-              border: '1px solid #FCA5A5', borderRadius: 4,
-              fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
-              color: '#B91C1C', cursor: 'pointer',
-            }}
-          >Delete opp</button>
+          {onDelete ? (
+            <button
+              type="button"
+              onClick={() => {
+                const label = String(opp['Account'] || '').trim() || 'this opp';
+                if (window.confirm(`Delete ${label}? This can't be undone.`)) {
+                  onDelete(opp._id);
+                  onClose();
+                }
+              }}
+              style={{
+                padding: '0.4rem 0.85rem', background: '#FEE2E2',
+                border: '1px solid #FCA5A5', borderRadius: 4,
+                fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+                color: '#B91C1C', cursor: 'pointer',
+              }}
+            >Delete opp</button>
+          ) : <span />}
           <button
             type="button"
             onClick={onClose}
