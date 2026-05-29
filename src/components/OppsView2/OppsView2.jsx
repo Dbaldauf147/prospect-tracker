@@ -148,6 +148,9 @@ const DEFAULT_HEADERS = [
   'Last Client Heard From Us', 'Last Spoke', 'Follow Up', 'Call In', 'Notes',
   'Next Steps', 'No Further Action Today', 'Competition', 'Waiting On', 'Close Date', 'BFO Link',
   'Pricing Option',
+  // Quote-stage detail columns. Captured via the QuotedFollowUpModal that
+  // pops when an opp moves into the "Quoted" stage.
+  'Quoted On', 'Chance?', 'Margin Email Date', 'Sales Leader Review Date',
 ];
 
 // Key columns to show by default (the rest are available via Columns toggle)
@@ -167,7 +170,16 @@ const TRISTATE_COLUMNS = new Set(['No Further Action Today']);
 // Columns the user wants treated as dates — rendered with a calendar
 // popup cell (HTML5 date input) and pre-populated with today on new
 // opps so a fresh entry shows useful defaults instead of blanks.
-const DATE_COLUMNS = new Set(['Start Date', 'Last Client Heard From Us', 'Follow Up']);
+const DATE_COLUMNS = new Set([
+  'Start Date', 'Last Client Heard From Us', 'Follow Up',
+  // Quote-stage dates, filled from the QuotedFollowUpModal.
+  'Quoted On', 'Margin Email Date', 'Sales Leader Review Date',
+]);
+
+// Date columns that should be pre-seeded with today's date on a brand-new
+// opp. The quote-stage dates are deliberately excluded — they stay blank
+// until the opp actually reaches the Quoted stage.
+const SEED_TODAY_DATE_COLUMNS = new Set(['Start Date', 'Last Client Heard From Us', 'Follow Up']);
 
 // Stages the Days-in-Stage tab reports on. Ordered to mirror the
 // pipeline progression so a row stays under one bucket as it moves
@@ -189,7 +201,8 @@ const COMPUTED_COLUMNS = ['Last Spoke', 'Call In'];
 // users who saved their layout before this column existed still pick
 // it up — and its "Find out the Story" default lands somewhere
 // visible on the next new opp.
-const ENSURED_COLUMNS = [...COMPUTED_COLUMNS, 'Next Steps', 'Pricing Option', 'No Further Action Today', 'Sales Partner'];
+const ENSURED_COLUMNS = [...COMPUTED_COLUMNS, 'Next Steps', 'Pricing Option', 'No Further Action Today', 'Sales Partner',
+  'Quoted On', 'Chance?', 'Margin Email Date', 'Sales Leader Review Date'];
 
 function todayISO() {
   const d = new Date();
@@ -228,7 +241,7 @@ function makeBlankOpp(id, headers, accountOverride, sourceOverride) {
   // today's date. Stored as ISO (YYYY-MM-DD) so the HTML5 date input
   // accepts it directly; DateCell displays a localized format.
   const today = todayISO();
-  for (const dateCol of DATE_COLUMNS) {
+  for (const dateCol of SEED_TODAY_DATE_COLUMNS) {
     if (cols.includes(dateCol)) row[dateCol] = today;
   }
   // Seed Call In with an explicit 0 so a brand-new opp shows up
@@ -1973,6 +1986,7 @@ const DEFAULT_COLUMN_LINKS = {
   Source: { listKey: 'source',       mode: 'single' },
   Stage:  { listKey: 'status',       mode: 'single' },
   Status: { listKey: 'whoIsWaiting', mode: 'single' },
+  'Chance?': { listKey: 'chance',    mode: 'single' },
 };
 
 // Thin wrapper around the shared resolver so existing call sites in
@@ -2188,6 +2202,139 @@ function NotSoldFollowUpModal({ opp, reasonOptions, onSave, onClose }) {
                 if (e.key === 'Enter') { e.preventDefault(); handleSave(); }
               }}
               placeholder="e.g. 22% or $4,500"
+              style={inputStyle}
+            />
+          </div>
+        </div>
+
+        <div style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          padding: '0.6rem 1rem',
+          borderTop: '1px solid var(--color-border-light)', background: 'var(--color-bg)',
+        }}>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              padding: '0.35rem 0.7rem', background: 'transparent',
+              border: '1px solid var(--color-border)', borderRadius: 4,
+              fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+              color: 'var(--color-text-muted)', cursor: 'pointer',
+            }}
+          >Skip for now</button>
+          <button
+            type="button"
+            onClick={handleSave}
+            style={{
+              padding: '0.35rem 0.85rem', background: 'var(--color-accent)',
+              border: '1px solid var(--color-accent)', borderRadius: 4,
+              fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+              color: '#fff', cursor: 'pointer',
+            }}
+          >Save</button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+// Prompt shown whenever an opp moves into the "Quoted" stage so the user
+// can enter / review the quote-tracking data points (Quoted On, Chance?,
+// Margin Email Date, Sales Leader Review Date). Pre-populated with the
+// opp's current values so it doubles as a review screen. Mirrors the
+// NotSoldFollowUpModal pattern.
+function QuotedFollowUpModal({ opp, chanceOptions, onSave, onClose }) {
+  const [quotedOn, setQuotedOn] = useState(toISODate(opp?.['Quoted On']) || '');
+  const [chance, setChance] = useState(String(opp?.['Chance?'] ?? opp?.['Chance'] ?? ''));
+  const [marginEmailDate, setMarginEmailDate] = useState(toISODate(opp?.['Margin Email Date']) || '');
+  const [salesLeaderReviewDate, setSalesLeaderReviewDate] = useState(toISODate(opp?.['Sales Leader Review Date']) || '');
+
+  function handleSave() {
+    onSave({ quotedOn, chance, marginEmailDate, salesLeaderReviewDate });
+  }
+
+  const labelStyle = { fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text)', display: 'block', marginBottom: 4 };
+  const inputStyle = {
+    width: '100%', boxSizing: 'border-box',
+    padding: '0.45rem 0.55rem',
+    border: '1px solid var(--color-border)', borderRadius: 4,
+    fontSize: '0.85rem', fontFamily: 'inherit',
+    background: '#fff', color: 'var(--color-text)',
+  };
+
+  return createPortal(
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)',
+        zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+        }}
+        style={{
+          width: 460, maxWidth: '92vw',
+          background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)',
+          display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        }}
+      >
+        <div style={{ padding: '0.85rem 1rem', borderBottom: '1px solid var(--color-border-light)' }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)' }}>
+            Quote details
+          </div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
+            <strong>{opp?.['Account'] || 'This opp'}</strong>
+            {opp?.['Scope'] ? <> &middot; {opp['Scope']}</> : null}
+            {' '}is now <strong>Quoted</strong>. Enter or review the quote-tracking details below.
+          </div>
+        </div>
+
+        <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.7rem' }}>
+          <div>
+            <label style={labelStyle}>Quoted On</label>
+            <input
+              type="date"
+              autoFocus
+              value={quotedOn}
+              onChange={(e) => setQuotedOn(e.target.value)}
+              style={inputStyle}
+            />
+          </div>
+          <div>
+            <label style={labelStyle}>Chance?</label>
+            <select
+              value={chance}
+              onChange={(e) => setChance(e.target.value)}
+              style={inputStyle}
+            >
+              <option value="">— Select —</option>
+              {chanceOptions.map(o => (
+                <option key={o} value={o}>{o}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style={labelStyle}>Margin Email Date</label>
+            <input
+              type="date"
+              value={marginEmailDate}
+              onChange={(e) => setMarginEmailDate(e.target.value)}
+              style={inputStyle}
+            />
+          </div>
+          <div>
+            <label style={labelStyle}>Sales Leader Review Date</label>
+            <input
+              type="date"
+              value={salesLeaderReviewDate}
+              onChange={(e) => setSalesLeaderReviewDate(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); handleSave(); }
+              }}
               style={inputStyle}
             />
           </div>
@@ -3487,6 +3634,11 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // Reason Not Sold, and Final Margin so the close-out reporting views
   // have what they need. Cleared on Save or Skip.
   const [notSoldPromptId, setNotSoldPromptId] = useState(null);
+  // _id of the opp that just moved into the "Quoted" stage. When set,
+  // the QuotedFollowUpModal asks the user to enter / review Quoted On,
+  // Chance?, Margin Email Date, and Sales Leader Review Date. Cleared on
+  // Save or Skip.
+  const [quotedPromptId, setQuotedPromptId] = useState(null);
   // _id of the opp whose info popup is open, or null when no popup
   // is showing. Resolved against the live records list on render so
   // the popup always reflects the latest cell edits.
@@ -4181,6 +4333,12 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     // don't want to multi-modal across selections.
     if (stageChanged && String(value ?? '').trim().toLowerCase() === 'not sold') {
       setNotSoldPromptId(id);
+    }
+    // Prompt for the quote-tracking data points (Quoted On / Chance? /
+    // Margin Email Date / Sales Leader Review Date) whenever the Stage
+    // flips TO "Quoted" so they can be entered or reviewed on the spot.
+    if (stageChanged && String(value ?? '').trim().toLowerCase() === 'quoted') {
+      setQuotedPromptId(id);
     }
   }, [pushUndoEntry]);
 
@@ -5218,6 +5376,35 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               setNotSoldPromptId(null);
             }}
             onClose={() => setNotSoldPromptId(null)}
+          />
+        );
+      })()}
+
+      {quotedPromptId != null && (() => {
+        const opp = records.find(r => r._id === quotedPromptId);
+        if (!opp) return null;
+        return (
+          <QuotedFollowUpModal
+            opp={opp}
+            chanceOptions={listRegistry.get('chance')?.options || []}
+            onSave={({ quotedOn, chance, marginEmailDate, salesLeaderReviewDate }) => {
+              // Only push fields whose value actually changed so the
+              // undo stack stays uncluttered with no-op snapshots.
+              if (quotedOn !== (toISODate(opp['Quoted On']) || '')) {
+                updateOppField(opp._id, 'Quoted On', quotedOn);
+              }
+              if (chance !== String(opp['Chance?'] ?? opp['Chance'] ?? '')) {
+                updateOppField(opp._id, 'Chance?', chance);
+              }
+              if (marginEmailDate !== (toISODate(opp['Margin Email Date']) || '')) {
+                updateOppField(opp._id, 'Margin Email Date', marginEmailDate);
+              }
+              if (salesLeaderReviewDate !== (toISODate(opp['Sales Leader Review Date']) || '')) {
+                updateOppField(opp._id, 'Sales Leader Review Date', salesLeaderReviewDate);
+              }
+              setQuotedPromptId(null);
+            }}
+            onClose={() => setQuotedPromptId(null)}
           />
         );
       })()}
