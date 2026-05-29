@@ -92,6 +92,10 @@
 .editorWrap :global(.ql-editor) { min-height: 180px; line-height: 1.6; color: var(--color-text); padding: 0.65rem 0.75rem; }
 .editorWrap :global(.ql-editor.ql-blank::before) { font-style: normal; color: var(--color-text-muted); }
 
+.draftsHeader { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 1rem; }
+.draftsHeader .cardTitle { margin-bottom: 0; }
+.clearAllDrafts { flex-shrink: 0; border: 1px solid #FECACA; background: #FEF2F2; color: #EF4444; cursor: pointer; font-size: 0.75rem; font-weight: 600; padding: 0.25rem 0.6rem; border-radius: 6px; line-height: 1; }
+.clearAllDrafts:hover { background: #FEE2E2; border-color: #FCA5A5; }
 .emptyDrafts { font-size: 0.82rem; color: var(--color-text-muted); text-align: center; padding: 1.5rem 0; }
 .draftsList { display: flex; flex-direction: column; gap: 0.35rem; }
 .draftItem { display: flex; align-items: center; gap: 0.35rem; }
