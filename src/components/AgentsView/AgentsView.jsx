@@ -1183,10 +1183,11 @@ export function AgentsView({ prospects = [], settings }) {
     for (const r of records) {
       const stage = String(r.Stage || '').trim();
       if (!stage || EXCLUDED_STAGES.has(stage)) continue;
-      // No BFO Opportunity Name: blank, "-", or "#N/A" all count as
-      // "no link yet" and qualify the row for creation in BFO.
+      // No BFO Opportunity Name: only a truly blank value qualifies the
+      // row for creation in BFO. "-" and "#N/A" are treated as having a
+      // name (they're deliberate placeholders) and are excluded.
       const bfoLink = String(r['BFO Link'] ?? '').trim();
-      if (bfoLink && bfoLink !== '-' && bfoLink !== '#N/A') continue;
+      if (bfoLink) continue;
       const callInRaw = String(r['Call In'] ?? '').trim();
       const account = String(r.Account || '').trim();
       const leadSource = String(r['Lead Source'] || r['Source'] || '').trim();
@@ -1889,7 +1890,7 @@ export function AgentsView({ prospects = [], settings }) {
               <span className={styles.sectionCount}>{newBfoOpps.length}</span>
             </h2>
             <p className={styles.subnote}>
-              Lists Opps whose Stage is not Not Started / Not Sold / Sold and that have no BFO Opportunity Name (BFO Link blank, &ldquo;-&rdquo;, or &ldquo;#N/A&rdquo;).
+              Lists Opps whose Stage is not Not Started / Not Sold / Sold and that have a blank BFO Opportunity Name (BFO Link empty). Rows with a value &mdash; including &ldquo;-&rdquo; or &ldquo;#N/A&rdquo; &mdash; are excluded.
             </p>
             {revealedPrompts.newBfoOpp && (
               <textarea
