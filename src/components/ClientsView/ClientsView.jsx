@@ -310,10 +310,11 @@ function ContractTable({ deals }) {
   );
 }
 
-function readSavedSubtab(storageKey) {
+const SUBTAB_STORAGE_KEY = 'clients-view:active-subtab';
+function readSavedSubtab() {
   try {
-    const s = localStorage.getItem(storageKey);
-    if (s === 'clients' || s === 'deals' || s === 'commissions') return s;
+    const s = localStorage.getItem(SUBTAB_STORAGE_KEY);
+    if (s === 'clients' || s === 'oldclients' || s === 'deals' || s === 'commissions') return s;
   } catch {}
   return 'clients';
 }
@@ -330,25 +331,25 @@ function normStatus(s) {
 function isClient(p) { return normStatus(p.status) === 'client'; }
 function isOldClient(p) { return normStatus(p.status) === 'old client'; }
 
-export function ClientsView({ prospects = [], cdmName, settings, updateSettings, mode = 'client' }) {
-  // `mode` lets this same view back both the Clients tab and a mirrored
-  // Old Clients tab. The only real difference is which Status the
-  // primary list filters on; the secondary "Include …" toggle pulls in
-  // the other bucket. Labels and per-tab persistence keys follow suit.
-  const isOldMode = mode === 'oldClient';
+export function ClientsView({ prospects = [], cdmName, settings, updateSettings }) {
+  const [subtab, setSubtab] = useState(readSavedSubtab);
+  function selectSubtab(key) {
+    setSubtab(key);
+    try { localStorage.setItem(SUBTAB_STORAGE_KEY, key); } catch {}
+  }
+
+  // The Clients and Old Clients subtabs share this view; the only real
+  // difference is which Status the primary list filters on. The secondary
+  // "Include …" toggle pulls in the other bucket. Labels and the table id
+  // (so column widths persist independently) follow the active subtab.
+  const isOldMode = subtab === 'oldclients';
   const primaryMatch = isOldMode ? isOldClient : isClient;
   const secondaryMatch = isOldMode ? isClient : isOldClient;
   const statusLabel = isOldMode ? 'Old Client' : 'Client';
   const otherLabel = isOldMode ? 'Client' : 'Old Client';
   const headingLabel = isOldMode ? 'Old Clients' : 'Clients';
-  const subtabStorageKey = isOldMode ? 'oldclients-view:active-subtab' : 'clients-view:active-subtab';
   const tableId = isOldMode ? 'oldclients' : 'clients';
 
-  const [subtab, setSubtab] = useState(() => readSavedSubtab(subtabStorageKey));
-  function selectSubtab(key) {
-    setSubtab(key);
-    try { localStorage.setItem(subtabStorageKey, key); } catch {}
-  }
   const [showOld, setShowOld] = useState(false);
   const [query, setQuery] = useState('');
   const [expandedIds, setExpandedIds] = useState(() => new Set());
@@ -400,7 +401,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
   // subtab — same-window upload / mapping changes on the Deals subtab
   // don't fire storage.
   useEffect(() => {
-    if (subtab === 'clients') {
+    if (subtab === 'clients' || subtab === 'oldclients') {
       setDealsList(loadDealsList().data);
       setClientMap(loadDealClientMap());
       setManagerMap(loadClientManagerMap());
@@ -683,6 +684,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
     <div style={{ display: 'flex', gap: '0.25rem', padding: '0.5rem 1.25rem 0', borderBottom: '1px solid #E2E8F0', flexShrink: 0 }}>
       {[
         { key: 'clients', label: 'Clients' },
+        { key: 'oldclients', label: 'Old Clients' },
         { key: 'deals', label: 'Deals' },
         { key: 'commissions', label: 'Commissions' },
       ].map(t => {
