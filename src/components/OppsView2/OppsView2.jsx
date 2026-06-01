@@ -70,7 +70,7 @@ const DEFAULT_HEADERS = [
   'Account', 'Open Year', 'Contact', 'Stage', 'Scope', 'Source', 'Type', 'Sales Partner',
   'Start Date', 'Status', 'Quoted Amount', 'Sites', 'Age',
   'Last Client Heard From Us', 'Last Spoke', 'Follow Up', 'Call In', 'Notes',
-  'Next Steps', 'No Further Action Today', 'Competition', 'Waiting On', 'Close Date', 'BFO Link',
+  'Next Steps', 'No Further Action Today', 'Competition', 'Waiting On', 'Close Date', 'BFO Link', 'BFO Company Name',
   'Pricing Option',
   // Quote-stage detail columns. Captured via the QuotedFollowUpModal that
   // pops when an opp moves into the "Quoted" stage.
@@ -165,7 +165,7 @@ const COMPUTED_COLUMNS = ['Last Spoke', 'Call In'];
 // it up — and its "Find out the Story" default lands somewhere
 // visible on the next new opp.
 const ENSURED_COLUMNS = [...COMPUTED_COLUMNS, 'Next Steps', 'Pricing Option', 'No Further Action Today', 'Sales Partner',
-  'Quoted On', 'Chance?', 'Margin Email Date - Sales Leader Review Date'];
+  'Quoted On', 'Chance?', 'Margin Email Date - Sales Leader Review Date', 'BFO Company Name'];
 
 // Merge a remote Firestore snapshot into local React state at the record
 // level so two browsers open on the same page stay in sync without full
