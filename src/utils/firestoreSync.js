@@ -105,7 +105,15 @@ function waitFrame() {
 }
 
 export async function replaceAllProspects(existingIds, newProspects, onProgress) {
-  const totalSteps = existingIds.length + newProspects.length;
+  // Delete the *actual* current documents, not just the caller-supplied
+  // IDs. A stale in-memory list — e.g. a re-import that ran before the
+  // collection finished loading — previously left old docs behind and
+  // wrote a fresh full copy alongside them, doubling the whole
+  // collection. Reading the live IDs makes the clear complete and the
+  // import idempotent no matter what the caller passes.
+  const snap = await getDocs(getCol());
+  const idsToDelete = Array.from(new Set([...(existingIds || []), ...snap.docs.map(d => d.id)]));
+  const totalSteps = idsToDelete.length + newProspects.length;
   let completed = 0;
 
   async function report(phase) {
@@ -116,11 +124,11 @@ export async function replaceAllProspects(existingIds, newProspects, onProgress)
   }
 
   // Delete existing in batches
-  for (let i = 0; i < existingIds.length; i += 400) {
+  for (let i = 0; i < idsToDelete.length; i += 400) {
     const batch = writeBatch(db);
-    existingIds.slice(i, i + 400).forEach(id => batch.delete(getDoc(id)));
+    idsToDelete.slice(i, i + 400).forEach(id => batch.delete(getDoc(id)));
     await batch.commit();
-    completed += Math.min(400, existingIds.length - i);
+    completed += Math.min(400, idsToDelete.length - i);
     await report('Clearing old data');
   }
   // Add new in batches
@@ -134,7 +142,7 @@ export async function replaceAllProspects(existingIds, newProspects, onProgress)
     completed += Math.min(400, newProspects.length - i);
     await report('Writing new data');
   }
-  return { deleted: existingIds.length, added: newProspects.length };
+  return { deleted: idsToDelete.length, added: newProspects.length };
 }
 
 // Fields worth preserving when collapsing duplicate prospects. If the
