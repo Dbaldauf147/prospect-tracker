@@ -227,6 +227,19 @@ function todayISO() {
   return `${y}-${m}-${day}`;
 }
 
+// ISO date for `n` calendar days before today. Used to back-date
+// `_stageEnteredAt` so a seeded "Days in Stage" reads correctly today
+// and keeps incrementing by a day from here, same as a real stage entry.
+function isoDaysAgo(n) {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - n);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 function makeBlankOpp(id, headers, accountOverride, sourceOverride) {
   const row = { _id: id, id, _rowUpdatedAt: Date.now() }; // id mirrored so DataTable's row key stays stable across edits
   const cols = (Array.isArray(headers) && headers.length) ? headers : DEFAULT_HEADERS;
@@ -5300,6 +5313,75 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     setDateFrom(''); setDateTo(''); setStatusFilter('all'); setActivityFilter('all');
   };
 
+  // One-time import: seed each opp's stage clock from the BFO Activity
+  // "Days in Stage" number. We back-date `_stageEnteredAt` to today minus
+  // that count so the Days-in-Stage view reads the BFO value now and then
+  // grows by a day each day from here, exactly like a normal stage entry.
+  // Matches by BFO Opportunity Name (the opp's `BFO Link`).
+  const [importingStageDays, setImportingStageDays] = useState(false);
+  async function importStageDaysFromBfo() {
+    if (importingStageDays) return;
+    let bfo = null;
+    try { bfo = await dbGet('bfo-activity', 'current'); } catch { bfo = null; }
+    const bfoHeaders = bfo?.headers || [];
+    const bfoRows = bfo?.rows || [];
+    if (!bfoRows.length) {
+      alert('No BFO Activity data found. Paste your BFO export on the BFO Activity page first.');
+      return;
+    }
+    const nameCol = bfoHeaders.find(h => /opportunity\s*name/i.test(h));
+    const daysCol = bfoHeaders.find(h => /days?\s*in\s*(current\s+)?stage/i.test(h));
+    if (!nameCol || !daysCol) {
+      alert('Could not find the needed BFO columns — the export needs an "Opportunity Name" column and a "Days in Stage" column.');
+      return;
+    }
+    // BFO Opportunity Name (lowercased) → Days in Stage. First non-empty wins.
+    const daysByName = new Map();
+    for (const r of bfoRows) {
+      const key = String(r[nameCol] || '').trim().toLowerCase();
+      if (!key || daysByName.has(key)) continue;
+      const n = parseInt(String(r[daysCol] ?? '').replace(/[^\d-]/g, ''), 10);
+      if (Number.isFinite(n) && n >= 0) daysByName.set(key, n);
+    }
+    if (daysByName.size === 0) {
+      alert('No usable "Days in Stage" numbers found in the BFO Activity data.');
+      return;
+    }
+    let matched = 0;
+    const nextRecords = (data?.records || []).map(r => {
+      const link = String(r['BFO Link'] || '').trim().toLowerCase();
+      if (!link) return r;
+      const days = daysByName.get(link);
+      if (days == null) return r;
+      matched += 1;
+      return { ...r, _stageEnteredAt: isoDaysAgo(days), _rowUpdatedAt: Date.now() };
+    });
+    if (matched === 0) {
+      alert('No Opps 2 opps matched a BFO Opportunity Name with a Days in Stage value.');
+      return;
+    }
+    if (!confirm(`Seed "Days in Stage" for ${matched} opp${matched === 1 ? '' : 's'} from the BFO Activity export? This overwrites the stage-entered date for those opps; from tomorrow they grow by a day as usual.`)) {
+      return;
+    }
+    setImportingStageDays(true);
+    try {
+      const nextState = { ...(data || {}), records: nextRecords };
+      setData(nextState);
+      await saveOpps2Cache(nextState);
+      if (user?.uid) {
+        try {
+          const ts = await saveOpps2ToFirestore(user.uid, nextState);
+          if (ts != null) lastFsSavedAtRef.current = ts;
+        } catch (err) {
+          console.error('Days-in-Stage import: Firestore save failed:', err);
+        }
+      }
+      alert(`Seeded Days in Stage for ${matched} opp${matched === 1 ? '' : 's'}.`);
+    } finally {
+      setImportingStageDays(false);
+    }
+  }
+
   // Rows for the Days-in-Stage tab. Reads `_stageEnteredAt` (stamped by
   // updateOppField when Stage flips) and falls back to Start Date so
   // pre-existing opps that have never had a stage change still
@@ -5991,6 +6073,14 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               />
               Hide Not Started ({(stageDaysByStage.get('Not Started') || []).length})
             </label>
+            <button
+              type="button"
+              className={styles.syncBtn}
+              onClick={importStageDaysFromBfo}
+              disabled={importingStageDays}
+              title="One-time only: seed each opp's Days in Stage from the matching BFO Activity row's Days in Stage value (matched by BFO Opportunity Name). Afterward it keeps growing by a day on its own. This does NOT import opps — it only sets the stage clock."
+              style={{ marginLeft: 'auto' }}
+            >{importingStageDays ? 'Seeding…' : 'Seed Days in Stage from BFO Activity (one-time)'}</button>
           </div>
           <div style={{
             display: 'flex', gap: 12, overflowX: 'auto',
