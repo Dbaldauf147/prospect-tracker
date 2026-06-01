@@ -1454,6 +1454,32 @@ function findProspectForAccount(account, prospects) {
   return exact || alias;
 }
 
+// "BFO Company Name" lives on the Table View company record (prospect),
+// not the opp. This cell sources its value from the prospect matching
+// the opp's Account and writes edits straight back to that prospect's
+// `bfoCompanyName`, so the two views stay in sync. When no Table View
+// company matches there's nowhere to store the value, so it renders
+// read-only with a hint to add the company on the Table View first.
+function BfoCompanyNameCell({ account, prospects, updateProspect }) {
+  const matched = useMemo(() => findProspectForAccount(account, prospects), [account, prospects]);
+  if (!matched || !updateProspect) {
+    return (
+      <span
+        style={{ color: 'var(--color-text-muted)' }}
+        title={matched ? undefined : 'Add this company on the Table View to set its BFO Company Name'}
+      >
+        {String(matched?.bfoCompanyName || '').trim() || '—'}
+      </span>
+    );
+  }
+  return (
+    <EditableCell
+      value={matched.bfoCompanyName || ''}
+      onChange={(v) => updateProspect(matched.id, { bfoCompanyName: v })}
+    />
+  );
+}
+
 function ContactCell({ value, onChange, account, prospects, updateProspect, hubspotContacts, onOpenContact, onOpenCompany }) {
   // Single boolean for popover state — the popover handles both
   // viewing currently tagged contacts and adding new ones (from the
@@ -2459,6 +2485,11 @@ export function OppInfoModal({
           {value == null || value === '' ? '—' : String(value)}
         </span>
       );
+    }
+    // Sourced from the matching Table View company, independent of the
+    // opp's own edit callback, so it works even in the read-only modal.
+    if (h === 'BFO Company Name') {
+      return <BfoCompanyNameCell account={opp['Account']} prospects={prospects} updateProspect={updateProspect} />;
     }
     if (!onFieldChange) {
       // Fallback to the original read-only renderer when the modal is
@@ -4934,6 +4965,9 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                 onOpen={() => setNextStepsPopupId(row._id)}
               />
             );
+          }
+          if (h === 'BFO Company Name') {
+            return <BfoCompanyNameCell account={row['Account']} prospects={prospects} updateProspect={updateProspect} />;
           }
           return (
             <EditableCell
