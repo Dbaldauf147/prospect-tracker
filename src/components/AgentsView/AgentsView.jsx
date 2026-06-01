@@ -475,6 +475,33 @@ function boundsForDate(iso) {
   return { start, end: start + 24 * 60 * 60 * 1000 };
 }
 
+// The most recent business day strictly before `date` (skips Sat/Sun).
+function previousBusinessDay(date) {
+  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  do { d.setDate(d.getDate() - 1); } while (d.getDay() === 0 || d.getDay() === 6);
+  return d;
+}
+
+// ISO (YYYY-MM-DD) of the previous business day before the given ISO date.
+function previousBusinessDayIso(iso) {
+  const d = previousBusinessDay(parseIsoDate(iso));
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+// Millisecond window spanning the reference date PLUS the previous
+// business day — the "past 2 business days" the Activity sections
+// (Sent emails / Called opps) scope to.
+function boundsForActivityWindow(iso) {
+  const ref = parseIsoDate(iso);
+  const end = new Date(ref.getFullYear(), ref.getMonth(), ref.getDate()).getTime() + 24 * 60 * 60 * 1000;
+  const prev = previousBusinessDay(ref);
+  const start = new Date(prev.getFullYear(), prev.getMonth(), prev.getDate()).getTime();
+  return { start, end };
+}
+
 function fmtTime(ts) {
   if (!ts) return '—';
   const d = new Date(ts);
@@ -1061,6 +1088,14 @@ export function AgentsView({ prospects = [], settings }) {
       const t = new Date(ts || 0).getTime();
       return Number.isFinite(t) && t >= bounds.start && t < bounds.end;
     };
+    // Sent emails span the past 2 business days (the reference day plus
+    // the previous business day); meetings stay scoped to the single
+    // reference day.
+    const activityBounds = boundsForActivityWindow(referenceDate);
+    const inActivityWindow = (ts) => {
+      const t = new Date(ts || 0).getTime();
+      return Number.isFinite(t) && t >= activityBounds.start && t < activityBounds.end;
+    };
     const sentByMe = (e) => {
       if (!senderEmail) return false;
       const from = String(e.hs_email_from_email || '').toLowerCase().trim();
@@ -1068,7 +1103,7 @@ export function AgentsView({ prospects = [], settings }) {
     };
     const outbound = senderEmail ? (cache?.emails || [])
       .filter(e => !(e.hs_email_subject || '').toLowerCase().includes('(sample email)'))
-      .filter(e => inToday(e.hs_timestamp))
+      .filter(e => inActivityWindow(e.hs_timestamp))
       .filter(sentByMe)
       .filter(e => hasExternalRecipient(e.hs_email_to_email))
       .filter(e => !ignoredEmailIds.has(String(e.id || e.hs_object_id)))
@@ -1211,7 +1246,10 @@ export function AgentsView({ prospects = [], settings }) {
     for (const r of records) {
       const nextSteps = String(r['Next Steps'] || '');
       if (!CALLED_NEXT_STEPS_RE.test(nextSteps)) continue;
-      if (lastSpokeBusinessDays(r, referenceDate) !== 0) continue;
+      // Include calls from the past 2 business days: 0 = the reference
+      // day itself, 1 = the previous business day.
+      const lsbd = lastSpokeBusinessDays(r, referenceDate);
+      if (lsbd !== 0 && lsbd !== 1) continue;
       const account = String(r.Account || '').trim();
       const bfoOpp = String(r['BFO Link'] || '').trim();
       rows.push({
@@ -1357,12 +1395,16 @@ export function AgentsView({ prospects = [], settings }) {
     return k ? (bfoLastActivityByName.get(k) || '') : '';
   };
 
-  // "Hide rows last active on the selected Activity date" toggle. The
-  // Last Activity value is whatever BFO pasted (usually M/D/YYYY) while
-  // referenceDate is ISO, so normalize both to ISO before comparing.
+  // "Hide rows last active in the activity window" toggle. The Sent /
+  // Called tables now span the past 2 business days, so this hides rows
+  // whose BFO Last Activity falls on either the reference day or the
+  // previous business day. Last Activity is whatever BFO pasted (usually
+  // M/D/YYYY) while referenceDate is ISO, so normalize both before
+  // comparing.
+  const prevBusinessDate = previousBusinessDayIso(referenceDate);
   const lastActivityOnReference = (bfoOpp) => {
     const iso = toISODate(lastActivityFor(bfoOpp));
-    return !!iso && iso === referenceDate;
+    return !!iso && (iso === referenceDate || iso === prevBusinessDate);
   };
   const visibleCalledOpps = hideActivityOnDate
     ? calledOpps.filter(o => !lastActivityOnReference(o.bfoOpp))
@@ -1679,7 +1721,7 @@ export function AgentsView({ prospects = [], settings }) {
         </label>
         <label
           className={styles.hideActivityField}
-          title="Hide rows in the Called and Sent tables whose Last Activity is the same day as the selected Activity date."
+          title="Hide rows in the Called and Sent tables whose Last Activity falls within the past 2 business days (the selected Activity date or the previous business day)."
         >
           <input
             type="checkbox"
@@ -1690,7 +1732,7 @@ export function AgentsView({ prospects = [], settings }) {
               writeHideActivityOnDate(on);
             }}
           />
-          Hide rows last active on this date
+          Hide rows last active in the past 2 business days
         </label>
         <button
           type="button"
@@ -1720,7 +1762,7 @@ export function AgentsView({ prospects = [], settings }) {
       )}
       {senderEmail ? (
         <p className={styles.subnote}>
-          {isToday ? 'Today’s' : `${dateLabel}’s`} outbound emails from <strong>{senderEmail}</strong> to non-SE recipients, plus any meetings on that day&rsquo;s calendar. BFO Opportunity tagging walks each recipient&rsquo;s email against the Opps tab&rsquo;s Contact field first, then falls back to fuzzy-matching the HubSpot company against the Opps tab&rsquo;s Account field. When neither matches, use the inline picker to search the Opps tab — your selection is remembered for that recipient on future emails. The Company column falls back to HubSpot&rsquo;s contact record when no Opp is matched.
+          Outbound emails from <strong>{senderEmail}</strong> to non-SE recipients over the past 2 business days (through {isToday ? 'today' : dateLabel}), plus any meetings on {isToday ? 'today' : `${dateLabel}`}&rsquo;s calendar. BFO Opportunity tagging walks each recipient&rsquo;s email against the Opps tab&rsquo;s Contact field first, then falls back to fuzzy-matching the HubSpot company against the Opps tab&rsquo;s Account field. When neither matches, use the inline picker to search the Opps tab — your selection is remembered for that recipient on future emails. The Company column falls back to HubSpot&rsquo;s contact record when no Opp is matched.
         </p>
       ) : (
         <div className={styles.staleBanner}>
@@ -1797,7 +1839,7 @@ export function AgentsView({ prospects = [], settings }) {
         </table>
         {hideActivityOnDate && calledHiddenCount > 0 && (
           <p className={styles.subnote}>
-            Hiding {calledHiddenCount} row{calledHiddenCount === 1 ? '' : 's'} last active on {dateLabel}.
+            Hiding {calledHiddenCount} row{calledHiddenCount === 1 ? '' : 's'} last active in the past 2 business days.
           </p>
         )}
       </section>
@@ -1895,7 +1937,7 @@ export function AgentsView({ prospects = [], settings }) {
         </table>
         {hideActivityOnDate && outboundHiddenCount > 0 && (
           <p className={styles.subnote}>
-            Hiding {outboundHiddenCount} email{outboundHiddenCount === 1 ? '' : 's'} last active on {dateLabel}.
+            Hiding {outboundHiddenCount} email{outboundHiddenCount === 1 ? '' : 's'} last active in the past 2 business days.
           </p>
         )}
         {excludedRecipients.length > 0 && (
@@ -2002,7 +2044,7 @@ export function AgentsView({ prospects = [], settings }) {
           <section className={styles.section}>
             <h2 className={styles.sectionHeader}>AI Prompt (Activity)</h2>
             <p className={styles.subnote}>
-              Today&rsquo;s BFO addresses are appended automatically. Click Copy to grab the full prompt for your AI assistant, or Edit prompt to tweak the wording.
+              The past 2 business days&rsquo; BFO addresses (sent emails and calls) are appended automatically. Click Copy to grab the full prompt for your AI assistant, or Edit prompt to tweak the wording.
             </p>
             {revealedPrompts.activity && (
               <textarea
