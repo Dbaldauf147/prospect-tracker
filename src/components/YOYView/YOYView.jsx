@@ -197,11 +197,13 @@ export function YOYView() {
 
   // Quoted Projections — month-end snapshots the user records (editable
   // via "Edit values"), plotted across the Dec→Nov fiscal year. Values
-  // are in $K: weak/ok/expected are the quoted-$ Chance buckets,
-  // agreements is Agreements Sent, and bfoPipe is the total BFO pipeline
-  // $ (its own axis since it runs larger). Months with no recorded value
-  // are left null so the lines break rather than dropping to zero.
+  // are in $K: weak/ok/expected are the quoted-$ Chance buckets and
+  // agreements is Agreements Sent. BFO Pipe Total stays the computed
+  // coverage ratio — the three Chance buckets ÷ the monthly $ target —
+  // shown on its own axis. Months with no recorded value are left null
+  // so the lines break rather than dropping to zero.
   const quotedData = useMemo(() => {
+    const monthlyTarget = target > 0 ? target / 12 : 0; // dollars
     const num = (x) => {
       if (x === '' || x == null) return null;
       const n = Number(x);
@@ -214,11 +216,16 @@ export function YOYView() {
       const ok = v ? num(v.ok) : null;
       const expected = v ? num(v.expected) : null;
       const agreements = v ? num(v.agreements) : null;
-      const bfoPipe = v ? num(v.bfoPipe) : null;
-      const _hasData = [weak, ok, expected, agreements, bfoPipe].some(x => x != null);
+      const _hasData = [weak, ok, expected, agreements].some(x => x != null);
+      // Quoted total ($K) → dollars ÷ monthly target. null when there's
+      // nothing quoted that month so the dashed line breaks.
+      const quotedTotalK = (weak || 0) + (ok || 0) + (expected || 0);
+      const bfoPipe = (monthlyTarget > 0 && quotedTotalK > 0)
+        ? +((quotedTotalK * 1000) / monthlyTarget).toFixed(2)
+        : null;
       return { month: m.label, year: m.year, monthKey: key, weak, ok, expected, agreements, bfoPipe, _hasData };
     });
-  }, [quotedTable, currentYear]);
+  }, [quotedTable, currentYear, target]);
 
   // Close Rate — stacked bar of In Progress / Sold / Not Sold per Open
   // Year (percentages summing to 100), plus two C/R lines.
@@ -924,7 +931,7 @@ export function YOYView() {
       'Quoted OK ($K)': r.ok ?? '',
       'Quoted Expected ($K)': r.expected ?? '',
       'Agreements Sent ($K)': r.agreements ?? '',
-      'BFO Pipe Total ($K)': r.bfoPipe ?? '',
+      'BFO Pipe Total (ratio)': r.bfoPipe == null ? '' : r.bfoPipe,
     }));
     const wb = XLSX.utils.book_new();
     appendSheet(wb, `Quoted Projections ${currentYear}`, summary);
@@ -1067,7 +1074,7 @@ export function YOYView() {
         />
         <div className={styles.row}>
           <LeadsCard data={leadsData} hasOpps={hasOpps} onDownload={downloadLeads} />
-          <QuotedProjectionsCard data={quotedData} quotedTable={quotedTable} onSaveTable={updateQuotedTable} onDownload={downloadQuoted} />
+          <QuotedProjectionsCard data={quotedData} quotedTable={quotedTable} onSaveTable={updateQuotedTable} target={target} onDownload={downloadQuoted} />
           <CloseRateCard data={closeRateData} hasOpps={hasOpps} onDownload={downloadCloseRate} />
         </div>
         <div className={styles.row}>
@@ -1264,9 +1271,10 @@ function LeadsCard({ data, hasOpps, onDownload }) {
   );
 }
 
-function QuotedProjectionsCard({ data, quotedTable, onSaveTable, onDownload }) {
+function QuotedProjectionsCard({ data, quotedTable, onSaveTable, target, onDownload }) {
   const [editing, setEditing] = useState(false);
   const hasAnyValues = data.some(r => r._hasData);
+  const monthlyTarget = target > 0 ? target / 12 : 0;
   return (
     <div className={styles.chartCard}>
       <ChartHeader title="Quoted Projections" onDownload={onDownload} canDownload={hasAnyValues} />
@@ -1287,23 +1295,27 @@ function QuotedProjectionsCard({ data, quotedTable, onSaveTable, onDownload }) {
               tickFormatter={fmtKLabel}
             />
             <YAxis
-              yAxisId="pipe"
+              yAxisId="ratio"
               orientation="right"
               tick={{ fontSize: 12 }}
-              tickFormatter={fmtKLabel}
+              tickFormatter={(v) => v.toFixed(2)}
             />
             <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
                 labelText={(label, row) => `${label} ${row.year}`}
-                valueFormat={(v) => (v == null ? '—' : fmtKLabel(v))}
+                valueFormat={(v, name) => {
+                  if (name === 'BFO Pipe Total') return v == null ? '—' : v.toFixed(2);
+                  return v == null ? '—' : fmtKLabel(v);
+                }}
                 explain={(row) => ({
-                  formula: 'Recorded month-end values (in $K). Quoted Weak/OK/Expected are the quoted-$ Chance buckets, Agreements Sent is contracts out, BFO Pipe Total is total pipeline $ (its own axis). Edit via “Edit values”.',
+                  formula: 'Recorded month-end values (in $K) for the quoted-$ Chance buckets and Agreements Sent. BFO Pipe Total = (Weak+OK+Expected) ÷ monthly target, on its own axis. Edit via “Edit values”.',
                   inputs: [
                     { label: 'Quoted Weak', value: row.weak == null ? '—' : fmtKLabel(row.weak) },
                     { label: 'Quoted OK', value: row.ok == null ? '—' : fmtKLabel(row.ok) },
                     { label: 'Quoted Expected', value: row.expected == null ? '—' : fmtKLabel(row.expected) },
                     { label: 'Agreements Sent', value: row.agreements == null ? '—' : fmtKLabel(row.agreements) },
-                    { label: 'BFO Pipe Total', value: row.bfoPipe == null ? '—' : fmtKLabel(row.bfoPipe) },
+                    { label: 'Monthly target', value: monthlyTarget > 0 ? fmtMoneyFull(Math.round(monthlyTarget)) : '—' },
+                    { label: 'BFO Pipe Total', value: row.bfoPipe == null ? '—' : row.bfoPipe.toFixed(2) },
                   ],
                   note: row._hasData ? null : 'No values recorded for this month yet.',
                 })}
@@ -1321,7 +1333,7 @@ function QuotedProjectionsCard({ data, quotedTable, onSaveTable, onDownload }) {
             </Line>
             <Line yAxisId="dollars" dataKey="agreements" name="Agreements Sent" stroke="#ef4444" strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false} connectNulls />
             <Line
-              yAxisId="pipe"
+              yAxisId="ratio"
               dataKey="bfoPipe"
               name="BFO Pipe Total"
               stroke="#111827"
@@ -1331,7 +1343,7 @@ function QuotedProjectionsCard({ data, quotedTable, onSaveTable, onDownload }) {
               isAnimationActive={false}
               connectNulls
             >
-              <LabelList dataKey="bfoPipe" position="top" style={{ fontSize: 10, fontWeight: 600, fill: '#111827' }} formatter={fmtKLabel} />
+              <LabelList dataKey="bfoPipe" position="top" style={{ fontSize: 10, fontWeight: 600, fill: '#111827' }} formatter={(v) => v == null ? '' : v.toFixed(2)} />
             </Line>
           </ComposedChart>
         </ResponsiveContainer>
@@ -1383,7 +1395,7 @@ function QuotedProjectionsEditor({ rows, table, onClose, onSave }) {
   };
   const labels = [
     ['weak', 'Quoted Weak'], ['ok', 'Quoted OK'], ['expected', 'Quoted Expected'],
-    ['agreements', 'Agreements Sent'], ['bfoPipe', 'BFO Pipe Total'],
+    ['agreements', 'Agreements Sent'],
   ];
   return createPortal(
     <div className={styles.modalOverlay} onClick={onClose}>
