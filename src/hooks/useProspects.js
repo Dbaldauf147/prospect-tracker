@@ -9,10 +9,12 @@ export function useProspects(user) {
   const seededRef = useRef(false);
   const pausedRef = useRef(false);
   const unsubRef = useRef(null);
+  const dedupeRanRef = useRef(false);
 
   useEffect(() => {
     if (!user) { setProspects([]); setLoading(false); setProspectsUser(null, null); return; }
     setProspectsUser(user.uid, user.email);
+    dedupeRanRef.current = false; // re-arm the one-time cleanup for this user
 
     async function init() {
       try {
@@ -41,6 +43,26 @@ export function useProspects(user) {
     init();
     return () => { if (unsubRef.current) unsubRef.current(); };
   }, [user]);
+
+  // One-time automatic cleanup: once the collection has loaded, collapse
+  // any duplicate prospect documents (same company stored twice). The
+  // deletions stream back through the live subscription, so every page
+  // that reads `prospects` self-heals without a manual step. No-ops when
+  // there are no duplicates.
+  useEffect(() => {
+    if (loading || dedupeRanRef.current || !user) return;
+    dedupeRanRef.current = true;
+    (async () => {
+      try {
+        const result = await dedupeProspects();
+        if (result.removed > 0) {
+          console.log(`Auto-removed ${result.removed} duplicate prospect(s) across ${result.groups} compan${result.groups === 1 ? 'y' : 'ies'}`);
+        }
+      } catch (err) {
+        console.warn('Auto de-dupe failed:', err.message);
+      }
+    })();
+  }, [loading, user]);
 
   async function addProspect(prospect) {
     return addDoc(prospect);
