@@ -61,14 +61,6 @@ function compareValues(a, b) {
   return String(a).localeCompare(String(b));
 }
 
-function ageClass(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return '';
-  if (n <= 60) return styles.ageGreen;
-  if (n <= 180) return styles.ageAmber;
-  return styles.ageRed;
-}
-
 export function BFOActivityView() {
   const [data, setData] = useState({ headers: [], rows: [] });
   const [search, setSearch] = useState('');
@@ -243,6 +235,40 @@ export function BFOActivityView() {
     return map;
   }, [opps]);
 
+  // Set of BFO Opportunity Names that exist on Opps 2 (keyed by the
+  // "BFO Link" field, lowercased + trimmed) used to flag BFO Activity
+  // rows whose Opportunity Name has no matching opp.
+  const oppNameKeys = useMemo(() => {
+    const set = new Set();
+    const records = (opps && Array.isArray(opps.records)) ? opps.records : [];
+    for (const r of records) {
+      const k = String(r['BFO Link'] || '').trim().toLowerCase();
+      if (k) set.add(k);
+    }
+    return set;
+  }, [opps]);
+
+  // Opportunity Names in the pasted BFO data that don't match any opp
+  // on Opps 2. Only meaningful once the Opps 2 cache has loaded — when
+  // it hasn't (oppNameKeys empty) we suppress the warning rather than
+  // flag every row.
+  const unmatchedOppNames = useMemo(() => {
+    if (!data?.headers?.length || oppNameKeys.size === 0) return [];
+    const oppCol = data.headers.find(h => /opportunity\s*name/i.test(h));
+    if (!oppCol) return [];
+    const seen = new Set();
+    const missing = [];
+    for (const r of data.rows) {
+      const raw = String(r[oppCol] || '').trim();
+      if (!raw) continue;
+      const k = raw.toLowerCase();
+      if (oppNameKeys.has(k) || seen.has(k)) continue;
+      seen.add(k);
+      missing.push(raw);
+    }
+    return missing;
+  }, [data, oppNameKeys]);
+
   // Build a derived view of the BFO data with the synthetic Lead
   // Source column injected. Persisted `data` is left untouched so the
   // saved BFO snapshot doesn't accumulate the lookup column on each
@@ -339,6 +365,17 @@ export function BFOActivityView() {
         </div>
       )}
 
+      {unmatchedOppNames.length > 0 && (
+        <div style={{ padding: '0 1.25rem 0.5rem' }}>
+          <div className={styles.warning}>
+            <strong>
+              ⚠ {unmatchedOppNames.length} Opportunity Name{unmatchedOppNames.length === 1 ? '' : 's'} not found on Opps 2:
+            </strong>{' '}
+            {unmatchedOppNames.join(', ')}
+          </div>
+        </div>
+      )}
+
       <div className={styles.body}>
         {pasteOpen && (
           <div className={styles.pasteBox}>
@@ -415,7 +452,6 @@ export function BFOActivityView() {
                         const isAge = /^age$/i.test(h);
                         const isAmount = /^amount$/i.test(h);
                         const classes = [
-                          isAge ? ageClass(v) : '',
                           (isAge || isAmount) ? styles.nowrapCell : '',
                         ].filter(Boolean).join(' ');
                         return <td key={h} className={classes}>{v}</td>;
