@@ -545,26 +545,20 @@ function easternWallToUtcMs(year, month, day, hour, minute) {
   return guess + (guess - obs);
 }
 
-// The most recent 2:00 PM America/New_York instant. If `nowMs` is
-// still before today's 2 PM Eastern, returns yesterday's 2 PM Eastern.
-function lastEastern2pmMs(nowMs = Date.now()) {
+// Midnight (00:00) America/New_York at the start of the current Eastern
+// day. The No-Further-Action-Today auto-clear uses this as its cutoff,
+// so every mark made on a previous day clears at the start of the new
+// day, while a mark made today persists until the next midnight.
+function startOfTodayEasternMs(nowMs = Date.now()) {
   const fmt = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/New_York',
     year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', hour12: false,
   });
   const parts = {};
   for (const p of fmt.formatToParts(new Date(nowMs))) {
     if (p.type !== 'literal') parts[p.type] = p.value;
   }
-  let y = Number(parts.year), m = Number(parts.month), d = Number(parts.day);
-  const hourEastern = Number(parts.hour) % 24;
-  const minuteEastern = Number(parts.minute);
-  if (hourEastern < 14 || (hourEastern === 14 && minuteEastern < 0)) {
-    const yest = new Date(Date.UTC(y, m - 1, d) - 86400000);
-    y = yest.getUTCFullYear(); m = yest.getUTCMonth() + 1; d = yest.getUTCDate();
-  }
-  return easternWallToUtcMs(y, m, d, 14, 0);
+  return easternWallToUtcMs(Number(parts.year), Number(parts.month), Number(parts.day), 0, 0);
 }
 
 // Values the Opps Google sheet uses to mean "no data" in cells where
@@ -4493,7 +4487,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         fields.push(snap('_stageHistory'));
       }
       // No Further Action Today flips track when the row was marked
-      // (see `_nfatSetAt`) so the daily 2 PM Eastern auto-clear can
+      // (see `_nfatSetAt`) so the daily start-of-day auto-clear can
       // tell yesterday's leftovers from today's marks. Snapshot it
       // for undo too.
       if (field === 'No Further Action Today') fields.push(snap('_nfatSetAt'));
@@ -4671,14 +4665,14 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     });
   }, []);
 
-  // Sweep stale "No Further Action Today" X's. The rule is: at or
-  // after 2:00 PM America/New_York, every row whose NFAT was marked
-  // BEFORE today's 2 PM Eastern gets cleared back to blank. We re-run
-  // the sweep on mount and every minute the tab is open, so a tab
-  // left open across 2 PM still self-clears without a reload.
+  // Sweep stale "No Further Action Today" X's. The rule is: at the
+  // start of each Eastern day, every row whose NFAT was marked BEFORE
+  // today's Eastern midnight gets cleared back to blank. We re-run the
+  // sweep on mount and every minute the tab is open, so a tab left open
+  // across midnight still self-clears without a reload.
   useEffect(() => {
     const sweep = () => {
-      const cutoff = lastEastern2pmMs();
+      const cutoff = startOfTodayEasternMs();
       setData(prev => {
         const records = prev?.records || [];
         let touched = false;
