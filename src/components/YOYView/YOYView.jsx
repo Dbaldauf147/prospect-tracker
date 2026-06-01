@@ -161,7 +161,9 @@ export function YOYView() {
     const ytdCount = byYear.get(currentYear) || 0;
     const frac = yearElapsedFraction(currentYear);
     const projected = frac > 0 ? Math.round(ytdCount / frac) : ytdCount;
-    rows.push({ year: 'Projected', count: projected, isProjected: true });
+    // _ytd / _frac feed the hover tooltip so the Projected bar can show
+    // its annualization (YTD count ÷ fraction of year elapsed).
+    rows.push({ year: 'Projected', count: projected, isProjected: true, _ytd: ytdCount, _frac: frac });
     return rows;
   }, [records, currentYear]);
 
@@ -264,6 +266,13 @@ export function YOYView() {
         inProgress: total > 0 ? +((inProgress / total) * 100).toFixed(2) : 0,
         totalCR: totalCR == null ? null : +totalCR.toFixed(2),
         quotedCR: quotedCR == null ? null : +quotedCR.toFixed(2),
+        // Raw counts behind the percentages / C/R lines, surfaced in the
+        // hover tooltip so each year's math can be audited.
+        _sold: sold,
+        _notSold: notSold,
+        _inProgress: inProgress,
+        _quotedNotSold: quotedNotSold,
+        _total: total,
       });
     }
     return rows;
@@ -332,7 +341,11 @@ export function YOYView() {
     const ytd = byYear.get(currentYear) || 0;
     const frac = yearElapsedFraction(currentYear);
     const projected = frac > 0 ? Math.round((ytd / frac) / 1000) : Math.round(ytd / 1000);
-    rows.push({ year: 'Projected', thousands: projected, isProjected: true });
+    // _ytdThousands / _frac let the tooltip explain the Projected bar.
+    rows.push({
+      year: 'Projected', thousands: projected, isProjected: true,
+      _ytdThousands: Math.round(ytd / 1000), _frac: frac,
+    });
     return rows;
   }, [records, currentYear]);
 
@@ -392,6 +405,10 @@ export function YOYView() {
         avgOppLife: lifeCount > 0 ? Math.round(lifeSum / lifeCount) : null,
         ageNotQuoted: notQuotedCount > 0 ? Math.round(notQuotedSum / notQuotedCount) : null,
         quoteToClose: qtcCount > 0 ? Math.round(qtcSum / qtcCount) : null,
+        // Sample sizes behind each averaged line, surfaced in the tooltip.
+        _lifeCount: lifeCount,
+        _notQuotedCount: notQuotedCount,
+        _qtcCount: qtcCount,
       });
     }
     // Projected Not Sold bar — annualize the current year's count.
@@ -401,6 +418,7 @@ export function YOYView() {
     rows.push({
       year: 'Projected', notSold: projected, isProjected: true,
       avgOppLife: null, ageNotQuoted: null, quoteToClose: null,
+      _ytdNotSold: ytdNotSold, _frac: frac,
     });
     return rows;
   }, [records, currentYear]);
@@ -600,6 +618,9 @@ export function YOYView() {
         quoted: s.quotedCount > 0 ? Math.round(s.quotedSum / s.quotedCount) : null,
         dealSize: s.soldCount > 0 ? Math.round(s.soldSum / s.soldCount) : null,
         _isProjected: false,
+        // Sample sizes behind the Quoted / Deal Size mean lines.
+        _quotedCount: s.quotedCount,
+        _soldCount: s.soldCount,
       });
     }
     // Projected — active-pipeline opps for the current year are added
@@ -632,6 +653,8 @@ export function YOYView() {
       quoted: projQuotedCount > 0 ? Math.round(projQuotedSum / projQuotedCount) : null,
       dealSize: projSoldCount > 0 ? Math.round(projSoldSum / projSoldCount) : null,
       _isProjected: true,
+      _quotedCount: projQuotedCount,
+      _soldCount: projSoldCount,
     });
     return rows;
   }, [records, yearRange, currentYear]);
@@ -647,6 +670,7 @@ export function YOYView() {
   // instead of a gap.
   const commissionsData = useMemo(() => {
     const byYear = new Map();
+    const countByYear = new Map();
     for (const row of (commissions || [])) {
       if (row?.__ignored) continue;
       const ts = Date.parse(row?.['Comm Start Date']);
@@ -661,13 +685,15 @@ export function YOYView() {
       }
       if (!any) continue;
       byYear.set(y, (byYear.get(y) || 0) + total);
+      countByYear.set(y, (countByYear.get(y) || 0) + 1);
     }
     if (byYear.size === 0) return [];
     const minY = Math.min(...byYear.keys());
     const maxY = Math.max(...byYear.keys());
     const rows = [];
     for (let y = minY; y <= maxY; y++) {
-      rows.push({ year: String(y), total: byYear.get(y) || 0 });
+      // _rowCount = roster rows that fed this year's total (tooltip input).
+      rows.push({ year: String(y), total: byYear.get(y) || 0, _rowCount: countByYear.get(y) || 0 });
     }
     return rows;
   }, [commissions]);
@@ -1022,7 +1048,7 @@ export function YOYView() {
         </div>
         <div className={styles.row}>
           <TopAccountsCard data={topAccountsData} hasOpps={hasOpps} onDownload={downloadTopAccounts} />
-          <AnnualSalesCard data={annualSalesData} hasOpps={hasOpps} onDownload={downloadAnnualSales} />
+          <AnnualSalesCard data={annualSalesData} hasOpps={hasOpps} target={target} onDownload={downloadAnnualSales} />
           <DealSizeCard data={dealSizeData} hasOpps={hasOpps} onDownload={downloadDealSize} />
         </div>
         <div className={styles.row}>
@@ -1083,6 +1109,60 @@ function ChartHeader({ title, onDownload, canDownload }) {
   );
 }
 
+// Shared hover tooltip for every YOY chart. Recharts clones this element
+// with `active` / `payload` / `label` injected at hover time. Beyond the
+// usual per-series values it makes two things explicit:
+//   1. None of the YOY numbers are static — they're recomputed live from
+//      the Opps cache — so a "∑ calculated" badge sits in the header.
+//   2. The formula and the specific inputs that produced *this* point, so
+//      a number can be sanity-checked without opening the .xlsx export.
+// `valueFormat(value, name, row)` formats each series line; `explain(row)`
+// returns { formula, inputs: [{label, value}], note } for the lower block.
+function CalcTooltip({
+  active, payload, label,
+  labelText, valueFormat, explain,
+}) {
+  if (!active || !payload || payload.length === 0) return null;
+  const row = payload[0]?.payload || {};
+  const info = explain ? explain(row, payload, label) : null;
+  const heading = labelText ? labelText(label, row) : label;
+  return (
+    <div className={styles.calcTip}>
+      <div className={styles.calcTipHead}>
+        <span className={styles.calcTipLabel}>{heading}</span>
+        <span className={styles.calcTipBadge} title="Recomputed live from the Opps cache — not a stored value">∑ calculated</span>
+      </div>
+      <div className={styles.calcTipSeries}>
+        {payload.map((p, i) => (
+          <div key={i} className={styles.calcTipRow}>
+            <span className={styles.calcTipSwatch} style={{ background: p.color || p.stroke || p.fill || '#94a3b8' }} />
+            <span className={styles.calcTipName}>{p.name}</span>
+            <span className={styles.calcTipVal}>
+              {valueFormat ? valueFormat(p.value, p.name, row) : (p.value == null ? '—' : p.value)}
+            </span>
+          </div>
+        ))}
+      </div>
+      {info && (info.formula || (info.inputs && info.inputs.length) || info.note) ? (
+        <div className={styles.calcTipExplain}>
+          {info.formula ? <div className={styles.calcTipFormula}>{info.formula}</div> : null}
+          {Array.isArray(info.inputs) && info.inputs.length > 0 ? (
+            <div className={styles.calcTipInputs}>
+              {info.inputs.map((it, i) => (
+                <div key={i} className={styles.calcTipInputRow}>
+                  <span className={styles.calcTipInputLabel}>{it.label}</span>
+                  <span className={styles.calcTipInputVal}>{it.value}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {info.note ? <div className={styles.calcTipNote}>{info.note}</div> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function LeadsCard({ data, hasOpps, onDownload }) {
   return (
     <div className={styles.chartCard}>
@@ -1097,7 +1177,25 @@ function LeadsCard({ data, hasOpps, onDownload }) {
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
             <XAxis dataKey="year" tick={{ fontSize: 12 }} />
             <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
-            <Tooltip formatter={(v) => v.toLocaleString('en-US')} />
+            <Tooltip content={
+              <CalcTooltip
+                labelText={(label, row) => row.isProjected ? 'Projected (annualized YTD)' : `Open Year ${label}`}
+                valueFormat={(v) => (v == null ? '—' : v.toLocaleString('en-US'))}
+                explain={(row) => row.isProjected
+                  ? {
+                      formula: 'Annualized: YTD lead count ÷ fraction of the year elapsed.',
+                      inputs: [
+                        { label: 'YTD leads', value: (row._ytd ?? 0).toLocaleString('en-US') },
+                        { label: 'Year elapsed', value: `${Math.round((row._frac ?? 0) * 100)}%` },
+                        { label: 'Projected', value: (row.count ?? 0).toLocaleString('en-US') },
+                      ],
+                    }
+                  : {
+                      formula: 'Count of Opps rows whose Open Year equals this year.',
+                      inputs: [{ label: 'Leads counted', value: (row.count ?? 0).toLocaleString('en-US') }],
+                    }}
+              />
+            } />
             <Bar dataKey="count" isAnimationActive={false}>
               {data.map((row, i) => (
                 <Cell key={i} fill={row.isProjected ? '#facc15' : '#3b82f6'} />
@@ -1137,13 +1235,24 @@ function QuotedProjectionsCard({ data, hasOpps, target, onDownload }) {
               tick={{ fontSize: 12 }}
               tickFormatter={(v) => v.toFixed(2)}
             />
-            <Tooltip
-              formatter={(v, name) => {
-                if (name === 'BFO Pipe Total') return [v == null ? '—' : v.toFixed(2), name];
-                return [fmtMoneyFull(v), name];
-              }}
-              labelFormatter={(label) => `Month: ${label}${monthlyTarget > 0 ? ` (target ${fmtMoneyFull(Math.round(monthlyTarget))})` : ''}`}
-            />
+            <Tooltip content={
+              <CalcTooltip
+                labelText={(label) => `Close month: ${label}`}
+                valueFormat={(v, name) => {
+                  if (name === 'BFO Pipe Total') return v == null ? '—' : v.toFixed(2);
+                  return v == null ? '—' : fmtMoneyFull(v);
+                }}
+                explain={(row) => ({
+                  formula: 'Quoted $ from opps whose Close Date lands in this month, bucketed by the Chance? field. BFO Pipe Total = Quoted Total ÷ monthly target.',
+                  inputs: [
+                    { label: 'Quoted Total (Weak+OK+Expected)', value: fmtMoneyFull(row._quotedTotal || 0) },
+                    { label: 'Monthly target', value: monthlyTarget > 0 ? fmtMoneyFull(Math.round(monthlyTarget)) : '—' },
+                    { label: 'BFO Pipe Total', value: row.bfoPipe == null ? '—' : row.bfoPipe.toFixed(2) },
+                  ],
+                  note: row._hasData ? null : 'No opps closed this month.',
+                })}
+              />
+            } />
             <Legend wrapperStyle={{ fontSize: 12 }} />
             <Line yAxisId="dollars" dataKey="weak" name="Quoted Weak" stroke="#22c55e" strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false}>
               <LabelList dataKey="weak" position="top" style={{ fontSize: 10, fill: '#15803d' }} formatter={(v) => v ? fmtMoneyShort(v) : ''} />
@@ -1201,9 +1310,22 @@ function CloseRateCard({ data, hasOpps, onDownload }) {
               domain={[0, 100]}
               tickFormatter={(v) => `${v}%`}
             />
-            <Tooltip
-              formatter={(v, name) => v == null ? ['—', name] : [`${v.toFixed(0)}%`, name]}
-            />
+            <Tooltip content={
+              <CalcTooltip
+                labelText={(label) => `Open Year ${label}`}
+                valueFormat={(v) => (v == null ? '—' : `${v.toFixed(0)}%`)}
+                explain={(row) => ({
+                  formula: 'Bars = each stage as a % of all opps that year. Total C/R = Sold ÷ (Sold + Not Sold). Quoted C/R = Sold ÷ (Sold + Not Sold that reached Quoted+).',
+                  inputs: [
+                    { label: 'Sold', value: (row._sold ?? 0).toLocaleString('en-US') },
+                    { label: 'Not Sold', value: (row._notSold ?? 0).toLocaleString('en-US') },
+                    { label: 'In Progress', value: (row._inProgress ?? 0).toLocaleString('en-US') },
+                    { label: 'Not Sold (Quoted+)', value: (row._quotedNotSold ?? 0).toLocaleString('en-US') },
+                    { label: 'Total opps', value: (row._total ?? 0).toLocaleString('en-US') },
+                  ],
+                })}
+              />
+            } />
             <Legend wrapperStyle={{ fontSize: 12 }} />
             <Bar yAxisId="pct" dataKey="totalNotSold" stackId="cr" name="Total Not Sold" fill="#ef4444" isAnimationActive={false} />
             <Bar yAxisId="pct" dataKey="totalSold" stackId="cr" name="Total Sold (OY)" fill="#facc15" isAnimationActive={false}>
@@ -1259,10 +1381,22 @@ function LeadSourcesCard({ data, hasOpps, onDownload }) {
               width={155}
               interval={0}
             />
-            <Tooltip
-              formatter={(v, name) => [v.toLocaleString('en-US'), name]}
-              labelFormatter={(label) => `Lead Source: ${label}`}
-            />
+            <Tooltip content={
+              <CalcTooltip
+                labelText={(label) => `Lead Source: ${label}`}
+                valueFormat={(v) => (v == null ? '—' : v.toLocaleString('en-US'))}
+                explain={(row) => ({
+                  formula: 'Opps with this Lead Source (Open Year ≥ 2020), counted by stage. Row-end green % = Close Rate = Sold ÷ (Sold + Not Sold).',
+                  inputs: [
+                    { label: 'In Progress', value: (row.inProgress ?? 0).toLocaleString('en-US') },
+                    { label: 'Not Sold', value: (row.notSold ?? 0).toLocaleString('en-US') },
+                    { label: 'Sold', value: (row.sold ?? 0).toLocaleString('en-US') },
+                    { label: 'Total', value: (row.total ?? 0).toLocaleString('en-US') },
+                    { label: 'Close Rate', value: row.closeRate == null ? '—' : `${Math.round(row.closeRate * 100)}%` },
+                  ],
+                })}
+              />
+            } />
             <Legend wrapperStyle={{ fontSize: 12 }} />
             <Bar dataKey="inProgress" stackId="ls" name="In Progress" fill="#3b82f6" isAnimationActive={false} />
             <Bar dataKey="notSold" stackId="ls" name="Not Sold" fill="#ef4444" isAnimationActive={false} />
@@ -1305,7 +1439,25 @@ function QuotedByYearCard({ data, hasOpps, onDownload }) {
               tick={{ fontSize: 12 }}
               tickFormatter={(v) => `$${v.toLocaleString('en-US')}`}
             />
-            <Tooltip formatter={(v) => `$${v.toLocaleString('en-US')}k`} />
+            <Tooltip content={
+              <CalcTooltip
+                labelText={(label, row) => row.isProjected ? 'Projected (annualized YTD)' : `Open Year ${label}`}
+                valueFormat={(v) => (v == null ? '—' : `$${v.toLocaleString('en-US')}k`)}
+                explain={(row) => row.isProjected
+                  ? {
+                      formula: 'Annualized: YTD quoted $ ÷ fraction of the year elapsed, shown in $k.',
+                      inputs: [
+                        { label: 'YTD quoted', value: `$${(row._ytdThousands ?? 0).toLocaleString('en-US')}k` },
+                        { label: 'Year elapsed', value: `${Math.round((row._frac ?? 0) * 100)}%` },
+                        { label: 'Projected', value: `$${(row.thousands ?? 0).toLocaleString('en-US')}k` },
+                      ],
+                    }
+                  : {
+                      formula: 'Sum of Quoted Amount across every opp with this Open Year (any stage), shown in $k.',
+                      inputs: [{ label: 'Quoted total', value: `$${(row.thousands ?? 0).toLocaleString('en-US')}k` }],
+                    }}
+              />
+            } />
             <Bar dataKey="thousands" isAnimationActive={false}>
               {data.map((row, i) => (
                 <Cell key={i} fill={row.isProjected ? '#facc15' : '#3b82f6'} />
@@ -1338,13 +1490,34 @@ function NotSoldsCard({ data, hasOpps, onDownload }) {
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
             <XAxis dataKey="year" tick={{ fontSize: 12 }} />
             <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
-            <Tooltip
-              formatter={(v, name) => {
-                if (v == null) return ['—', name];
-                if (name === 'Not Solds') return [v.toLocaleString('en-US'), name];
-                return [`${v.toLocaleString('en-US')} days`, name];
-              }}
-            />
+            <Tooltip content={
+              <CalcTooltip
+                labelText={(label, row) => row.isProjected ? 'Projected (annualized YTD)' : `Open Year ${label}`}
+                valueFormat={(v, name) => {
+                  if (v == null) return '—';
+                  if (name === 'Not Solds') return v.toLocaleString('en-US');
+                  return `${v.toLocaleString('en-US')} days`;
+                }}
+                explain={(row) => row.isProjected
+                  ? {
+                      formula: 'Not Sold bar annualized: YTD Not Sold ÷ fraction of year elapsed. The day-count lines are actuals only — not projected.',
+                      inputs: [
+                        { label: 'YTD Not Sold', value: (row._ytdNotSold ?? 0).toLocaleString('en-US') },
+                        { label: 'Year elapsed', value: `${Math.round((row._frac ?? 0) * 100)}%` },
+                        { label: 'Projected', value: (row.notSold ?? 0).toLocaleString('en-US') },
+                      ],
+                    }
+                  : {
+                      formula: 'Bar = count of Not Sold opps. Lines = mean days — Avg Opp Life (closed opps), Age of not Quoted (pre-quote opps), Quote to Close (Close Date − Quoted On).',
+                      inputs: [
+                        { label: 'Not Solds', value: (row.notSold ?? 0).toLocaleString('en-US') },
+                        { label: 'Avg Opp Life', value: row.avgOppLife == null ? '—' : `${row.avgOppLife} d (n=${row._lifeCount ?? 0})` },
+                        { label: 'Age of not Quoted', value: row.ageNotQuoted == null ? '—' : `${row.ageNotQuoted} d (n=${row._notQuotedCount ?? 0})` },
+                        { label: 'Quote to Close', value: row.quoteToClose == null ? '—' : `${row.quoteToClose} d (n=${row._qtcCount ?? 0})` },
+                      ],
+                    }}
+              />
+            } />
             <Legend wrapperStyle={{ fontSize: 12 }} />
             <Bar dataKey="notSold" name="Not Solds" isAnimationActive={false}>
               {data.map((row, i) => (
@@ -1414,10 +1587,17 @@ function TopAccountsCard({ data, hasOpps, onDownload }) {
               tick={{ fontSize: 12 }}
               tickFormatter={(v) => `$${(v / 1_000_000).toFixed(0)}M`}
             />
-            <Tooltip
-              formatter={(v, name) => [fmtMoneyLabel(v), name]}
-              labelFormatter={(label) => `Year: ${label}`}
-            />
+            <Tooltip content={
+              <CalcTooltip
+                labelText={(label, row) => row._isProjected ? 'Projected (YTD + active pipeline)' : `Year ${label}`}
+                valueFormat={(v) => (v ? fmtMoneyLabel(v) : '$0')}
+                explain={(row) => ({
+                  formula: 'Sold Quoted Amount summed per Account for this year. The top 4 accounts by lifetime Sold $ get their own slice; everyone else is grouped as Remaining.',
+                  inputs: [{ label: 'Year total', value: row._total ? fmtMoneyLabel(row._total) : '$0' }],
+                  note: row._isProjected ? 'Projected adds active pipeline (non-closed current-year opps) to YTD Sold $.' : null,
+                })}
+              />
+            } />
             <Legend wrapperStyle={{ fontSize: 12 }} />
             {/* Stack order: largest (Brookfield) at bottom; Remaining at top. */}
             {topAccounts.map((a, i) => (
@@ -1454,8 +1634,9 @@ function TopAccountsCard({ data, hasOpps, onDownload }) {
   );
 }
 
-function AnnualSalesCard({ data, hasOpps, onDownload }) {
+function AnnualSalesCard({ data, hasOpps, target, onDownload }) {
   const hasAny = data.some(r => r._total > 0);
+  const annualTarget = target > 0 ? target : DEFAULT_ANNUAL_TARGET;
   return (
     <div className={styles.chartCard}>
       <ChartHeader title="Annual Sales" onDownload={onDownload} canDownload={hasOpps && hasAny} />
@@ -1472,12 +1653,23 @@ function AnnualSalesCard({ data, hasOpps, onDownload }) {
               tick={{ fontSize: 12 }}
               tickFormatter={(v) => v >= 1_000_000 ? `${(v / 1_000_000).toFixed(0)}M` : v.toLocaleString('en-US')}
             />
-            <Tooltip
-              formatter={(v, name) => name === '% Quota'
-                ? [`${v}%`, name]
-                : [fmtMoneyLabel(v), name]}
-              labelFormatter={(label) => `Year: ${label}`}
-            />
+            <Tooltip content={
+              <CalcTooltip
+                labelText={(label, row) => row._isProjected ? 'Projected (YTD + active pipeline)' : `Year ${label}`}
+                valueFormat={(v, name) => (name === '% Quota' ? `${v}%` : (v ? fmtMoneyLabel(v) : '$0'))}
+                explain={(row) => ({
+                  formula: 'Sold Quoted Amount for this year, split Current vs New Client by the Lead Source text. % Quota = Total Sold ÷ annual target.',
+                  inputs: [
+                    { label: 'Current Client', value: row.currentClient ? fmtMoneyLabel(row.currentClient) : '$0' },
+                    { label: 'New Client', value: row.newClient ? fmtMoneyLabel(row.newClient) : '$0' },
+                    { label: 'Total Sold', value: row._total ? fmtMoneyLabel(row._total) : '$0' },
+                    { label: 'Annual target', value: fmtMoneyLabel(annualTarget) },
+                    { label: '% Quota', value: row.pctQuota == null ? '—' : `${row.pctQuota}%` },
+                  ],
+                  note: row._isProjected ? 'Projected adds active pipeline to YTD Sold $.' : null,
+                })}
+              />
+            } />
             <Legend
               wrapperStyle={{ fontSize: 12 }}
               payload={[
@@ -1534,13 +1726,25 @@ function DealSizeCard({ data, hasOpps, onDownload }) {
               tick={{ fontSize: 12 }}
               tickFormatter={(v) => v >= 1000 ? `$${Math.round(v / 1000)}k` : `$${v}`}
             />
-            <Tooltip
-              formatter={(v, name) => {
-                if (name === 'Deals') return [v.toLocaleString('en-US'), name];
-                return [fmtMoneyLabel(v), name];
-              }}
-              labelFormatter={(label) => `Year: ${label}`}
-            />
+            <Tooltip content={
+              <CalcTooltip
+                labelText={(label, row) => row._isProjected ? 'Projected (YTD + active pipeline)' : `Year ${label}`}
+                valueFormat={(v, name) => {
+                  if (v == null) return '—';
+                  if (name === 'Deals') return v.toLocaleString('en-US');
+                  return v ? fmtMoneyLabel(v) : '$0';
+                }}
+                explain={(row) => ({
+                  formula: 'Deals = count of closed opps (Sold + Not Sold). Quoted = mean Quoted Amount across closed opps. Deal Size = mean Quoted Amount of Sold opps only.',
+                  inputs: [
+                    { label: 'Deals (closed)', value: (row.deals ?? 0).toLocaleString('en-US') },
+                    { label: 'Quoted mean', value: row.quoted == null ? '—' : `${fmtMoneyLabel(row.quoted)} (n=${row._quotedCount ?? 0})` },
+                    { label: 'Deal Size mean', value: row.dealSize == null ? '—' : `${fmtMoneyLabel(row.dealSize)} (n=${row._soldCount ?? 0})` },
+                  ],
+                  note: row._isProjected ? 'Projected counts active pipeline opps as expected future closes.' : null,
+                })}
+              />
+            } />
             <Legend wrapperStyle={{ fontSize: 12 }} />
             <Bar yAxisId="deals" dataKey="deals" name="Deals" isAnimationActive={false}>
               {data.map((row, i) => (
@@ -1596,7 +1800,19 @@ function CommissionsCard({ data, hasCommissions, onDownload }) {
               tick={{ fontSize: 12 }}
               tickFormatter={(v) => fmtMoneyShort(v)}
             />
-            <Tooltip formatter={(v, name) => [fmtMoneyFull(v), name]} />
+            <Tooltip content={
+              <CalcTooltip
+                labelText={(label) => `Year ${label}`}
+                valueFormat={(v) => (v == null ? '—' : fmtMoneyFull(v))}
+                explain={(row) => ({
+                  formula: 'Sum of the 12 monthly commission cells across every roster row whose Comm Start Date falls in this year (ignored rows excluded).',
+                  inputs: [
+                    { label: 'Roster rows', value: (row._rowCount ?? 0).toLocaleString('en-US') },
+                    { label: 'Total', value: fmtMoneyFull(row.total) },
+                  ],
+                })}
+              />
+            } />
             <Bar dataKey="total" name="Commissions" fill="#3b82f6" isAnimationActive={false}>
               <LabelList
                 dataKey="total"
