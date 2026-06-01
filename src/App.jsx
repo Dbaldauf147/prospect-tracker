@@ -346,6 +346,8 @@ function App() {
             <ListsView onTargetAccountsLoaded={setTargetAccountsData} prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} updateSettingsPath={updateSettingsPath} />
           ) : view === 'clients' ? (
             <ClientsView prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} />
+          ) : view === 'oldclients' ? (
+            <ClientsView mode="oldClient" prospects={prospects} onSelectProspect={handleSelect} cdmName={cdmName} settings={settings} updateSettings={updateSettings} />
           ) : view === 'opps' ? (
             <OppsView settings={settings} updateSettings={updateSettings} />
           ) : view === 'opps2' ? (

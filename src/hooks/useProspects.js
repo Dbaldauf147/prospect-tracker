@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { subscribeToProspects, addProspect as addDoc, updateProspect as updateDoc, deleteProspect as deleteDoc, seedProspects, replaceAllProspects, setProspectsUser, findDuplicateProspects, dedupeProspects } from '../utils/firestoreSync';
+import { subscribeToProspects, addProspect as addDoc, updateProspect as updateDoc, deleteProspect as deleteDoc, seedProspects, replaceAllProspects, setProspectsUser, findDuplicateProspects, dedupeProspects, groupDuplicateProspects, collapseDuplicateGroups, normalizeCompanyName } from '../utils/firestoreSync';
 import seedData from '../data/seedProspects';
 
 export function useProspects(user) {
@@ -10,6 +10,10 @@ export function useProspects(user) {
   const pausedRef = useRef(false);
   const unsubRef = useRef(null);
   const dedupeRanRef = useRef(false);
+  // Always-current view of the loaded prospects so addProspect can check
+  // for an existing record without a Firestore read.
+  const prospectsRef = useRef([]);
+  prospectsRef.current = prospects;
 
   useEffect(() => {
     if (!user) { setProspects([]); setLoading(false); setProspectsUser(null, null); return; }
@@ -44,17 +48,20 @@ export function useProspects(user) {
     return () => { if (unsubRef.current) unsubRef.current(); };
   }, [user]);
 
-  // One-time automatic cleanup: once the collection has loaded, collapse
-  // any duplicate prospect documents (same company stored twice). The
-  // deletions stream back through the live subscription, so every page
-  // that reads `prospects` self-heals without a manual step. No-ops when
-  // there are no duplicates.
+  // any duplicate prospect documents (same company stored twice).
+  // Detection runs against the already-subscribed list, so when the data
+  // is clean (the normal case) this does ZERO Firestore reads/writes —
+  // just an in-memory grouping. It only touches Firestore when actual
+  // duplicates are found, and those deletions stream back through the
+  // live subscription so every page self-heals without a manual step.
   useEffect(() => {
     if (loading || dedupeRanRef.current || !user) return;
     dedupeRanRef.current = true;
+    const groups = groupDuplicateProspects(prospectsRef.current);
+    if (groups.length === 0) return; // clean: no I/O
     (async () => {
       try {
-        const result = await dedupeProspects();
+        const result = await collapseDuplicateGroups(groups);
         if (result.removed > 0) {
           console.log(`Auto-removed ${result.removed} duplicate prospect(s) across ${result.groups} compan${result.groups === 1 ? 'y' : 'ies'}`);
         }
@@ -65,6 +72,14 @@ export function useProspects(user) {
   }, [loading, user]);
 
   async function addProspect(prospect) {
+    // Idempotent by company name, checked against the in-memory list (no
+    // extra read): if a prospect with the same normalized company already
+    // exists, return it instead of minting a duplicate.
+    const key = normalizeCompanyName(prospect?.company);
+    if (key) {
+      const existing = prospectsRef.current.find(p => normalizeCompanyName(p?.company) === key);
+      if (existing) return existing.id;
+    }
     return addDoc(prospect);
   }
 

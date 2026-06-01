@@ -310,10 +310,9 @@ function ContractTable({ deals }) {
   );
 }
 
-const SUBTAB_STORAGE_KEY = 'clients-view:active-subtab';
-function readSavedSubtab() {
+function readSavedSubtab(storageKey) {
   try {
-    const s = localStorage.getItem(SUBTAB_STORAGE_KEY);
+    const s = localStorage.getItem(storageKey);
     if (s === 'clients' || s === 'deals' || s === 'commissions') return s;
   } catch {}
   return 'clients';
@@ -331,11 +330,24 @@ function normStatus(s) {
 function isClient(p) { return normStatus(p.status) === 'client'; }
 function isOldClient(p) { return normStatus(p.status) === 'old client'; }
 
-export function ClientsView({ prospects = [], cdmName, settings, updateSettings }) {
-  const [subtab, setSubtab] = useState(readSavedSubtab);
+export function ClientsView({ prospects = [], cdmName, settings, updateSettings, mode = 'client' }) {
+  // `mode` lets this same view back both the Clients tab and a mirrored
+  // Old Clients tab. The only real difference is which Status the
+  // primary list filters on; the secondary "Include …" toggle pulls in
+  // the other bucket. Labels and per-tab persistence keys follow suit.
+  const isOldMode = mode === 'oldClient';
+  const primaryMatch = isOldMode ? isOldClient : isClient;
+  const secondaryMatch = isOldMode ? isClient : isOldClient;
+  const statusLabel = isOldMode ? 'Old Client' : 'Client';
+  const otherLabel = isOldMode ? 'Client' : 'Old Client';
+  const headingLabel = isOldMode ? 'Old Clients' : 'Clients';
+  const subtabStorageKey = isOldMode ? 'oldclients-view:active-subtab' : 'clients-view:active-subtab';
+  const tableId = isOldMode ? 'oldclients' : 'clients';
+
+  const [subtab, setSubtab] = useState(() => readSavedSubtab(subtabStorageKey));
   function selectSubtab(key) {
     setSubtab(key);
-    try { localStorage.setItem(SUBTAB_STORAGE_KEY, key); } catch {}
+    try { localStorage.setItem(subtabStorageKey, key); } catch {}
   }
   const [showOld, setShowOld] = useState(false);
   const [query, setQuery] = useState('');
@@ -439,14 +451,14 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
     });
   }
 
-  // Only the configured user's clients. Additionally filter to active
-  // Client by default, or include Old Client too when the toggle is on.
+  // Only the configured user's clients. Filter to the tab's primary
+  // Status by default, or include the other bucket when the toggle is on.
   const clients = useMemo(() => (
     prospects
       .filter(p => matchesCdm(p.cdm, cdmName))
-      .filter(p => isClient(p) || (showOld && isOldClient(p)))
+      .filter(p => primaryMatch(p) || (showOld && secondaryMatch(p)))
       .sort((a, b) => (a.company || '').localeCompare(b.company || ''))
-  ), [prospects, showOld, cdmName]);
+  ), [prospects, showOld, cdmName, primaryMatch, secondaryMatch]);
 
   const q = query.trim().toLowerCase();
   const filtered = q
@@ -464,12 +476,12 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
     : clients;
 
   const myProspects = useMemo(() => prospects.filter(p => matchesCdm(p.cdm, cdmName)), [prospects, cdmName]);
-  const activeCount = myProspects.filter(isClient).length;
-  const oldCount = myProspects.filter(isOldClient).length;
+  const activeCount = myProspects.filter(primaryMatch).length; // primary bucket for this tab
+  const oldCount = myProspects.filter(secondaryMatch).length;  // the "Include …" bucket
 
   // Diagnostic counts for the empty state.
   const totalProspects = prospects.length;
-  const allClients = useMemo(() => prospects.filter(isClient).length, [prospects]);
+  const allClients = useMemo(() => prospects.filter(primaryMatch).length, [prospects, primaryMatch]);
   const uniqueCdms = useMemo(() => {
     const s = new Set();
     for (const p of prospects) {
@@ -723,15 +735,15 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
       {subtabBar}
       <div style={{ padding: '1rem 1.25rem 0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexShrink: 0, flexWrap: 'wrap' }}>
         <div>
-          <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#1E293B', margin: 0 }}>Clients</h2>
+          <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#1E293B', margin: 0 }}>{headingLabel}</h2>
           <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2 }}>
-            {cdmName ? `${cdmName}'s clients` : 'Your clients'} — every prospect with CDM = {cdmName || 'your CDM'} and <strong>Status = Client</strong>
-            {showOld ? ' or Old Client' : ''}. Click ▸ to expand a client&apos;s contracts.
+            {cdmName ? `${cdmName}'s ${headingLabel.toLowerCase()}` : `Your ${headingLabel.toLowerCase()}`} — every prospect with CDM = {cdmName || 'your CDM'} and <strong>Status = {statusLabel}</strong>
+            {showOld ? ` or ${otherLabel}` : ''}. Click ▸ to expand a client&apos;s contracts.
           </div>
         </div>
         <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.72rem', color: '#475569', cursor: 'pointer' }}>
           <input type="checkbox" checked={showOld} onChange={e => setShowOld(e.target.checked)} />
-          <span>Include Old Clients ({oldCount})</span>
+          <span>Include {otherLabel}s ({oldCount})</span>
         </label>
       </div>
 
@@ -750,28 +762,28 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
           style={{ padding: '0.4rem 0.8rem', border: '1px solid #E2E8F0', background: 'white', borderRadius: 6, fontSize: '0.78rem', cursor: 'pointer', fontFamily: 'inherit' }}
         >Link columns</button>
         <span style={{ fontSize: '0.72rem', color: '#64748B' }}>
-          {filtered.length} of {activeCount}{showOld ? ` active · ${oldCount} old` : ''}
+          {filtered.length} of {activeCount}{showOld ? ` ${statusLabel.toLowerCase()} · ${oldCount} ${otherLabel.toLowerCase()}` : ''}
         </span>
       </div>
 
       {/* Always-visible diagnostic strip so 'blank page' is never actually blank. */}
       <div style={{ padding: '0 1.25rem 0.5rem', fontSize: '0.68rem', color: '#64748B', flexShrink: 0 }}>
-        Loaded {totalProspects} prospects · {myProspects.length} match CDM &quot;{cdmName || '(unset)'}&quot; · {allClients} are Status=Client · showing {clients.length}
+        Loaded {totalProspects} prospects · {myProspects.length} match CDM &quot;{cdmName || '(unset)'}&quot; · {allClients} are Status={statusLabel} · showing {clients.length}
       </div>
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {clients.length === 0 ? (
           <div style={{ margin: '0 1.25rem', padding: '1.25rem', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
-            <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem', textAlign: 'center' }}>No clients found for {cdmName || 'this user'}</div>
+            <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem', textAlign: 'center' }}>No {headingLabel.toLowerCase()} found for {cdmName || 'this user'}</div>
             <div style={{ fontSize: '0.78rem', marginBottom: '0.75rem', textAlign: 'center' }}>
-              Set a prospect&apos;s <strong>CDM</strong> to {cdmName || 'your CDM name'} and <strong>Status</strong> to <code>Client</code> in My Accounts to list it here.
+              Set a prospect&apos;s <strong>CDM</strong> to {cdmName || 'your CDM name'} and <strong>Status</strong> to <code>{statusLabel}</code> in My Accounts to list it here.
             </div>
             <div style={{ fontSize: '0.72rem', background: '#F8FAFC', padding: '0.6rem 0.8rem', borderRadius: 6, color: '#334155' }}>
               <div><strong>Diagnostic:</strong></div>
               <div>Total prospects loaded: {totalProspects}</div>
               <div>Prospects matching CDM &quot;{cdmName || '(unset)'}&quot;: {myProspects.length}</div>
-              <div>Prospects with Status = Client: {allClients}</div>
-              <div>{cdmName || 'Your CDM'} + Client: {activeCount}</div>
+              <div>Prospects with Status = {statusLabel}: {allClients}</div>
+              <div>{cdmName || 'Your CDM'} + {statusLabel}: {activeCount}</div>
               {totalProspects === 0 && (
                 <div style={{ color: '#B91C1C', marginTop: '0.5rem' }}>
                   Prospects haven&apos;t loaded yet. If this sticks, check your network / login.
@@ -790,7 +802,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
           </div>
         ) : (
           <DataTable
-            tableId="clients"
+            tableId={tableId}
             columns={columns}
             rows={rows}
             alwaysVisible={['company']}
