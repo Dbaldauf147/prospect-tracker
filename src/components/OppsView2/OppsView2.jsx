@@ -21,6 +21,7 @@ import { OPPS_PRICING_SNAPSHOT_EVENT } from '../../utils/oppsPricingSnapshot';
 import { fmtMoneyWhole } from '../../utils/pricingOptionCalc';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { normalizeCompany } from '../../utils/companyNorm';
+import { userLsGet, userLsSet } from '../../utils/userLs';
 import styles from './OppsView2.module.css';
 
 // Second Opps tab — user-entered opps stored in Firestore
@@ -51,6 +52,28 @@ function stampUpdatedAt(data) {
 async function saveOpps2Cache(data) {
   try { await dbPut(OPPS2_STORE, stampUpdatedAt(data), OPPS2_CACHE_KEY); }
   catch (err) { console.error('opps2: IndexedDB save failed', err); }
+}
+
+// Detail-row visibility. The Opp details popup lets the user hide rows
+// (header fields) they don't care to see. The choice is a single global
+// preference applied to *every* opp's detail view (not per-opp) and is
+// persisted in user-scoped localStorage so it survives reloads and is
+// shared across the Opps 2 and Agents detail popups. Stored as a JSON
+// array of field names.
+const OPP_DETAIL_HIDDEN_FIELDS_KEY = 'opp-detail-hidden-fields';
+
+function loadHiddenDetailFields() {
+  try {
+    const raw = userLsGet(OPP_DETAIL_HIDDEN_FIELDS_KEY);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw);
+    return new Set(Array.isArray(arr) ? arr.filter(x => typeof x === 'string') : []);
+  } catch { return new Set(); }
+}
+
+function saveHiddenDetailFields(set) {
+  try { userLsSet(OPP_DETAIL_HIDDEN_FIELDS_KEY, JSON.stringify([...set])); }
+  catch (err) { console.warn('opps2: save hidden detail fields failed', err); }
 }
 
 // Firestore caps a single document at ~1 MB. Once Opps 2 grows past
@@ -2459,12 +2482,29 @@ export function OppInfoModal({
   onOpenContact,
   onOpenCompany,
 }) {
+  // Globally-hidden detail rows (header fields) + a session toggle to
+  // temporarily reveal them. Declared before the early return so the
+  // hook order stays stable. The hidden set is a global preference, so
+  // toggling a row here hides/shows it on every opp's detail popup.
+  const [hiddenFields, setHiddenFields] = useState(() => loadHiddenDetailFields());
+  const [showHiddenRows, setShowHiddenRows] = useState(false);
+  const toggleDetailField = useCallback((field) => {
+    setHiddenFields(prev => {
+      const next = new Set(prev);
+      if (next.has(field)) next.delete(field); else next.add(field);
+      saveHiddenDetailFields(next);
+      return next;
+    });
+  }, []);
   if (!opp) return null;
   // Show every header column the row has a value for, in the same order
   // the table presents them, so the popup matches the user's mental
   // model of the row. Computed columns are pulled from the live row
   // (the parent computes them into the opp before passing it in).
   const orderedFields = (headers || []).filter(h => h && h !== '_select' && h !== '_info' && h !== '_actions');
+  // Count of currently-hidden rows among the fields this opp actually
+  // shows, so the "Show N hidden" toggle reflects what's collapsed here.
+  const hiddenCount = orderedFields.filter(h => hiddenFields.has(h)).length;
   const formatValue = (key, raw) => {
     if (raw == null || raw === '') return '—';
     if (DATE_COLUMNS.has(key)) return formatDateDisplay(raw);
@@ -2616,23 +2656,72 @@ export function OppInfoModal({
               </div>
             </div>
           ) : null}
+          {hiddenCount > 0 && (
+            <div style={{
+              display: 'flex', justifyContent: 'flex-end', alignItems: 'center',
+              margin: '0 0 0.35rem',
+            }}>
+              <label style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                fontSize: '0.74rem', color: 'var(--color-text-muted)',
+                fontWeight: 600, cursor: 'pointer',
+              }}>
+                <input
+                  type="checkbox"
+                  checked={showHiddenRows}
+                  onChange={e => setShowHiddenRows(e.target.checked)}
+                />
+                Show {hiddenCount} hidden {hiddenCount === 1 ? 'row' : 'rows'}
+              </label>
+            </div>
+          )}
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
             <tbody>
-              {orderedFields.map(h => (
-                <tr key={h} style={{ borderTop: '1px solid var(--color-border-light)' }}>
-                  <td style={{
-                    padding: '0.45rem 0.5rem 0.45rem 0',
-                    fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.03em',
-                    color: 'var(--color-text-muted)', fontWeight: 600,
-                    width: 170, verticalAlign: 'top',
-                  }}>{h === 'BFO Link' ? 'BFO Opportunity Name' : h}</td>
-                  <td style={{
-                    padding: '0.45rem 0',
-                    color: 'var(--color-text)',
-                    whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                  }}>{renderEditor(h)}</td>
-                </tr>
-              ))}
+              {orderedFields.map(h => {
+                const isHidden = hiddenFields.has(h);
+                if (isHidden && !showHiddenRows) return null;
+                const label = h === 'BFO Link' ? 'BFO Opportunity Name' : h;
+                return (
+                  <tr key={h} style={{
+                    borderTop: '1px solid var(--color-border-light)',
+                    opacity: isHidden ? 0.5 : undefined,
+                  }}>
+                    <td style={{
+                      padding: '0.45rem 0.4rem 0.45rem 0',
+                      width: 24, verticalAlign: 'top',
+                    }}>
+                      <button
+                        type="button"
+                        onClick={() => toggleDetailField(h)}
+                        title={isHidden
+                          ? `Show "${label}" on every opp's details`
+                          : `Hide "${label}" on every opp's details`}
+                        aria-label={isHidden ? `Show ${label}` : `Hide ${label}`}
+                        style={{
+                          width: 18, height: 18, lineHeight: '16px',
+                          padding: 0, borderRadius: 4,
+                          border: '1px solid var(--color-border)',
+                          background: isHidden ? '#E2E8F0' : 'transparent',
+                          color: 'var(--color-text-muted)',
+                          fontSize: '0.72rem', fontFamily: 'inherit',
+                          cursor: 'pointer', display: 'block',
+                        }}
+                      >{isHidden ? '+' : '×'}</button>
+                    </td>
+                    <td style={{
+                      padding: '0.45rem 0.5rem 0.45rem 0',
+                      fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.03em',
+                      color: 'var(--color-text-muted)', fontWeight: 600,
+                      width: 170, verticalAlign: 'top',
+                    }}>{label}</td>
+                    <td style={{
+                      padding: '0.45rem 0',
+                      color: 'var(--color-text)',
+                      whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                    }}>{renderEditor(h)}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
