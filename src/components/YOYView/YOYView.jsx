@@ -10,7 +10,9 @@ import {
 } from 'recharts';
 import { dbGet } from '../../utils/db';
 import { loadOppsFromCache } from '../../utils/oppsCache';
-import { loadCommissions, COMMISSION_MONTH_NAMES } from '../../utils/commissionsStore';
+import { loadCommissions } from '../../utils/commissionsStore';
+import { loadDealsList } from '../../utils/dealsStore';
+import { indexCommissionsByBfo, normBfo, DEAL_BFO_KEY } from '../../utils/dealCommissions';
 import { loadQuotedProjections, saveQuotedProjections, QUOTED_FIELDS } from '../../utils/quotedProjectionsStore';
 import styles from './YOYView.module.css';
 
@@ -115,6 +117,7 @@ export function YOYView() {
   const [opps, setOpps] = useState(null);
   const [target, setTarget] = useState(DEFAULT_ANNUAL_TARGET);
   const [commissions, setCommissions] = useState(() => loadCommissions().data);
+  const [deals, setDeals] = useState(() => loadDealsList().data);
   // Quoted Projections is now a user-maintained table of month-end values
   // (seeded with the supplied Dec–May history) rather than a live compute.
   const [quotedTable, setQuotedTable] = useState(loadQuotedProjections);
@@ -124,8 +127,14 @@ export function YOYView() {
       if (!e || e.key === 'commissions-list-override') {
         setCommissions(loadCommissions().data);
       }
+      if (!e || e.key === 'deals-list-override') {
+        setDeals(loadDealsList().data);
+      }
     }
-    function onFocus() { setCommissions(loadCommissions().data); }
+    function onFocus() {
+      setCommissions(loadCommissions().data);
+      setDeals(loadDealsList().data);
+    }
     window.addEventListener('storage', onStorage);
     window.addEventListener('focus', onFocus);
     return () => {
@@ -664,48 +673,44 @@ export function YOYView() {
 
   const hasOpps = records.length > 0;
 
-  // Commissions — attribute each monthly commission cell to its actual
-  // calendar year, then sum per year. The 12 cells are calendar months
-  // (Jan–Dec) covering a contract's fiscal year that runs from the Comm
-  // Start Date; months at/after the start month belong to the start
-  // year, earlier months roll into the next year (e.g. a 7/1/2025 start
-  // puts Jul–Dec in 2025 and Jan–Jun in 2026). This keeps the back half
-  // of a mid-year contract from being lumped into the start year.
-  // Ignored rows (the per-row Ignore toggle on the Commissions tab) are
-  // dropped. Years between the earliest and latest are kept even if
-  // blank, so a missing year shows as a $0 bar instead of a gap.
+  // Commissions — total Paid to Date per year, sourced from the Deals
+  // tab (Clients page). Each deal is bucketed by the calendar year of its
+  // Current Term Start Date, and its Paid to Date amount is summed in.
+  // Paid to Date mirrors what the Deals grid shows: the matching
+  // Commissions roster total when the deal's BFO opp name maps to one,
+  // otherwise the amount stored on the deal row. Years between the
+  // earliest and latest are kept even if blank so a missing year shows
+  // as a $0 bar instead of a gap.
   const commissionsData = useMemo(() => {
+    const commByBfo = indexCommissionsByBfo(commissions || []);
     const byYear = new Map();
     const countByYear = new Map();
-    for (const row of (commissions || [])) {
-      if (row?.__ignored) continue;
-      const ts = Date.parse(row?.['Comm Start Date']);
+    for (const row of (deals || [])) {
+      const ts = Date.parse(row?.['Current Term Start Date']);
       if (Number.isNaN(ts)) continue;
-      const start = new Date(ts);
-      const startMonth = start.getMonth(); // 0 = Jan … 11 = Dec
-      const startYear = start.getFullYear();
-      if (!Number.isFinite(startYear) || startYear < 1900 || startYear > 2100) continue;
-      const yearsTouched = new Set();
-      for (let mi = 0; mi < COMMISSION_MONTH_NAMES.length; mi++) {
-        const v = parseMoney(row[COMMISSION_MONTH_NAMES[mi]]);
-        if (typeof v !== 'number') continue;
-        const y = mi >= startMonth ? startYear : startYear + 1;
-        byYear.set(y, (byYear.get(y) || 0) + v);
-        yearsTouched.add(y);
-      }
-      for (const y of yearsTouched) countByYear.set(y, (countByYear.get(y) || 0) + 1);
+      const year = new Date(ts).getFullYear();
+      if (!Number.isFinite(year) || year < 1900 || year > 2100) continue;
+      // Match the Deals grid's Paid to Date numerator: auto-populate from
+      // the Commissions roster when the BFO name matches, else fall back
+      // to the value stored on the deal row.
+      const bfo = normBfo(row?.[DEAL_BFO_KEY]);
+      const hit = bfo ? commByBfo.get(bfo) : null;
+      const paid = hit ? hit.commission : (parseMoney(row?.['Paid to Date']) ?? 0);
+      if (!paid) continue;
+      byYear.set(year, (byYear.get(year) || 0) + paid);
+      countByYear.set(year, (countByYear.get(year) || 0) + 1);
     }
     if (byYear.size === 0) return [];
     const minY = Math.min(...byYear.keys());
     const maxY = Math.max(...byYear.keys());
     const rows = [];
     for (let y = minY; y <= maxY; y++) {
-      // _rowCount = roster rows that fed this year's total (tooltip input).
+      // _rowCount = deal rows that fed this year's total (tooltip input).
       rows.push({ year: String(y), total: byYear.get(y) || 0, _rowCount: countByYear.get(y) || 0 });
     }
     return rows;
-  }, [commissions]);
-  const hasCommissions = (commissions || []).length > 0;
+  }, [deals, commissions]);
+  const hasCommissions = commissionsData.length > 0;
 
   // Per-chart underlying records. Each entry mirrors the filter used by
   // the matching useMemo above so the downloaded Excel rows tie back to
@@ -1984,9 +1989,9 @@ function CommissionsCard({ data, hasCommissions, onDownload }) {
     <div className={styles.chartCard}>
       <ChartHeader title="Commissions" onDownload={onDownload} canDownload={hasCommissions && data.length > 0} />
       {!hasCommissions ? (
-        <div className={styles.empty}>No commissions yet — paste a roster on the Clients › Commissions tab.</div>
+        <div className={styles.empty}>No deals with a Paid to Date amount — add deals on the Clients › Deals tab.</div>
       ) : data.length === 0 ? (
-        <div className={styles.empty}>No commissions with a Comm Start Date.</div>
+        <div className={styles.empty}>No deals with a Current Term Start Date.</div>
       ) : (
         <ResponsiveContainer width="100%" height={320}>
           <BarChart data={data} margin={{ top: 22, right: 8, left: 16, bottom: 4 }}>
@@ -2001,9 +2006,9 @@ function CommissionsCard({ data, hasCommissions, onDownload }) {
                 labelText={(label) => `Year ${label}`}
                 valueFormat={(v) => (v == null ? '—' : fmtMoneyFull(v))}
                 explain={(row) => ({
-                  formula: 'Each monthly commission cell counted in its own calendar year (months before a contract’s start month roll into the next year), summed across all roster rows. Ignored rows excluded.',
+                  formula: 'Sum of each deal’s Paid to Date amount, bucketed by the calendar year of its Current Term Start Date. Paid to Date mirrors the Deals tab — the matching Commissions roster total when the BFO name maps, else the value stored on the deal.',
                   inputs: [
-                    { label: 'Roster rows', value: (row._rowCount ?? 0).toLocaleString('en-US') },
+                    { label: 'Deals counted', value: (row._rowCount ?? 0).toLocaleString('en-US') },
                     { label: 'Total', value: fmtMoneyFull(row.total) },
                   ],
                 })}
