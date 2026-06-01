@@ -18,6 +18,8 @@ import styles from './YOYView.module.css';
 
 const PIPELINE_STORE = 'pipeline-dashboard';
 const PIPELINE_KEY = 'current';
+const BFO_ACTIVITY_STORE = 'bfo-activity';
+const BFO_ACTIVITY_KEY = 'current';
 const DEFAULT_ANNUAL_TARGET = 1325000;
 
 function parseMoney(v) {
@@ -115,6 +117,7 @@ const TOOLTIP_WRAPPER_STYLE = { pointerEvents: 'none', zIndex: 30 };
 
 export function YOYView() {
   const [opps, setOpps] = useState(null);
+  const [bfoActivity, setBfoActivity] = useState(null);
   const [target, setTarget] = useState(DEFAULT_ANNUAL_TARGET);
   const [commissions, setCommissions] = useState(() => loadCommissions().data);
   const [deals, setDeals] = useState(() => loadDealsList().data);
@@ -160,12 +163,19 @@ export function YOYView() {
       } catch {
         // Pipeline target falls back to DEFAULT_ANNUAL_TARGET — no-op.
       }
+      try {
+        const bfo = await dbGet(BFO_ACTIVITY_STORE, BFO_ACTIVITY_KEY);
+        if (!cancelled && bfo) setBfoActivity(bfo);
+      } catch {
+        // BFO Pipe Total falls back to blank when no activity is cached.
+      }
     })();
     function onFocus() {
       loadOppsFromCache().then(o => setOpps(o || null)).catch(() => {});
       dbGet(PIPELINE_STORE, PIPELINE_KEY).then(p => {
         if (p && Number.isFinite(Number(p.target))) setTarget(Number(p.target));
       }).catch(() => {});
+      dbGet(BFO_ACTIVITY_STORE, BFO_ACTIVITY_KEY).then(b => { if (b) setBfoActivity(b); }).catch(() => {});
     }
     window.addEventListener('focus', onFocus);
     return () => { cancelled = true; window.removeEventListener('focus', onFocus); };
@@ -204,30 +214,70 @@ export function YOYView() {
     return rows;
   }, [records, currentYear]);
 
+  // Live snapshot for the current calendar month, in $K. The Chance
+  // buckets and Agreements Sent sum each open Opps 2 opp's current Quoted
+  // Amount; BFO Pipe Total sums the Amount column on the BFO Activity
+  // tab. Closed opps (Sold / Not Sold / Duplicate) are excluded from the
+  // Chance buckets since they're no longer current pipeline. This fills
+  // the current month automatically so it isn't blank until recorded — a
+  // manual entry for that month still wins (see quotedData below).
+  const liveQuoted = useMemo(() => {
+    const CLOSED = new Set(['Sold', 'Not Sold', 'Duplicate Opp']);
+    let weak = 0, ok = 0, expected = 0, agreements = 0;
+    for (const r of records) {
+      const amt = parseMoney(r['Quoted Amount']);
+      if (typeof amt !== 'number' || amt <= 0) continue;
+      const status = String(r.Status || '').trim();
+      if (status === 'Agreement Sent') agreements += amt;
+      if (CLOSED.has(status)) continue;
+      const chance = String(r['Chance?'] || r['Chance'] || '').trim().toLowerCase();
+      if (chance === 'weak') weak += amt;
+      else if (chance === 'ok') ok += amt;
+      else if (chance === 'expected') expected += amt;
+    }
+    let bfoPipe = 0;
+    const headers = bfoActivity?.headers || [];
+    const amountKey = headers.find(h => /^amount$/i.test(String(h).trim()));
+    if (amountKey) {
+      for (const row of (bfoActivity?.rows || [])) {
+        const a = parseMoney(row[amountKey]);
+        if (typeof a === 'number' && a > 0) bfoPipe += a;
+      }
+    }
+    const k = (n) => (n > 0 ? Math.round(n / 1000) : null); // dollars → $K
+    return { weak: k(weak), ok: k(ok), expected: k(expected), agreements: k(agreements), bfoPipe: k(bfoPipe) };
+  }, [records, bfoActivity]);
+
   // Quoted Projections — month-end snapshots the user records (editable
   // via "Edit values"), plotted across the Dec→Nov fiscal year. Values
   // are in $K: weak/ok/expected are the quoted-$ Chance buckets,
   // agreements is Agreements Sent, and bfoPipe is the total BFO pipeline
-  // $ (its own right-hand axis since it runs larger). Months with no
-  // recorded value are left null so the lines break rather than zeroing.
+  // $ (its own right-hand axis since it runs larger). The current month
+  // auto-fills from the live snapshot above when nothing's recorded yet;
+  // other unrecorded months stay null so the lines break rather than zero.
   const quotedData = useMemo(() => {
     const num = (x) => {
       if (x === '' || x == null) return null;
       const n = Number(x);
       return Number.isFinite(n) ? n : null;
     };
+    const now = new Date();
+    const liveMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     return fiscalMonths(currentYear).map((m) => {
       const key = `${m.year}-${String(m.monthIdx + 1).padStart(2, '0')}`;
-      const v = quotedTable[key] || null;
-      const weak = v ? num(v.weak) : null;
-      const ok = v ? num(v.ok) : null;
-      const expected = v ? num(v.expected) : null;
-      const agreements = v ? num(v.agreements) : null;
-      const bfoPipe = v ? num(v.bfoPipe) : null;
+      const manual = quotedTable[key] || null;
+      const live = (!manual && key === liveMonthKey) ? liveQuoted : null;
+      const src = manual || live;
+      const weak = src ? num(src.weak) : null;
+      const ok = src ? num(src.ok) : null;
+      const expected = src ? num(src.expected) : null;
+      const agreements = src ? num(src.agreements) : null;
+      const bfoPipe = src ? num(src.bfoPipe) : null;
       const _hasData = [weak, ok, expected, agreements, bfoPipe].some(x => x != null);
-      return { month: m.label, year: m.year, monthKey: key, weak, ok, expected, agreements, bfoPipe, _hasData };
+      const _live = !!live && _hasData;
+      return { month: m.label, year: m.year, monthKey: key, weak, ok, expected, agreements, bfoPipe, _hasData, _live };
     });
-  }, [quotedTable, currentYear]);
+  }, [quotedTable, currentYear, liveQuoted]);
 
   // Close Rate — stacked bar of In Progress / Sold / Not Sold per Open
   // Year (percentages summing to 100), plus two C/R lines.
@@ -930,6 +980,7 @@ export function YOYView() {
       'Quoted Expected ($K)': r.expected ?? '',
       'Agreements Sent ($K)': r.agreements ?? '',
       'BFO Pipe Total ($K)': r.bfoPipe ?? '',
+      Source: r._live ? 'Live (Opps 2 + BFO Activity)' : (r._hasData ? 'Recorded' : ''),
     }));
     const wb = XLSX.utils.book_new();
     appendSheet(wb, `Quoted Projections ${currentYear}`, summary);
@@ -1331,7 +1382,9 @@ function QuotedProjectionsCard({ data, quotedTable, onSaveTable, onDownload }) {
                 labelText={(label, row) => `${label} ${row.year}`}
                 valueFormat={(v) => (v == null ? '—' : fmtKLabel(v))}
                 explain={(row) => ({
-                  formula: 'Recorded month-end values (in $K). Quoted Weak/OK/Expected are the quoted-$ Chance buckets, Agreements Sent is contracts out, and BFO Pipe Total is the total pipeline $ (its own right-hand axis). Edit via “Edit values”.',
+                  formula: row._live
+                    ? 'Live snapshot for the current month (in $K): Quoted Weak/OK/Expected sum open Opps 2 opps’ current Quoted Amount by Chance, Agreements Sent sums opps with that Status, and BFO Pipe Total sums the BFO Activity tab’s Amount column. Record a value via “Edit values” to override.'
+                    : 'Recorded month-end values (in $K). Quoted Weak/OK/Expected are the quoted-$ Chance buckets, Agreements Sent is contracts out, and BFO Pipe Total is the total pipeline $ (its own right-hand axis). Edit via “Edit values”.',
                   inputs: [
                     { label: 'Quoted Weak', value: row.weak == null ? '—' : fmtKLabel(row.weak) },
                     { label: 'Quoted OK', value: row.ok == null ? '—' : fmtKLabel(row.ok) },
@@ -1339,7 +1392,9 @@ function QuotedProjectionsCard({ data, quotedTable, onSaveTable, onDownload }) {
                     { label: 'Agreements Sent', value: row.agreements == null ? '—' : fmtKLabel(row.agreements) },
                     { label: 'BFO Pipe Total', value: row.bfoPipe == null ? '—' : fmtKLabel(row.bfoPipe) },
                   ],
-                  note: row._hasData ? null : 'No values recorded for this month yet.',
+                  note: row._live
+                    ? 'Live from Opps 2 + BFO Activity — not yet recorded.'
+                    : (row._hasData ? null : 'No values recorded for this month yet.'),
                 })}
               />
             } />
