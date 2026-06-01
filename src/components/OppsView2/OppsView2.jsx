@@ -70,7 +70,7 @@ const DEFAULT_HEADERS = [
   'Account', 'Open Year', 'Contact', 'Stage', 'Scope', 'Source', 'Type', 'Sales Partner',
   'Start Date', 'Status', 'Quoted Amount', 'Sites', 'Age',
   'Last Client Heard From Us', 'Last Spoke', 'Follow Up', 'Call In', 'Notes',
-  'Next Steps', 'No Further Action Today', 'Competition', 'Waiting On', 'Close Date', 'BFO Link',
+  'Next Steps', 'No Further Action Today', 'Competition', 'Waiting On', 'Close Date', 'BFO Link', 'BFO Company Name',
   'Pricing Option',
   // Quote-stage detail columns. Captured via the QuotedFollowUpModal that
   // pops when an opp moves into the "Quoted" stage.
@@ -165,7 +165,7 @@ const COMPUTED_COLUMNS = ['Last Spoke', 'Call In'];
 // it up — and its "Find out the Story" default lands somewhere
 // visible on the next new opp.
 const ENSURED_COLUMNS = [...COMPUTED_COLUMNS, 'Next Steps', 'Pricing Option', 'No Further Action Today', 'Sales Partner',
-  'Quoted On', 'Chance?', 'Margin Email Date - Sales Leader Review Date'];
+  'Quoted On', 'Chance?', 'Margin Email Date - Sales Leader Review Date', 'BFO Company Name'];
 
 // Merge a remote Firestore snapshot into local React state at the record
 // level so two browsers open on the same page stay in sync without full
@@ -1454,6 +1454,32 @@ function findProspectForAccount(account, prospects) {
   return exact || alias;
 }
 
+// "BFO Company Name" lives on the Table View company record (prospect),
+// not the opp. This cell sources its value from the prospect matching
+// the opp's Account and writes edits straight back to that prospect's
+// `bfoCompanyName`, so the two views stay in sync. When no Table View
+// company matches there's nowhere to store the value, so it renders
+// read-only with a hint to add the company on the Table View first.
+function BfoCompanyNameCell({ account, prospects, updateProspect }) {
+  const matched = useMemo(() => findProspectForAccount(account, prospects), [account, prospects]);
+  if (!matched || !updateProspect) {
+    return (
+      <span
+        style={{ color: 'var(--color-text-muted)' }}
+        title={matched ? undefined : 'Add this company on the Table View to set its BFO Company Name'}
+      >
+        {String(matched?.bfoCompanyName || '').trim() || '—'}
+      </span>
+    );
+  }
+  return (
+    <EditableCell
+      value={matched.bfoCompanyName || ''}
+      onChange={(v) => updateProspect(matched.id, { bfoCompanyName: v })}
+    />
+  );
+}
+
 function ContactCell({ value, onChange, account, prospects, updateProspect, hubspotContacts, onOpenContact, onOpenCompany }) {
   // Single boolean for popover state — the popover handles both
   // viewing currently tagged contacts and adding new ones (from the
@@ -2440,7 +2466,17 @@ export function OppInfoModal({
   // the table presents them, so the popup matches the user's mental
   // model of the row. Computed columns are pulled from the live row
   // (the parent computes them into the opp before passing it in).
-  const orderedFields = (headers || []).filter(h => h && h !== '_select' && h !== '_info' && h !== '_actions');
+  // Guarantee "BFO Company Name" shows here and sits right after the
+  // BFO Opportunity Name (BFO Link) field — saved layouts that predate
+  // the column would otherwise bury it at the very end (or omit it
+  // until the next hydration appends it).
+  const orderedFields = (headers || [])
+    .filter(h => h && h !== '_select' && h !== '_info' && h !== '_actions' && h !== 'BFO Company Name');
+  {
+    const idx = orderedFields.indexOf('BFO Link');
+    if (idx >= 0) orderedFields.splice(idx + 1, 0, 'BFO Company Name');
+    else orderedFields.push('BFO Company Name');
+  }
   // Count of currently-hidden rows among the fields this opp actually
   // shows, so the "Show N hidden" toggle reflects what's collapsed here.
   const hiddenCount = orderedFields.filter(h => hiddenFields.has(h)).length;
@@ -2459,6 +2495,11 @@ export function OppInfoModal({
           {value == null || value === '' ? '—' : String(value)}
         </span>
       );
+    }
+    // Sourced from the matching Table View company, independent of the
+    // opp's own edit callback, so it works even in the read-only modal.
+    if (h === 'BFO Company Name') {
+      return <BfoCompanyNameCell account={opp['Account']} prospects={prospects} updateProspect={updateProspect} />;
     }
     if (!onFieldChange) {
       // Fallback to the original read-only renderer when the modal is
@@ -4934,6 +4975,9 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                 onOpen={() => setNextStepsPopupId(row._id)}
               />
             );
+          }
+          if (h === 'BFO Company Name') {
+            return <BfoCompanyNameCell account={row['Account']} prospects={prospects} updateProspect={updateProspect} />;
           }
           return (
             <EditableCell
