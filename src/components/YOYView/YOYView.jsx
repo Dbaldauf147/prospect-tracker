@@ -1,7 +1,8 @@
 // YOY tab — recreates the Leads / Quoted Projections / Close Rate
 // summary charts off the Opps tab data cached in IndexedDB.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, createContext, useContext } from 'react';
+import { createPortal } from 'react-dom';
 import * as XLSX from 'xlsx';
 import {
   BarChart, Bar, ComposedChart, Line, XAxis, YAxis, CartesianGrid,
@@ -86,6 +87,20 @@ function fmtMoneyFull(n) {
   if (n == null || !Number.isFinite(n)) return '';
   return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 }
+
+// To keep the explanation from ever covering the bars/points being
+// reviewed, the hover content is rendered into a single docked panel
+// (sticky strip at the top of the YOY body) instead of floating over
+// the plot. This context carries a ref to that panel down to the
+// per-chart tooltips; CalcTooltip portals its content into it. Only one
+// chart is hovered at a time, so a shared panel is enough.
+const CalcPanelContext = createContext(null);
+
+// Recharts still owns the cursor highlight, but we suppress its floating
+// box by portaling the content away — keep its wrapper from reserving
+// space or eating pointer events just in case the portal target is
+// missing (then it falls back to a small floating box).
+const TOOLTIP_WRAPPER_STYLE = { pointerEvents: 'none', zIndex: 30 };
 
 export function YOYView() {
   const [opps, setOpps] = useState(null);
@@ -1024,6 +1039,13 @@ export function YOYView() {
     XLSX.writeFile(wb, `yoy-deal-size-${todayStamp()}.xlsx`);
   }
 
+  // The single panel every chart's hover content portals into. It's
+  // docked (sticky) at the top of the body so the explanation is always
+  // visible while hovering any chart and never floats over the plot.
+  // Held in state (via a callback ref) rather than a ref so the element
+  // is provided through context and is safe to read during render.
+  const [calcPanelEl, setCalcPanelEl] = useState(null);
+
   return (
     <div className={styles.wrapper}>
       <div className={styles.header}>
@@ -1036,6 +1058,12 @@ export function YOYView() {
         </div>
       </div>
       <div className={styles.body}>
+        <CalcPanelContext.Provider value={calcPanelEl}>
+        <div
+          ref={setCalcPanelEl}
+          className={styles.calcPanel}
+          data-empty-hint="Hover any chart’s bars or points to see how that number is calculated — shown here so it never covers the chart."
+        />
         <div className={styles.row}>
           <LeadsCard data={leadsData} hasOpps={hasOpps} onDownload={downloadLeads} />
           <QuotedProjectionsCard data={quotedData} hasOpps={hasOpps} target={target} onDownload={downloadQuoted} />
@@ -1059,6 +1087,7 @@ export function YOYView() {
           <div style={{ flex: '1 1 0' }} aria-hidden="true" />
           <div style={{ flex: '1 1 0' }} aria-hidden="true" />
         </div>
+        </CalcPanelContext.Provider>
       </div>
     </div>
   );
@@ -1118,49 +1147,74 @@ function ChartHeader({ title, onDownload, canDownload }) {
 //      a number can be sanity-checked without opening the .xlsx export.
 // `valueFormat(value, name, row)` formats each series line; `explain(row)`
 // returns { formula, inputs: [{label, value}], note } for the lower block.
-function CalcTooltip({
-  active, payload, label,
-  labelText, valueFormat, explain,
-}) {
-  if (!active || !payload || payload.length === 0) return null;
+// Inner content shared by the docked panel (normal case) and the
+// floating fallback. Laid out as a horizontal strip — heading + badge,
+// then the per-series values, then the formula and its inputs — so it
+// reads left-to-right in the wide docked panel without growing tall.
+function CalcContent({ payload, label, labelText, valueFormat, explain }) {
   const row = payload[0]?.payload || {};
   const info = explain ? explain(row, payload, label) : null;
   const heading = labelText ? labelText(label, row) : label;
   return (
-    <div className={styles.calcTip}>
-      <div className={styles.calcTipHead}>
-        <span className={styles.calcTipLabel}>{heading}</span>
+    <div className={styles.calcDock}>
+      <div className={styles.calcDockLabel}>
+        <span className={styles.calcDockHeading}>{heading}</span>
         <span className={styles.calcTipBadge} title="Recomputed live from the Opps cache — not a stored value">∑ calculated</span>
       </div>
-      <div className={styles.calcTipSeries}>
+      <div className={styles.calcDockSeries}>
         {payload.map((p, i) => (
-          <div key={i} className={styles.calcTipRow}>
+          <span key={i} className={styles.calcDockSeriesItem}>
             <span className={styles.calcTipSwatch} style={{ background: p.color || p.stroke || p.fill || '#94a3b8' }} />
-            <span className={styles.calcTipName}>{p.name}</span>
-            <span className={styles.calcTipVal}>
+            <span className={styles.calcDockName}>{p.name}</span>
+            <span className={styles.calcDockVal}>
               {valueFormat ? valueFormat(p.value, p.name, row) : (p.value == null ? '—' : p.value)}
             </span>
-          </div>
+          </span>
         ))}
       </div>
       {info && (info.formula || (info.inputs && info.inputs.length) || info.note) ? (
-        <div className={styles.calcTipExplain}>
-          {info.formula ? <div className={styles.calcTipFormula}>{info.formula}</div> : null}
+        <div className={styles.calcDockExplain}>
+          {info.formula ? <div className={styles.calcDockFormula}>{info.formula}</div> : null}
           {Array.isArray(info.inputs) && info.inputs.length > 0 ? (
-            <div className={styles.calcTipInputs}>
+            <div className={styles.calcDockInputs}>
               {info.inputs.map((it, i) => (
-                <div key={i} className={styles.calcTipInputRow}>
-                  <span className={styles.calcTipInputLabel}>{it.label}</span>
-                  <span className={styles.calcTipInputVal}>{it.value}</span>
-                </div>
+                <span key={i} className={styles.calcDockInput}>
+                  <span className={styles.calcDockInputLabel}>{it.label}</span>
+                  <span className={styles.calcDockInputVal}>{it.value}</span>
+                </span>
               ))}
             </div>
           ) : null}
-          {info.note ? <div className={styles.calcTipNote}>{info.note}</div> : null}
+          {info.note ? <span className={styles.calcDockNote}>{info.note}</span> : null}
         </div>
       ) : null}
     </div>
   );
+}
+
+// Shared hover tooltip for every YOY chart. Recharts clones this element
+// with `active` / `payload` / `label` injected at hover time and would
+// normally float it over the plot — which covers the very point being
+// reviewed. Instead we portal the content into the docked panel at the
+// top of the YOY body so the chart and its data stay fully visible. If
+// no panel is mounted (defensive), it falls back to a small floating box.
+function CalcTooltip({
+  active, payload, label,
+  labelText, valueFormat, explain,
+}) {
+  const target = useContext(CalcPanelContext);
+  if (!active || !payload || payload.length === 0) return null;
+  const body = (
+    <CalcContent
+      payload={payload}
+      label={label}
+      labelText={labelText}
+      valueFormat={valueFormat}
+      explain={explain}
+    />
+  );
+  if (target) return createPortal(body, target);
+  return <div className={styles.calcTip}>{body}</div>;
 }
 
 function LeadsCard({ data, hasOpps, onDownload }) {
@@ -1177,7 +1231,7 @@ function LeadsCard({ data, hasOpps, onDownload }) {
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
             <XAxis dataKey="year" tick={{ fontSize: 12 }} />
             <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
-            <Tooltip content={
+            <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
                 labelText={(label, row) => row.isProjected ? 'Projected (annualized YTD)' : `Open Year ${label}`}
                 valueFormat={(v) => (v == null ? '—' : v.toLocaleString('en-US'))}
@@ -1235,7 +1289,7 @@ function QuotedProjectionsCard({ data, hasOpps, target, onDownload }) {
               tick={{ fontSize: 12 }}
               tickFormatter={(v) => v.toFixed(2)}
             />
-            <Tooltip content={
+            <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
                 labelText={(label) => `Close month: ${label}`}
                 valueFormat={(v, name) => {
@@ -1310,7 +1364,7 @@ function CloseRateCard({ data, hasOpps, onDownload }) {
               domain={[0, 100]}
               tickFormatter={(v) => `${v}%`}
             />
-            <Tooltip content={
+            <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
                 labelText={(label) => `Open Year ${label}`}
                 valueFormat={(v) => (v == null ? '—' : `${v.toFixed(0)}%`)}
@@ -1381,7 +1435,7 @@ function LeadSourcesCard({ data, hasOpps, onDownload }) {
               width={155}
               interval={0}
             />
-            <Tooltip content={
+            <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
                 labelText={(label) => `Lead Source: ${label}`}
                 valueFormat={(v) => (v == null ? '—' : v.toLocaleString('en-US'))}
@@ -1439,7 +1493,7 @@ function QuotedByYearCard({ data, hasOpps, onDownload }) {
               tick={{ fontSize: 12 }}
               tickFormatter={(v) => `$${v.toLocaleString('en-US')}`}
             />
-            <Tooltip content={
+            <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
                 labelText={(label, row) => row.isProjected ? 'Projected (annualized YTD)' : `Open Year ${label}`}
                 valueFormat={(v) => (v == null ? '—' : `$${v.toLocaleString('en-US')}k`)}
@@ -1490,7 +1544,7 @@ function NotSoldsCard({ data, hasOpps, onDownload }) {
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
             <XAxis dataKey="year" tick={{ fontSize: 12 }} />
             <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
-            <Tooltip content={
+            <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
                 labelText={(label, row) => row.isProjected ? 'Projected (annualized YTD)' : `Open Year ${label}`}
                 valueFormat={(v, name) => {
@@ -1587,7 +1641,7 @@ function TopAccountsCard({ data, hasOpps, onDownload }) {
               tick={{ fontSize: 12 }}
               tickFormatter={(v) => `$${(v / 1_000_000).toFixed(0)}M`}
             />
-            <Tooltip content={
+            <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
                 labelText={(label, row) => row._isProjected ? 'Projected (YTD + active pipeline)' : `Year ${label}`}
                 valueFormat={(v) => (v ? fmtMoneyLabel(v) : '$0')}
@@ -1653,7 +1707,7 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload }) {
               tick={{ fontSize: 12 }}
               tickFormatter={(v) => v >= 1_000_000 ? `${(v / 1_000_000).toFixed(0)}M` : v.toLocaleString('en-US')}
             />
-            <Tooltip content={
+            <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
                 labelText={(label, row) => row._isProjected ? 'Projected (YTD + active pipeline)' : `Year ${label}`}
                 valueFormat={(v, name) => (name === '% Quota' ? `${v}%` : (v ? fmtMoneyLabel(v) : '$0'))}
@@ -1726,7 +1780,7 @@ function DealSizeCard({ data, hasOpps, onDownload }) {
               tick={{ fontSize: 12 }}
               tickFormatter={(v) => v >= 1000 ? `$${Math.round(v / 1000)}k` : `$${v}`}
             />
-            <Tooltip content={
+            <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
                 labelText={(label, row) => row._isProjected ? 'Projected (YTD + active pipeline)' : `Year ${label}`}
                 valueFormat={(v, name) => {
@@ -1800,7 +1854,7 @@ function CommissionsCard({ data, hasCommissions, onDownload }) {
               tick={{ fontSize: 12 }}
               tickFormatter={(v) => fmtMoneyShort(v)}
             />
-            <Tooltip content={
+            <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
                 labelText={(label) => `Year ${label}`}
                 valueFormat={(v) => (v == null ? '—' : fmtMoneyFull(v))}
