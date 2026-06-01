@@ -187,34 +187,36 @@ function writeHideActivityOnDate(on) {
   try { userLsSet(HIDE_ACTIVITY_ON_DATE_STORAGE_KEY, on ? '1' : '0'); } catch {}
 }
 
-// Toggleable columns on the Sent emails table, in render order. The
-// Actions column is always shown and is not part of this list.
-const SENT_EMAIL_COLUMNS = [
+// Toggleable columns on the Activity table (merged Sent emails + Called
+// + Meetings), in render order. The Actions column is always shown and
+// is not part of this list.
+const ACTIVITY_COLUMNS = [
   { key: 'time', label: 'Time' },
-  { key: 'subject', label: 'Subject' },
+  { key: 'type', label: 'Type' },
+  { key: 'subject', label: 'Subject / Title' },
   { key: 'to', label: 'To (external)' },
   { key: 'company', label: 'Company' },
   { key: 'bfoCompanyName', label: 'BFO Company Name' },
   { key: 'bfoOpp', label: 'BFO Opportunity' },
   { key: 'lastActivity', label: 'Last Activity' },
   { key: 'bfoLink', label: 'BFO Link' },
-  { key: 'type', label: 'Type' },
-  { key: 'status', label: 'Status' },
+  { key: 'outcome', label: 'Outcome / Status' },
+  { key: 'location', label: 'Location' },
 ];
-const SENT_EMAIL_COLUMN_KEYS = SENT_EMAIL_COLUMNS.map(c => c.key);
-const SENT_EMAIL_COLS_STORAGE_KEY = 'agents-sent-email-hidden-cols';
+const ACTIVITY_COLUMN_KEYS = ACTIVITY_COLUMNS.map(c => c.key);
+const ACTIVITY_COLS_STORAGE_KEY = 'agents-activity-hidden-cols';
 
-// Read the set of hidden Sent-email column keys (persisted per user).
-function readHiddenSentCols() {
+// Read the set of hidden Activity-table column keys (persisted per user).
+function readHiddenActivityCols() {
   try {
-    const raw = userLsGet(SENT_EMAIL_COLS_STORAGE_KEY);
+    const raw = userLsGet(ACTIVITY_COLS_STORAGE_KEY);
     const arr = raw ? JSON.parse(raw) : [];
-    return new Set(Array.isArray(arr) ? arr.filter(k => SENT_EMAIL_COLUMN_KEYS.includes(k)) : []);
+    return new Set(Array.isArray(arr) ? arr.filter(k => ACTIVITY_COLUMN_KEYS.includes(k)) : []);
   } catch { return new Set(); }
 }
 
-function writeHiddenSentCols(set) {
-  try { userLsSet(SENT_EMAIL_COLS_STORAGE_KEY, JSON.stringify([...set])); } catch {}
+function writeHiddenActivityCols(set) {
+  try { userLsSet(ACTIVITY_COLS_STORAGE_KEY, JSON.stringify([...set])); } catch {}
 }
 
 // Normalize a BFO Opportunity Name for matching the Opps tab's "BFO
@@ -599,7 +601,7 @@ function companiesMatch(a, b) {
   return false;
 }
 
-function OppPicker({ oppsCache, onSelect, triggerLabel = '+ Pick opportunity' }) {
+function OppPicker({ oppsCache, onSelect, triggerLabel = '+ Pick opportunity', company = '' }) {
   const [open, setOpen] = useState(false);
   const [term, setTerm] = useState('');
   const wrapRef = useRef(null);
@@ -612,8 +614,16 @@ function OppPicker({ oppsCache, onSelect, triggerLabel = '+ Pick opportunity' })
 
   const matches = useMemo(() => {
     if (!oppsCache?.records?.length) return [];
+    // With no search term and a company in context, default to that
+    // company's opportunities only — so editing a row's tag shows the
+    // BFO opps for that company first. Typing searches across all opps.
+    if (!term.trim() && company) {
+      return oppsCache.records
+        .filter(r => companiesMatch(String(r['Account'] || ''), company))
+        .slice(0, 50);
+    }
     return searchOpps(oppsCache, term).slice(0, 12);
-  }, [oppsCache, term]);
+  }, [oppsCache, term, company]);
 
   // Recompute the fixed-position coordinates from the input's rect,
   // flipping above the field when there isn't room below it.
@@ -681,7 +691,7 @@ function OppPicker({ oppsCache, onSelect, triggerLabel = '+ Pick opportunity' })
       <input
         autoFocus
         className={styles.pickerInput}
-        placeholder="Search opps by account, BFO link, or contact…"
+        placeholder={company ? `Showing ${company} — type to search all opps…` : 'Search opps by account, BFO link, or contact…'}
         value={term}
         onChange={e => setTerm(e.target.value)}
         onKeyDown={e => { if (e.key === 'Escape') { setOpen(false); setTerm(''); } }}
@@ -700,7 +710,11 @@ function OppPicker({ oppsCache, onSelect, triggerLabel = '+ Pick opportunity' })
           }}
         >
           {matches.length === 0 ? (
-            <div className={styles.pickerEmpty}>No matching opps. Try a different search term.</div>
+            <div className={styles.pickerEmpty}>
+              {!term.trim() && company
+                ? `No opportunities found for ${company}. Type to search all opps.`
+                : 'No matching opps. Try a different search term.'}
+            </div>
           ) : matches.map((opp, i) => {
             const bfoOpp = opp['BFO Link'] || '(no opportunity name)';
             const account = opp['Account'] || '';
@@ -742,27 +756,27 @@ export function AgentsView({ prospects = [], settings }) {
   // When on, the Called / Sent tables hide rows whose Last Activity date
   // is the same calendar day as the selected Activity date up top.
   const [hideActivityOnDate, setHideActivityOnDate] = useState(readHideActivityOnDate);
-  // Which Sent-email columns are hidden, plus the column-menu open state.
-  const [hiddenSentCols, setHiddenSentCols] = useState(readHiddenSentCols);
-  const [sentColsMenuOpen, setSentColsMenuOpen] = useState(false);
-  const sentColsMenuRef = useRef(null);
-  const isSentColVisible = (key) => !hiddenSentCols.has(key);
-  const toggleSentCol = (key) => {
-    setHiddenSentCols(prev => {
+  // Which Activity-table columns are hidden, plus the column-menu open state.
+  const [hiddenActivityCols, setHiddenActivityCols] = useState(readHiddenActivityCols);
+  const [activityColsMenuOpen, setActivityColsMenuOpen] = useState(false);
+  const activityColsMenuRef = useRef(null);
+  const isActivityColVisible = (key) => !hiddenActivityCols.has(key);
+  const toggleActivityCol = (key) => {
+    setHiddenActivityCols(prev => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key); else next.add(key);
-      writeHiddenSentCols(next);
+      writeHiddenActivityCols(next);
       return next;
     });
   };
   useEffect(() => {
-    if (!sentColsMenuOpen) return;
+    if (!activityColsMenuOpen) return;
     const onDown = (e) => {
-      if (!sentColsMenuRef.current?.contains(e.target)) setSentColsMenuOpen(false);
+      if (!activityColsMenuRef.current?.contains(e.target)) setActivityColsMenuOpen(false);
     };
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
-  }, [sentColsMenuOpen]);
+  }, [activityColsMenuOpen]);
   const [aiPrompt, setAiPrompt] = useState(readAiPrompt);
   const [newBfoOppPrompt, setNewBfoOppPrompt] = useState(readNewBfoOppPrompt);
   const [closeDatesPrompt, setCloseDatesPrompt] = useState(readCloseDatesPrompt);
@@ -1491,8 +1505,51 @@ export function AgentsView({ prospects = [], settings }) {
   const visibleOutbound = hideActivityOnDate
     ? todaysOutbound.filter(e => !lastActivityOnReference(e.bfoOpp))
     : todaysOutbound;
-  const calledHiddenCount = calledOpps.length - visibleCalledOpps.length;
-  const outboundHiddenCount = todaysOutbound.length - visibleOutbound.length;
+  const visibleMeetings = hideActivityOnDate
+    ? todaysMeetings.filter(m => !lastActivityOnReference(m.bfoOpp))
+    : todaysMeetings;
+  const activityHiddenCount =
+    (calledOpps.length - visibleCalledOpps.length)
+    + (todaysOutbound.length - visibleOutbound.length)
+    + (todaysMeetings.length - visibleMeetings.length);
+
+  // Unified Activity rows: Sent emails + Called + Meetings, normalized to
+  // one shape and tagged with `type` (email / call / meeting). Emails and
+  // meetings carry an overrideKey so their BFO Opportunity tag is
+  // editable; calls come straight off the Opps sheet, so they're shown
+  // read-only. Sorted newest-first by timestamp; calls (no timestamp)
+  // fall to the bottom.
+  const activityRows = useMemo(() => {
+    const rows = [];
+    for (const e of visibleOutbound) {
+      rows.push({
+        rowKey: `email:${e.id}`, type: 'email', ts: e.ts, endTs: null,
+        title: e.subject, to: e.to, rawTo: e.rawTo, recipients: e.recipients || [],
+        company: e.company, bfoOpp: e.bfoOpp, bfoUrl: e.bfoUrl,
+        outcome: e.status || '', location: '', overrideKey: e.overrideKey,
+        isManual: e.isManual, editable: true, emailId: e.id,
+      });
+    }
+    for (const o of visibleCalledOpps) {
+      rows.push({
+        rowKey: `call:${o.id}`, type: 'call', ts: null, endTs: null,
+        title: o.nextSteps || '', to: '', rawTo: '', recipients: [],
+        company: (o.company && o.company !== '—') ? o.company : '', bfoOpp: o.bfoOpp, bfoUrl: o.bfoUrl,
+        outcome: '', location: '', overrideKey: '', isManual: false, editable: false,
+      });
+    }
+    for (const m of visibleMeetings) {
+      rows.push({
+        rowKey: `meeting:${m.id}`, type: 'meeting', ts: m.ts, endTs: m.endTs,
+        title: m.title, to: '', rawTo: '', recipients: [],
+        company: m.company, bfoOpp: m.bfoOpp, bfoUrl: '',
+        outcome: m.outcome || '', location: m.location || '', overrideKey: m.overrideKey,
+        isManual: m.isManual, editable: true, meetingId: m.id,
+      });
+    }
+    rows.sort((a, b) => (new Date(b.ts || 0)) - (new Date(a.ts || 0)));
+    return rows;
+  }, [visibleOutbound, visibleCalledOpps, visibleMeetings]);
 
   // BFO opps whose Close Date should slip by 30 days. Three windows
   // collapsed into one filter, all keyed off the BFO Sales Stage number
@@ -1841,7 +1898,7 @@ export function AgentsView({ prospects = [], settings }) {
       )}
       {senderEmail ? (
         <p className={styles.subnote}>
-          Outbound emails from <strong>{senderEmail}</strong> to non-SE recipients over the past 2 business days (through {isToday ? 'today' : dateLabel}), plus any meetings on {isToday ? 'today' : `${dateLabel}`}&rsquo;s calendar. BFO Opportunity tagging walks each recipient&rsquo;s email against the Opps tab&rsquo;s Contact field first, then estimates by company name — fuzzy-matching the HubSpot company (or, when there&rsquo;s no HubSpot contact, the company guessed from the email domain) against the Opps tab&rsquo;s Account field. Use the inline picker to set or change any tag — your selection is remembered for that recipient on future emails. The BFO Company Name column is resolved from the Company. Use the Columns menu to choose which columns are shown.
+          The Activity table merges outbound emails from <strong>{senderEmail}</strong> (to non-SE recipients, past 2 business days), logged calls from the Opps tab, and meetings on {isToday ? 'today' : `${dateLabel}`}&rsquo;s calendar — the Type column marks each row as Email, Call, or Meeting. BFO Opportunity tagging walks each recipient&rsquo;s email against the Opps tab&rsquo;s Contact field first, then estimates by company name — fuzzy-matching the HubSpot company (or, when there&rsquo;s no HubSpot contact, the company guessed from the email domain) against the Opps tab&rsquo;s Account field. Use the inline picker to set or change any tag (it shows that company&rsquo;s opportunities first); your selection is remembered for that recipient on future emails. The BFO Company Name column is resolved from the Company. Use the Columns menu to choose which columns are shown.
         </p>
       ) : (
         <div className={styles.staleBanner}>
@@ -1850,10 +1907,9 @@ export function AgentsView({ prospects = [], settings }) {
       )}
 
       <div className={styles.tallies}>
-        <div className={styles.tally}><strong>{todaysOutbound.length}</strong>sent emails {isToday ? 'today' : 'that day'}</div>
-        {todaysMeetings.length > 0 && (
-          <div className={styles.tally}><strong>{todaysMeetings.length}</strong>meeting{todaysMeetings.length === 1 ? '' : 's'} {isToday ? 'today' : 'that day'}</div>
-        )}
+        <div className={styles.tally}><strong>{todaysOutbound.length}</strong>sent emails</div>
+        <div className={styles.tally}><strong>{calledOpps.length}</strong>call{calledOpps.length === 1 ? '' : 's'}</div>
+        <div className={styles.tally}><strong>{todaysMeetings.length}</strong>meeting{todaysMeetings.length === 1 ? '' : 's'}</div>
       </div>
 
       {!cache && (
@@ -1871,77 +1927,24 @@ export function AgentsView({ prospects = [], settings }) {
       )}
 
       <section className={styles.section}>
-        <h2 className={styles.sectionHeader}>
-          Called <span className={styles.sectionCount}>{visibleCalledOpps.length}</span>
-        </h2>
-        <table className={styles.table}>
-          <thead>
-            <tr>
-              <th>Company</th>
-              <th>BFO Opportunity</th>
-              <th style={{ width: 110 }}>Last Activity</th>
-              <th style={{ width: 70 }}>BFO Link</th>
-              <th style={{ width: 70 }}>Type</th>
-            </tr>
-          </thead>
-          <tbody>
-            {visibleCalledOpps.length === 0 ? (
-              <tr className={styles.emptyRow}>
-                <td colSpan={5}>No Opps with a phone touch logged in Next Steps and Last Spoke = 0.</td>
-              </tr>
-            ) : visibleCalledOpps.map(o => {
-              const lastActivity = lastActivityFor(o.bfoOpp);
-              return (
-              <tr key={o.id}>
-                <td className={o.company && o.company !== '—' ? '' : styles.muted}>{o.company || '—'}</td>
-                <td className={o.bfoOpp ? '' : styles.muted} title={o.nextSteps}>
-                  {o.bfoOpp || '—'}
-                </td>
-                <td className={lastActivity ? '' : styles.muted}>{lastActivity || '—'}</td>
-                <td>
-                  {o.bfoUrl ? (
-                    <a
-                      href={o.bfoUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className={styles.bfoLink}
-                    >Open</a>
-                  ) : (
-                    <span className={styles.muted}>—</span>
-                  )}
-                </td>
-                <td>called</td>
-              </tr>
-              );
-            })}
-          </tbody>
-        </table>
-        {hideActivityOnDate && calledHiddenCount > 0 && (
-          <p className={styles.subnote}>
-            Hiding {calledHiddenCount} row{calledHiddenCount === 1 ? '' : 's'} last active in the past 2 business days.
-          </p>
-        )}
-      </section>
-
-      <section className={styles.section}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem' }}>
           <h2 className={styles.sectionHeader}>
-            Sent emails <span className={styles.sectionCount}>{visibleOutbound.length}</span>
+            Activity <span className={styles.sectionCount}>{activityRows.length}</span>
           </h2>
-          <div ref={sentColsMenuRef} style={{ position: 'relative' }}>
+          <div ref={activityColsMenuRef} style={{ position: 'relative' }}>
             <button
               type="button"
               className={styles.linkBtn}
-              onClick={() => setSentColsMenuOpen(o => !o)}
-              title="Choose which columns are visible on the Sent emails table"
+              onClick={() => setActivityColsMenuOpen(o => !o)}
+              title="Choose which columns are visible on the Activity table"
             >
-              Columns ({SENT_EMAIL_COLUMNS.length - hiddenSentCols.size}/{SENT_EMAIL_COLUMNS.length}) ▾
+              Columns ({ACTIVITY_COLUMNS.length - hiddenActivityCols.size}/{ACTIVITY_COLUMNS.length}) ▾
             </button>
-            {sentColsMenuOpen && (
+            {activityColsMenuOpen && (
               <div style={{ position: 'absolute', right: 0, top: '100%', zIndex: 50, marginTop: 4, background: '#fff', border: '1px solid #E2E8F0', borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.12)', padding: '0.35rem', minWidth: 190 }}>
-                {SENT_EMAIL_COLUMNS.map(col => (
+                {ACTIVITY_COLUMNS.map(col => (
                   <label key={col.key} style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', padding: '0.25rem 0.4rem', fontSize: '0.75rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                    <input type="checkbox" checked={isSentColVisible(col.key)} onChange={() => toggleSentCol(col.key)} />
+                    <input type="checkbox" checked={isActivityColVisible(col.key)} onChange={() => toggleActivityCol(col.key)} />
                     {col.label}
                   </label>
                 ))}
@@ -1952,64 +1955,72 @@ export function AgentsView({ prospects = [], settings }) {
         <table className={styles.table}>
           <thead>
             <tr>
-              {isSentColVisible('time') && <th style={{ width: 90 }}>Time</th>}
-              {isSentColVisible('subject') && <th>Subject</th>}
-              {isSentColVisible('to') && <th>To (external)</th>}
-              {isSentColVisible('company') && <th>Company</th>}
-              {isSentColVisible('bfoCompanyName') && <th>BFO Company Name</th>}
-              {isSentColVisible('bfoOpp') && <th>BFO Opportunity</th>}
-              {isSentColVisible('lastActivity') && <th style={{ width: 110 }}>Last Activity</th>}
-              {isSentColVisible('bfoLink') && <th style={{ width: 70 }}>BFO Link</th>}
-              {isSentColVisible('type') && <th style={{ width: 70 }}>Type</th>}
-              {isSentColVisible('status') && <th style={{ width: 130 }}>Status</th>}
+              {isActivityColVisible('time') && <th style={{ width: 110 }}>Time</th>}
+              {isActivityColVisible('type') && <th style={{ width: 80 }}>Type</th>}
+              {isActivityColVisible('subject') && <th>Subject / Title</th>}
+              {isActivityColVisible('to') && <th>To (external)</th>}
+              {isActivityColVisible('company') && <th>Company</th>}
+              {isActivityColVisible('bfoCompanyName') && <th>BFO Company Name</th>}
+              {isActivityColVisible('bfoOpp') && <th>BFO Opportunity</th>}
+              {isActivityColVisible('lastActivity') && <th style={{ width: 110 }}>Last Activity</th>}
+              {isActivityColVisible('bfoLink') && <th style={{ width: 70 }}>BFO Link</th>}
+              {isActivityColVisible('outcome') && <th style={{ width: 130 }}>Outcome / Status</th>}
+              {isActivityColVisible('location') && <th>Location</th>}
               <th style={{ width: 64 }} aria-label="Actions" />
             </tr>
           </thead>
           <tbody>
-            {visibleOutbound.length === 0 ? (
+            {activityRows.length === 0 ? (
               <tr className={styles.emptyRow}>
-                <td colSpan={SENT_EMAIL_COLUMNS.length - hiddenSentCols.size + 1}>No outbound emails to external recipients on {dateLabel}.</td>
+                <td colSpan={ACTIVITY_COLUMNS.length - hiddenActivityCols.size + 1}>No activity (emails, calls, or meetings) for {isToday ? 'today' : dateLabel}.</td>
               </tr>
-            ) : visibleOutbound.map(e => {
-                const lastActivity = lastActivityFor(e.bfoOpp);
-                const bfoCompanyName = resolveBfoCompanyName(e);
+            ) : activityRows.map(r => {
+                const lastActivity = lastActivityFor(r.bfoOpp);
+                const bfoCompanyName = resolveBfoCompanyName(r);
+                const typeLabel = r.type === 'email' ? 'Email' : r.type === 'call' ? 'Call' : 'Meeting';
                 return (
-                <tr key={e.id}>
-                  {isSentColVisible('time') && <td>{fmtTime(e.ts)}</td>}
-                  {isSentColVisible('subject') && <td>{e.subject}</td>}
-                  {isSentColVisible('to') && <td title={e.rawTo}>{e.to || <span className={styles.muted}>—</span>}</td>}
-                  {isSentColVisible('company') && <td className={e.company ? '' : styles.muted}>{e.company || '—'}</td>}
-                  {isSentColVisible('bfoCompanyName') && <td className={bfoCompanyName ? '' : styles.muted}>{bfoCompanyName || '—'}</td>}
-                  {isSentColVisible('bfoOpp') && (
+                <tr key={r.rowKey}>
+                  {isActivityColVisible('time') && <td className={r.ts ? '' : styles.muted}>{r.ts ? `${fmtTime(r.ts)}${r.endTs ? ` – ${fmtTime(r.endTs)}` : ''}` : '—'}</td>}
+                  {isActivityColVisible('type') && <td>{typeLabel}</td>}
+                  {isActivityColVisible('subject') && <td className={r.title ? '' : styles.muted} title={r.title}>{r.title || '—'}</td>}
+                  {isActivityColVisible('to') && <td title={r.rawTo}>{r.to || <span className={styles.muted}>—</span>}</td>}
+                  {isActivityColVisible('company') && <td className={r.company ? '' : styles.muted}>{r.company || '—'}</td>}
+                  {isActivityColVisible('bfoCompanyName') && <td className={bfoCompanyName ? '' : styles.muted}>{bfoCompanyName || '—'}</td>}
+                  {isActivityColVisible('bfoOpp') && (
                     <td>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}>
-                        {e.bfoOpp && (
-                          <span className={styles.overrideValue}>
-                            {e.bfoOpp}
-                            {e.isManual && (
-                              <button
-                                type="button"
-                                className={styles.overrideClear}
-                                onClick={() => clearOverride(e.overrideKey)}
-                                title="Clear manual tag (revert to auto-match)"
-                              >✕</button>
-                            )}
-                          </span>
-                        )}
-                        <OppPicker
-                          oppsCache={oppsCache}
-                          triggerLabel={e.bfoOpp ? '✎ Change' : '+ Pick opportunity'}
-                          onSelect={(opp) => setOverride(e.overrideKey, opp)}
-                        />
-                      </div>
+                      {r.editable ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}>
+                          {r.bfoOpp && (
+                            <span className={styles.overrideValue}>
+                              {r.bfoOpp}
+                              {r.isManual && (
+                                <button
+                                  type="button"
+                                  className={styles.overrideClear}
+                                  onClick={() => clearOverride(r.overrideKey)}
+                                  title="Clear manual tag (revert to auto-match)"
+                                >✕</button>
+                              )}
+                            </span>
+                          )}
+                          <OppPicker
+                            oppsCache={oppsCache}
+                            company={r.company}
+                            triggerLabel={r.bfoOpp ? '✎ Change' : '+ Pick opportunity'}
+                            onSelect={(opp) => setOverride(r.overrideKey, opp)}
+                          />
+                        </div>
+                      ) : (
+                        <span className={r.bfoOpp ? '' : styles.muted} title={r.title}>{r.bfoOpp || '—'}</span>
+                      )}
                     </td>
                   )}
-                  {isSentColVisible('lastActivity') && <td className={lastActivity ? '' : styles.muted}>{lastActivity || '—'}</td>}
-                  {isSentColVisible('bfoLink') && (
+                  {isActivityColVisible('lastActivity') && <td className={lastActivity ? '' : styles.muted}>{lastActivity || '—'}</td>}
+                  {isActivityColVisible('bfoLink') && (
                     <td>
-                      {e.bfoUrl ? (
+                      {r.bfoUrl ? (
                         <a
-                          href={e.bfoUrl}
+                          href={r.bfoUrl}
                           target="_blank"
                           rel="noreferrer"
                           className={styles.bfoLink}
@@ -2019,35 +2030,48 @@ export function AgentsView({ prospects = [], settings }) {
                       )}
                     </td>
                   )}
-                  {isSentColVisible('type') && <td>{e.nextStepsType}</td>}
-                  {isSentColVisible('status') && <td className={e.status ? '' : styles.muted}>{e.status || '—'}</td>}
+                  {isActivityColVisible('outcome') && <td className={r.outcome ? '' : styles.muted}>{r.outcome || '—'}</td>}
+                  {isActivityColVisible('location') && <td className={r.location ? '' : styles.muted}>{r.location || '—'}</td>}
                   <td className={styles.actionsCell}>
-                    <button
-                      type="button"
-                      className={styles.ignoreBtn}
-                      onClick={() => ignoreEmail(e.id)}
-                      title="Hide just this email from the Sent emails table"
-                      aria-label="Ignore email"
-                    >✕</button>
-                    <button
-                      type="button"
-                      className={styles.ignoreBtn}
-                      onClick={() => excludeRecipient(e.recipients)}
-                      disabled={!e.recipients?.length}
-                      title={e.recipients?.length
-                        ? `Don't include emails to ${e.recipients.join(', ')} moving forward`
-                        : 'No external recipient to exclude'}
-                      aria-label="Exclude recipient from future Sent emails"
-                    >🚫</button>
+                    {r.type === 'email' && (
+                      <>
+                        <button
+                          type="button"
+                          className={styles.ignoreBtn}
+                          onClick={() => ignoreEmail(r.emailId)}
+                          title="Hide just this email from the Activity table"
+                          aria-label="Ignore email"
+                        >✕</button>
+                        <button
+                          type="button"
+                          className={styles.ignoreBtn}
+                          onClick={() => excludeRecipient(r.recipients)}
+                          disabled={!r.recipients?.length}
+                          title={r.recipients?.length
+                            ? `Don't include emails to ${r.recipients.join(', ')} moving forward`
+                            : 'No external recipient to exclude'}
+                          aria-label="Exclude recipient from future activity"
+                        >🚫</button>
+                      </>
+                    )}
+                    {r.type === 'meeting' && (
+                      <button
+                        type="button"
+                        className={styles.ignoreBtn}
+                        onClick={() => ignoreMeeting(r.meetingId)}
+                        title="Hide this meeting from the Activity table"
+                        aria-label="Ignore meeting"
+                      >✕</button>
+                    )}
                   </td>
                 </tr>
                 );
               })}
           </tbody>
         </table>
-        {hideActivityOnDate && outboundHiddenCount > 0 && (
+        {hideActivityOnDate && activityHiddenCount > 0 && (
           <p className={styles.subnote}>
-            Hiding {outboundHiddenCount} email{outboundHiddenCount === 1 ? '' : 's'} last active in the past 2 business days.
+            Hiding {activityHiddenCount} row{activityHiddenCount === 1 ? '' : 's'} last active in the past 2 business days.
           </p>
         )}
         {excludedRecipients.length > 0 && (
@@ -2056,69 +2080,6 @@ export function AgentsView({ prospects = [], settings }) {
             <button type="button" className={styles.linkBtn} onClick={clearExcludedRecipients}>Restore all</button>
           </p>
         )}
-      </section>
-
-      <section className={styles.section}>
-        <h2 className={styles.sectionHeader}>
-          Meetings <span className={styles.sectionCount}>{todaysMeetings.length}</span>
-        </h2>
-        <table className={styles.table}>
-          <thead>
-            <tr>
-              <th style={{ width: 130 }}>Time</th>
-              <th>Title</th>
-              <th>Company</th>
-              <th>BFO Opportunity</th>
-              <th style={{ width: 160 }}>Outcome</th>
-              <th>Location</th>
-              <th style={{ width: 40 }} aria-label="Actions" />
-            </tr>
-          </thead>
-          <tbody>
-            {todaysMeetings.length === 0 ? (
-              <tr className={styles.emptyRow}>
-                <td colSpan={7}>No meetings on {dateLabel}&rsquo;s calendar.</td>
-              </tr>
-            ) : todaysMeetings.map(m => (
-              <tr key={m.id}>
-                  <td>{fmtTime(m.ts)}{m.endTs ? ` – ${fmtTime(m.endTs)}` : ''}</td>
-                  <td>{m.title}</td>
-                  <td className={m.company ? '' : styles.muted}>{m.company || '—'}</td>
-                  <td>
-                    {m.bfoOpp ? (
-                      <span className={styles.overrideValue}>
-                        {m.bfoOpp}
-                        {m.isManual && (
-                          <button
-                            type="button"
-                            className={styles.overrideClear}
-                            onClick={() => clearOverride(m.overrideKey)}
-                            title="Clear this manual tag"
-                          >✕</button>
-                        )}
-                      </span>
-                    ) : (
-                      <OppPicker
-                        oppsCache={oppsCache}
-                        onSelect={(opp) => setOverride(m.overrideKey, opp)}
-                      />
-                    )}
-                  </td>
-                  <td className={m.outcome ? '' : styles.muted}>{m.outcome || '—'}</td>
-                  <td className={m.location ? '' : styles.muted}>{m.location || '—'}</td>
-                  <td>
-                    <button
-                      type="button"
-                      className={styles.ignoreBtn}
-                      onClick={() => ignoreMeeting(m.id)}
-                      title="Hide this meeting from the Meetings table"
-                      aria-label="Ignore meeting"
-                    >✕</button>
-                  </td>
-                </tr>
-            ))}
-          </tbody>
-        </table>
       </section>
 
       {(() => {
