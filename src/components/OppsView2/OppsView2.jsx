@@ -205,6 +205,45 @@ const DATE_COLUMNS = new Set([
 // until the opp actually reaches the Quoted stage.
 const SEED_TODAY_DATE_COLUMNS = new Set(['Start Date', 'Last Client Heard From Us', 'Follow Up']);
 
+const MONTH_FULL_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+// Parse a free-text Close Date into a Date. Accepts ISO (2026-06-01)
+// and locale/US (6/1/2026, "June 1, 2026") entries. Returns null when
+// the text isn't a recognizable date so a typo never clobbers the
+// derived Close Year / Close Month columns.
+function parseCloseDate(raw) {
+  const s = String(raw ?? '').trim();
+  if (!s) return null;
+  const ts = Date.parse(s);
+  if (Number.isNaN(ts)) return null;
+  const d = new Date(ts);
+  // Date.parse reads a bare ISO date (YYYY-MM-DD) as UTC midnight, which
+  // can land on the previous day in a negative-offset timezone. Pull the
+  // UTC parts back for ISO strings; slash/locale strings parse as local
+  // so getFullYear/getMonth are already correct there.
+  if (/^\d{4}-\d{2}/.test(s)) return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  return d;
+}
+
+// Locate the "Close Year" / "Close Month" columns to auto-fill from a
+// Close Date. Matched loosely (Close/Closed, optional space) so it works
+// regardless of the exact label in the user's imported headers.
+const CLOSE_YEAR_RE = /^closed?\s*year$/;
+const CLOSE_MONTH_RE = /^closed?\s*month$/;
+function findCloseDerivedColumns(headers) {
+  const yearCols = [];
+  const monthCols = [];
+  for (const h of (headers || [])) {
+    const norm = String(h || '').trim().toLowerCase();
+    if (CLOSE_YEAR_RE.test(norm)) yearCols.push(h);
+    else if (CLOSE_MONTH_RE.test(norm)) monthCols.push(h);
+  }
+  return { yearCols, monthCols };
+}
+
 // Stages the Days-in-Stage tab reports on. Ordered to mirror the
 // pipeline progression so a row stays under one bucket as it moves
 // forward. Closed stages (Sold / Not Sold) are intentionally excluded
@@ -4479,6 +4518,27 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     // computed column back to life via "+ add".
     const row = (dataRef.current?.records || []).find(r => r._id === id);
     const stageChanged = !!row && field === 'Stage' && String(row[field] ?? '') !== String(value ?? '');
+    // When the user enters a Close Date, mirror its year + month into the
+    // "Close Year" / "Close Month" columns so the Opp details stay in
+    // sync without manual entry. A cleared date clears them; an
+    // unparseable entry leaves them untouched so a typo doesn't wipe
+    // good data.
+    let closeDerived = null;
+    if (row && field === 'Close Date') {
+      const { yearCols, monthCols } = findCloseDerivedColumns(dataRef.current?.headers);
+      if (yearCols.length || monthCols.length) {
+        const d = parseCloseDate(value);
+        const cleared = String(value ?? '').trim() === '';
+        if (d || cleared) {
+          closeDerived = {
+            yearCols,
+            monthCols,
+            yearVal: d ? String(d.getFullYear()) : '',
+            monthVal: d ? MONTH_FULL_NAMES[d.getMonth()] : '',
+          };
+        }
+      }
+    }
     if (row) {
       const snap = (f) => ({ field: f, hadField: f in row, prevValue: f in row ? row[f] : undefined });
       const fields = [snap(field)];
@@ -4496,6 +4556,11 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       // tell yesterday's leftovers from today's marks. Snapshot it
       // for undo too.
       if (field === 'No Further Action Today') fields.push(snap('_nfatSetAt'));
+      // Snapshot the auto-filled Close Year / Close Month so one undo of
+      // the Close Date edit restores them in the same step.
+      if (closeDerived) {
+        for (const c of [...closeDerived.yearCols, ...closeDerived.monthCols]) fields.push(snap(c));
+      }
       pushUndoEntry({ id, fields });
     }
     setData(prev => {
@@ -4512,6 +4577,12 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           // blank forever even after the user picks a new Follow Up.
           if (field === 'Follow Up' && 'Call In' in next) delete next['Call In'];
           if (field === 'Last Client Heard From Us' && 'Last Spoke' in next) delete next['Last Spoke'];
+          // Auto-fill the derived Close Year / Close Month columns from
+          // the new Close Date (computed above).
+          if (closeDerived) {
+            for (const c of closeDerived.yearCols) next[c] = closeDerived.yearVal;
+            for (const c of closeDerived.monthCols) next[c] = closeDerived.monthVal;
+          }
           // Stamp the stage-entry date whenever Stage flips to a new
           // value so Days-in-Stage measures "time since the last move"
           // rather than the row's age. We also push a history entry
