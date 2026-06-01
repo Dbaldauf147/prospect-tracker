@@ -87,6 +87,15 @@ function fmtMoneyFull(n) {
   return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 }
 
+// Keep the hover tooltip from covering the point being hovered. Pinning
+// y to the top of the plot parks the explanation panel in the headroom
+// above the bars/lines (which grow up from the baseline), while x is
+// left unset so it still tracks the cursor and Recharts flips it away
+// from the right edge. offset nudges it off the cursor; pointerEvents
+// none means it never eats the hover that spawned it.
+const TOOLTIP_POSITION = { y: 0 };
+const TOOLTIP_WRAPPER_STYLE = { pointerEvents: 'none', zIndex: 30 };
+
 export function YOYView() {
   const [opps, setOpps] = useState(null);
   const [target, setTarget] = useState(DEFAULT_ANNUAL_TARGET);
@@ -1177,7 +1186,7 @@ function LeadsCard({ data, hasOpps, onDownload }) {
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
             <XAxis dataKey="year" tick={{ fontSize: 12 }} />
             <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
-            <Tooltip content={
+            <Tooltip position={TOOLTIP_POSITION} offset={16} allowEscapeViewBox={{ x: false, y: true }} wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
                 labelText={(label, row) => row.isProjected ? 'Projected (annualized YTD)' : `Open Year ${label}`}
                 valueFormat={(v) => (v == null ? '—' : v.toLocaleString('en-US'))}
@@ -1235,7 +1244,7 @@ function QuotedProjectionsCard({ data, hasOpps, target, onDownload }) {
               tick={{ fontSize: 12 }}
               tickFormatter={(v) => v.toFixed(2)}
             />
-            <Tooltip content={
+            <Tooltip position={TOOLTIP_POSITION} offset={16} allowEscapeViewBox={{ x: false, y: true }} wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
                 labelText={(label) => `Close month: ${label}`}
                 valueFormat={(v, name) => {
@@ -1310,7 +1319,7 @@ function CloseRateCard({ data, hasOpps, onDownload }) {
               domain={[0, 100]}
               tickFormatter={(v) => `${v}%`}
             />
-            <Tooltip content={
+            <Tooltip position={TOOLTIP_POSITION} offset={16} allowEscapeViewBox={{ x: false, y: true }} wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
                 labelText={(label) => `Open Year ${label}`}
                 valueFormat={(v) => (v == null ? '—' : `${v.toFixed(0)}%`)}
@@ -1381,7 +1390,7 @@ function LeadSourcesCard({ data, hasOpps, onDownload }) {
               width={155}
               interval={0}
             />
-            <Tooltip content={
+            <Tooltip position={TOOLTIP_POSITION} offset={16} allowEscapeViewBox={{ x: false, y: true }} wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
                 labelText={(label) => `Lead Source: ${label}`}
                 valueFormat={(v) => (v == null ? '—' : v.toLocaleString('en-US'))}
@@ -1439,7 +1448,7 @@ function QuotedByYearCard({ data, hasOpps, onDownload }) {
               tick={{ fontSize: 12 }}
               tickFormatter={(v) => `$${v.toLocaleString('en-US')}`}
             />
-            <Tooltip content={
+            <Tooltip position={TOOLTIP_POSITION} offset={16} allowEscapeViewBox={{ x: false, y: true }} wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
                 labelText={(label, row) => row.isProjected ? 'Projected (annualized YTD)' : `Open Year ${label}`}
                 valueFormat={(v) => (v == null ? '—' : `$${v.toLocaleString('en-US')}k`)}
@@ -1490,7 +1499,7 @@ function NotSoldsCard({ data, hasOpps, onDownload }) {
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
             <XAxis dataKey="year" tick={{ fontSize: 12 }} />
             <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
-            <Tooltip content={
+            <Tooltip position={TOOLTIP_POSITION} offset={16} allowEscapeViewBox={{ x: false, y: true }} wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
                 labelText={(label, row) => row.isProjected ? 'Projected (annualized YTD)' : `Open Year ${label}`}
                 valueFormat={(v, name) => {
@@ -1587,7 +1596,7 @@ function TopAccountsCard({ data, hasOpps, onDownload }) {
               tick={{ fontSize: 12 }}
               tickFormatter={(v) => `$${(v / 1_000_000).toFixed(0)}M`}
             />
-            <Tooltip content={
+            <Tooltip position={TOOLTIP_POSITION} offset={16} allowEscapeViewBox={{ x: false, y: true }} wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
                 labelText={(label, row) => row._isProjected ? 'Projected (YTD + active pipeline)' : `Year ${label}`}
                 valueFormat={(v) => (v ? fmtMoneyLabel(v) : '$0')}
@@ -1653,7 +1662,7 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload }) {
               tick={{ fontSize: 12 }}
               tickFormatter={(v) => v >= 1_000_000 ? `${(v / 1_000_000).toFixed(0)}M` : v.toLocaleString('en-US')}
             />
-            <Tooltip content={
+            <Tooltip position={TOOLTIP_POSITION} offset={16} allowEscapeViewBox={{ x: false, y: true }} wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
                 labelText={(label, row) => row._isProjected ? 'Projected (YTD + active pipeline)' : `Year ${label}`}
                 valueFormat={(v, name) => (name === '% Quota' ? `${v}%` : (v ? fmtMoneyLabel(v) : '$0'))}
@@ -1726,7 +1735,7 @@ function DealSizeCard({ data, hasOpps, onDownload }) {
               tick={{ fontSize: 12 }}
               tickFormatter={(v) => v >= 1000 ? `$${Math.round(v / 1000)}k` : `$${v}`}
             />
-            <Tooltip content={
+            <Tooltip position={TOOLTIP_POSITION} offset={16} allowEscapeViewBox={{ x: false, y: true }} wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
                 labelText={(label, row) => row._isProjected ? 'Projected (YTD + active pipeline)' : `Year ${label}`}
                 valueFormat={(v, name) => {
@@ -1800,7 +1809,7 @@ function CommissionsCard({ data, hasCommissions, onDownload }) {
               tick={{ fontSize: 12 }}
               tickFormatter={(v) => fmtMoneyShort(v)}
             />
-            <Tooltip content={
+            <Tooltip position={TOOLTIP_POSITION} offset={16} allowEscapeViewBox={{ x: false, y: true }} wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
                 labelText={(label) => `Year ${label}`}
                 valueFormat={(v) => (v == null ? '—' : fmtMoneyFull(v))}
