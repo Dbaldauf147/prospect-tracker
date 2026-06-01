@@ -327,16 +327,20 @@ export function YOYView() {
     return rows;
   }, [records]);
 
-  // Quoted (Thousands) — sum of Quoted Amount per Open Year (any stage),
-  // displayed in $k. Includes a Projected bar for the current year.
+  // Quoted (Thousands) — sum of Quoted Amount bucketed by the calendar
+  // year of each opp's Quoted On date (any stage), displayed in $k. Opps
+  // without a parseable Quoted On date are excluded since they have no
+  // quote year to attribute. Includes a Projected bar for the current year.
   const quotedByYearData = useMemo(() => {
     if (records.length === 0) return [];
     const byYear = new Map();
     let minYear = currentYear;
     let maxYear = currentYear;
     for (const r of records) {
-      const y = parseYear(r['Open Year']);
-      if (y === null) continue;
+      const ts = Date.parse(r['Quoted On'] || r['Quoted Date'] || '');
+      if (Number.isNaN(ts)) continue;
+      const y = new Date(ts).getFullYear();
+      if (!Number.isFinite(y) || y < 1900 || y > 2100) continue;
       const amt = parseMoney(r['Quoted Amount']);
       const v = (typeof amt === 'number' && Number.isFinite(amt)) ? amt : 0;
       byYear.set(y, (byYear.get(y) || 0) + v);
@@ -742,6 +746,24 @@ export function YOYView() {
       const ageNum = Number(String(r.Age ?? '').replace(/[^0-9.-]/g, ''));
       const age = Number.isFinite(ageNum) ? ageNum : '';
 
+      // Quoted (Thousands) contributors — grouped by the calendar year of
+      // the Quoted On date, so include any row with a parseable Quoted On
+      // regardless of Open Year.
+      const quotedOnTs = Date.parse(quotedOn);
+      if (!Number.isNaN(quotedOnTs)) {
+        const qy = new Date(quotedOnTs).getFullYear();
+        if (Number.isFinite(qy) && qy >= 1900 && qy <= 2100) {
+          quotedByYear.push({
+            Account: account,
+            'Quoted On': quotedOn,
+            'Quoted Year': qy,
+            Stage: stage,
+            'Open Year': oy ?? '',
+            'Quoted Amount': quotedAmt ?? 0,
+          });
+        }
+      }
+
       if (oy !== null) {
         leads.push({
           Account: account,
@@ -762,13 +784,6 @@ export function YOYView() {
             : (stage === 'Not Sold')
               ? (isQuotedPlus(r) ? 'Not Sold (Quoted+)' : 'Not Sold (pre-quote)')
               : 'In Progress',
-          'Close Date': closeDate,
-        });
-        quotedByYear.push({
-          Account: account,
-          'Open Year': oy,
-          Stage: stage,
-          'Quoted Amount': quotedAmt ?? 0,
           'Close Date': closeDate,
         });
         // Not Solds chart contributors — keep every row that fed any of
@@ -836,7 +851,7 @@ export function YOYView() {
     }
     leads.sort((a, b) => a['Open Year'] - b['Open Year'] || a.Account.localeCompare(b.Account));
     closeRate.sort((a, b) => a['Open Year'] - b['Open Year'] || a.Account.localeCompare(b.Account));
-    quotedByYear.sort((a, b) => a['Open Year'] - b['Open Year'] || a.Account.localeCompare(b.Account));
+    quotedByYear.sort((a, b) => a['Quoted Year'] - b['Quoted Year'] || a.Account.localeCompare(b.Account));
     notSolds.sort((a, b) => a['Open Year'] - b['Open Year'] || a.Account.localeCompare(b.Account));
     leadSources.sort((a, b) =>
       a['Lead Source'].localeCompare(b['Lead Source'])
@@ -959,7 +974,7 @@ export function YOYView() {
   }
   function downloadQuotedByYear() {
     const summary = quotedByYearData.map(r => ({
-      Year: r.year,
+      'Quoted Year': r.year,
       'Quoted ($k)': r.thousands,
       Type: r.isProjected ? 'Projected (annualized YTD)' : 'Actual',
     }));
@@ -1495,11 +1510,11 @@ function QuotedByYearCard({ data, hasOpps, onDownload }) {
             />
             <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
-                labelText={(label, row) => row.isProjected ? 'Projected (annualized YTD)' : `Open Year ${label}`}
+                labelText={(label, row) => row.isProjected ? 'Projected (annualized YTD)' : `Quoted ${label}`}
                 valueFormat={(v) => (v == null ? '—' : `$${v.toLocaleString('en-US')}k`)}
                 explain={(row) => row.isProjected
                   ? {
-                      formula: 'Annualized: YTD quoted $ ÷ fraction of the year elapsed, shown in $k.',
+                      formula: 'Annualized: YTD quoted $ (by Quoted On date) ÷ fraction of the year elapsed, shown in $k.',
                       inputs: [
                         { label: 'YTD quoted', value: `$${(row._ytdThousands ?? 0).toLocaleString('en-US')}k` },
                         { label: 'Year elapsed', value: `${Math.round((row._frac ?? 0) * 100)}%` },
@@ -1507,7 +1522,7 @@ function QuotedByYearCard({ data, hasOpps, onDownload }) {
                       ],
                     }
                   : {
-                      formula: 'Sum of Quoted Amount across every opp with this Open Year (any stage), shown in $k.',
+                      formula: 'Sum of Quoted Amount for every opp whose Quoted On date falls in this year (any stage), shown in $k.',
                       inputs: [{ label: 'Quoted total', value: `$${(row.thousands ?? 0).toLocaleString('en-US')}k` }],
                     }}
               />
