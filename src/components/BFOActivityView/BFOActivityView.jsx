@@ -8,6 +8,18 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import styles from './BFOActivityView.module.css';
 import { dbGet, dbPut, dbDelete } from '../../utils/db';
 import { loadOppsFromCache } from '../../utils/oppsCache';
+import { setOppBfoLink } from '../../utils/opps2Store';
+import { normalizeCompany } from '../../utils/companyNorm';
+import { useAuth } from '../../contexts/AuthContext';
+
+// Readable label for an Opps 2 opp shown as an assignment target —
+// Scope plus Stage / Open Year context, falling back to the row id.
+function oppTargetLabel(r) {
+  const scope = String(r?.Scope || '').trim();
+  const meta = [r?.Stage, r?.['Open Year']].map(v => String(v || '').trim()).filter(Boolean).join(' · ');
+  const base = scope || `Opp ${r?._id}`;
+  return meta ? `${base} (${meta})` : base;
+}
 
 const STORE = 'bfo-activity';
 const KEY = 'current';
@@ -75,6 +87,8 @@ export function BFOActivityView() {
   // mount and whenever the window regains focus so that pasting on
   // the Opps tab and switching back here surfaces the new sources.
   const [opps, setOpps] = useState(null);
+  const { user } = useAuth();
+  const [assigning, setAssigning] = useState(false);
   useEffect(() => {
     let cancelled = false;
     const refresh = () => {
@@ -249,13 +263,16 @@ export function BFOActivityView() {
   }, [opps]);
 
   // Opportunity Names in the pasted BFO data that don't match any opp
-  // on Opps 2. Only meaningful once the Opps 2 cache has loaded — when
-  // it hasn't (oppNameKeys empty) we suppress the warning rather than
-  // flag every row.
+  // on Opps 2, paired with the BFO Account they came from (used to
+  // suggest assignment targets). Only meaningful once the Opps 2 cache
+  // has loaded — when it hasn't (oppNameKeys empty) we suppress the
+  // warning rather than flag every row.
   const unmatchedOppNames = useMemo(() => {
     if (!data?.headers?.length || oppNameKeys.size === 0) return [];
     const oppCol = data.headers.find(h => /opportunity\s*name/i.test(h));
     if (!oppCol) return [];
+    const acctCol = data.headers.find(h => /^account(\s*name)?$/i.test(h.trim()))
+      || data.headers.find(h => /account/i.test(h));
     const seen = new Set();
     const missing = [];
     for (const r of data.rows) {
@@ -264,10 +281,45 @@ export function BFOActivityView() {
       const k = raw.toLowerCase();
       if (oppNameKeys.has(k) || seen.has(k)) continue;
       seen.add(k);
-      missing.push(raw);
+      missing.push({ name: raw, account: acctCol ? String(r[acctCol] || '').trim() : '' });
     }
     return missing;
   }, [data, oppNameKeys]);
+
+  // Opps 2 opps that have NO BFO Opportunity Name yet, grouped by
+  // normalized Account. These are the rows we offer as assignment
+  // targets for an unmatched BFO Opportunity Name from the same company.
+  const unlinkedOppsByAccount = useMemo(() => {
+    const map = new Map();
+    const records = (opps && Array.isArray(opps.records)) ? opps.records : [];
+    for (const r of records) {
+      if (String(r['BFO Link'] || '').trim() !== '') continue;
+      const key = normalizeCompany(r.Account || '');
+      if (!key) continue;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(r);
+    }
+    return map;
+  }, [opps]);
+
+  // Tag the chosen Opps 2 opp with the BFO Opportunity Name, persist
+  // through the shared Opps 2 store, then refresh the local opps cache
+  // so the warning + Lead Source column reflect the new tag.
+  async function assignBfoName(oppId, bfoName) {
+    if (assigning) return;
+    setAssigning(true);
+    try {
+      await setOppBfoLink(user?.uid, oppId, bfoName);
+      const refreshed = await loadOppsFromCache();
+      setOpps(refreshed || null);
+      setFlash(`Tagged an Opps 2 opp with "${bfoName}".`);
+    } catch (err) {
+      setFlash(`Could not tag opp: ${err?.message || err}`);
+    } finally {
+      setAssigning(false);
+      window.setTimeout(() => setFlash(''), 3500);
+    }
+  }
 
   // Build a derived view of the BFO data with the synthetic Lead
   // Source column injected. Persisted `data` is left untouched so the
@@ -369,9 +421,44 @@ export function BFOActivityView() {
         <div style={{ padding: '0 1.25rem 0.5rem' }}>
           <div className={styles.warning}>
             <strong>
-              ⚠ {unmatchedOppNames.length} Opportunity Name{unmatchedOppNames.length === 1 ? '' : 's'} not found on Opps 2:
-            </strong>{' '}
-            {unmatchedOppNames.join(', ')}
+              ⚠ {unmatchedOppNames.length} BFO Opportunity Name{unmatchedOppNames.length === 1 ? '' : 's'} not tagged to an opp on Opps 2
+            </strong>
+            <div className={styles.warningHint}>
+              Click an Opps 2 opp below to tag it with the BFO Opportunity Name. Only opps that don&apos;t already have a BFO Opportunity Name are listed.
+            </div>
+            <ul className={styles.warnList}>
+              {unmatchedOppNames.map(({ name, account }) => {
+                const candidates = unlinkedOppsByAccount.get(normalizeCompany(account)) || [];
+                return (
+                  <li key={name} className={styles.warnItem}>
+                    <div className={styles.warnName}>
+                      <span className={styles.warnNameText}>{name}</span>
+                      {account && <span className={styles.warnAcct}> · {account}</span>}
+                    </div>
+                    {candidates.length === 0 ? (
+                      <div className={styles.warnNone}>
+                        No untagged Opps 2 opps{account ? ` for “${account}”` : ''} to assign.
+                      </div>
+                    ) : (
+                      <div className={styles.warnChips}>
+                        {candidates.map(c => (
+                          <button
+                            key={c._id}
+                            type="button"
+                            className={styles.assignChip}
+                            disabled={assigning}
+                            title={`Tag this opp's BFO Opportunity Name as "${name}"`}
+                            onClick={() => assignBfoName(c._id, name)}
+                          >
+                            + {oppTargetLabel(c)}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
           </div>
         </div>
       )}
