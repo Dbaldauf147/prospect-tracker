@@ -18,6 +18,7 @@ import styles from './AgentsView.module.css';
 const OVERRIDE_STORAGE_KEY = 'agents-bfo-overrides';
 const IGNORED_EMAILS_STORAGE_KEY = 'agents-ignored-emails';
 const IGNORED_MEETINGS_STORAGE_KEY = 'agents-ignored-meetings';
+const HIDE_ACTIVITY_ON_DATE_STORAGE_KEY = 'agents-hide-activity-on-date';
 // External recipient addresses the user has chosen to permanently
 // exclude from the Sent emails table. Unlike IGNORED_EMAILS (one
 // message at a time), this hides every current and future email sent
@@ -176,6 +177,14 @@ function readExcludedRecipients() {
 
 function writeExcludedRecipients(next) {
   try { userLsSet(EXCLUDED_RECIPIENTS_STORAGE_KEY, JSON.stringify(next)); } catch {}
+}
+
+function readHideActivityOnDate() {
+  try { return userLsGet(HIDE_ACTIVITY_ON_DATE_STORAGE_KEY) === '1'; } catch { return false; }
+}
+
+function writeHideActivityOnDate(on) {
+  try { userLsSet(HIDE_ACTIVITY_ON_DATE_STORAGE_KEY, on ? '1' : '0'); } catch {}
 }
 
 // Normalize a BFO Opportunity Name for matching the Opps tab's "BFO
@@ -673,6 +682,9 @@ export function AgentsView({ prospects = [], settings }) {
   const [ignoredEmails, setIgnoredEmails] = useState(readIgnoredEmails);
   const [ignoredMeetings, setIgnoredMeetings] = useState(readIgnoredMeetings);
   const [excludedRecipients, setExcludedRecipients] = useState(readExcludedRecipients);
+  // When on, the Called / Sent tables hide rows whose Last Activity date
+  // is the same calendar day as the selected Activity date up top.
+  const [hideActivityOnDate, setHideActivityOnDate] = useState(readHideActivityOnDate);
   const [aiPrompt, setAiPrompt] = useState(readAiPrompt);
   const [newBfoOppPrompt, setNewBfoOppPrompt] = useState(readNewBfoOppPrompt);
   const [closeDatesPrompt, setCloseDatesPrompt] = useState(readCloseDatesPrompt);
@@ -1345,6 +1357,22 @@ export function AgentsView({ prospects = [], settings }) {
     return k ? (bfoLastActivityByName.get(k) || '') : '';
   };
 
+  // "Hide rows last active on the selected Activity date" toggle. The
+  // Last Activity value is whatever BFO pasted (usually M/D/YYYY) while
+  // referenceDate is ISO, so normalize both to ISO before comparing.
+  const lastActivityOnReference = (bfoOpp) => {
+    const iso = toISODate(lastActivityFor(bfoOpp));
+    return !!iso && iso === referenceDate;
+  };
+  const visibleCalledOpps = hideActivityOnDate
+    ? calledOpps.filter(o => !lastActivityOnReference(o.bfoOpp))
+    : calledOpps;
+  const visibleOutbound = hideActivityOnDate
+    ? todaysOutbound.filter(e => !lastActivityOnReference(e.bfoOpp))
+    : todaysOutbound;
+  const calledHiddenCount = calledOpps.length - visibleCalledOpps.length;
+  const outboundHiddenCount = todaysOutbound.length - visibleOutbound.length;
+
   // BFO opps whose Close Date should slip by 30 days. Three windows
   // collapsed into one filter, all keyed off the BFO Sales Stage number
   // (which is why we read the BFO Activity tab — the Opps sheet's
@@ -1649,6 +1677,21 @@ export function AgentsView({ prospects = [], settings }) {
             >Today</button>
           )}
         </label>
+        <label
+          className={styles.hideActivityField}
+          title="Hide rows in the Called and Sent tables whose Last Activity is the same day as the selected Activity date."
+        >
+          <input
+            type="checkbox"
+            checked={hideActivityOnDate}
+            onChange={(e) => {
+              const on = e.target.checked;
+              setHideActivityOnDate(on);
+              writeHideActivityOnDate(on);
+            }}
+          />
+          Hide rows last active on this date
+        </label>
         <button
           type="button"
           className={styles.refreshActivityBtn}
@@ -1708,7 +1751,7 @@ export function AgentsView({ prospects = [], settings }) {
 
       <section className={styles.section}>
         <h2 className={styles.sectionHeader}>
-          Called <span className={styles.sectionCount}>{calledOpps.length}</span>
+          Called <span className={styles.sectionCount}>{visibleCalledOpps.length}</span>
         </h2>
         <table className={styles.table}>
           <thead>
@@ -1721,11 +1764,11 @@ export function AgentsView({ prospects = [], settings }) {
             </tr>
           </thead>
           <tbody>
-            {calledOpps.length === 0 ? (
+            {visibleCalledOpps.length === 0 ? (
               <tr className={styles.emptyRow}>
                 <td colSpan={5}>No Opps with a phone touch logged in Next Steps and Last Spoke = 0.</td>
               </tr>
-            ) : calledOpps.map(o => {
+            ) : visibleCalledOpps.map(o => {
               const lastActivity = lastActivityFor(o.bfoOpp);
               return (
               <tr key={o.id}>
@@ -1752,11 +1795,16 @@ export function AgentsView({ prospects = [], settings }) {
             })}
           </tbody>
         </table>
+        {hideActivityOnDate && calledHiddenCount > 0 && (
+          <p className={styles.subnote}>
+            Hiding {calledHiddenCount} row{calledHiddenCount === 1 ? '' : 's'} last active on {dateLabel}.
+          </p>
+        )}
       </section>
 
       <section className={styles.section}>
         <h2 className={styles.sectionHeader}>
-          Sent emails <span className={styles.sectionCount}>{todaysOutbound.length}</span>
+          Sent emails <span className={styles.sectionCount}>{visibleOutbound.length}</span>
         </h2>
         <table className={styles.table}>
           <thead>
@@ -1774,11 +1822,11 @@ export function AgentsView({ prospects = [], settings }) {
             </tr>
           </thead>
           <tbody>
-            {todaysOutbound.length === 0 ? (
+            {visibleOutbound.length === 0 ? (
               <tr className={styles.emptyRow}>
                 <td colSpan={10}>No outbound emails to external recipients on {dateLabel}.</td>
               </tr>
-            ) : todaysOutbound.map(e => {
+            ) : visibleOutbound.map(e => {
                 const lastActivity = lastActivityFor(e.bfoOpp);
                 return (
                 <tr key={e.id}>
@@ -1845,6 +1893,11 @@ export function AgentsView({ prospects = [], settings }) {
               })}
           </tbody>
         </table>
+        {hideActivityOnDate && outboundHiddenCount > 0 && (
+          <p className={styles.subnote}>
+            Hiding {outboundHiddenCount} email{outboundHiddenCount === 1 ? '' : 's'} last active on {dateLabel}.
+          </p>
+        )}
         {excludedRecipients.length > 0 && (
           <p className={styles.subnote}>
             Hiding emails to {excludedRecipients.length} excluded recipient{excludedRecipients.length === 1 ? '' : 's'} ({excludedRecipients.join(', ')}).{' '}
