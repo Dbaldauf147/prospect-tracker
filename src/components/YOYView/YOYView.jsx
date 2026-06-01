@@ -10,7 +10,9 @@ import {
 } from 'recharts';
 import { dbGet } from '../../utils/db';
 import { loadOppsFromCache } from '../../utils/oppsCache';
-import { loadCommissions, COMMISSION_MONTH_NAMES } from '../../utils/commissionsStore';
+import { loadCommissions } from '../../utils/commissionsStore';
+import { loadDealsList } from '../../utils/dealsStore';
+import { indexCommissionsByBfo, normBfo, DEAL_BFO_KEY } from '../../utils/dealCommissions';
 import { loadQuotedProjections, saveQuotedProjections, QUOTED_FIELDS } from '../../utils/quotedProjectionsStore';
 import styles from './YOYView.module.css';
 
@@ -115,6 +117,7 @@ export function YOYView() {
   const [opps, setOpps] = useState(null);
   const [target, setTarget] = useState(DEFAULT_ANNUAL_TARGET);
   const [commissions, setCommissions] = useState(() => loadCommissions().data);
+  const [deals, setDeals] = useState(() => loadDealsList().data);
   // Quoted Projections is now a user-maintained table of month-end values
   // (seeded with the supplied Dec–May history) rather than a live compute.
   const [quotedTable, setQuotedTable] = useState(loadQuotedProjections);
@@ -124,8 +127,14 @@ export function YOYView() {
       if (!e || e.key === 'commissions-list-override') {
         setCommissions(loadCommissions().data);
       }
+      if (!e || e.key === 'deals-list-override') {
+        setDeals(loadDealsList().data);
+      }
     }
-    function onFocus() { setCommissions(loadCommissions().data); }
+    function onFocus() {
+      setCommissions(loadCommissions().data);
+      setDeals(loadDealsList().data);
+    }
     window.addEventListener('storage', onStorage);
     window.addEventListener('focus', onFocus);
     return () => {
@@ -197,13 +206,11 @@ export function YOYView() {
 
   // Quoted Projections — month-end snapshots the user records (editable
   // via "Edit values"), plotted across the Dec→Nov fiscal year. Values
-  // are in $K: weak/ok/expected are the quoted-$ Chance buckets and
-  // agreements is Agreements Sent. BFO Pipe Total stays the computed
-  // coverage ratio — the three Chance buckets ÷ the monthly $ target —
-  // shown on its own axis. Months with no recorded value are left null
-  // so the lines break rather than dropping to zero.
+  // are in $K: weak/ok/expected are the quoted-$ Chance buckets,
+  // agreements is Agreements Sent, and bfoPipe is the total BFO pipeline
+  // $ (its own right-hand axis since it runs larger). Months with no
+  // recorded value are left null so the lines break rather than zeroing.
   const quotedData = useMemo(() => {
-    const monthlyTarget = target > 0 ? target / 12 : 0; // dollars
     const num = (x) => {
       if (x === '' || x == null) return null;
       const n = Number(x);
@@ -216,16 +223,11 @@ export function YOYView() {
       const ok = v ? num(v.ok) : null;
       const expected = v ? num(v.expected) : null;
       const agreements = v ? num(v.agreements) : null;
-      const _hasData = [weak, ok, expected, agreements].some(x => x != null);
-      // Quoted total ($K) → dollars ÷ monthly target. null when there's
-      // nothing quoted that month so the dashed line breaks.
-      const quotedTotalK = (weak || 0) + (ok || 0) + (expected || 0);
-      const bfoPipe = (monthlyTarget > 0 && quotedTotalK > 0)
-        ? +((quotedTotalK * 1000) / monthlyTarget).toFixed(2)
-        : null;
+      const bfoPipe = v ? num(v.bfoPipe) : null;
+      const _hasData = [weak, ok, expected, agreements, bfoPipe].some(x => x != null);
       return { month: m.label, year: m.year, monthKey: key, weak, ok, expected, agreements, bfoPipe, _hasData };
     });
-  }, [quotedTable, currentYear, target]);
+  }, [quotedTable, currentYear]);
 
   // Close Rate — stacked bar of In Progress / Sold / Not Sold per Open
   // Year (percentages summing to 100), plus two C/R lines.
@@ -671,48 +673,44 @@ export function YOYView() {
 
   const hasOpps = records.length > 0;
 
-  // Commissions — attribute each monthly commission cell to its actual
-  // calendar year, then sum per year. The 12 cells are calendar months
-  // (Jan–Dec) covering a contract's fiscal year that runs from the Comm
-  // Start Date; months at/after the start month belong to the start
-  // year, earlier months roll into the next year (e.g. a 7/1/2025 start
-  // puts Jul–Dec in 2025 and Jan–Jun in 2026). This keeps the back half
-  // of a mid-year contract from being lumped into the start year.
-  // Ignored rows (the per-row Ignore toggle on the Commissions tab) are
-  // dropped. Years between the earliest and latest are kept even if
-  // blank, so a missing year shows as a $0 bar instead of a gap.
+  // Commissions — total Paid to Date per year, sourced from the Deals
+  // tab (Clients page). Each deal is bucketed by the calendar year of its
+  // Current Term Start Date, and its Paid to Date amount is summed in.
+  // Paid to Date mirrors what the Deals grid shows: the matching
+  // Commissions roster total when the deal's BFO opp name maps to one,
+  // otherwise the amount stored on the deal row. Years between the
+  // earliest and latest are kept even if blank so a missing year shows
+  // as a $0 bar instead of a gap.
   const commissionsData = useMemo(() => {
+    const commByBfo = indexCommissionsByBfo(commissions || []);
     const byYear = new Map();
     const countByYear = new Map();
-    for (const row of (commissions || [])) {
-      if (row?.__ignored) continue;
-      const ts = Date.parse(row?.['Comm Start Date']);
+    for (const row of (deals || [])) {
+      const ts = Date.parse(row?.['Current Term Start Date']);
       if (Number.isNaN(ts)) continue;
-      const start = new Date(ts);
-      const startMonth = start.getMonth(); // 0 = Jan … 11 = Dec
-      const startYear = start.getFullYear();
-      if (!Number.isFinite(startYear) || startYear < 1900 || startYear > 2100) continue;
-      const yearsTouched = new Set();
-      for (let mi = 0; mi < COMMISSION_MONTH_NAMES.length; mi++) {
-        const v = parseMoney(row[COMMISSION_MONTH_NAMES[mi]]);
-        if (typeof v !== 'number') continue;
-        const y = mi >= startMonth ? startYear : startYear + 1;
-        byYear.set(y, (byYear.get(y) || 0) + v);
-        yearsTouched.add(y);
-      }
-      for (const y of yearsTouched) countByYear.set(y, (countByYear.get(y) || 0) + 1);
+      const year = new Date(ts).getFullYear();
+      if (!Number.isFinite(year) || year < 1900 || year > 2100) continue;
+      // Match the Deals grid's Paid to Date numerator: auto-populate from
+      // the Commissions roster when the BFO name matches, else fall back
+      // to the value stored on the deal row.
+      const bfo = normBfo(row?.[DEAL_BFO_KEY]);
+      const hit = bfo ? commByBfo.get(bfo) : null;
+      const paid = hit ? hit.commission : (parseMoney(row?.['Paid to Date']) ?? 0);
+      if (!paid) continue;
+      byYear.set(year, (byYear.get(year) || 0) + paid);
+      countByYear.set(year, (countByYear.get(year) || 0) + 1);
     }
     if (byYear.size === 0) return [];
     const minY = Math.min(...byYear.keys());
     const maxY = Math.max(...byYear.keys());
     const rows = [];
     for (let y = minY; y <= maxY; y++) {
-      // _rowCount = roster rows that fed this year's total (tooltip input).
+      // _rowCount = deal rows that fed this year's total (tooltip input).
       rows.push({ year: String(y), total: byYear.get(y) || 0, _rowCount: countByYear.get(y) || 0 });
     }
     return rows;
-  }, [commissions]);
-  const hasCommissions = (commissions || []).length > 0;
+  }, [deals, commissions]);
+  const hasCommissions = commissionsData.length > 0;
 
   // Per-chart underlying records. Each entry mirrors the filter used by
   // the matching useMemo above so the downloaded Excel rows tie back to
@@ -931,7 +929,7 @@ export function YOYView() {
       'Quoted OK ($K)': r.ok ?? '',
       'Quoted Expected ($K)': r.expected ?? '',
       'Agreements Sent ($K)': r.agreements ?? '',
-      'BFO Pipe Total (ratio)': r.bfoPipe == null ? '' : r.bfoPipe,
+      'BFO Pipe Total ($K)': r.bfoPipe ?? '',
     }));
     const wb = XLSX.utils.book_new();
     appendSheet(wb, `Quoted Projections ${currentYear}`, summary);
@@ -1074,7 +1072,7 @@ export function YOYView() {
         />
         <div className={styles.row}>
           <LeadsCard data={leadsData} hasOpps={hasOpps} onDownload={downloadLeads} />
-          <QuotedProjectionsCard data={quotedData} quotedTable={quotedTable} onSaveTable={updateQuotedTable} target={target} onDownload={downloadQuoted} />
+          <QuotedProjectionsCard data={quotedData} quotedTable={quotedTable} onSaveTable={updateQuotedTable} onDownload={downloadQuoted} />
           <CloseRateCard data={closeRateData} hasOpps={hasOpps} onDownload={downloadCloseRate} />
         </div>
         <div className={styles.row}>
@@ -1127,6 +1125,32 @@ function appendSheet(wb, name, rows) {
   // Excel sheet names cap at 31 chars and can't contain []:?*/\
   const safe = String(name).replace(/[[\]:?*/\\]/g, ' ').slice(0, 31) || 'Sheet';
   XLSX.utils.book_append_sheet(wb, ws, safe);
+}
+
+// Makes a chart's <Legend> interactive: clicking a series label toggles
+// it on/off. Spread `legendProps` onto <Legend> and set `hide={hidden[key]}`
+// on each series (key = its dataKey). Hidden labels render struck-through
+// and greyed so it's clear what's currently filtered out.
+function useInteractiveLegend() {
+  const [hidden, setHidden] = useState({});
+  const legendProps = {
+    wrapperStyle: { fontSize: 12, cursor: 'pointer' },
+    onClick: (o) => {
+      const key = o?.dataKey ?? o?.value;
+      if (key == null) return;
+      setHidden(h => ({ ...h, [key]: !h[key] }));
+    },
+    formatter: (value, entry) => {
+      const key = entry?.dataKey ?? value;
+      const off = hidden[key];
+      return (
+        <span style={{ color: off ? '#9ca3af' : '#374151', textDecoration: off ? 'line-through' : 'none' }}>
+          {value}
+        </span>
+      );
+    },
+  };
+  return { hidden, legendProps };
 }
 
 function ChartHeader({ title, onDownload, canDownload }) {
@@ -1226,6 +1250,7 @@ function CalcTooltip({
 }
 
 function LeadsCard({ data, hasOpps, onDownload }) {
+  const { hidden, legendProps } = useInteractiveLegend();
   return (
     <div className={styles.chartCard}>
       <ChartHeader title="Leads" onDownload={onDownload} canDownload={hasOpps && data.length > 0} />
@@ -1258,7 +1283,8 @@ function LeadsCard({ data, hasOpps, onDownload }) {
                     }}
               />
             } />
-            <Bar dataKey="count" isAnimationActive={false}>
+            <Legend {...legendProps} />
+            <Bar dataKey="count" name="Leads" fill="#3b82f6" isAnimationActive={false} hide={hidden.count}>
               {data.map((row, i) => (
                 <Cell key={i} fill={row.isProjected ? '#facc15' : '#3b82f6'} />
               ))}
@@ -1271,10 +1297,10 @@ function LeadsCard({ data, hasOpps, onDownload }) {
   );
 }
 
-function QuotedProjectionsCard({ data, quotedTable, onSaveTable, target, onDownload }) {
+function QuotedProjectionsCard({ data, quotedTable, onSaveTable, onDownload }) {
   const [editing, setEditing] = useState(false);
   const hasAnyValues = data.some(r => r._hasData);
-  const monthlyTarget = target > 0 ? target / 12 : 0;
+  const { hidden, legendProps } = useInteractiveLegend();
   return (
     <div className={styles.chartCard}>
       <ChartHeader title="Quoted Projections" onDownload={onDownload} canDownload={hasAnyValues} />
@@ -1295,45 +1321,41 @@ function QuotedProjectionsCard({ data, quotedTable, onSaveTable, target, onDownl
               tickFormatter={fmtKLabel}
             />
             <YAxis
-              yAxisId="ratio"
+              yAxisId="pipe"
               orientation="right"
               tick={{ fontSize: 12 }}
-              tickFormatter={(v) => v.toFixed(2)}
+              tickFormatter={fmtKLabel}
             />
             <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
                 labelText={(label, row) => `${label} ${row.year}`}
-                valueFormat={(v, name) => {
-                  if (name === 'BFO Pipe Total') return v == null ? '—' : v.toFixed(2);
-                  return v == null ? '—' : fmtKLabel(v);
-                }}
+                valueFormat={(v) => (v == null ? '—' : fmtKLabel(v))}
                 explain={(row) => ({
-                  formula: 'Recorded month-end values (in $K) for the quoted-$ Chance buckets and Agreements Sent. BFO Pipe Total = (Weak+OK+Expected) ÷ monthly target, on its own axis. Edit via “Edit values”.',
+                  formula: 'Recorded month-end values (in $K). Quoted Weak/OK/Expected are the quoted-$ Chance buckets, Agreements Sent is contracts out, and BFO Pipe Total is the total pipeline $ (its own right-hand axis). Edit via “Edit values”.',
                   inputs: [
                     { label: 'Quoted Weak', value: row.weak == null ? '—' : fmtKLabel(row.weak) },
                     { label: 'Quoted OK', value: row.ok == null ? '—' : fmtKLabel(row.ok) },
                     { label: 'Quoted Expected', value: row.expected == null ? '—' : fmtKLabel(row.expected) },
                     { label: 'Agreements Sent', value: row.agreements == null ? '—' : fmtKLabel(row.agreements) },
-                    { label: 'Monthly target', value: monthlyTarget > 0 ? fmtMoneyFull(Math.round(monthlyTarget)) : '—' },
-                    { label: 'BFO Pipe Total', value: row.bfoPipe == null ? '—' : row.bfoPipe.toFixed(2) },
+                    { label: 'BFO Pipe Total', value: row.bfoPipe == null ? '—' : fmtKLabel(row.bfoPipe) },
                   ],
                   note: row._hasData ? null : 'No values recorded for this month yet.',
                 })}
               />
             } />
-            <Legend wrapperStyle={{ fontSize: 12 }} />
-            <Line yAxisId="dollars" dataKey="weak" name="Quoted Weak" stroke="#22c55e" strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false} connectNulls>
+            <Legend {...legendProps} />
+            <Line yAxisId="dollars" dataKey="weak" name="Quoted Weak" stroke="#22c55e" strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false} connectNulls hide={hidden.weak}>
               <LabelList dataKey="weak" position="top" style={{ fontSize: 10, fill: '#15803d' }} formatter={fmtKLabel} />
             </Line>
-            <Line yAxisId="dollars" dataKey="ok" name="Quoted OK" stroke="#eab308" strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false} connectNulls>
+            <Line yAxisId="dollars" dataKey="ok" name="Quoted OK" stroke="#eab308" strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false} connectNulls hide={hidden.ok}>
               <LabelList dataKey="ok" position="top" style={{ fontSize: 10, fill: '#a16207' }} formatter={fmtKLabel} />
             </Line>
-            <Line yAxisId="dollars" dataKey="expected" name="Quoted Expected" stroke="#3b82f6" strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false} connectNulls>
+            <Line yAxisId="dollars" dataKey="expected" name="Quoted Expected" stroke="#3b82f6" strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false} connectNulls hide={hidden.expected}>
               <LabelList dataKey="expected" position="top" style={{ fontSize: 10, fill: '#1d4ed8' }} formatter={fmtKLabel} />
             </Line>
-            <Line yAxisId="dollars" dataKey="agreements" name="Agreements Sent" stroke="#ef4444" strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false} connectNulls />
+            <Line yAxisId="dollars" dataKey="agreements" name="Agreements Sent" stroke="#ef4444" strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false} connectNulls hide={hidden.agreements} />
             <Line
-              yAxisId="ratio"
+              yAxisId="pipe"
               dataKey="bfoPipe"
               name="BFO Pipe Total"
               stroke="#111827"
@@ -1342,8 +1364,9 @@ function QuotedProjectionsCard({ data, quotedTable, onSaveTable, target, onDownl
               dot={{ r: 3 }}
               isAnimationActive={false}
               connectNulls
+              hide={hidden.bfoPipe}
             >
-              <LabelList dataKey="bfoPipe" position="top" style={{ fontSize: 10, fontWeight: 600, fill: '#111827' }} formatter={(v) => v == null ? '' : v.toFixed(2)} />
+              <LabelList dataKey="bfoPipe" position="top" style={{ fontSize: 10, fontWeight: 600, fill: '#111827' }} formatter={fmtKLabel} />
             </Line>
           </ComposedChart>
         </ResponsiveContainer>
@@ -1395,7 +1418,7 @@ function QuotedProjectionsEditor({ rows, table, onClose, onSave }) {
   };
   const labels = [
     ['weak', 'Quoted Weak'], ['ok', 'Quoted OK'], ['expected', 'Quoted Expected'],
-    ['agreements', 'Agreements Sent'],
+    ['agreements', 'Agreements Sent'], ['bfoPipe', 'BFO Pipe Total'],
   ];
   return createPortal(
     <div className={styles.modalOverlay} onClick={onClose}>
@@ -1446,6 +1469,7 @@ function QuotedProjectionsEditor({ rows, table, onClose, onSave }) {
 }
 
 function CloseRateCard({ data, hasOpps, onDownload }) {
+  const { hidden, legendProps } = useInteractiveLegend();
   return (
     <div className={styles.chartCard}>
       <ChartHeader title="Close Rate" onDownload={onDownload} canDownload={hasOpps && data.length > 0} />
@@ -1487,9 +1511,9 @@ function CloseRateCard({ data, hasOpps, onDownload }) {
                 })}
               />
             } />
-            <Legend wrapperStyle={{ fontSize: 12 }} />
-            <Bar yAxisId="pct" dataKey="totalNotSold" stackId="cr" name="Total Not Sold" fill="#ef4444" isAnimationActive={false} />
-            <Bar yAxisId="pct" dataKey="totalSold" stackId="cr" name="Total Sold (OY)" fill="#facc15" isAnimationActive={false}>
+            <Legend {...legendProps} />
+            <Bar yAxisId="pct" dataKey="totalNotSold" stackId="cr" name="Total Not Sold" fill="#ef4444" isAnimationActive={false} hide={hidden.totalNotSold} />
+            <Bar yAxisId="pct" dataKey="totalSold" stackId="cr" name="Total Sold (OY)" fill="#facc15" isAnimationActive={false} hide={hidden.totalSold}>
               <LabelList
                 dataKey="totalSold"
                 position="insideTop"
@@ -1497,11 +1521,11 @@ function CloseRateCard({ data, hasOpps, onDownload }) {
                 formatter={(v) => v >= 3 ? `${Math.round(v)}%` : ''}
               />
             </Bar>
-            <Bar yAxisId="pct" dataKey="inProgress" stackId="cr" name="In Progress (OY)" fill="#3b82f6" isAnimationActive={false} />
-            <Line yAxisId="cr" dataKey="quotedCR" name="Quoted C/R" stroke="#f97316" strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false} connectNulls>
+            <Bar yAxisId="pct" dataKey="inProgress" stackId="cr" name="In Progress (OY)" fill="#3b82f6" isAnimationActive={false} hide={hidden.inProgress} />
+            <Line yAxisId="cr" dataKey="quotedCR" name="Quoted C/R" stroke="#f97316" strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false} connectNulls hide={hidden.quotedCR}>
               <LabelList dataKey="quotedCR" position="top" style={{ fontSize: 10, fontWeight: 600, fill: '#c2410c' }} formatter={(v) => v == null ? '' : `${Math.round(v)}%`} />
             </Line>
-            <Line yAxisId="cr" dataKey="totalCR" name="Total C/R" stroke="#16a34a" strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false} connectNulls>
+            <Line yAxisId="cr" dataKey="totalCR" name="Total C/R" stroke="#16a34a" strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false} connectNulls hide={hidden.totalCR}>
               <LabelList dataKey="totalCR" position="bottom" style={{ fontSize: 10, fontWeight: 600, fill: '#15803d' }} formatter={(v) => v == null ? '' : `${Math.round(v)}%`} />
             </Line>
           </ComposedChart>
@@ -1512,6 +1536,7 @@ function CloseRateCard({ data, hasOpps, onDownload }) {
 }
 
 function LeadSourcesCard({ data, hasOpps, onDownload }) {
+  const { hidden, legendProps } = useInteractiveLegend();
   // Per-row height keeps the chart legible even when source values
   // accumulate (e.g. opps tagged with novel sources over time). Pad
   // the wrapper height so the LabelList sold count + close-rate label
@@ -1558,10 +1583,10 @@ function LeadSourcesCard({ data, hasOpps, onDownload }) {
                 })}
               />
             } />
-            <Legend wrapperStyle={{ fontSize: 12 }} />
-            <Bar dataKey="inProgress" stackId="ls" name="In Progress" fill="#3b82f6" isAnimationActive={false} />
-            <Bar dataKey="notSold" stackId="ls" name="Not Sold" fill="#ef4444" isAnimationActive={false} />
-            <Bar dataKey="sold" stackId="ls" name="Sold" fill="#facc15" isAnimationActive={false}>
+            <Legend {...legendProps} />
+            <Bar dataKey="inProgress" stackId="ls" name="In Progress" fill="#3b82f6" isAnimationActive={false} hide={hidden.inProgress} />
+            <Bar dataKey="notSold" stackId="ls" name="Not Sold" fill="#ef4444" isAnimationActive={false} hide={hidden.notSold} />
+            <Bar dataKey="sold" stackId="ls" name="Sold" fill="#facc15" isAnimationActive={false} hide={hidden.sold}>
               <LabelList
                 dataKey="sold"
                 position="right"
@@ -1584,6 +1609,7 @@ function LeadSourcesCard({ data, hasOpps, onDownload }) {
 }
 
 function QuotedByYearCard({ data, hasOpps, onDownload }) {
+  const { hidden, legendProps } = useInteractiveLegend();
   return (
     <div className={styles.chartCard}>
       <ChartHeader title="Quoted (Thousands)" onDownload={onDownload} canDownload={hasOpps && data.length > 0} />
@@ -1619,7 +1645,8 @@ function QuotedByYearCard({ data, hasOpps, onDownload }) {
                     }}
               />
             } />
-            <Bar dataKey="thousands" isAnimationActive={false}>
+            <Legend {...legendProps} />
+            <Bar dataKey="thousands" name="Quoted ($k)" fill="#3b82f6" isAnimationActive={false} hide={hidden.thousands}>
               {data.map((row, i) => (
                 <Cell key={i} fill={row.isProjected ? '#facc15' : '#3b82f6'} />
               ))}
@@ -1638,6 +1665,7 @@ function QuotedByYearCard({ data, hasOpps, onDownload }) {
 }
 
 function NotSoldsCard({ data, hasOpps, onDownload }) {
+  const { hidden, legendProps } = useInteractiveLegend();
   return (
     <div className={styles.chartCard}>
       <ChartHeader title="Not Solds" onDownload={onDownload} canDownload={hasOpps && data.length > 0} />
@@ -1679,8 +1707,8 @@ function NotSoldsCard({ data, hasOpps, onDownload }) {
                     }}
               />
             } />
-            <Legend wrapperStyle={{ fontSize: 12 }} />
-            <Bar dataKey="notSold" name="Not Solds" isAnimationActive={false}>
+            <Legend {...legendProps} />
+            <Bar dataKey="notSold" name="Not Solds" isAnimationActive={false} hide={hidden.notSold}>
               {data.map((row, i) => (
                 <Cell key={i} fill={row.isProjected ? '#facc15' : '#3b82f6'} />
               ))}
@@ -1694,6 +1722,7 @@ function NotSoldsCard({ data, hasOpps, onDownload }) {
               dot={{ r: 4 }}
               isAnimationActive={false}
               connectNulls
+              hide={hidden.avgOppLife}
             >
               <LabelList dataKey="avgOppLife" position="top" style={{ fontSize: 10, fontWeight: 600, fill: '#991b1b' }} formatter={(v) => v == null ? '' : v} />
             </Line>
@@ -1706,6 +1735,7 @@ function NotSoldsCard({ data, hasOpps, onDownload }) {
               dot={{ r: 3 }}
               isAnimationActive={false}
               connectNulls
+              hide={hidden.ageNotQuoted}
             />
             <Line
               dataKey="quoteToClose"
@@ -1715,6 +1745,7 @@ function NotSoldsCard({ data, hasOpps, onDownload }) {
               dot={{ r: 3 }}
               isAnimationActive={false}
               connectNulls
+              hide={hidden.quoteToClose}
             />
           </ComposedChart>
         </ResponsiveContainer>
@@ -1732,6 +1763,7 @@ function fmtMoneyLabel(v) {
 function TopAccountsCard({ data, hasOpps, onDownload }) {
   const { years = [], topAccounts = [], colors = {} } = data || {};
   const hasAny = years.some(r => r._total > 0);
+  const { hidden, legendProps } = useInteractiveLegend();
   return (
     <div className={styles.chartCard}>
       <ChartHeader title="Top Accounts" onDownload={onDownload} canDownload={hasOpps && hasAny} />
@@ -1759,7 +1791,7 @@ function TopAccountsCard({ data, hasOpps, onDownload }) {
                 })}
               />
             } />
-            <Legend wrapperStyle={{ fontSize: 12 }} />
+            <Legend {...legendProps} />
             {/* Stack order: largest (Brookfield) at bottom; Remaining at top. */}
             {topAccounts.map((a, i) => (
               <Bar
@@ -1769,6 +1801,7 @@ function TopAccountsCard({ data, hasOpps, onDownload }) {
                 name={a}
                 fill={colors[a] || '#94a3b8'}
                 isAnimationActive={false}
+                hide={hidden[a]}
               >
                 {i === 0 ? (
                   <LabelList
@@ -1780,7 +1813,7 @@ function TopAccountsCard({ data, hasOpps, onDownload }) {
                 ) : null}
               </Bar>
             ))}
-            <Bar dataKey="Remaining" stackId="ta" name="Remaining" fill={colors.Remaining || '#22c55e'} isAnimationActive={false}>
+            <Bar dataKey="Remaining" stackId="ta" name="Remaining" fill={colors.Remaining || '#22c55e'} isAnimationActive={false} hide={hidden.Remaining}>
               <LabelList
                 dataKey="_total"
                 position="top"
@@ -1798,6 +1831,7 @@ function TopAccountsCard({ data, hasOpps, onDownload }) {
 function AnnualSalesCard({ data, hasOpps, target, onDownload }) {
   const hasAny = data.some(r => r._total > 0);
   const annualTarget = target > 0 ? target : DEFAULT_ANNUAL_TARGET;
+  const { hidden, legendProps } = useInteractiveLegend();
   return (
     <div className={styles.chartCard}>
       <ChartHeader title="Annual Sales" onDownload={onDownload} canDownload={hasOpps && hasAny} />
@@ -1832,28 +1866,30 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload }) {
               />
             } />
             <Legend
-              wrapperStyle={{ fontSize: 12 }}
+              {...legendProps}
               payload={[
-                { value: '% Quota', type: 'circle', color: '#eab308', id: 'pct' },
-                { value: 'New Client', type: 'rect', color: '#ef4444', id: 'new' },
-                { value: 'Current Client', type: 'rect', color: '#3b82f6', id: 'cur' },
+                { value: '% Quota', type: 'circle', color: '#eab308', id: 'pct', dataKey: 'pctQuota' },
+                { value: 'New Client', type: 'rect', color: '#ef4444', id: 'new', dataKey: 'newClient' },
+                { value: 'Current Client', type: 'rect', color: '#3b82f6', id: 'cur', dataKey: 'currentClient' },
               ]}
             />
-            <Bar dataKey="currentClient" stackId="as" name="Current Client" fill="#3b82f6" isAnimationActive={false} />
-            <Bar dataKey="newClient" stackId="as" name="New Client" fill="#ef4444" isAnimationActive={false}>
+            <Bar dataKey="currentClient" stackId="as" name="Current Client" fill="#3b82f6" isAnimationActive={false} hide={hidden.currentClient} />
+            <Bar dataKey="newClient" stackId="as" name="New Client" fill="#ef4444" isAnimationActive={false} hide={hidden.newClient}>
               <LabelList
                 dataKey="_total"
                 position="top"
                 style={{ fontSize: 11, fontWeight: 600, fill: '#1f2937' }}
                 formatter={(v) => fmtMoneyLabel(v)}
               />
-              <LabelList
-                dataKey="pctQuota"
-                position="top"
-                offset={18}
-                style={{ fontSize: 10, fontWeight: 600, fill: '#a16207' }}
-                formatter={(v) => v == null ? '' : `${v}%`}
-              />
+              {!hidden.pctQuota && (
+                <LabelList
+                  dataKey="pctQuota"
+                  position="top"
+                  offset={18}
+                  style={{ fontSize: 10, fontWeight: 600, fill: '#a16207' }}
+                  formatter={(v) => v == null ? '' : `${v}%`}
+                />
+              )}
             </Bar>
           </BarChart>
         </ResponsiveContainer>
@@ -1864,6 +1900,7 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload }) {
 
 function DealSizeCard({ data, hasOpps, onDownload }) {
   const hasAny = data.some(r => r.deals > 0);
+  const { hidden, legendProps } = useInteractiveLegend();
   return (
     <div className={styles.chartCard}>
       <ChartHeader title="Deal Size" onDownload={onDownload} canDownload={hasOpps && hasAny} />
@@ -1906,8 +1943,8 @@ function DealSizeCard({ data, hasOpps, onDownload }) {
                 })}
               />
             } />
-            <Legend wrapperStyle={{ fontSize: 12 }} />
-            <Bar yAxisId="deals" dataKey="deals" name="Deals" isAnimationActive={false}>
+            <Legend {...legendProps} />
+            <Bar yAxisId="deals" dataKey="deals" name="Deals" isAnimationActive={false} hide={hidden.deals}>
               {data.map((row, i) => (
                 <Cell key={i} fill={row._isProjected ? '#facc15' : '#94a3b8'} />
               ))}
@@ -1922,6 +1959,7 @@ function DealSizeCard({ data, hasOpps, onDownload }) {
               dot={{ r: 4 }}
               isAnimationActive={false}
               connectNulls
+              hide={hidden.quoted}
             >
               <LabelList dataKey="quoted" position="top" style={{ fontSize: 10, fontWeight: 600, fill: '#991b1b' }} formatter={(v) => fmtMoneyLabel(v)} />
             </Line>
@@ -1934,6 +1972,7 @@ function DealSizeCard({ data, hasOpps, onDownload }) {
               dot={{ r: 4 }}
               isAnimationActive={false}
               connectNulls
+              hide={hidden.dealSize}
             >
               <LabelList dataKey="dealSize" position="bottom" style={{ fontSize: 10, fontWeight: 600, fill: '#1d4ed8' }} formatter={(v) => fmtMoneyLabel(v)} />
             </Line>
@@ -1945,13 +1984,14 @@ function DealSizeCard({ data, hasOpps, onDownload }) {
 }
 
 function CommissionsCard({ data, hasCommissions, onDownload }) {
+  const { hidden, legendProps } = useInteractiveLegend();
   return (
     <div className={styles.chartCard}>
       <ChartHeader title="Commissions" onDownload={onDownload} canDownload={hasCommissions && data.length > 0} />
       {!hasCommissions ? (
-        <div className={styles.empty}>No commissions yet — paste a roster on the Clients › Commissions tab.</div>
+        <div className={styles.empty}>No deals with a Paid to Date amount — add deals on the Clients › Deals tab.</div>
       ) : data.length === 0 ? (
-        <div className={styles.empty}>No commissions with a Comm Start Date.</div>
+        <div className={styles.empty}>No deals with a Current Term Start Date.</div>
       ) : (
         <ResponsiveContainer width="100%" height={320}>
           <BarChart data={data} margin={{ top: 22, right: 8, left: 16, bottom: 4 }}>
@@ -1966,15 +2006,16 @@ function CommissionsCard({ data, hasCommissions, onDownload }) {
                 labelText={(label) => `Year ${label}`}
                 valueFormat={(v) => (v == null ? '—' : fmtMoneyFull(v))}
                 explain={(row) => ({
-                  formula: 'Each monthly commission cell counted in its own calendar year (months before a contract’s start month roll into the next year), summed across all roster rows. Ignored rows excluded.',
+                  formula: 'Sum of each deal’s Paid to Date amount, bucketed by the calendar year of its Current Term Start Date. Paid to Date mirrors the Deals tab — the matching Commissions roster total when the BFO name maps, else the value stored on the deal.',
                   inputs: [
-                    { label: 'Roster rows', value: (row._rowCount ?? 0).toLocaleString('en-US') },
+                    { label: 'Deals counted', value: (row._rowCount ?? 0).toLocaleString('en-US') },
                     { label: 'Total', value: fmtMoneyFull(row.total) },
                   ],
                 })}
               />
             } />
-            <Bar dataKey="total" name="Commissions" fill="#3b82f6" isAnimationActive={false}>
+            <Legend {...legendProps} />
+            <Bar dataKey="total" name="Commissions" fill="#3b82f6" isAnimationActive={false} hide={hidden.total}>
               <LabelList
                 dataKey="total"
                 position="top"
