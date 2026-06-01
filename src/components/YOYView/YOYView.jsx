@@ -680,13 +680,16 @@ export function YOYView() {
 
   const hasOpps = records.length > 0;
 
-  // Commissions — bucket every row from the Commissions tab by the
-  // calendar year of its Comm Start Date, summing the 12 monthly
-  // commission cells. Ignored rows (the per-row Ignore toggle on the
-  // Commissions tab) are dropped so a row parked for visual mute also
-  // disappears from the YOY total. Years between the earliest and the
-  // latest are kept even if blank, so a missing year shows as a $0 bar
-  // instead of a gap.
+  // Commissions — attribute each monthly commission cell to its actual
+  // calendar year, then sum per year. The 12 cells are calendar months
+  // (Jan–Dec) covering a contract's fiscal year that runs from the Comm
+  // Start Date; months at/after the start month belong to the start
+  // year, earlier months roll into the next year (e.g. a 7/1/2025 start
+  // puts Jul–Dec in 2025 and Jan–Jun in 2026). This keeps the back half
+  // of a mid-year contract from being lumped into the start year.
+  // Ignored rows (the per-row Ignore toggle on the Commissions tab) are
+  // dropped. Years between the earliest and latest are kept even if
+  // blank, so a missing year shows as a $0 bar instead of a gap.
   const commissionsData = useMemo(() => {
     const byYear = new Map();
     const countByYear = new Map();
@@ -694,17 +697,19 @@ export function YOYView() {
       if (row?.__ignored) continue;
       const ts = Date.parse(row?.['Comm Start Date']);
       if (Number.isNaN(ts)) continue;
-      const y = new Date(ts).getFullYear();
-      if (!Number.isFinite(y) || y < 1900 || y > 2100) continue;
-      let total = 0;
-      let any = false;
-      for (const m of COMMISSION_MONTH_NAMES) {
-        const v = parseMoney(row[m]);
-        if (typeof v === 'number') { total += v; any = true; }
+      const start = new Date(ts);
+      const startMonth = start.getMonth(); // 0 = Jan … 11 = Dec
+      const startYear = start.getFullYear();
+      if (!Number.isFinite(startYear) || startYear < 1900 || startYear > 2100) continue;
+      const yearsTouched = new Set();
+      for (let mi = 0; mi < COMMISSION_MONTH_NAMES.length; mi++) {
+        const v = parseMoney(row[COMMISSION_MONTH_NAMES[mi]]);
+        if (typeof v !== 'number') continue;
+        const y = mi >= startMonth ? startYear : startYear + 1;
+        byYear.set(y, (byYear.get(y) || 0) + v);
+        yearsTouched.add(y);
       }
-      if (!any) continue;
-      byYear.set(y, (byYear.get(y) || 0) + total);
-      countByYear.set(y, (countByYear.get(y) || 0) + 1);
+      for (const y of yearsTouched) countByYear.set(y, (countByYear.get(y) || 0) + 1);
     }
     if (byYear.size === 0) return [];
     const minY = Math.min(...byYear.keys());
@@ -1874,7 +1879,7 @@ function CommissionsCard({ data, hasCommissions, onDownload }) {
                 labelText={(label) => `Year ${label}`}
                 valueFormat={(v) => (v == null ? '—' : fmtMoneyFull(v))}
                 explain={(row) => ({
-                  formula: 'Sum of the 12 monthly commission cells across every roster row whose Comm Start Date falls in this year (ignored rows excluded).',
+                  formula: 'Each monthly commission cell counted in its own calendar year (months before a contract’s start month roll into the next year), summed across all roster rows. Ignored rows excluded.',
                   inputs: [
                     { label: 'Roster rows', value: (row._rowCount ?? 0).toLocaleString('en-US') },
                     { label: 'Total', value: fmtMoneyFull(row.total) },
