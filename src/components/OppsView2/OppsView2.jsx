@@ -2466,7 +2466,17 @@ export function OppInfoModal({
   // the table presents them, so the popup matches the user's mental
   // model of the row. Computed columns are pulled from the live row
   // (the parent computes them into the opp before passing it in).
-  const orderedFields = (headers || []).filter(h => h && h !== '_select' && h !== '_info' && h !== '_actions');
+  // Guarantee "BFO Company Name" shows here and sits right after the
+  // BFO Opportunity Name (BFO Link) field — saved layouts that predate
+  // the column would otherwise bury it at the very end (or omit it
+  // until the next hydration appends it).
+  const orderedFields = (headers || [])
+    .filter(h => h && h !== '_select' && h !== '_info' && h !== '_actions' && h !== 'BFO Company Name');
+  {
+    const idx = orderedFields.indexOf('BFO Link');
+    if (idx >= 0) orderedFields.splice(idx + 1, 0, 'BFO Company Name');
+    else orderedFields.push('BFO Company Name');
+  }
   // Count of currently-hidden rows among the fields this opp actually
   // shows, so the "Show N hidden" toggle reflects what's collapsed here.
   const hiddenCount = orderedFields.filter(h => hiddenFields.has(h)).length;
