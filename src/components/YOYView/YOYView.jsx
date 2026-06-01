@@ -566,13 +566,13 @@ export function YOYView() {
       _total: Math.round(r._total),
       pctQuota: annualTarget > 0 ? Math.round((r._total / annualTarget) * 100) : null,
     }));
-    // Projected — current year YTD Sold + active-pipeline Quoted Amount.
+    // Projected — current year Sold + Agreement Sent Quoted Amount.
     let projCurrent = 0, projNew = 0;
     for (const r of records) {
       const y = parseYear(r['Open Year']);
       if (y !== currentYear) continue;
       const stage = String(r.Stage || '').trim();
-      if (stage === 'Not Sold') continue;
+      if (stage !== 'Sold' && stage !== 'Agreement Sent') continue;
       const amt = parseMoney(r['Quoted Amount']) || 0;
       if (!amt) continue;
       const src = String(r['Lead Source'] || r['Source'] || '');
@@ -1009,7 +1009,7 @@ export function YOYView() {
     const annualTarget = target > 0 ? target : DEFAULT_ANNUAL_TARGET;
     const summary = annualSalesData.map(r => ({
       Year: r.year,
-      Type: r._isProjected ? 'Projected (YTD + active pipeline)' : 'Actual',
+      Type: r._isProjected ? 'Projected (Sold + Agreement Sent)' : 'Actual',
       'Current Client ($)': r.currentClient,
       'New Client ($)': r.newClient,
       'Total Sold ($)': r._total,
@@ -1850,7 +1850,7 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload }) {
             />
             <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
-                labelText={(label, row) => row._isProjected ? 'Projected (YTD + active pipeline)' : `Year ${label}`}
+                labelText={(label, row) => row._isProjected ? 'Projected (Sold + Agreement Sent)' : `Year ${label}`}
                 valueFormat={(v, name) => (name === '% Quota' ? `${v}%` : (v ? fmtMoneyLabel(v) : '$0'))}
                 explain={(row) => ({
                   formula: 'Sold Quoted Amount for this year, split Current vs New Client by the Lead Source text. % Quota = Total Sold ÷ annual target.',
@@ -1861,7 +1861,7 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload }) {
                     { label: 'Annual target', value: fmtMoneyLabel(annualTarget) },
                     { label: '% Quota', value: row.pctQuota == null ? '—' : `${row.pctQuota}%` },
                   ],
-                  note: row._isProjected ? 'Projected adds active pipeline to YTD Sold $.' : null,
+                  note: row._isProjected ? 'Projected = current-year Sold + Agreement Sent Quoted $.' : null,
                 })}
               />
             } />
@@ -1873,8 +1873,15 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload }) {
                 { value: 'Current Client', type: 'rect', color: '#3b82f6', id: 'cur', dataKey: 'currentClient' },
               ]}
             />
-            <Bar dataKey="currentClient" stackId="as" name="Current Client" fill="#3b82f6" isAnimationActive={false} hide={hidden.currentClient} />
+            <Bar dataKey="currentClient" stackId="as" name="Current Client" fill="#3b82f6" isAnimationActive={false} hide={hidden.currentClient}>
+              {data.map((row, i) => (
+                <Cell key={i} fill={row._isProjected ? '#facc15' : '#3b82f6'} />
+              ))}
+            </Bar>
             <Bar dataKey="newClient" stackId="as" name="New Client" fill="#ef4444" isAnimationActive={false} hide={hidden.newClient}>
+              {data.map((row, i) => (
+                <Cell key={i} fill={row._isProjected ? '#facc15' : '#ef4444'} />
+              ))}
               <LabelList
                 dataKey="_total"
                 position="top"
