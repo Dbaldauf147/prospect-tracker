@@ -11,6 +11,7 @@ import {
 import { dbGet } from '../../utils/db';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { loadCommissions, COMMISSION_MONTH_NAMES } from '../../utils/commissionsStore';
+import { loadQuotedProjections, saveQuotedProjections, QUOTED_FIELDS } from '../../utils/quotedProjectionsStore';
 import styles from './YOYView.module.css';
 
 const PIPELINE_STORE = 'pipeline-dashboard';
@@ -88,6 +89,14 @@ function fmtMoneyFull(n) {
   return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 }
 
+// Quoted Projections values are stored in thousands of dollars ($K), so
+// e.g. 757 → "$757K" and 4061 → "$4.06M".
+function fmtKLabel(v) {
+  if (v == null || !Number.isFinite(v)) return '';
+  if (Math.abs(v) >= 1000) return `$${(v / 1000).toFixed(2)}M`;
+  return `$${Math.round(v).toLocaleString('en-US')}K`;
+}
+
 // To keep the explanation from ever covering the bars/points being
 // reviewed, the hover content is rendered into a single docked panel
 // (sticky strip at the top of the YOY body) instead of floating over
@@ -106,6 +115,10 @@ export function YOYView() {
   const [opps, setOpps] = useState(null);
   const [target, setTarget] = useState(DEFAULT_ANNUAL_TARGET);
   const [commissions, setCommissions] = useState(() => loadCommissions().data);
+  // Quoted Projections is now a user-maintained table of month-end values
+  // (seeded with the supplied Dec–May history) rather than a live compute.
+  const [quotedTable, setQuotedTable] = useState(loadQuotedProjections);
+  const updateQuotedTable = (next) => { setQuotedTable(next); saveQuotedProjections(next); };
   useEffect(() => {
     function onStorage(e) {
       if (!e || e.key === 'commissions-list-override') {
@@ -182,59 +195,30 @@ export function YOYView() {
     return rows;
   }, [records, currentYear]);
 
-  // Quoted Projections — Dec-to-Nov fiscal year ending in the current
-  // calendar year, monthly buckets keyed by Close Date. Quoted Weak/OK/
-  // Expected come from the `Chance?` column; Agreements Sent from
-  // `Status` == "Agreement Sent". BFO Pipe Total = sum of Quoted Amount
-  // in month ÷ (annual target ÷ 12).
+  // Quoted Projections — month-end snapshots the user records (editable
+  // via "Edit values"), plotted across the Dec→Nov fiscal year. Values
+  // are in $K: weak/ok/expected are the quoted-$ Chance buckets,
+  // agreements is Agreements Sent, and bfoPipe is the total BFO pipeline
+  // $ (its own axis since it runs larger). Months with no recorded value
+  // are left null so the lines break rather than dropping to zero.
   const quotedData = useMemo(() => {
-    const monthlyTarget = target > 0 ? target / 12 : 0;
-    const months = fiscalMonths(currentYear);
-    const indexByKey = new Map(months.map((m, i) => [m.key, i]));
-    const rows = months.map((m) => ({
-      month: m.label,
-      year: m.year,
-      weak: 0,
-      ok: 0,
-      expected: 0,
-      agreements: 0,
-      _quotedTotal: 0,
-      _hasData: false,
-    }));
-    for (const r of records) {
-      const cd = r['Close Date'];
-      if (!cd) continue;
-      const ts = Date.parse(cd);
-      if (Number.isNaN(ts)) continue;
-      const d = new Date(ts);
-      const idx = indexByKey.get(`${d.getFullYear()}-${d.getMonth()}`);
-      if (idx === undefined) continue;
-      const amt = parseMoney(r['Quoted Amount']);
-      if (typeof amt !== 'number' || amt <= 0) continue;
-      const chance = String(r['Chance?'] || r['Chance'] || '').trim().toLowerCase();
-      const status = String(r['Status'] || '').trim();
-      const row = rows[idx];
-      if (chance === 'weak') row.weak += amt;
-      else if (chance === 'ok') row.ok += amt;
-      else if (chance === 'expected') row.expected += amt;
-      if (status === 'Agreement Sent') row.agreements += amt;
-      if (chance === 'weak' || chance === 'ok' || chance === 'expected') {
-        row._quotedTotal += amt;
-      }
-      row._hasData = true;
-    }
-    // Coverage ratio per month — sum of Quoted Amount across the 3
-    // Chance buckets ÷ monthly quota target. Months without any opps
-    // are left null so the dashed line breaks rather than dropping to 0.
-    for (const row of rows) {
-      if (monthlyTarget > 0 && row._hasData) {
-        row.bfoPipe = +(row._quotedTotal / monthlyTarget).toFixed(2);
-      } else {
-        row.bfoPipe = null;
-      }
-    }
-    return rows;
-  }, [records, currentYear, target]);
+    const num = (x) => {
+      if (x === '' || x == null) return null;
+      const n = Number(x);
+      return Number.isFinite(n) ? n : null;
+    };
+    return fiscalMonths(currentYear).map((m) => {
+      const key = `${m.year}-${String(m.monthIdx + 1).padStart(2, '0')}`;
+      const v = quotedTable[key] || null;
+      const weak = v ? num(v.weak) : null;
+      const ok = v ? num(v.ok) : null;
+      const expected = v ? num(v.expected) : null;
+      const agreements = v ? num(v.agreements) : null;
+      const bfoPipe = v ? num(v.bfoPipe) : null;
+      const _hasData = [weak, ok, expected, agreements, bfoPipe].some(x => x != null);
+      return { month: m.label, year: m.year, monthKey: key, weak, ok, expected, agreements, bfoPipe, _hasData };
+    });
+  }, [quotedTable, currentYear]);
 
   // Close Rate — stacked bar of In Progress / Sold / Not Sold per Open
   // Year (percentages summing to 100), plus two C/R lines.
@@ -933,20 +917,17 @@ export function YOYView() {
     XLSX.writeFile(wb, `yoy-leads-${todayStamp()}.xlsx`);
   }
   function downloadQuoted() {
-    const monthlyTarget = target > 0 ? target / 12 : 0;
     const summary = quotedData.map(r => ({
       Month: r.month,
-      'Quoted Weak ($)': round0(r.weak),
-      'Quoted OK ($)': round0(r.ok),
-      'Quoted Expected ($)': round0(r.expected),
-      'Agreements Sent ($)': round0(r.agreements),
-      'Quoted Total ($)': round0(r._quotedTotal),
-      'Monthly Target ($)': monthlyTarget > 0 ? Math.round(monthlyTarget) : '',
-      'BFO Pipe Total (ratio)': r.bfoPipe == null ? '' : r.bfoPipe,
+      Year: r.year,
+      'Quoted Weak ($K)': r.weak ?? '',
+      'Quoted OK ($K)': r.ok ?? '',
+      'Quoted Expected ($K)': r.expected ?? '',
+      'Agreements Sent ($K)': r.agreements ?? '',
+      'BFO Pipe Total ($K)': r.bfoPipe ?? '',
     }));
     const wb = XLSX.utils.book_new();
     appendSheet(wb, `Quoted Projections ${currentYear}`, summary);
-    appendSheet(wb, 'Contributing Opps', contributingRecords.quoted);
     XLSX.writeFile(wb, `yoy-quoted-projections-${currentYear}-${todayStamp()}.xlsx`);
   }
   function downloadCloseRate() {
@@ -1086,7 +1067,7 @@ export function YOYView() {
         />
         <div className={styles.row}>
           <LeadsCard data={leadsData} hasOpps={hasOpps} onDownload={downloadLeads} />
-          <QuotedProjectionsCard data={quotedData} hasOpps={hasOpps} target={target} onDownload={downloadQuoted} />
+          <QuotedProjectionsCard data={quotedData} quotedTable={quotedTable} onSaveTable={updateQuotedTable} onDownload={downloadQuoted} />
           <CloseRateCard data={closeRateData} hasOpps={hasOpps} onDownload={downloadCloseRate} />
         </div>
         <div className={styles.row}>
@@ -1283,16 +1264,18 @@ function LeadsCard({ data, hasOpps, onDownload }) {
   );
 }
 
-function QuotedProjectionsCard({ data, hasOpps, target, onDownload }) {
-  const monthlyTarget = target > 0 ? target / 12 : 0;
+function QuotedProjectionsCard({ data, quotedTable, onSaveTable, onDownload }) {
+  const [editing, setEditing] = useState(false);
   const hasAnyValues = data.some(r => r._hasData);
   return (
     <div className={styles.chartCard}>
-      <ChartHeader title="Quoted Projections" onDownload={onDownload} canDownload={hasOpps && hasAnyValues} />
-      {!hasOpps ? (
-        <div className={styles.empty}>No Opps data — open the Opps tab to load.</div>
-      ) : !hasAnyValues ? (
-        <div className={styles.empty}>No opps with a Close Date between Dec {new Date().getFullYear() - 1} and Nov {new Date().getFullYear()}.</div>
+      <ChartHeader title="Quoted Projections" onDownload={onDownload} canDownload={hasAnyValues} />
+      <div className={styles.quotedEditRow}>
+        <span className={styles.quotedUnitNote}>values in $K</span>
+        <button type="button" className={styles.editValuesBtn} onClick={() => setEditing(true)}>Edit values</button>
+      </div>
+      {!hasAnyValues ? (
+        <div className={styles.empty}>No values yet — click “Edit values” to record each month’s figures.</div>
       ) : (
         <ResponsiveContainer width="100%" height={320}>
           <ComposedChart data={data} margin={{ top: 18, right: 12, left: 0, bottom: 4 }}>
@@ -1301,45 +1284,44 @@ function QuotedProjectionsCard({ data, hasOpps, target, onDownload }) {
             <YAxis
               yAxisId="dollars"
               tick={{ fontSize: 12 }}
-              tickFormatter={(v) => v >= 1000 ? `$${Math.round(v / 1000)}k` : `$${v}`}
+              tickFormatter={fmtKLabel}
             />
             <YAxis
-              yAxisId="ratio"
+              yAxisId="pipe"
               orientation="right"
               tick={{ fontSize: 12 }}
-              tickFormatter={(v) => v.toFixed(2)}
+              tickFormatter={fmtKLabel}
             />
             <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
-                labelText={(label) => `Close month: ${label}`}
-                valueFormat={(v, name) => {
-                  if (name === 'BFO Pipe Total') return v == null ? '—' : v.toFixed(2);
-                  return v == null ? '—' : fmtMoneyFull(v);
-                }}
+                labelText={(label, row) => `${label} ${row.year}`}
+                valueFormat={(v) => (v == null ? '—' : fmtKLabel(v))}
                 explain={(row) => ({
-                  formula: 'Quoted $ from opps whose Close Date lands in this month, bucketed by the Chance? field. BFO Pipe Total = Quoted Total ÷ monthly target.',
+                  formula: 'Recorded month-end values (in $K). Quoted Weak/OK/Expected are the quoted-$ Chance buckets, Agreements Sent is contracts out, BFO Pipe Total is total pipeline $ (its own axis). Edit via “Edit values”.',
                   inputs: [
-                    { label: 'Quoted Total (Weak+OK+Expected)', value: fmtMoneyFull(row._quotedTotal || 0) },
-                    { label: 'Monthly target', value: monthlyTarget > 0 ? fmtMoneyFull(Math.round(monthlyTarget)) : '—' },
-                    { label: 'BFO Pipe Total', value: row.bfoPipe == null ? '—' : row.bfoPipe.toFixed(2) },
+                    { label: 'Quoted Weak', value: row.weak == null ? '—' : fmtKLabel(row.weak) },
+                    { label: 'Quoted OK', value: row.ok == null ? '—' : fmtKLabel(row.ok) },
+                    { label: 'Quoted Expected', value: row.expected == null ? '—' : fmtKLabel(row.expected) },
+                    { label: 'Agreements Sent', value: row.agreements == null ? '—' : fmtKLabel(row.agreements) },
+                    { label: 'BFO Pipe Total', value: row.bfoPipe == null ? '—' : fmtKLabel(row.bfoPipe) },
                   ],
-                  note: row._hasData ? null : 'No opps closed this month.',
+                  note: row._hasData ? null : 'No values recorded for this month yet.',
                 })}
               />
             } />
             <Legend wrapperStyle={{ fontSize: 12 }} />
-            <Line yAxisId="dollars" dataKey="weak" name="Quoted Weak" stroke="#22c55e" strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false}>
-              <LabelList dataKey="weak" position="top" style={{ fontSize: 10, fill: '#15803d' }} formatter={(v) => v ? fmtMoneyShort(v) : ''} />
+            <Line yAxisId="dollars" dataKey="weak" name="Quoted Weak" stroke="#22c55e" strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false} connectNulls>
+              <LabelList dataKey="weak" position="top" style={{ fontSize: 10, fill: '#15803d' }} formatter={fmtKLabel} />
             </Line>
-            <Line yAxisId="dollars" dataKey="ok" name="Quoted OK" stroke="#eab308" strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false}>
-              <LabelList dataKey="ok" position="top" style={{ fontSize: 10, fill: '#a16207' }} formatter={(v) => v ? fmtMoneyShort(v) : ''} />
+            <Line yAxisId="dollars" dataKey="ok" name="Quoted OK" stroke="#eab308" strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false} connectNulls>
+              <LabelList dataKey="ok" position="top" style={{ fontSize: 10, fill: '#a16207' }} formatter={fmtKLabel} />
             </Line>
-            <Line yAxisId="dollars" dataKey="expected" name="Quoted Expected" stroke="#3b82f6" strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false}>
-              <LabelList dataKey="expected" position="top" style={{ fontSize: 10, fill: '#1d4ed8' }} formatter={(v) => v ? fmtMoneyShort(v) : ''} />
+            <Line yAxisId="dollars" dataKey="expected" name="Quoted Expected" stroke="#3b82f6" strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false} connectNulls>
+              <LabelList dataKey="expected" position="top" style={{ fontSize: 10, fill: '#1d4ed8' }} formatter={fmtKLabel} />
             </Line>
-            <Line yAxisId="dollars" dataKey="agreements" name="Agreements Sent" stroke="#ef4444" strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false} />
+            <Line yAxisId="dollars" dataKey="agreements" name="Agreements Sent" stroke="#ef4444" strokeWidth={2} dot={{ r: 4 }} isAnimationActive={false} connectNulls />
             <Line
-              yAxisId="ratio"
+              yAxisId="pipe"
               dataKey="bfoPipe"
               name="BFO Pipe Total"
               stroke="#111827"
@@ -1349,12 +1331,105 @@ function QuotedProjectionsCard({ data, hasOpps, target, onDownload }) {
               isAnimationActive={false}
               connectNulls
             >
-              <LabelList dataKey="bfoPipe" position="top" style={{ fontSize: 10, fontWeight: 600, fill: '#111827' }} formatter={(v) => v == null ? '' : v.toFixed(2)} />
+              <LabelList dataKey="bfoPipe" position="top" style={{ fontSize: 10, fontWeight: 600, fill: '#111827' }} formatter={fmtKLabel} />
             </Line>
           </ComposedChart>
         </ResponsiveContainer>
       )}
+      {editing && (
+        <QuotedProjectionsEditor
+          rows={data}
+          table={quotedTable}
+          onClose={() => setEditing(false)}
+          onSave={(next) => { onSaveTable(next); setEditing(false); }}
+        />
+      )}
     </div>
+  );
+}
+
+// Editable month-by-month table behind the Quoted Projections "Edit
+// values" button. Lets the user record each month's figures (in $K);
+// blank cells are omitted. Seeded values come from the store.
+function QuotedProjectionsEditor({ rows, table, onClose, onSave }) {
+  const [draft, setDraft] = useState(() => {
+    const d = {};
+    for (const r of rows) {
+      const v = table[r.monthKey] || {};
+      const cells = {};
+      for (const f of QUOTED_FIELDS) cells[f] = (v[f] == null || v[f] === '') ? '' : String(v[f]);
+      d[r.monthKey] = cells;
+    }
+    return d;
+  });
+  const setCell = (key, field, value) =>
+    setDraft(prev => ({ ...prev, [key]: { ...prev[key], [field]: value } }));
+  const handleSave = () => {
+    const next = { ...table };
+    for (const r of rows) {
+      const cells = draft[r.monthKey] || {};
+      const out = {};
+      let any = false;
+      for (const f of QUOTED_FIELDS) {
+        const raw = String(cells[f] ?? '').trim().replace(/[$,]/g, '');
+        if (raw === '') continue;
+        const n = Number(raw);
+        if (Number.isFinite(n)) { out[f] = n; any = true; }
+      }
+      if (any) next[r.monthKey] = out;
+      else delete next[r.monthKey];
+    }
+    onSave(next);
+  };
+  const labels = [
+    ['weak', 'Quoted Weak'], ['ok', 'Quoted OK'], ['expected', 'Quoted Expected'],
+    ['agreements', 'Agreements Sent'], ['bfoPipe', 'BFO Pipe Total'],
+  ];
+  return createPortal(
+    <div className={styles.modalOverlay} onClick={onClose}>
+      <div className={styles.modalCard} onClick={(e) => e.stopPropagation()}>
+        <div className={styles.modalHead}>
+          <div>
+            <div className={styles.modalTitle}>Quoted Projections — monthly values</div>
+            <div className={styles.modalSub}>All figures in thousands of dollars ($K). Leave a cell blank to omit it. Saved per month for the Dec→Nov fiscal year.</div>
+          </div>
+          <button type="button" className={styles.downloadBtn} onClick={onClose}>Close</button>
+        </div>
+        <div className={styles.modalBody}>
+          <table className={styles.editTable}>
+            <thead>
+              <tr>
+                <th>Month</th>
+                {labels.map(([f, lbl]) => <th key={f}>{lbl}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(r => (
+                <tr key={r.monthKey}>
+                  <td className={styles.editMonthCell}>{r.month} {r.year}</td>
+                  {labels.map(([f]) => (
+                    <td key={f}>
+                      <input
+                        type="number"
+                        className={styles.editInput}
+                        value={draft[r.monthKey]?.[f] ?? ''}
+                        onChange={(e) => setCell(r.monthKey, f, e.target.value)}
+                        placeholder="—"
+                      />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className={styles.modalFoot}>
+          <button type="button" className={styles.downloadBtn} onClick={onClose}>Cancel</button>
+          <button type="button" className={styles.saveBtn} onClick={handleSave}>Save</button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
