@@ -48,7 +48,6 @@ export function useProspects(user) {
     return () => { if (unsubRef.current) unsubRef.current(); };
   }, [user]);
 
-  // One-time automatic cleanup: once the collection has loaded, collapse
   // any duplicate prospect documents (same company stored twice).
   // Detection runs against the already-subscribed list, so when the data
   // is clean (the normal case) this does ZERO Firestore reads/writes —
