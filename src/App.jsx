@@ -82,7 +82,7 @@ function parseCsvRow(line) {
 
 function App() {
   const { user, isAdmin, loading: authLoading, authError, signInWithEmail, createAccount, resetPassword, logout } = useAuth();
-  const { prospects, loading: dataLoading, addProspect, updateProspect, deleteProspect, replaceAll } = useProspects(user);
+  const { prospects, loading: dataLoading, addProspect, updateProspect, deleteProspect, replaceAll, findDuplicates, dedupe } = useProspects(user);
   const { settings, updateSettings, updateSettingsPath } = useUserSettings(user);
 
   // The CDM name to filter and default new-prospect ownership against.
@@ -359,6 +359,8 @@ function App() {
               onUpdate={updateProspect}
               onDelete={deleteProspect}
               onAdd={addProspect}
+              onFindDuplicates={findDuplicates}
+              onDedupe={dedupe}
               targetAccountsData={targetAccountsData}
               settings={settings}
               updateSettings={updateSettings}

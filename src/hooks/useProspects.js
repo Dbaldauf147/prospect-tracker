@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { subscribeToProspects, addProspect as addDoc, updateProspect as updateDoc, deleteProspect as deleteDoc, seedProspects, replaceAllProspects, setProspectsUser } from '../utils/firestoreSync';
+import { subscribeToProspects, addProspect as addDoc, updateProspect as updateDoc, deleteProspect as deleteDoc, seedProspects, replaceAllProspects, setProspectsUser, findDuplicateProspects, dedupeProspects } from '../utils/firestoreSync';
 import seedData from '../data/seedProspects';
 
 export function useProspects(user) {
@@ -67,5 +67,14 @@ export function useProspects(user) {
     }
   }, [prospects]);
 
-  return { prospects, loading, error, addProspect, updateProspect, deleteProspect, replaceAll };
+  // Preview duplicate prospects (grouped by normalized company name)
+  // without changing anything — used to confirm before cleanup.
+  const findDuplicates = useCallback(() => findDuplicateProspects(), []);
+
+  // Collapse duplicate prospects, keeping the richest record. The
+  // onSnapshot listener stays live so the UI reflects the deletions as
+  // they stream in.
+  const dedupe = useCallback(() => dedupeProspects(), []);
+
+  return { prospects, loading, error, addProspect, updateProspect, deleteProspect, replaceAll, findDuplicates, dedupe };
 }

@@ -936,7 +936,7 @@ function parseXlsx(file) {
   });
 }
 
-export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd, targetAccountsData, settings, updateSettings, cdmName }) {
+export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd, onFindDuplicates, onDedupe, targetAccountsData, settings, updateSettings, cdmName }) {
   const { user, isAdmin } = useAuth();
   const savedView = settings?.viewFilters?.myAccounts;
   const [search, setSearch] = useState(savedView?.search || '');
@@ -944,6 +944,7 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
   const [expandedBucket, setExpandedBucket] = useState(null);
   const [bucketFilter, setBucketFilter] = useState(savedView?.bucketFilter ?? null); // 'tier1' | 'tier2' | 'client' | 'pipeline' | null
   const [hqLookupRunning, setHqLookupRunning] = useState(false);
+  const [dedupeRunning, setDedupeRunning] = useState(false);
   const [inactiveMode, setInactiveMode] = useState(savedView?.inactiveMode || 'hide'); // 'hide' | 'only' | 'show'
   // companyLowerName → Set<listLabel>. Built further below once
   // allAccounts is resolved; declared here so it's available while
@@ -1041,6 +1042,37 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
 
   function clearHqLocations() {
     updateSettings({ hqRegionMap: {} });
+  }
+
+  // Find and remove duplicate prospect records (same company stored as
+  // two+ documents). Previews the count first, then collapses each set
+  // into its most complete record on confirm. Fixes duplicates that
+  // surface across every page, since they all read the same collection.
+  async function handleDedupe() {
+    if (!onFindDuplicates || !onDedupe || dedupeRunning) return;
+    setDedupeRunning(true);
+    try {
+      const groups = await onFindDuplicates();
+      const extra = groups.reduce((s, g) => s + (g.docs.length - 1), 0);
+      if (extra === 0) {
+        alert('No duplicate accounts found.');
+        return;
+      }
+      const sample = groups.slice(0, 12).map(g => `• ${g.docs[0].company} (${g.docs.length} copies)`).join('\n');
+      const more = groups.length > 12 ? `\n…and ${groups.length - 12} more` : '';
+      const ok = window.confirm(
+        `Found ${extra} duplicate record${extra === 1 ? '' : 's'} across ${groups.length} ${groups.length === 1 ? 'company' : 'companies'}:\n\n${sample}${more}\n\n` +
+        'Remove the extra copies, keeping the most complete record for each (and backfilling any missing fields from the copies)?\n\nThis cannot be undone.'
+      );
+      if (!ok) return;
+      const result = await onDedupe();
+      alert(`Removed ${result.removed} duplicate record${result.removed === 1 ? '' : 's'} across ${result.groups} ${result.groups === 1 ? 'company' : 'companies'}.`);
+    } catch (err) {
+      console.error('De-dupe failed:', err);
+      alert('De-dupe failed: ' + (err?.message || err));
+    } finally {
+      setDedupeRunning(false);
+    }
   }
 
   const zoomFileRef = useRef(null);
@@ -2597,6 +2629,16 @@ export function MyAccountsView({ prospects, onSelect, onUpdate, onDelete, onAdd,
           title="Download a CSV of the accounts in the current view that have no HubSpot contacts yet, with their Zoom / website data from Table View"
           style={{ padding: '0.25rem 0.6rem', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: 'var(--color-accent)', whiteSpace: 'nowrap' }}
         >⇩ Accounts w/o contacts</button>
+        {onDedupe && (
+          <button
+            onClick={handleDedupe}
+            disabled={dedupeRunning}
+            title="Find accounts saved as two or more records (the same company twice) and collapse each into its most complete record. Removes the duplicate rows you see here and on other pages."
+            style={{ padding: '0.25rem 0.6rem', borderRadius: '6px', border: '1px solid var(--color-border)', background: 'var(--color-surface)', fontSize: '0.7rem', fontWeight: 600, cursor: dedupeRunning ? 'wait' : 'pointer', fontFamily: 'inherit', color: '#DC2626', whiteSpace: 'nowrap' }}
+          >
+            {dedupeRunning ? 'Removing duplicates…' : 'Remove duplicates'}
+          </button>
+        )}
         <span className={styles.resultCount}>{filteredAccounts.length} of {allAccounts.length}</span>
       </div>
       {targetAccounts.length > 0 && (() => {
