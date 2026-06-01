@@ -6034,9 +6034,9 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               className={styles.syncBtn}
               onClick={importStageDaysFromBfo}
               disabled={importingStageDays}
-              title="One-time: seed Days in Stage for opps with a BFO Opportunity Name from the BFO Activity export. Afterward it grows by a day as usual."
+              title="One-time only: seed each opp's Days in Stage from the matching BFO Activity row's Days in Stage value (matched by BFO Opportunity Name). Afterward it keeps growing by a day on its own. This does NOT import opps — it only sets the stage clock."
               style={{ marginLeft: 'auto' }}
-            >{importingStageDays ? 'Importing…' : 'Import Days in Stage from BFO (one-time)'}</button>
+            >{importingStageDays ? 'Seeding…' : 'Seed Days in Stage from BFO Activity (one-time)'}</button>
           </div>
           <div style={{
             display: 'flex', gap: 12, overflowX: 'auto',
