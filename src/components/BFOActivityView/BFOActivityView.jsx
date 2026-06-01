@@ -73,7 +73,7 @@ function compareValues(a, b) {
   return String(a).localeCompare(String(b));
 }
 
-export function BFOActivityView() {
+export function BFOActivityView({ prospects = [] } = {}) {
   const [data, setData] = useState({ headers: [], rows: [] });
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState(null); // { col, dir: 'asc'|'desc' }
@@ -286,21 +286,42 @@ export function BFOActivityView() {
     return missing;
   }, [data, oppNameKeys]);
 
-  // Opps 2 opps that have NO BFO Opportunity Name yet, grouped by
-  // normalized Account. These are the rows we offer as assignment
-  // targets for an unmatched BFO Opportunity Name from the same company.
-  const unlinkedOppsByAccount = useMemo(() => {
+  // Map of normalized company name → that company's BFO Company Name,
+  // sourced from the Table View company records (prospects). Lets us
+  // match a BFO Activity row to Opps 2 opps on the shared BFO Company
+  // Name rather than relying on the raw Account text lining up.
+  const bfoCompanyByAccount = useMemo(() => {
     const map = new Map();
+    for (const p of (prospects || [])) {
+      const key = normalizeCompany(p?.company || '');
+      const bfo = String(p?.bfoCompanyName || '').trim();
+      if (key && bfo) map.set(key, bfo);
+    }
+    return map;
+  }, [prospects]);
+
+  // Opps 2 opps that have NO BFO Opportunity Name yet, indexed by every
+  // key we might match a BFO Activity row on: the normalized Account and
+  // the normalized BFO Company Name (the mutual identifier carried on the
+  // Table View company). These are the assignment targets we suggest.
+  const unlinkedOppsByKey = useMemo(() => {
+    const map = new Map();
+    const add = (key, opp) => {
+      if (!key) return;
+      let list = map.get(key);
+      if (!list) { list = []; map.set(key, list); }
+      if (!list.some(o => o._id === opp._id)) list.push(opp);
+    };
     const records = (opps && Array.isArray(opps.records)) ? opps.records : [];
     for (const r of records) {
       if (String(r['BFO Link'] || '').trim() !== '') continue;
-      const key = normalizeCompany(r.Account || '');
-      if (!key) continue;
-      if (!map.has(key)) map.set(key, []);
-      map.get(key).push(r);
+      const acctKey = normalizeCompany(r.Account || '');
+      add(acctKey, r);
+      const bfo = bfoCompanyByAccount.get(acctKey);
+      if (bfo) add(normalizeCompany(bfo), r);
     }
     return map;
-  }, [opps]);
+  }, [opps, bfoCompanyByAccount]);
 
   // Tag the chosen Opps 2 opp with the BFO Opportunity Name, persist
   // through the shared Opps 2 store, then refresh the local opps cache
@@ -428,7 +449,7 @@ export function BFOActivityView() {
             </div>
             <ul className={styles.warnList}>
               {unmatchedOppNames.map(({ name, account }) => {
-                const candidates = unlinkedOppsByAccount.get(normalizeCompany(account)) || [];
+                const candidates = unlinkedOppsByKey.get(normalizeCompany(account)) || [];
                 return (
                   <li key={name} className={styles.warnItem}>
                     <div className={styles.warnName}>

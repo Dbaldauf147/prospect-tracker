@@ -322,7 +322,7 @@ function App() {
               <YOYView />
             </Suspense>
           ) : view === 'bfo' ? (
-            <BFOActivityView />
+            <BFOActivityView prospects={prospects} />
           ) : view === 'privacy' ? (
             <PrivacyPolicy />
           ) : view === 'activity' ? (
