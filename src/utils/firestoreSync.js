@@ -63,17 +63,6 @@ export function subscribeToProspects(onChange) {
 }
 
 export async function addProspect(prospect) {
-  // Idempotent by company name: if a prospect already exists whose
-  // company normalizes to the same key, return that doc instead of
-  // minting a second one. This is the single chokepoint that keeps
-  // every caller — the manual "add new" modal, bulk importers, and the
-  // auto-create-from-opps effect — from spawning duplicate documents.
-  const key = normalizeCompanyName(prospect?.company);
-  if (key) {
-    const snap = await getDocs(getCol());
-    const existing = snap.docs.find(d => normalizeCompanyName(d.data()?.company) === key);
-    if (existing) return existing.id;
-  }
   const ref = doc(getCol());
   await setDoc(ref, {
     ...prospect,
@@ -183,19 +172,18 @@ function createdMillis(p) {
   return Number.isFinite(t) ? t : 0;
 }
 
-// Group prospects by normalized company name and return the groups that
-// have more than one document — i.e. the duplicates. Each group lists
-// its docs richest-first so the caller can preview which record would
-// be kept.
-export async function findDuplicateProspects() {
-  const snap = await getDocs(getCol());
+// Group an in-memory prospect array by normalized company name and
+// return only the groups with more than one record — i.e. duplicates.
+// Pure (no Firestore I/O), so callers that already hold the live list
+// from the subscription can detect duplicates for free. Each group is
+// sorted richest-first so the first element is the keeper.
+export function groupDuplicateProspects(list) {
   const byKey = new Map();
-  for (const d of snap.docs) {
-    const data = d.data() || {};
-    const key = normalizeCompanyName(data.company);
+  for (const p of (list || [])) {
+    const key = normalizeCompanyName(p?.company);
     if (!key) continue;
     if (!byKey.has(key)) byKey.set(key, []);
-    byKey.get(key).push({ id: d.id, ...data });
+    byKey.get(key).push(p);
   }
   const groups = [];
   for (const [key, docs] of byKey) {
@@ -210,14 +198,13 @@ export async function findDuplicateProspects() {
   return groups;
 }
 
-// Collapse duplicate prospects: for each group of same-company records,
-// keep the richest one, backfill any fields it lacks from the copies,
-// then delete the extras. Returns a summary of what was removed.
-export async function dedupeProspects() {
-  const groups = await findDuplicateProspects();
+// Collapse the given duplicate groups: keep the richest record, backfill
+// any fields it lacks from the copies, then delete the extras. Only
+// touches Firestore when there is something to merge or remove.
+export async function collapseDuplicateGroups(groups) {
   let removed = 0;
   const merged = [];
-  for (const { docs } of groups) {
+  for (const { docs } of (groups || [])) {
     const keeper = docs[0];
     const losers = docs.slice(1);
     // Backfill empty keeper fields from the duplicates being removed.
@@ -237,7 +224,24 @@ export async function dedupeProspects() {
     }
     merged.push({ company: keeper.company, removed: losers.length });
   }
-  return { groups: groups.length, removed, merged };
+  return { groups: groups?.length || 0, removed, merged };
+}
+
+// Read the live collection and return its duplicate groups. Used by the
+// on-demand "Remove duplicates" button, which wants fresh server state
+// rather than whatever the client currently holds.
+export async function findDuplicateProspects() {
+  const snap = await getDocs(getCol());
+  const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  return groupDuplicateProspects(list);
+}
+
+// Collapse duplicates by reading fresh from Firestore first. For the
+// per-load auto-cleanup, prefer collapseDuplicateGroups() with the
+// already-subscribed list so no extra read is incurred.
+export async function dedupeProspects() {
+  const groups = await findDuplicateProspects();
+  return collapseDuplicateGroups(groups);
 }
 
 function getAnalysisDoc(prospectId) {
