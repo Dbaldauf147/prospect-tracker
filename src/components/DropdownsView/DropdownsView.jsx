@@ -689,7 +689,7 @@ export function DropdownsView({ settings, updateSettings }) {
           </div>
         </>
       ) : (
-        <QuestionsTab settings={settings} updateSettings={updateSettings} />
+        <QuestionsTab settings={settings} updateSettings={updateSettings} serviceOptions={serviceRows.map(r => r.name)} />
       )}
     </div>
   );
