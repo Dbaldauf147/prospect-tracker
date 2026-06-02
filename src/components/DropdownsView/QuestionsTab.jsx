@@ -83,7 +83,7 @@ const addBtnStyle = {
 // stored per service under settings.serviceQuestions /
 // settings.serviceTheirQuestions and override the hardcoded defaults when
 // a new opportunity seeds that service.
-export function QuestionsTab({ settings, updateSettings }) {
+export function QuestionsTab({ settings, updateSettings, serviceOptions = [] }) {
   const [newService, setNewService] = useState('');
 
   const ourOverrides = (settings?.serviceQuestions && typeof settings.serviceQuestions === 'object') ? settings.serviceQuestions : {};
@@ -102,6 +102,22 @@ export function QuestionsTab({ settings, updateSettings }) {
     ]);
     return [...set].sort();
   }, [ourOverrides, theirOverrides]);
+
+  // Predictive options for the "Add service" box: services from the
+  // Services menu (Solutions list) that aren't already on this page.
+  // Compared case-insensitively against the lowercase keys we store.
+  const availableServices = useMemo(() => {
+    const listed = new Set(services);
+    const seen = new Set();
+    const out = [];
+    for (const name of (serviceOptions || [])) {
+      const key = String(name || '').trim().toLowerCase();
+      if (!key || listed.has(key) || seen.has(key)) continue;
+      seen.add(key);
+      out.push(String(name).trim());
+    }
+    return out.sort((a, b) => a.localeCompare(b));
+  }, [serviceOptions, services]);
 
   function saveOur(svc, list) { updateSettings?.({ serviceQuestions: { ...ourOverrides, [svc]: list } }); }
   function saveTheir(svc, list) { updateSettings?.({ serviceTheirQuestions: { ...theirOverrides, [svc]: list } }); }
@@ -122,11 +138,15 @@ export function QuestionsTab({ settings, updateSettings }) {
         <input
           type="text"
           className={styles.searchInput}
-          placeholder="New service name (e.g. demand response)…"
+          list="questions-service-options"
+          placeholder="Add a service from the Services menu…"
           value={newService}
           onChange={(e) => setNewService(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addService(); } }}
         />
+        <datalist id="questions-service-options">
+          {availableServices.map(s => <option key={s} value={s} />)}
+        </datalist>
         <button
           type="button"
           onClick={addService}
