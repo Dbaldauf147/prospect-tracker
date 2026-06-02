@@ -13,6 +13,7 @@ import {
   setOppPricingSnapshot,
   clearOppPricingSnapshot,
 } from '../../utils/oppsPricingSnapshot';
+import { sortByCallInAsc, resolveCallIn, callInDateISO, formatDateDisplay } from '../../utils/oppsCallIn';
 import styles from './OptionsTab.module.css';
 
 const TYPE_OPTIONS = ['Setup', 'One Time', 'Recurring (monthly)'];
@@ -689,8 +690,10 @@ export function OppPickerModal({ opps, optionName, onPick, onClose }) {
       }))
       .filter(({ r, hay }) => !!(r.Account || r.Scope) && (!q || hay.includes(q)))
       .map(({ r }) => r);
-    ranked.sort((a, b) => (a.Account || '').localeCompare(b.Account || ''));
-    return ranked.slice(0, 200);
+    // Order the same way the Opps 2 page does — Call In ascending, so the
+    // most urgent (most overdue) opps sit at the top — instead of A→Z by
+    // Account. Predictive filtering above still narrows the list first.
+    return sortByCallInAsc(ranked).slice(0, 200);
   }, [opps, query]);
 
   return (
@@ -753,6 +756,17 @@ export function OppPickerModal({ opps, optionName, onPick, onClose }) {
               }}
             >
               <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{r.Account || '—'}</span>
+              <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                {(() => {
+                  const iso = callInDateISO(r);
+                  const days = resolveCallIn(r);
+                  if (!iso) return 'Call in: —';
+                  const when = typeof days === 'number' && Number.isFinite(days)
+                    ? ` (${days === 0 ? 'today' : days > 0 ? `in ${days}d` : `${-days}d ago`})`
+                    : '';
+                  return `Call in: ${formatDateDisplay(iso)}${when}`;
+                })()}
+              </span>
               <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
                 {[r.Scope, r.Stage, r.Source].filter(Boolean).join(' · ') || 'No Scope / Stage'}
               </span>
