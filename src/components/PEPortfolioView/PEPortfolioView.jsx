@@ -6,6 +6,7 @@ import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { dbGet } from '../../utils/db';
 import { loadOppsFromCache } from '../../utils/oppsCache';
 import { formatAum } from '../../utils/formatters';
+import { PE_STAGES } from '../../data/enums';
 import { PEOppsScheduleModal } from './PEOppsScheduleModal';
 
 // Closed/invalid stages from the Opps tab — these shouldn't count toward "active pipeline".
@@ -548,6 +549,8 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
           <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2, maxWidth: 640 }}>
             {subtab === 'portfolio'
               ? <>Every prospect with Type = <code>Private Equity</code>, sorted by pipeline from their portfolio companies. Opportunity counts come from the <strong>Opps</strong> tab (same as the Opps column in My Accounts).</>
+              : subtab === 'stages'
+              ? <>PE firms grouped by their <strong>PE Stage</strong> (set in each firm's company popup): <code>Discovery</code>, <code>Piloting</code>, and <code>Existing Partnership</code>.</>
               : <>Every opportunity from the <strong>Opps 2</strong> tab with Type = <code>Private Equity</code> or Source = <code>PE partner</code>.</>}
           </div>
         </div>
@@ -563,6 +566,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderBottom: '1px solid #E2E8F0', margin: '0 1.25rem 0.5rem', flexShrink: 0 }}>
         {[
           { key: 'portfolio', label: 'Portfolio', count: peFirms.length },
+          { key: 'stages', label: 'PE Stages', count: peFirms.length },
           { key: 'opps', label: 'PE Opps', count: peOpps.length },
         ].map(t => {
           const isActive = subtab === t.key;
@@ -610,6 +614,12 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
           prospects={prospects}
           onSelectProspect={onSelectProspect}
           user={user}
+        />
+      ) : subtab === 'stages' ? (
+        <PEStagesTab
+          firms={peFirms}
+          portfolioByPe={portfolioByPe}
+          onSelectProspect={onSelectProspect}
         />
       ) : (
       <>
@@ -1024,6 +1034,83 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
       </>
       )}
     </div>
+  );
+}
+
+// PE firms grouped by their engagement stage (peStage): one section per
+// stage — Discovery, Piloting, Existing Partnership, plus an Unassigned
+// bucket for firms with no stage set — so the user can scan which PE
+// relationships sit at each phase. Rows link back to the firm's company
+// popup. Stage is set per firm in that popup's "PE Stage" dropdown.
+function PEStagesTab({ firms, portfolioByPe, onSelectProspect }) {
+  const [query, setQuery] = useState('');
+  const STAGE_META = [
+    { stage: 'Discovery', accent: '#2563EB', bg: '#EFF6FF', border: '#BFDBFE' },
+    { stage: 'Piloting', accent: '#D97706', bg: '#FFFBEB', border: '#FDE68A' },
+    { stage: 'Existing Partnership', accent: '#059669', bg: '#ECFDF5', border: '#A7F3D0' },
+    { stage: 'Unassigned', accent: '#64748B', bg: '#F8FAFC', border: '#E2E8F0' },
+  ];
+  const q = query.trim().toLowerCase();
+  const filtered = q ? firms.filter(p => (p.company || '').toLowerCase().includes(q)) : firms;
+  const groups = new Map(STAGE_META.map(m => [m.stage, []]));
+  for (const pe of filtered) {
+    const stage = PE_STAGES.includes(pe.peStage) ? pe.peStage : 'Unassigned';
+    groups.get(stage).push(pe);
+  }
+  const ROW_GRID = '1fr 90px 130px 80px';
+
+  return (
+    <>
+      <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0 }}>
+        <input
+          type="text"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder={`Search ${firms.length} PE firm${firms.length === 1 ? '' : 's'}…`}
+          style={{ width: '100%', maxWidth: 400, padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
+        />
+      </div>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '0 1.25rem 1.25rem', minHeight: 0, display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+        {firms.length === 0 ? (
+          <div style={{ padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
+            <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>No PE firms found</div>
+            <div style={{ fontSize: '0.78rem' }}>Set a prospect's <strong>Type</strong> to <code>Private Equity</code> to list it here.</div>
+          </div>
+        ) : STAGE_META.map(({ stage, accent, bg, border }) => {
+          const list = groups.get(stage) || [];
+          return (
+            <div key={stage} style={{ border: `1px solid ${border}`, borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 0.75rem', background: bg, borderBottom: `1px solid ${border}` }}>
+                <span style={{ width: 8, height: 8, borderRadius: 2, background: accent }} />
+                <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#1E293B' }}>{stage}</span>
+                <span style={{ fontSize: '0.65rem', fontWeight: 700, padding: '1px 7px', borderRadius: 999, background: accent, color: '#fff' }}>{list.length}</span>
+              </div>
+              {list.length === 0 ? (
+                <div style={{ padding: '0.6rem 0.75rem', fontSize: '0.72rem', color: '#94A3B8', fontStyle: 'italic' }}>
+                  {q ? 'No matching PE firms at this stage.' : 'No PE firms at this stage.'}
+                </div>
+              ) : list.map((pe, i) => {
+                const pcCount = (portfolioByPe.get((pe.company || '').trim().toLowerCase()) || []).length;
+                return (
+                  <button
+                    key={pe.id}
+                    type="button"
+                    onClick={() => onSelectProspect?.(pe)}
+                    title={`Open ${pe.company || 'this firm'}`}
+                    style={{ width: '100%', display: 'grid', gridTemplateColumns: ROW_GRID, alignItems: 'center', gap: '0.5rem', padding: '0.5rem 0.75rem', background: '#fff', border: 'none', borderTop: i === 0 ? 'none' : '1px solid #F1F5F9', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}
+                  >
+                    <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pe.company || '—'}</span>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 600, textAlign: 'right', color: pe.peAum ? '#1E293B' : '#CBD5E1' }} title={pe.peAum ? `PE AUM: $${pe.peAum}B` : 'No PE AUM set'}>{formatAum(pe.peAum)}</span>
+                    <span style={{ fontSize: '0.72rem', fontWeight: 600, color: pe.geography ? '#475569' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={pe.geography || 'No geography set'}>{pe.geography || '—'}</span>
+                    <span style={{ fontSize: '0.7rem', fontWeight: 600, textAlign: 'right', color: pcCount ? '#475569' : '#CBD5E1' }} title="Portfolio companies linked to this firm">{pcCount} PC{pcCount === 1 ? '' : 's'}</span>
+                  </button>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+    </>
   );
 }
 
