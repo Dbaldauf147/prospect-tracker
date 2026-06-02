@@ -29,8 +29,14 @@ function parseMoney(v) {
 }
 
 function parseYear(v) {
-  const n = Number(String(v ?? '').replace(/[^0-9]/g, ''));
-  return Number.isFinite(n) && n >= 1900 && n <= 2100 ? n : null;
+  // Pull the first standalone 4-digit year out of the value. This keeps
+  // plain "2026" working while still recognising date-formatted Open Year
+  // cells like "2026-06-01" or "6/1/2026" — stripping every non-digit
+  // first would turn those into 20260601 / 612026 and lose the year.
+  const m = String(v ?? '').match(/(?:19|20)\d{2}/);
+  if (!m) return null;
+  const n = Number(m[0]);
+  return n >= 1900 && n <= 2100 ? n : null;
 }
 
 const MONTH_LABELS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -1841,9 +1847,9 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload }) {
         <div className={styles.empty}>No Sold opps with a Quoted Amount yet.</div>
       ) : (
         <ResponsiveContainer width="100%" height={320}>
-          <BarChart data={data} margin={{ top: 32, right: 8, left: 16, bottom: 4 }}>
+          <BarChart data={data} margin={{ top: 48, right: 8, left: 16, bottom: 4 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
-            <XAxis dataKey="year" tick={{ fontSize: 12 }} />
+            <XAxis dataKey="year" interval={0} tick={{ fontSize: 12 }} />
             <YAxis
               tick={{ fontSize: 12 }}
               tickFormatter={(v) => v >= 1_000_000 ? `${(v / 1_000_000).toFixed(0)}M` : v.toLocaleString('en-US')}
