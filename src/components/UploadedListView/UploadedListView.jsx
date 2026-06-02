@@ -208,6 +208,58 @@ function MatchPctCell({ row, myAccountMapping, myAccountDismissed, portfolioMapp
   );
 }
 
+// Looks up the Table View prospect that best matches a list row and
+// either shows that prospect's existing field value (e.g. its BFO
+// Company Name) or, when the prospect has a similar name but no value
+// yet, offers a one-click button to fill it with the list row's name.
+function ProspectFillCell({ row, mapping, dismissed, prospectSuggestionFor, prospectsByNorm, field, label, onFill }) {
+  const [busy, setBusy] = useState(false);
+  const mk = row.__matchKey__;
+  const raw = row.__rawName__ || '';
+  // Prefer a confirmed Table View mapping; otherwise fall back to the
+  // best live similar-name suggestion (unless the row was dismissed).
+  let prospect = null;
+  const confirmed = mapping[mk];
+  if (confirmed) prospect = prospectsByNorm.get(normalizeCompany(confirmed));
+  if (!prospect && !dismissed[mk]) {
+    const s = raw ? prospectSuggestionFor(raw) : null;
+    prospect = s?.prospect || null;
+  }
+  if (!prospect) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>—</span>;
+  const current = prospect[field];
+  if (current != null && String(current).trim() !== '') {
+    // Already populated in Table View — show the looked-up value.
+    return (
+      <span title={`${label} from Table View · ${prospect.company}`} style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)' }}>
+        {String(current)}
+      </span>
+    );
+  }
+  if (!raw) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>—</span>;
+  // Blank in Table View — offer to set it to this row's company name.
+  return (
+    <button
+      type="button"
+      disabled={busy}
+      onClick={async (e) => {
+        e.stopPropagation();
+        if (busy) return;
+        setBusy(true);
+        try { await onFill(prospect.id, raw); } finally { setBusy(false); }
+      }}
+      title={`Set ${prospect.company}'s ${label} to "${raw}"`}
+      style={{
+        padding: '1px 8px', borderRadius: 999, border: '1px solid #FCD34D',
+        background: '#FEF3C7', color: '#92400E', fontSize: '0.65rem', fontWeight: 700,
+        cursor: busy ? 'default' : 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
+        opacity: busy ? 0.6 : 1,
+      }}
+    >
+      {busy ? 'Saving…' : `+ Set on ${prospect.company}`}
+    </button>
+  );
+}
+
 function buildColumns(data, ctx) {
   if (!data.length) return [];
   const { prospectsByNorm, myAccountsByNorm, portfolioByNorm,
@@ -216,7 +268,8 @@ function buildColumns(data, ctx) {
           portfolioMapping, portfolioDismissed,
           textColumn, textValues, onTextChange,
           onPick, onDismiss,
-          selectedKeys, onToggleSelect, shortDateColumns } = ctx;
+          selectedKeys, onToggleSelect, shortDateColumns,
+          prospectFieldFill, onFillProspectField } = ctx;
   const keys = new Set();
   for (const row of data) for (const k of Object.keys(row)) if (k !== 'id' && k !== '__matchKey__') keys.add(k);
   // Headers (case-insensitive) whose values should render as short dates.
@@ -407,7 +460,40 @@ function buildColumns(data, ctx) {
       />
     ),
   };
-  return [selectCol, ...baseCols, ...textCol, myAccountsCol, myAccountsInfoCol, portfolioCol, portfolioInfoCol, matchPctCol];
+  // Optional write-back column: look up the matched Table View
+  // prospect's field (e.g. BFO Company Name) and let the user fill it
+  // when a similar-named prospect is missing it.
+  const prospectFillCol = prospectFieldFill?.field
+    ? [{
+        key: '__prospectFill__',
+        label: `${prospectFieldFill.label || prospectFieldFill.field} (Table View)`,
+        defaultWidth: 200,
+        getFilterValue: (row) => {
+          const mk = row.__matchKey__;
+          const confirmed = mapping[mk];
+          let prospect = confirmed ? prospectsByNorm.get(normalizeCompany(confirmed)) : null;
+          if (!prospect && !dismissed[mk]) {
+            const s = row.__rawName__ ? prospectSuggestionFor(row.__rawName__) : null;
+            prospect = s?.prospect || null;
+          }
+          const v = prospect?.[prospectFieldFill.field];
+          return v != null ? String(v) : '';
+        },
+        render: (row) => (
+          <ProspectFillCell
+            row={row}
+            mapping={mapping}
+            dismissed={dismissed}
+            prospectSuggestionFor={prospectSuggestionFor}
+            prospectsByNorm={prospectsByNorm}
+            field={prospectFieldFill.field}
+            label={prospectFieldFill.label || prospectFieldFill.field}
+            onFill={onFillProspectField}
+          />
+        ),
+      }]
+    : [];
+  return [selectCol, ...baseCols, ...textCol, myAccountsCol, myAccountsInfoCol, portfolioCol, portfolioInfoCol, matchPctCol, ...prospectFillCol];
 }
 
 export function UploadedListView({
@@ -422,6 +508,8 @@ export function UploadedListView({
   textColumn, // { key: string, label: string, placeholder?: string }
   shortDateColumns, // array of header names to render as M/D/YYYY
   defaultHideWhere, // { column, values: string[], label } — default-on row exclusion
+  prospectFieldFill, // { field, label } — adds a Table View write-back column
+  updateProspect, // (id, patch) => Promise — required for prospectFieldFill
   settings,
   updateSettings,
   updateSettingsPath,
@@ -1100,6 +1188,17 @@ export function UploadedListView({
     });
   }
 
+  // Write the list row's name into a Table View prospect's field (e.g.
+  // bfoCompanyName). The live prospects subscription refreshes the cell.
+  async function fillProspectField(prospectId, value) {
+    if (!updateProspect || !prospectFieldFill?.field || !prospectId) return;
+    try {
+      await updateProspect(prospectId, { [prospectFieldFill.field]: value });
+    } catch (err) {
+      console.warn('Failed to set prospect field:', err?.message || err);
+    }
+  }
+
   const columns = useMemo(
     () => buildColumns(rows, {
       prospectsByNorm, myAccountsByNorm, portfolioByNorm,
@@ -1109,9 +1208,10 @@ export function UploadedListView({
       textColumn, textValues, onTextChange: setTextValue,
       onPick: openPicker, onDismiss: dismissSuggestion,
       selectedKeys, onToggleSelect: toggleSelectKey, shortDateColumns,
+      prospectFieldFill, onFillProspectField: fillProspectField,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rows, prospectsByNorm, myAccountsByNorm, portfolioByNorm, prospectSuggestionFor, myAccountSuggestionFor, portfolioSuggestionFor, mapping, dismissed, myAccountMapping, myAccountDismissed, portfolioMapping, portfolioDismissed, textColumn, textValues, selectedKeys, shortDateColumns]
+    [rows, prospectsByNorm, myAccountsByNorm, portfolioByNorm, prospectSuggestionFor, myAccountSuggestionFor, portfolioSuggestionFor, mapping, dismissed, myAccountMapping, myAccountDismissed, portfolioMapping, portfolioDismissed, textColumn, textValues, selectedKeys, shortDateColumns, prospectFieldFill]
   );
   const tableId = useMemo(
     () => `${tableIdPrefix}:` + columns.map(c => c.key).sort().join('|'),
