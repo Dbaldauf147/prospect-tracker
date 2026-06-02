@@ -30,6 +30,7 @@ const CLOSE_DATES_PROMPT_STORAGE_KEY = 'agents-ai-prompt-close-dates';
 const AMOUNT_UPDATES_PROMPT_STORAGE_KEY = 'agents-ai-prompt-amount-updates';
 const STAGE_CHANGE_PROMPT_STORAGE_KEY = 'agents-ai-prompt-stage-change';
 const CLOSE_NOT_SOLDS_PROMPT_STORAGE_KEY = 'agents-ai-prompt-close-not-solds';
+const UPDATE_BFO_ACTIVITY_PROMPT_STORAGE_KEY = 'agents-ai-prompt-update-bfo-activity';
 
 // IndexedDB store + key the BFO Activity tab persists its pasted rows
 // into. The Close Dates + Amount Updates prompts read it so each row's
@@ -81,6 +82,14 @@ const DEFAULT_AI_PROMPT_STAGE_CHANGE = `1.  Reference the BFO links below, and t
 2.  After selecting the new stage, click save to ensure the new stage is selected.
 3.  Make sure to save the new stage status before proceeding with the next item.
 4.  Repeat this process for all Opportunities listed below.`;
+
+// Appended to the end of every prompt copy (and the Copy-all bundle) so
+// the assistant finishes by re-pulling the BFO list into the BFO
+// Activity tab. Editable + reset like the others.
+const DEFAULT_AI_PROMPT_UPDATE_BFO_ACTIVITY = `1.  When you are on this page click the Printable View https://se.lightning.force.com/lightning/o/Opportunity/list?filterName=00B8V00000B0XsD&0.sfdcIFrameOrigin=https%3A%2F%2Fse.lightning.force.com
+2.  A new tab will pop up, go to that tab and change the number of records to 250
+3.  Copy all data in the table on that page starting with Account Name going all the way down to the bottom righthand corner of that table in the final row of data in the final column.
+4.  Navigate to this website https://prospect-tracker-ashen.vercel.app/ and then paste the data from the previous page into the BFO Activity tab .`;
 
 // Opps 2 Stage → expected BFO Sales Stage. When the BFO Activity tab's
 // Sales Stage value for an opp doesn't match the expected stage for the
@@ -303,6 +312,19 @@ function readCloseNotSoldsPrompt() {
 
 function writeCloseNotSoldsPrompt(next) {
   try { userLsSet(CLOSE_NOT_SOLDS_PROMPT_STORAGE_KEY, next); } catch {}
+}
+
+function readUpdateBfoActivityPrompt() {
+  try {
+    const raw = userLsGet(UPDATE_BFO_ACTIVITY_PROMPT_STORAGE_KEY);
+    return raw == null ? DEFAULT_AI_PROMPT_UPDATE_BFO_ACTIVITY : raw;
+  } catch {
+    return DEFAULT_AI_PROMPT_UPDATE_BFO_ACTIVITY;
+  }
+}
+
+function writeUpdateBfoActivityPrompt(next) {
+  try { userLsSet(UPDATE_BFO_ACTIVITY_PROMPT_STORAGE_KEY, next); } catch {}
 }
 
 // Pull the leading stage digit from BFO Sales Stage values like
@@ -783,6 +805,7 @@ export function AgentsView({ prospects = [], settings }) {
   const [amountUpdatesPrompt, setAmountUpdatesPrompt] = useState(readAmountUpdatesPrompt);
   const [stageChangePrompt, setStageChangePrompt] = useState(readStageChangePrompt);
   const [closeNotSoldsPrompt, setCloseNotSoldsPrompt] = useState(readCloseNotSoldsPrompt);
+  const [updateBfoActivityPrompt, setUpdateBfoActivityPrompt] = useState(readUpdateBfoActivityPrompt);
   const [bfoActivity, setBfoActivity] = useState(null);
   const [copyFlash, setCopyFlash] = useState('');
   const [newBfoOppCopyFlash, setNewBfoOppCopyFlash] = useState('');
@@ -790,6 +813,7 @@ export function AgentsView({ prospects = [], settings }) {
   const [amountUpdatesCopyFlash, setAmountUpdatesCopyFlash] = useState('');
   const [stageChangeCopyFlash, setStageChangeCopyFlash] = useState('');
   const [closeNotSoldsCopyFlash, setCloseNotSoldsCopyFlash] = useState('');
+  const [updateBfoActivityCopyFlash, setUpdateBfoActivityCopyFlash] = useState('');
   // HubSpot Activity refresh — kicked off by the header button. Mirrors
   // the fetchActivity flow on ActivityView so both tabs share the same
   // hubspot-activity-cache localStorage entry.
@@ -847,6 +871,20 @@ export function AgentsView({ prospects = [], settings }) {
     writeCloseNotSoldsPrompt(next);
   };
   const resetCloseNotSoldsPrompt = () => updateCloseNotSoldsPrompt(DEFAULT_AI_PROMPT_CLOSE_NOT_SOLDS);
+
+  const updateUpdateBfoActivityPrompt = (next) => {
+    setUpdateBfoActivityPrompt(next);
+    writeUpdateBfoActivityPrompt(next);
+  };
+  const resetUpdateBfoActivityPrompt = () => updateUpdateBfoActivityPrompt(DEFAULT_AI_PROMPT_UPDATE_BFO_ACTIVITY);
+
+  // The "Update BFO Activity" prompt is appended to the end of every
+  // individual prompt copy (and the Copy-all bundle). Helper keeps that
+  // one place so all the copy buttons stay in sync.
+  const withBfoActivitySuffix = (text) => {
+    const suffix = (updateBfoActivityPrompt || '').trim();
+    return suffix ? `${text}\n\n===== Update BFO Activity =====\n${suffix}` : text;
+  };
 
   const ignoreEmail = (id) => {
     if (!id) return;
@@ -1811,12 +1849,17 @@ export function AgentsView({ prospects = [], settings }) {
       { title: 'Stage Change', prompt: stageChangePrompt, block: stageBlock },
       { title: 'Close Not Solds', prompt: closeNotSoldsPrompt, block: closeNotSoldBlock },
     ];
-    return sections
+    const base = sections
       .map(s => `===== ${s.title} =====\n${s.prompt}\n\n${s.block}`)
       .join('\n\n');
+    // Update BFO Activity closes out the bundle (no data block of its own).
+    const bfoSuffix = (updateBfoActivityPrompt || '').trim();
+    return bfoSuffix
+      ? `${base}\n\n===== Update BFO Activity =====\n${bfoSuffix}`
+      : base;
   }, [
     aiPrompt, newBfoOppPrompt, closeDatesPrompt, amountUpdatesPrompt,
-    stageChangePrompt, closeNotSoldsPrompt,
+    stageChangePrompt, closeNotSoldsPrompt, updateBfoActivityPrompt,
     todaysOutbound, calledOpps, newBfoOpps, closeDateOpps,
     amountUpdateOpps, stageChangeOpps, closeNotSoldOpps,
   ]);
@@ -2104,7 +2147,7 @@ export function AgentsView({ prospects = [], settings }) {
         const fullPrompt = `${aiPrompt}\n\n${addressBlock}`;
         const onCopy = async () => {
           try {
-            await navigator.clipboard.writeText(fullPrompt);
+            await navigator.clipboard.writeText(withBfoActivitySuffix(fullPrompt));
             setCopyFlash('Copied!');
           } catch {
             setCopyFlash('Copy failed');
@@ -2161,7 +2204,7 @@ export function AgentsView({ prospects = [], settings }) {
         const fullPrompt = `${newBfoOppPrompt}\n\n${block}`;
         const onCopy = async () => {
           try {
-            await navigator.clipboard.writeText(fullPrompt);
+            await navigator.clipboard.writeText(withBfoActivitySuffix(fullPrompt));
             setNewBfoOppCopyFlash('Copied!');
           } catch {
             setNewBfoOppCopyFlash('Copy failed');
@@ -2287,7 +2330,7 @@ export function AgentsView({ prospects = [], settings }) {
         const fullPrompt = `${closeDatesPrompt}\n\n${block}`;
         const onCopy = async () => {
           try {
-            await navigator.clipboard.writeText(fullPrompt);
+            await navigator.clipboard.writeText(withBfoActivitySuffix(fullPrompt));
             setCloseDatesCopyFlash('Copied!');
           } catch {
             setCloseDatesCopyFlash('Copy failed');
@@ -2367,7 +2410,7 @@ export function AgentsView({ prospects = [], settings }) {
         const fullPrompt = `${amountUpdatesPrompt}\n\n${block}`;
         const onCopy = async () => {
           try {
-            await navigator.clipboard.writeText(fullPrompt);
+            await navigator.clipboard.writeText(withBfoActivitySuffix(fullPrompt));
             setAmountUpdatesCopyFlash('Copied!');
           } catch {
             setAmountUpdatesCopyFlash('Copy failed');
@@ -2450,7 +2493,7 @@ export function AgentsView({ prospects = [], settings }) {
         const fullPrompt = `${stageChangePrompt}\n\n${block}`;
         const onCopy = async () => {
           try {
-            await navigator.clipboard.writeText(fullPrompt);
+            await navigator.clipboard.writeText(withBfoActivitySuffix(fullPrompt));
             setStageChangeCopyFlash('Copied!');
           } catch {
             setStageChangeCopyFlash('Copy failed');
@@ -2539,7 +2582,7 @@ export function AgentsView({ prospects = [], settings }) {
         const fullPrompt = `${closeNotSoldsPrompt}\n\n${block}`;
         const onCopy = async () => {
           try {
-            await navigator.clipboard.writeText(fullPrompt);
+            await navigator.clipboard.writeText(withBfoActivitySuffix(fullPrompt));
             setCloseNotSoldsCopyFlash('Copied!');
           } catch {
             setCloseNotSoldsCopyFlash('Copy failed');
@@ -2614,6 +2657,48 @@ export function AgentsView({ prospects = [], settings }) {
                   ))}
                 </tbody>
               </table>
+            </div>
+            <pre className={styles.aiPromptPreview}>{fullPrompt}</pre>
+          </section>
+        );
+      })()}
+      {(() => {
+        const fullPrompt = updateBfoActivityPrompt;
+        const onCopy = async () => {
+          try {
+            // This prompt is itself the suffix, so copy it as-is (no
+            // double-append).
+            await navigator.clipboard.writeText(fullPrompt);
+            setUpdateBfoActivityCopyFlash('Copied!');
+          } catch {
+            setUpdateBfoActivityCopyFlash('Copy failed');
+          }
+          window.setTimeout(() => setUpdateBfoActivityCopyFlash(''), 1500);
+        };
+        return (
+          <section className={styles.section}>
+            <h2 className={styles.sectionHeader}>AI Prompt (Update BFO Activity)</h2>
+            <p className={styles.subnote}>
+              Appended to the end of every prompt copy on this page (and &ldquo;Copy all prompts&rdquo;) so the assistant finishes by re-pulling the BFO Opportunity list into the BFO Activity tab. You can copy it on its own here too.
+            </p>
+            {revealedPrompts.updateBfoActivity && (
+              <textarea
+                className={styles.aiPromptInput}
+                value={updateBfoActivityPrompt}
+                onChange={(e) => updateUpdateBfoActivityPrompt(e.target.value)}
+                rows={8}
+                spellCheck={false}
+              />
+            )}
+            <div className={styles.aiPromptControls}>
+              <button type="button" className={styles.aiPromptBtn} onClick={onCopy}>Copy full prompt</button>
+              <button type="button" className={styles.aiPromptBtnGhost} onClick={() => togglePrompt('updateBfoActivity')}>
+                {revealedPrompts.updateBfoActivity ? 'Hide prompt' : 'Edit prompt'}
+              </button>
+              {revealedPrompts.updateBfoActivity && (
+                <button type="button" className={styles.aiPromptBtnGhost} onClick={resetUpdateBfoActivityPrompt}>Reset to default</button>
+              )}
+              {updateBfoActivityCopyFlash && <span className={styles.copyFlash}>{updateBfoActivityCopyFlash}</span>}
             </div>
             <pre className={styles.aiPromptPreview}>{fullPrompt}</pre>
           </section>
