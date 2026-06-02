@@ -52,7 +52,7 @@ const PROGRESS_FIELDS = [
   { key: 'Commission Sheet Sent to Kathy', label: 'Commission Sheet Sent to Kathy' },
   { key: 'Paperwork completed', label: 'Paperwork' },
   { key: 'Billing information collected', label: 'Billing Letter' },
-  { key: 'Closed Won', label: 'Closed Won' },
+  { key: 'Closed Won', label: 'Closed Won', href: 'https://servicedesk.ems.schneider-electric.com/servicedesk/customer/portal/35/create/3562' },
   { key: 'Setup', label: 'Setup' },
   { key: 'Recurring Revenue', label: 'Recurring' },
   { key: 'Commission', label: 'Commission' },
@@ -306,7 +306,18 @@ function ProgressPopoverRow({ row, field, columnLinks, listRegistry, onSave }) {
       >
         {filled ? '✓' : ''}
       </span>
-      <span style={{ flex: 1, fontSize: '0.72rem', color: filled ? '#1E293B' : '#475569', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={field.label}>{field.label}</span>
+      {field.href ? (
+        <a
+          href={field.href}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          style={{ flex: 1, fontSize: '0.72rem', color: '#2563EB', textDecoration: 'underline', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+          title={`${field.label} — open the Service Desk ticket form in a new tab`}
+        >{field.label}</a>
+      ) : (
+        <span style={{ flex: 1, fontSize: '0.72rem', color: filled ? '#1E293B' : '#475569', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={field.label}>{field.label}</span>
+      )}
       <div style={{ flex: '0 0 130px', minWidth: 0 }}>
         {editor}
       </div>
