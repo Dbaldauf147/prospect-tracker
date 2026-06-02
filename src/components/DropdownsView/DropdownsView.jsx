@@ -5,6 +5,7 @@ import {
   getEffectiveDropdownLists,
   makeCustomListKey,
 } from '../../utils/dropdownListsStore';
+import { QuestionsTab } from './QuestionsTab';
 import styles from './DropdownsView.module.css';
 
 const SERVICE_TABLE_COLUMNS = [
@@ -545,6 +546,11 @@ export function DropdownsView({ settings, updateSettings }) {
           className={activeTab === 'services' ? styles.subtabActive : styles.subtab}
           onClick={() => setActiveTab('services')}
         >Services <span className={styles.subtabCount}>{serviceRows.length}</span></button>
+        <button
+          type="button"
+          className={activeTab === 'questions' ? styles.subtabActive : styles.subtab}
+          onClick={() => setActiveTab('questions')}
+        >Questions</button>
       </div>
 
       {activeTab === 'lists' ? (
@@ -624,7 +630,7 @@ export function DropdownsView({ settings, updateSettings }) {
             )}
           </div>
         </>
-      ) : (
+      ) : activeTab === 'services' ? (
         <>
           <div className={styles.searchRow}>
             <input
@@ -682,6 +688,8 @@ export function DropdownsView({ settings, updateSettings }) {
             </div>
           </div>
         </>
+      ) : (
+        <QuestionsTab settings={settings} updateSettings={updateSettings} />
       )}
     </div>
   );
