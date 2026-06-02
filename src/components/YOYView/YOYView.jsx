@@ -6,7 +6,7 @@ import { createPortal } from 'react-dom';
 import * as XLSX from 'xlsx';
 import {
   BarChart, Bar, ComposedChart, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip, Legend, ResponsiveContainer, LabelList, Cell,
+  Tooltip, Legend, ResponsiveContainer, LabelList, Cell, Customized,
 } from 'recharts';
 import { dbGet } from '../../utils/db';
 import { loadOppsFromCache } from '../../utils/oppsCache';
@@ -1115,7 +1115,10 @@ export function YOYView() {
   // exactly those deals. Cleared when the cursor leaves the chart.
   const hoverRowRef = useRef(null);
   const [pinnedExport, setPinnedExport] = useState(null);
-  const togglePin = () => {
+  const togglePin = (e) => {
+    // Controls that opt out (e.g. the pinned panel's Export button) must
+    // not toggle the pin.
+    if (e && e.target && typeof e.target.closest === 'function' && e.target.closest('[data-no-pin]')) return;
     if (pinnedHtml != null) {
       setPinnedHtml(null);
       setPinnedExport(null);
@@ -1139,7 +1142,9 @@ export function YOYView() {
           </div>
         </div>
       </div>
-      <div className={styles.body} onClick={togglePin}>
+      {/* Capture phase so the click is seen even though Recharts stops
+          the event from bubbling out of its charts. */}
+      <div className={styles.body} onClickCapture={togglePin}>
         <CalcPanelContext.Provider value={calcPanelEl}>
         <div
           ref={setCalcPanelEl}
@@ -1153,6 +1158,7 @@ export function YOYView() {
               {pinnedExport ? (
                 <button
                   type="button"
+                  data-no-pin
                   className={styles.calcPinExport}
                   onClick={(e) => { e.stopPropagation(); downloadAnnualSalesYear(pinnedExport); }}
                   title={`Export the ${pinnedExport._deals.length} deal${pinnedExport._deals.length === 1 ? '' : 's'} behind ${pinnedExport.year} to Excel`}
@@ -1935,6 +1941,37 @@ function TopAccountsCard({ data, hasOpps, onDownload }) {
   );
 }
 
+// Total (+ % Quota) labels above each Annual Sales bar, drawn from the
+// chart's own x/y scales so the amount always lands on the right bar.
+// `rows` is the chart data; Recharts injects xAxisMap / yAxisMap.
+function AnnualTotalsLayer({ xAxisMap, yAxisMap, rows, hiddenPct }) {
+  const xAxis = xAxisMap && Object.values(xAxisMap)[0];
+  const yAxis = yAxisMap && Object.values(yAxisMap)[0];
+  const xScale = xAxis?.scale;
+  const yScale = yAxis?.scale;
+  if (!xScale || !yScale || !Array.isArray(rows)) return null;
+  const band = typeof xScale.bandwidth === 'function' ? xScale.bandwidth() : 0;
+  return (
+    <g>
+      {rows.map((row, i) => {
+        if (!row || !row._total) return null;
+        const xPos = xScale(row.year);
+        if (xPos == null || Number.isNaN(xPos)) return null;
+        const cx = xPos + band / 2;
+        const topY = yScale(row._total);
+        return (
+          <g key={i}>
+            <text x={cx} y={topY - 7} textAnchor="middle" style={{ fontSize: 11, fontWeight: 600, fill: '#1f2937' }}>{fmtMoneyLabel(row._total)}</text>
+            {!hiddenPct && row.pctQuota != null ? (
+              <text x={cx} y={topY - 22} textAnchor="middle" style={{ fontSize: 10, fontWeight: 600, fill: '#a16207' }}>{`${row.pctQuota}%`}</text>
+            ) : null}
+          </g>
+        );
+      })}
+    </g>
+  );
+}
+
 function AnnualSalesCard({ data, hasOpps, target, onDownload, onHoverRow }) {
   const hasAny = data.some(r => r._total > 0);
   const annualTarget = target > 0 ? target : DEFAULT_ANNUAL_TARGET;
@@ -1946,21 +1983,6 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload, onHoverRow }) {
   // segment actually sits on top: New Client when it has value, else
   // Current Client. `_total` is read from the row so the amount is right
   // either way, and the % sits clear above it.
-  const renderTotalLabel = (segment) => (props) => {
-    const row = data[props.index];
-    if (!row || !row._total) return null;
-    const newClientOnTop = (row.newClient || 0) > 0;
-    if (segment === 'new' ? !newClientOnTop : newClientOnTop) return null;
-    const cx = props.x + props.width / 2;
-    return (
-      <g>
-        <text x={cx} y={props.y - 7} textAnchor="middle" style={{ fontSize: 11, fontWeight: 600, fill: '#1f2937' }}>{fmtMoneyLabel(row._total)}</text>
-        {!hidden.pctQuota && row.pctQuota != null ? (
-          <text x={cx} y={props.y - 22} textAnchor="middle" style={{ fontSize: 10, fontWeight: 600, fill: '#a16207' }}>{`${row.pctQuota}%`}</text>
-        ) : null}
-      </g>
-    );
-  };
   return (
     <div className={styles.chartCard}>
       <ChartHeader title="Annual Sales" onDownload={onDownload} canDownload={hasOpps && hasAny} />
@@ -2016,16 +2038,19 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload, onHoverRow }) {
               {data.map((row, i) => (
                 <Cell key={i} fill={row._isProjected ? '#facc15' : '#3b82f6'} />
               ))}
-              {/* Total sits here only for years whose top segment (New
-                  Client) is $0 — otherwise it's drawn on the New Client bar. */}
-              <LabelList dataKey="_total" content={renderTotalLabel('cur')} />
             </Bar>
             <Bar dataKey="newClient" stackId="as" name="New Client" fill="#ef4444" isAnimationActive={false} hide={hidden.newClient}>
               {data.map((row, i) => (
                 <Cell key={i} fill={row._isProjected ? '#facc15' : '#ef4444'} />
               ))}
-              <LabelList dataKey="_total" content={renderTotalLabel('new')} />
             </Bar>
+            {/* Totals drawn as a Customized layer (positions from the axis
+                scales) rather than per-segment LabelLists — Recharts
+                re-indexes a stacked bar's labels when a segment is $0,
+                which mislabeled bars when a year had no New Client sales. */}
+            {!hidden.currentClient && !hidden.newClient && (
+              <Customized component={(p) => <AnnualTotalsLayer {...p} rows={data} hiddenPct={hidden.pctQuota} />} />
+            )}
           </BarChart>
         </ResponsiveContainer>
       )}
