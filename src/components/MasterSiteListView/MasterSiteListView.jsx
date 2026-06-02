@@ -4,6 +4,7 @@ import { saveList, loadList, clearList } from '../../utils/uploadedListStore';
 import { loadUtilityRates } from '../../utils/utilityRatesStore';
 import { parseBestSheet } from '../../utils/xlsxParse';
 import { lookupUtilityForZip } from '../../utils/utilityClassify';
+import { userLsGet, userLsSet } from '../../utils/userLs';
 import {
   MASTER_FIELDS,
   CANONICAL_HEADERS,
@@ -20,8 +21,40 @@ import styles from './MasterSiteListView.module.css';
 const MASTER_STORAGE_KEY = 'master-site-list-override';
 // The key the Utility Lookup page (SitesView) reads/writes its sites from.
 const SITES_STORAGE_KEY = 'sites-list-override';
+// Per-user UI preferences (column widths + hidden columns).
+const WIDTHS_LS_KEY = 'master-site-list:col-widths';
+const HIDDEN_LS_KEY = 'master-site-list:hidden-cols';
 
 const ALL = '__all__';
+
+// Every togglable/resizable column, in display order. The eight editable
+// fields plus the two derived (read-only) Utility Lookup columns. The "#"
+// row-number and delete columns are fixed and not part of this list.
+const COLUMNS = [
+  ...MASTER_FIELDS.map(f => ({ key: f.key, label: f.label, kind: 'field' })),
+  { key: '__utility__', label: 'Indicative Utility', kind: 'utility', title: 'Indicative electric utility pulled from the Utility Lookup zip table' },
+  { key: '__status__', label: 'Status', kind: 'status', title: 'Regulated vs Deregulated, derived from the indicative utility' },
+];
+
+// Sensible starting widths (px) per column; anything missing uses 140.
+const DEFAULT_WIDTHS = {
+  company: 180, propertyName: 180, subsector: 130, country: 120,
+  address: 220, city: 130, state: 90, zip: 90,
+  __utility__: 200, __status__: 120,
+};
+const MIN_COL_WIDTH = 60;
+
+function colWidthOf(widths, key) {
+  const w = widths[key];
+  return Number.isFinite(w) ? w : (DEFAULT_WIDTHS[key] || 140);
+}
+
+function readJsonLs(key, fallback) {
+  try {
+    const raw = userLsGet(key);
+    return raw ? (JSON.parse(raw) ?? fallback) : fallback;
+  } catch { return fallback; }
+}
 
 // Split one line of pasted text into cells, honoring tabs first (the
 // usual clipboard format out of Excel/Sheets) then falling back to a
@@ -89,8 +122,66 @@ export function MasterSiteListView() {
   const [showPaste, setShowPaste] = useState(false);
   const [pasteText, setPasteText] = useState('');
   const [busy, setBusy] = useState('');
+  const [colWidths, setColWidths] = useState(() => readJsonLs(WIDTHS_LS_KEY, {}));
+  const [hiddenCols, setHiddenCols] = useState(() => new Set(readJsonLs(HIDDEN_LS_KEY, [])));
+  const [showColMenu, setShowColMenu] = useState(false);
   const fileInputRef = useRef(null);
+  const colMenuRef = useRef(null);
+  const resizeRef = useRef(null); // { key, startX, startW } during a drag
   const skipSave = useRef(true);
+
+  // Persist column widths / hidden columns per user.
+  useEffect(() => { userLsSet(WIDTHS_LS_KEY, JSON.stringify(colWidths)); }, [colWidths]);
+  useEffect(() => { userLsSet(HIDDEN_LS_KEY, JSON.stringify([...hiddenCols])); }, [hiddenCols]);
+
+  // Close the Columns popover on outside click / Escape.
+  useEffect(() => {
+    if (!showColMenu) return;
+    const onDown = (e) => { if (!colMenuRef.current?.contains(e.target)) setShowColMenu(false); };
+    const onKey = (e) => { if (e.key === 'Escape') setShowColMenu(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
+  }, [showColMenu]);
+
+  // Column-resize drag: track the live pointer and widen/narrow the
+  // column under the grabbed handle. Listeners live on document so the
+  // drag keeps working even when the pointer leaves the header cell.
+  useEffect(() => {
+    function onMove(e) {
+      const r = resizeRef.current;
+      if (!r) return;
+      const next = Math.max(MIN_COL_WIDTH, r.startW + (e.clientX - r.startX));
+      setColWidths(prev => ({ ...prev, [r.key]: next }));
+    }
+    function onUp() {
+      if (!resizeRef.current) return;
+      resizeRef.current = null;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+  }, []);
+
+  const startResize = useCallback((key, e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    resizeRef.current = { key, startX: e.clientX, startW: colWidthOf(colWidths, key) };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }, [colWidths]);
+
+  const toggleColumn = useCallback((key) => {
+    setHiddenCols(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }, []);
+
+  const visibleColumns = useMemo(() => COLUMNS.filter(c => !hiddenCols.has(c.key)), [hiddenCols]);
 
   // Initial load: master rows + the zip→utility lookup table.
   useEffect(() => {
@@ -319,6 +410,30 @@ export function MasterSiteListView() {
         <button className={styles.btn} onClick={importFromUtilityLookup} title="Pull sites in from the Utility Lookup page">↙ From Utility Lookup</button>
         <button className={styles.btn} onClick={exportToUtilityLookup} title="Send the selected sites to the Utility Lookup page">↗ To Utility Lookup</button>
 
+        <div className={styles.colMenuWrap} ref={colMenuRef}>
+          <button className={styles.btn} onClick={() => setShowColMenu(v => !v)} title="Show or hide columns">
+            Columns ▾
+          </button>
+          {showColMenu && (
+            <div className={styles.colMenu} role="menu">
+              {COLUMNS.map(c => (
+                <label key={c.key} className={styles.colMenuItem}>
+                  <input
+                    type="checkbox"
+                    checked={!hiddenCols.has(c.key)}
+                    onChange={() => toggleColumn(c.key)}
+                  />
+                  {c.label}
+                </label>
+              ))}
+              <div className={styles.colMenuDivider} />
+              <button className={styles.colMenuReset} onClick={() => { setHiddenCols(new Set()); setColWidths({}); }}>
+                Reset columns & widths
+              </button>
+            </div>
+          )}
+        </div>
+
         <span className={styles.spacer} />
 
         <span className={styles.count}>{visible.length} shown</span>
@@ -329,20 +444,33 @@ export function MasterSiteListView() {
       {busy && <div className={styles.hint}>{busy}</div>}
 
       <div className={styles.tableWrap}>
-        <table className={styles.table}>
+        <table className={styles.table} style={{ tableLayout: 'fixed', width: 'auto' }}>
+          <colgroup>
+            <col style={{ width: 44 }} />
+            {visibleColumns.map(c => <col key={c.key} style={{ width: colWidthOf(colWidths, c.key) }} />)}
+            <col style={{ width: 40 }} />
+          </colgroup>
           <thead>
             <tr>
               <th className={styles.rowNum}>#</th>
-              {MASTER_FIELDS.map(f => <th key={f.key}>{f.label}</th>)}
-              <th title="Indicative electric utility pulled from the Utility Lookup zip table">Indicative Utility</th>
-              <th title="Regulated vs Deregulated, derived from the indicative utility">Status</th>
+              {visibleColumns.map(c => (
+                <th key={c.key} title={c.title || c.label}>
+                  <span className={styles.thLabel}>{c.label}</span>
+                  <span
+                    className={styles.resizer}
+                    title="Drag to resize"
+                    onMouseDown={(e) => startResize(c.key, e)}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                </th>
+              ))}
               <th />
             </tr>
           </thead>
           <tbody>
             {visible.length === 0 ? (
               <tr>
-                <td colSpan={MASTER_FIELDS.length + 4} className={styles.empty}>
+                <td colSpan={visibleColumns.length + 2} className={styles.empty}>
                   No sites yet. Add a row, paste a list, import a file, or pull from the Utility Lookup page.
                 </td>
               </tr>
@@ -351,23 +479,36 @@ export function MasterSiteListView() {
               return (
                 <tr key={i}>
                   <td className={styles.rowNum}>{i + 1}</td>
-                  {MASTER_FIELDS.map(f => (
-                    <td key={f.key}>
-                      <input
-                        className={styles.cellInput}
-                        value={r[f.key] || ''}
-                        onChange={e => updateCell(i, f.key, e.target.value)}
-                      />
-                    </td>
-                  ))}
-                  <td className={styles.derived}>{look.utility || <span style={{ color: 'var(--color-text-muted)' }}>—</span>}</td>
-                  <td className={styles.derived}>
-                    {look.status === 'Regulated'
-                      ? <span className={`${styles.badge} ${styles.badgeReg}`}>Regulated</span>
-                      : look.status === 'Deregulated'
-                        ? <span className={`${styles.badge} ${styles.badgeDereg}`}>Deregulated</span>
-                        : <span style={{ color: 'var(--color-text-muted)' }}>—</span>}
-                  </td>
+                  {visibleColumns.map(c => {
+                    if (c.kind === 'field') {
+                      return (
+                        <td key={c.key}>
+                          <input
+                            className={styles.cellInput}
+                            value={r[c.key] || ''}
+                            onChange={e => updateCell(i, c.key, e.target.value)}
+                          />
+                        </td>
+                      );
+                    }
+                    if (c.kind === 'utility') {
+                      return (
+                        <td key={c.key} className={styles.derived}>
+                          {look.utility || <span style={{ color: 'var(--color-text-muted)' }}>—</span>}
+                        </td>
+                      );
+                    }
+                    // status
+                    return (
+                      <td key={c.key} className={styles.derived}>
+                        {look.status === 'Regulated'
+                          ? <span className={`${styles.badge} ${styles.badgeReg}`}>Regulated</span>
+                          : look.status === 'Deregulated'
+                            ? <span className={`${styles.badge} ${styles.badgeDereg}`}>Deregulated</span>
+                            : <span style={{ color: 'var(--color-text-muted)' }}>—</span>}
+                      </td>
+                    );
+                  })}
                   <td>
                     <button className={styles.del} title="Delete row" onClick={() => deleteRow(i)}>✕</button>
                   </td>

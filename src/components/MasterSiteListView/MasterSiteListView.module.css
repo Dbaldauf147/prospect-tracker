@@ -85,9 +85,43 @@
   white-space: nowrap;
 }
 
+/* Header label clips with ellipsis so a narrow column stays tidy and
+   leaves room for the resize handle on the right edge. */
+.thLabel {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-right: 6px;
+}
+
+/* Grab strip on the right edge of each header cell. */
+.resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 7px;
+  height: 100%;
+  cursor: col-resize;
+  user-select: none;
+  touch-action: none;
+}
+.resizer::after {
+  content: '';
+  position: absolute;
+  top: 20%;
+  right: 2px;
+  height: 60%;
+  width: 2px;
+  background: var(--color-border);
+  border-radius: 1px;
+}
+.resizer:hover::after { background: var(--color-accent); }
+
 .table td {
   padding: 0;
   border-bottom: 1px solid var(--color-border-light);
+  overflow: hidden;
 }
 
 .table tbody tr:hover td { background: var(--color-accent-light); }
@@ -112,7 +146,52 @@
   padding: 0.4rem 0.5rem;
   color: var(--color-text-secondary);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
+
+/* Columns show/hide popover */
+.colMenuWrap { position: relative; display: inline-flex; }
+.colMenu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 50;
+  min-width: 200px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.18);
+  padding: 0.35rem;
+}
+.colMenuItem {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.74rem;
+  color: var(--color-text);
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.colMenuItem:hover { background: var(--color-surface-alt); }
+.colMenuItem input { cursor: pointer; }
+.colMenuDivider { height: 1px; background: var(--color-border); margin: 0.35rem 0.25rem; }
+.colMenuReset {
+  width: 100%;
+  text-align: left;
+  padding: 0.35rem 0.5rem;
+  border: none;
+  background: transparent;
+  color: var(--color-accent);
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-family: inherit;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.colMenuReset:hover { background: var(--color-accent-light); }
 
 .badge {
   display: inline-block;
