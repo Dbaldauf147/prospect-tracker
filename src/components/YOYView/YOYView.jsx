@@ -19,6 +19,12 @@ import styles from './YOYView.module.css';
 const PIPELINE_STORE = 'pipeline-dashboard';
 const PIPELINE_KEY = 'current';
 const DEFAULT_ANNUAL_TARGET = 1325000;
+// BFO Activity cache — pasted BFO pipeline rows, used to total the live
+// "BFO Pipe Total" for the current Quoted Projections month.
+const BFO_ACTIVITY_STORE = 'bfo-activity';
+const BFO_ACTIVITY_KEY = 'current';
+// Closed stages don't belong in the live quoted pipeline buckets.
+const CLOSED_STAGES = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
 
 function parseMoney(v) {
   if (v === null || v === undefined) return null;
@@ -26,6 +32,29 @@ function parseMoney(v) {
   if (!s) return null;
   const n = Number(s);
   return Number.isFinite(n) ? n : null;
+}
+
+// Total pipeline $ from the BFO Activity table — sum of its "Amount"
+// column across every pasted row. Returns null when no BFO data is
+// cached so the chart leaves that point blank instead of plotting $0.
+function sumBfoPipe(bfo) {
+  if (!bfo || !Array.isArray(bfo.rows) || bfo.rows.length === 0 || !Array.isArray(bfo.headers)) return null;
+  const amountCol = bfo.headers.find(h => /^amount$/i.test(h));
+  if (!amountCol) return null;
+  let sum = 0;
+  let any = false;
+  for (const r of bfo.rows) {
+    const amt = parseMoney(r[amountCol]);
+    if (typeof amt === 'number' && Number.isFinite(amt)) { sum += amt; any = true; }
+  }
+  return any ? sum : null;
+}
+
+// Calendar-month key ("YYYY-MM") matching the Quoted Projections table
+// keys, for the month `nowMs` falls in.
+function currentMonthKey(nowMs = Date.now()) {
+  const d = new Date(nowMs);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
 function parseYear(v) {
@@ -130,6 +159,7 @@ const TOOLTIP_WRAPPER_STYLE = { pointerEvents: 'none', zIndex: 30 };
 
 export function YOYView() {
   const [opps, setOpps] = useState(null);
+  const [bfo, setBfo] = useState(null);
   const [target, setTarget] = useState(DEFAULT_ANNUAL_TARGET);
   const [commissions, setCommissions] = useState(() => loadCommissions().data);
   const [deals, setDeals] = useState(() => loadDealsList().data);
@@ -168,6 +198,12 @@ export function YOYView() {
         console.warn('YOY opps hydrate failed', e);
       }
       try {
+        const bfoSaved = await dbGet(BFO_ACTIVITY_STORE, BFO_ACTIVITY_KEY);
+        if (!cancelled && bfoSaved) setBfo(bfoSaved);
+      } catch {
+        // BFO Pipe Total just stays blank for the live month — no-op.
+      }
+      try {
         const pipe = await dbGet(PIPELINE_STORE, PIPELINE_KEY);
         if (!cancelled && pipe && Number.isFinite(Number(pipe.target))) {
           setTarget(Number(pipe.target));
@@ -178,6 +214,7 @@ export function YOYView() {
     })();
     function onFocus() {
       loadOppsFromCache().then(o => setOpps(o || null)).catch(() => {});
+      dbGet(BFO_ACTIVITY_STORE, BFO_ACTIVITY_KEY).then(b => setBfo(b || null)).catch(() => {});
       dbGet(PIPELINE_STORE, PIPELINE_KEY).then(p => {
         if (p && Number.isFinite(Number(p.target))) setTarget(Number(p.target));
       }).catch(() => {});
@@ -225,24 +262,57 @@ export function YOYView() {
   // agreements is Agreements Sent, and bfoPipe is the total BFO pipeline
   // $ (its own right-hand axis since it runs larger). Months with no
   // recorded value are left null so the lines break rather than zeroing.
+  // Live snapshot for the in-progress (current calendar) month, computed
+  // off the Opps 2 cache + BFO Activity so the user doesn't have to hand-
+  // enter it. weak/ok/expected = open quoted-$ by Chance bucket;
+  // agreements = open Quoted-$ with Status "Agreement Sent"; bfoPipe =
+  // total BFO Activity Amount. All in $K. A 0 bucket → null so the line
+  // doesn't dip to $0 for an empty category.
+  const liveCurrentMonth = useMemo(() => {
+    if (records.length === 0) return null;
+    let weak = 0, ok = 0, expected = 0, agreements = 0;
+    for (const r of records) {
+      const stage = String(r.Stage || '').trim();
+      if (CLOSED_STAGES.has(stage)) continue;
+      const amt = parseMoney(r['Quoted Amount']) || 0;
+      if (!amt) continue;
+      const chance = String(r['Chance?'] ?? r['Chance'] ?? '').trim().toLowerCase();
+      if (chance === 'weak') weak += amt;
+      else if (chance === 'ok') ok += amt;
+      else if (chance === 'expected') expected += amt;
+      if (String(r.Status || '').trim() === 'Agreement Sent') agreements += amt;
+    }
+    const toK = (n) => (n > 0 ? n / 1000 : null);
+    const pipe = sumBfoPipe(bfo);
+    return {
+      weak: toK(weak), ok: toK(ok), expected: toK(expected),
+      agreements: toK(agreements), bfoPipe: pipe != null ? pipe / 1000 : null,
+    };
+  }, [records, bfo]);
+
   const quotedData = useMemo(() => {
     const num = (x) => {
       if (x === '' || x == null) return null;
       const n = Number(x);
       return Number.isFinite(n) ? n : null;
     };
+    const liveKey = currentMonthKey();
     return fiscalMonths(currentYear).map((m) => {
       const key = `${m.year}-${String(m.monthIdx + 1).padStart(2, '0')}`;
-      const v = quotedTable[key] || null;
+      // Manually-recorded values win; otherwise the current month falls
+      // back to the live Opps 2 / BFO computation.
+      const saved = quotedTable[key] || null;
+      const isLive = !saved && key === liveKey && liveCurrentMonth != null;
+      const v = saved || (isLive ? liveCurrentMonth : null);
       const weak = v ? num(v.weak) : null;
       const ok = v ? num(v.ok) : null;
       const expected = v ? num(v.expected) : null;
       const agreements = v ? num(v.agreements) : null;
       const bfoPipe = v ? num(v.bfoPipe) : null;
       const _hasData = [weak, ok, expected, agreements, bfoPipe].some(x => x != null);
-      return { month: m.label, year: m.year, monthKey: key, weak, ok, expected, agreements, bfoPipe, _hasData };
+      return { month: m.label, year: m.year, monthKey: key, weak, ok, expected, agreements, bfoPipe, _hasData, _live: isLive && _hasData };
     });
-  }, [quotedTable, currentYear]);
+  }, [quotedTable, currentYear, liveCurrentMonth]);
 
   // Close Rate — stacked bar of In Progress / Sold / Not Sold per Open
   // Year (percentages summing to 100), plus two C/R lines.
@@ -1405,7 +1475,9 @@ function QuotedProjectionsCard({ data, quotedTable, onSaveTable, onDownload }) {
                     { label: 'Agreements Sent', value: row.agreements == null ? '—' : fmtKLabel(row.agreements) },
                     { label: 'BFO Pipe Total', value: row.bfoPipe == null ? '—' : fmtKLabel(row.bfoPipe) },
                   ],
-                  note: row._hasData ? null : 'No values recorded for this month yet.',
+                  note: row._live
+                    ? 'Live — computed now from Opps 2 (quoted $ by Chance / Agreements Sent) + BFO Activity (Pipe Total). Use “Edit values” to record a fixed month-end snapshot.'
+                    : (row._hasData ? null : 'No values recorded for this month yet.'),
                 })}
               />
             } />
@@ -1456,9 +1528,16 @@ function QuotedProjectionsEditor({ rows, table, onClose, onSave }) {
   const [draft, setDraft] = useState(() => {
     const d = {};
     for (const r of rows) {
-      const v = table[r.monthKey] || {};
+      const saved = table[r.monthKey];
+      // Pre-fill the live current month from its computed values (rounded
+      // to whole $K) so saving locks in what the chart already shows.
+      const live = r._live ? { weak: r.weak, ok: r.ok, expected: r.expected, agreements: r.agreements, bfoPipe: r.bfoPipe } : null;
+      const v = saved || live || {};
       const cells = {};
-      for (const f of QUOTED_FIELDS) cells[f] = (v[f] == null || v[f] === '') ? '' : String(v[f]);
+      for (const f of QUOTED_FIELDS) {
+        const raw = v[f];
+        cells[f] = (raw == null || raw === '') ? '' : String(saved ? raw : Math.round(raw));
+      }
       d[r.monthKey] = cells;
     }
     return d;
