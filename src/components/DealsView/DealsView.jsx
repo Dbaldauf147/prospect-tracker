@@ -1048,6 +1048,25 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
     });
   }
 
+  // Add a new deal seeded from a flagged Sold opp. Carries over the BFO
+  // opp name (so the row immediately matches the opp and clears the
+  // warning) plus the Account → Client Name and the opp's GM. Mirrors
+  // addNewDeal's Due Date seed so Days/Paid on renders right away.
+  function addDealFromOpp(opp) {
+    setStore(prev => {
+      const due = new Date();
+      due.setDate(due.getDate() + 60);
+      const dueDateStr = due.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' });
+      const row = { 'Due Date': dueDateStr };
+      if (opp.bfo) row[DEAL_BFO_KEY] = opp.bfo;
+      if (opp.account) row['Client Name'] = opp.account;
+      if (opp.gm) row['GM'] = opp.gm;
+      const next = [row, ...prev.data];
+      try { saveDealsOverride(next); } catch (err) { console.warn('Save deal failed', err); }
+      return { data: next, source: 'override' };
+    });
+  }
+
   // Bulk-edit helpers. Selection lives in DealsView state (Set of row
   // indices) and survives table re-renders since `rows` is derived
   // deterministically from `data`. Apply pushes the picked value into
@@ -1162,7 +1181,11 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
         const ignoreKey = r?._id != null
           ? `id:${r._id}`
           : `k:${account}|${scope}|${bfo}`.toLowerCase();
-        return { id: r?._id, account, scope, bfo, ignoreKey };
+        // GM to carry onto a new deal. Sold opps record their margin as
+        // "Final Margin" (the close-out field); fall back to a plain GM /
+        // Margin column if the data uses one of those names instead.
+        const gm = String(r?.['GM'] ?? r?.['Final Margin'] ?? r?.['Margin'] ?? '').trim();
+        return { id: r?._id, account, scope, bfo, ignoreKey, gm };
       });
   }, [opps2Records, data]);
 
@@ -1573,6 +1596,16 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
                     ? <span style={{ color: '#B45309' }}> — BFO opp name &ldquo;{o.bfo}&rdquo; not found on Deals</span>
                     : <span style={{ color: '#B45309' }}> — no BFO opp name set</span>}
                 </span>
+                <button
+                  type="button"
+                  onClick={() => addDealFromOpp(o)}
+                  title="Create a new deal seeded with this opp's BFO opp name, Client Name, and GM"
+                  style={{
+                    flex: '0 0 auto', padding: '0 0.45rem', background: '#92400E',
+                    border: '1px solid #92400E', borderRadius: 4, color: '#fff',
+                    fontSize: '0.68rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+                  }}
+                >Add to new deal</button>
                 <button
                   type="button"
                   onClick={() => setSoldWarningIgnore(o.ignoreKey, true)}
