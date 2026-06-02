@@ -4630,8 +4630,14 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     // Close Year / Close Month columns, just like a manual Close Date
     // edit would. Computed here so it can be snapshotted for undo and
     // applied inside the setData mapper below.
+    //
+    // Only fill an EMPTY Close Date — never overwrite one already on the
+    // row. Re-marking a deal Sold (or a bulk Stage update) used to clobber
+    // a real close date with today's date, which silently moved last
+    // year's sales into the current year on the YOY Annual Sales chart.
+    const hasCloseDate = !!row && String(row['Close Date'] ?? '').trim() !== '';
     let soldClose = null;
-    if (stageChanged && String(value ?? '').trim().toLowerCase() === 'sold') {
+    if (stageChanged && !hasCloseDate && String(value ?? '').trim().toLowerCase() === 'sold') {
       const today = todayISO();
       const { yearCols, monthCols } = findCloseDerivedColumns(dataRef.current?.headers);
       const d = parseCloseDate(today);

@@ -69,11 +69,19 @@ function parseYear(v) {
 }
 
 // Calendar year of a Close Date string (e.g. "6/1/2026" or "2026-06-01").
-// Returns null when the value is empty or unparseable.
+// Returns null when the value is empty or unparseable. A bare ISO date
+// (YYYY-MM-DD) is read by Date.parse as UTC midnight, which lands on the
+// previous day — and so can roll back to the previous year — in a
+// negative-offset timezone. Pull the UTC parts back for ISO strings so a
+// 2026-01-01 close stays in 2026; slash/locale strings parse as local
+// and are already correct. Mirrors OppsView2's parseCloseDate.
 function parseDateYear(v) {
-  const ts = Date.parse(v);
+  const s = String(v ?? '').trim();
+  if (!s) return null;
+  const ts = Date.parse(s);
   if (Number.isNaN(ts)) return null;
-  const y = new Date(ts).getFullYear();
+  const d = new Date(ts);
+  const y = /^\d{4}-\d{2}/.test(s) ? d.getUTCFullYear() : d.getFullYear();
   return Number.isFinite(y) && y >= 1900 && y <= 2100 ? y : null;
 }
 
