@@ -1,7 +1,7 @@
 // YOY tab — recreates the Leads / Quoted Projections / Close Rate
 // summary charts off the Opps tab data cached in IndexedDB.
 
-import { useEffect, useMemo, useState, createContext, useContext } from 'react';
+import { useEffect, useMemo, useState, useRef, createContext, useContext } from 'react';
 import { createPortal } from 'react-dom';
 import * as XLSX from 'xlsx';
 import {
@@ -1064,6 +1064,15 @@ export function YOYView() {
     appendSheet(wb, 'Contributing Deals', contributing);
     XLSX.writeFile(wb, `yoy-annual-sales-${todayStamp()}.xlsx`);
   }
+  // Export just the deals behind one pinned Annual Sales bar — wired to
+  // the Export button on the pinned hover panel.
+  function downloadAnnualSalesYear(row) {
+    if (!row || !Array.isArray(row._deals) || row._deals.length === 0) return;
+    const wb = XLSX.utils.book_new();
+    appendSheet(wb, `Sold ${row.year}`, row._deals);
+    const tag = String(row.year).toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    XLSX.writeFile(wb, `yoy-annual-sales-${tag}-${todayStamp()}.xlsx`);
+  }
   function downloadCommissions() {
     const summary = commissionsData.map(r => ({
       Year: r.year,
@@ -1101,12 +1110,22 @@ export function YOYView() {
   // panel only ever has content while a data point is hovered, so a
   // click that finds content is a click on a data point.
   const [pinnedHtml, setPinnedHtml] = useState(null);
+  // The Annual Sales bar currently under the cursor (carries `_deals` +
+  // `year`), so a pin made on that chart can offer a one-click export of
+  // exactly those deals. Cleared when the cursor leaves the chart.
+  const hoverRowRef = useRef(null);
+  const [pinnedExport, setPinnedExport] = useState(null);
   const togglePin = () => {
-    setPinnedHtml(prev => {
-      if (prev != null) return null;
-      const html = calcPanelEl ? calcPanelEl.innerHTML : '';
-      return html && html.trim() ? html : prev;
-    });
+    if (pinnedHtml != null) {
+      setPinnedHtml(null);
+      setPinnedExport(null);
+      return;
+    }
+    const html = calcPanelEl ? calcPanelEl.innerHTML : '';
+    if (!html || !html.trim()) return;
+    setPinnedHtml(html);
+    const row = hoverRowRef.current;
+    setPinnedExport(row && Array.isArray(row._deals) && row._deals.length > 0 ? row : null);
   };
 
   return (
@@ -1129,7 +1148,17 @@ export function YOYView() {
         />
         {pinnedHtml != null ? (
           <div className={`${styles.calcPanel} ${styles.calcPanelPinned}`}>
-            <div className={styles.calcPinHint}>📌 Pinned — click anywhere to unpin</div>
+            <div className={styles.calcPinHeader}>
+              <span className={styles.calcPinHint}>📌 Pinned — click anywhere to unpin</span>
+              {pinnedExport ? (
+                <button
+                  type="button"
+                  className={styles.calcPinExport}
+                  onClick={(e) => { e.stopPropagation(); downloadAnnualSalesYear(pinnedExport); }}
+                  title={`Export the ${pinnedExport._deals.length} deal${pinnedExport._deals.length === 1 ? '' : 's'} behind ${pinnedExport.year} to Excel`}
+                >Export {pinnedExport._deals.length} deal{pinnedExport._deals.length === 1 ? '' : 's'} (.xlsx)</button>
+              ) : null}
+            </div>
             <div dangerouslySetInnerHTML={{ __html: pinnedHtml }} />
           </div>
         ) : null}
@@ -1145,7 +1174,7 @@ export function YOYView() {
         </div>
         <div className={styles.row}>
           <TopAccountsCard data={topAccountsData} hasOpps={hasOpps} onDownload={downloadTopAccounts} />
-          <AnnualSalesCard data={annualSalesData} hasOpps={hasOpps} target={target} onDownload={downloadAnnualSales} />
+          <AnnualSalesCard data={annualSalesData} hasOpps={hasOpps} target={target} onDownload={downloadAnnualSales} onHoverRow={(row) => { hoverRowRef.current = row; }} />
           <DealSizeCard data={dealSizeData} hasOpps={hasOpps} onDownload={downloadDealSize} />
         </div>
         <div className={styles.row}>
@@ -1906,7 +1935,7 @@ function TopAccountsCard({ data, hasOpps, onDownload }) {
   );
 }
 
-function AnnualSalesCard({ data, hasOpps, target, onDownload }) {
+function AnnualSalesCard({ data, hasOpps, target, onDownload, onHoverRow }) {
   const hasAny = data.some(r => r._total > 0);
   const annualTarget = target > 0 ? target : DEFAULT_ANNUAL_TARGET;
   const { hidden, legendProps } = useInteractiveLegend();
@@ -1941,7 +1970,13 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload }) {
         <div className={styles.empty}>No Sold opps with a Quoted Amount yet.</div>
       ) : (
         <ResponsiveContainer width="100%" height={320}>
-          <BarChart data={data} margin={{ top: 48, right: 8, left: 16, bottom: 4 }} style={{ cursor: 'pointer' }}>
+          <BarChart
+            data={data}
+            margin={{ top: 48, right: 8, left: 16, bottom: 4 }}
+            style={{ cursor: 'pointer' }}
+            onMouseMove={(s) => onHoverRow?.(s?.activePayload?.[0]?.payload || null)}
+            onMouseLeave={() => onHoverRow?.(null)}
+          >
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
             <XAxis dataKey="year" interval={0} tick={{ fontSize: 12 }} />
             <YAxis
