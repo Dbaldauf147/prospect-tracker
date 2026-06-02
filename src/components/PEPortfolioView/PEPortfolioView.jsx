@@ -5,6 +5,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { dbGet } from '../../utils/db';
 import { loadOppsFromCache } from '../../utils/oppsCache';
+import * as XLSX from 'xlsx';
 import { formatAum } from '../../utils/formatters';
 import { PE_STAGES } from '../../data/enums';
 import { PEOppsScheduleModal } from './PEOppsScheduleModal';
@@ -1037,11 +1038,13 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
   );
 }
 
-// PE firms grouped by their engagement stage (peStage): one section per
-// stage — Discovery, Piloting, Existing Partnership, plus an Unassigned
-// bucket for firms with no stage set — so the user can scan which PE
-// relationships sit at each phase. Rows link back to the firm's company
-// popup. Stage is set per firm in that popup's "PE Stage" dropdown.
+// PE firms laid out as a Kanban board by engagement stage (peStage):
+// one column per stage — Discovery, Piloting, Existing Partnership, plus
+// an Unassigned column for firms with no stage set — so the user can
+// scan which PE relationships sit at each phase. Cards link back to the
+// firm's company popup; stage is set per firm in that popup's "PE Stage"
+// dropdown. The whole board (respecting the search filter) exports to
+// Excel via the toolbar button.
 function PEStagesTab({ firms, portfolioByPe, onSelectProspect }) {
   const [query, setQuery] = useState('');
   const STAGE_META = [
@@ -1050,66 +1053,101 @@ function PEStagesTab({ firms, portfolioByPe, onSelectProspect }) {
     { stage: 'Existing Partnership', accent: '#059669', bg: '#ECFDF5', border: '#A7F3D0' },
     { stage: 'Unassigned', accent: '#64748B', bg: '#F8FAFC', border: '#E2E8F0' },
   ];
+  const stageOf = (pe) => (PE_STAGES.includes(pe.peStage) ? pe.peStage : 'Unassigned');
+  const pcCountOf = (pe) => (portfolioByPe.get((pe.company || '').trim().toLowerCase()) || []).length;
   const q = query.trim().toLowerCase();
   const filtered = q ? firms.filter(p => (p.company || '').toLowerCase().includes(q)) : firms;
   const groups = new Map(STAGE_META.map(m => [m.stage, []]));
-  for (const pe of filtered) {
-    const stage = PE_STAGES.includes(pe.peStage) ? pe.peStage : 'Unassigned';
-    groups.get(stage).push(pe);
-  }
-  const ROW_GRID = '1fr 90px 130px 80px';
+  for (const pe of filtered) groups.get(stageOf(pe)).push(pe);
+
+  const exportToExcel = () => {
+    const order = new Map(STAGE_META.map((m, i) => [m.stage, i]));
+    const rows = filtered
+      .map(pe => ({
+        Stage: stageOf(pe),
+        'PE Firm': pe.company || '',
+        'PE AUM ($B)': pe.peAum ?? '',
+        Geography: pe.geography || '',
+        'Portfolio Companies': pcCountOf(pe),
+      }))
+      .sort((a, b) =>
+        (order.get(a.Stage) - order.get(b.Stage))
+        || a['PE Firm'].localeCompare(b['PE Firm']));
+    const ws = XLSX.utils.json_to_sheet(rows.length ? rows : [{ Stage: '', 'PE Firm': '', 'PE AUM ($B)': '', Geography: '', 'Portfolio Companies': '' }]);
+    ws['!cols'] = [{ wch: 22 }, { wch: 32 }, { wch: 12 }, { wch: 16 }, { wch: 20 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'PE Stages');
+    XLSX.writeFile(wb, `pe-stages-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
 
   return (
     <>
-      <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0 }}>
+      <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
         <input
           type="text"
           value={query}
           onChange={e => setQuery(e.target.value)}
           placeholder={`Search ${firms.length} PE firm${firms.length === 1 ? '' : 's'}…`}
-          style={{ width: '100%', maxWidth: 400, padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
+          style={{ flex: 1, maxWidth: 400, padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
         />
+        <button
+          type="button"
+          onClick={exportToExcel}
+          disabled={filtered.length === 0}
+          title={filtered.length === 0 ? 'No PE firms to export' : 'Export the board to Excel (.xlsx)'}
+          style={{ padding: '0.4rem 0.75rem', border: '1px solid #E2E8F0', borderRadius: 6, background: filtered.length === 0 ? '#F1F5F9' : '#fff', fontSize: '0.72rem', fontWeight: 600, color: filtered.length === 0 ? '#94A3B8' : '#334155', cursor: filtered.length === 0 ? 'not-allowed' : 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+        >Export to Excel</button>
       </div>
-      <div style={{ flex: 1, overflowY: 'auto', padding: '0 1.25rem 1.25rem', minHeight: 0, display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-        {firms.length === 0 ? (
+      {firms.length === 0 ? (
+        <div style={{ flex: 1, overflowY: 'auto', padding: '0 1.25rem 1.25rem', minHeight: 0 }}>
           <div style={{ padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
             <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>No PE firms found</div>
             <div style={{ fontSize: '0.78rem' }}>Set a prospect's <strong>Type</strong> to <code>Private Equity</code> to list it here.</div>
           </div>
-        ) : STAGE_META.map(({ stage, accent, bg, border }) => {
-          const list = groups.get(stage) || [];
-          return (
-            <div key={stage} style={{ border: `1px solid ${border}`, borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 0.75rem', background: bg, borderBottom: `1px solid ${border}` }}>
-                <span style={{ width: 8, height: 8, borderRadius: 2, background: accent }} />
-                <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#1E293B' }}>{stage}</span>
-                <span style={{ fontSize: '0.65rem', fontWeight: 700, padding: '1px 7px', borderRadius: 999, background: accent, color: '#fff' }}>{list.length}</span>
-              </div>
-              {list.length === 0 ? (
-                <div style={{ padding: '0.6rem 0.75rem', fontSize: '0.72rem', color: '#94A3B8', fontStyle: 'italic' }}>
-                  {q ? 'No matching PE firms at this stage.' : 'No PE firms at this stage.'}
+        </div>
+      ) : (
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: '0.75rem', overflowX: 'auto', overflowY: 'hidden', padding: '0 1.25rem 1.25rem' }}>
+          {STAGE_META.map(({ stage, accent, bg, border }) => {
+            const list = groups.get(stage) || [];
+            return (
+              <div key={stage} style={{ flex: '0 0 290px', display: 'flex', flexDirection: 'column', minHeight: 0, border: `1px solid ${border}`, borderRadius: 8, background: '#F8FAFC', overflow: 'hidden' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.55rem 0.75rem', background: bg, borderBottom: `1px solid ${border}`, flexShrink: 0 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 2, background: accent }} />
+                  <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#1E293B', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{stage}</span>
+                  <span style={{ fontSize: '0.65rem', fontWeight: 700, padding: '1px 7px', borderRadius: 999, background: accent, color: '#fff' }}>{list.length}</span>
                 </div>
-              ) : list.map((pe, i) => {
-                const pcCount = (portfolioByPe.get((pe.company || '').trim().toLowerCase()) || []).length;
-                return (
-                  <button
-                    key={pe.id}
-                    type="button"
-                    onClick={() => onSelectProspect?.(pe)}
-                    title={`Open ${pe.company || 'this firm'}`}
-                    style={{ width: '100%', display: 'grid', gridTemplateColumns: ROW_GRID, alignItems: 'center', gap: '0.5rem', padding: '0.5rem 0.75rem', background: '#fff', border: 'none', borderTop: i === 0 ? 'none' : '1px solid #F1F5F9', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}
-                  >
-                    <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pe.company || '—'}</span>
-                    <span style={{ fontSize: '0.75rem', fontWeight: 600, textAlign: 'right', color: pe.peAum ? '#1E293B' : '#CBD5E1' }} title={pe.peAum ? `PE AUM: $${pe.peAum}B` : 'No PE AUM set'}>{formatAum(pe.peAum)}</span>
-                    <span style={{ fontSize: '0.72rem', fontWeight: 600, color: pe.geography ? '#475569' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={pe.geography || 'No geography set'}>{pe.geography || '—'}</span>
-                    <span style={{ fontSize: '0.7rem', fontWeight: 600, textAlign: 'right', color: pcCount ? '#475569' : '#CBD5E1' }} title="Portfolio companies linked to this firm">{pcCount} PC{pcCount === 1 ? '' : 's'}</span>
-                  </button>
-                );
-              })}
-            </div>
-          );
-        })}
-      </div>
+                <div style={{ flex: 1, overflowY: 'auto', minHeight: 0, padding: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  {list.length === 0 ? (
+                    <div style={{ padding: '0.6rem 0.5rem', fontSize: '0.72rem', color: '#94A3B8', fontStyle: 'italic', textAlign: 'center' }}>
+                      {q ? 'No matches here.' : 'No PE firms at this stage.'}
+                    </div>
+                  ) : list.map((pe) => {
+                    const pcCount = pcCountOf(pe);
+                    return (
+                      <button
+                        key={pe.id}
+                        type="button"
+                        onClick={() => onSelectProspect?.(pe)}
+                        title={`Open ${pe.company || 'this firm'}`}
+                        style={{ display: 'block', width: '100%', textAlign: 'left', background: '#fff', border: '1px solid #E2E8F0', borderLeft: `3px solid ${accent}`, borderRadius: 6, padding: '0.55rem 0.6rem', cursor: 'pointer', fontFamily: 'inherit', boxShadow: '0 1px 2px rgba(15,23,42,0.04)' }}
+                      >
+                        <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#1E293B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pe.company || '—'}</div>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.4rem', marginTop: '0.35rem' }}>
+                          <span style={{ fontSize: '0.7rem', fontWeight: 600, color: pe.peAum ? '#1E293B' : '#CBD5E1' }} title={pe.peAum ? `PE AUM: $${pe.peAum}B` : 'No PE AUM set'}>{formatAum(pe.peAum)}</span>
+                          <span style={{ fontSize: '0.68rem', fontWeight: 600, color: pe.geography ? '#475569' : '#CBD5E1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={pe.geography || 'No geography set'}>{pe.geography || '—'}</span>
+                        </div>
+                        <div style={{ marginTop: '0.3rem', fontSize: '0.66rem', fontWeight: 600, color: pcCount ? '#64748B' : '#CBD5E1' }} title="Portfolio companies linked to this firm">
+                          {pcCount} portfolio co{pcCount === 1 ? '' : 's'}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </>
   );
 }
