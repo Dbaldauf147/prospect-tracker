@@ -15,4 +15,5 @@ export const UPLOADED_LISTS = [
   { key: 'unpri', label: 'UN PRI', storageKey: 'unpri-list-override' },
   { key: 'casb', label: 'CA SB', storageKey: 'casb-list-override' },
   { key: 'nzam', label: 'NZAM', storageKey: 'nzam-list-override' },
+  { key: 'bfoopps', label: 'BFO Opps', storageKey: 'bfo-opps-override' },
 ];
