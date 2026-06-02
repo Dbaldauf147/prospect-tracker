@@ -1989,6 +1989,17 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload, onExportYear }) {
   const hasAny = data.some(r => r._total > 0);
   const annualTarget = target > 0 ? target : DEFAULT_ANNUAL_TARGET;
   const { hidden, legendProps } = useInteractiveLegend();
+  // Drive the Y axis off the stacked total (currentClient + newClient).
+  // A function domain like `dataMax => dataMax * 1.18` can clip stacked
+  // bars: Recharts may hand the function the per-series max rather than
+  // the stack total, so a bar whose two segments sum higher than either
+  // segment alone renders shorter than its real value (while the tooltip,
+  // which reads the row, still shows the right number). Computing the max
+  // from `_total` here guarantees every bar scales to its true height.
+  const yMax = useMemo(() => {
+    const max = data.reduce((m, r) => Math.max(m, r._total || 0), 0);
+    return max > 0 ? Math.ceil(max * 1.18) : 1;
+  }, [data]);
   const handleBarClick = (state) => {
     const row = state?.activePayload?.[0]?.payload;
     if (row && Array.isArray(row._deals) && row._deals.length > 0) onExportYear?.(row);
@@ -2029,7 +2040,8 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload, onExportYear }) {
             <XAxis dataKey="year" interval={0} tick={{ fontSize: 12 }} />
             <YAxis
               tick={{ fontSize: 12 }}
-              domain={[0, (dataMax) => Math.ceil(dataMax * 1.18)]}
+              domain={[0, yMax]}
+              allowDataOverflow={false}
               tickFormatter={(v) => v >= 1_000_000 ? `${(v / 1_000_000).toFixed(0)}M` : v.toLocaleString('en-US')}
             />
             <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
