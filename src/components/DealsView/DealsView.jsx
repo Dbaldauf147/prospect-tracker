@@ -14,6 +14,10 @@ import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { loadDealsList, saveDealsOverride, clearDealsOverride } from '../../utils/dealsStore';
 import { loadCommissions } from '../../utils/commissionsStore';
 import { loadOpps2Newest } from '../../utils/opps2Store';
+import {
+  loadSoldWarningIgnore, setSoldWarningIgnore, clearSoldWarningIgnore,
+  SOLD_WARNING_IGNORE_EVENT,
+} from '../../utils/soldWarningIgnore';
 import { DEAL_BFO_KEY, normBfo, indexCommissionsByBfo } from '../../utils/dealCommissions';
 import {
   asNumber, asDate, fmtCurrency, fmtPercent, fmtDate,
@@ -862,6 +866,9 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
   // of the local cache and the synced Firestore copy so the warning
   // reflects what the Opps 2 tab would show, even on a fresh device.
   const [opps2Records, setOpps2Records] = useState([]);
+  // Per-opp dismissals for the "Sold opp has no matching deal" banner, so
+  // the user can silence a flagged opp they've decided not to track here.
+  const [soldIgnore, setSoldIgnore] = useState(() => loadSoldWarningIgnore());
   // Commissions roster feeds the Revenue Recorded / Paid to Date auto-
   // population. Re-hydrated on the storage event so a paste on the
   // Commissions tab in another window flows through here without a
@@ -913,11 +920,16 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
       setClientMap(loadDealClientMap());
       setIgnoreSet(loadDealClientIgnore());
     }
+    function onSoldIgnore() {
+      setSoldIgnore(loadSoldWarningIgnore());
+    }
     window.addEventListener('storage', onStorage);
     window.addEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
+    window.addEventListener(SOLD_WARNING_IGNORE_EVENT, onSoldIgnore);
     return () => {
       window.removeEventListener('storage', onStorage);
       window.removeEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
+      window.removeEventListener(SOLD_WARNING_IGNORE_EVENT, onSoldIgnore);
     };
   }, []);
 
@@ -1140,13 +1152,28 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
         const n = realBfo(r?.['BFO Link']);
         return !n || !dealBfoNames.has(n);
       })
-      .map((r) => ({
-        id: r?._id,
-        account: String(r?.['Account'] ?? '').trim(),
-        scope: String(r?.['Scope'] ?? '').trim(),
-        bfo: String(r?.['BFO Link'] ?? '').trim(),
-      }));
+      .map((r) => {
+        const account = String(r?.['Account'] ?? '').trim();
+        const scope = String(r?.['Scope'] ?? '').trim();
+        const bfo = String(r?.['BFO Link'] ?? '').trim();
+        // Stable dismissal key: prefer the opp's _id; fall back to an
+        // account/scope/BFO composite so opps without an _id still
+        // persist their own ignore state.
+        const ignoreKey = r?._id != null
+          ? `id:${r._id}`
+          : `k:${account}|${scope}|${bfo}`.toLowerCase();
+        return { id: r?._id, account, scope, bfo, ignoreKey };
+      });
   }, [opps2Records, data]);
+
+  // Split the flagged opps into the ones still showing and the ones the
+  // user has dismissed, so the banner can hide dismissals while still
+  // offering a Reset to bring them all back.
+  const visibleSoldMissing = useMemo(
+    () => soldMissingDeals.filter((o) => !soldIgnore.has(o.ignoreKey)),
+    [soldMissingDeals, soldIgnore]
+  );
+  const ignoredSoldCount = soldMissingDeals.length - visibleSoldMissing.length;
 
   // Rolled-up Commissions data, keyed by normalized BFO opp name. Feeds
   // the Revenue Recorded / Paid to Date auto-population in buildColumns.
@@ -1528,25 +1555,58 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
         </div>
       )}
 
-      {soldMissingDeals.length > 0 && (
+      {visibleSoldMissing.length > 0 && (
         <div style={{ margin: '0 1.25rem 0.5rem', padding: '0.6rem 0.85rem', background: '#FFFBEB', border: '1px solid #FCD34D', borderRadius: 6, color: '#92400E', fontSize: '0.8rem', flexShrink: 0 }}>
           <div style={{ fontWeight: 700, marginBottom: 4 }}>
-            ⚠ {soldMissingDeals.length} Sold {soldMissingDeals.length === 1 ? 'opp has' : 'opps have'} no matching deal here
+            ⚠ {visibleSoldMissing.length} Sold {visibleSoldMissing.length === 1 ? 'opp has' : 'opps have'} no matching deal here
           </div>
           <div style={{ fontSize: '0.74rem', marginBottom: 6 }}>
             These opportunities are marked <strong>Sold</strong> in Opps 2 but their BFO opp name isn&apos;t on the Deals page. Add the deal (or set the opp&apos;s BFO Opportunity Name) so it shows up here.
           </div>
-          <ul style={{ margin: 0, paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: 2 }}>
-            {soldMissingDeals.map((o) => (
-              <li key={o.id ?? `${o.account}|${o.scope}`}>
-                <strong>{o.account || 'Unknown account'}</strong>
-                {o.scope ? <> &middot; {o.scope}</> : null}
-                {o.bfo
-                  ? <span style={{ color: '#B45309' }}> — BFO opp name &ldquo;{o.bfo}&rdquo; not found on Deals</span>
-                  : <span style={{ color: '#B45309' }}> — no BFO opp name set</span>}
+          <ul style={{ margin: 0, paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: 3 }}>
+            {visibleSoldMissing.map((o) => (
+              <li key={o.ignoreKey} style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                <span>
+                  <strong>{o.account || 'Unknown account'}</strong>
+                  {o.scope ? <> &middot; {o.scope}</> : null}
+                  {o.bfo
+                    ? <span style={{ color: '#B45309' }}> — BFO opp name &ldquo;{o.bfo}&rdquo; not found on Deals</span>
+                    : <span style={{ color: '#B45309' }}> — no BFO opp name set</span>}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSoldWarningIgnore(o.ignoreKey, true)}
+                  title="Stop warning about this opp"
+                  style={{
+                    flex: '0 0 auto', padding: '0 0.4rem', background: 'transparent',
+                    border: '1px solid #FCD34D', borderRadius: 4, color: '#92400E',
+                    fontSize: '0.68rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+                  }}
+                >Ignore</button>
               </li>
             ))}
           </ul>
+          {ignoredSoldCount > 0 && (
+            <div style={{ fontSize: '0.7rem', marginTop: 6 }}>
+              {ignoredSoldCount} ignored ·{' '}
+              <button
+                type="button"
+                onClick={() => clearSoldWarningIgnore()}
+                style={{ padding: 0, background: 'none', border: 'none', color: '#92400E', textDecoration: 'underline', fontSize: '0.7rem', fontFamily: 'inherit', cursor: 'pointer' }}
+              >Reset</button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {visibleSoldMissing.length === 0 && ignoredSoldCount > 0 && (
+        <div style={{ margin: '0 1.25rem 0.5rem', fontSize: '0.7rem', color: '#94A3B8', flexShrink: 0 }}>
+          {ignoredSoldCount} Sold-opp {ignoredSoldCount === 1 ? 'warning' : 'warnings'} ignored ·{' '}
+          <button
+            type="button"
+            onClick={() => clearSoldWarningIgnore()}
+            style={{ padding: 0, background: 'none', border: 'none', color: '#64748B', textDecoration: 'underline', fontSize: '0.7rem', fontFamily: 'inherit', cursor: 'pointer' }}
+          >Reset</button>
         </div>
       )}
 
