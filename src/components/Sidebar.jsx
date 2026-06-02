@@ -139,11 +139,11 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
           Draft Emails
         </button>
         <button
-          className={view === 'progress' ? styles.navItemActive : styles.navItem}
-          onClick={() => setView('progress')}
+          className={view === 'charts' ? styles.navItemActive : styles.navItem}
+          onClick={() => setView('charts')}
         >
-          <span className={styles.navIcon}>&#128200;</span>
-          Progress
+          <span className={styles.navIcon}>&#128202;</span>
+          Charts
         </button>
         <button
           className={view === 'pricing' ? styles.navItemActive : styles.navItem}
@@ -151,20 +151,6 @@ export function Sidebar({ view, setView, user, onLogout, onSync, onOpenBackups, 
         >
           <span className={styles.navIcon}>&#128181;</span>
           Pricing
-        </button>
-        <button
-          className={view === 'pipeline' ? styles.navItemActive : styles.navItem}
-          onClick={() => setView('pipeline')}
-        >
-          <span className={styles.navIcon}>&#128202;</span>
-          Pipeline
-        </button>
-        <button
-          className={view === 'yoy' ? styles.navItemActive : styles.navItem}
-          onClick={() => setView('yoy')}
-        >
-          <span className={styles.navIcon}>&#128200;</span>
-          YOY
         </button>
         <button
           className={view === 'bfo' ? styles.navItemActive : styles.navItem}
