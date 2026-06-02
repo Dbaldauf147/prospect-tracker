@@ -2009,19 +2009,28 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload, onExportYear }) {
   // all Current Client has newClient = 0, so a label on the New Client
   // (top) segment silently disappeared. Instead draw it on whichever
   // segment actually sits on top: New Client when it has value, else
-  // Current Client. `_total` is read from the row so the amount is right
-  // either way, and the % sits clear above it.
+  // Current Client.
+  //
+  // The row comes from the bar entry's own payload (fed in via the
+  // LabelList `valueAccessor` below) — NOT `data[props.index]`. Recharts
+  // drops zero-dimension bars from its rendered set, so `props.index` is
+  // an index into that filtered set; using it against the full `data`
+  // array drew a year's total over the wrong bar once any segment was $0.
+  // Reading the payload keeps the amount, the %, and the x/y position all
+  // tied to the same bar.
   const renderTotalLabel = (segment) => (props) => {
-    const row = data[props.index];
-    if (!row || !row._total) return null;
+    const row = props.value;
+    if (!row || typeof row !== 'object' || !row._total) return null;
     const newClientOnTop = (row.newClient || 0) > 0;
     if (segment === 'new' ? !newClientOnTop : newClientOnTop) return null;
-    const cx = props.x + props.width / 2;
+    const vb = (props.viewBox && props.viewBox.x != null) ? props.viewBox : props;
+    const cx = (vb.x || 0) + (vb.width || 0) / 2;
+    const top = vb.y || 0;
     return (
       <g>
-        <text x={cx} y={props.y - 7} textAnchor="middle" style={{ fontSize: 11, fontWeight: 600, fill: '#1f2937' }}>{fmtMoneyLabel(row._total)}</text>
+        <text x={cx} y={top - 7} textAnchor="middle" style={{ fontSize: 11, fontWeight: 600, fill: '#1f2937' }}>{fmtMoneyLabel(row._total)}</text>
         {!hidden.pctQuota && row.pctQuota != null ? (
-          <text x={cx} y={props.y - 22} textAnchor="middle" style={{ fontSize: 10, fontWeight: 600, fill: '#a16207' }}>{`${row.pctQuota}%`}</text>
+          <text x={cx} y={top - 22} textAnchor="middle" style={{ fontSize: 10, fontWeight: 600, fill: '#a16207' }}>{`${row.pctQuota}%`}</text>
         ) : null}
       </g>
     );
@@ -2077,14 +2086,16 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload, onExportYear }) {
                 <Cell key={i} fill={row._isProjected ? '#facc15' : '#3b82f6'} />
               ))}
               {/* Total sits here only for years whose top segment (New
-                  Client) is $0 — otherwise it's drawn on the New Client bar. */}
-              <LabelList dataKey="_total" content={renderTotalLabel('cur')} />
+                  Client) is $0 — otherwise it's drawn on the New Client bar.
+                  valueAccessor hands the label its bar's own payload row so
+                  the amount stays tied to the bar it's drawn over. */}
+              <LabelList valueAccessor={(entry) => entry?.payload} content={renderTotalLabel('cur')} />
             </Bar>
             <Bar dataKey="newClient" stackId="as" name="New Client" fill="#ef4444" isAnimationActive={false} hide={hidden.newClient}>
               {data.map((row, i) => (
                 <Cell key={i} fill={row._isProjected ? '#facc15' : '#ef4444'} />
               ))}
-              <LabelList dataKey="_total" content={renderTotalLabel('new')} />
+              <LabelList valueAccessor={(entry) => entry?.payload} content={renderTotalLabel('new')} />
             </Bar>
           </BarChart>
         </ResponsiveContainer>
