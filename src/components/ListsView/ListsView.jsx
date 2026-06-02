@@ -161,7 +161,7 @@ function DataSourceLink({ storageKey }) {
   );
 }
 
-export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectProspect, cdmName, settings, updateSettings, updateSettingsPath }) {
+export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectProspect, cdmName, settings, updateSettings, updateSettingsPath, updateProspect }) {
   const [subtab, setSubtab] = useState('raclients');
   // { [subtabKey]: { mapped, touched, pct } } — green subtab when pct===100.
   const [coverageByKey, setCoverageByKey] = useState({});
@@ -495,6 +495,8 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             plural="opportunities"
             shortDateColumns={['Close Date']}
             defaultHideWhere={{ column: 'Opportunity Leader', values: ['Daniel Baldauf'], label: 'Daniel Baldauf' }}
+            prospectFieldFill={{ field: 'bfoCompanyName', label: 'BFO Company Name' }}
+            updateProspect={updateProspect}
             prospects={prospects}
             onSelectProspect={onSelectProspect}
             cdmName={cdmName}
