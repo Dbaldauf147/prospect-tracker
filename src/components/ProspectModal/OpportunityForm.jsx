@@ -3170,6 +3170,39 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                 }
                 return out;
               };
+              const attendeeId = (a) => { const id = a?.match?.id || a?.match?.vid; return id ? String(id) : null; };
+              // Reorder a bucket so managers sit above their reports, with
+              // each report nested (indented) under its manager. Hierarchy
+              // is scoped to the bucket: only a manager present in the same
+              // bucket pulls a report beneath them. Returns [{ attendee,
+              // depth }]; roots keep their existing order.
+              const orderByHierarchy = (members) => {
+                const ids = new Set(members.map(attendeeId).filter(Boolean));
+                const childrenByMgr = new Map();
+                const hasMgrInBucket = new Set();
+                for (const a of members) {
+                  const id = attendeeId(a);
+                  const mgrIds = (id && Array.isArray(contactReportsTo[id])) ? contactReportsTo[id].map(String) : [];
+                  const mgr = mgrIds.find(m => m !== id && ids.has(m));
+                  if (mgr) {
+                    hasMgrInBucket.add(a);
+                    if (!childrenByMgr.has(mgr)) childrenByMgr.set(mgr, []);
+                    childrenByMgr.get(mgr).push(a);
+                  }
+                }
+                const out = [];
+                const visited = new Set();
+                const visit = (a, depth) => {
+                  if (visited.has(a)) return; // cycle / dupe guard
+                  visited.add(a);
+                  out.push({ attendee: a, depth });
+                  const id = attendeeId(a);
+                  for (const kid of (id ? childrenByMgr.get(id) || [] : [])) visit(kid, depth + 1);
+                };
+                for (const a of members) if (!hasMgrInBucket.has(a)) visit(a, 0);
+                for (const a of members) if (!visited.has(a)) visit(a, 0); // safety net
+                return out;
+              };
               const renderAttendee = (a, i) => {
                 const matched = !!a.match;
                 const rawSummary = a.rawParams
@@ -3522,7 +3555,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
               // Make a customer attendee row draggable so it can be
               // moved between custom groups / Required / Optional. The
               // drop targets sit on the section headers.
-              const renderCustomerAttendee = (a) => {
+              const renderCustomerAttendee = (a, depth = 0) => {
                 const myKey = custKey(a);
                 return (
                   <div
@@ -3533,6 +3566,11 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                     style={{
                       opacity: custDragKey === myKey ? 0.5 : 1,
                       cursor: 'grab',
+                      // Nest reports under their manager: indent + a left
+                      // rail echoing the Org Chart's connector styling.
+                      marginLeft: depth ? depth * 18 : 0,
+                      paddingLeft: depth ? 8 : 0,
+                      borderLeft: depth ? '2px solid #CBD5E1' : undefined,
                     }}
                   >
                     {renderAttendee(a)}
@@ -3617,7 +3655,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                           )}
                           {members.length > 0 ? (
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                              {members.map(renderCustomerAttendee)}
+                              {orderByHierarchy(members).map(({ attendee, depth }) => renderCustomerAttendee(attendee, depth))}
                             </div>
                           ) : (
                             <div style={{ fontSize: '0.7rem', color: '#94A3B8', fontStyle: 'italic', padding: '0.2rem 0.5rem' }}>
@@ -3631,7 +3669,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                       <>
                         {groupHeader('Required', req.length, '#B91C1C', '#FEE2E2', { targetGroup: '', targetRequired: true })}
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                          {req.map(renderCustomerAttendee)}
+                          {orderByHierarchy(req).map(({ attendee, depth }) => renderCustomerAttendee(attendee, depth))}
                         </div>
                       </>
                     )}
@@ -3639,7 +3677,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                       <>
                         {groupHeader('Optional', opt.length, '#3730A3', '#E0E7FF', { targetGroup: '', targetRequired: false })}
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                          {opt.map(renderCustomerAttendee)}
+                          {orderByHierarchy(opt).map(({ attendee, depth }) => renderCustomerAttendee(attendee, depth))}
                         </div>
                       </>
                     )}
