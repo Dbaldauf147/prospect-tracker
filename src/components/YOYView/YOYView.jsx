@@ -1110,7 +1110,7 @@ export function YOYView() {
         <div>
           <h1 className={styles.title}>YOY</h1>
           <div className={styles.subtitle}>
-            Year-over-year summary, computed off the Opps tab cache.
+            Year-over-year summary, computed off the Opps tab cache. Hover a chart’s bars or points to see how that number is calculated — details appear in a panel on the right.
             {opps?.fetchedAt ? ` Opps fetched ${new Date(opps.fetchedAt).toLocaleString()}.` : ' Open the Opps tab to load data.'}
           </div>
         </div>
@@ -1120,7 +1120,6 @@ export function YOYView() {
         <div
           ref={setCalcPanelEl}
           className={styles.calcPanel}
-          data-empty-hint="Hover any chart’s bars or points to see how that number is calculated — shown here so it never covers the chart."
         />
         <div className={styles.row}>
           <LeadsCard data={leadsData} hasOpps={hasOpps} onDownload={downloadLeads} />
@@ -1329,7 +1328,7 @@ function LeadsCard({ data, hasOpps, onDownload }) {
         <ResponsiveContainer width="100%" height={320}>
           <BarChart data={data} margin={{ top: 18, right: 8, left: 0, bottom: 4 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
-            <XAxis dataKey="year" tick={{ fontSize: 12 }} />
+            <XAxis dataKey="year" interval={0} tick={{ fontSize: 12 }} />
             <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
             <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
@@ -1548,7 +1547,7 @@ function CloseRateCard({ data, hasOpps, onDownload }) {
         <ResponsiveContainer width="100%" height={320}>
           <ComposedChart data={data} margin={{ top: 18, right: 12, left: 0, bottom: 4 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
-            <XAxis dataKey="year" tick={{ fontSize: 12 }} />
+            <XAxis dataKey="year" interval={0} tick={{ fontSize: 12 }} />
             <YAxis
               yAxisId="pct"
               tick={{ fontSize: 12 }}
@@ -1688,7 +1687,7 @@ function QuotedByYearCard({ data, hasOpps, onDownload }) {
         <ResponsiveContainer width="100%" height={320}>
           <BarChart data={data} margin={{ top: 18, right: 8, left: 0, bottom: 4 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
-            <XAxis dataKey="year" tick={{ fontSize: 12 }} />
+            <XAxis dataKey="year" interval={0} tick={{ fontSize: 12 }} />
             <YAxis
               tick={{ fontSize: 12 }}
               tickFormatter={(v) => `$${v.toLocaleString('en-US')}`}
@@ -1744,7 +1743,7 @@ function NotSoldsCard({ data, hasOpps, onDownload }) {
         <ResponsiveContainer width="100%" height={320}>
           <ComposedChart data={data} margin={{ top: 18, right: 8, left: 0, bottom: 4 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
-            <XAxis dataKey="year" tick={{ fontSize: 12 }} />
+            <XAxis dataKey="year" interval={0} tick={{ fontSize: 12 }} />
             <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
             <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
@@ -1842,7 +1841,7 @@ function TopAccountsCard({ data, hasOpps, onDownload }) {
         <ResponsiveContainer width="100%" height={320}>
           <BarChart data={years} margin={{ top: 20, right: 8, left: 16, bottom: 4 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
-            <XAxis dataKey="year" tick={{ fontSize: 12 }} />
+            <XAxis dataKey="year" interval={0} tick={{ fontSize: 12 }} />
             <YAxis
               tick={{ fontSize: 12 }}
               tickFormatter={(v) => `$${(v / 1_000_000).toFixed(0)}M`}
@@ -1903,6 +1902,28 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload, onExportYear }) {
     const row = state?.activePayload?.[0]?.payload;
     if (row && Array.isArray(row._deals) && row._deals.length > 0) onExportYear?.(row);
   };
+  // Draw the total (+ % Quota) above each bar. Pinning the label to one
+  // segment breaks when that segment is $0 — a year whose Sold deals are
+  // all Current Client has newClient = 0, so a label on the New Client
+  // (top) segment silently disappeared. Instead draw it on whichever
+  // segment actually sits on top: New Client when it has value, else
+  // Current Client. `_total` is read from the row so the amount is right
+  // either way, and the % sits clear above it.
+  const renderTotalLabel = (segment) => (props) => {
+    const row = data[props.index];
+    if (!row || !row._total) return null;
+    const newClientOnTop = (row.newClient || 0) > 0;
+    if (segment === 'new' ? !newClientOnTop : newClientOnTop) return null;
+    const cx = props.x + props.width / 2;
+    return (
+      <g>
+        <text x={cx} y={props.y - 7} textAnchor="middle" style={{ fontSize: 11, fontWeight: 600, fill: '#1f2937' }}>{fmtMoneyLabel(row._total)}</text>
+        {!hidden.pctQuota && row.pctQuota != null ? (
+          <text x={cx} y={props.y - 22} textAnchor="middle" style={{ fontSize: 10, fontWeight: 600, fill: '#a16207' }}>{`${row.pctQuota}%`}</text>
+        ) : null}
+      </g>
+    );
+  };
   return (
     <div className={styles.chartCard}>
       <ChartHeader title="Annual Sales" onDownload={onDownload} canDownload={hasOpps && hasAny} />
@@ -1917,6 +1938,7 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload, onExportYear }) {
             <XAxis dataKey="year" interval={0} tick={{ fontSize: 12 }} />
             <YAxis
               tick={{ fontSize: 12 }}
+              domain={[0, (dataMax) => Math.ceil(dataMax * 1.18)]}
               tickFormatter={(v) => v >= 1_000_000 ? `${(v / 1_000_000).toFixed(0)}M` : v.toLocaleString('en-US')}
             />
             <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
@@ -1951,26 +1973,15 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload, onExportYear }) {
               {data.map((row, i) => (
                 <Cell key={i} fill={row._isProjected ? '#facc15' : '#3b82f6'} />
               ))}
+              {/* Total sits here only for years whose top segment (New
+                  Client) is $0 — otherwise it's drawn on the New Client bar. */}
+              <LabelList dataKey="_total" content={renderTotalLabel('cur')} />
             </Bar>
             <Bar dataKey="newClient" stackId="as" name="New Client" fill="#ef4444" isAnimationActive={false} hide={hidden.newClient}>
               {data.map((row, i) => (
                 <Cell key={i} fill={row._isProjected ? '#facc15' : '#ef4444'} />
               ))}
-              <LabelList
-                dataKey="_total"
-                position="top"
-                style={{ fontSize: 11, fontWeight: 600, fill: '#1f2937' }}
-                formatter={(v) => fmtMoneyLabel(v)}
-              />
-              {!hidden.pctQuota && (
-                <LabelList
-                  dataKey="pctQuota"
-                  position="top"
-                  offset={18}
-                  style={{ fontSize: 10, fontWeight: 600, fill: '#a16207' }}
-                  formatter={(v) => v == null ? '' : `${v}%`}
-                />
-              )}
+              <LabelList dataKey="_total" content={renderTotalLabel('new')} />
             </Bar>
           </BarChart>
         </ResponsiveContainer>
@@ -1993,7 +2004,7 @@ function DealSizeCard({ data, hasOpps, onDownload }) {
         <ResponsiveContainer width="100%" height={320}>
           <ComposedChart data={data} margin={{ top: 20, right: 16, left: 16, bottom: 4 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
-            <XAxis dataKey="year" tick={{ fontSize: 12 }} />
+            <XAxis dataKey="year" interval={0} tick={{ fontSize: 12 }} />
             <YAxis
               yAxisId="deals"
               tick={{ fontSize: 12 }}
@@ -2077,7 +2088,7 @@ function CommissionsCard({ data, hasCommissions, onDownload }) {
         <ResponsiveContainer width="100%" height={320}>
           <BarChart data={data} margin={{ top: 22, right: 8, left: 16, bottom: 4 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
-            <XAxis dataKey="year" tick={{ fontSize: 12 }} />
+            <XAxis dataKey="year" interval={0} tick={{ fontSize: 12 }} />
             <YAxis
               tick={{ fontSize: 12 }}
               tickFormatter={(v) => fmtMoneyShort(v)}
