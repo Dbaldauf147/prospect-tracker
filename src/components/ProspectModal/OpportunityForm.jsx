@@ -3150,6 +3150,26 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
             </div>
             {totalAttendees > 0 && (() => {
               const GRID_COLS = 'auto minmax(0, 1fr) minmax(0, 0.9fr) minmax(0, 1fr) minmax(0, 0.8fr) minmax(0, 1.4fr) auto';
+              // Detect reporting lines *within* the customer attendee list:
+              // build an id→attendee map of the customer attendees, then for
+              // any attendee return the names of their managers who are also
+              // on the list. Lets us flag "reports to X" right on the row.
+              const custAttendeeById = new Map();
+              for (const a of customerAttendees) {
+                const id = a.match?.id || a.match?.vid;
+                if (id) custAttendeeById.set(String(id), a);
+              }
+              const managersAmongAttendees = (a) => {
+                const id = a.match?.id || a.match?.vid;
+                if (!id) return [];
+                const mgrIds = Array.isArray(contactReportsTo[id]) ? contactReportsTo[id] : [];
+                const out = [];
+                for (const mid of mgrIds) {
+                  const mgr = custAttendeeById.get(String(mid));
+                  if (mgr) out.push(displayAttendeeName(mgr, contactNicknames));
+                }
+                return out;
+              };
               const renderAttendee = (a, i) => {
                 const matched = !!a.match;
                 const rawSummary = a.rawParams
@@ -3211,6 +3231,18 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
                           title="Open LinkedIn profile"
                         >in↗</a>
                       )}
+                      {(() => {
+                        const mgrs = managersAmongAttendees(a);
+                        if (mgrs.length === 0) return null;
+                        return (
+                          <span
+                            style={{ flexBasis: '100%', fontSize: '0.68rem', color: '#0F766E', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 3 }}
+                            title={`Reports to ${mgrs.join(', ')} — also on this attendee list`}
+                          >
+                            <span aria-hidden="true">↳</span> Reports to {mgrs.join(', ')}
+                          </span>
+                        );
+                      })()}
                     </div>
                     <div style={{ fontSize: '0.72rem', color: '#475569', paddingTop: 3, ...wrap }}>
                       {company || <span style={{ color: '#94A3B8' }}>—</span>}
