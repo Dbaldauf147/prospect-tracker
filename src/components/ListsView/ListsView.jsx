@@ -4,6 +4,7 @@ import { TargetAccountsView } from '../TargetAccountsView/TargetAccountsView';
 import { RECAClientsView } from '../RECAClientsView/RECAClientsView';
 import { EcoActClientsView } from '../EcoActClientsView/EcoActClientsView';
 import { SitesView } from '../SitesView/SitesView';
+import { MasterSiteListView } from '../MasterSiteListView/MasterSiteListView';
 import { UploadedListView } from '../UploadedListView/UploadedListView';
 import { loadList as loadListFromIDB } from '../../utils/uploadedListStore';
 import { matchesCdm } from '../../utils/cdmMatch';
@@ -15,6 +16,7 @@ const SUBTABS = [
   { key: 'targets', label: 'Target Accounts' },
   { key: 'strategic', label: 'Strategic Accounts', storageKey: 'strategic-accounts-override' },
   { key: 'sites', label: 'Utility Lookup' },
+  { key: 'mastersites', label: 'Master Site List' },
   { key: 'recaclients', label: 'RECA Clients', storageKey: 'reca-clients-override' },
   { key: 'ecoactclients', label: 'EcoAct Clients', storageKey: 'ecoact-clients-override' },
   { key: 'csrd', label: 'CSRD', storageKey: 'csrd-list-override' },
@@ -396,6 +398,7 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
           />
         )}
         {subtab === 'sites' && <SitesView settings={settings} updateSettings={updateSettings} prospects={prospects} />}
+        {subtab === 'mastersites' && <MasterSiteListView />}
         {subtab === 'csrd' && (
           <UploadedListView
             storageKey="csrd-list-override"

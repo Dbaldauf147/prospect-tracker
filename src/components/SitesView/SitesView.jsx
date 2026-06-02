@@ -29,6 +29,7 @@ import { parseAllSheets, parseBestSheet, parseSplitSitesTemplate, readRoundTripS
 import { saveIndicativeAnalysis, deleteIndicativeAnalysis } from '../../utils/firestoreSync';
 import { injectLiveLineChart } from '../../utils/xlsxLiveChart';
 import { findFuzzyMatch } from '../../utils/utilityNameMatch';
+import { classifyUtility } from '../../utils/utilityClassify';
 import { ENERGY_SUPPLIERS } from '../../data/energySuppliers';
 import { isRegulatedRateOpportunity } from '../../data/regulatedRateOpportunities';
 import {
@@ -145,62 +146,8 @@ function detectSitesMapping(headers) {
   };
 }
 
-// Classify a utility provider as "Regulated" (monopoly market — usually
-// municipally owned, public power, or a cooperative) or "Deregulated"
-// (competitive retail market). Based on the provider name only, since
-// that's all we have in the lookup file today. Well-known municipal
-// and coop utilities that don't follow the naming conventions get an
-// explicit override so Austin Energy / LADWP / SMUD / TVA etc. are
-// classified correctly.
-const REGULATED_PATTERNS = [
-  /^city of\b/i,
-  /\bmunicipal\b/i,
-  /\b(co-?op|cooperative)\b/i,
-  /\bpublic power\b/i,
-  /\bpublic utilit(y|ies)\b/i,
-  /\b(power|electric|utility|utilities)\s+authority\b/i,
-  /\b(p\.?u\.?d\.?)\b/i, // Public Utility District
-  /\bmembership corp(oration)?\b/i, // Rural electric membership corps
-  /\belectric (membership|cooperative)\b/i,
-];
-const REGULATED_OVERRIDES = [
-  /^austin energy\b/i,
-  /^ladwp\b/i,
-  /\b(department|dept\.?) of water\s*(and|&)\s*power\b/i,
-  /^smud\b/i,
-  /^sacramento municipal/i,
-  /^seattle city light\b/i,
-  /^tacoma power\b/i,
-  /^cps energy\b/i, // San Antonio
-  /^jea\b/i,         // Jacksonville
-  /^ouc\b/i,         // Orlando Utilities Commission
-  /^orlando utilities/i,
-  /^long island power\b/i,
-  /^lipa\b/i,
-  /^nyseg\b/i,
-  /^nebraska public power\b/i,
-  /^omaha public power\b/i,
-  /^salt river project\b/i,
-  /^srp\b/i,
-  /^colorado springs utilities\b/i,
-  /^nashville electric\b/i,
-  /^memphis light,?\s*gas/i,
-  /^knoxville utilities\b/i,
-  /^epb\b/i,                       // Chattanooga
-  /^bonneville power\b/i,
-  /^tva\b/i,
-  /^tennessee valley authority\b/i,
-  /^gainesville regional utilities\b/i,
-  /^lakeland electric\b/i,
-];
-function classifyUtility(name) {
-  if (!name) return null;
-  const str = String(name).trim();
-  if (!str) return null;
-  if (REGULATED_OVERRIDES.some(r => r.test(str))) return 'Regulated';
-  if (REGULATED_PATTERNS.some(r => r.test(str))) return 'Regulated';
-  return 'Deregulated';
-}
+// classifyUtility (Regulated vs Deregulated) now lives in
+// ../../utils/utilityClassify so the Master Site List shares it.
 
 // Ontario Global Adjustment (GA) opportunity flag. Every Ontario
 // commercial customer pays GA, but only Class A — peak demand ≥ 1 MW
