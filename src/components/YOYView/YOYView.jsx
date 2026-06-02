@@ -280,7 +280,11 @@ export function YOYView() {
       if (chance === 'weak') weak += amt;
       else if (chance === 'ok') ok += amt;
       else if (chance === 'expected') expected += amt;
-      if (String(r.Status || '').trim() === 'Agreement Sent') agreements += amt;
+      // "Agreement Sent" is a Stage value (the Stage column uses the
+      // `status` dropdown list — see OppsView2 DROPDOWN config), not the
+      // free-text Status column. Match on Stage so the live month's
+      // Agreements Sent total isn't always $0.
+      if (stage === 'Agreement Sent') agreements += amt;
     }
     const toK = (n) => (n > 0 ? n / 1000 : null);
     const pipe = sumBfoPipe(bfo);
