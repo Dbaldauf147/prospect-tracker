@@ -23,6 +23,7 @@ const SUBTABS = [
   { key: 'sbt', label: 'SBT', storageKey: 'sbt-list-override' },
   { key: 'unpri', label: 'UN PRI', storageKey: 'unpri-list-override' },
   { key: 'casb', label: 'CA SB', storageKey: 'casb-list-override' },
+  { key: 'bfoopps', label: 'BFO Opps', storageKey: 'bfo-opps-override' },
 ];
 
 const LIST_CORP_SUFFIXES = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|oy|ab|spa|kk|pty|holdings|group|grp)\b\.?/g;
@@ -477,6 +478,21 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             title="CA SB"
             singular="company"
             plural="companies"
+            prospects={prospects}
+            onSelectProspect={onSelectProspect}
+            cdmName={cdmName}
+            settings={settings}
+            updateSettings={updateSettings}
+            updateSettingsPath={updateSettingsPath}
+          />
+        )}
+        {subtab === 'bfoopps' && (
+          <UploadedListView
+            storageKey="bfo-opps-override"
+            tableIdPrefix="bfo-opps"
+            title="BFO Opps"
+            singular="opportunity"
+            plural="opportunities"
             prospects={prospects}
             onSelectProspect={onSelectProspect}
             cdmName={cdmName}
