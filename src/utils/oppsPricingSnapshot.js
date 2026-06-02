@@ -12,48 +12,30 @@
 // if the opp can't be located in either — so the picker shows the
 // alert instead of silently doing nothing.
 
-import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { db } from '../firebase';
-import { dbGet, dbPut } from './db';
+import {
+  loadOpps2FromFirestore,
+  loadOpps2Cache,
+  saveOpps2Cache,
+  saveOpps2ToFirestore,
+} from './opps2Store';
 import { fmtMoneyWhole } from './pricingOptionCalc';
-
-const OPPS2_STORE = 'opps2-cache';
-const OPPS2_CACHE_KEY = 'data';
-const OPPS2_FIRESTORE_COLLECTION = 'opps2Data';
 
 export const OPPS_PRICING_SNAPSHOT_EVENT = 'opps2:pricingSnapshotUpdated';
 
-async function readFirestoreOpps2(uid) {
-  if (!uid) return null;
-  try {
-    const ref = doc(db, OPPS2_FIRESTORE_COLLECTION, uid);
-    const snap = await getDoc(ref);
-    if (!snap.exists()) return null;
-    const raw = snap.data();
-    if (!raw?.json) return null;
-    return JSON.parse(raw.json);
-  } catch (err) {
-    console.error('opps2 pricing snapshot: Firestore read failed', err);
-    return null;
-  }
-}
-
-async function readIdbOpps2() {
-  try { return (await dbGet(OPPS2_STORE, OPPS2_CACHE_KEY)) || null; }
-  catch { return null; }
-}
-
 // Pick the freshest copy of the Opps 2 dataset that contains the
 // target opp. Prefer Firestore (server-side truth), fall back to IDB
-// (covers freshly-fed Opps tab records that haven't synced yet).
+// (covers freshly-fed Opps tab records that haven't synced yet). Both
+// loaders are chunk-aware (the Opps 2 dataset is split across a
+// Firestore `chunks` subcollection once it grows past the ~1 MB
+// single-document limit), so this reads back large datasets correctly.
 async function loadOpps2ContainingOpp(uid, oppId) {
   const target = String(oppId);
   const containsTarget = (data) =>
     Array.isArray(data?.records)
     && data.records.some(r => String(r?._id) === target);
-  const fs = await readFirestoreOpps2(uid);
+  const fs = uid ? await loadOpps2FromFirestore(uid) : null;
   if (containsTarget(fs)) return { source: 'firestore', data: fs };
-  const idb = await readIdbOpps2();
+  const idb = await loadOpps2Cache();
   if (containsTarget(idb)) return { source: 'idb', data: idb };
   return {
     source: null,
@@ -79,18 +61,13 @@ async function updateOpp2Record(uid, oppId, mutator) {
   const nextRecords = records.slice();
   nextRecords[idx] = nextRecord;
   const next = { ...data, records: nextRecords };
-  try { await dbPut(OPPS2_STORE, next, OPPS2_CACHE_KEY); }
-  catch (err) { console.error('opps2 pricing snapshot: IDB write failed', err); }
+  // saveOpps2Cache swallows its own errors (best-effort local write);
+  // saveOpps2ToFirestore chunks the payload to stay under Firestore's
+  // ~1 MB per-document limit and throws on failure so the picker can
+  // surface the alert.
+  await saveOpps2Cache(next);
   if (uid) {
-    try {
-      await setDoc(doc(db, OPPS2_FIRESTORE_COLLECTION, uid), {
-        json: JSON.stringify(next),
-        updatedAt: new Date().toISOString(),
-      });
-    } catch (err) {
-      console.error('opps2 pricing snapshot: Firestore write failed', err);
-      throw err;
-    }
+    await saveOpps2ToFirestore(uid, next);
   }
   try {
     window.dispatchEvent(new CustomEvent(OPPS_PRICING_SNAPSHOT_EVENT, {
