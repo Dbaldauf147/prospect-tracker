@@ -29,12 +29,12 @@ import { DraftEmailsPage } from './components/DraftEmailView/DraftEmailsPage';
 import { VibeProspecting } from './components/VibeProspecting/VibeProspecting';
 import { ListsView } from './components/ListsView/ListsView';
 import { PEPortfolioView } from './components/PEPortfolioView/PEPortfolioView';
-import { PipelineView } from './components/PipelineView/PipelineView';
+// Charts host: YOY / Progress / Pipeline as sub-tabs. Its YOY + Progress
+// sub-views stay code-split inside ChartsView.
+import { ChartsView } from './components/ChartsView/ChartsView';
 // Chart-heavy views (recharts ~250 KB gz, plus their own xlsx usage)
 // are split out of the main chunk; each load on first navigation.
-const ProgressView = lazy(() => import('./components/ProgressView/ProgressView').then(m => ({ default: m.ProgressView })));
 const PricingView = lazy(() => import('./components/PricingView/PricingView').then(m => ({ default: m.PricingView })));
-const YOYView = lazy(() => import('./components/YOYView/YOYView').then(m => ({ default: m.YOYView })));
 import { BFOActivityView } from './components/BFOActivityView/BFOActivityView';
 import { DailySuccessManager } from './components/DailySuccess/DailySuccessManager';
 import { DailySuccessLogModal } from './components/DailySuccess/DailySuccessLogModal';
@@ -305,21 +305,13 @@ function App() {
             <div className="loading">Loading prospects...</div>
           ) : view === 'drafts' || view === 'campaigns' ? (
             <DraftEmailsPage prospects={prospects} settings={settings} updateSettings={updateSettings} initialTab={view === 'campaigns' ? 'campaigns' : 'drafts'} />
-          ) : view === 'progress' ? (
-            <Suspense fallback={<div className="loading">Loading view…</div>}>
-              <ProgressView prospects={prospects} settings={settings} cdmName={cdmName} />
-            </Suspense>
+          ) : view === 'charts' ? (
+            <ChartsView prospects={prospects} settings={settings} cdmName={cdmName} />
           ) : view === 'vibe' ? (
             <VibeProspecting prospects={prospects} onUpdate={updateProspect} cdmName={cdmName} />
           ) : view === 'pricing' ? (
             <Suspense fallback={<div className="loading">Loading view…</div>}>
               <PricingView settings={settings} />
-            </Suspense>
-          ) : view === 'pipeline' ? (
-            <PipelineView />
-          ) : view === 'yoy' ? (
-            <Suspense fallback={<div className="loading">Loading view…</div>}>
-              <YOYView />
             </Suspense>
           ) : view === 'bfo' ? (
             <BFOActivityView prospects={prospects} />
