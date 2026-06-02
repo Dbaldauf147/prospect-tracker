@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { subscribeToProspects, addProspect as addDoc, updateProspect as updateDoc, deleteProspect as deleteDoc, seedProspects, replaceAllProspects, setProspectsUser, findDuplicateProspects, dedupeProspects, groupDuplicateProspects, collapseDuplicateGroups, normalizeCompanyName } from '../utils/firestoreSync';
+import { subscribeToProspects, addProspect as addDoc, updateProspect as updateDoc, deleteProspect as deleteDoc, seedProspects, replaceAllProspects, setProspectsUser, findDuplicateProspects, dedupeProspects, groupDuplicateProspects, collapseDuplicateGroups, companyDedupeKey } from '../utils/firestoreSync';
 import seedData from '../data/seedProspects';
 
 export function useProspects(user) {
@@ -73,11 +73,13 @@ export function useProspects(user) {
 
   async function addProspect(prospect) {
     // Idempotent by company name, checked against the in-memory list (no
-    // extra read): if a prospect with the same normalized company already
-    // exists, return it instead of minting a duplicate.
-    const key = normalizeCompanyName(prospect?.company);
+    // extra read): if a prospect with the same dedupe key already exists,
+    // return it instead of minting a duplicate. Uses companyDedupeKey so a
+    // regional variant like "Brookfield (Dubai)" is NOT treated as the same
+    // company as "Brookfield (NAM Multifamily)" or a bare "Brookfield".
+    const key = companyDedupeKey(prospect?.company);
     if (key) {
-      const existing = prospectsRef.current.find(p => normalizeCompanyName(p?.company) === key);
+      const existing = prospectsRef.current.find(p => companyDedupeKey(p?.company) === key);
       if (existing) return existing.id;
     }
     return addDoc(prospect);

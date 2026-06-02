@@ -32,6 +32,44 @@ export function normalizeCompanyName(s) {
     .trim();
 }
 
+// Pull out and normalize any parenthetical / bracketed qualifier so it can
+// be kept as part of a record's identity. normalizeCompanyName() throws
+// these away — which is right for stripping noise like "(a USAA Co.)" but
+// wrong when the qualifier is the ONLY thing distinguishing two records,
+// e.g. "Brookfield (Dubai)" vs "Brookfield (NAM Multifamily)". Corporate
+// suffixes inside the qualifier are still removed so an ownership note like
+// "(a Brookfield Co.)" collapses to "brookfield" rather than surviving as
+// junk. Returns '' when there is no meaningful qualifier.
+export function companyQualifier(s) {
+  const parts = [];
+  const re = /[([]([^)\]]*)[)\]]/g;
+  let m;
+  while ((m = re.exec(String(s || ''))) !== null) {
+    const tag = String(m[1] || '')
+      .toLowerCase()
+      .normalize('NFKD').replace(/[̀-ͯ]/g, '')
+      .replace(/&/g, ' and ')
+      .replace(CORP_SUFFIXES, ' ')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (tag) parts.push(tag);
+  }
+  return parts.sort().join(' ');
+}
+
+// The key two records must share to be treated as the SAME company. It is
+// the normalized base name plus any parenthetical qualifier, so records
+// that differ only by a corporate suffix still merge ("Brookfield Inc." ==
+// "Brookfield"), but records distinguished solely by a region/segment tag
+// stay separate ("Brookfield (Dubai)" != "Brookfield (NAM Multifamily)").
+export function companyDedupeKey(s) {
+  const base = normalizeCompanyName(s);
+  if (!base) return '';
+  const qual = companyQualifier(s);
+  return qual ? `${base}|${qual}` : base;
+}
+
 // Admin uses the shared collection; everyone else gets their own
 let _userId = null;
 let _useShared = false;
@@ -180,7 +218,7 @@ function createdMillis(p) {
 export function groupDuplicateProspects(list) {
   const byKey = new Map();
   for (const p of (list || [])) {
-    const key = normalizeCompanyName(p?.company);
+    const key = companyDedupeKey(p?.company);
     if (!key) continue;
     if (!byKey.has(key)) byKey.set(key, []);
     byKey.get(key).push(p);
