@@ -16,6 +16,45 @@ function loadMapping(key) {
   } catch { return {}; }
 }
 
+// Format a cell value as a short-form date (M/D/YYYY). The xlsx parser
+// reads with raw:true (no cellDates), so spreadsheet dates arrive as
+// Excel serial numbers; CSVs arrive as strings. Handle both, and return
+// the original value untouched when it isn't a recognizable date.
+function formatShortDate(v) {
+  if (v == null || v === '') return '';
+  if (typeof v === 'number' && isFinite(v) && v > 0) {
+    // Excel serial: days since 1899-12-30. 25569 = days to the Unix epoch.
+    const d = new Date(Math.round((v - 25569) * 86400000));
+    if (!isNaN(d.getTime())) return `${d.getUTCMonth() + 1}/${d.getUTCDate()}/${d.getUTCFullYear()}`;
+  }
+  const s = String(v).trim();
+  if (!s) return '';
+  // ISO-ish "2025-12-31" / "2025-12-31T..." — format from the literal
+  // parts so a timezone offset can't shift the displayed day.
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${Number(iso[2])}/${Number(iso[3])}/${iso[1]}`;
+  const d = new Date(s);
+  if (!isNaN(d.getTime())) return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
+  return s;
+}
+
+// Tokenize a name to a lowercased alphanumeric token set so "Daniel
+// Baldauf", "Baldauf, Daniel" and "DANIEL BALDAUF" all compare equal.
+function nameTokens(s) {
+  return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter(Boolean);
+}
+
+// True when `cellVal` contains every token of at least one target name —
+// order-independent, punctuation-insensitive.
+function matchesAnyName(cellVal, targets) {
+  const cellSet = new Set(nameTokens(cellVal));
+  if (cellSet.size === 0) return false;
+  return (targets || []).some(t => {
+    const toks = nameTokens(t);
+    return toks.length > 0 && toks.every(tok => cellSet.has(tok));
+  });
+}
+
 const TIER_COLORS = {
   'Tier 1': { bg: '#FEE2E2', border: '#FCA5A5', text: '#991B1B' },
   'Tier 2': { bg: '#DBEAFE', border: '#93C5FD', text: '#1E3A8A' },
@@ -177,15 +216,24 @@ function buildColumns(data, ctx) {
           portfolioMapping, portfolioDismissed,
           textColumn, textValues, onTextChange,
           onPick, onDismiss,
-          selectedKeys, onToggleSelect } = ctx;
+          selectedKeys, onToggleSelect, shortDateColumns } = ctx;
   const keys = new Set();
   for (const row of data) for (const k of Object.keys(row)) if (k !== 'id' && k !== '__matchKey__') keys.add(k);
-  const baseCols = [...keys].map((k, i) => ({
-    key: k,
-    label: k,
-    defaultWidth: i === 0 ? 240 : 140,
-    ...(i === 0 ? { sticky: true } : {}),
-  }));
+  // Headers (case-insensitive) whose values should render as short dates.
+  const dateColSet = new Set((shortDateColumns || []).map(h => String(h).trim().toLowerCase()));
+  const baseCols = [...keys].map((k, i) => {
+    const col = {
+      key: k,
+      label: k,
+      defaultWidth: i === 0 ? 240 : 140,
+      ...(i === 0 ? { sticky: true } : {}),
+    };
+    if (dateColSet.has(String(k).trim().toLowerCase())) {
+      col.getFilterValue = (row) => formatShortDate(row[k]);
+      col.render = (row) => formatShortDate(row[k]);
+    }
+    return col;
+  });
   const selectCol = {
     key: '__select__',
     label: '',
@@ -372,6 +420,8 @@ export function UploadedListView({
   onSelectProspect,
   cdmName,
   textColumn, // { key: string, label: string, placeholder?: string }
+  shortDateColumns, // array of header names to render as M/D/YYYY
+  defaultHideWhere, // { column, values: string[], label } — default-on row exclusion
   settings,
   updateSettings,
   updateSettingsPath,
@@ -470,6 +520,9 @@ export function UploadedListView({
   const [suggestedOnly, setSuggestedOnly] = useState(false);
   const [portfolioOnly, setPortfolioOnly] = useState(false);
   const [mappedOnly, setMappedOnly] = useState(false);
+  // Default-on exclusion (e.g. hide rows whose Opportunity Leader is
+  // Daniel Baldauf). Starts hidden; the user can toggle them back in.
+  const [hideExcluded, setHideExcluded] = useState(true);
   const [uploadError, setUploadError] = useState(null);
   const [uploadInfo, setUploadInfo] = useState(null); // { total, preservedTableView, preservedMyAccounts }
   const [picker, setPicker] = useState(null); // { matchKey, raw, query, scope: 'tableView' | 'myAccounts' }
@@ -1055,10 +1108,10 @@ export function UploadedListView({
       portfolioMapping, portfolioDismissed,
       textColumn, textValues, onTextChange: setTextValue,
       onPick: openPicker, onDismiss: dismissSuggestion,
-      selectedKeys, onToggleSelect: toggleSelectKey,
+      selectedKeys, onToggleSelect: toggleSelectKey, shortDateColumns,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rows, prospectsByNorm, myAccountsByNorm, portfolioByNorm, prospectSuggestionFor, myAccountSuggestionFor, portfolioSuggestionFor, mapping, dismissed, myAccountMapping, myAccountDismissed, portfolioMapping, portfolioDismissed, textColumn, textValues, selectedKeys]
+    [rows, prospectsByNorm, myAccountsByNorm, portfolioByNorm, prospectSuggestionFor, myAccountSuggestionFor, portfolioSuggestionFor, mapping, dismissed, myAccountMapping, myAccountDismissed, portfolioMapping, portfolioDismissed, textColumn, textValues, selectedKeys, shortDateColumns]
   );
   const tableId = useMemo(
     () => `${tableIdPrefix}:` + columns.map(c => c.key).sort().join('|'),
@@ -1107,8 +1160,27 @@ export function UploadedListView({
     !!myAccountMapping[r.__matchKey__] || !!portfolioMapping[r.__matchKey__]
   ), [myAccountMapping, portfolioMapping]);
 
+  // Resolve the configured exclusion column to the actual uploaded header
+  // (case-insensitive) and build a predicate matching the rows to hide.
+  const excludeColKey = useMemo(() => {
+    if (!defaultHideWhere?.column || !rows.length) return null;
+    const want = String(defaultHideWhere.column).trim().toLowerCase();
+    return Object.keys(rows[0]).find(k => String(k).trim().toLowerCase() === want) || null;
+  }, [defaultHideWhere, rows]);
+  const isExcludedRow = useMemo(() => (r) => (
+    !!excludeColKey && matchesAnyName(r[excludeColKey], defaultHideWhere?.values)
+  ), [excludeColKey, defaultHideWhere]);
+  const excludedCount = useMemo(
+    () => (excludeColKey ? rows.reduce((n, r) => n + (isExcludedRow(r) ? 1 : 0), 0) : 0),
+    [rows, excludeColKey, isExcludedRow]
+  );
+
   const filtered = useMemo(() => {
     let result = rows;
+    // Default-on exclusion (e.g. hide Daniel Baldauf's opportunities).
+    if (excludeColKey && hideExcluded) {
+      result = result.filter(r => !isExcludedRow(r));
+    }
     if (search.trim()) {
       const term = search.toLowerCase();
       result = result.filter(r =>
@@ -1143,7 +1215,7 @@ export function UploadedListView({
       const best = [ma, pc].filter(Boolean).reduce((acc, s) => (acc && acc.score >= s.score ? acc : s), null);
       return { ...r, __matchPct__: best ? Math.round(best.score * 100) : null };
     });
-  }, [search, suggestedOnly, portfolioOnly, mappedOnly, rows, isMyAccountsRow, isPortfolioRow, isMappedRow, myAccountMapping, myAccountDismissed, portfolioMapping, portfolioDismissed, myAccountSuggestionFor, portfolioSuggestionFor]);
+  }, [search, suggestedOnly, portfolioOnly, mappedOnly, hideExcluded, excludeColKey, isExcludedRow, rows, isMyAccountsRow, isPortfolioRow, isMappedRow, myAccountMapping, myAccountDismissed, portfolioMapping, portfolioDismissed, myAccountSuggestionFor, portfolioSuggestionFor]);
 
   const myAccountsMatchCount = useMemo(
     () => rows.reduce((n, r) => n + (isMyAccountsRow(r) ? 1 : 0), 0),
@@ -1591,6 +1663,34 @@ export function UploadedListView({
             </span>
           )}
         </button>
+        {excludeColKey && (
+          <button
+            type="button"
+            onClick={() => setHideExcluded(v => !v)}
+            title={`Hide rows where ${defaultHideWhere.column} is ${defaultHideWhere.label || (defaultHideWhere.values || []).join(', ')}. On by default.`}
+            style={{
+              padding: '0.35rem 0.7rem',
+              border: `1px solid ${hideExcluded ? '#DC2626' : 'var(--color-border)'}`,
+              borderRadius: 6,
+              background: hideExcluded ? '#FEE2E2' : '#fff',
+              color: hideExcluded ? '#991B1B' : 'var(--color-text-secondary)',
+              fontSize: '0.75rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {hideExcluded
+              ? `Hiding ${defaultHideWhere.label || (defaultHideWhere.values || []).join(', ')}`
+              : `Show ${defaultHideWhere.label || (defaultHideWhere.values || []).join(', ')}`}
+            {excludedCount > 0 && (
+              <span style={{ marginLeft: 6, fontSize: '0.68rem', color: hideExcluded ? '#991B1B' : '#94A3B8' }}>
+                {excludedCount}
+              </span>
+            )}
+          </button>
+        )}
         {(() => {
           // Only count rows that currently show a yellow suggestion pill
           // in at least one scope — i.e. not already mapped and not
@@ -1731,7 +1831,7 @@ export function UploadedListView({
             </button>
           );
         })()}
-        {(search || suggestedOnly || portfolioOnly || mappedOnly) && <span className={styles.resultCount}>{filtered.length} results</span>}
+        {(search || suggestedOnly || portfolioOnly || mappedOnly || (excludeColKey && hideExcluded && excludedCount > 0)) && <span className={styles.resultCount}>{filtered.length} results</span>}
       </div>
       {selectedKeys.size > 0 && (() => {
         const acceptMa = pendingCountFor('myAccounts');
