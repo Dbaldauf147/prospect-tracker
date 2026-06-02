@@ -2021,6 +2021,20 @@ export function PricingView({ settings } = {}) {
       // fills the fee later. Unit pre-fills from linkedToUnitDefaults
       // when set, and Per Site / Per Account inherit the SIA metadata
       // count. Pad to 9 rows so the grid keeps its Excel-template feel.
+      // Normalize an SIA alt-fee Type string into one of the alt-fee
+      // dropdown values so imported rows render as selected (and match
+      // the seeded rows for the fill pass). Idempotent — already-normal
+      // values map back to themselves.
+      const normAltType = (raw) => {
+        const t = String(raw || '').trim();
+        if (/recurring/i.test(t)) return 'Recurring (monthly)';
+        if (/^setup/i.test(t)) return 'Setup';
+        if (/^one\s*time/i.test(t)) return 'One Time';
+        return t;
+      };
+      const altMatchKey = (item, type) =>
+        `${String(item || '').trim().toLowerCase()}|${normAltType(type).toLowerCase()}`;
+
       const seeded = {};
       for (const opt of parsed.options) {
         const flatItems = (opt.sections || []).flatMap(s => s.items || []);
@@ -2058,6 +2072,35 @@ export function PricingView({ settings } = {}) {
           // the linked CTS rows; the user can type a value to override.
           return { altItem: tag, type, fee: null, unit, unitCount, startMonth: null };
         });
+        // If the uploaded SIA already has fees filled into its own
+        // Alternative Fee Structure/Schedule table, pull them in: fill the
+        // fee (and unit/start-month details) onto a matching seeded row,
+        // and append the rest as new rows. The parser only yields real
+        // rows; we limit to ones carrying an actual fee so blank template
+        // rows don't add noise.
+        const wbAltRows = (opt.altFees || []).filter(a => a && a.fee != null);
+        const consumed = new Set();
+        for (const wb of wbAltRows) {
+          const key = altMatchKey(wb.altItem, wb.type);
+          const hit = rows.find(rw => rw.altItem && altMatchKey(rw.altItem, rw.type) === key);
+          if (!hit) continue;
+          if (hit.fee == null) hit.fee = wb.fee;
+          if (!hit.unit && wb.unit) hit.unit = wb.unit;
+          if ((hit.unitCount == null || hit.unitCount === 1) && wb.unitCount != null) hit.unitCount = wb.unitCount;
+          if (hit.startMonth == null && wb.startMonth != null) hit.startMonth = wb.startMonth;
+          consumed.add(wb);
+        }
+        for (const wb of wbAltRows) {
+          if (consumed.has(wb)) continue;
+          rows.push({
+            altItem: wb.altItem,
+            type: normAltType(wb.type),
+            fee: wb.fee,
+            unit: wb.unit || '',
+            unitCount: wb.unitCount == null ? 1 : wb.unitCount,
+            startMonth: wb.startMonth == null ? null : wb.startMonth,
+          });
+        }
         while (rows.length < 9) rows.push({ altItem: '', type: '', fee: null, unit: '', unitCount: 1, startMonth: null });
         seeded[opt.optionNumber] = rows;
       }
