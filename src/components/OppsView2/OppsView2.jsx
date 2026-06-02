@@ -4688,6 +4688,11 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           const copy = { ...r };
           copy['No Further Action Today'] = '';
           delete copy._nfatSetAt;
+          // Bump the row clock so the cleared value wins the cross-device
+          // merge. Without this the swept row keeps yesterday's
+          // _rowUpdatedAt, ties the stale 'no' still sitting on another
+          // device, and mergeOpps2Data's tie-break keeps that stale mark.
+          copy._rowUpdatedAt = Date.now();
           return copy;
         });
         if (!touched) return prev;
