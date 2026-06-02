@@ -2274,6 +2274,144 @@ function NotSoldFollowUpModal({ opp, reasonOptions, onSave, onClose }) {
   );
 }
 
+// Popup that fires after Stage flips to "Sold". Prompts the user to
+// fill in the three close-out columns (Reason Not Sold, Final Margin,
+// Competition). The Close Date is set automatically to the date of the
+// status change (see updateOppField) and shown here read-only so the
+// user knows it was captured. Mirrors the NotSoldFollowUpModal pattern.
+function SoldFollowUpModal({ opp, reasonOptions, onSave, onClose }) {
+  const [reason, setReason] = useState(String(opp?.['Reason Not Sold'] ?? ''));
+  const [finalMargin, setFinalMargin] = useState(String(opp?.['Final Margin'] ?? ''));
+  const [competition, setCompetition] = useState(String(opp?.['Competition'] ?? ''));
+
+  function handleSave() {
+    onSave({
+      reason,
+      finalMargin: finalMargin.trim(),
+      competition: competition.trim(),
+    });
+  }
+
+  const labelStyle = { fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text)', display: 'block', marginBottom: 4 };
+  const inputStyle = {
+    width: '100%', boxSizing: 'border-box',
+    padding: '0.45rem 0.55rem',
+    border: '1px solid var(--color-border)', borderRadius: 4,
+    fontSize: '0.85rem', fontFamily: 'inherit',
+    background: '#fff', color: 'var(--color-text)',
+  };
+
+  return createPortal(
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)',
+        zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+        }}
+        style={{
+          width: 460, maxWidth: '92vw',
+          background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)',
+          display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        }}
+      >
+        <div style={{ padding: '0.85rem 1rem', borderBottom: '1px solid var(--color-border-light)' }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)' }}>
+            Close out this opportunity
+          </div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
+            <strong>{opp?.['Account'] || 'This opp'}</strong>
+            {opp?.['Scope'] ? <> &middot; {opp['Scope']}</> : null}
+            {' '}is now marked <strong>Sold</strong>. Fill in the close-out details below.
+          </div>
+        </div>
+
+        <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.7rem' }}>
+          <div>
+            <label style={labelStyle}>Close Date</label>
+            <div style={{ fontSize: '0.8rem', color: 'var(--color-text)' }}>
+              {formatDateDisplay(opp?.['Close Date']) || '—'}
+              <span style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', marginLeft: 6 }}>
+                (set to the status-change date)
+              </span>
+            </div>
+          </div>
+          <div>
+            <label style={labelStyle}>Reason Not Sold</label>
+            <select
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              style={inputStyle}
+            >
+              <option value="">— Select a reason —</option>
+              {reasonOptions.map(o => (
+                <option key={o} value={o}>{o}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style={labelStyle}>Final Margin</label>
+            <input
+              type="text"
+              autoFocus
+              value={finalMargin}
+              onChange={(e) => setFinalMargin(e.target.value)}
+              placeholder="e.g. 22% or $4,500"
+              style={inputStyle}
+            />
+          </div>
+          <div>
+            <label style={labelStyle}>Competition</label>
+            <input
+              type="text"
+              value={competition}
+              onChange={(e) => setCompetition(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); handleSave(); }
+              }}
+              placeholder="Who else was bidding?"
+              style={inputStyle}
+            />
+          </div>
+        </div>
+
+        <div style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          padding: '0.6rem 1rem',
+          borderTop: '1px solid var(--color-border-light)', background: 'var(--color-bg)',
+        }}>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              padding: '0.35rem 0.7rem', background: 'transparent',
+              border: '1px solid var(--color-border)', borderRadius: 4,
+              fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+              color: 'var(--color-text-muted)', cursor: 'pointer',
+            }}
+          >Skip for now</button>
+          <button
+            type="button"
+            onClick={handleSave}
+            style={{
+              padding: '0.35rem 0.85rem', background: 'var(--color-accent)',
+              border: '1px solid var(--color-accent)', borderRadius: 4,
+              fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+              color: '#fff', cursor: 'pointer',
+            }}
+          >Save</button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 // Prompt shown whenever an opp moves into the "Quoted" stage so the user
 // can enter / review the quote-tracking data points (Quoted On, Chance?,
 // Margin Email Date - Sales Leader Review Date). Pre-populated with the
@@ -3774,6 +3912,11 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // Chance?, and Margin Email Date - Sales Leader Review Date. Cleared on
   // Save or Skip.
   const [quotedPromptId, setQuotedPromptId] = useState(null);
+  // _id of the opp that just had its Stage flipped to "Sold". When set,
+  // the SoldFollowUpModal asks the user to fill in Reason Not Sold,
+  // Final Margin, and Competition. The Close Date is auto-stamped to the
+  // status-change date in updateOppField. Cleared on Save or Skip.
+  const [soldPromptId, setSoldPromptId] = useState(null);
   // _id of the opp whose info popup is open, or null when no popup
   // is showing. Resolved against the live records list on render so
   // the popup always reflects the latest cell edits.
@@ -4474,11 +4617,35 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         }
       }
     }
+    // When the Stage flips TO "Sold", stamp the Close Date with the date
+    // of the status change (today) and mirror it into the derived
+    // Close Year / Close Month columns, just like a manual Close Date
+    // edit would. Computed here so it can be snapshotted for undo and
+    // applied inside the setData mapper below.
+    let soldClose = null;
+    if (stageChanged && String(value ?? '').trim().toLowerCase() === 'sold') {
+      const today = todayISO();
+      const { yearCols, monthCols } = findCloseDerivedColumns(dataRef.current?.headers);
+      const d = parseCloseDate(today);
+      soldClose = {
+        date: today,
+        yearCols,
+        monthCols,
+        yearVal: d ? String(d.getFullYear()) : '',
+        monthVal: d ? MONTH_FULL_NAMES[d.getMonth()] : '',
+      };
+    }
     if (row) {
       const snap = (f) => ({ field: f, hadField: f in row, prevValue: f in row ? row[f] : undefined });
       const fields = [snap(field)];
       if (field === 'Follow Up' && 'Call In' in row) fields.push(snap('Call In'));
       if (field === 'Last Client Heard From Us' && 'Last Spoke' in row) fields.push(snap('Last Spoke'));
+      // Snapshot the auto-stamped Close Date (+ derived columns) so one
+      // undo of the Sold stage change also restores them.
+      if (soldClose) {
+        fields.push(snap('Close Date'));
+        for (const c of [...soldClose.yearCols, ...soldClose.monthCols]) fields.push(snap(c));
+      }
       // Days-in-Stage reads `_stageEnteredAt`; snapshot it alongside the
       // Stage edit so an undo restores both in one step. The Stage
       // History tab reads `_stageHistory`, so we snapshot that too.
@@ -4517,6 +4684,13 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           if (closeDerived) {
             for (const c of closeDerived.yearCols) next[c] = closeDerived.yearVal;
             for (const c of closeDerived.monthCols) next[c] = closeDerived.monthVal;
+          }
+          // Auto-stamp the Close Date (+ derived columns) when the stage
+          // flips to Sold, using the status-change date.
+          if (soldClose) {
+            next['Close Date'] = soldClose.date;
+            for (const c of soldClose.yearCols) next[c] = soldClose.yearVal;
+            for (const c of soldClose.monthCols) next[c] = soldClose.monthVal;
           }
           // Stamp the stage-entry date whenever Stage flips to a new
           // value so Days-in-Stage measures "time since the last move"
@@ -4560,6 +4734,12 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     // flips TO "Quoted" so they can be entered or reviewed on the spot.
     if (stageChanged && String(value ?? '').trim().toLowerCase() === 'quoted') {
       setQuotedPromptId(id);
+    }
+    // Prompt for the close-out details (Reason Not Sold / Final Margin /
+    // Competition) whenever the Stage flips TO "Sold". The Close Date was
+    // already auto-stamped above.
+    if (stageChanged && String(value ?? '').trim().toLowerCase() === 'sold') {
+      setSoldPromptId(id);
     }
   }, [pushUndoEntry]);
 
@@ -5605,6 +5785,32 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               setNotSoldPromptId(null);
             }}
             onClose={() => setNotSoldPromptId(null)}
+          />
+        );
+      })()}
+
+      {soldPromptId != null && (() => {
+        const opp = records.find(r => r._id === soldPromptId);
+        if (!opp) return null;
+        return (
+          <SoldFollowUpModal
+            opp={opp}
+            reasonOptions={listRegistry.get('reasonNotSold')?.options || []}
+            onSave={({ reason, finalMargin, competition }) => {
+              // Only push fields whose value actually changed so the
+              // undo stack stays uncluttered with no-op snapshots.
+              if (reason !== String(opp['Reason Not Sold'] ?? '')) {
+                updateOppField(opp._id, 'Reason Not Sold', reason);
+              }
+              if (finalMargin !== String(opp['Final Margin'] ?? '').trim()) {
+                updateOppField(opp._id, 'Final Margin', finalMargin);
+              }
+              if (competition !== String(opp['Competition'] ?? '').trim()) {
+                updateOppField(opp._id, 'Competition', competition);
+              }
+              setSoldPromptId(null);
+            }}
+            onClose={() => setSoldPromptId(null)}
           />
         );
       })()}
