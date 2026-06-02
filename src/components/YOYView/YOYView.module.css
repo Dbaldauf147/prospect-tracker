@@ -242,6 +242,24 @@
   display: none;
 }
 
+/* Pinned snapshot — same side panel, but kept on screen after a click
+   until the user clicks again. Accent border + a hint make it clear the
+   panel is frozen rather than live. */
+.calcPanelPinned {
+  border-color: #2563eb;
+  box-shadow: 0 6px 22px rgba(37, 99, 235, 0.28);
+  cursor: pointer;
+}
+
+.calcPinHint {
+  font-size: 0.66rem;
+  font-weight: 700;
+  color: #2563eb;
+  margin-bottom: 0.35rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
 /* Vertical layout for the side panel — heading, series values, then the
    formula/inputs/deals stack top-to-bottom so it reads in a narrow,
    tall panel. */

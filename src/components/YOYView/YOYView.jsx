@@ -1064,15 +1064,6 @@ export function YOYView() {
     appendSheet(wb, 'Contributing Deals', contributing);
     XLSX.writeFile(wb, `yoy-annual-sales-${todayStamp()}.xlsx`);
   }
-  // Export just the deals behind a single year's bar (triggered by
-  // clicking that bar in the chart).
-  function downloadAnnualSalesYear(row) {
-    if (!row || !Array.isArray(row._deals) || row._deals.length === 0) return;
-    const wb = XLSX.utils.book_new();
-    appendSheet(wb, `Sold ${row.year}`, row._deals);
-    const tag = String(row.year).toLowerCase().replace(/[^a-z0-9]+/g, '-');
-    XLSX.writeFile(wb, `yoy-annual-sales-${tag}-${todayStamp()}.xlsx`);
-  }
   function downloadCommissions() {
     const summary = commissionsData.map(r => ({
       Year: r.year,
@@ -1103,6 +1094,20 @@ export function YOYView() {
   // Held in state (via a callback ref) rather than a ref so the element
   // is provided through context and is safe to read during render.
   const [calcPanelEl, setCalcPanelEl] = useState(null);
+  // Click a data point to "pin" the hover panel: snapshot whatever the
+  // panel is currently showing and keep it on screen until the next
+  // click. Snapshotting the rendered HTML lets this work uniformly for
+  // every chart without re-plumbing each one's tooltip config — the
+  // panel only ever has content while a data point is hovered, so a
+  // click that finds content is a click on a data point.
+  const [pinnedHtml, setPinnedHtml] = useState(null);
+  const togglePin = () => {
+    setPinnedHtml(prev => {
+      if (prev != null) return null;
+      const html = calcPanelEl ? calcPanelEl.innerHTML : '';
+      return html && html.trim() ? html : prev;
+    });
+  };
 
   return (
     <div className={styles.wrapper}>
@@ -1115,12 +1120,19 @@ export function YOYView() {
           </div>
         </div>
       </div>
-      <div className={styles.body}>
+      <div className={styles.body} onClick={togglePin}>
         <CalcPanelContext.Provider value={calcPanelEl}>
         <div
           ref={setCalcPanelEl}
           className={styles.calcPanel}
+          style={pinnedHtml != null ? { display: 'none' } : undefined}
         />
+        {pinnedHtml != null ? (
+          <div className={`${styles.calcPanel} ${styles.calcPanelPinned}`}>
+            <div className={styles.calcPinHint}>📌 Pinned — click anywhere to unpin</div>
+            <div dangerouslySetInnerHTML={{ __html: pinnedHtml }} />
+          </div>
+        ) : null}
         <div className={styles.row}>
           <LeadsCard data={leadsData} hasOpps={hasOpps} onDownload={downloadLeads} />
           <QuotedProjectionsCard data={quotedData} quotedTable={quotedTable} onSaveTable={updateQuotedTable} onDownload={downloadQuoted} />
@@ -1133,7 +1145,7 @@ export function YOYView() {
         </div>
         <div className={styles.row}>
           <TopAccountsCard data={topAccountsData} hasOpps={hasOpps} onDownload={downloadTopAccounts} />
-          <AnnualSalesCard data={annualSalesData} hasOpps={hasOpps} target={target} onDownload={downloadAnnualSales} onExportYear={downloadAnnualSalesYear} />
+          <AnnualSalesCard data={annualSalesData} hasOpps={hasOpps} target={target} onDownload={downloadAnnualSales} />
           <DealSizeCard data={dealSizeData} hasOpps={hasOpps} onDownload={downloadDealSize} />
         </div>
         <div className={styles.row}>
@@ -1894,14 +1906,10 @@ function TopAccountsCard({ data, hasOpps, onDownload }) {
   );
 }
 
-function AnnualSalesCard({ data, hasOpps, target, onDownload, onExportYear }) {
+function AnnualSalesCard({ data, hasOpps, target, onDownload }) {
   const hasAny = data.some(r => r._total > 0);
   const annualTarget = target > 0 ? target : DEFAULT_ANNUAL_TARGET;
   const { hidden, legendProps } = useInteractiveLegend();
-  const handleBarClick = (state) => {
-    const row = state?.activePayload?.[0]?.payload;
-    if (row && Array.isArray(row._deals) && row._deals.length > 0) onExportYear?.(row);
-  };
   // Draw the total (+ % Quota) above each bar. Pinning the label to one
   // segment breaks when that segment is $0 — a year whose Sold deals are
   // all Current Client has newClient = 0, so a label on the New Client
@@ -1933,7 +1941,7 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload, onExportYear }) {
         <div className={styles.empty}>No Sold opps with a Quoted Amount yet.</div>
       ) : (
         <ResponsiveContainer width="100%" height={320}>
-          <BarChart data={data} margin={{ top: 48, right: 8, left: 16, bottom: 4 }} onClick={handleBarClick} style={{ cursor: 'pointer' }}>
+          <BarChart data={data} margin={{ top: 48, right: 8, left: 16, bottom: 4 }} style={{ cursor: 'pointer' }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
             <XAxis dataKey="year" interval={0} tick={{ fontSize: 12 }} />
             <YAxis
@@ -1956,8 +1964,8 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload, onExportYear }) {
                   ],
                   deals: row._deals || [],
                   note: row._isProjected
-                    ? 'Projected = current-year Sold (by Close Date) + Agreement Sent Quoted $. Click the bar to export these deals to Excel.'
-                    : 'Click the bar to export these deals to Excel.',
+                    ? 'Projected = current-year Sold (by Close Date) + Agreement Sent Quoted $. Click to pin this panel; use Download .xlsx to export the deals.'
+                    : 'Click to pin this panel; use Download .xlsx to export the deals.',
                 })}
               />
             } />
