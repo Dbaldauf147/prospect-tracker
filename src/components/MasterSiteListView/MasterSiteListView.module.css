@@ -252,6 +252,15 @@
   width: min(640px, 92vw);
   box-shadow: 0 12px 40px rgba(0,0,0,0.25);
 }
+.modalWide {
+  background: var(--color-surface);
+  border-radius: 10px;
+  padding: 1.1rem 1.2rem;
+  width: min(560px, 92vw);
+  max-height: 86vh;
+  overflow: auto;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.25);
+}
 .modalTitle { font-size: 0.9rem; font-weight: 700; margin: 0 0 0.4rem; }
 .modalText { font-size: 0.74rem; color: var(--color-text-secondary); margin: 0 0 0.6rem; }
 .textarea {
@@ -267,3 +276,9 @@
 }
 .modalActions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.75rem; }
 .checkRow { display: flex; align-items: center; gap: 0.4rem; font-size: 0.74rem; margin: 0.5rem 0; color: var(--color-text-secondary); }
+
+/* Column-matcher field → source-column grid */
+.mapGrid { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.5rem; }
+.mapRow { display: grid; grid-template-columns: 120px 1fr; align-items: center; gap: 0.6rem; }
+.mapField { font-size: 0.74rem; font-weight: 600; color: var(--color-text); }
+.mapRow .select { max-width: none; width: 100%; }
