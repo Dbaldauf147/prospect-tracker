@@ -13,6 +13,7 @@ import {
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { loadDealsList, saveDealsOverride, clearDealsOverride } from '../../utils/dealsStore';
 import { loadCommissions } from '../../utils/commissionsStore';
+import { loadOpps2Newest } from '../../utils/opps2Store';
 import { DEAL_BFO_KEY, normBfo, indexCommissionsByBfo } from '../../utils/dealCommissions';
 import {
   asNumber, asDate, fmtCurrency, fmtPercent, fmtDate,
@@ -854,8 +855,13 @@ function buildColumns(rows, columnLinks, listRegistry, commissionsByBfo) {
   });
 }
 
-export function DealsView({ settings, updateSettings, prospects = [], cdmName }) {
+export function DealsView({ settings, updateSettings, prospects = [], cdmName, user }) {
   const [{ data, source }, setStore] = useState(() => loadDealsList());
+  // Opps 2 records, loaded once so the page can flag Sold opps that have
+  // no matching deal here (see soldMissingDeals below). Picks the newest
+  // of the local cache and the synced Firestore copy so the warning
+  // reflects what the Opps 2 tab would show, even on a fresh device.
+  const [opps2Records, setOpps2Records] = useState([]);
   // Commissions roster feeds the Revenue Recorded / Paid to Date auto-
   // population. Re-hydrated on the storage event so a paste on the
   // Commissions tab in another window flows through here without a
@@ -914,6 +920,20 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
       window.removeEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
     };
   }, []);
+
+  // Pull the Opps 2 records so we can warn about Sold opps that aren't
+  // represented on the Deals page. A cancelled flag guards against a
+  // late resolve writing state after unmount / a user change.
+  useEffect(() => {
+    let cancelled = false;
+    loadOpps2Newest(user?.uid)
+      .then((d) => {
+        if (cancelled) return;
+        setOpps2Records(Array.isArray(d?.records) ? d.records : []);
+      })
+      .catch(() => { if (!cancelled) setOpps2Records([]); });
+    return () => { cancelled = true; };
+  }, [user?.uid]);
 
   // Active + Old Client roster the helper-column dropdown picks from.
   // CDM-matching Client / Old Client prospects come first, but any
@@ -1093,6 +1113,41 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
     () => data.map((r, i) => ({ ...r, id: i, __onUpdate: updateCell, __newRow: i === 0 && !isFilled(r['Client Name']) })),
     [data]
   );
+  // Sold Opps 2 opps that don't line up with any deal here. The link
+  // between the two is the BFO opportunity name — "BFO Link" on an opp,
+  // DEAL_BFO_KEY on a deal — so a Sold opp is flagged when it has no BFO
+  // name at all, or its BFO name matches no deal row. Surfaces as a
+  // warning banner so the user can add the missing deal (or assign the
+  // opp's BFO name) before it slips through the cracks.
+  const soldMissingDeals = useMemo(() => {
+    // Treat dash / #N/A placeholders as "no BFO name", matching the Opps 2
+    // import dedup so a "-" cell doesn't read as a real, matchable name.
+    const realBfo = (v) => {
+      const n = normBfo(v);
+      return n === '-' || n === '#n/a' ? '' : n;
+    };
+    const sold = opps2Records.filter(
+      (r) => String(r?.['Stage'] ?? '').trim().toLowerCase() === 'sold'
+    );
+    if (sold.length === 0) return [];
+    const dealBfoNames = new Set();
+    for (const r of data) {
+      const n = realBfo(r?.[DEAL_BFO_KEY]);
+      if (n) dealBfoNames.add(n);
+    }
+    return sold
+      .filter((r) => {
+        const n = realBfo(r?.['BFO Link']);
+        return !n || !dealBfoNames.has(n);
+      })
+      .map((r) => ({
+        id: r?._id,
+        account: String(r?.['Account'] ?? '').trim(),
+        scope: String(r?.['Scope'] ?? '').trim(),
+        bfo: String(r?.['BFO Link'] ?? '').trim(),
+      }));
+  }, [opps2Records, data]);
+
   // Rolled-up Commissions data, keyed by normalized BFO opp name. Feeds
   // the Revenue Recorded / Paid to Date auto-population in buildColumns.
   const commissionsByBfo = useMemo(
@@ -1470,6 +1525,28 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName })
       {uploadError && (
         <div style={{ margin: '0 1.25rem 0.5rem', padding: '0.5rem 0.75rem', background: '#FEF2F2', border: '1px solid #FCA5A5', borderRadius: 6, color: '#991B1B', fontSize: '0.8rem' }}>
           {uploadError}
+        </div>
+      )}
+
+      {soldMissingDeals.length > 0 && (
+        <div style={{ margin: '0 1.25rem 0.5rem', padding: '0.6rem 0.85rem', background: '#FFFBEB', border: '1px solid #FCD34D', borderRadius: 6, color: '#92400E', fontSize: '0.8rem', flexShrink: 0 }}>
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>
+            ⚠ {soldMissingDeals.length} Sold {soldMissingDeals.length === 1 ? 'opp has' : 'opps have'} no matching deal here
+          </div>
+          <div style={{ fontSize: '0.74rem', marginBottom: 6 }}>
+            These opportunities are marked <strong>Sold</strong> in Opps 2 but their BFO opp name isn&apos;t on the Deals page. Add the deal (or set the opp&apos;s BFO Opportunity Name) so it shows up here.
+          </div>
+          <ul style={{ margin: 0, paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: 2 }}>
+            {soldMissingDeals.map((o) => (
+              <li key={o.id ?? `${o.account}|${o.scope}`}>
+                <strong>{o.account || 'Unknown account'}</strong>
+                {o.scope ? <> &middot; {o.scope}</> : null}
+                {o.bfo
+                  ? <span style={{ color: '#B45309' }}> — BFO opp name &ldquo;{o.bfo}&rdquo; not found on Deals</span>
+                  : <span style={{ color: '#B45309' }}> — no BFO opp name set</span>}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
