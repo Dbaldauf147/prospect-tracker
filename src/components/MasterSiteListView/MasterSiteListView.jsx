@@ -76,40 +76,61 @@ function splitPasteLine(line) {
   return out;
 }
 
-// Parse a block of pasted rows into canonical master rows. If the first
-// line looks like headers we map by header text; otherwise we assume the
-// columns are in the documented order (Company, Property Name, ...).
-function parsePastedRows(text) {
+// Parse pasted text into a padded 2-D grid of trimmed cells (one inner
+// array per line, every row the same width). Blank lines are dropped.
+function parsePasteCells(text) {
   const lines = text.split(/\r?\n/).filter(l => l.trim() !== '');
-  if (!lines.length) return [];
-  const firstCells = splitPasteLine(lines[0]).map(c => c.trim());
-  const looksLikeHeader = firstCells.some(c => MASTER_FIELDS.some(f =>
-    f.label.toLowerCase() === c.toLowerCase() || c.toLowerCase().includes('company') || c.toLowerCase().includes('property')));
+  const cells = lines.map(splitPasteLine);
+  const width = cells.reduce((m, r) => Math.max(m, r.length), 0);
+  return cells.map(r => {
+    const c = r.map(x => String(x ?? '').trim());
+    while (c.length < width) c.push('');
+    return c;
+  });
+}
 
-  if (looksLikeHeader) {
-    const mapping = detectMasterMapping(firstCells);
-    // Map detected header text back to its column index.
-    const idxByField = {};
+// Does the first pasted row read like a header (field names / common
+// site-list column words) rather than data?
+function looksLikeHeaderRow(firstCells) {
+  return firstCells.some(c =>
+    MASTER_FIELDS.some(f => f.label.toLowerCase() === c.toLowerCase()) ||
+    /\b(company|property|address|city|state|zip|postal|country|sub-?sector|sector)\b/i.test(c));
+}
+
+// Column headers for the matcher: the real header row when present, else
+// generic "Column 1…N" placeholders.
+function headersFromCells(cells, hasHeader) {
+  const width = cells[0]?.length || 0;
+  return hasHeader
+    ? cells[0].slice()
+    : Array.from({ length: width }, (_, i) => `Column ${i + 1}`);
+}
+
+// Best-guess mapping of each master field → source column index (-1 when
+// unmatched). With a header row we reuse the shared header detection;
+// without one we fall back to positional order (Company, Property Name…).
+function defaultMapping(headers, hasHeader) {
+  const m = {};
+  if (hasHeader) {
+    const det = detectMasterMapping(headers);
     for (const f of MASTER_FIELDS) {
-      const hdr = mapping[f.key];
-      idxByField[f.key] = hdr ? firstCells.findIndex(c => c === hdr) : -1;
+      const h = det[f.key];
+      m[f.key] = h ? headers.indexOf(h) : -1;
     }
-    return lines.slice(1).map(line => {
-      const cells = splitPasteLine(line);
-      const row = emptyRow();
-      for (const f of MASTER_FIELDS) {
-        const i = idxByField[f.key];
-        if (i >= 0 && cells[i] != null) row[f.key] = String(cells[i]).trim();
-      }
-      return row;
-    }).filter(r => !isRowEmpty(r));
+  } else {
+    MASTER_FIELDS.forEach((f, i) => { m[f.key] = i < headers.length ? i : -1; });
   }
+  return m;
+}
 
-  // No header — positional mapping in field order.
-  return lines.map(line => {
-    const cells = splitPasteLine(line);
+// Build canonical master rows from the data rows + a field→column map.
+function rowsFromMapping(dataRows, mapping) {
+  return dataRows.map(cells => {
     const row = emptyRow();
-    MASTER_FIELDS.forEach((f, i) => { if (cells[i] != null) row[f.key] = String(cells[i]).trim(); });
+    for (const f of MASTER_FIELDS) {
+      const i = mapping[f.key];
+      if (i != null && i >= 0 && cells[i] != null) row[f.key] = String(cells[i]).trim();
+    }
     return row;
   }).filter(r => !isRowEmpty(r));
 }
@@ -121,6 +142,8 @@ export function MasterSiteListView() {
   const [companyFilter, setCompanyFilter] = useState(ALL);
   const [showPaste, setShowPaste] = useState(false);
   const [pasteText, setPasteText] = useState('');
+  // Column-matching popup: { cells, hasHeader, mapping } once text is parsed.
+  const [matcher, setMatcher] = useState(null);
   const [busy, setBusy] = useState('');
   const [colWidths, setColWidths] = useState(() => readJsonLs(WIDTHS_LS_KEY, {}));
   const [hiddenCols, setHiddenCols] = useState(() => new Set(readJsonLs(HIDDEN_LS_KEY, [])));
@@ -259,13 +282,46 @@ export function MasterSiteListView() {
     return added;
   }
 
-  function doPaste() {
-    const parsed = parsePastedRows(pasteText);
-    if (!parsed.length) { alert('No rows found in the pasted text.'); return; }
-    const added = appendDeduped(parsed);
+  // Step 1 → 2: parse the pasted text into a grid and open the column
+  // matcher with a best-guess field→column mapping.
+  function openMatcher() {
+    const cells = parsePasteCells(pasteText);
+    if (!cells.length) { alert('No rows found in the pasted text.'); return; }
+    const hasHeader = cells.length > 1 && looksLikeHeaderRow(cells[0]);
+    const headers = headersFromCells(cells, hasHeader);
+    setMatcher({ cells, hasHeader, mapping: defaultMapping(headers, hasHeader) });
     setShowPaste(false);
+  }
+
+  function setMatcherHasHeader(hasHeader) {
+    setMatcher(m => {
+      if (!m) return m;
+      const headers = headersFromCells(m.cells, hasHeader);
+      return { ...m, hasHeader, mapping: defaultMapping(headers, hasHeader) };
+    });
+  }
+
+  function setFieldColumn(fieldKey, colIndex) {
+    setMatcher(m => (m ? { ...m, mapping: { ...m.mapping, [fieldKey]: colIndex } } : m));
+  }
+
+  // Step 2 commit: build rows from the chosen mapping and add any that
+  // aren't already in the list.
+  function applyMatcher() {
+    if (!matcher) return;
+    const { cells, hasHeader, mapping } = matcher;
+    if (!Object.values(mapping).some(i => i != null && i >= 0)) {
+      alert('Map at least one column before adding.');
+      return;
+    }
+    const dataRows = hasHeader ? cells.slice(1) : cells;
+    const parsed = rowsFromMapping(dataRows, mapping);
+    if (!parsed.length) { alert('No non-empty rows to add with the current column matching.'); return; }
+    const added = appendDeduped(parsed);
+    const skipped = parsed.length - added;
+    setMatcher(null);
     setPasteText('');
-    setBusy(`Added ${added} row${added === 1 ? '' : 's'} (skipped ${parsed.length - added} duplicate${parsed.length - added === 1 ? '' : 's'}).`);
+    setBusy(`Added ${added} new site${added === 1 ? '' : 's'}${skipped ? ` (skipped ${skipped} already in the list)` : ''}.`);
   }
 
   async function onFile(e) {
@@ -530,8 +586,9 @@ export function MasterSiteListView() {
           <div className={styles.modal} onClick={e => e.stopPropagation()}>
             <h3 className={styles.modalTitle}>Paste sites</h3>
             <p className={styles.modalText}>
-              Paste rows copied from Excel or Sheets. Columns:{' '}
-              <strong>{CANONICAL_HEADERS.join(' · ')}</strong>. A header row is auto-detected; otherwise columns are read in that order.
+              Paste rows copied from Excel or Sheets (any column order). The next
+              step lets you match each pasted column to a field. New rows are
+              added to the list; rows already present are skipped.
             </p>
             <textarea
               className={styles.textarea}
@@ -542,11 +599,59 @@ export function MasterSiteListView() {
             />
             <div className={styles.modalActions}>
               <button className={styles.btn} onClick={() => { setShowPaste(false); setPasteText(''); }}>Cancel</button>
-              <button className={styles.btnPrimary} onClick={doPaste}>Add Rows</button>
+              <button className={styles.btnPrimary} onClick={openMatcher} disabled={!pasteText.trim()}>Next: Match Columns →</button>
             </div>
           </div>
         </div>
       )}
+
+      {matcher && (() => {
+        const headers = headersFromCells(matcher.cells, matcher.hasHeader);
+        const dataRows = matcher.hasHeader ? matcher.cells.slice(1) : matcher.cells;
+        const sample = dataRows[0] || [];
+        return (
+          <div className={styles.modalBackdrop} onClick={() => setMatcher(null)}>
+            <div className={styles.modalWide} onClick={e => e.stopPropagation()}>
+              <h3 className={styles.modalTitle}>Match columns</h3>
+              <p className={styles.modalText}>
+                Choose which pasted column fills each field. {dataRows.length} data
+                row{dataRows.length === 1 ? '' : 's'} detected.
+              </p>
+              <label className={styles.checkRow}>
+                <input
+                  type="checkbox"
+                  checked={matcher.hasHeader}
+                  onChange={e => setMatcherHasHeader(e.target.checked)}
+                />
+                First pasted row is a header row
+              </label>
+              <div className={styles.mapGrid}>
+                {MASTER_FIELDS.map(f => (
+                  <div key={f.key} className={styles.mapRow}>
+                    <span className={styles.mapField}>{f.label}</span>
+                    <select
+                      className={styles.select}
+                      value={matcher.mapping[f.key] ?? -1}
+                      onChange={e => setFieldColumn(f.key, Number(e.target.value))}
+                    >
+                      <option value={-1}>— Not mapped —</option>
+                      {headers.map((h, idx) => (
+                        <option key={idx} value={idx}>
+                          {h}{sample[idx] ? ` — e.g. "${String(sample[idx]).slice(0, 24)}"` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+              <div className={styles.modalActions}>
+                <button className={styles.btn} onClick={() => { setMatcher(null); setShowPaste(true); }}>← Back</button>
+                <button className={styles.btnPrimary} onClick={applyMatcher}>Add Rows</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
