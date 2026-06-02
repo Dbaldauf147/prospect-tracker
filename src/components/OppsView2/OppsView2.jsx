@@ -545,20 +545,28 @@ function easternWallToUtcMs(year, month, day, hour, minute) {
   return guess + (guess - obs);
 }
 
-// Midnight (00:00) America/New_York at the start of the current Eastern
-// day. The No-Further-Action-Today auto-clear uses this as its cutoff,
-// so every mark made on a previous day clears at the start of the new
-// day, while a mark made today persists until the next midnight.
-function startOfTodayEasternMs(nowMs = Date.now()) {
+// The most recent 2 PM (14:00) America/New_York boundary. The
+// No-Further-Action-Today auto-clear uses this as its cutoff: every X
+// marked before today's 2 PM Eastern clears at 2 PM, while a mark made
+// after 2 PM persists until 2 PM the next day. Before 2 PM Eastern the
+// boundary is yesterday's 2 PM, so overnight marks stay until 2 PM.
+function mostRecent2pmEasternMs(nowMs = Date.now()) {
   const fmt = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/New_York',
-    year: 'numeric', month: '2-digit', day: '2-digit',
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hour12: false,
   });
-  const parts = {};
-  for (const p of fmt.formatToParts(new Date(nowMs))) {
-    if (p.type !== 'literal') parts[p.type] = p.value;
-  }
-  return easternWallToUtcMs(Number(parts.year), Number(parts.month), Number(parts.day), 0, 0);
+  const readParts = (ms) => {
+    const out = {};
+    for (const p of fmt.formatToParts(new Date(ms))) {
+      if (p.type !== 'literal') out[p.type] = p.value;
+    }
+    return out;
+  };
+  let parts = readParts(nowMs);
+  // Before 2 PM Eastern, the active boundary is yesterday's 2 PM — read
+  // the calendar date from ~24h earlier so DST never skews the day.
+  if ((Number(parts.hour) % 24) < 14) parts = readParts(nowMs - 24 * 60 * 60 * 1000);
+  return easternWallToUtcMs(Number(parts.year), Number(parts.month), Number(parts.day), 14, 0);
 }
 
 // Values the Opps Google sheet uses to mean "no data" in cells where
@@ -4845,14 +4853,14 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     });
   }, []);
 
-  // Sweep stale "No Further Action Today" X's. The rule is: at the
-  // start of each Eastern day, every row whose NFAT was marked BEFORE
-  // today's Eastern midnight gets cleared back to blank. We re-run the
-  // sweep on mount and every minute the tab is open, so a tab left open
-  // across midnight still self-clears without a reload.
+  // Sweep stale "No Further Action Today" X's. The rule is: every row
+  // whose NFAT was marked BEFORE the most recent 2 PM Eastern boundary
+  // gets cleared back to blank — so X's reset at 2 PM each day. We re-run
+  // the sweep on mount and every minute the tab is open, so a tab left
+  // open across 2 PM self-clears without a reload.
   useEffect(() => {
     const sweep = () => {
-      const cutoff = startOfTodayEasternMs();
+      const cutoff = mostRecent2pmEasternMs();
       setData(prev => {
         const records = prev?.records || [];
         let touched = false;
