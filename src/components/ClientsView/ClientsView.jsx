@@ -331,7 +331,7 @@ function normStatus(s) {
 function isClient(p) { return normStatus(p.status) === 'client'; }
 function isOldClient(p) { return normStatus(p.status) === 'old client'; }
 
-export function ClientsView({ prospects = [], cdmName, settings, updateSettings }) {
+export function ClientsView({ prospects = [], cdmName, settings, updateSettings, user }) {
   const [subtab, setSubtab] = useState(readSavedSubtab);
   function selectSubtab(key) {
     setSubtab(key);
@@ -718,7 +718,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings 
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
         {subtabBar}
-        <DealsView settings={settings} updateSettings={updateSettings} prospects={prospects} cdmName={cdmName} />
+        <DealsView settings={settings} updateSettings={updateSettings} prospects={prospects} cdmName={cdmName} user={user} />
       </div>
     );
   }

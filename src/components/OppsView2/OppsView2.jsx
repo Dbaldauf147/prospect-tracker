@@ -2279,7 +2279,7 @@ function NotSoldFollowUpModal({ opp, reasonOptions, onSave, onClose }) {
 // Competition). The Close Date is set automatically to the date of the
 // status change (see updateOppField) and shown here read-only so the
 // user knows it was captured. Mirrors the NotSoldFollowUpModal pattern.
-function SoldFollowUpModal({ opp, reasonOptions, onSave, onClose }) {
+function SoldFollowUpModal({ opp, reasonOptions, competitionOptions, onSave, onClose }) {
   const [reason, setReason] = useState(String(opp?.['Reason Not Sold'] ?? ''));
   const [finalMargin, setFinalMargin] = useState(String(opp?.['Final Margin'] ?? ''));
   const [competition, setCompetition] = useState(String(opp?.['Competition'] ?? ''));
@@ -2367,16 +2367,16 @@ function SoldFollowUpModal({ opp, reasonOptions, onSave, onClose }) {
           </div>
           <div>
             <label style={labelStyle}>Competition</label>
-            <input
-              type="text"
+            <select
               value={competition}
               onChange={(e) => setCompetition(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') { e.preventDefault(); handleSave(); }
-              }}
-              placeholder="Who else was bidding?"
               style={inputStyle}
-            />
+            >
+              <option value="">— Select —</option>
+              {competitionOptions.map(o => (
+                <option key={o} value={o}>{o}</option>
+              ))}
+            </select>
           </div>
         </div>
 
@@ -5796,6 +5796,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           <SoldFollowUpModal
             opp={opp}
             reasonOptions={listRegistry.get('reasonNotSold')?.options || []}
+            competitionOptions={listRegistry.get('competition')?.options || []}
             onSave={({ reason, finalMargin, competition }) => {
               // Only push fields whose value actually changed so the
               // undo stack stays uncluttered with no-op snapshots.
