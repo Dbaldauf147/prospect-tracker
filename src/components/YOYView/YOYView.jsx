@@ -39,6 +39,15 @@ function parseYear(v) {
   return n >= 1900 && n <= 2100 ? n : null;
 }
 
+// Calendar year of a Close Date string (e.g. "6/1/2026" or "2026-06-01").
+// Returns null when the value is empty or unparseable.
+function parseDateYear(v) {
+  const ts = Date.parse(v);
+  if (Number.isNaN(ts)) return null;
+  const y = new Date(ts).getFullYear();
+  return Number.isFinite(y) && y >= 1900 && y <= 2100 ? y : null;
+}
+
 const MONTH_LABELS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 // Quoted Projections runs on a Dec-to-Nov fiscal year, starting in
@@ -542,48 +551,79 @@ export function YOYView() {
     return { years: rows, topAccounts, colors };
   }, [records, yearRange, currentYear]);
 
-  // Annual Sales — Sold Quoted Amount per Open Year split into Current
-  // Client vs New Client buckets. Current Client classification mirrors
-  // the regex PipelineView uses (client|existing|renewal|cross-sell|
-  // expansion|upsell on the Lead Source value).
+  // Annual Sales — Sold Quoted Amount per *Close Date* year split into
+  // Current Client vs New Client buckets. Current Client classification
+  // mirrors the regex PipelineView uses (client|existing|renewal|
+  // cross-sell|expansion|upsell on the Lead Source value). Each bar also
+  // carries the list of deals that make up its total (`_deals`) so the
+  // hover panel can show — and the user can export — the contributors.
   const annualSalesData = useMemo(() => {
-    if (records.length === 0 || yearRange.length === 0) return [];
+    if (records.length === 0) return [];
     const CLIENT_RE = /client|existing|renewal|cross[\s-]?sell|expansion|upsell/i;
     const annualTarget = target > 0 ? target : DEFAULT_ANNUAL_TARGET;
-    const buckets = new Map();
-    for (const y of yearRange) {
-      buckets.set(y, { year: String(y), currentClient: 0, newClient: 0, _total: 0, _isProjected: false });
-    }
+    const dealFor = (r, y, src, amt) => ({
+      Account: String(r.Account || '').trim(),
+      'Close Date': r['Close Date'] || '',
+      Year: y,
+      'Lead Source': src,
+      'Client Bucket': CLIENT_RE.test(src) ? 'Current Client' : 'New Client',
+      'Quoted Amount': Math.round(amt),
+    });
+    // Collect Sold deals keyed by the year of their Close Date (falling
+    // back to Open Year if the Close Date is missing/unparseable), and
+    // track the min→max span so every year in between gets a bar.
+    const sold = [];
+    let minYear = currentYear, maxYear = currentYear, any = false;
     for (const r of records) {
       if (String(r.Stage || '').trim() !== 'Sold') continue;
-      const y = parseYear(r['Open Year']);
-      if (y === null || !buckets.has(y)) continue;
+      const y = parseDateYear(r['Close Date']) ?? parseYear(r['Open Year']);
+      if (y === null) continue;
       const amt = parseMoney(r['Quoted Amount']) || 0;
       const src = String(r['Lead Source'] || r['Source'] || '');
-      const row = buckets.get(y);
-      if (CLIENT_RE.test(src)) row.currentClient += amt;
-      else row.newClient += amt;
-      row._total += amt;
+      sold.push({ y, amt, isClient: CLIENT_RE.test(src), deal: dealFor(r, y, src, amt) });
+      any = true;
+      if (y < minYear) minYear = y;
+      if (y > maxYear) maxYear = y;
     }
+    if (!any) return [];
+    const buckets = new Map();
+    for (let y = minYear; y <= maxYear; y++) {
+      buckets.set(y, { year: String(y), currentClient: 0, newClient: 0, _total: 0, _isProjected: false, _deals: [] });
+    }
+    for (const s of sold) {
+      const row = buckets.get(s.y);
+      if (!row) continue;
+      if (s.isClient) row.currentClient += s.amt;
+      else row.newClient += s.amt;
+      row._total += s.amt;
+      row._deals.push(s.deal);
+    }
+    const sortDeals = (a, b) => b['Quoted Amount'] - a['Quoted Amount'] || a.Account.localeCompare(b.Account);
     const rows = Array.from(buckets.values()).map(r => ({
       ...r,
       currentClient: Math.round(r.currentClient),
       newClient: Math.round(r.newClient),
       _total: Math.round(r._total),
       pctQuota: annualTarget > 0 ? Math.round((r._total / annualTarget) * 100) : null,
+      _deals: r._deals.sort(sortDeals),
     }));
-    // Projected — current year Sold + Agreement Sent Quoted Amount.
+    // Projected — this year's Sold (by Close Date) plus Agreement Sent
+    // contracts opened this year that are expected to land.
     let projCurrent = 0, projNew = 0;
+    const projDeals = [];
     for (const r of records) {
-      const y = parseYear(r['Open Year']);
-      if (y !== currentYear) continue;
       const stage = String(r.Stage || '').trim();
       if (stage !== 'Sold' && stage !== 'Agreement Sent') continue;
+      const y = stage === 'Sold'
+        ? (parseDateYear(r['Close Date']) ?? parseYear(r['Open Year']))
+        : parseYear(r['Open Year']);
+      if (y !== currentYear) continue;
       const amt = parseMoney(r['Quoted Amount']) || 0;
       if (!amt) continue;
       const src = String(r['Lead Source'] || r['Source'] || '');
       if (CLIENT_RE.test(src)) projCurrent += amt;
       else projNew += amt;
+      projDeals.push({ ...dealFor(r, y, src, amt), Stage: stage });
     }
     const projTotal = projCurrent + projNew;
     rows.push({
@@ -593,9 +633,10 @@ export function YOYView() {
       _total: Math.round(projTotal),
       pctQuota: annualTarget > 0 ? Math.round((projTotal / annualTarget) * 100) : null,
       _isProjected: true,
+      _deals: projDeals.sort(sortDeals),
     });
     return rows;
-  }, [records, yearRange, currentYear, target]);
+  }, [records, currentYear, target]);
 
   // Deal Size — composed chart per Open Year:
   //   Deals (gray bars)     = count of closed opps (Sold + Not Sold)
@@ -868,10 +909,10 @@ export function YOYView() {
     // Row-3 chart contributors. Built from the same `records` loop in
     // a second pass so we don't disrupt the existing classifications.
     const topAccountsRecs = [];
-    const annualSalesRecs = [];
     const dealSizeRecs = [];
-    const CLIENT_RE = /client|existing|renewal|cross[\s-]?sell|expansion|upsell/i;
     const topSet = new Set(topAccountsData.topAccounts || []);
+    // Annual Sales contributors are carried per-bar on annualSalesData
+    // (`_deals`, bucketed by Close Date), so they aren't rebuilt here.
     for (const r of records) {
       const oy = parseYear(r['Open Year']);
       if (oy === null) continue;
@@ -879,20 +920,12 @@ export function YOYView() {
       const stage = String(r.Stage || '').trim();
       const closedStage = (stage === 'Sold' || stage === 'Not Sold');
       const amt = parseMoney(r['Quoted Amount']);
-      const src = String(r['Lead Source'] || r['Source'] || '').trim();
       if (stage === 'Sold') {
         topAccountsRecs.push({
           Account: account,
           'Open Year': oy,
           'Quoted Amount': amt ?? '',
           'Top-4 Bucket': topSet.has(account) ? account : 'Remaining',
-        });
-        annualSalesRecs.push({
-          Account: account,
-          'Open Year': oy,
-          'Lead Source': src,
-          'Client Bucket': CLIENT_RE.test(src) ? 'Current Client' : 'New Client',
-          'Quoted Amount': amt ?? '',
         });
       }
       if (closedStage) {
@@ -908,11 +941,10 @@ export function YOYView() {
       }
     }
     topAccountsRecs.sort((a, b) => a['Open Year'] - b['Open Year'] || a.Account.localeCompare(b.Account));
-    annualSalesRecs.sort((a, b) => a['Open Year'] - b['Open Year'] || a.Account.localeCompare(b.Account));
     dealSizeRecs.sort((a, b) => a['Open Year'] - b['Open Year'] || a.Account.localeCompare(b.Account));
     return {
       leads, quoted, closeRate, leadSources, quotedByYear, notSolds,
-      topAccounts: topAccountsRecs, annualSales: annualSalesRecs, dealSize: dealSizeRecs,
+      topAccounts: topAccountsRecs, dealSize: dealSizeRecs,
     };
   }, [records, currentYear, topAccountsData]);
 
@@ -1022,10 +1054,24 @@ export function YOYView() {
       'Annual Target ($)': annualTarget,
       '% Quota': r.pctQuota == null ? '' : r.pctQuota,
     }));
+    // Contributing deals come straight from each actual bar's `_deals`
+    // so the export matches the Close-Date bucketing shown in the chart.
+    const contributing = annualSalesData
+      .filter(r => !r._isProjected)
+      .flatMap(r => r._deals);
     const wb = XLSX.utils.book_new();
     appendSheet(wb, 'Annual Sales', summary);
-    appendSheet(wb, 'Contributing Opps', contributingRecords.annualSales);
+    appendSheet(wb, 'Contributing Deals', contributing);
     XLSX.writeFile(wb, `yoy-annual-sales-${todayStamp()}.xlsx`);
+  }
+  // Export just the deals behind a single year's bar (triggered by
+  // clicking that bar in the chart).
+  function downloadAnnualSalesYear(row) {
+    if (!row || !Array.isArray(row._deals) || row._deals.length === 0) return;
+    const wb = XLSX.utils.book_new();
+    appendSheet(wb, `Sold ${row.year}`, row._deals);
+    const tag = String(row.year).toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    XLSX.writeFile(wb, `yoy-annual-sales-${tag}-${todayStamp()}.xlsx`);
   }
   function downloadCommissions() {
     const summary = commissionsData.map(r => ({
@@ -1088,7 +1134,7 @@ export function YOYView() {
         </div>
         <div className={styles.row}>
           <TopAccountsCard data={topAccountsData} hasOpps={hasOpps} onDownload={downloadTopAccounts} />
-          <AnnualSalesCard data={annualSalesData} hasOpps={hasOpps} target={target} onDownload={downloadAnnualSales} />
+          <AnnualSalesCard data={annualSalesData} hasOpps={hasOpps} target={target} onDownload={downloadAnnualSales} onExportYear={downloadAnnualSalesYear} />
           <DealSizeCard data={dealSizeData} hasOpps={hasOpps} onDownload={downloadDealSize} />
         </div>
         <div className={styles.row}>
@@ -1224,6 +1270,21 @@ function CalcContent({ payload, label, labelText, valueFormat, explain }) {
             </div>
           ) : null}
           {info.note ? <span className={styles.calcDockNote}>{info.note}</span> : null}
+        </div>
+      ) : null}
+      {Array.isArray(info?.deals) && info.deals.length > 0 ? (
+        <div className={styles.calcDockDeals}>
+          <div className={styles.calcDockDealsHead}>
+            {info.deals.length} deal{info.deals.length === 1 ? '' : 's'}
+          </div>
+          <div className={styles.calcDockDealsList}>
+            {info.deals.map((d, i) => (
+              <span key={i} className={styles.calcDockDeal}>
+                <span className={styles.calcDockDealAcct}>{d.Account || '—'}</span>
+                <span className={styles.calcDockDealVal}>{fmtMoneyLabel(d['Quoted Amount']) || '$0'}</span>
+              </span>
+            ))}
+          </div>
         </div>
       ) : null}
     </div>
@@ -1834,10 +1895,14 @@ function TopAccountsCard({ data, hasOpps, onDownload }) {
   );
 }
 
-function AnnualSalesCard({ data, hasOpps, target, onDownload }) {
+function AnnualSalesCard({ data, hasOpps, target, onDownload, onExportYear }) {
   const hasAny = data.some(r => r._total > 0);
   const annualTarget = target > 0 ? target : DEFAULT_ANNUAL_TARGET;
   const { hidden, legendProps } = useInteractiveLegend();
+  const handleBarClick = (state) => {
+    const row = state?.activePayload?.[0]?.payload;
+    if (row && Array.isArray(row._deals) && row._deals.length > 0) onExportYear?.(row);
+  };
   return (
     <div className={styles.chartCard}>
       <ChartHeader title="Annual Sales" onDownload={onDownload} canDownload={hasOpps && hasAny} />
@@ -1847,7 +1912,7 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload }) {
         <div className={styles.empty}>No Sold opps with a Quoted Amount yet.</div>
       ) : (
         <ResponsiveContainer width="100%" height={320}>
-          <BarChart data={data} margin={{ top: 48, right: 8, left: 16, bottom: 4 }}>
+          <BarChart data={data} margin={{ top: 48, right: 8, left: 16, bottom: 4 }} onClick={handleBarClick} style={{ cursor: 'pointer' }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
             <XAxis dataKey="year" interval={0} tick={{ fontSize: 12 }} />
             <YAxis
@@ -1856,10 +1921,10 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload }) {
             />
             <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
-                labelText={(label, row) => row._isProjected ? 'Projected (Sold + Agreement Sent)' : `Year ${label}`}
+                labelText={(label, row) => row._isProjected ? 'Projected (Sold + Agreement Sent)' : `Sold in ${label}`}
                 valueFormat={(v, name) => (name === '% Quota' ? `${v}%` : (v ? fmtMoneyLabel(v) : '$0'))}
                 explain={(row) => ({
-                  formula: 'Sold Quoted Amount for this year, split Current vs New Client by the Lead Source text. % Quota = Total Sold ÷ annual target.',
+                  formula: 'Sold Quoted Amount bucketed by the year of the Close Date, split Current vs New Client by the Lead Source text. % Quota = Total Sold ÷ annual target.',
                   inputs: [
                     { label: 'Current Client', value: row.currentClient ? fmtMoneyLabel(row.currentClient) : '$0' },
                     { label: 'New Client', value: row.newClient ? fmtMoneyLabel(row.newClient) : '$0' },
@@ -1867,7 +1932,10 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload }) {
                     { label: 'Annual target', value: fmtMoneyLabel(annualTarget) },
                     { label: '% Quota', value: row.pctQuota == null ? '—' : `${row.pctQuota}%` },
                   ],
-                  note: row._isProjected ? 'Projected = current-year Sold + Agreement Sent Quoted $.' : null,
+                  deals: row._deals || [],
+                  note: row._isProjected
+                    ? 'Projected = current-year Sold (by Close Date) + Agreement Sent Quoted $. Click the bar to export these deals to Excel.'
+                    : 'Click the bar to export these deals to Excel.',
                 })}
               />
             } />

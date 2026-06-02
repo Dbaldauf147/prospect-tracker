@@ -321,6 +321,47 @@
   color: var(--color-text-muted);
 }
 
+/* Annual Sales — list of the deals that make up the hovered bar's total,
+   shown in the docked panel. Wraps and scrolls so a busy year never
+   pushes the strip too tall. */
+.calcDockDeals {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  flex: 1 1 100%;
+  padding-top: 0.3rem;
+  margin-top: 0.1rem;
+  border-top: 1px dashed var(--color-border);
+}
+
+.calcDockDealsHead {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--color-text-muted);
+}
+
+.calcDockDealsList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.15rem 0.9rem;
+  max-height: 84px;
+  overflow-y: auto;
+}
+
+.calcDockDeal {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.3rem;
+}
+
+.calcDockDealAcct { color: var(--color-text); }
+
+.calcDockDealVal {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+}
+
 /* Quoted Projections — "Edit values" control row + editor modal. */
 .quotedEditRow {
   display: flex;
