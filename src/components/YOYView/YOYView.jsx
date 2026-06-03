@@ -689,23 +689,30 @@ export function YOYView() {
       pctQuota: annualTarget > 0 ? Math.round((r._total / annualTarget) * 100) : null,
       _deals: r._deals.sort(sortDeals),
     }));
-    // Projected — this year's Sold (by Close Date) plus Agreement Sent
-    // contracts opened this year that are expected to land.
+    // Projected — this year's Sold deals plus every still-open opp in the
+    // strong pipeline: Stage "Agreement Sent" or a "Quoted Expected" chance
+    // (Chance? = Expected). Closed/Not-Sold opps and prior-year Sold are
+    // excluded; Sold is counted once here, so the pipeline branch skips
+    // closed stages to avoid double-counting.
     let projCurrent = 0, projNew = 0;
     const projDeals = [];
     for (const r of records) {
       const stage = String(r.Stage || '').trim();
-      if (stage !== 'Sold' && stage !== 'Agreement Sent') continue;
-      const y = stage === 'Sold'
-        ? (parseDateYear(r['Close Date']) ?? parseYear(r['Open Year']))
-        : parseYear(r['Open Year']);
-      if (y !== currentYear) continue;
       const amt = parseMoney(r['Quoted Amount']) || 0;
       if (!amt) continue;
+      let include = false;
+      if (stage === 'Sold') {
+        const y = parseDateYear(r['Close Date']) ?? parseYear(r['Open Year']);
+        include = y === currentYear;
+      } else if (!CLOSED_STAGES.has(stage)) {
+        const chance = String(r['Chance?'] ?? r['Chance'] ?? '').trim().toLowerCase();
+        include = stage === 'Agreement Sent' || chance === 'expected';
+      }
+      if (!include) continue;
       const src = String(r['Lead Source'] || r['Source'] || '');
       if (CLIENT_RE.test(src)) projCurrent += amt;
       else projNew += amt;
-      projDeals.push({ ...dealFor(r, y, src, amt), Stage: stage });
+      projDeals.push({ ...dealFor(r, currentYear, src, amt), Stage: stage });
     }
     const projTotal = projCurrent + projNew;
     rows.push({
@@ -1129,7 +1136,7 @@ export function YOYView() {
     const annualTarget = target > 0 ? target : DEFAULT_ANNUAL_TARGET;
     const summary = annualSalesData.map(r => ({
       Year: r.year,
-      Type: r._isProjected ? 'Projected (Sold + Agreement Sent)' : 'Actual',
+      Type: r._isProjected ? 'Projected (Sold + Agreement Sent + Quoted Expected)' : 'Actual',
       'Current Client ($)': r.currentClient,
       'New Client ($)': r.newClient,
       'Total Sold ($)': r._total,
@@ -2034,7 +2041,7 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload, onExportYear }) {
             />
             <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
-                labelText={(label, row) => row._isProjected ? 'Projected (Sold + Agreement Sent)' : `Sold in ${label}`}
+                labelText={(label, row) => row._isProjected ? 'Projected (Sold + Agreement Sent + Quoted Expected)' : `Sold in ${label}`}
                 valueFormat={(v, name) => (name === '% Quota' ? `${v}%` : (v ? fmtMoneyLabel(v) : '$0'))}
                 explain={(row) => ({
                   formula: 'Sold Quoted Amount bucketed by the year of the Close Date, split Current vs New Client by the Lead Source text. % Quota = Total Sold ÷ annual target.',
@@ -2047,7 +2054,7 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload, onExportYear }) {
                   ],
                   deals: row._deals || [],
                   note: row._isProjected
-                    ? 'Projected = current-year Sold (by Close Date) + Agreement Sent Quoted $. Click the bar to export these deals to Excel.'
+                    ? 'Projected = this year’s Sold (by Close Date) + every open opp that is Agreement Sent or Quoted Expected (Chance = Expected). Click the bar to export these deals to Excel.'
                     : 'Click the bar to export these deals to Excel.',
                 })}
               />
