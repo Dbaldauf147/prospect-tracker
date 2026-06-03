@@ -1,12 +1,9 @@
 import { Component, useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import { apiFetch } from '../../utils/apiFetch';
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotCache, updateHubspotCache } from '../../utils/hubspotContactsCache';
-import { dbGet } from '../../utils/db';
 import { userLsGet } from '../../utils/userLs';
-import { loadOppsFromCache } from '../../utils/oppsCache';
+import { loadOpps2Newest } from '../../utils/opps2Store';
 import { formatAum } from '../../utils/formatters';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
 import { buildCompanyGuessIndex, guessCompanyForContact } from '../../utils/companyGuess';
@@ -369,28 +366,18 @@ export function useOppsRecords(userId) {
   const [records, setRecords] = useState([]);
   useEffect(() => {
     let cancelled = false;
-    async function loadFromIndexedDB() {
-      try { const data = await loadOppsFromCache(); return data?.records || null; } catch { return null; }
-    }
-    async function loadFromFirestore() {
-      // Opps 2 is the canonical store now — fall back to its
-      // Firestore doc when the local IDB cache is empty (e.g. fresh
-      // browser, never opened Opps 2 here yet).
-      if (!userId) return null;
-      try {
-        const ref = doc(db, 'opps2Data', userId);
-        const snap = await getDoc(ref);
-        if (!snap.exists()) return null;
-        const raw = snap.data();
-        if (!raw?.json) return null;
-        const parsed = JSON.parse(raw.json);
-        return parsed?.records || null;
-      } catch { return null; }
-    }
     (async () => {
-      let recs = await loadFromIndexedDB();
-      if (!recs || recs.length === 0) recs = await loadFromFirestore();
-      if (!cancelled && recs && recs.length > 0) setRecords(recs);
+      // Read the canonical Opps 2 store the way the rest of the app does:
+      // the strictly-newer of the local IndexedDB cache and the Firestore
+      // doc, with Firestore's chunked payload reassembled. The inline
+      // reader this replaced only read the doc's `json` field and bailed
+      // when the doc was chunked (large datasets), and it always preferred
+      // local IDB even when Firestore was newer.
+      try {
+        const data = await loadOpps2Newest(userId);
+        const recs = Array.isArray(data?.records) ? data.records : null;
+        if (!cancelled && recs && recs.length > 0) setRecords(recs);
+      } catch { /* leave records empty on failure */ }
     })();
     return () => { cancelled = true; };
   }, [userId]);
