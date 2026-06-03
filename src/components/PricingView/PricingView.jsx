@@ -4095,11 +4095,17 @@ export function PricingView({ settings } = {}) {
                 await setOppPricingSnapshot(user?.uid, oppId, snapshot);
                 setPricingPickerOpen(false);
               } catch (err) {
-                console.error('Save to Opp (Pricing): snapshot save failed', err);
+                console.error('Save to Opp (Pricing): snapshot save failed', { err, uid: user?.uid, oppId });
+                const denied = err?.code === 'permission-denied'
+                  || /insufficient permissions/i.test(err?.message || '');
                 window.alert(
                   'Saved the link, but the Pricing snapshot failed to save to Firestore. ' +
-                  'Year 1 fees and the saved details may not appear on the Opp. ' +
-                  'Check your network and try again.\n\n' +
+                  'Year 1 fees and the saved details may not appear on the Opp.\n\n' +
+                  (denied
+                    ? 'Firestore denied the write (permission error) — this is a security-rules issue, not your network. '
+                      + 'The deployed rules need to allow the opps2Data document for your account.'
+                    : 'Check your network and try again.') +
+                  '\n\n' +
                   (err?.message || String(err))
                 );
               }
