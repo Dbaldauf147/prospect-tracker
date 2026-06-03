@@ -56,6 +56,7 @@ const PROGRESS_FIELDS = [
   { key: 'Setup', label: 'Setup' },
   { key: 'Recurring Revenue', label: 'Recurring' },
   { key: 'Commission', label: 'Commission' },
+  { key: '__siaUploadedToBFO', label: 'SIA line items uploaded to BFO?', yesno: true },
 ];
 
 function normClient(s) { return String(s || '').toLowerCase().trim(); }
@@ -72,6 +73,15 @@ function isFilled(v) {
   if (s === '') return false;
   if (DASH_PLACEHOLDERS.has(s)) return false;
   return true;
+}
+
+// Completion test for a single handoff field. Yes/No fields only count
+// as done when the answer is an explicit "Yes" — a "No" is a real
+// answer but still an outstanding handoff step. Every other field
+// counts as done once it carries any real value.
+function isFieldDone(row, field) {
+  if (field?.yesno) return String(row[field.key] ?? '').trim().toLowerCase() === 'yes';
+  return isFilled(row[field.key]);
 }
 
 // Days/Paid on stores a per-row "hide" flag under a double-underscore
@@ -284,12 +294,14 @@ function ProgressTextEditor({ value, onCommit }) {
 // (Single / Multi select) or left it as free text.
 function ProgressPopoverRow({ row, field, columnLinks, listRegistry, onSave }) {
   const raw = row[field.key];
-  const filled = isFilled(raw);
+  const filled = isFieldDone(row, field);
   const link = resolveColumnLink(field.key, columnLinks);
   const onChange = (v) => onSave?.(row.id, field.key, v);
 
   let editor;
-  if (link) {
+  if (field.yesno) {
+    editor = <SelectCell value={raw} onChange={onChange} options={['Yes', 'No']} />;
+  } else if (link) {
     const opts = listRegistry?.get(link.listKey)?.options || [];
     editor = link.mode === 'multi'
       ? <MultiSelectCell value={raw} onChange={onChange} options={opts} />
@@ -341,7 +353,7 @@ function ProgressCell({ row, columnLinks, listRegistry, onSave, onDelete }) {
   const btnRef = useRef(null);
 
   const ignored = isFilled(row[PROGRESS_IGNORED_KEY]);
-  const done = PROGRESS_FIELDS.filter(f => isFilled(row[f.key])).length;
+  const done = PROGRESS_FIELDS.filter(f => isFieldDone(row, f)).length;
   const total = PROGRESS_FIELDS.length;
   const pct = total === 0 ? 0 : done / total;
   // Greyed-out pill when the user has opted this deal out of the
@@ -1269,7 +1281,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
       ),
       exportValue: (row) => {
         if (isFilled(row[PROGRESS_IGNORED_KEY])) return 'Ignored';
-        const done = PROGRESS_FIELDS.filter(f => isFilled(row[f.key])).length;
+        const done = PROGRESS_FIELDS.filter(f => isFieldDone(row, f)).length;
         return `${done}/${PROGRESS_FIELDS.length}`;
       },
       getFilterValue: () => '',
@@ -1395,7 +1407,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
   // column so the filter button stays in lockstep with the badge.
   const incompleteCount = useMemo(
     () => rows.filter(r => !isFilled(r[PROGRESS_IGNORED_KEY])
-      && PROGRESS_FIELDS.some(f => !isFilled(r[f.key]))).length,
+      && PROGRESS_FIELDS.some(f => !isFieldDone(r, f))).length,
     [rows]
   );
 
@@ -1410,7 +1422,7 @@ export function DealsView({ settings, updateSettings, prospects = [], cdmName, u
     if (onlyUnmapped) out = out.filter(isRowUnmapped);
     if (onlyIncomplete) {
       out = out.filter(r => !isFilled(r[PROGRESS_IGNORED_KEY])
-        && PROGRESS_FIELDS.some(f => !isFilled(r[f.key])));
+        && PROGRESS_FIELDS.some(f => !isFieldDone(r, f)));
     }
     return out;
   }, [search, rows, onlyUnmapped, onlyIncomplete, clientNameSet, clientMap, ignoreSet, clientOptions]);
