@@ -1870,6 +1870,12 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     let elecEstCost = 0, elecEstCostSites = 0;
     let gasActualCost = 0, gasActualCostSites = 0;
     let gasEstCost = 0, gasEstCostSites = 0;
+    // "Missing" = the site landed in neither the actual nor the
+    // estimated bucket, i.e. we have no consumption / cost figure for
+    // it at all. Tracked per commodity so the summary card can flag
+    // the data gap in red.
+    let elecMissingKwhSites = 0, gasMissingThermsSites = 0;
+    let elecMissingCostSites = 0, gasMissingCostSites = 0;
     let elecFromSupplier = 0, elecFromZip = 0, elecUnknown = 0;
     let gasFromSupplier = 0, gasFromZip = 0, gasUnknown = 0;
     for (const r of rows) {
@@ -1883,21 +1889,29 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         elecActualKwh += r.__kwh__; elecActualKwhSites++;
       } else if (r.__kwhFromEstimate__ && typeof r.__kwh__ === 'number' && Number.isFinite(r.__kwh__)) {
         elecEstKwh += r.__kwh__; elecEstKwhSites++;
+      } else {
+        elecMissingKwhSites++;
       }
       if (r.__thermsSource__ && typeof r.__therms__ === 'number' && Number.isFinite(r.__therms__)) {
         gasActualTherms += r.__therms__; gasActualThermsSites++;
       } else if (r.__thermsFromEstimate__ && typeof r.__therms__ === 'number' && Number.isFinite(r.__therms__)) {
         gasEstTherms += r.__therms__; gasEstThermsSites++;
+      } else {
+        gasMissingThermsSites++;
       }
       if (typeof r.__electricCostActual__ === 'number' && Number.isFinite(r.__electricCostActual__)) {
         elecActualCost += r.__electricCostActual__; elecActualCostSites++;
       } else if (typeof r.__electricCostEstimated__ === 'number' && Number.isFinite(r.__electricCostEstimated__)) {
         elecEstCost += r.__electricCostEstimated__; elecEstCostSites++;
+      } else {
+        elecMissingCostSites++;
       }
       if (typeof r.__gasCostActual__ === 'number' && Number.isFinite(r.__gasCostActual__)) {
         gasActualCost += r.__gasCostActual__; gasActualCostSites++;
       } else if (typeof r.__gasCostEstimated__ === 'number' && Number.isFinite(r.__gasCostEstimated__)) {
         gasEstCost += r.__gasCostEstimated__; gasEstCostSites++;
+      } else {
+        gasMissingCostSites++;
       }
       // Utility company provenance — vendor-match wins (the source
       // file named a supplier that resolved to a utility); else zip-
@@ -1912,12 +1926,12 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     return {
       total: rows.length,
       consumption: {
-        electric: { actual: elecActualKwh, actualSites: elecActualKwhSites, est: elecEstKwh, estSites: elecEstKwhSites },
-        gas:      { actual: gasActualTherms, actualSites: gasActualThermsSites, est: gasEstTherms, estSites: gasEstThermsSites },
+        electric: { actual: elecActualKwh, actualSites: elecActualKwhSites, est: elecEstKwh, estSites: elecEstKwhSites, missingSites: elecMissingKwhSites },
+        gas:      { actual: gasActualTherms, actualSites: gasActualThermsSites, est: gasEstTherms, estSites: gasEstThermsSites, missingSites: gasMissingThermsSites },
       },
       cost: {
-        electric: { actual: elecActualCost, actualSites: elecActualCostSites, est: elecEstCost, estSites: elecEstCostSites },
-        gas:      { actual: gasActualCost, actualSites: gasActualCostSites, est: gasEstCost, estSites: gasEstCostSites },
+        electric: { actual: elecActualCost, actualSites: elecActualCostSites, est: elecEstCost, estSites: elecEstCostSites, missingSites: elecMissingCostSites },
+        gas:      { actual: gasActualCost, actualSites: gasActualCostSites, est: gasEstCost, estSites: gasEstCostSites, missingSites: gasMissingCostSites },
       },
       utility: {
         electric: { fromSupplier: elecFromSupplier, fromZip: elecFromZip, unknown: elecUnknown },
@@ -8212,15 +8226,19 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
               <div style={cardTitleStyle}>Consumption</div>
               {sumLine(ELEC, 'Electric — Actual',    `${fmtInt(s.consumption.electric.actual)} kWh`,   `${s.consumption.electric.actualSites} site${s.consumption.electric.actualSites === 1 ? '' : 's'}`)}
               {sumLine(ELEC, 'Electric — Estimated', `${fmtInt(s.consumption.electric.est)} kWh`,      `${s.consumption.electric.estSites} site${s.consumption.electric.estSites === 1 ? '' : 's'}`)}
+              {sumLine(SLATE, 'Electric — Missing',  `${fmtInt(s.consumption.electric.missingSites)} sites`, null, s.consumption.electric.missingSites > 0)}
               {sumLine(GAS,  'Gas — Actual',         `${fmtInt(s.consumption.gas.actual)} therms`,     `${s.consumption.gas.actualSites} site${s.consumption.gas.actualSites === 1 ? '' : 's'}`)}
               {sumLine(GAS,  'Gas — Estimated',      `${fmtInt(s.consumption.gas.est)} therms`,        `${s.consumption.gas.estSites} site${s.consumption.gas.estSites === 1 ? '' : 's'}`)}
+              {sumLine(SLATE, 'Gas — Missing',       `${fmtInt(s.consumption.gas.missingSites)} sites`, null, s.consumption.gas.missingSites > 0)}
             </div>
             <div style={cardStyle}>
               <div style={cardTitleStyle}>Cost</div>
               {sumLine(ELEC, 'Electric — Actual',    formatMoney(s.cost.electric.actual), `${s.cost.electric.actualSites} site${s.cost.electric.actualSites === 1 ? '' : 's'}`)}
               {sumLine(ELEC, 'Electric — Estimated', formatMoney(s.cost.electric.est),    `${s.cost.electric.estSites} site${s.cost.electric.estSites === 1 ? '' : 's'}`)}
+              {sumLine(SLATE, 'Electric — Missing',  `${fmtInt(s.cost.electric.missingSites)} sites`, null, s.cost.electric.missingSites > 0)}
               {sumLine(GAS,  'Gas — Actual',         formatMoney(s.cost.gas.actual),      `${s.cost.gas.actualSites} site${s.cost.gas.actualSites === 1 ? '' : 's'}`)}
               {sumLine(GAS,  'Gas — Estimated',      formatMoney(s.cost.gas.est),         `${s.cost.gas.estSites} site${s.cost.gas.estSites === 1 ? '' : 's'}`)}
+              {sumLine(SLATE, 'Gas — Missing',       `${fmtInt(s.cost.gas.missingSites)} sites`, null, s.cost.gas.missingSites > 0)}
             </div>
             <div style={cardStyle}>
               <div style={cardTitleStyle} title="Source = the upload's supplier column named a utility we recognized. Zip lookup = no supplier in the source, utility derived from the rates file via zip code.">Utility Companies</div>
