@@ -69,6 +69,7 @@ import {
   countryGasRatePerTherm,
   normalizeCountryRateName,
 } from '../../data/countryRates';
+import { inferCountryFromLocation } from '../../data/locationCountryHints';
 import styles from './SitesView.module.css';
 
 const SITES_STORAGE_KEY = 'sites-list-override';
@@ -1027,6 +1028,15 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const elec = pickFirstConsumption(r, consumption.electric, toKwh, normalizeElectricUom(electricUomRaw));
       const gas = pickFirstConsumption(r, consumption.gas, toTherms, normalizeGasUom(gasUomRaw));
       const inputCountry = countryOverride ? String(r[countryOverride] || '').trim() : '';
+      const inputCity = cityOverride ? String(r[cityOverride] || '').trim() : '';
+      // Last-resort country inference. When the site has no US/CA state
+      // and no Country column / zip-file country, guess the country
+      // from its City / State-Province text so it still buckets by
+      // country for rates, market status, and the Indicative Savings
+      // export (which drops sites with neither a state nor a country).
+      const inferredCountry = (!state && !inputCountry && !match?.country)
+        ? inferCountryFromLocation({ city: inputCity, region: stateColInput })
+        : null;
       // Country-rate fallback. When the state rate didn't resolve
       // (non-US sites, or US sites whose state code we couldn't
       // derive), look up an indicative commercial rate from the
@@ -1034,7 +1044,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // as $/kWh directly; gas converts from $/kWh-equiv to $/therm
       // via the 29.3001 kWh/therm energy-content factor so the cost
       // helpers downstream stay shape-compatible.
-      const resolvedCountryForRate = inputCountry || match?.country || null;
+      const resolvedCountryForRate = inputCountry || match?.country || inferredCountry || null;
       const countryElectricRateVal = stateElectricRate == null
         ? countryElectricRate(resolvedCountryForRate)
         : null;
@@ -1209,8 +1219,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         __gasUtilityTokens__: gasUtilityTokens,
         __water__: match?.water,
         __address__: addressOverride ? String(r[addressOverride] || '').trim() || null : null,
-        __city__: (cityOverride ? String(r[cityOverride] || '').trim() : '') || match?.city,
-        __country__: inputCountry || match?.country,
+        __city__: inputCity || match?.city,
+        __country__: resolvedCountryForRate,
+        __countryInferred__: !inputCountry && !match?.country && !!inferredCountry,
         // Canonical US code when resolved (drives rates + deregulation
         // lookups); else the raw mapped value so non-US provinces still
         // display.
@@ -1377,7 +1388,13 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       render: (row) => {
         const val = row[`__${key}__`];
         if (!val) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
-        return <span style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)' }}>{val}</span>;
+        const inferred = key === 'country' && row.__countryInferred__;
+        return (
+          <span
+            title={inferred ? `Inferred from City / State-Province — no Country column was mapped. Indicative only; map a Country column to override.` : undefined}
+            style={{ fontSize: '0.72rem', color: 'var(--color-text-secondary)', fontStyle: inferred ? 'italic' : 'normal' }}
+          >{val}{inferred ? ' *' : ''}</span>
+        );
       },
       exportValue: (row) => row[`__${key}__`] ?? '',
     });
