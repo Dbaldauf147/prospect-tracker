@@ -2448,8 +2448,9 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
         row.height = 18;
       };
 
-      const addTable = (title, columns, rows /*, widths unused */) => {
+      const addTable = (title, columns, rows /*, widths unused */, opts = {}) => {
         addSectionHeader(title);
+        const highlightRow = typeof opts.highlightRow === 'function' ? opts.highlightRow : null;
         // Distribute the SPAN worksheet columns across this table's columns
         // so the whole table fills the full page width. Columns can declare
         // a widthRatio (e.g. 0.25 for a Service column); any missing ratios
@@ -2508,10 +2509,13 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
         hRow.height = 22;
 
         // Data rows
+        const HL_BG = 'FFFEF3C7';   // amber-100 — highlighted (top) row fill
+        const HL_TEXT = 'FF7C2D12'; // amber-900 — highlighted row text
         const dataRows = rows.length > 0 ? rows : [{}];
         dataRows.forEach((r, idx) => {
           const dRow = ws.addRow([]);
           const zebra = idx % 2 === 1;
+          const isHighlight = highlightRow ? highlightRow(r) : false;
           let maxLines = 1;
           slots.forEach((slot, i) => {
             const col = columns[i];
@@ -2523,16 +2527,22 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
               c.value = (n != null && !isNaN(n)) ? n : null;
               if (col.numFmt) c.numFmt = col.numFmt;
             } else {
-              c.value = (raw === '' || raw == null) ? null : raw;
+              // Star the highlighted row's first column so the top issue
+              // reads as "★ …" while staying in the same table.
+              const text = (raw === '' || raw == null) ? '' : String(raw);
+              const display = (isHighlight && i === 0) ? `★ ${text}`.trim() : text;
+              c.value = display === '' ? null : display;
             }
-            c.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+            c.font = { name: 'Nunito Sans', size: 10, bold: isHighlight, color: { argb: isHighlight ? HL_TEXT : SE_TEXT_DARK } };
             c.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
             c.border = borderAll;
-            if (zebra) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_SURFACE } };
+            if (isHighlight) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HL_BG } };
+            else if (zebra) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_SURFACE } };
             if (slot.end > slot.start) {
               ws.mergeCells(dRow.number, slot.start, dRow.number, slot.end);
             }
-            maxLines = Math.max(maxLines, estimateWrappedLines(raw, slotUnits(slot)));
+            const measure = (isHighlight && i === 0 && (raw != null && raw !== '')) ? `★ ${raw}` : raw;
+            maxLines = Math.max(maxLines, estimateWrappedLines(measure, slotUnits(slot)));
           });
           dRow.height = rowHeightForLines(maxLines);
         });
@@ -2812,62 +2822,20 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
             return out;
           });
         }
-        // Key Issues: lift the single starred row out and render it as
-        // a "★ THEIR TOP ISSUE" callout block above the regular table,
-        // styled in an amber palette so the top issue is impossible to
-        // miss in the export. Remaining issues fall through to the
-        // standard Key Issues table.
+        // Key Issues: keep the starred "top issue" inside the Key Issues
+        // table rather than lifting it into a separate callout above.
+        // Float it to the first row and flag it so addTable renders it
+        // with the amber highlight / ★ styling — same table, different
+        // formatting.
+        let addTableOpts;
         if (t.key === 'meetingNotes') {
           const starred = tableRows.find(r => r?.starred);
           if (starred) {
-            const TOP_BG = 'FFFEF3C7';     // amber-100
-            const TOP_BG_SOFT = 'FFFFFBEB'; // amber-50
-            const TOP_TEXT = 'FF7C2D12';   // amber-900
-            const labelRow = ws.addRow([]);
-            const labelCell = ws.getCell(labelRow.number, 1);
-            labelCell.value = '★ THEIR TOP ISSUE';
-            labelCell.font = { name: 'Nunito Sans', bold: true, size: 13, color: { argb: TOP_TEXT } };
-            labelCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TOP_BG } };
-            labelCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-            labelCell.border = borderAll;
-            ws.mergeCells(labelRow.number, 1, labelRow.number, SPAN);
-            labelRow.height = 22;
-            for (const col of t.columns) {
-              const row = ws.addRow([]);
-              const lc = ws.getCell(row.number, 1);
-              // Trim long instructional column labels like
-              // "Issue - Capture all issues (What else is there?)"
-              // down to just "Issue" / "Evidence" / "Impact" for the
-              // callout block.
-              lc.value = String(col.label || '').split(/\s*-\s*/)[0];
-              lc.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: TOP_TEXT } };
-              lc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TOP_BG_SOFT } };
-              lc.alignment = { vertical: 'top', horizontal: 'left', indent: 1, wrapText: true };
-              lc.border = borderAll;
-              ws.mergeCells(row.number, 1, row.number, 2);
-              const vc = ws.getCell(row.number, 3);
-              vc.value = starred[col.key] || '';
-              vc.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-              vc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TOP_BG_SOFT } };
-              vc.alignment = { vertical: 'top', horizontal: 'left', indent: 1, wrapText: true };
-              vc.border = borderAll;
-              ws.mergeCells(row.number, 3, row.number, SPAN);
-              let mergedWidth = 0;
-              for (let k = 3; k <= SPAN; k++) mergedWidth += colWidths[k - 1] || 0;
-              row.height = rowHeightForLines(estimateWrappedLines(starred[col.key] || '', mergedWidth));
-            }
-            tableRows = tableRows.filter(r => r !== starred);
-            // No remaining rows → skip the empty Key Issues table
-            // entirely; the callout above already says everything.
-            if (tableRows.length === 0) {
-              colWidths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
-              continue;
-            }
-            // Visual breathing room before the rest of the issues table
-            addBlankRow();
+            tableRows = [starred, ...tableRows.filter(r => r !== starred)];
+            addTableOpts = { highlightRow: (r) => r === starred };
           }
         }
-        addTable(t.label, t.columns, tableRows, widths);
+        addTable(t.label, t.columns, tableRows, widths, addTableOpts);
         // Restore defaults for next block
         colWidths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
       }
