@@ -2691,6 +2691,8 @@ export function PricingView({ settings } = {}) {
         if (typeof item.cts !== 'number') continue;
         const isMonthly = /recurring.*monthly|monthly.*recurring|^recurring/i.test(effectiveType(item));
         const unitAmount = item.cts * (isMonthly ? 12 : 1);
+        // Plain numbers, no currency formatting; skip zero-value line items.
+        if (unitAmount === 0) continue;
         lineRows.push([item.description || '', unitAmount.toFixed(2), 1]);
       }
     }
