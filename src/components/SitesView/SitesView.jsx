@@ -1004,7 +1004,13 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     return cleanSitesData.map((r, i) => {
       const zip = zipColumn ? normalizeZip(r[zipColumn]) : '';
       const match = utility?.zipMap && zip ? utility.zipMap[zip] : null;
-      const state = match?.state || zipToState(zip);
+      // State resolution for indicative rates + the deregulation map.
+      // Prefer the utility file's zip match, then the zip prefix, then
+      // a mapped State column — but only when that column normalizes to
+      // a real US state code, so international provinces ("Milan",
+      // "SP") don't false-map and still fall through to country rates.
+      const stateColInput = stateColumnOverride ? String(r[stateColumnOverride] || '').trim() : '';
+      const state = match?.state || zipToState(zip) || normalizeState(stateColInput);
       // Property type + customer segment resolve first: the segment
       // (commercial vs industrial) picks which state-rate column
       // applies. An explicit Segment column wins; otherwise infer it
@@ -1205,7 +1211,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         __address__: addressOverride ? String(r[addressOverride] || '').trim() || null : null,
         __city__: (cityOverride ? String(r[cityOverride] || '').trim() : '') || match?.city,
         __country__: inputCountry || match?.country,
-        __state__: (stateColumnOverride ? String(r[stateColumnOverride] || '').trim() : '') || state,
+        // Canonical US code when resolved (drives rates + deregulation
+        // lookups); else the raw mapped value so non-US provinces still
+        // display.
+        __state__: state || stateColInput || null,
         __propertyTypeRaw__: inputPropertyType || null,
         __propertyType__: canonicalPropertyType,
         __segment__: segment,
@@ -1494,9 +1503,13 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       label,
       defaultWidth: 120,
       render: (row) => {
-        if (!utility?.zipMap || !row.__matched__) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
         const providerName = row[`__${utilityKey}__`];
-        const classification = classifyUtility(providerName);
+        const providerClass = (utility?.zipMap && row.__matched__) ? classifyUtility(providerName) : null;
+        // Fall back to the state deregulation map when there's no
+        // recognized provider (e.g. no utility file loaded, US site
+        // resolved only by State column).
+        const fromState = !providerClass;
+        const classification = providerClass || classifyMarketByState(row.__state__, utilityKey);
         if (!classification) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
         const isRegulated = classification === 'Regulated';
         // Deregulated = green (opportunity), Regulated = orange.
@@ -1506,14 +1519,17 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         const ruleHint = isRegulated
           ? 'Municipal, public power, or cooperative — single-utility market.'
           : 'Competitive retail market — customers can choose a supplier.';
+        const basis = fromState
+          ? `Based on ${row.__state__ || 'state'} (no utility provider matched).`
+          : `Provider: ${providerName}`;
         return (
           <span
-            title={`${label}: ${classification}. ${ruleHint} Provider: ${providerName}`}
+            title={`${label}: ${classification}. ${ruleHint} ${basis}`}
             style={{ background: color.bg, border: `1px solid ${color.border}`, color: color.text, padding: '1px 8px', borderRadius: 999, fontSize: '0.7rem', fontWeight: 700, whiteSpace: 'nowrap' }}
-          >{classification}</span>
+          >{classification}{fromState ? '*' : ''}</span>
         );
       },
-      exportValue: (row) => classifyUtility(row[`__${utilityKey}__`]) || '',
+      exportValue: (row) => classifyMarket(row, utilityKey) || '',
     });
     const makeGacOpportunityCol = () => ({
       key: 'gac_opportunity',
@@ -1931,11 +1947,6 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     let elecMissingCostSites = 0, gasMissingCostSites = 0;
     let elecFromSupplier = 0, elecFromZip = 0, elecUnknown = 0;
     let gasFromSupplier = 0, gasFromZip = 0, gasUnknown = 0;
-    // Regulated vs deregulated market split, per commodity. Classified
-    // off the resolved utility provider; sites with no recognized
-    // provider (unmatched) fall into the "Unknown" bucket.
-    let elecReg = 0, elecDereg = 0, elecMktUnknown = 0;
-    let gasReg = 0, gasDereg = 0, gasMktUnknown = 0;
     for (const r of rows) {
       // __kwhFromEstimate__ / __thermsFromEstimate__ are BOOLEAN
       // flags ("did this value come from the property-type estimate
@@ -1980,17 +1991,6 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       if (r.__gasVendorMatchKind__ === 'utility') gasFromSupplier++;
       else if (r.__gas__) gasFromZip++;
       else gasUnknown++;
-      // Regulated / deregulated market split. classifyUtility returns
-      // null when there's no recognized provider — count those as
-      // Unknown so the three buckets always sum to the site total.
-      const elecMkt = classifyUtility(r.__electric__);
-      if (elecMkt === 'Regulated') elecReg++;
-      else if (elecMkt === 'Deregulated') elecDereg++;
-      else elecMktUnknown++;
-      const gasMkt = classifyUtility(r.__gas__);
-      if (gasMkt === 'Regulated') gasReg++;
-      else if (gasMkt === 'Deregulated') gasDereg++;
-      else gasMktUnknown++;
     }
     return {
       total: rows.length,
@@ -2005,10 +2005,6 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       utility: {
         electric: { fromSupplier: elecFromSupplier, fromZip: elecFromZip, unknown: elecUnknown },
         gas:      { fromSupplier: gasFromSupplier, fromZip: gasFromZip, unknown: gasUnknown },
-      },
-      market: {
-        electric: { regulated: elecReg, deregulated: elecDereg, unknown: elecMktUnknown },
-        gas:      { regulated: gasReg, deregulated: gasDereg, unknown: gasMktUnknown },
       },
     };
   }, [rows]);
@@ -2179,6 +2175,51 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     WV: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
     WY: { status: 'Large load only', range: '0 - 0%', lowPct: 0, highPct: 0 },
   };
+
+  // Market structure from the state alone, used as a fallback when no
+  // utility provider is available to classify. A US/CA state that
+  // appears in the deregulation map for the commodity is Deregulated;
+  // a recognized US state that isn't is Regulated; anything else
+  // (non-US/CA, or an unrecognized code) is left Unknown. Declared as a
+  // hoisted function so both the Market column closure and the
+  // marketSummary memo below can share it. References the dereg maps
+  // above — only ever called after they're initialized.
+  function classifyMarketByState(rawState, commodity) {
+    const code = String(rawState || '').trim().toUpperCase();
+    if (!/^[A-Z]{2}$/.test(code)) return null;
+    const map = commodity === 'electric' ? ELECTRIC_DEREGULATION : GAS_DEREGULATION;
+    if (map[code]) return 'Deregulated';
+    if (stateRate(code, commodity) != null) return 'Regulated';
+    return null;
+  }
+  // Single market classifier shared by the column and the summary card:
+  // a recognized utility provider wins; otherwise fall back to the
+  // site's state. Returns 'Deregulated' | 'Regulated' | null.
+  function classifyMarket(row, commodity) {
+    const providerName = commodity === 'electric' ? row.__electric__ : row.__gas__;
+    const providerClass = (utility?.zipMap && row.__matched__) ? classifyUtility(providerName) : null;
+    return providerClass || classifyMarketByState(row.__state__, commodity);
+  }
+
+  // Regulated / deregulated split for the on-page summary card. Lives
+  // in its own memo (after the dereg maps) so it can use the state
+  // fallback above. Three buckets per commodity always sum to total.
+  const marketSummary = useMemo(() => {
+    if (!rows.length) return null;
+    const bucket = () => ({ deregulated: 0, regulated: 0, unknown: 0 });
+    const electric = bucket(), gas = bucket();
+    const tally = (acc, cls) => {
+      if (cls === 'Deregulated') acc.deregulated++;
+      else if (cls === 'Regulated') acc.regulated++;
+      else acc.unknown++;
+    };
+    for (const r of rows) {
+      tally(electric, classifyMarket(r, 'electric'));
+      tally(gas, classifyMarket(r, 'gas'));
+    }
+    return { total: rows.length, electric, gas };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, utility]);
 
   // Detect a company column on the uploaded sites sheet so we can
   // group the overview by (company, state). Falls back to the sticky
@@ -8268,6 +8309,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
 
       {analysisSummary && (() => {
         const s = analysisSummary;
+        const m = marketSummary || { total: s.total, electric: { deregulated: 0, regulated: 0, unknown: s.total }, gas: { deregulated: 0, regulated: 0, unknown: s.total } };
         const ELEC = '#92400E';
         const GAS = '#1E3A8A';
         const SLATE = '#475569';
@@ -8323,13 +8365,13 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
               {sumLine(SLATE, 'Gas — Unknown',             fmtInt(s.utility.gas.unknown),          fmtPct(s.utility.gas.unknown, s.total), s.utility.gas.unknown > 0)}
             </div>
             <div style={cardStyle}>
-              <div style={cardTitleStyle} title="Market structure of each site's utility. Deregulated = competitive retail market (supplier choice — sourcing opportunity). Regulated = single-utility monopoly market. Unknown = no recognized provider to classify.">Market</div>
-              {sumLine(ELEC, 'Electric — Deregulated', fmtInt(s.market.electric.deregulated), fmtPct(s.market.electric.deregulated, s.total))}
-              {sumLine(ELEC, 'Electric — Regulated',   fmtInt(s.market.electric.regulated),   fmtPct(s.market.electric.regulated, s.total))}
-              {sumLine(SLATE, 'Electric — Unknown',     fmtInt(s.market.electric.unknown),     fmtPct(s.market.electric.unknown, s.total), s.market.electric.unknown > 0)}
-              {sumLine(GAS,  'Gas — Deregulated',       fmtInt(s.market.gas.deregulated),      fmtPct(s.market.gas.deregulated, s.total))}
-              {sumLine(GAS,  'Gas — Regulated',         fmtInt(s.market.gas.regulated),        fmtPct(s.market.gas.regulated, s.total))}
-              {sumLine(SLATE, 'Gas — Unknown',          fmtInt(s.market.gas.unknown),          fmtPct(s.market.gas.unknown, s.total), s.market.gas.unknown > 0)}
+              <div style={cardTitleStyle} title="Market structure per site. Classified from the utility provider when known, otherwise from the site's US/CA state deregulation map. Deregulated = competitive retail market (supplier choice — sourcing opportunity). Regulated = single-utility monopoly market. Unknown = no provider and no recognized US/CA state.">Market</div>
+              {sumLine(ELEC, 'Electric — Deregulated', fmtInt(m.electric.deregulated), fmtPct(m.electric.deregulated, m.total))}
+              {sumLine(ELEC, 'Electric — Regulated',   fmtInt(m.electric.regulated),   fmtPct(m.electric.regulated, m.total))}
+              {sumLine(SLATE, 'Electric — Unknown',     fmtInt(m.electric.unknown),     fmtPct(m.electric.unknown, m.total), m.electric.unknown > 0)}
+              {sumLine(GAS,  'Gas — Deregulated',       fmtInt(m.gas.deregulated),      fmtPct(m.gas.deregulated, m.total))}
+              {sumLine(GAS,  'Gas — Regulated',         fmtInt(m.gas.regulated),        fmtPct(m.gas.regulated, m.total))}
+              {sumLine(SLATE, 'Gas — Unknown',          fmtInt(m.gas.unknown),          fmtPct(m.gas.unknown, m.total), m.gas.unknown > 0)}
             </div>
           </div>
         );
