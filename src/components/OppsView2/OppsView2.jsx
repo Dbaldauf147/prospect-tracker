@@ -2572,10 +2572,12 @@ function QuotedFollowUpModal({ opp, chanceOptions, onSave, onClose }) {
 // current with each follow-up. Cleared on Save or Skip.
 function FollowUpStatusModal({ opp, statusOptions, onSave, onClose }) {
   const curStatus = opp?.['Status'] ?? '';
+  const curNextSteps = opp?.['Next Steps'] ?? '';
   const [status, setStatus] = useState(String(curStatus ?? ''));
+  const [nextSteps, setNextSteps] = useState(String(curNextSteps ?? ''));
 
   function handleSave() {
-    onSave({ status });
+    onSave({ status, nextSteps });
   }
 
   const hintStyle = { fontSize: '0.68rem', color: 'var(--color-text-muted)', marginTop: 3 };
@@ -2641,6 +2643,15 @@ function FollowUpStatusModal({ opp, statusOptions, onSave, onClose }) {
               ))}
             </select>
             {textHint(curStatus)}
+          </div>
+          <div>
+            <label style={labelStyle}>Next Steps</label>
+            <textarea
+              value={nextSteps}
+              onChange={(e) => setNextSteps(e.target.value)}
+              rows={4}
+              style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.4 }}
+            />
           </div>
         </div>
 
@@ -4038,6 +4049,14 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // the FollowUpStatusModal asks the user to pick the new Status
   // (Who is waiting) for that opp. Cleared on Save or Skip.
   const [followUpStatusPromptId, setFollowUpStatusPromptId] = useState(null);
+  // Imperative sort trigger handed to the DataTable. Bumping it re-ranks
+  // the table by Call In ascending — fired once the Follow Up status
+  // popup is dismissed so the re-scheduled opp lands in its new
+  // soonest-first position.
+  const [callInSortSignal, setCallInSortSignal] = useState(null);
+  const requestCallInSort = useCallback(() => {
+    setCallInSortSignal({ key: 'Call In', direction: 'asc', nonce: Date.now() });
+  }, []);
   // _id of the opp whose info popup is open, or null when no popup
   // is showing. Resolved against the live records list on render so
   // the popup always reflects the latest cell edits.
@@ -5993,13 +6012,17 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           <FollowUpStatusModal
             opp={opp}
             statusOptions={statusOpts}
-            onSave={({ status }) => {
+            onSave={({ status, nextSteps }) => {
               if (status !== String(opp['Status'] ?? '')) {
                 updateOppField(opp._id, 'Status', status);
               }
+              if (nextSteps !== String(opp['Next Steps'] ?? '')) {
+                updateOppField(opp._id, 'Next Steps', nextSteps);
+              }
               setFollowUpStatusPromptId(null);
+              requestCallInSort();
             }}
-            onClose={() => setFollowUpStatusPromptId(null)}
+            onClose={() => { setFollowUpStatusPromptId(null); requestCallInSort(); }}
           />
         );
       })()}
@@ -6269,6 +6292,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               tableId="opps2"
               columns={columns}
               rows={filtered}
+              sortSignal={callInSortSignal}
               alwaysVisible={['Account', '_select', '_info']}
               // No default sort — editing Follow Up / Last Client Heard From
               // Us would otherwise re-rank rows by Call In on every keystroke
