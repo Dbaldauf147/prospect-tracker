@@ -2572,10 +2572,12 @@ function QuotedFollowUpModal({ opp, chanceOptions, onSave, onClose }) {
 // current with each follow-up. Cleared on Save or Skip.
 function FollowUpStatusModal({ opp, statusOptions, onSave, onClose }) {
   const curStatus = opp?.['Status'] ?? '';
+  const curNextSteps = opp?.['Next Steps'] ?? '';
   const [status, setStatus] = useState(String(curStatus ?? ''));
+  const [nextSteps, setNextSteps] = useState(String(curNextSteps ?? ''));
 
   function handleSave() {
-    onSave({ status });
+    onSave({ status, nextSteps });
   }
 
   const hintStyle = { fontSize: '0.68rem', color: 'var(--color-text-muted)', marginTop: 3 };
@@ -2641,6 +2643,15 @@ function FollowUpStatusModal({ opp, statusOptions, onSave, onClose }) {
               ))}
             </select>
             {textHint(curStatus)}
+          </div>
+          <div>
+            <label style={labelStyle}>Next Steps</label>
+            <textarea
+              value={nextSteps}
+              onChange={(e) => setNextSteps(e.target.value)}
+              rows={4}
+              style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.4 }}
+            />
           </div>
         </div>
 
@@ -5993,9 +6004,12 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           <FollowUpStatusModal
             opp={opp}
             statusOptions={statusOpts}
-            onSave={({ status }) => {
+            onSave={({ status, nextSteps }) => {
               if (status !== String(opp['Status'] ?? '')) {
                 updateOppField(opp._id, 'Status', status);
+              }
+              if (nextSteps !== String(opp['Next Steps'] ?? '')) {
+                updateOppField(opp._id, 'Next Steps', nextSteps);
               }
               setFollowUpStatusPromptId(null);
             }}
