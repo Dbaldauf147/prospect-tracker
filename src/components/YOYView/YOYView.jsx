@@ -1924,6 +1924,13 @@ function fmtMoneyLabel(v) {
   return `$${Math.round(v).toLocaleString('en-US')}`;
 }
 
+// Compact "thousands" form for the Annual Sales bar totals: 1,823,986
+// shows as "$1,823k" (the sub-thousand remainder is dropped).
+function fmtThousandsLabel(v) {
+  if (v == null || !Number.isFinite(v) || v === 0) return '';
+  return `$${Math.trunc(v / 1000).toLocaleString('en-US')}k`;
+}
+
 function TopAccountsCard({ data, hasOpps, onDownload }) {
   const { years = [], topAccounts = [], colors = {} } = data || {};
   const hasAny = years.some(r => r._total > 0);
@@ -2035,7 +2042,7 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload, onExportYear }) {
     const top = vb.y || 0;
     return (
       <g>
-        <text x={cx} y={top - 7} textAnchor="middle" style={{ fontSize: 11, fontWeight: 600, fill: '#1f2937' }}>{fmtMoneyLabel(row._total)}</text>
+        <text x={cx} y={top - 7} textAnchor="middle" style={{ fontSize: 11, fontWeight: 600, fill: '#1f2937' }}>{fmtThousandsLabel(row._total)}</text>
         {!hidden.pctQuota && row.pctQuota != null ? (
           <text x={cx} y={top - 22} textAnchor="middle" style={{ fontSize: 10, fontWeight: 600, fill: '#a16207' }}>{`${row.pctQuota}%`}</text>
         ) : null}
