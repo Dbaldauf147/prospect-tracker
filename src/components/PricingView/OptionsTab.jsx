@@ -175,44 +175,6 @@ function OptionPanel({ opt, onChange, savedToLabel, onClickSave, onClearSave }) 
     rows: Array.from({ length: 12 }, EMPTY_ROW),
   });
 
-  // Export the option's cost line items in the Commercial Reference
-  // template format (Commercial Reference, Unit Amount, Quantity).
-  // Monthly fees are annualized (× 12) so every line reads as a yearly
-  // figure; Setup / One Time fees pass through as-is.
-  function exportCommercialRef() {
-    const escape = (v) => {
-      const s = String(v ?? '');
-      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-    };
-    const lineRows = opt.rows
-      .filter(r => (r.feeSchedule || '').trim() !== '' && toNum(r.fee) != null)
-      .map(r => {
-        const isMonthly = (r.type || '').toLowerCase().startsWith('recurring');
-        const unitAmount = (toNum(r.fee) || 0) * (isMonthly ? 12 : 1);
-        return [
-          r.feeSchedule.trim(),
-          unitAmount.toFixed(2),
-          unitCountOrOne(r.unitCount),
-        ];
-      });
-    if (!lineRows.length) {
-      window.alert('No cost line items to export. Add a Fee Schedule and Fee first.');
-      return;
-    }
-    const lines = [
-      ['Commercial Reference', 'Unit Amount', 'Quantity'].join(','),
-      ...lineRows.map(cols => cols.map(escape).join(',')),
-    ];
-    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    const safeName = (opt.name || 'Option').replace(/[\\/:*?"<>|]+/g, '-').trim() || 'Option';
-    a.href = url;
-    a.download = `CommercialReference-${safeName}-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
   function handleTablePaste(e) {
     const cd = e.clipboardData;
     if (!cd) return;
@@ -296,7 +258,6 @@ function OptionPanel({ opt, onChange, savedToLabel, onClickSave, onClearSave }) 
           {pasteOpen ? 'Close paste' : 'Paste from Excel'}
         </button>
         <button type="button" className={styles.btn} onClick={addRow}>+ Row</button>
-        <button type="button" className={styles.btn} onClick={exportCommercialRef}>Export CSV</button>
         <button type="button" className={styles.btnDanger} onClick={clearOption}>Clear</button>
         {savedToLabel ? (
           <span

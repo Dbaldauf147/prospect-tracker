@@ -2671,6 +2671,47 @@ export function PricingView({ settings } = {}) {
     XLSX.writeFile(wb, `Monthly-Costs-${slug}-${new Date().toISOString().slice(0, 10)}.xlsx`);
   }
 
+  // Commercial Reference export — writes the active Option's cost line
+  // items in the SE Commercial Reference template format (Commercial
+  // Reference, Unit Amount, Quantity). Each item's CTS is annualized:
+  // Recurring (monthly) costs are multiplied by 12 so every row reads
+  // as a yearly figure; Setup / One Time costs pass through as-is.
+  // Quantity is always 1. Filename: CommercialReference-<option>-<date>.csv.
+  function exportCommercialRef() {
+    if (!workbook) return;
+    const opt = workbook.options.find(o => o.optionNumber === activeOption) || workbook.options[0];
+    if (!opt) return;
+    const escape = (v) => {
+      const s = String(v ?? '');
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const lineRows = [];
+    for (const sec of opt.sections) {
+      for (const item of sec.items) {
+        if (typeof item.cts !== 'number') continue;
+        const isMonthly = /recurring.*monthly|monthly.*recurring|^recurring/i.test(effectiveType(item));
+        const unitAmount = item.cts * (isMonthly ? 12 : 1);
+        lineRows.push([item.description || '', unitAmount.toFixed(2), 1]);
+      }
+    }
+    if (!lineRows.length) {
+      window.alert('No cost line items to export on this Option.');
+      return;
+    }
+    const lines = [
+      ['Commercial Reference', 'Unit Amount', 'Quantity'].join(','),
+      ...lineRows.map(cols => cols.map(escape).join(',')),
+    ];
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const slug = (opt.sheetName || `Option-${opt.optionNumber}`).replace(/[^a-zA-Z0-9-]+/g, '-');
+    a.href = url;
+    a.download = `CommercialReference-${slug}-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   // Margin Request Template export — fills the standard SE template
   // with one block per loaded Pricing Option. Services come from the
   // per-option services bundle, Fee Structure is the option's Alt Fee
@@ -3229,6 +3270,12 @@ export function PricingView({ settings } = {}) {
                     {opt.hidden && <span className={styles.hiddenPill}>hidden in workbook</span>}
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      className={styles.actionBtn}
+                      onClick={exportCommercialRef}
+                      title={`Export "${opt.sheetName}" cost line items as a Commercial Reference CSV. Monthly costs are annualized (×12); Quantity is always 1.`}
+                    >Commercial Ref ⇩</button>
                     <button
                       type="button"
                       className={styles.actionBtn}
