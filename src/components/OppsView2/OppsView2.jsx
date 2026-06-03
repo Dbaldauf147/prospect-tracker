@@ -917,7 +917,15 @@ function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onCh
         setupOneTime += rowYearRevenue(r, 1, years, esc);
       }
     }
-    return { name: String(snapshot.name || '').trim(), setupOneTime, recurringMonthly };
+    return {
+      name: String(snapshot.name || '').trim(),
+      setupOneTime,
+      recurringMonthly,
+      // Annualized recurring (monthly × 12) and the Year-1 total the
+      // user reads off the popup: Setup + One Time plus annual recurring.
+      recurringAnnual: recurringMonthly * 12,
+      totalYear1: setupOneTime + recurringMonthly * 12,
+    };
   }, [snapshot]);
 
   // Cell display — no inline action buttons. The whole cell is the
@@ -971,7 +979,7 @@ function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onCh
               />
             </label>
             <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: '0.78rem', color: '#475569' }}>
-              Hyperlink
+              Sharepoint Hyperlink
               <input
                 type="text"
                 value={draftUrl}
@@ -1002,6 +1010,17 @@ function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onCh
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
                   <span>Recurring Fees <span style={{ color: '#94A3B8' }}>(monthly)</span></span>
                   <strong style={{ color: '#1E293B' }}>{fmtMoneyWhole(snapStats.recurringMonthly) || '$0'}</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                  <span>Recurring Fees <span style={{ color: '#94A3B8' }}>(annual)</span></span>
+                  <strong style={{ color: '#1E293B' }}>{fmtMoneyWhole(snapStats.recurringAnnual) || '$0'}</strong>
+                </div>
+                <div style={{
+                  display: 'flex', justifyContent: 'space-between', gap: 12,
+                  marginTop: 2, paddingTop: 4, borderTop: '1px solid var(--color-border-light)',
+                }}>
+                  <span style={{ fontWeight: 600, color: '#1E293B' }}>Total Year 1 <span style={{ fontWeight: 400, color: '#94A3B8' }}>(Setup + Recurring Annual)</span></span>
+                  <strong style={{ color: '#1E293B' }}>{fmtMoneyWhole(snapStats.totalYear1) || '$0'}</strong>
                 </div>
               </div>
             )}
