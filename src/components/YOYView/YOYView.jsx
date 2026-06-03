@@ -1,7 +1,7 @@
 // YOY tab — recreates the Leads / Quoted Projections / Close Rate
 // summary charts off the Opps tab data cached in IndexedDB.
 
-import { useEffect, useMemo, useState, createContext, useContext } from 'react';
+import { useEffect, useMemo, useState, useRef, useCallback, createContext, useContext } from 'react';
 import { createPortal } from 'react-dom';
 import * as XLSX from 'xlsx';
 import {
@@ -1193,23 +1193,53 @@ export function YOYView() {
   // is provided through context and is safe to read during render.
   const [calcPanelEl, setCalcPanelEl] = useState(null);
 
+  // Click-to-pin: hovering a point reports its content into hoverRef (set
+  // by CalcTooltip); a click anywhere in the body then "sticks" that exact
+  // content into a pinned panel that survives mouse-out until the user
+  // clicks an empty area, clicks another point (re-pins), or hits the ✕.
+  const hoverRef = useRef({ active: false, content: null });
+  const [pinned, setPinned] = useState(null); // snapshot { payload, label, labelText, valueFormat, explain }
+  // Charts report their hovered point here (the ref is owned by this
+  // component, so the mutation stays local) for the click-to-pin handler.
+  const reportHover = useCallback((content) => {
+    hoverRef.current = content
+      ? { active: true, content }
+      : { active: false, content: hoverRef.current?.content || null };
+  }, []);
+  const calcCtx = useMemo(
+    () => ({ el: calcPanelEl, pinned: !!pinned, reportHover }),
+    [calcPanelEl, pinned, reportHover],
+  );
+  const handleBodyClick = useCallback(() => {
+    const h = hoverRef.current;
+    if (h?.active && h.content) setPinned(h.content); // stick / re-pin to hovered point
+    else if (pinned) setPinned(null);                 // clicked empty area → unstick
+  }, [pinned]);
+  const stop = useCallback((e) => e.stopPropagation(), []);
+
   return (
     <div className={styles.wrapper}>
       <div className={styles.header}>
         <div>
           <h1 className={styles.title}>YOY</h1>
           <div className={styles.subtitle}>
-            Year-over-year summary, computed off the Opps tab cache. Hover a chart’s bars or points to see how that number is calculated — details appear in a panel on the right.
+            Year-over-year summary, computed off the Opps tab cache. Hover a chart’s bars or points to see how that number is calculated — details appear in a panel on the right. Click a point to pin that panel; click an empty spot or the ✕ to unpin.
             {opps?.fetchedAt ? ` Opps fetched ${new Date(opps.fetchedAt).toLocaleString()}.` : ' Open the Opps tab to load data.'}
           </div>
         </div>
       </div>
-      <div className={styles.body}>
-        <CalcPanelContext.Provider value={calcPanelEl}>
+      <div className={styles.body} onClick={handleBodyClick}>
+        <CalcPanelContext.Provider value={calcCtx}>
         <div
           ref={setCalcPanelEl}
           className={styles.calcPanel}
+          onClick={stop}
         />
+        {pinned ? (
+          <div className={styles.calcPanel} onClick={stop}>
+            <CalcContent {...pinned} pinned onUnpin={() => setPinned(null)} />
+          </div>
+        ) : null}
         <div className={styles.row}>
           <LeadsCard data={leadsData} hasOpps={hasOpps} onDownload={downloadLeads} />
           <QuotedProjectionsCard data={quotedData} quotedTable={quotedTable} onSaveTable={updateQuotedTable} onDownload={downloadQuoted} />
@@ -1323,7 +1353,7 @@ function ChartHeader({ title, onDownload, canDownload }) {
 // floating fallback. Laid out as a horizontal strip — heading + badge,
 // then the per-series values, then the formula and its inputs — so it
 // reads left-to-right in the wide docked panel without growing tall.
-function CalcContent({ payload, label, labelText, valueFormat, explain }) {
+function CalcContent({ payload, label, labelText, valueFormat, explain, pinned, onUnpin }) {
   const row = payload[0]?.payload || {};
   const info = explain ? explain(row, payload, label) : null;
   const heading = labelText ? labelText(label, row) : label;
@@ -1331,7 +1361,11 @@ function CalcContent({ payload, label, labelText, valueFormat, explain }) {
     <div className={styles.calcDock}>
       <div className={styles.calcDockLabel}>
         <span className={styles.calcDockHeading}>{heading}</span>
-        <span className={styles.calcTipBadge} title="Recomputed live from the Opps cache — not a stored value">∑ calculated</span>
+        {pinned ? (
+          <button type="button" className={styles.calcPinBtn} onClick={onUnpin} title="Unstick this panel">📌 Pinned ✕</button>
+        ) : (
+          <span className={styles.calcTipBadge} title="Recomputed live from the Opps cache — not a stored value">∑ calculated</span>
+        )}
       </div>
       <div className={styles.calcDockSeries}>
         {payload.map((p, i) => (
@@ -1364,6 +1398,9 @@ function CalcContent({ payload, label, labelText, valueFormat, explain }) {
         <div className={styles.calcDockDeals}>
           <div className={styles.calcDockDealsHead}>
             {info.deals.length} deal{info.deals.length === 1 ? '' : 's'}
+            {typeof info.exportDeals === 'function' ? (
+              <button type="button" className={styles.calcExportBtn} onClick={info.exportDeals} title="Download these deals to Excel">⬇ Excel</button>
+            ) : null}
           </div>
           <div className={styles.calcDockDealsList}>
             {info.deals.map((d, i) => (
@@ -1389,8 +1426,21 @@ function CalcTooltip({
   active, payload, label,
   labelText, valueFormat, explain,
 }) {
-  const target = useContext(CalcPanelContext);
-  if (!active || !payload || payload.length === 0) return null;
+  const ctx = useContext(CalcPanelContext);
+  const isActive = !!(active && payload && payload.length > 0);
+  // Report the currently-hovered point up to the page so a click anywhere
+  // in the YOY body can pin (stick) this exact content. Runs in an effect
+  // so we never setState/refs mid-render. Snapshot the payload (Recharts
+  // mutates its array between events) so the pinned copy stays stable.
+  const reportHover = ctx?.reportHover;
+  useEffect(() => {
+    if (!reportHover) return;
+    reportHover(isActive ? { payload: payload.slice(), label, labelText, valueFormat, explain } : null);
+  });
+  if (!isActive) return null;
+  // While a panel is pinned, the hover panel steps aside so it doesn't
+  // fight the pinned one for the docked slot.
+  if (ctx?.pinned) return null;
   const body = (
     <CalcContent
       payload={payload}
@@ -1400,7 +1450,7 @@ function CalcTooltip({
       explain={explain}
     />
   );
-  if (target) return createPortal(body, target);
+  if (ctx?.el) return createPortal(body, ctx.el);
   return <div className={styles.calcTip}>{body}</div>;
 }
 
@@ -2014,10 +2064,8 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload, onExportYear }) {
     const max = data.reduce((m, r) => Math.max(m, r._total || 0), 0);
     return max > 0 ? Math.ceil(max * 1.18) : 1;
   }, [data]);
-  const handleBarClick = (state) => {
-    const row = state?.activePayload?.[0]?.payload;
-    if (row && Array.isArray(row._deals) && row._deals.length > 0) onExportYear?.(row);
-  };
+  // Bar clicks now pin the panel (handled at the page level); the per-bar
+  // Excel export lives as a button inside that panel (see explain → exportDeals).
   // Draw the total (+ % Quota) above each bar. Pinning the label to one
   // segment breaks when that segment is $0 — a year whose Sold deals are
   // all Current Client has newClient = 0, so a label on the New Client
@@ -2058,7 +2106,7 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload, onExportYear }) {
         <div className={styles.empty}>No Sold opps with a Quoted Amount yet.</div>
       ) : (
         <ResponsiveContainer width="100%" height={320}>
-          <BarChart data={data} margin={{ top: 48, right: 8, left: 16, bottom: 4 }} onClick={handleBarClick} style={{ cursor: 'pointer' }}>
+          <BarChart data={data} margin={{ top: 48, right: 8, left: 16, bottom: 4 }} style={{ cursor: 'pointer' }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
             <XAxis dataKey="year" interval={0} tick={{ fontSize: 12 }} />
             <YAxis
@@ -2081,9 +2129,12 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload, onExportYear }) {
                     { label: '% Quota', value: row.pctQuota == null ? '—' : `${row.pctQuota}%` },
                   ],
                   deals: row._deals || [],
+                  exportDeals: (Array.isArray(row._deals) && row._deals.length > 0)
+                    ? () => onExportYear?.(row)
+                    : undefined,
                   note: row._isProjected
-                    ? 'Projected = this year’s Sold (by Close Date) + every open opp that is Agreement Sent or Quoted Expected (Chance = Expected). Click the bar to export these deals to Excel.'
-                    : 'Click the bar to export these deals to Excel.',
+                    ? 'Projected = this year’s Sold (by Close Date) + every open opp that is Agreement Sent or Quoted Expected (Chance = Expected). Click the bar to pin this panel, then ⬇ Excel to export.'
+                    : 'Click the bar to pin this panel, then ⬇ Excel to export these deals.',
                 })}
               />
             } />
