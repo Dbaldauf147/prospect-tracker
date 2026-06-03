@@ -34,7 +34,7 @@ const tzLabel = (() => {
 // send the PE Opps Excel file to a list of recipients. `allColumns` is the
 // PE Opps column set ([{key,label}]); `defaultColumns` seeds new schedules
 // with the columns currently shown in the tab.
-export function PEOppsScheduleModal({ open, onClose, uid, email, allColumns, defaultColumns }) {
+export function PEOppsScheduleModal({ open, onClose, uid, email, oppsRows, allColumns, defaultColumns }) {
   const [schedules, setSchedules] = useState([]);
   const [form, setForm] = useState(() => emptyForm(defaultColumns));
   const [editing, setEditing] = useState(false);
@@ -132,13 +132,18 @@ export function PEOppsScheduleModal({ open, onClose, uid, email, allColumns, def
     setBusyId(s ? s.id : 'form');
     setError('');
     try {
+      // Send exactly the PE opps shown on the page (the page reads the
+      // newest local/cloud data, which can be ahead of the cloud copy the
+      // server would otherwise re-read) so the email matches the table.
+      const records = Array.isArray(oppsRows) ? oppsRows : undefined;
       const body = s
-        ? { scheduleId: s.id }
+        ? { scheduleId: s.id, records }
         : {
             recipients: normalizeRecipients(form.recipients),
             subject: form.subject,
             message: form.message,
             columns: form.columns,
+            records,
           };
       if (!s) {
         const v = validate();
