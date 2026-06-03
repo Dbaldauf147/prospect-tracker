@@ -246,6 +246,11 @@ function makeBlankOpp(id, headers, accountOverride, sourceOverride) {
   // it's unhidden later.
   row['Scope'] = 'AEM';
   row['Next Steps'] = 'Find out the Story';
+  // Seed the BFO Opportunity Name (BFO Link) column with a dash so a
+  // brand-new opp reads as "BFO opp still needs to be created" — the
+  // same sentinel the rest of the app uses for untagged opps. Set
+  // unconditionally so the value sticks even when the column is hidden.
+  row['BFO Link'] = '-';
   // Source comes from the New Opp prompt — leave blank when the user
   // skipped the picker so the cell still surfaces its dropdown on
   // click.
