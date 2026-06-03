@@ -22,6 +22,8 @@ import {
   toKwh,
   toTherms,
   stateRate,
+  propertyTypeSegment,
+  normalizeSegment,
   formatMoney,
   formatRate,
 } from '../../utils/utilityRates';
@@ -123,6 +125,7 @@ function detectSitesMapping(headers) {
     zip: pickZipColumn(headers),
     country: detectColumn(headers, [/^country$/i, /\bcountry\b/i, /\bnation\b/i]) || '',
     propertyType: detectColumn(headers, [/property\s*type/i, /building\s*type/i, /property\s*class/i, /asset\s*type/i, /^use$/i, /\buse\s*type\b/i, /\bsegment\b/i]) || '',
+    segment: detectColumn(headers, [/customer\s*class/i, /rate\s*class/i, /\bc\s*&\s*i\b/i, /commercial\s*\/?\s*industrial/i, /industrial\s*\/?\s*commercial/i, /comm.*ind|ind.*comm/i]) || '',
     siteDescription: detectColumn(headers, [/^site\s*description$/i, /^description$/i, /\bdescription\b/i]) || '',
     propertySize: detectColumn(headers, [/sq\s*\.?\s*ft/i, /square\s*(feet|foot)/i, /\bft\s*2\b/i, /\bft\^?2\b/i, /\bsf\b/i, /size.*ft/i, /building.*size/i, /gross.*area/i, /^size$/i, /rsf|gsf/i]) || '',
     electric: detectColumn(headers, [/electric.*kwh|kwh.*electric/i, /annual.*electric.*kwh/i, /annual.*kwh/i, /^kwh$/i, /electric.*usage/i, /electric.*consumption/i, /annual.*electric/i, /^electric$/i]) || '',
@@ -326,6 +329,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
   // are optional; with only Property Type the export uses the
   // reference Size_ft2 for that type and skips per-site size scaling.
   const [propertyTypeOverride, setPropertyTypeOverride] = useState(null);
+  // Optional column mapping the user's own Commercial / Industrial
+  // classification onto each site, overriding the property-type-derived
+  // segment that drives commercial-vs-industrial rate selection.
+  const [segmentOverride, setSegmentOverride] = useState(null);
   const [siteDescriptionOverride, setSiteDescriptionOverride] = useState(null);
   const [propertySizeOverride, setPropertySizeOverride] = useState(null);
   const [electricContractPriceOverride, setElectricContractPriceOverride] = useState(null);
@@ -429,6 +436,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         setCityOverride(m.city || null);
         setStateColumnOverride(m.state || null);
         setPropertyTypeOverride(m.propertyType || null);
+        setSegmentOverride(m.segment || null);
         setSiteDescriptionOverride(m.siteDescription || null);
         setPropertySizeOverride(m.propertySize || null);
         setElectricContractPriceOverride(m.electricContractPrice || null);
@@ -558,6 +566,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       zip:                   safe(noneToEmpty(zipColOverride)),
       country:               safe(noneToEmpty(countryOverride)),
       propertyType:          safe(noneToEmpty(propertyTypeOverride)),
+      segment:               safe(noneToEmpty(segmentOverride)),
       siteDescription:       safe(noneToEmpty(siteDescriptionOverride)),
       propertySize:          safe(noneToEmpty(propertySizeOverride)),
       electric:              safe(noneToEmpty(electricColOverride)),
@@ -612,7 +621,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // table even though the user only wanted these specific fields.
       const TARGET_KEYS = [
         'siteName', 'address', 'city', 'state', 'zip', 'country',
-        'propertyType', 'siteDescription', 'propertySize',
+        'propertyType', 'segment', 'siteDescription', 'propertySize',
         'electric', 'electricUom', 'gas', 'gasUom',
         'electricCost', 'gasCost',
         'electricSupplier', 'gasSupplier',
@@ -662,6 +671,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       setCityOverride(mapping.city || null);
       setStateColumnOverride(mapping.state || null);
       setPropertyTypeOverride(mapping.propertyType || null);
+      setSegmentOverride(mapping.segment || null);
       setSiteDescriptionOverride(mapping.siteDescription || null);
       setPropertySizeOverride(mapping.propertySize || null);
       setElectricContractPriceOverride(mapping.electricContractPrice || null);
@@ -995,8 +1005,17 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const zip = zipColumn ? normalizeZip(r[zipColumn]) : '';
       const match = utility?.zipMap && zip ? utility.zipMap[zip] : null;
       const state = match?.state || zipToState(zip);
-      const stateElectricRate = state ? stateRate(state, 'electric') : null;
-      const stateGasRate = state ? stateRate(state, 'gas') : null;
+      // Property type + customer segment resolve first: the segment
+      // (commercial vs industrial) picks which state-rate column
+      // applies. An explicit Segment column wins; otherwise infer it
+      // from the property type; absent both, default to commercial.
+      const inputPropertyType = propertyTypeOverride ? String(r[propertyTypeOverride] || '').trim() : '';
+      const canonicalPropertyType = inputPropertyType ? normalizePropertyType(inputPropertyType) : null;
+      const segmentFromColumn = segmentOverride ? normalizeSegment(r[segmentOverride]) : null;
+      const segment = segmentFromColumn || propertyTypeSegment(canonicalPropertyType) || 'commercial';
+      const segmentSource = segmentFromColumn ? 'column' : (propertyTypeSegment(canonicalPropertyType) ? 'propertyType' : 'default');
+      const stateElectricRate = state ? stateRate(state, 'electric', segment) : null;
+      const stateGasRate = state ? stateRate(state, 'gas', segment) : null;
       const electricUomRaw = electricUomOverride ? r[electricUomOverride] : '';
       const gasUomRaw = gasUomOverride ? r[gasUomOverride] : '';
       const elec = pickFirstConsumption(r, consumption.electric, toKwh, normalizeElectricUom(electricUomRaw));
@@ -1027,8 +1046,6 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const resolvedCountryRateName = (electricRateSource === 'country' || gasRateSource === 'country')
         ? normalizeCountryRateName(resolvedCountryForRate)
         : null;
-      const inputPropertyType = propertyTypeOverride ? String(r[propertyTypeOverride] || '').trim() : '';
-      const canonicalPropertyType = inputPropertyType ? normalizePropertyType(inputPropertyType) : null;
       const inputSiteDescription = siteDescriptionOverride ? String(r[siteDescriptionOverride] || '').trim() : '';
       // Loose numeric parse for the optional Size_ft2 column — strips
       // commas, "sf"/"sqft" suffixes, etc.
@@ -1191,6 +1208,8 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         __state__: (stateColumnOverride ? String(r[stateColumnOverride] || '').trim() : '') || state,
         __propertyTypeRaw__: inputPropertyType || null,
         __propertyType__: canonicalPropertyType,
+        __segment__: segment,
+        __segmentSource__: segmentSource,
         __siteDescription__: inputSiteDescription || null,
         __propertySizeFt2__: inputPropertySize,
         __kwhFromEstimate__: elecValueFromEstimate,
@@ -1226,7 +1245,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         __matched__: !!match || electricUtilityTokens.length > 0 || gasUtilityTokens.length > 0,
       };
     });
-  }, [cleanSitesData, zipColumn, utility, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, addressOverride, cityOverride, stateColumnOverride, propertyTypeOverride, siteDescriptionOverride, propertySizeOverride, electricContractPriceOverride, gasContractPriceOverride, electricContractNameOverride, electricProductTypeOverride, gasContractNameOverride, gasProductTypeOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
+  }, [cleanSitesData, zipColumn, utility, consumption, electricCostOverride, gasCostOverride, electricSupplierOverride, gasSupplierOverride, electricStartOverride, electricEndOverride, gasStartOverride, gasEndOverride, electricUomOverride, gasUomOverride, countryOverride, addressOverride, cityOverride, stateColumnOverride, propertyTypeOverride, segmentOverride, siteDescriptionOverride, propertySizeOverride, electricContractPriceOverride, gasContractPriceOverride, electricContractNameOverride, electricProductTypeOverride, gasContractNameOverride, gasProductTypeOverride, knownUtilityNames, vendorDecisions, supplierOverrides]);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return rows;
@@ -1404,6 +1423,37 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       },
       exportValue: (row) => row.__propertyType__ || row.__propertyTypeRaw__ || '',
     };
+    // Customer segment (Commercial / Industrial) — drives which state
+    // rate column the cost estimate uses. Derived from property type
+    // unless the upload mapped an explicit Segment column. A coloured
+    // badge mirrors the electric/gas palette: amber-ish for industrial,
+    // slate for commercial.
+    const segmentCol = {
+      key: 'segment',
+      label: 'Segment',
+      defaultWidth: 110,
+      render: (row) => {
+        const seg = row.__segment__;
+        if (!seg) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
+        const isIndustrial = seg === 'industrial';
+        const src = row.__segmentSource__;
+        const srcLabel = src === 'column'
+          ? 'from the mapped Segment column'
+          : src === 'propertyType'
+            ? 'inferred from property type'
+            : 'defaulted (no property type or segment column)';
+        const palette = isIndustrial
+          ? { bg: '#FEF3C7', border: '#FCD34D', text: '#92400E' }
+          : { bg: '#F1F5F9', border: '#CBD5E1', text: '#475569' };
+        return (
+          <span
+            title={`${isIndustrial ? 'Industrial' : 'Commercial'} — ${srcLabel}. Uses the state ${isIndustrial ? 'industrial' : 'commercial'} indicative rate.`}
+            style={{ display: 'inline-block', fontSize: '0.68rem', fontWeight: 600, padding: '0.1rem 0.4rem', borderRadius: 4, background: palette.bg, border: `1px solid ${palette.border}`, color: palette.text }}
+          >{isIndustrial ? 'Industrial' : 'Commercial'}</span>
+        );
+      },
+      exportValue: (row) => row.__segment__ === 'industrial' ? 'Industrial' : (row.__segment__ ? 'Commercial' : ''),
+    };
     // Free-text site annotation that lives next to Property Type. No
     // canonicalization or estimates — purely a passthrough column for
     // the user's notes / descriptions of each site.
@@ -1505,9 +1555,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         const val = row[`__${commodity}Rate__`];
         if (val == null) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem' }}>—</span>;
         const source = row[`__${commodity}RateSource__`];
+        const segLabel = row.__segment__ === 'industrial' ? 'industrial' : 'commercial';
         const tip = source === 'country'
           ? `${row.__rateCountry__ || 'country'} indicative commercial rate. Drops in when no state rate resolves and no actual cost was provided. Indicative only — not a tariff rate.`
-          : `${row.__state__ || 'unknown state'} commercial average. Indicative only — not a tariff rate.`;
+          : `${row.__state__ || 'unknown state'} ${segLabel} average. Indicative only — not a tariff rate.`;
         return (
           <span
             title={tip}
@@ -1758,6 +1809,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       makeLocationCol('city', 'Lookup City'),
       makeLocationCol('country', 'Lookup Country'),
       propertyTypeCol,
+      segmentCol,
       siteDescriptionCol,
       propertySizeCol,
       // Property-type-based estimates — always show the reference
@@ -1841,6 +1893,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     return [
       columns[0].key,
       'propertyType',
+      'segment',
       'siteDescription',
       'propertySize',
       'electric', 'electric_market', 'electric_rate', 'electricCost',
@@ -8302,6 +8355,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             { key: 'zip', label: 'Zip / Postal Code', required: false, hint: 'Required for US and Canada sites — drives the utility lookup. Leave blank on international rows; mapping the column at all is optional if the file has no US / Canada sites.' },
             { key: 'country', label: 'Country', required: false, hint: 'Country of the site. Falls back to the utility-rates file when blank.' },
             { key: 'propertyType', label: 'Property Type', required: false, hint: 'Building / use type (Office, Hospital, Warehouse, etc.) — drives the per-property-type consumption + account-count estimates surfaced on the page and on the Indicative Savings export.' },
+            { key: 'segment', label: 'Segment (Commercial / Industrial)', required: false, hint: 'Customer class for rate selection. Values like "Commercial"/"Industrial" (or C / I) override the segment otherwise inferred from Property Type. Industrial sites use the state industrial indicative rate; everything else uses commercial.' },
             { key: 'siteDescription', label: 'Site Description', required: false, hint: 'Free-text annotation for the site (building name, internal code, notes). Passthrough only; surfaced next to Property Type on the Utility Lookup page.' },
             { key: 'propertySize', label: 'Size (ft²)', required: false, hint: 'Square footage of the site. Scales the property-type reference consumption linearly. Optional — when blank the reference size for the property type is used as-is.' },
             { key: 'electric', label: 'Annual Electric Consumption', required: false, hint: 'Annual electric usage. Pair with Electric UoM to control how the value is converted to kWh for cost estimates.' },
@@ -8331,12 +8385,13 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             { name: 'State', from: 'looked up from Zip' },
             { name: 'Electric Utility', from: 'rates file × Zip (or Supplier when known)' },
             { name: 'Electric Market', from: 'regulated vs. deregulated rule' },
-            { name: 'Electric Rate', from: 'state commercial average' },
+            { name: 'Segment', from: 'Commercial / Industrial — from mapped column or property type' },
+            { name: 'Electric Rate', from: 'state commercial / industrial average (by segment)' },
             { name: 'Total Electric Cost', from: 'actual cost when mapped, else kWh × rate' },
             { name: 'GAC Opportunity (Ontario)', from: 'Ontario sites only — tiered by annual kWh as a Class A proxy' },
             { name: 'Gas Utility', from: 'rates file × Zip (or Supplier when known)' },
             { name: 'Gas Market', from: 'regulated vs. deregulated rule' },
-            { name: 'Gas Rate', from: 'state commercial average' },
+            { name: 'Gas Rate', from: 'state commercial / industrial average (by segment)' },
             { name: 'Total Natural Gas Cost', from: 'actual cost when mapped, else Dth × rate' },
             { name: 'Total Est. Cost', from: 'Electric + Gas cost' },
             { name: 'Water Utility', from: 'rates file × Zip' },
