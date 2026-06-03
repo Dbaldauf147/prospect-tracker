@@ -545,12 +545,12 @@ function easternWallToUtcMs(year, month, day, hour, minute) {
   return guess + (guess - obs);
 }
 
-// The most recent 2 PM (14:00) America/New_York boundary. The
+// The most recent 8 AM (08:00) America/New_York boundary. The
 // No-Further-Action-Today auto-clear uses this as its cutoff: every X
-// marked before today's 2 PM Eastern clears at 2 PM, while a mark made
-// after 2 PM persists until 2 PM the next day. Before 2 PM Eastern the
-// boundary is yesterday's 2 PM, so overnight marks stay until 2 PM.
-function mostRecent2pmEasternMs(nowMs = Date.now()) {
+// marked before today's 8 AM Eastern clears at 8 AM, while a mark made
+// after 8 AM persists until 8 AM the next day. Before 8 AM Eastern the
+// boundary is yesterday's 8 AM, so overnight marks stay until 8 AM.
+function mostRecent8amEasternMs(nowMs = Date.now()) {
   const fmt = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/New_York',
     year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hour12: false,
@@ -563,10 +563,10 @@ function mostRecent2pmEasternMs(nowMs = Date.now()) {
     return out;
   };
   let parts = readParts(nowMs);
-  // Before 2 PM Eastern, the active boundary is yesterday's 2 PM — read
+  // Before 8 AM Eastern, the active boundary is yesterday's 8 AM — read
   // the calendar date from ~24h earlier so DST never skews the day.
-  if ((Number(parts.hour) % 24) < 14) parts = readParts(nowMs - 24 * 60 * 60 * 1000);
-  return easternWallToUtcMs(Number(parts.year), Number(parts.month), Number(parts.day), 14, 0);
+  if ((Number(parts.hour) % 24) < 8) parts = readParts(nowMs - 24 * 60 * 60 * 1000);
+  return easternWallToUtcMs(Number(parts.year), Number(parts.month), Number(parts.day), 8, 0);
 }
 
 // Values the Opps Google sheet uses to mean "no data" in cells where
@@ -4860,13 +4860,13 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   }, []);
 
   // Sweep stale "No Further Action Today" X's. The rule is: every row
-  // whose NFAT was marked BEFORE the most recent 2 PM Eastern boundary
-  // gets cleared back to blank — so X's reset at 2 PM each day. We re-run
+  // whose NFAT was marked BEFORE the most recent 8 AM Eastern boundary
+  // gets cleared back to blank — so X's reset at 8 AM each day. We re-run
   // the sweep on mount and every minute the tab is open, so a tab left
-  // open across 2 PM self-clears without a reload.
+  // open across 8 AM self-clears without a reload.
   useEffect(() => {
     const sweep = () => {
-      const cutoff = mostRecent2pmEasternMs();
+      const cutoff = mostRecent8amEasternMs();
       setData(prev => {
         const records = prev?.records || [];
         let touched = false;
