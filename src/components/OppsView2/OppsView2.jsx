@@ -26,7 +26,7 @@ import {
 } from '../../utils/opps2Store';
 import { loadOptionLinks, setOppOptionLink, OPTION_LINKS_EVENT } from '../../utils/pricingOptionLinks';
 import { OPPS_PRICING_SNAPSHOT_EVENT } from '../../utils/oppsPricingSnapshot';
-import { fmtMoneyWhole } from '../../utils/pricingOptionCalc';
+import { fmtMoneyWhole, toNum, unitCountOrOne, rowYearRevenue } from '../../utils/pricingOptionCalc';
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { normalizeCompany } from '../../utils/companyNorm';
 import { userLsGet, userLsSet } from '../../utils/userLs';
@@ -895,6 +895,31 @@ function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onCh
     setOpen(false);
   };
 
+  // Derive the at-a-glance figures the popup shows for a saved Pricing
+  // Option (SIA) snapshot: which option was saved, the Year-1 Setup +
+  // One Time fees (every non-recurring line that bills in year 1), and
+  // the monthly Recurring fee (sum of each recurring line's base
+  // fee × unit count). Recomputed from the frozen snapshot rows so it
+  // stays correct even after the Pricing tab is cleared.
+  const snapStats = useMemo(() => {
+    if (!snapshot) return null;
+    const rows = Array.isArray(snapshot.rows) ? snapshot.rows : [];
+    const years = Math.max(1, Number(snapshot.years) || 1);
+    const esc = Number(snapshot.escPct) || 0;
+    let setupOneTime = 0;
+    let recurringMonthly = 0;
+    for (const r of rows) {
+      if (String(r.type || '').toLowerCase().startsWith('recurring')) {
+        recurringMonthly += (toNum(r.fee) || 0) * unitCountOrOne(r.unitCount);
+      } else {
+        // Setup / One Time lines bill a single month — rowYearRevenue
+        // returns their amount only when that month lands in Year 1.
+        setupOneTime += rowYearRevenue(r, 1, years, esc);
+      }
+    }
+    return { name: String(snapshot.name || '').trim(), setupOneTime, recurringMonthly };
+  }, [snapshot]);
+
   // Cell display — no inline action buttons. The whole cell is the
   // click target for the editor popup; when a URL or snapshot is set
   // the value is styled as a link for affordance.
@@ -959,6 +984,27 @@ function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onCh
                 style={{ padding: '0.4rem 0.55rem', border: '1px solid var(--color-border)', borderRadius: 4, fontFamily: 'inherit', fontSize: '0.82rem' }}
               />
             </label>
+            {snapshot && snapStats && (
+              <div style={{
+                display: 'flex', flexDirection: 'column', gap: 4,
+                padding: '0.5rem 0.6rem', background: '#F8FAFC',
+                border: '1px solid var(--color-border-light)', borderRadius: 4,
+                fontSize: '0.78rem', color: '#475569',
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                  <span>Saved SIA Option</span>
+                  <strong style={{ color: '#1E293B', textAlign: 'right' }}>{snapStats.name || '—'}</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                  <span>Setup Fees <span style={{ color: '#94A3B8' }}>(Setup + One Time, Yr 1)</span></span>
+                  <strong style={{ color: '#1E293B' }}>{fmtMoneyWhole(snapStats.setupOneTime) || '$0'}</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                  <span>Recurring Fees <span style={{ color: '#94A3B8' }}>(monthly)</span></span>
+                  <strong style={{ color: '#1E293B' }}>{fmtMoneyWhole(snapStats.recurringMonthly) || '$0'}</strong>
+                </div>
+              </div>
+            )}
             {(url || snapshot) && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, fontSize: '0.78rem' }}>
                 {url && (
