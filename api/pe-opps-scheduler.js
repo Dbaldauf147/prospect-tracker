@@ -9,7 +9,7 @@
 // `?secret=` query param is also accepted for manual triggering.
 
 import { adminDb } from './_lib/firebaseAdmin.js';
-import { loadPeOpps, buildPeOppsWorkbook, sendPeOppsEmail, peOppsFilename } from './_lib/peOpps.js';
+import { loadPeOpps, loadPeFirms, buildPeOppsWorkbook, sendPeOppsEmail, peOppsFilename } from './_lib/peOpps.js';
 import { computeNextRun } from './_lib/peOppsSchedule.js';
 
 export default async function handler(req, res) {
@@ -59,7 +59,8 @@ export default async function handler(req, res) {
         results.push({ id: s.id, status: 'skipped-empty' });
         continue;
       }
-      const buffer = await buildPeOppsWorkbook(records, s.columns);
+      const firms = await loadPeFirms(db, s.ownerUid, s.ownerEmail);
+      const buffer = await buildPeOppsWorkbook(records, s.columns, firms);
       await sendPeOppsEmail({
         to: s.recipients,
         subject: s.subject,
