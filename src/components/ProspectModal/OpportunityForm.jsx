@@ -2348,7 +2348,10 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
         if (!s) return 1;
         const explicit = s.split('\n');
         let lines = 0;
-        const perLine = Math.max(8, Math.floor(colUnits * 1.5));
+        // Slightly conservative chars-per-line (1.4 rather than 1.5) so
+        // text that wraps just past the column width is counted as the
+        // extra line it really takes, instead of being clipped.
+        const perLine = Math.max(8, Math.floor(colUnits * 1.4));
         for (const line of explicit) {
           const len = line.length;
           if (len === 0) { lines += 1; continue; }
@@ -2358,7 +2361,10 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       };
       // ~14pt per wrapped line of 10pt text (matches Excel's native
       // auto-fit), with a 16pt floor so single-line rows stay tight.
-      const rowHeightForLines = (lines) => Math.min(600, Math.max(16, lines * 14));
+      // Multi-line (wrapping) cells get a small cushion on top so the
+      // final line never clips when Excel wraps a touch tighter than
+      // estimated.
+      const rowHeightForLines = (lines) => (lines <= 1 ? 16 : Math.min(600, lines * 14 + 8));
 
       // Row 1: "SE ADVISORY SERVICES" wordmark. SE is green, the rest
       // is dark gray — rendered as a rich-text cell on a white background.
