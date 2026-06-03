@@ -15,7 +15,7 @@ async function handler(req, res, auth) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   if (!(await enforceRateLimit(res, auth.uid, 'pe-opps-send-now', 20, 5 * 60 * 1000))) return;
 
-  let { recipients, subject, message, columns, scheduleId } = req.body || {};
+  let { recipients, subject, message, columns, scheduleId, records: postedRecords } = req.body || {};
 
   const db = adminDb();
   if (scheduleId) {
@@ -35,7 +35,15 @@ async function handler(req, res, auth) {
   if (to.length === 0) return res.status(400).json({ error: 'At least one recipient is required' });
 
   try {
-    const records = await loadPeOpps(db, auth.uid);
+    // When the PE Opps page supplies its on-screen rows, send exactly
+    // those so the email matches what the user sees — the page reads the
+    // newest of local/cloud Opps 2 data, which can be ahead of the cloud
+    // copy this route would otherwise re-read. Fall back to the cloud
+    // (loadPeOpps) for callers that don't post rows. PE firms still come
+    // from the shared prospects store (same source the page uses).
+    const records = Array.isArray(postedRecords)
+      ? postedRecords.filter((r) => r && typeof r === 'object').slice(0, 5000)
+      : await loadPeOpps(db, auth.uid);
     const firms = await loadPeFirms(db, auth.uid, auth.email);
     const buffer = await buildPeOppsWorkbook(records, columns, firms);
     const result = await sendPeOppsEmail({
