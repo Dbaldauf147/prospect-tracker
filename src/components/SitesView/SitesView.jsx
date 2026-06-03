@@ -8188,16 +8188,20 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         const cardStyle = { border: '1px solid #E2E8F0', borderRadius: 8, background: '#FFFFFF', padding: '0.65rem 0.85rem' };
         const cardTitleStyle = { fontSize: '0.72rem', fontWeight: 700, color: '#0F172A', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '0.45rem' };
         const rowStyle = { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '0.5rem', padding: '0.2rem 0', borderBottom: '1px dashed #F1F5F9' };
+        // Red flag styling for rows whose value is Unknown / missing —
+        // a tinted background, padding, and a left accent bar so the
+        // data gap stands out in the summary cards.
+        const dangerRowStyle = { ...rowStyle, background: '#FEF2F2', borderLeft: '3px solid #DC2626', borderRadius: 4, padding: '0.2rem 0.4rem', margin: '0 -0.4rem' };
         const labelStyle = (color) => ({ fontSize: '0.72rem', color, fontWeight: 600, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
         const valueStyle = { fontSize: '0.78rem', fontWeight: 600, color: '#0F172A', fontVariantNumeric: 'tabular-nums' };
         const subStyle = { fontSize: '0.65rem', color: MUTED, fontWeight: 500, marginLeft: '0.35rem' };
         const fmtInt = (n) => Math.round(n).toLocaleString();
         const fmtPct = (num, den) => den > 0 ? `${Math.round((num / den) * 100)}%` : '0%';
-        const sumLine = (color, label, value, sub) => (
-          <div style={rowStyle}>
-            <span style={labelStyle(color)}>{label}</span>
+        const sumLine = (color, label, value, sub, danger = false) => (
+          <div style={danger ? dangerRowStyle : rowStyle}>
+            <span style={labelStyle(danger ? '#991B1B' : color)}>{label}</span>
             <span>
-              <span style={valueStyle}>{value}</span>
+              <span style={danger ? { ...valueStyle, color: '#991B1B' } : valueStyle}>{value}</span>
               {sub && <span style={subStyle}>{sub}</span>}
             </span>
           </div>
@@ -8222,10 +8226,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
               <div style={cardTitleStyle} title="Source = the upload's supplier column named a utility we recognized. Zip lookup = no supplier in the source, utility derived from the rates file via zip code.">Utility Companies</div>
               {sumLine(ELEC, 'Electric — From Supplier',  fmtInt(s.utility.electric.fromSupplier), fmtPct(s.utility.electric.fromSupplier, s.total))}
               {sumLine(ELEC, 'Electric — From Zip Lookup', fmtInt(s.utility.electric.fromZip),     fmtPct(s.utility.electric.fromZip, s.total))}
-              {sumLine(SLATE, 'Electric — Unknown',        fmtInt(s.utility.electric.unknown),     fmtPct(s.utility.electric.unknown, s.total))}
+              {sumLine(SLATE, 'Electric — Unknown',        fmtInt(s.utility.electric.unknown),     fmtPct(s.utility.electric.unknown, s.total), s.utility.electric.unknown > 0)}
               {sumLine(GAS,  'Gas — From Supplier',        fmtInt(s.utility.gas.fromSupplier),     fmtPct(s.utility.gas.fromSupplier, s.total))}
               {sumLine(GAS,  'Gas — From Zip Lookup',      fmtInt(s.utility.gas.fromZip),          fmtPct(s.utility.gas.fromZip, s.total))}
-              {sumLine(SLATE, 'Gas — Unknown',             fmtInt(s.utility.gas.unknown),          fmtPct(s.utility.gas.unknown, s.total))}
+              {sumLine(SLATE, 'Gas — Unknown',             fmtInt(s.utility.gas.unknown),          fmtPct(s.utility.gas.unknown, s.total), s.utility.gas.unknown > 0)}
             </div>
           </div>
         );
