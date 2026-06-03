@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState, useRef } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { loadOpps2Newest } from '../../utils/opps2Store';
-import * as XLSX from 'xlsx';
 import { formatAum } from '../../utils/formatters';
 import { PE_STAGES } from '../../data/enums';
 import { PEOppsScheduleModal } from './PEOppsScheduleModal';
@@ -1049,24 +1048,112 @@ function PEStagesTab({ firms, portfolioByPe, onSelectProspect }) {
   const groups = new Map(STAGE_META.map(m => [m.stage, []]));
   for (const pe of filtered) groups.get(stageOf(pe)).push(pe);
 
-  const exportToExcel = () => {
-    const order = new Map(STAGE_META.map((m, i) => [m.stage, i]));
-    const rows = filtered
-      .map(pe => ({
-        Stage: stageOf(pe),
-        'PE Firm': pe.company || '',
-        'PE AUM ($B)': pe.peAum ?? '',
-        Geography: pe.geography || '',
-        'Portfolio Companies': pcCountOf(pe),
-      }))
-      .sort((a, b) =>
-        (order.get(a.Stage) - order.get(b.Stage))
-        || a['PE Firm'].localeCompare(b['PE Firm']));
-    const ws = XLSX.utils.json_to_sheet(rows.length ? rows : [{ Stage: '', 'PE Firm': '', 'PE AUM ($B)': '', Geography: '', 'Portfolio Companies': '' }]);
-    ws['!cols'] = [{ wch: 22 }, { wch: 32 }, { wch: 12 }, { wch: 16 }, { wch: 20 }];
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'PE Stages');
-    XLSX.writeFile(wb, `pe-stages-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  // SE-formatted XLSX export that mirrors the on-screen Kanban board:
+  // one spreadsheet column per stage, each holding stacked "firm cards"
+  // (name + AUM · geography + portfolio-company count) in the stage's
+  // accent palette, with a slim spacer column between stages for the gap.
+  const exportToExcel = async () => {
+    const { Workbook } = await import('exceljs');
+    // STAGE_META carries CSS hex (#RRGGBB); ExcelJS wants ARGB ('FF'+RGB).
+    const argb = (hex) => 'FF' + hex.replace('#', '').toUpperCase();
+    const cardBorder = (m) => ({
+      left: { style: 'thick', color: { argb: argb(m.accent) } },
+      top: { style: 'thin', color: { argb: argb(m.border) } },
+      bottom: { style: 'thin', color: { argb: argb(m.border) } },
+      right: { style: 'thin', color: { argb: argb(m.border) } },
+    });
+    const SE_GREEN_DARK = 'FF009530';
+    const SE_GREEN = 'FF3DCD58';
+
+    const wb = new Workbook();
+    wb.creator = 'Schneider Electric · Prospect Tracker';
+    wb.created = new Date();
+    const ws = wb.addWorksheet('PE Stages', {
+      properties: { tabColor: { argb: SE_GREEN } },
+      views: [{ showGridLines: false, state: 'frozen', ySplit: 3 }],
+    });
+
+    // Lay out one column per stage with a spacer column in between.
+    const stageCol = {};
+    const colSpecs = [];
+    STAGE_META.forEach((m, i) => {
+      stageCol[m.stage] = colSpecs.length + 1;
+      colSpecs.push({ width: 34 });
+      if (i < STAGE_META.length - 1) colSpecs.push({ width: 3 });
+    });
+    ws.columns = colSpecs;
+    const lastCol = colSpecs.length;
+
+    // Title band across the whole board (Schneider green, white text).
+    ws.mergeCells(1, 1, 1, lastCol);
+    const title = ws.getCell(1, 1);
+    title.value = `PE Stages · ${filtered.length} PE firm${filtered.length === 1 ? '' : 's'}`;
+    title.font = { name: 'Nunito Sans', bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
+    title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+    title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    ws.getRow(1).height = 28;
+    ws.getRow(2).height = 6; // spacer
+
+    // Stage header row (3) — each column in its own accent color, with a
+    // count badge baked into the label, matching the on-screen headers.
+    const headerRow = ws.getRow(3);
+    STAGE_META.forEach((m) => {
+      const list = groups.get(m.stage) || [];
+      const cell = headerRow.getCell(stageCol[m.stage]);
+      cell.value = `${m.stage}  (${list.length})`;
+      cell.font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: argb(m.accent) } };
+      cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    });
+    headerRow.height = 24;
+
+    // Card rows — one row per firm slot; the tallest column sets how many
+    // rows we draw, and shorter columns just leave their cells blank
+    // (so the board has uneven column heights, like the page).
+    const maxLen = Math.max(0, ...STAGE_META.map((m) => (groups.get(m.stage) || []).length));
+    for (let i = 0; i < Math.max(maxLen, 1); i++) {
+      const row = ws.getRow(4 + i);
+      row.height = 46;
+      STAGE_META.forEach((m) => {
+        const list = groups.get(m.stage) || [];
+        const cell = row.getCell(stageCol[m.stage]);
+        const pe = list[i];
+        if (!pe) {
+          // First empty slot of an empty column gets a placeholder card,
+          // mirroring the "No PE firms at this stage." note on the page.
+          if (i === 0 && list.length === 0) {
+            cell.value = 'No PE firms at this stage.';
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: argb(m.bg) } };
+            cell.font = { name: 'Nunito Sans', italic: true, size: 9, color: { argb: 'FF94A3B8' } };
+            cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+            cell.border = cardBorder(m);
+          }
+          return;
+        }
+        const pcCount = pcCountOf(pe);
+        cell.value = {
+          richText: [
+            { text: pe.company || '—', font: { name: 'Nunito Sans', bold: true, size: 11, color: { argb: 'FF1E293B' } } },
+            { text: `\n${formatAum(pe.peAum)}   ·   ${pe.geography || '—'}`, font: { name: 'Nunito Sans', size: 9, color: { argb: 'FF475569' } } },
+            { text: `\n${pcCount} portfolio co${pcCount === 1 ? '' : 's'}`, font: { name: 'Nunito Sans', size: 9, color: { argb: 'FF64748B' } } },
+          ],
+        };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: argb(m.bg) } };
+        cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+        cell.border = cardBorder(m);
+      });
+    }
+
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `pe-stages-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   return (

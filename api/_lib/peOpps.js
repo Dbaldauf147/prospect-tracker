@@ -111,10 +111,149 @@ export async function loadPeOpps(db, uid) {
   });
 }
 
+// ---- Load the user's PE firms for the PE Stages board -------------------
+// Mirrors PEPortfolioView's peFirms + portfolioByPe: every prospect with
+// Type = "Private Equity" is a firm, and any prospect's `peOwner` points
+// at the firm it belongs to (counted as a portfolio company). Admin
+// (baldaufdan@gmail.com) reads the shared `prospects` collection; every
+// other user reads `users/{uid}/prospects` — matching firestoreSync.getCol.
+export async function loadPeFirms(db, uid, email) {
+  const col = email === 'baldaufdan@gmail.com'
+    ? db.collection('prospects')
+    : db.collection('users').doc(uid).collection('prospects');
+  let snap;
+  try { snap = await col.get(); } catch { return []; }
+  const prospects = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+  // Portfolio-company count per firm, keyed by lowercased firm name.
+  const pcByFirm = new Map();
+  for (const p of prospects) {
+    const owner = String(p.peOwner || '').trim().toLowerCase();
+    if (!owner) continue;
+    pcByFirm.set(owner, (pcByFirm.get(owner) || 0) + 1);
+  }
+
+  return prospects
+    .filter((p) => p.type === 'Private Equity')
+    .map((p) => ({
+      company: p.company || '',
+      peStage: p.peStage || '',
+      peAum: p.peAum ?? null,
+      geography: p.geography || '',
+      pcCount: pcByFirm.get(String(p.company || '').trim().toLowerCase()) || 0,
+    }))
+    .sort((a, b) => a.company.localeCompare(b.company));
+}
+
+// ---- PE Stages board (mirror PEStagesTab.exportToExcel) ------------------
+const PE_STAGE_ORDER = ['Discovery', 'Piloting', 'Existing Partnership'];
+const PE_STAGE_META = [
+  { stage: 'Discovery', accent: '2563EB', bg: 'EFF6FF', border: 'BFDBFE' },
+  { stage: 'Piloting', accent: 'D97706', bg: 'FFFBEB', border: 'FDE68A' },
+  { stage: 'Existing Partnership', accent: '059669', bg: 'ECFDF5', border: 'A7F3D0' },
+  { stage: 'Unassigned', accent: '64748B', bg: 'F8FAFC', border: 'E2E8F0' },
+];
+
+// AUM formatting identical to src/utils/formatters.formatAum.
+function formatAum(value) {
+  if (value == null || value === 0) return '—';
+  if (value >= 1) return `$${value.toFixed(1)}B`;
+  return `$${(value * 1000).toFixed(0)}M`;
+}
+
+// Add the Kanban-style PE Stages worksheet to an existing workbook: one
+// column per stage, stacked firm "cards" in each stage's palette. Mirrors
+// the on-screen board so the emailed file matches the PE Stages tab.
+function addPeStagesSheet(wb, firms) {
+  const argb = (hex) => 'FF' + hex.toUpperCase();
+  const cardBorder = (m) => ({
+    left: { style: 'thick', color: { argb: argb(m.accent) } },
+    top: { style: 'thin', color: { argb: argb(m.border) } },
+    bottom: { style: 'thin', color: { argb: argb(m.border) } },
+    right: { style: 'thin', color: { argb: argb(m.border) } },
+  });
+  const SE_GREEN_DARK = 'FF009530';
+  const SE_GREEN = 'FF3DCD58';
+
+  const ws = wb.addWorksheet('PE Stages', {
+    properties: { tabColor: { argb: SE_GREEN } },
+    views: [{ showGridLines: false, state: 'frozen', ySplit: 3 }],
+  });
+
+  const stageOf = (f) => (PE_STAGE_ORDER.includes(f.peStage) ? f.peStage : 'Unassigned');
+  const groups = new Map(PE_STAGE_META.map((m) => [m.stage, []]));
+  for (const f of firms) groups.get(stageOf(f)).push(f);
+
+  // One column per stage with a slim spacer column between them.
+  const stageCol = {};
+  const colSpecs = [];
+  PE_STAGE_META.forEach((m, i) => {
+    stageCol[m.stage] = colSpecs.length + 1;
+    colSpecs.push({ width: 34 });
+    if (i < PE_STAGE_META.length - 1) colSpecs.push({ width: 3 });
+  });
+  ws.columns = colSpecs;
+  const lastCol = colSpecs.length;
+
+  ws.mergeCells(1, 1, 1, lastCol);
+  const title = ws.getCell(1, 1);
+  title.value = `PE Stages · ${firms.length} PE firm${firms.length === 1 ? '' : 's'}`;
+  title.font = { name: 'Nunito Sans', bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
+  title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+  title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+  ws.getRow(1).height = 28;
+  ws.getRow(2).height = 6; // spacer
+
+  const headerRow = ws.getRow(3);
+  PE_STAGE_META.forEach((m) => {
+    const list = groups.get(m.stage) || [];
+    const cell = headerRow.getCell(stageCol[m.stage]);
+    cell.value = `${m.stage}  (${list.length})`;
+    cell.font = { name: 'Nunito Sans', bold: true, size: 11, color: { argb: 'FFFFFFFF' } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: argb(m.accent) } };
+    cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+  });
+  headerRow.height = 24;
+
+  const maxLen = Math.max(0, ...PE_STAGE_META.map((m) => (groups.get(m.stage) || []).length));
+  for (let i = 0; i < Math.max(maxLen, 1); i++) {
+    const row = ws.getRow(4 + i);
+    row.height = 46;
+    PE_STAGE_META.forEach((m) => {
+      const list = groups.get(m.stage) || [];
+      const cell = row.getCell(stageCol[m.stage]);
+      const f = list[i];
+      if (!f) {
+        if (i === 0 && list.length === 0) {
+          cell.value = 'No PE firms at this stage.';
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: argb(m.bg) } };
+          cell.font = { name: 'Nunito Sans', italic: true, size: 9, color: { argb: 'FF94A3B8' } };
+          cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+          cell.border = cardBorder(m);
+        }
+        return;
+      }
+      cell.value = {
+        richText: [
+          { text: f.company || '—', font: { name: 'Nunito Sans', bold: true, size: 11, color: { argb: 'FF1E293B' } } },
+          { text: `\n${formatAum(f.peAum)}   ·   ${f.geography || '—'}`, font: { name: 'Nunito Sans', size: 9, color: { argb: 'FF475569' } } },
+          { text: `\n${f.pcCount} portfolio co${f.pcCount === 1 ? '' : 's'}`, font: { name: 'Nunito Sans', size: 9, color: { argb: 'FF64748B' } } },
+        ],
+      };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: argb(m.bg) } };
+      cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+      cell.border = cardBorder(m);
+    });
+  }
+  return ws;
+}
+
 // ---- Build the SE-branded workbook (mirror PEOppsTab.handleExport) -------
 // Returns a Node Buffer of the .xlsx file. `columnKeys` selects/orders the
-// columns; unknown keys are ignored and an empty list falls back to all.
-export async function buildPeOppsWorkbook(records, columnKeys) {
+// PE Opps columns; unknown keys are ignored and an empty list falls back
+// to all. When `firms` is non-empty a second "PE Stages" worksheet is
+// appended, mirroring the on-screen PE Stages board.
+export async function buildPeOppsWorkbook(records, columnKeys, firms = []) {
   // exceljs is CommonJS; under Node's ESM loader its classes may sit on
   // `.default` rather than as named exports, so resolve defensively.
   const exceljs = await import('exceljs');
@@ -171,6 +310,9 @@ export async function buildPeOppsWorkbook(records, columnKeys) {
   });
 
   ws.autoFilter = { from: { row: 3, column: 1 }, to: { row: 3, column: columns.length } };
+
+  // Second tab: the PE Stages board, when the caller supplied PE firms.
+  if (Array.isArray(firms) && firms.length) addPeStagesSheet(wb, firms);
 
   const arrayBuffer = await wb.xlsx.writeBuffer();
   return Buffer.from(arrayBuffer);
