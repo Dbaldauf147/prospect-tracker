@@ -61,14 +61,31 @@ export function SelectCell({ value, onChange, options }) {
   // Popup is portaled to <body> so the table cell's overflow:hidden
   // can't clip it; position is recomputed from the wrapper's bounding
   // rect whenever the popup opens.
-  const [popPos, setPopPos] = useState({ top: 0, left: 0, width: 0 });
+  const [popPos, setPopPos] = useState({ top: 0, left: 0, width: 0, maxHeight: 280, dropUp: false });
   const wrapRef = useRef(null);
   const popRef = useRef(null);
 
   useLayoutEffect(() => {
     if (!open || !wrapRef.current) return;
     const rect = wrapRef.current.getBoundingClientRect();
-    setPopPos({ top: rect.bottom + 2, left: rect.left, width: rect.width });
+    // Flip the menu above the cell (and cap its height) when there isn't
+    // enough room below — otherwise a Stage cell near the bottom of the
+    // screen opens a menu that runs off the viewport and gets clipped.
+    const GAP = 2;
+    const MARGIN = 8; // keep a little breathing room from the viewport edge
+    const DESIRED = 280;
+    const spaceBelow = window.innerHeight - rect.bottom - GAP - MARGIN;
+    const spaceAbove = rect.top - GAP - MARGIN;
+    const dropUp = spaceBelow < Math.min(DESIRED, spaceAbove) && spaceAbove > spaceBelow;
+    const maxHeight = Math.max(120, Math.min(DESIRED, dropUp ? spaceAbove : spaceBelow));
+    setPopPos({
+      left: rect.left,
+      width: rect.width,
+      maxHeight,
+      dropUp,
+      top: dropUp ? undefined : rect.bottom + GAP,
+      bottom: dropUp ? window.innerHeight - rect.top + GAP : undefined,
+    });
   }, [open]);
 
   useEffect(() => {
@@ -116,14 +133,20 @@ export function SelectCell({ value, onChange, options }) {
           ref={popRef}
           onMouseDown={(e) => e.stopPropagation()}
           style={{
-            position: 'fixed', top: popPos.top, left: popPos.left,
+            position: 'fixed',
+            ...(popPos.dropUp ? { bottom: popPos.bottom } : { top: popPos.top }),
+            left: popPos.left,
             zIndex: 9999, minWidth: Math.max(popPos.width, 160), width: 240,
             background: '#fff', border: '1px solid var(--color-border)',
             borderRadius: 4, boxShadow: '0 8px 20px rgba(15, 23, 42, 0.18)',
             fontSize: '0.82rem',
+            // Reserve room for the Clear footer so the whole popover stays
+            // within the space measured above/below the cell.
+            maxHeight: popPos.maxHeight,
+            display: 'flex', flexDirection: 'column',
           }}
         >
-          <div style={{ maxHeight: 280, overflowY: 'auto' }}>
+          <div style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto' }}>
             {displayOptions.map(opt => {
               const selected = opt.toLowerCase() === current.toLowerCase();
               return (
