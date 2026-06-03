@@ -1931,6 +1931,11 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     let elecMissingCostSites = 0, gasMissingCostSites = 0;
     let elecFromSupplier = 0, elecFromZip = 0, elecUnknown = 0;
     let gasFromSupplier = 0, gasFromZip = 0, gasUnknown = 0;
+    // Regulated vs deregulated market split, per commodity. Classified
+    // off the resolved utility provider; sites with no recognized
+    // provider (unmatched) fall into the "Unknown" bucket.
+    let elecReg = 0, elecDereg = 0, elecMktUnknown = 0;
+    let gasReg = 0, gasDereg = 0, gasMktUnknown = 0;
     for (const r of rows) {
       // __kwhFromEstimate__ / __thermsFromEstimate__ are BOOLEAN
       // flags ("did this value come from the property-type estimate
@@ -1975,6 +1980,17 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       if (r.__gasVendorMatchKind__ === 'utility') gasFromSupplier++;
       else if (r.__gas__) gasFromZip++;
       else gasUnknown++;
+      // Regulated / deregulated market split. classifyUtility returns
+      // null when there's no recognized provider — count those as
+      // Unknown so the three buckets always sum to the site total.
+      const elecMkt = classifyUtility(r.__electric__);
+      if (elecMkt === 'Regulated') elecReg++;
+      else if (elecMkt === 'Deregulated') elecDereg++;
+      else elecMktUnknown++;
+      const gasMkt = classifyUtility(r.__gas__);
+      if (gasMkt === 'Regulated') gasReg++;
+      else if (gasMkt === 'Deregulated') gasDereg++;
+      else gasMktUnknown++;
     }
     return {
       total: rows.length,
@@ -1989,6 +2005,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       utility: {
         electric: { fromSupplier: elecFromSupplier, fromZip: elecFromZip, unknown: elecUnknown },
         gas:      { fromSupplier: gasFromSupplier, fromZip: gasFromZip, unknown: gasUnknown },
+      },
+      market: {
+        electric: { regulated: elecReg, deregulated: elecDereg, unknown: elecMktUnknown },
+        gas:      { regulated: gasReg, deregulated: gasDereg, unknown: gasMktUnknown },
       },
     };
   }, [rows]);
@@ -8274,7 +8294,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           </div>
         );
         return (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem', margin: '0.5rem 1.25rem 0.75rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.75rem', margin: '0.5rem 1.25rem 0.75rem' }}>
             <div style={cardStyle}>
               <div style={cardTitleStyle}>Consumption</div>
               {sumLine(ELEC, 'Electric — Actual',    `${fmtInt(s.consumption.electric.actual)} kWh`,   `${s.consumption.electric.actualSites} site${s.consumption.electric.actualSites === 1 ? '' : 's'}`)}
@@ -8301,6 +8321,15 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
               {sumLine(GAS,  'Gas — From Supplier',        fmtInt(s.utility.gas.fromSupplier),     fmtPct(s.utility.gas.fromSupplier, s.total))}
               {sumLine(GAS,  'Gas — From Zip Lookup',      fmtInt(s.utility.gas.fromZip),          fmtPct(s.utility.gas.fromZip, s.total))}
               {sumLine(SLATE, 'Gas — Unknown',             fmtInt(s.utility.gas.unknown),          fmtPct(s.utility.gas.unknown, s.total), s.utility.gas.unknown > 0)}
+            </div>
+            <div style={cardStyle}>
+              <div style={cardTitleStyle} title="Market structure of each site's utility. Deregulated = competitive retail market (supplier choice — sourcing opportunity). Regulated = single-utility monopoly market. Unknown = no recognized provider to classify.">Market</div>
+              {sumLine(ELEC, 'Electric — Deregulated', fmtInt(s.market.electric.deregulated), fmtPct(s.market.electric.deregulated, s.total))}
+              {sumLine(ELEC, 'Electric — Regulated',   fmtInt(s.market.electric.regulated),   fmtPct(s.market.electric.regulated, s.total))}
+              {sumLine(SLATE, 'Electric — Unknown',     fmtInt(s.market.electric.unknown),     fmtPct(s.market.electric.unknown, s.total), s.market.electric.unknown > 0)}
+              {sumLine(GAS,  'Gas — Deregulated',       fmtInt(s.market.gas.deregulated),      fmtPct(s.market.gas.deregulated, s.total))}
+              {sumLine(GAS,  'Gas — Regulated',         fmtInt(s.market.gas.regulated),        fmtPct(s.market.gas.regulated, s.total))}
+              {sumLine(SLATE, 'Gas — Unknown',          fmtInt(s.market.gas.unknown),          fmtPct(s.market.gas.unknown, s.total), s.market.gas.unknown > 0)}
             </div>
           </div>
         );
