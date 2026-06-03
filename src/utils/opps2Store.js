@@ -5,7 +5,7 @@
 // document stay in lock-step. The chunking + `_updatedAt` rules live
 // here in exactly one place.
 
-import { doc, getDoc, collection, getDocs, writeBatch, deleteField } from 'firebase/firestore';
+import { doc, getDoc, setDoc, collection, getDocs, writeBatch, deleteField } from 'firebase/firestore';
 import { db } from '../firebase';
 import { dbGet, dbPut } from './db';
 
@@ -19,6 +19,20 @@ export const OPPS2_FIRESTORE_COLLECTION = 'opps2Data';
 // user's doc; the parent doc holds metadata. Each chunk stays well
 // below the cap.
 const OPPS2_CHUNK_SIZE = 700 * 1024;
+
+// When the payload fits under this byte budget it's stored as a single
+// `json` field on the parent doc and the `chunks` subcollection is left
+// untouched. Leaves headroom under Firestore's ~1 MB per-doc cap for
+// field names and metadata. Measured in UTF-8 bytes (not chars) so
+// multi-byte content can't sneak the doc over the limit.
+const OPPS2_SINGLE_DOC_MAX_BYTES = 950 * 1024;
+
+function utf8ByteLength(str) {
+  // TextEncoder is available in every browser this app runs in; the
+  // char-length fallback only matters in a non-DOM environment.
+  try { return new TextEncoder().encode(str).length; }
+  catch { return str.length; }
+}
 
 // Stamp every save with a wall-clock timestamp so hydration can pick
 // the strictly newer source between IDB and Firestore. Without this,
@@ -88,6 +102,40 @@ export async function saveOpps2ToFirestore(userId, data) {
   catch (err) { throw new Error(`opps2: refusing to save unparseable JSON (${err.message})`); }
   const ref = doc(db, OPPS2_FIRESTORE_COLLECTION, userId);
   const updatedAt = new Date(stamped._updatedAt).toISOString();
+
+  // Single-document fast path. When the payload fits comfortably under
+  // Firestore's per-doc cap, store it as one `json` field on the parent
+  // doc and never touch the `chunks` subcollection. This keeps the
+  // common case to a single write *and* means the save only needs
+  // access to opps2Data/{uid} itself — so it works even if the chunks
+  // subcollection rule isn't deployed. loadOpps2FromFirestore already
+  // prefers raw.json whenever chunkCount isn't a positive number.
+  if (utf8ByteLength(json) <= OPPS2_SINGLE_DOC_MAX_BYTES) {
+    // Read the parent doc (not the chunks list) to learn whether a
+    // previous larger save left chunks behind. Avoiding getDocs on the
+    // subcollection keeps this path independent of the chunks rule.
+    let priorChunkCount = 0;
+    try { priorChunkCount = Number((await getDoc(ref)).data()?.chunkCount) || 0; }
+    catch { priorChunkCount = 0; }
+    await setDoc(ref, { chunkCount: 0, updatedAt, json }, { merge: true });
+    // Best-effort: delete chunks from a previous chunked save. The
+    // loader now ignores them (chunkCount is 0), so a failure here —
+    // e.g. a missing chunks rule — is harmless dead data, not a lost
+    // save. Done in a separate commit so it can't abort the json write.
+    if (priorChunkCount > 0) {
+      try {
+        const cleanup = writeBatch(db);
+        for (let i = 0; i < priorChunkCount; i++) {
+          cleanup.delete(doc(ref, 'chunks', String(i)));
+        }
+        await cleanup.commit();
+      } catch (err) { console.warn('opps2: stale chunk cleanup failed (harmless)', err); }
+    }
+    return stamped._updatedAt;
+  }
+
+  // Chunked path for datasets past the single-doc budget: split the JSON
+  // across the `chunks` subcollection; the parent doc holds metadata.
   const chunks = [];
   for (let i = 0; i < json.length; i += OPPS2_CHUNK_SIZE) {
     chunks.push(json.slice(i, i + OPPS2_CHUNK_SIZE));
