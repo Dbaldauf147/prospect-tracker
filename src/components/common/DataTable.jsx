@@ -378,6 +378,11 @@ export function DataTable({
   onSort: externalSort,
   sortConfig: externalSortConfig,
   defaultSort,
+  // Imperative sort trigger: { key, direction, nonce }. Bumping nonce
+  // re-applies the given sort through the same path as a header click
+  // (incl. the freeze snapshot). Lets a parent re-rank on demand
+  // without owning sort state. Ignored when an external sort is wired.
+  sortSignal,
   alwaysVisible = [],
   onRowClick,
   rowClassName,
@@ -498,14 +503,8 @@ export function DataTable({
   // row in place. Clicking the same header again resnapshots.
   const [sortSnapshot, setSortSnapshot] = useState(null);
 
-  function handleSort(key) {
-    if (externalSort) {
-      externalSort(key);
-      return;
-    }
-    const isSame = internalSort.key === key;
-    const nextDirection = isSame && internalSort.direction === 'asc' ? 'desc' : 'asc';
-    setInternalSort({ key, direction: nextDirection });
+  function applySort(key, direction) {
+    setInternalSort({ key, direction });
     const col = colByKey.get(key);
     if (col?.freezeSortOrder) {
       const sortGetter = col.getSortValue;
@@ -518,22 +517,50 @@ export function DataTable({
         const aNum = parseFloat(String(aVal).replace(/[,$%]/g, ''));
         const bNum = parseFloat(String(bVal).replace(/[,$%]/g, ''));
         if (!isNaN(aNum) && !isNaN(bNum)) {
-          return nextDirection === 'asc' ? aNum - bNum : bNum - aNum;
+          return direction === 'asc' ? aNum - bNum : bNum - aNum;
         }
         aVal = String(aVal).toLowerCase();
         bVal = String(bVal).toLowerCase();
-        if (aVal < bVal) return nextDirection === 'asc' ? -1 : 1;
-        if (aVal > bVal) return nextDirection === 'asc' ? 1 : -1;
+        if (aVal < bVal) return direction === 'asc' ? -1 : 1;
+        if (aVal > bVal) return direction === 'asc' ? 1 : -1;
         return 0;
       });
       setSortSnapshot({
-        key, direction: nextDirection,
+        key, direction,
         ids: sorted.map(r => (r?.id != null ? String(r.id) : null)).filter(Boolean),
       });
     } else {
       setSortSnapshot(null);
     }
   }
+
+  function handleSort(key) {
+    if (externalSort) {
+      externalSort(key);
+      return;
+    }
+    const isSame = internalSort.key === key;
+    const nextDirection = isSame && internalSort.direction === 'asc' ? 'desc' : 'asc';
+    applySort(key, nextDirection);
+  }
+
+  // Lets a parent imperatively trigger a sort (e.g. re-rank by Call In
+  // after an edit) without taking over sort state. The parent bumps
+  // `sortSignal.nonce` to fire; we apply the requested key + direction
+  // through the same path as a header click, including the
+  // freeze-snapshot capture for `freezeSortOrder` columns. Ignored when
+  // an external sort controls the table.
+  const lastSortNonce = useRef(sortSignal?.nonce);
+  useEffect(() => {
+    if (externalSort || externalSortConfig) return;
+    const nonce = sortSignal?.nonce;
+    if (nonce == null || nonce === lastSortNonce.current) return;
+    lastSortNonce.current = nonce;
+    if (sortSignal.key) {
+      applySort(sortSignal.key, sortSignal.direction === 'desc' ? 'desc' : 'asc');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sortSignal?.nonce]);
 
   // Sort rows internally if no external sort.
   // Apply per-column filters on top of the externally-filtered rows prop.
