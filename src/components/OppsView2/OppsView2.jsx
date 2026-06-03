@@ -2425,6 +2425,105 @@ function SoldFollowUpModal({ opp, reasonOptions, competitionOptions, onSave, onC
   );
 }
 
+// Popup that fires when an opp's Stage flips from "Not Started" to
+// "Lead". Prompts the user to enter the Quoted Amount on the spot so a
+// freshly-activated opp carries a dollar figure into the pipeline.
+// Pre-populates with whatever the row already has. Save applies the
+// value via updateOppField; Skip leaves the row as-is (Stage is still
+// Lead). Mirrors the NotSoldFollowUpModal pattern.
+function LeadQuotedAmountModal({ opp, onSave, onClose }) {
+  const [quotedAmount, setQuotedAmount] = useState(String(opp?.['Quoted Amount'] ?? ''));
+
+  function handleSave() {
+    onSave({ quotedAmount: quotedAmount.trim() });
+  }
+
+  const labelStyle = { fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text)', display: 'block', marginBottom: 4 };
+  const inputStyle = {
+    width: '100%', boxSizing: 'border-box',
+    padding: '0.45rem 0.55rem',
+    border: '1px solid var(--color-border)', borderRadius: 4,
+    fontSize: '0.85rem', fontFamily: 'inherit',
+    background: '#fff', color: 'var(--color-text)',
+  };
+
+  return createPortal(
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)',
+        zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+        }}
+        style={{
+          width: 420, maxWidth: '92vw',
+          background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)',
+          display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        }}
+      >
+        <div style={{ padding: '0.85rem 1rem', borderBottom: '1px solid var(--color-border-light)' }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)' }}>
+            Enter the Quoted Amount
+          </div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
+            <strong>{opp?.['Account'] || 'This opp'}</strong>
+            {opp?.['Scope'] ? <> &middot; {opp['Scope']}</> : null}
+            {' '}just moved to <strong>Lead</strong>. Add the Quoted Amount below.
+          </div>
+        </div>
+
+        <div style={{ padding: '0.85rem 1rem' }}>
+          <label style={labelStyle}>Quoted Amount</label>
+          <input
+            type="text"
+            autoFocus
+            value={quotedAmount}
+            onChange={(e) => setQuotedAmount(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); handleSave(); }
+            }}
+            placeholder="e.g. $25,000"
+            style={inputStyle}
+          />
+        </div>
+
+        <div style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          padding: '0.6rem 1rem',
+          borderTop: '1px solid var(--color-border-light)', background: 'var(--color-bg)',
+        }}>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              padding: '0.35rem 0.7rem', background: 'transparent',
+              border: '1px solid var(--color-border)', borderRadius: 4,
+              fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+              color: 'var(--color-text-muted)', cursor: 'pointer',
+            }}
+          >Skip for now</button>
+          <button
+            type="button"
+            onClick={handleSave}
+            style={{
+              padding: '0.35rem 0.85rem', background: 'var(--color-accent)',
+              border: '1px solid var(--color-accent)', borderRadius: 4,
+              fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+              color: '#fff', cursor: 'pointer',
+            }}
+          >Save</button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 // Prompt shown whenever an opp moves into the "Quoted" stage so the user
 // can enter / review the quote-tracking data points (Quoted On, Chance?,
 // Margin Email Date - Sales Leader Review Date). Pre-populated with the
@@ -4084,6 +4183,11 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // Final Margin, and Competition. The Close Date is auto-stamped to the
   // status-change date in updateOppField. Cleared on Save or Skip.
   const [soldPromptId, setSoldPromptId] = useState(null);
+  // _id of the opp that just moved from "Not Started" to "Lead". When
+  // set, the LeadQuotedAmountModal prompts the user to enter the Quoted
+  // Amount so a newly-activated opp carries a dollar figure. Cleared on
+  // Save or Skip.
+  const [leadQuotedPromptId, setLeadQuotedPromptId] = useState(null);
   // _id of the opp that just had its Follow Up date changed. When set,
   // the FollowUpStatusModal asks the user to pick the new Status
   // (Who is waiting) for that opp. Cleared on Save or Skip.
@@ -4930,6 +5034,16 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     // already auto-stamped above.
     if (stageChanged && String(value ?? '').trim().toLowerCase() === 'sold') {
       setSoldPromptId(id);
+    }
+    // Prompt for the Quoted Amount whenever the Stage flips FROM "Not
+    // Started" TO "Lead", so the number is captured the moment the opp
+    // becomes active.
+    if (
+      stageChanged
+      && String(row['Stage'] ?? '').trim().toLowerCase() === 'not started'
+      && String(value ?? '').trim().toLowerCase() === 'lead'
+    ) {
+      setLeadQuotedPromptId(id);
     }
     // Whenever the Follow Up date changes, prompt for the new Status so
     // the "Who is waiting" value stays current with each follow-up.
@@ -6007,6 +6121,25 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               setSoldPromptId(null);
             }}
             onClose={() => setSoldPromptId(null)}
+          />
+        );
+      })()}
+
+      {leadQuotedPromptId != null && (() => {
+        const opp = records.find(r => r._id === leadQuotedPromptId);
+        if (!opp) return null;
+        return (
+          <LeadQuotedAmountModal
+            opp={opp}
+            onSave={({ quotedAmount }) => {
+              // Only push when the value actually changed so the undo
+              // stack stays uncluttered with no-op snapshots.
+              if (quotedAmount !== String(opp['Quoted Amount'] ?? '').trim()) {
+                updateOppField(opp._id, 'Quoted Amount', quotedAmount);
+              }
+              setLeadQuotedPromptId(null);
+            }}
+            onClose={() => setLeadQuotedPromptId(null)}
           />
         );
       })()}
