@@ -2572,12 +2572,30 @@ function QuotedFollowUpModal({ opp, chanceOptions, onSave, onClose }) {
 // current with each follow-up. Cleared on Save or Skip.
 function FollowUpStatusModal({ opp, statusOptions, onSave, onClose }) {
   const curStatus = opp?.['Status'] ?? '';
-  const curNextSteps = opp?.['Next Steps'] ?? '';
   const [status, setStatus] = useState(String(curStatus ?? ''));
-  const [nextSteps, setNextSteps] = useState(String(curNextSteps ?? ''));
+
+  // Seed the Next Steps rows from the same source the standalone
+  // NextStepsEditor uses so this popup edits them in the identical
+  // Next Step / Waiting On format. Kept as local state and flattened
+  // back on Save.
+  const noteLines = useMemo(() => textToBulletItems(opp?.['Next Steps']), [opp]);
+  const storedWaiting = Array.isArray(opp?._nextStepsWaiting) ? opp._nextStepsWaiting : [];
+  const [rows, setRows] = useState(() => {
+    const seed = noteLines.map((note, i) => ({ note, waitingOn: String(storedWaiting[i] || '') }));
+    return seed.length > 0 ? seed : [{ note: '', waitingOn: '' }];
+  });
+  const updateRow = (idx, key, value) => setRows(prev => prev.map((r, i) => i === idx ? { ...r, [key]: value } : r));
+  const addRow = () => setRows(prev => [...prev, { note: '', waitingOn: '' }]);
+  const deleteRow = (idx) => setRows(prev => {
+    const next = prev.filter((_, i) => i !== idx);
+    return next.length > 0 ? next : [{ note: '', waitingOn: '' }];
+  });
 
   function handleSave() {
-    onSave({ status, nextSteps });
+    const kept = rows.filter(r => (r.note || '').trim() || (r.waitingOn || '').trim());
+    const nextSteps = kept.map(r => (r.note || '').trim()).join('\n');
+    const nextStepsWaiting = kept.map(r => (r.waitingOn || '').trim());
+    onSave({ status, nextSteps, nextStepsWaiting });
   }
 
   const hintStyle = { fontSize: '0.68rem', color: 'var(--color-text-muted)', marginTop: 3 };
@@ -2609,7 +2627,7 @@ function FollowUpStatusModal({ opp, statusOptions, onSave, onClose }) {
           if (e.key === 'Escape') { e.preventDefault(); onClose(); }
         }}
         style={{
-          width: 460, maxWidth: '92vw',
+          width: 'min(820px, 94vw)', maxHeight: '88vh',
           background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)',
           display: 'flex', flexDirection: 'column', overflow: 'hidden',
         }}
@@ -2621,20 +2639,17 @@ function FollowUpStatusModal({ opp, statusOptions, onSave, onClose }) {
           <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
             <strong>{opp?.['Account'] || 'This opp'}</strong>
             {opp?.['Scope'] ? <> &middot; {opp['Scope']}</> : null}
-            {' '}has a new <strong>Follow Up</strong> date. Pick the current Status below.
+            {' '}has a new <strong>Follow Up</strong> date. Pick the current Status and review the Next Steps below.
           </div>
         </div>
 
-        <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.7rem' }}>
+        <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.7rem', overflow: 'auto' }}>
           <div>
             <label style={labelStyle}>Status</label>
             <select
               autoFocus
               value={status}
               onChange={(e) => setStatus(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') { e.preventDefault(); handleSave(); }
-              }}
               style={inputStyle}
             >
               <option value="">— Select —</option>
@@ -2646,11 +2661,12 @@ function FollowUpStatusModal({ opp, statusOptions, onSave, onClose }) {
           </div>
           <div>
             <label style={labelStyle}>Next Steps</label>
-            <textarea
-              value={nextSteps}
-              onChange={(e) => setNextSteps(e.target.value)}
-              rows={4}
-              style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.4 }}
+            <NextStepsRowsEditor
+              rows={rows}
+              onUpdateRow={updateRow}
+              onAddRow={addRow}
+              onDeleteRow={deleteRow}
+              onCommit={() => {}}
             />
           </div>
         </div>
@@ -3732,6 +3748,79 @@ function AutoGrowTextarea({ value, onChange, onBlur, placeholder, style }) {
   );
 }
 
+// The Next Step / Waiting On rows table shared by the standalone
+// NextStepsEditor modal and the Follow Up status popup, so both edit
+// Next Steps in the exact same format. Presentational only — the
+// parent owns the `rows` state and the add / delete / commit handlers.
+function NextStepsRowsEditor({ rows, onUpdateRow, onAddRow, onDeleteRow, onCommit }) {
+  const inputStyle = {
+    width: '100%', padding: '0.4rem 0.5rem', border: '1px solid #CBD5E1',
+    borderRadius: 4, fontSize: '0.85rem', fontFamily: 'inherit',
+    lineHeight: 1.4, resize: 'vertical', minHeight: 56, background: '#fff',
+    overflow: 'hidden',
+  };
+  return (
+    <>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+        <thead>
+          <tr style={{ background: '#F1F5F9', textAlign: 'left', color: '#475569' }}>
+            <th style={{ padding: '0.4rem 0.5rem', fontWeight: 600, width: '55%', borderBottom: '1px solid #E2E8F0' }}>Next Step</th>
+            <th style={{ padding: '0.4rem 0.5rem', fontWeight: 600, width: '40%', borderBottom: '1px solid #E2E8F0' }}>Waiting On</th>
+            <th style={{ width: 32, borderBottom: '1px solid #E2E8F0' }} aria-label="" />
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, idx) => (
+            <tr key={idx} style={{ verticalAlign: 'top' }}>
+              <td style={{ padding: '0.3rem 0.4rem 0.3rem 0', borderBottom: '1px solid #F1F5F9' }}>
+                <AutoGrowTextarea
+                  style={inputStyle}
+                  value={row.note}
+                  onChange={(e) => onUpdateRow(idx, 'note', e.target.value)}
+                  onBlur={onCommit}
+                  placeholder="What needs to happen?"
+                />
+              </td>
+              <td style={{ padding: '0.3rem 0.4rem', borderBottom: '1px solid #F1F5F9' }}>
+                <AutoGrowTextarea
+                  style={inputStyle}
+                  value={row.waitingOn}
+                  onChange={(e) => onUpdateRow(idx, 'waitingOn', e.target.value)}
+                  onBlur={onCommit}
+                  placeholder="Who / what?"
+                />
+              </td>
+              <td style={{ padding: '0.3rem 0 0.3rem 0.2rem', borderBottom: '1px solid #F1F5F9', textAlign: 'right' }}>
+                <button
+                  type="button"
+                  onClick={() => onDeleteRow(idx)}
+                  aria-label="Delete step"
+                  title="Delete step"
+                  style={{
+                    background: 'transparent', border: 'none', cursor: 'pointer',
+                    color: '#94A3B8', fontSize: '1rem', padding: '0 4px', lineHeight: 1,
+                  }}
+                >×</button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div style={{ marginTop: '0.6rem' }}>
+        <button
+          type="button"
+          onClick={onAddRow}
+          style={{
+            padding: '0.35rem 0.7rem', border: '1px solid #BFDBFE', borderRadius: 4,
+            background: '#EFF6FF', color: '#1E40AF', fontSize: '0.75rem', fontWeight: 600,
+            cursor: 'pointer', fontFamily: 'inherit',
+          }}
+        >+ Add step</button>
+      </div>
+    </>
+  );
+}
+
 function NextStepsEditor({ opp, onClose, updateOppField }) {
   const noteLines = useMemo(() => textToBulletItems(opp?.['Next Steps']), [opp]);
   const storedWaiting = Array.isArray(opp?._nextStepsWaiting) ? opp._nextStepsWaiting : [];
@@ -3772,12 +3861,6 @@ function NextStepsEditor({ opp, onClose, updateOppField }) {
   }
 
   const account = String(opp?.['Account'] || '').trim() || '(no account)';
-  const inputStyle = {
-    width: '100%', padding: '0.4rem 0.5rem', border: '1px solid #CBD5E1',
-    borderRadius: 4, fontSize: '0.85rem', fontFamily: 'inherit',
-    lineHeight: 1.4, resize: 'vertical', minHeight: 56, background: '#fff',
-    overflow: 'hidden',
-  };
 
   return (
     <div
@@ -3809,62 +3892,13 @@ function NextStepsEditor({ opp, onClose, updateOppField }) {
             }}
           >×</button>
         </div>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
-          <thead>
-            <tr style={{ background: '#F1F5F9', textAlign: 'left', color: '#475569' }}>
-              <th style={{ padding: '0.4rem 0.5rem', fontWeight: 600, width: '55%', borderBottom: '1px solid #E2E8F0' }}>Next Step</th>
-              <th style={{ padding: '0.4rem 0.5rem', fontWeight: 600, width: '40%', borderBottom: '1px solid #E2E8F0' }}>Waiting On</th>
-              <th style={{ width: 32, borderBottom: '1px solid #E2E8F0' }} aria-label="" />
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row, idx) => (
-              <tr key={idx} style={{ verticalAlign: 'top' }}>
-                <td style={{ padding: '0.3rem 0.4rem 0.3rem 0', borderBottom: '1px solid #F1F5F9' }}>
-                  <AutoGrowTextarea
-                    style={inputStyle}
-                    value={row.note}
-                    onChange={(e) => updateRow(idx, 'note', e.target.value)}
-                    onBlur={() => commit(rows)}
-                    placeholder="What needs to happen?"
-                  />
-                </td>
-                <td style={{ padding: '0.3rem 0.4rem', borderBottom: '1px solid #F1F5F9' }}>
-                  <AutoGrowTextarea
-                    style={inputStyle}
-                    value={row.waitingOn}
-                    onChange={(e) => updateRow(idx, 'waitingOn', e.target.value)}
-                    onBlur={() => commit(rows)}
-                    placeholder="Who / what?"
-                  />
-                </td>
-                <td style={{ padding: '0.3rem 0 0.3rem 0.2rem', borderBottom: '1px solid #F1F5F9', textAlign: 'right' }}>
-                  <button
-                    type="button"
-                    onClick={() => deleteRow(idx)}
-                    aria-label="Delete step"
-                    title="Delete step"
-                    style={{
-                      background: 'transparent', border: 'none', cursor: 'pointer',
-                      color: '#94A3B8', fontSize: '1rem', padding: '0 4px', lineHeight: 1,
-                    }}
-                  >×</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <div style={{ marginTop: '0.6rem' }}>
-          <button
-            type="button"
-            onClick={addRow}
-            style={{
-              padding: '0.35rem 0.7rem', border: '1px solid #BFDBFE', borderRadius: 4,
-              background: '#EFF6FF', color: '#1E40AF', fontSize: '0.75rem', fontWeight: 600,
-              cursor: 'pointer', fontFamily: 'inherit',
-            }}
-          >+ Add step</button>
-        </div>
+        <NextStepsRowsEditor
+          rows={rows}
+          onUpdateRow={updateRow}
+          onAddRow={addRow}
+          onDeleteRow={deleteRow}
+          onCommit={() => commit(rows)}
+        />
       </div>
     </div>
   );
@@ -6012,12 +6046,16 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           <FollowUpStatusModal
             opp={opp}
             statusOptions={statusOpts}
-            onSave={({ status, nextSteps }) => {
+            onSave={({ status, nextSteps, nextStepsWaiting }) => {
               if (status !== String(opp['Status'] ?? '')) {
                 updateOppField(opp._id, 'Status', status);
               }
               if (nextSteps !== String(opp['Next Steps'] ?? '')) {
                 updateOppField(opp._id, 'Next Steps', nextSteps);
+              }
+              const curWaiting = Array.isArray(opp._nextStepsWaiting) ? opp._nextStepsWaiting : [];
+              if (JSON.stringify(nextStepsWaiting) !== JSON.stringify(curWaiting)) {
+                updateOppField(opp._id, '_nextStepsWaiting', nextStepsWaiting);
               }
               setFollowUpStatusPromptId(null);
               requestCallInSort();
