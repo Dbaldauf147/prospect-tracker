@@ -2923,7 +2923,9 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
   // Shape: settings.companyOpportunities[slug] = { buckets: [{id,name}], opportunities: [{id,bucketId,title,notes,createdAt,updatedAt}] }
   // (Legacy storage key; the UI label is "Notes" but the underlying data model is unchanged.)
   const companyOppsData = (settings.companyOpportunities || {})[companySlug] || { buckets: [], opportunities: [] };
-  const [opportunitiesOpen, setOpportunitiesOpen] = useState(false);
+  // Notes section starts expanded so the per-company note pages are
+  // visible by default when a company popup opens.
+  const [opportunitiesOpen, setOpportunitiesOpen] = useState(true);
   const [selectedOppId, setSelectedOppId] = useState(null);
   // ID of the form tab currently in inline-rename mode. The tab strip
   // swaps the title span out for an <input> when this matches.
