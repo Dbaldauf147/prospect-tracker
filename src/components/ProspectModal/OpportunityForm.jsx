@@ -2448,7 +2448,7 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
         row.height = 18;
       };
 
-      const addTable = (title, columns, rows /*, widths unused */, opts = {}) => {
+      const addTable = (title, columns, rows, _widths /* unused */, opts = {}) => {
         addSectionHeader(title);
         const highlightRow = typeof opts.highlightRow === 'function' ? opts.highlightRow : null;
         // Distribute the SPAN worksheet columns across this table's columns
