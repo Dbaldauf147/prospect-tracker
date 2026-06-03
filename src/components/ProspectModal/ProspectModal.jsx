@@ -390,7 +390,7 @@ const EMPTY = {
   company: '', cdm: '', status: 'Inside Sales', type: '', geography: '', publicPrivate: '',
   assetTypes: [], peAum: null, reAum: null, numberOfSites: null, rank: '', tier: 'Tier 2',
   hqRegion: '', frameworks: [], notes: '', website: '', emailDomain: '', servicesExplored: {}, serviceNotes: {}, competitors: {}, portfolioCompanies: [],
-  peOwner: '', sustainabilityTargets: '', caseStudyCreated: false, peStage: '',
+  peOwner: '', sustainabilityTargets: '', caseStudyCreated: false, peStage: '', bfoCompanyName: '',
 };
 
 // Company-name normalizer shared with the list tabs so fuzzy matching
@@ -4059,6 +4059,11 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             <div>
               <label className={styles.label}>Website</label>
               <CommitOnBlurInput className={styles.input} value={fields.website} onCommit={v => set('website', v)} placeholder="www.example.com" />
+            </div>
+
+            <div>
+              <label className={styles.label}>BFO Company Name</label>
+              <CommitOnBlurInput className={styles.input} value={fields.bfoCompanyName ?? ''} onCommit={v => set('bfoCompanyName', v)} placeholder="Name as it appears in BFO" />
             </div>
 
             <div>
