@@ -2691,7 +2691,14 @@ export function PricingView({ settings } = {}) {
         if (typeof item.cts !== 'number') continue;
         const isMonthly = /recurring.*monthly|monthly.*recurring|^recurring/i.test(effectiveType(item));
         const unitAmount = item.cts * (isMonthly ? 12 : 1);
-        lineRows.push([item.description || '', unitAmount.toFixed(2), 1]);
+        // Unit Amount as a $ figure with thousands separators and two
+        // decimals (e.g. $1,234.56). The comma triggers CSV quoting via
+        // escape() below so the value stays in one column.
+        const unitAmountStr = unitAmount.toLocaleString('en-US', {
+          style: 'currency', currency: 'USD',
+          minimumFractionDigits: 2, maximumFractionDigits: 2,
+        });
+        lineRows.push([item.description || '', unitAmountStr, 1]);
       }
     }
     if (!lineRows.length) {
