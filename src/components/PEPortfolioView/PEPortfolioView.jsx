@@ -3,6 +3,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { loadOpps2Newest } from '../../utils/opps2Store';
 import { formatAum } from '../../utils/formatters';
+import { formatDateDisplay } from '../../utils/oppsCallIn';
 import { PE_STAGES } from '../../data/enums';
 import { PEOppsScheduleModal } from './PEOppsScheduleModal';
 
@@ -1245,9 +1246,9 @@ function PEOppsTab({ opps, totalOpps, query, setQuery, oppsLoaded, prospects, on
     { key: 'Status', label: 'Status', width: '1.4fr' },
     { key: 'BFO Link', label: 'BFO Opportunity Name', width: '1.6fr' },
     { key: 'Next Steps', label: 'Next Steps', width: '1.8fr' },
-    { key: 'Last Client Heard From Us', label: 'Last Client Heard From Us', width: '1.3fr' },
+    { key: 'Last Client Heard From Us', label: 'Last Client Heard From Us', width: '1.3fr', value: r => formatDateDisplay(r['Last Client Heard From Us']) },
     { key: 'Call In', label: 'Call In', width: '0.8fr', align: 'right', value: r => { const n = resolveCallIn(r); return n == null ? '' : String(n); } },
-    { key: 'Close Date', label: 'Close Date', width: '1fr' },
+    { key: 'Close Date', label: 'Close Date', width: '1fr', value: r => formatDateDisplay(r['Close Date']) },
   ];
   const ALL_KEYS = ALL_COLUMNS.map(c => c.key);
   const cellValue = (r, c) => (c.value ? c.value(r) : (r[c.key] ?? ''));
