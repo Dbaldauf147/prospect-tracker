@@ -1442,6 +1442,7 @@ function PEOppsTab({ opps, totalOpps, query, setQuery, oppsLoaded, prospects, on
         onClose={() => setScheduleOpen(false)}
         uid={user?.uid}
         email={user?.email}
+        oppsRows={sortedOpps}
         allColumns={ALL_COLUMNS.map(c => ({ key: c.key, label: c.label }))}
         defaultColumns={[...visibleCols]}
       />
