@@ -690,10 +690,10 @@ export function YOYView() {
       _deals: r._deals.sort(sortDeals),
     }));
     // Projected — this year's Sold deals plus every still-open opp in the
-    // strong pipeline: Stage "Agreement Sent" or a "Quoted Expected" chance
-    // (Chance? = Expected). Closed/Not-Sold opps and prior-year Sold are
-    // excluded; Sold is counted once here, so the pipeline branch skips
-    // closed stages to avoid double-counting.
+    // late-stage pipeline: Stage "Agreement Sent" or "Contracting".
+    // Closed/Not-Sold opps and prior-year Sold are excluded; Sold is counted
+    // once here, so the pipeline branch skips closed stages to avoid
+    // double-counting.
     let projCurrent = 0, projNew = 0;
     const projDeals = [];
     for (const r of records) {
@@ -704,9 +704,8 @@ export function YOYView() {
       if (stage === 'Sold') {
         const y = parseDateYear(r['Close Date']) ?? parseYear(r['Open Year']);
         include = y === currentYear;
-      } else if (!CLOSED_STAGES.has(stage)) {
-        const chance = String(r['Chance?'] ?? r['Chance'] ?? '').trim().toLowerCase();
-        include = stage === 'Agreement Sent' || chance === 'expected';
+      } else {
+        include = stage === 'Agreement Sent' || stage === 'Contracting';
       }
       if (!include) continue;
       const src = String(r['Lead Source'] || r['Source'] || '');
@@ -1136,7 +1135,7 @@ export function YOYView() {
     const annualTarget = target > 0 ? target : DEFAULT_ANNUAL_TARGET;
     const summary = annualSalesData.map(r => ({
       Year: r.year,
-      Type: r._isProjected ? 'Projected (Sold + Agreement Sent + Quoted Expected)' : 'Actual',
+      Type: r._isProjected ? 'Projected (Sold + Agreement Sent + Contracting)' : 'Actual',
       'Current Client ($)': r.currentClient,
       'New Client ($)': r.newClient,
       'Total Sold ($)': r._total,
@@ -2117,7 +2116,7 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload, onExportYear }) {
             />
             <Tooltip wrapperStyle={TOOLTIP_WRAPPER_STYLE} content={
               <CalcTooltip
-                labelText={(label, row) => row._isProjected ? 'Projected (Sold + Agreement Sent + Quoted Expected)' : `Sold in ${label}`}
+                labelText={(label, row) => row._isProjected ? 'Projected (Sold + Agreement Sent + Contracting)' : `Sold in ${label}`}
                 valueFormat={(v, name) => (name === '% Quota' ? `${v}%` : (v ? fmtMoneyLabel(v) : '$0'))}
                 explain={(row) => ({
                   formula: 'Sold Quoted Amount bucketed by the year of the Close Date, split Current vs New Client by the Lead Source text. % Quota = Total Sold ÷ annual target.',
@@ -2133,7 +2132,7 @@ function AnnualSalesCard({ data, hasOpps, target, onDownload, onExportYear }) {
                     ? () => onExportYear?.(row)
                     : undefined,
                   note: row._isProjected
-                    ? 'Projected = this year’s Sold (by Close Date) + every open opp that is Agreement Sent or Quoted Expected (Chance = Expected). Click the bar to pin this panel, then ⬇ Excel to export.'
+                    ? 'Projected = this year’s Sold (by Close Date) + every open Agreement Sent or Contracting opp. Click the bar to pin this panel, then ⬇ Excel to export.'
                     : 'Click the bar to pin this panel, then ⬇ Excel to export these deals.',
                 })}
               />
