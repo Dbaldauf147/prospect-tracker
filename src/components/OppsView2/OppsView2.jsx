@@ -545,12 +545,12 @@ function easternWallToUtcMs(year, month, day, hour, minute) {
   return guess + (guess - obs);
 }
 
-// The most recent 8 AM (08:00) America/New_York boundary. The
+// The most recent 2 PM (14:00) America/New_York boundary. The
 // No-Further-Action-Today auto-clear uses this as its cutoff: every X
-// marked before today's 8 AM Eastern clears at 8 AM, while a mark made
-// after 8 AM persists until 8 AM the next day. Before 8 AM Eastern the
-// boundary is yesterday's 8 AM, so overnight marks stay until 8 AM.
-function mostRecent8amEasternMs(nowMs = Date.now()) {
+// marked before today's 2 PM Eastern clears at 2 PM, while a mark made
+// after 2 PM persists until 2 PM the next day. Before 2 PM Eastern the
+// boundary is yesterday's 2 PM, so morning marks stay until 2 PM.
+function mostRecent2pmEasternMs(nowMs = Date.now()) {
   const fmt = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/New_York',
     year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hour12: false,
@@ -563,10 +563,10 @@ function mostRecent8amEasternMs(nowMs = Date.now()) {
     return out;
   };
   let parts = readParts(nowMs);
-  // Before 8 AM Eastern, the active boundary is yesterday's 8 AM — read
+  // Before 2 PM Eastern, the active boundary is yesterday's 2 PM — read
   // the calendar date from ~24h earlier so DST never skews the day.
-  if ((Number(parts.hour) % 24) < 8) parts = readParts(nowMs - 24 * 60 * 60 * 1000);
-  return easternWallToUtcMs(Number(parts.year), Number(parts.month), Number(parts.day), 8, 0);
+  if ((Number(parts.hour) % 24) < 14) parts = readParts(nowMs - 24 * 60 * 60 * 1000);
+  return easternWallToUtcMs(Number(parts.year), Number(parts.month), Number(parts.day), 14, 0);
 }
 
 // Values the Opps Google sheet uses to mean "no data" in cells where
@@ -2567,6 +2567,115 @@ function QuotedFollowUpModal({ opp, chanceOptions, onSave, onClose }) {
   );
 }
 
+// Prompt shown whenever an opp's Follow Up date changes, asking the user
+// to pick the new Status (Who is waiting) for that opp so it stays
+// current with each follow-up. Cleared on Save or Skip.
+function FollowUpStatusModal({ opp, statusOptions, onSave, onClose }) {
+  const curStatus = opp?.['Status'] ?? '';
+  const [status, setStatus] = useState(String(curStatus ?? ''));
+
+  function handleSave() {
+    onSave({ status });
+  }
+
+  const hintStyle = { fontSize: '0.68rem', color: 'var(--color-text-muted)', marginTop: 3 };
+  const textHint = (raw) => {
+    const v = (raw ?? '').toString().trim();
+    return v ? <div style={hintStyle}>Currently: {v}</div> : null;
+  };
+
+  const labelStyle = { fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text)', display: 'block', marginBottom: 4 };
+  const inputStyle = {
+    width: '100%', boxSizing: 'border-box',
+    padding: '0.45rem 0.55rem',
+    border: '1px solid var(--color-border)', borderRadius: 4,
+    fontSize: '0.85rem', fontFamily: 'inherit',
+    background: '#fff', color: 'var(--color-text)',
+  };
+
+  return createPortal(
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)',
+        zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+        }}
+        style={{
+          width: 460, maxWidth: '92vw',
+          background: '#fff', borderRadius: 8, boxShadow: '0 20px 50px rgba(15, 23, 42, 0.3)',
+          display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        }}
+      >
+        <div style={{ padding: '0.85rem 1rem', borderBottom: '1px solid var(--color-border-light)' }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)' }}>
+            Update Status
+          </div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
+            <strong>{opp?.['Account'] || 'This opp'}</strong>
+            {opp?.['Scope'] ? <> &middot; {opp['Scope']}</> : null}
+            {' '}has a new <strong>Follow Up</strong> date. Pick the current Status below.
+          </div>
+        </div>
+
+        <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.7rem' }}>
+          <div>
+            <label style={labelStyle}>Status</label>
+            <select
+              autoFocus
+              value={status}
+              onChange={(e) => setStatus(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); handleSave(); }
+              }}
+              style={inputStyle}
+            >
+              <option value="">— Select —</option>
+              {statusOptions.map(o => (
+                <option key={o} value={o}>{o}</option>
+              ))}
+            </select>
+            {textHint(curStatus)}
+          </div>
+        </div>
+
+        <div style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          padding: '0.6rem 1rem',
+          borderTop: '1px solid var(--color-border-light)', background: 'var(--color-bg)',
+        }}>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              padding: '0.35rem 0.7rem', background: 'transparent',
+              border: '1px solid var(--color-border)', borderRadius: 4,
+              fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+              color: 'var(--color-text-muted)', cursor: 'pointer',
+            }}
+          >Skip for now</button>
+          <button
+            type="button"
+            onClick={handleSave}
+            style={{
+              padding: '0.35rem 0.85rem', background: 'var(--color-accent)',
+              border: '1px solid var(--color-accent)', borderRadius: 4,
+              fontSize: '0.78rem', fontWeight: 600, fontFamily: 'inherit',
+              color: '#fff', cursor: 'pointer',
+            }}
+          >Save</button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 // Popup that shows the basic info for one opp + a Delete button. Opened
 // from the row-level info button so the user can eyeball the full record
 // without having to hunt through the (often horizontally scrolled) row.
@@ -3925,6 +4034,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // Final Margin, and Competition. The Close Date is auto-stamped to the
   // status-change date in updateOppField. Cleared on Save or Skip.
   const [soldPromptId, setSoldPromptId] = useState(null);
+  // _id of the opp that just had its Follow Up date changed. When set,
+  // the FollowUpStatusModal asks the user to pick the new Status
+  // (Who is waiting) for that opp. Cleared on Save or Skip.
+  const [followUpStatusPromptId, setFollowUpStatusPromptId] = useState(null);
   // _id of the opp whose info popup is open, or null when no popup
   // is showing. Resolved against the live records list on render so
   // the popup always reflects the latest cell edits.
@@ -4604,6 +4717,11 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     // computed column back to life via "+ add".
     const row = (dataRef.current?.records || []).find(r => r._id === id);
     const stageChanged = !!row && field === 'Stage' && String(row[field] ?? '') !== String(value ?? '');
+    // A changed Follow Up date prompts the user to set the new Status
+    // (Who is waiting) for that opp. Compared on the ISO date so a
+    // reformat of the same day doesn't trigger the prompt.
+    const followUpChanged = !!row && field === 'Follow Up'
+      && (toISODate(row[field]) || '') !== (toISODate(value) || '');
     // When the user enters a Close Date, mirror its year + month into the
     // "Close Year" / "Close Month" columns so the Opp details stay in
     // sync without manual entry. A cleared date clears them; an
@@ -4755,6 +4873,11 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     if (stageChanged && String(value ?? '').trim().toLowerCase() === 'sold') {
       setSoldPromptId(id);
     }
+    // Whenever the Follow Up date changes, prompt for the new Status so
+    // the "Who is waiting" value stays current with each follow-up.
+    if (followUpChanged) {
+      setFollowUpStatusPromptId(id);
+    }
   }, [pushUndoEntry]);
 
   // Drop a field entirely from a row. Used to clear a user-set Call In
@@ -4860,13 +4983,13 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   }, []);
 
   // Sweep stale "No Further Action Today" X's. The rule is: every row
-  // whose NFAT was marked BEFORE the most recent 8 AM Eastern boundary
-  // gets cleared back to blank — so X's reset at 8 AM each day. We re-run
+  // whose NFAT was marked BEFORE the most recent 2 PM Eastern boundary
+  // gets cleared back to blank — so X's reset at 2 PM each day. We re-run
   // the sweep on mount and every minute the tab is open, so a tab left
-  // open across 8 AM self-clears without a reload.
+  // open across 2 PM self-clears without a reload.
   useEffect(() => {
     const sweep = () => {
-      const cutoff = mostRecent8amEasternMs();
+      const cutoff = mostRecent2pmEasternMs();
       setData(prev => {
         const records = prev?.records || [];
         let touched = false;
@@ -5857,6 +5980,26 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               setQuotedPromptId(null);
             }}
             onClose={() => setQuotedPromptId(null)}
+          />
+        );
+      })()}
+
+      {followUpStatusPromptId != null && (() => {
+        const opp = records.find(r => r._id === followUpStatusPromptId);
+        if (!opp) return null;
+        const link = resolveColumnLink('Status', columnLinks);
+        const statusOpts = (link && listRegistry.get(link.listKey)?.options) || [];
+        return (
+          <FollowUpStatusModal
+            opp={opp}
+            statusOptions={statusOpts}
+            onSave={({ status }) => {
+              if (status !== String(opp['Status'] ?? '')) {
+                updateOppField(opp._id, 'Status', status);
+              }
+              setFollowUpStatusPromptId(null);
+            }}
+            onClose={() => setFollowUpStatusPromptId(null)}
           />
         );
       })()}
