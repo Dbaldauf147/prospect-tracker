@@ -1004,7 +1004,13 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     return cleanSitesData.map((r, i) => {
       const zip = zipColumn ? normalizeZip(r[zipColumn]) : '';
       const match = utility?.zipMap && zip ? utility.zipMap[zip] : null;
-      const state = match?.state || zipToState(zip);
+      // State resolution for indicative rates + the deregulation map.
+      // Prefer the utility file's zip match, then the zip prefix, then
+      // a mapped State column — but only when that column normalizes to
+      // a real US state code, so international provinces ("Milan",
+      // "SP") don't false-map and still fall through to country rates.
+      const stateColInput = stateColumnOverride ? String(r[stateColumnOverride] || '').trim() : '';
+      const state = match?.state || zipToState(zip) || normalizeState(stateColInput);
       // Property type + customer segment resolve first: the segment
       // (commercial vs industrial) picks which state-rate column
       // applies. An explicit Segment column wins; otherwise infer it
@@ -1205,7 +1211,10 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         __address__: addressOverride ? String(r[addressOverride] || '').trim() || null : null,
         __city__: (cityOverride ? String(r[cityOverride] || '').trim() : '') || match?.city,
         __country__: inputCountry || match?.country,
-        __state__: (stateColumnOverride ? String(r[stateColumnOverride] || '').trim() : '') || state,
+        // Canonical US code when resolved (drives rates + deregulation
+        // lookups); else the raw mapped value so non-US provinces still
+        // display.
+        __state__: state || stateColInput || null,
         __propertyTypeRaw__: inputPropertyType || null,
         __propertyType__: canonicalPropertyType,
         __segment__: segment,
