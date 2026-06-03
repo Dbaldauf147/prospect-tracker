@@ -227,6 +227,20 @@ function todayISO() {
   return `${y}-${m}-${day}`;
 }
 
+// Normalize a user-entered Quoted Amount to "$25,000" — USD currency
+// with thousands separators and no decimals. Anything that doesn't
+// parse to a number (empty, or legacy free-text like "TBD") is returned
+// trimmed and unchanged so it isn't silently wiped.
+function formatQuotedAmount(raw) {
+  const s = String(raw ?? '').trim();
+  if (!s) return '';
+  // Drop currency symbols, commas, and spaces; keep digits, sign, dot.
+  const cleaned = s.replace(/[^0-9.-]/g, '');
+  const n = Number(cleaned);
+  if (cleaned === '' || !Number.isFinite(n)) return s;
+  return fmtMoneyWhole(Math.round(n));
+}
+
 function makeBlankOpp(id, headers, accountOverride, sourceOverride) {
   const row = { _id: id, id, _rowUpdatedAt: Date.now() }; // id mirrored so DataTable's row key stays stable across edits
   const cols = (Array.isArray(headers) && headers.length) ? headers : DEFAULT_HEADERS;
@@ -4870,7 +4884,11 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [undoLastChange]);
 
-  const updateOppField = useCallback((id, field, value) => {
+  const updateOppField = useCallback((id, field, rawValue) => {
+    // Auto-format a user-entered Quoted Amount to currency ($25,000) so
+    // the stored value — and every view that reads it — stays consistent,
+    // regardless of how the user typed it (25000, 25,000, $25000.50…).
+    const value = field === 'Quoted Amount' ? formatQuotedAmount(rawValue) : rawValue;
     // Snapshot the prior cell state before the mutation so the Undo
     // stack can restore it. We also snapshot the sibling columns that
     // are dropped as a side effect (Follow Up → Call In, Last Client
