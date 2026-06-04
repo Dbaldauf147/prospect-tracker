@@ -491,13 +491,23 @@ Type a value to override.`
         const ctsPassRev = Array.isArray(passThroughRevenueByYear) ? passThroughRevenueByYear : ctsPasses;
         const revLessPass = grand.map((v, i) => v - (ctsPassRev[i] || 0) - (altPasses[i] || 0));
         const anyPassThrough = passes.some(v => v > 0);
+        // "Deal margin" is the deal's cumulative margin through each year,
+        // not that single year's margin in isolation: a heavy Year-1 setup
+        // fee keeps lifting the blended margin in later years. Accumulate
+        // fee / cost (and the pass-through carve-outs) year over year, then
+        // apply the same pass-through-excluded formula to the running totals.
+        let cumFee = 0;
+        let cumCost = 0;
+        let cumCtsPass = 0;
+        let cumAltPass = 0;
         const margins = grand.map((fee, i) => {
-          const cost = costs[i] || 0;
-          const ctsPass = ctsPasses[i] || 0;
-          const altPass = altPasses[i] || 0;
-          const adjFee = fee - ctsPass - altPass;
+          cumFee += fee;
+          cumCost += costs[i] || 0;
+          cumCtsPass += ctsPasses[i] || 0;
+          cumAltPass += altPasses[i] || 0;
+          const adjFee = cumFee - cumCtsPass - cumAltPass;
           if (adjFee <= 0) return null;
-          const adjCost = cost - ctsPass;
+          const adjCost = cumCost - cumCtsPass;
           return (adjFee - adjCost) / adjFee;
         });
         const fmtPctCell = (n) => n == null ? '' : `${(n * 100).toFixed(1)}%`;
