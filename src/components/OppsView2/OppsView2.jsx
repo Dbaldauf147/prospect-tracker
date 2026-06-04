@@ -33,6 +33,7 @@ import { fmtMoneyWhole, toNum, unitCountOrOne, rowYearRevenue } from '../../util
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { normalizeCompany } from '../../utils/companyNorm';
 import { userLsGet, userLsSet } from '../../utils/userLs';
+import { apiFetch } from '../../utils/apiFetch';
 import styles from './OppsView2.module.css';
 
 // Second Opps tab — user-entered opps stored in Firestore
@@ -4357,6 +4358,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   const [importingFromOpps, setImportingFromOpps] = useState(false);
   const [bulkImportOpen, setBulkImportOpen] = useState(false);
   const [backupsOpen, setBackupsOpen] = useState(false);
+  const [backingUpToDrive, setBackingUpToDrive] = useState(false);
 
   // Dedup key for the Opps → Opps 2 one-time import. BFO Link is the
   // natural unique id; for rows that lack one we fall back to a
@@ -5102,6 +5104,35 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       console.error('opps2: backup export failed', err);
     }
   }, [data]);
+
+  // Fire an immediate off-site backup to Google Drive (server-side, all
+  // collections — not just Opps 2). Handy to click right before a risky
+  // edit so there's a fresh cloud copy independent of this browser.
+  const backupToDriveNow = useCallback(async () => {
+    if (backingUpToDrive) return;
+    setBackingUpToDrive(true);
+    try {
+      const resp = await apiFetch('/api/backup-now', { method: 'POST' });
+      const out = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        window.alert(`Drive backup failed: ${out?.error || resp.status}`);
+        return;
+      }
+      if (out.status === 'empty') {
+        window.alert('Nothing to back up yet.');
+        return;
+      }
+      const counts = out.counts || {};
+      const lines = Object.keys(counts).map(k => `  • ${k}: ${counts[k]}`).join('\n');
+      const warn = out.errors?.length ? `\n\nSome sections failed: ${out.errors.join('; ')}` : '';
+      window.alert(`Backed up to Google Drive:\n${out.file}\n\n${lines}${warn}`);
+    } catch (err) {
+      window.alert(`Drive backup failed: ${err?.message || err}`);
+    } finally {
+      setBackingUpToDrive(false);
+    }
+  }, [backingUpToDrive]);
+
   // Global Cmd/Ctrl+Z. Skipped when the user has an input/textarea
   // focused so the browser's native text-undo still works mid-edit;
   // the toolbar button stays available either way.
@@ -6322,6 +6353,18 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             }}
             title="Browse and restore local rolling backups of the Opps 2 dataset"
           >Backups</button>
+          <button
+            type="button"
+            onClick={backupToDriveNow}
+            disabled={backingUpToDrive}
+            style={{
+              padding: '0.45rem 0.85rem', background: 'transparent',
+              border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)',
+              fontSize: 'var(--font-size-sm)', fontWeight: 600, fontFamily: 'inherit',
+              color: 'var(--color-text)', cursor: backingUpToDrive ? 'progress' : 'pointer',
+            }}
+            title="Save an immediate off-site backup of all your data to Google Drive"
+          >{backingUpToDrive ? 'Backing up…' : 'Back up to Drive'}</button>
           <button
             type="button"
             onClick={undoLastChange}
