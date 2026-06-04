@@ -4925,6 +4925,28 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       return prev.slice(0, -1);
     });
   }, []);
+
+  // Download the full Opps 2 dataset (headers + every record) as a JSON
+  // file so the user always has a manual, off-device safety copy without
+  // needing a console script. Mirrors the shape stored in the cache /
+  // Firestore so the file can be inspected or re-imported later.
+  const exportBackup = useCallback(() => {
+    try {
+      const payload = JSON.stringify(data ?? {}, null, 2);
+      const blob = new Blob([payload], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      a.download = `opps2-backup-${stamp}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('opps2: backup export failed', err);
+    }
+  }, [data]);
   // Global Cmd/Ctrl+Z. Skipped when the user has an input/textarea
   // focused so the browser's native text-undo still works mid-edit;
   // the toolbar button stays available either way.
@@ -6113,6 +6135,20 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             }}
             title="Paste data from a Google Sheet with the same columns and review the mapping before importing"
           >Bulk import</button>
+          <button
+            type="button"
+            onClick={exportBackup}
+            disabled={!records.length}
+            style={{
+              padding: '0.45rem 0.85rem', background: 'transparent',
+              border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)',
+              fontSize: 'var(--font-size-sm)', fontWeight: 600, fontFamily: 'inherit',
+              color: records.length ? 'var(--color-text)' : 'var(--color-text-muted)',
+              cursor: records.length ? 'pointer' : 'not-allowed',
+              opacity: records.length ? 1 : 0.6,
+            }}
+            title="Download all Opps 2 rows as a JSON backup file"
+          >Export backup</button>
           <button
             type="button"
             onClick={undoLastChange}
