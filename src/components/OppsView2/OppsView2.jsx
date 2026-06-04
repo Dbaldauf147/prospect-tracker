@@ -886,7 +886,13 @@ function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onCh
         setupOneTime += rowYearRevenue(r, 1, years, esc);
       }
     }
-    return { name: String(snapshot.name || '').trim(), setupOneTime, recurringMonthly };
+    // Annual recurring = the monthly figure billed across a full year
+    // (Year 1 has no escalator, so it's a straight ×12). Year-1 total is
+    // the frozen snapshot's own Year-1 quote (Setup + One Time + 12×
+    // recurring) — shown so the popup surfaces the headline quoted number.
+    const recurringAnnual = recurringMonthly * 12;
+    const year1Total = Number(snapshot.year1Total) || 0;
+    return { name: String(snapshot.name || '').trim(), setupOneTime, recurringMonthly, recurringAnnual, year1Total };
   }, [snapshot]);
 
   // Cell display — no inline action buttons. The whole cell is the
@@ -940,7 +946,7 @@ function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onCh
               />
             </label>
             <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: '0.78rem', color: '#475569' }}>
-              Hyperlink
+              Sharepoint Hyperlink
               <input
                 type="text"
                 value={draftUrl}
@@ -971,6 +977,14 @@ function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onCh
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
                   <span>Recurring Fees <span style={{ color: '#94A3B8' }}>(monthly)</span></span>
                   <strong style={{ color: '#1E293B' }}>{fmtMoneyWhole(snapStats.recurringMonthly) || '$0'}</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                  <span>Recurring Fees <span style={{ color: '#94A3B8' }}>(annual)</span></span>
+                  <strong style={{ color: '#1E293B' }}>{fmtMoneyWhole(snapStats.recurringAnnual) || '$0'}</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, borderTop: '1px solid var(--color-border-light)', paddingTop: 4, marginTop: 2 }}>
+                  <span>Year 1 Total <span style={{ color: '#94A3B8' }}>(quoted)</span></span>
+                  <strong style={{ color: '#1E293B' }}>{fmtMoneyWhole(snapStats.year1Total) || '$0'}</strong>
                 </div>
               </div>
             )}
