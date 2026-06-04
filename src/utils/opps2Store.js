@@ -147,8 +147,43 @@ export async function loadOpps2FromFirestore(userId) {
 
 // Throws when the save fails so callers (e.g. the Import button) can
 // surface the failure instead of silently leaving stale data behind.
-export async function saveOpps2ToFirestore(userId, data) {
+export async function saveOpps2ToFirestore(userId, data, { allowEmpty = false } = {}) {
   const stamped = stampUpdatedAt(data);
+  const ref = doc(db, OPPS2_FIRESTORE_COLLECTION, userId);
+
+  // Structural guard: a payload with no `records` array is corruption,
+  // not a save — never let it reach the cloud.
+  const incomingRecords = Array.isArray(stamped.records) ? stamped.records : null;
+  if (incomingRecords === null) {
+    throw new Error('opps2: refusing to save — payload has no records array');
+  }
+
+  // Anti-wipe guard: refuse to replace a populated cloud dataset with an
+  // empty one (the catastrophic clobber, regardless of any higher-level
+  // bug). A genuinely empty/new dataset still saves because the prior
+  // doc is empty too. Only the rare empty-incoming case pays for the
+  // prior read/parse, so normal saves are unaffected. `allowEmpty: true`
+  // is the deliberate escape hatch for an intentional clear-all.
+  if (!allowEmpty && incomingRecords.length === 0) {
+    let priorPopulated = false;
+    let priorCount = 0;
+    try {
+      const priorSnap = await getDoc(ref);
+      const prior = priorSnap.exists() ? priorSnap.data() : null;
+      if (prior) {
+        if (Number(prior.chunkCount) > 0) {
+          priorPopulated = true; // was chunked => definitely had data
+        } else if (typeof prior.json === 'string' && prior.json) {
+          try { priorCount = (JSON.parse(prior.json)?.records || []).length; priorPopulated = priorCount > 0; }
+          catch { /* unreadable prior — don't block on it */ }
+        }
+      }
+    } catch { /* prior read failed — don't block a legitimate empty save */ }
+    if (priorPopulated) {
+      throw new Error(`opps2: refusing to overwrite a populated cloud dataset (${priorCount || 'chunked'} rows) with an empty one. Pass { allowEmpty: true } to force a clear-all.`);
+    }
+  }
+
   const json = JSON.stringify(stamped);
   // Refuse to push a payload the next device can't read back. A
   // stringify result that fails its own parse would land in Firestore
@@ -157,7 +192,6 @@ export async function saveOpps2ToFirestore(userId, data) {
   // copy gets stomped.
   try { JSON.parse(json); }
   catch (err) { throw new Error(`opps2: refusing to save unparseable JSON (${err.message})`); }
-  const ref = doc(db, OPPS2_FIRESTORE_COLLECTION, userId);
   const updatedAt = new Date(stamped._updatedAt).toISOString();
 
   // Single-document fast path. When the payload fits comfortably under
