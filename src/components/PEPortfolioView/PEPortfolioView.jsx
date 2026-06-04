@@ -1535,13 +1535,19 @@ function PEOppsTab({ opps, totalOpps, query, setQuery, oppsLoaded, prospects, on
             </div>
             {sortedOpps.map((r, idx) => {
               const parent = findProspect(r['Account']);
+              // Tint lost deals light red so they read at a glance. The
+              // base color also drives the hover handlers so the tint
+              // survives mouse-over instead of flashing back to white.
+              const isNotSold = String(r['Stage'] || '').trim().toLowerCase() === 'not sold';
+              const baseBg = isNotSold ? '#FEE2E2' : '#fff';
+              const hoverBg = isNotSold ? '#FECACA' : '#F8FAFC';
               return (
                 <div
                   key={r._id || r.id || idx}
                   onClick={() => parent && onSelectProspect?.(parent)}
-                  style={{ display: 'grid', gridTemplateColumns: GRID, borderTop: idx === 0 ? 'none' : '1px solid #E2E8F0', cursor: parent ? 'pointer' : 'default', background: '#fff' }}
-                  onMouseEnter={e => { if (parent) e.currentTarget.style.background = '#F8FAFC'; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = '#fff'; }}
+                  style={{ display: 'grid', gridTemplateColumns: GRID, borderTop: idx === 0 ? 'none' : '1px solid #E2E8F0', cursor: parent ? 'pointer' : 'default', background: baseBg }}
+                  onMouseEnter={e => { if (parent) e.currentTarget.style.background = hoverBg; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = baseBg; }}
                 >
                   {COLUMNS.map(c => {
                     const val = cellValue(r, c) || '';
