@@ -304,6 +304,8 @@ export function BFOActivityView({ prospects = [] } = {}) {
   // key we might match a BFO Activity row on: the normalized Account and
   // the normalized BFO Company Name (the mutual identifier carried on the
   // Table View company). These are the assignment targets we suggest.
+  // Closed opps (Stage "Sold" / "Not Sold") are excluded — there's no
+  // point tagging a finished deal with a BFO Opportunity Name.
   const unlinkedOppsByKey = useMemo(() => {
     const map = new Map();
     const add = (key, opp) => {
@@ -312,9 +314,14 @@ export function BFOActivityView({ prospects = [] } = {}) {
       if (!list) { list = []; map.set(key, list); }
       if (!list.some(o => o._id === opp._id)) list.push(opp);
     };
+    const isClosedStage = (stage) => {
+      const s = String(stage || '').trim().toLowerCase();
+      return s === 'sold' || s === 'not sold';
+    };
     const records = (opps && Array.isArray(opps.records)) ? opps.records : [];
     for (const r of records) {
       if (String(r['BFO Link'] || '').trim() !== '') continue;
+      if (isClosedStage(r.Stage)) continue;
       const acctKey = normalizeCompany(r.Account || '');
       add(acctKey, r);
       const bfo = bfoCompanyByAccount.get(acctKey);
