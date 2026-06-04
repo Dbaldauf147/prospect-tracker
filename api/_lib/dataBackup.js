@@ -80,6 +80,28 @@ export async function collectUserBackup(db, uid, email) {
     summary.captured.push('prospects');
   } catch (e) { summary.errors.push(`prospects: ${msg(e)}`); }
 
+  // Prospect analyses (AI research) live in an `analyses` subcollection
+  // under each prospect: `${prospectsSource}/{prospectId}/analyses/{id}`.
+  // A collectionGroup query pulls every analyses doc in one read instead
+  // of one read per prospect, then we keep only those under this user's
+  // prospects path (and store the full path so a restore can re-place
+  // each doc under the right prospect).
+  try {
+    const useShared = !!email && email.toLowerCase() === SHARED_PROSPECTS_EMAIL;
+    const prefix = useShared ? 'prospects/' : `users/${uid}/prospects/`;
+    const cg = await db.collectionGroup('analyses').get();
+    const analyses = [];
+    cg.forEach(d => {
+      const path = d.ref.path;
+      if (path.startsWith(prefix) && path.includes('/analyses/')) {
+        analyses.push({ path, id: d.id, ...d.data() });
+      }
+    });
+    backup.collections.prospectAnalyses = analyses;
+    summary.counts.prospectAnalyses = analyses.length;
+    summary.captured.push('prospectAnalyses');
+  } catch (e) { summary.errors.push(`prospectAnalyses: ${msg(e)}`); }
+
   return { backup, summary };
 }
 
