@@ -33,6 +33,7 @@ import { fmtMoneyWhole, toNum, unitCountOrOne, rowYearRevenue } from '../../util
 import { getHubspotContacts } from '../../utils/hubspotContactsCache';
 import { normalizeCompany } from '../../utils/companyNorm';
 import { userLsGet, userLsSet } from '../../utils/userLs';
+import { apiFetch } from '../../utils/apiFetch';
 import styles from './OppsView2.module.css';
 
 // Second Opps tab — user-entered opps stored in Firestore
@@ -4023,7 +4024,70 @@ function NextStepsEditor({ opp, onClose, updateOppField }) {
   );
 }
 
-// Rolling-backup browser + restore. Lists the local IndexedDB snapshot
+// Off-site restore: lists the user's Google Drive backups (daily +
+// manual) and restores the Opps 2 slice of a chosen one. The full data
+// lives in Drive; this fetches just opps2Data for the selected file.
+function DriveRestoreModal({ onRestore, onClose }) {
+  const [rows, setRows] = useState(null);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    let alive = true;
+    apiFetch('/api/backups-list')
+      .then(async r => { const o = await r.json().catch(() => ({})); if (!r.ok) throw new Error(o?.error || `HTTP ${r.status}`); return o; })
+      .then(o => { if (alive) setRows(o.files || []); })
+      .catch(e => { if (alive) setErr(String(e.message || e)); });
+    return () => { alive = false; };
+  }, []);
+
+  return createPortal(
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: 'var(--color-surface, #fff)', color: 'var(--color-text)', borderRadius: 8, padding: '1.25rem', width: 'min(680px, 92vw)', maxHeight: '80vh', overflow: 'auto', boxShadow: '0 10px 40px rgba(0,0,0,0.3)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+          <h3 style={{ margin: 0, fontSize: '1.05rem' }}>Restore from Google Drive</h3>
+          <button type="button" onClick={onClose} style={{ background: 'transparent', border: 'none', fontSize: '1.2rem', cursor: 'pointer', color: 'inherit' }}>×</button>
+        </div>
+        <p style={{ marginTop: 0, fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
+          Off-site daily + manual backups. Restoring pulls the Opps 2 data from the chosen file, re-stamps it to win the next sync, and replaces the current Opps 2 data everywhere.
+        </p>
+        {err ? <div style={{ padding: '1rem', color: 'var(--color-danger, #b91c1c)' }}>Couldn’t list Drive backups: {err}</div>
+          : rows == null ? <div style={{ padding: '1rem' }}>Loading…</div>
+          : rows.length === 0 ? <div style={{ padding: '1rem', color: 'var(--color-text-muted)' }}>No Drive backups found yet.</div>
+          : (
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
+            <thead>
+              <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--color-border)' }}>
+                <th style={{ padding: '0.4rem 0.5rem' }}>When</th>
+                <th style={{ padding: '0.4rem 0.5rem' }}>File</th>
+                <th style={{ padding: '0.4rem 0.5rem' }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(f => (
+                <tr key={f.id} style={{ borderBottom: '1px solid var(--color-border)' }}>
+                  <td style={{ padding: '0.4rem 0.5rem', whiteSpace: 'nowrap' }}>{f.createdTime ? new Date(f.createdTime).toLocaleString() : '—'}{/manual/.test(f.name) ? ' (manual)' : ''}</td>
+                  <td style={{ padding: '0.4rem 0.5rem', color: 'var(--color-text-muted)', wordBreak: 'break-all' }}>{f.name}</td>
+                  <td style={{ padding: '0.4rem 0.5rem', whiteSpace: 'nowrap', textAlign: 'right' }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (window.confirm(`Restore Opps 2 from "${f.name}"? This replaces the current Opps 2 data on every device.`)) {
+                          onRestore(f.id, f.name);
+                        }
+                      }}
+                      style={{ cursor: 'pointer', fontWeight: 600 }}
+                    >Restore Opps 2</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 // ring (session-load / autosave / pre-import) so recovering a clobbered
 // dataset is a click instead of a forensic dig through Chrome blobs.
 function Opps2BackupsModal({ onRestore, onClose }) {
@@ -4357,6 +4421,8 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   const [importingFromOpps, setImportingFromOpps] = useState(false);
   const [bulkImportOpen, setBulkImportOpen] = useState(false);
   const [backupsOpen, setBackupsOpen] = useState(false);
+  const [driveRestoreOpen, setDriveRestoreOpen] = useState(false);
+  const [backingUpToDrive, setBackingUpToDrive] = useState(false);
 
   // Dedup key for the Opps → Opps 2 one-time import. BFO Link is the
   // natural unique id; for rows that lack one we fall back to a
@@ -4579,20 +4645,22 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // clobbered copy in the cloud or on another device — this is a
   // deliberate, confirmed recovery, so it should override. Persists
   // through the normal cache + Firestore path.
-  const restoreOpps2Backup = useCallback(async (timestamp) => {
-    const entry = await getOpps2Backup(timestamp);
-    if (!entry?.data || !Array.isArray(entry.data.records)) {
-      window.alert('That backup could not be loaded.');
-      return;
+  // Shared restore applier for both local and Drive backups: re-stamps
+  // every row to "now" so the recovered snapshot decisively wins the
+  // per-row merge against any clobbered copy, snapshots the data it's
+  // about to replace (so the restore is itself reversible), then
+  // persists through the normal cache + Firestore path.
+  const applyOpps2Snapshot = useCallback(async (snapshot, label) => {
+    if (!snapshot || !Array.isArray(snapshot.records)) {
+      window.alert('That backup has no Opps 2 records to restore.');
+      return false;
     }
     const now = Date.now();
     const restored = {
-      ...entry.data,
-      records: entry.data.records.map(r => ({ ...r, _rowUpdatedAt: now })),
+      ...snapshot,
+      records: snapshot.records.map(r => ({ ...r, _rowUpdatedAt: now })),
       _updatedAt: now,
     };
-    // Snapshot what we're about to replace, so an unwanted restore is
-    // itself reversible.
     await pushOpps2Backup(data, 'pre-restore', { force: true });
     setData(restored);
     if (firestoreSaveTimerRef.current) {
@@ -4604,9 +4672,34 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       const ts = await trySaveOpps2ToFirestore(user.uid, restored);
       if (ts != null) lastFsSavedAtRef.current = ts;
     }
-    setBackupsOpen(false);
-    window.alert(`Restored ${restored.records.length} rows from the ${new Date(timestamp).toLocaleString()} backup.`);
+    window.alert(`Restored ${restored.records.length} rows from ${label}.`);
+    return true;
   }, [data, user?.uid]);
+
+  const restoreOpps2Backup = useCallback(async (timestamp) => {
+    const entry = await getOpps2Backup(timestamp);
+    if (!entry?.data) { window.alert('That backup could not be loaded.'); return; }
+    const ok = await applyOpps2Snapshot(entry.data, `the ${new Date(timestamp).toLocaleString()} local backup`);
+    if (ok) setBackupsOpen(false);
+  }, [applyOpps2Snapshot]);
+
+  // Restore Opps 2 from one of the off-site Drive backups. Fetches just
+  // the opps2Data slice of the chosen backup file, then applies it.
+  const restoreOpps2FromDrive = useCallback(async (fileId, displayName) => {
+    try {
+      const resp = await apiFetch(`/api/backup-fetch?id=${encodeURIComponent(fileId)}&part=opps2Data`);
+      const out = await resp.json().catch(() => ({}));
+      if (!resp.ok) { window.alert(`Couldn't fetch that backup: ${out?.error || resp.status}`); return; }
+      if (!out.value || !Array.isArray(out.value.records)) {
+        window.alert('That Drive backup has no Opps 2 data in it.');
+        return;
+      }
+      const ok = await applyOpps2Snapshot(out.value, `the Drive backup "${displayName}"`);
+      if (ok) setDriveRestoreOpen(false);
+    } catch (err) {
+      window.alert(`Restore from Drive failed: ${err?.message || err}`);
+    }
+  }, [applyOpps2Snapshot]);
 
   // Look the tagged contact's full HubSpot record up by email (most
   // reliable) and fall back to a case-insensitive name match. When
@@ -5102,6 +5195,35 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       console.error('opps2: backup export failed', err);
     }
   }, [data]);
+
+  // Fire an immediate off-site backup to Google Drive (server-side, all
+  // collections — not just Opps 2). Handy to click right before a risky
+  // edit so there's a fresh cloud copy independent of this browser.
+  const backupToDriveNow = useCallback(async () => {
+    if (backingUpToDrive) return;
+    setBackingUpToDrive(true);
+    try {
+      const resp = await apiFetch('/api/backup-now', { method: 'POST' });
+      const out = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        window.alert(`Drive backup failed: ${out?.error || resp.status}`);
+        return;
+      }
+      if (out.status === 'empty') {
+        window.alert('Nothing to back up yet.');
+        return;
+      }
+      const counts = out.counts || {};
+      const lines = Object.keys(counts).map(k => `  • ${k}: ${counts[k]}`).join('\n');
+      const warn = out.errors?.length ? `\n\nSome sections failed: ${out.errors.join('; ')}` : '';
+      window.alert(`Backed up to Google Drive:\n${out.file}\n\n${lines}${warn}`);
+    } catch (err) {
+      window.alert(`Drive backup failed: ${err?.message || err}`);
+    } finally {
+      setBackingUpToDrive(false);
+    }
+  }, [backingUpToDrive]);
+
   // Global Cmd/Ctrl+Z. Skipped when the user has an input/textarea
   // focused so the browser's native text-undo still works mid-edit;
   // the toolbar button stays available either way.
@@ -6324,6 +6446,29 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           >Backups</button>
           <button
             type="button"
+            onClick={backupToDriveNow}
+            disabled={backingUpToDrive}
+            style={{
+              padding: '0.45rem 0.85rem', background: 'transparent',
+              border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)',
+              fontSize: 'var(--font-size-sm)', fontWeight: 600, fontFamily: 'inherit',
+              color: 'var(--color-text)', cursor: backingUpToDrive ? 'progress' : 'pointer',
+            }}
+            title="Save an immediate off-site backup of all your data to Google Drive"
+          >{backingUpToDrive ? 'Backing up…' : 'Back up to Drive'}</button>
+          <button
+            type="button"
+            onClick={() => setDriveRestoreOpen(true)}
+            style={{
+              padding: '0.45rem 0.85rem', background: 'transparent',
+              border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)',
+              fontSize: 'var(--font-size-sm)', fontWeight: 600, fontFamily: 'inherit',
+              color: 'var(--color-text)', cursor: 'pointer',
+            }}
+            title="Restore Opps 2 from one of your off-site Google Drive backups"
+          >Restore from Drive</button>
+          <button
+            type="button"
             onClick={undoLastChange}
             disabled={!undoStack.length}
             style={{
@@ -6370,6 +6515,13 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         <Opps2BackupsModal
           onRestore={restoreOpps2Backup}
           onClose={() => setBackupsOpen(false)}
+        />
+      )}
+
+      {driveRestoreOpen && (
+        <DriveRestoreModal
+          onRestore={restoreOpps2FromDrive}
+          onClose={() => setDriveRestoreOpen(false)}
         />
       )}
 
