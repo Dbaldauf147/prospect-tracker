@@ -2814,6 +2814,7 @@ function FollowUpStatusModal({ opp, statusOptions, onSave, onClose }) {
               onAddRow={addRow}
               onDeleteRow={deleteRow}
               onCommit={() => {}}
+              onQuickWaiting={(idx, value) => updateRow(idx, 'waitingOn', value)}
             />
           </div>
         </div>
@@ -3899,7 +3900,7 @@ function AutoGrowTextarea({ value, onChange, onBlur, placeholder, style }) {
 // NextStepsEditor modal and the Follow Up status popup, so both edit
 // Next Steps in the exact same format. Presentational only — the
 // parent owns the `rows` state and the add / delete / commit handlers.
-function NextStepsRowsEditor({ rows, onUpdateRow, onAddRow, onDeleteRow, onCommit }) {
+function NextStepsRowsEditor({ rows, onUpdateRow, onAddRow, onDeleteRow, onCommit, onQuickWaiting }) {
   const inputStyle = {
     width: '100%', padding: '0.4rem 0.5rem', border: '1px solid #CBD5E1',
     borderRadius: 4, fontSize: '0.85rem', fontFamily: 'inherit',
@@ -3936,6 +3937,16 @@ function NextStepsRowsEditor({ rows, onUpdateRow, onAddRow, onDeleteRow, onCommi
                   onBlur={onCommit}
                   placeholder="Who / what?"
                 />
+                <button
+                  type="button"
+                  onClick={() => (onQuickWaiting ? onQuickWaiting(idx, 'Me') : onUpdateRow(idx, 'waitingOn', 'Me'))}
+                  title="We're waiting on me — set Waiting On to “Me”"
+                  style={{
+                    marginTop: 4, padding: '0.2rem 0.55rem', border: '1px solid #BFDBFE',
+                    borderRadius: 4, background: '#EFF6FF', color: '#1E40AF',
+                    fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+                  }}
+                >Me</button>
               </td>
               <td style={{ padding: '0.3rem 0 0.3rem 0.2rem', borderBottom: '1px solid #F1F5F9', textAlign: 'right' }}>
                 <button
@@ -4045,6 +4056,11 @@ function NextStepsEditor({ opp, onClose, updateOppField }) {
           onAddRow={addRow}
           onDeleteRow={deleteRow}
           onCommit={() => commit(rows)}
+          onQuickWaiting={(idx, value) => setRows(prev => {
+            const next = prev.map((r, i) => i === idx ? { ...r, waitingOn: value } : r);
+            commit(next);
+            return next;
+          })}
         />
       </div>
     </div>
