@@ -4081,6 +4081,17 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // edits live only in local IndexedDB while other devices kept showing
   // stale data; the banner makes that state impossible to miss.
   const [syncError, setSyncError] = useState(false);
+  // The specific reason the last cloud write failed (permission denied,
+  // quota exhausted, offline, …) so the banner can say *why*, not just
+  // "it failed".
+  const [syncErrorDetail, setSyncErrorDetail] = useState('');
+  // Wall-clock of the last confirmed Firestore write this session, shown
+  // in the banner so the user knows how long their edits have been
+  // local-only.
+  const [lastSyncedAt, setLastSyncedAt] = useState(null);
+  // True while a manual "Retry now" is in flight, to disable the button
+  // and avoid clearing the banner optimistically before the write acks.
+  const [retryingSync, setRetryingSync] = useState(false);
 
   // HubSpot contacts cache feeds the Contact column's per-row picker.
   // Most contact rosters live here (not on the prospect record), so
@@ -4838,21 +4849,48 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     if (!user?.uid) return;
     if (firestoreSaveTimerRef.current) clearTimeout(firestoreSaveTimerRef.current);
     firestoreSaveTimerRef.current = setTimeout(async () => {
-      const ts = await trySaveOpps2ToFirestore(user.uid, data);
-      // ts is the saved timestamp on success, null on failure. Surface
-      // the failure so a denied/exhausted cloud write can't go unnoticed
-      // while edits sit only in the local cache.
-      if (ts != null) {
+      // Use the throwing variant so we can capture *why* the cloud write
+      // failed (permission, quota, offline) and show it in the banner —
+      // a denied/exhausted write must never go unnoticed while edits sit
+      // only in the local cache.
+      try {
+        const ts = await saveOpps2ToFirestore(user.uid, data);
         lastFsSavedAtRef.current = ts;
+        setLastSyncedAt(ts);
         setSyncError(false);
-      } else {
+        setSyncErrorDetail('');
+      } catch (err) {
+        console.error('opps2: Firestore save failed', err);
         setSyncError(true);
+        setSyncErrorDetail(err?.message || String(err));
       }
     }, 1500);
     return () => {
       if (firestoreSaveTimerRef.current) clearTimeout(firestoreSaveTimerRef.current);
     };
   }, [data, user?.uid]);
+
+  // Manual "Retry now" from the sync-failure banner. Writes the latest
+  // data straight to Firestore (no debounce) and only clears the banner
+  // once the write actually acks, so a still-failing connection keeps
+  // the warning up instead of flickering it away.
+  const retrySync = useCallback(async () => {
+    if (!latestUidRef.current || retryingSync) return;
+    setRetryingSync(true);
+    try {
+      const ts = await saveOpps2ToFirestore(latestUidRef.current, latestDataRef.current);
+      lastFsSavedAtRef.current = ts;
+      setLastSyncedAt(ts);
+      setSyncError(false);
+      setSyncErrorDetail('');
+    } catch (err) {
+      console.error('opps2: manual retry failed', err);
+      setSyncError(true);
+      setSyncErrorDetail(err?.message || String(err));
+    } finally {
+      setRetryingSync(false);
+    }
+  }, [retryingSync]);
 
   // Flush any pending Firestore save on unmount — without this, a
   // user who clicks Import (or makes a quick edit) and then switches
@@ -6085,22 +6123,29 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   return (
     <div className={styles.wrapper}>
       {syncError && (
-        <div className={styles.syncBanner} role="alert">
+        <div className={styles.syncBanner} role="alert" aria-live="assertive">
           <span>
-            <strong>Cloud sync failed.</strong> Your latest changes are saved on
-            this device but couldn't be written to the cloud, so other devices
-            may show older data. Check your connection and Firestore access, then
-            retry.
+            <strong>⚠ Cloud sync failed — your changes are saved on this device only.</strong>{' '}
+            Other devices may show older data, and these edits will be lost if
+            you clear this browser. Check your connection and Firestore access,
+            then retry.
+            {syncErrorDetail && (
+              <><br /><span className={styles.syncBannerDetail}>Reason: {syncErrorDetail}</span></>
+            )}
+            <br />
+            <span className={styles.syncBannerDetail}>
+              {lastSyncedAt
+                ? `Last successful cloud sync: ${new Date(lastSyncedAt).toLocaleTimeString()}.`
+                : 'No successful cloud sync yet this session.'}
+            </span>
           </span>
           <button
             type="button"
             className={styles.syncBannerRetry}
-            onClick={() => {
-              setSyncError(false);
-              setData(prev => ({ ...prev }));
-            }}
+            onClick={retrySync}
+            disabled={retryingSync}
           >
-            Retry now
+            {retryingSync ? 'Retrying…' : 'Retry now'}
           </button>
         </div>
       )}
