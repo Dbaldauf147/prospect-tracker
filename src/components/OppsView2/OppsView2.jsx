@@ -2130,7 +2130,7 @@ function resolveColumnLink(columnName, userLinks) {
 // pick one and commit, or cancel (no opp gets created). Account is
 // passed through so the prompt can display "for <company>" when the
 // flow came from the Add Company combobox.
-function NewOppSourceModal({ account, options, onCreate, onCancel }) {
+function NewOppSourceModal({ account, companyType, options, onCreate, onCancel }) {
   const [source, setSource] = useState('');
   return createPortal(
     <div
@@ -2159,6 +2159,14 @@ function NewOppSourceModal({ account, options, onCreate, onCancel }) {
               ? <>Adding <strong>{account}</strong>. Pick a Source so the new row is tagged correctly.</>
               : 'Pick a Source so the new row is tagged correctly. You can skip and fill it in later.'}
           </div>
+          {account && (
+            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
+              Company type:{' '}
+              <strong style={{ color: 'var(--color-text)' }}>
+                {String(companyType || '').trim() || 'Unknown (no Table View company)'}
+              </strong>
+            </div>
+          )}
         </div>
 
         <div style={{ padding: '0.85rem 1rem' }}>
@@ -6638,6 +6646,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       {pendingNewOpp && (
         <NewOppSourceModal
           account={pendingNewOpp.account}
+          companyType={pendingNewOpp.account ? (findProspectForAccount(pendingNewOpp.account, prospects)?.type || '') : ''}
           options={listRegistry.get('source')?.options || []}
           onCreate={(source) => {
             addNewOpp(pendingNewOpp.account, source);
