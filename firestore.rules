@@ -124,6 +124,14 @@ service cloud.firestore {
     // which bypasses these rules. Clients never touch the collection
     // directly, so it stays default-deny here.
 
+    // Backup run metadata (counts / last-file / anomaly flags) written by
+    // the daily-backup cron and the on-demand backup route via the admin
+    // SDK. Never read or written by the client — explicit default-deny so
+    // backup history (and the counts it exposes) can't be probed.
+    match /backupRuns/{userId} {
+      allow read, write: if false;
+    }
+
     // Audit log: append-only. Authenticated users may create entries
     // stamped with their own uid. No read/update/delete from the client;
     // admin inspection goes through Firebase Console.
