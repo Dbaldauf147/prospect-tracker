@@ -562,6 +562,21 @@ function mostRecent2pmEasternMs(nowMs = Date.now()) {
 // than as a parseable string.
 const BLANK_SENTINELS = new Set(['', '-', '#N/A', '#n/a', 'N/A', 'n/a']);
 
+// True when a BFO field holds no real value — blank, "-", or an "#N/A"
+// variant. Lowercased so casing doesn't matter.
+function bfoFieldMissing(v) {
+  const s = String(v ?? '').trim().toLowerCase();
+  return s === '' || s === '-' || s === '#n/a' || s === 'n/a';
+}
+
+// "Missing Data" flag for the Opps 2 table: the opp has a BFO
+// Opportunity Name (BFO Link) but its BFO Address is still missing
+// (blank / "-" / "#N/A"). These are the rows whose BFO Address needs
+// to be filled in.
+function oppMissingBfoAddress(row) {
+  return !bfoFieldMissing(row?.['BFO Link']) && bfoFieldMissing(row?.['BFO Address']);
+}
+
 // Resolve the displayed value of a row's computed column. When the
 // sheet shipped a literal value for that column (imported rows carry
 // the Google Sheet's own formula output) we honor it — including
@@ -6135,6 +6150,33 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         >i</button>
       ),
     };
+    // "Missing Data" — flags opps that carry a BFO Opportunity Name but
+    // no BFO Address yet. Synthetic (not a stored field), placed right
+    // after the BFO Opportunity Name column for context; falls back to
+    // the end when that column is hidden.
+    const missingDataCol = {
+      key: '_missingData',
+      label: 'Missing Data',
+      defaultWidth: 130,
+      getFilterValue: (row) => (oppMissingBfoAddress(row) ? 'Missing BFO Address' : ''),
+      getSortValue: (row) => (oppMissingBfoAddress(row) ? 1 : 0),
+      exportValue: (row) => (oppMissingBfoAddress(row) ? 'Missing BFO Address' : ''),
+      render: (row) => (oppMissingBfoAddress(row) ? (
+        <span
+          title="Has a BFO Opportunity Name but no BFO Address — add the BFO Address."
+          style={{
+            display: 'inline-block', padding: '1px 8px', borderRadius: 999,
+            fontSize: '0.65rem', fontWeight: 700, whiteSpace: 'nowrap',
+            background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5',
+          }}
+        >⚠ No BFO Address</span>
+      ) : (
+        <span style={{ color: 'var(--color-text-muted)' }}>—</span>
+      )),
+    };
+    const bfoLinkIdx = mapped.findIndex(c => c.key === 'BFO Link');
+    if (bfoLinkIdx >= 0) mapped.splice(bfoLinkIdx + 1, 0, missingDataCol);
+    else mapped.push(missingDataCol);
     // Splice the info column in just before Next Steps when it's
     // present in the visible header set. Falls back to appending so
     // a user who hid Next Steps still gets the button.
