@@ -841,7 +841,7 @@ function PricingOptionSnapshotView({ snapshot }) {
 // renders as a link to it, and a Pricing-Option snapshot still falls
 // back to the existing "open the Opp details popup" affordance when
 // no manual URL is set. All edits happen inside the popup.
-function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onChangeUrl }) {
+function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onChangeUrl, services }) {
   const [open, setOpen] = useState(false);
   const [draftAmount, setDraftAmount] = useState(value ?? '');
   const [draftUrl, setDraftUrl] = useState(url ?? '');
@@ -894,6 +894,26 @@ function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onCh
     const year1Total = Number(snapshot.year1Total) || 0;
     return { name: String(snapshot.name || '').trim(), setupOneTime, recurringMonthly, recurringAnnual, year1Total };
   }, [snapshot]);
+
+  // Services bundled in the saved Option. Prefer the list frozen into
+  // the snapshot (self-contained); fall back to the live per-Option
+  // services map passed in (covers snapshots saved before services were
+  // stored). Deduped, blanks dropped.
+  const optionServices = useMemo(() => {
+    const raw = (Array.isArray(snapshot?.services) && snapshot.services.length)
+      ? snapshot.services
+      : (Array.isArray(services) ? services : []);
+    const seen = new Set();
+    const out = [];
+    for (const s of raw) {
+      const v = String(s || '').trim();
+      const k = v.toLowerCase();
+      if (!v || seen.has(k)) continue;
+      seen.add(k);
+      out.push(v);
+    }
+    return out;
+  }, [snapshot, services]);
 
   // Cell display — no inline action buttons. The whole cell is the
   // click target for the editor popup; when a URL or snapshot is set
@@ -986,6 +1006,22 @@ function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onCh
                   <span>Year 1 Total <span style={{ color: '#94A3B8' }}>(quoted)</span></span>
                   <strong style={{ color: '#1E293B' }}>{fmtMoneyWhole(snapStats.year1Total) || '$0'}</strong>
                 </div>
+              </div>
+            )}
+            {snapshot && optionServices.length > 0 && (
+              <div style={{
+                padding: '0.5rem 0.6rem', background: '#F8FAFC',
+                border: '1px solid var(--color-border-light)', borderRadius: 4,
+                fontSize: '0.78rem', color: '#475569',
+              }}>
+                <div style={{ fontWeight: 600, color: '#1E293B', marginBottom: 4 }}>
+                  Services <span style={{ color: '#94A3B8', fontWeight: 400 }}>({optionServices.length})</span>
+                </div>
+                <ul style={{ margin: 0, paddingLeft: '1.1rem' }}>
+                  {optionServices.map((s, i) => (
+                    <li key={`svc-${i}`} style={{ margin: '0.1rem 0' }}>{s}</li>
+                  ))}
+                </ul>
               </div>
             )}
             {(url || snapshot) && (
@@ -5808,6 +5844,12 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             // small ✎ for inline override edits. A manual URL on
             // `_quotedAmountUrl` takes precedence so users can attach
             // a quote PDF / BFO doc / etc.
+            // Resolve the linked Option's services from the live
+            // per-Option map (keyed by sheetName, which equals the saved
+            // snapshot's name / the opp's Pricing Option link). Used as a
+            // fallback for snapshots saved before services were frozen in.
+            const optName = String(row._pricingOption?.name || optionLinks[String(row._id)] || '').trim();
+            const cellServices = (optName && pricingOptionServices) ? (pricingOptionServices[optName] || []) : [];
             return (
               <QuotedAmountCell
                 value={row[h]}
@@ -5816,6 +5858,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                 onViewSnapshot={() => setInfoOppId(row._id)}
                 url={row._quotedAmountUrl || ''}
                 onChangeUrl={(u) => updateOppField(row._id, '_quotedAmountUrl', u)}
+                services={cellServices}
               />
             );
           }

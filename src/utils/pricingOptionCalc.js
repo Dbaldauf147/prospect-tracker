@@ -101,6 +101,10 @@ export function buildPricingOptionSnapshot(option) {
     name: option?.name || '',
     years: termYears,
     escPct: esc,
+    // Service bundle for this Option (line-item → services mapping,
+    // deduped upstream). Frozen in so the Opp can list them even after
+    // the Pricing tab is cleared.
+    services: Array.isArray(option?.services) ? option.services.filter(Boolean) : [],
     rows: rows.map(r => ({ ...r })),
     year1Total: yearTotals[0] || 0,
     yearTotals,
