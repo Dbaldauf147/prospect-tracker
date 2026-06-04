@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Opps 2 — IndexedDB Blob Decoder / Recovery</title>
+<style>
+  :root { font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+  body { margin: 0; background: #0f1115; color: #e6e6e6; }
+  header { padding: 16px 20px; background: #161a22; border-bottom: 1px solid #262c38; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { color: #9aa4b2; font-size: 13px; }
+  main { padding: 20px; }
+  #drop { border: 2px dashed #3a4456; border-radius: 10px; padding: 28px; text-align: center; color: #9aa4b2; cursor: pointer; transition: .15s; }
+  #drop.hover { border-color: #5b8cff; background: #131826; color: #cfe0ff; }
+  table { border-collapse: collapse; width: 100%; margin-top: 18px; font-size: 13px; }
+  th, td { border: 1px solid #2a3140; padding: 6px 9px; text-align: left; vertical-align: top; }
+  th { background: #1a2030; position: sticky; top: 0; }
+  tr:nth-child(even) td { background: #141823; }
+  .ok { color: #57d38c; } .warn { color: #ffcc66; } .bad { color: #ff7a7a; } .dim { color: #8b95a5; }
+  button { background: #2d6cdf; color: #fff; border: 0; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 13px; }
+  button.secondary { background: #333b4d; }
+  button:hover { filter: brightness(1.1); }
+  .log { white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #9aa4b2; margin-top: 16px; max-height: 180px; overflow:auto; background:#0b0d12; border:1px solid #222; border-radius:6px; padding:10px; }
+  .search { margin-top: 18px; display: none; }
+  input[type=text] { background:#0b0d12; border:1px solid #2a3140; color:#e6e6e6; border-radius:6px; padding:7px 10px; width: 320px; font-size: 13px; }
+  code { background:#0b0d12; padding:1px 5px; border-radius:4px; }
+  .pill { display:inline-block; padding:1px 7px; border-radius:10px; font-size:11px; background:#222a38; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Opps 2 — IndexedDB Blob Decoder &amp; Recovery</h1>
+  <div class="sub">Runs 100% locally in your browser. Nothing is uploaded. Drop the Opps 2 blob files (the ones under <code>Default__blob\4\…</code>) to decode &amp; compare snapshots.</div>
+</header>
+<main>
+  <div id="drop">
+    <strong>Drop blob files here</strong> &nbsp;or&nbsp; <button class="secondary" id="pick" type="button">Choose files…</button>
+    <div class="sub" style="margin-top:8px">Tip: select every file inside <code>Default__blob\4\</code> (and <code>Default__blob\c\</code> if you want). Folders of files are fine.</div>
+    <input id="file" type="file" multiple style="display:none" />
+  </div>
+
+  <div id="results"></div>
+
+  <div class="search" id="searchWrap">
+    <div style="margin-bottom:8px;color:#cfe0ff">Search records in the selected snapshot (type part of an Account / Company / Scope, e.g. <code>Blackstone</code> or <code>Strateg</code>):</div>
+    <input type="text" id="search" placeholder="search account / any field…" />
+    <span class="dim" id="searchSnap"></span>
+    <div id="searchOut" style="margin-top:10px"></div>
+  </div>
+
+  <div class="log" id="log"></div>
+</main>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const log = (m) => { $("log").textContent += m + "\n"; $("log").scrollTop = 1e9; };
+
+// ---- V8 / Blink ValueSerializer reader -------------------------------------
+// Implements the subset of the V8 serialization format Chrome uses for
+// IndexedDB structured-clone values: objects, dense/sparse arrays, one/two
+// byte strings, ints, doubles, booleans, null/undefined, dates, references.
+const TAG = {
+  VERSION:0xFF, PADDING:0x00, VERIFY:0x3F, THE_HOLE:0x2D, UNDEFINED:0x5F,
+  NULL:0x30, TRUE:0x54, FALSE:0x46, INT32:0x49, UINT32:0x55, DOUBLE:0x4E,
+  BIGINT:0x5A, UTF8:0x53, ONE_BYTE:0x22, TWO_BYTE:0x63, OBJ_REF:0x5E,
+  BEGIN_OBJ:0x6F, END_OBJ:0x7B, BEGIN_SPARSE:0x61, END_SPARSE:0x40,
+  BEGIN_DENSE:0x41, END_DENSE:0x24, DATE:0x44, TRUE_OBJ:0x79, FALSE_OBJ:0x78,
+  NUMBER_OBJ:0x6E, STRING_OBJ:0x73, REGEXP:0x52, MAP:0x3B, SET:0x27,
+  ARRAY_BUFFER:0x42, ARRAY_BUFFER_VIEW:0x56,
+};
+
+class Reader {
+  constructor(bytes, start) { this.b = bytes; this.p = start || 0; this.refs = []; }
+  eof() { return this.p >= this.b.length; }
+  u8() { return this.b[this.p++]; }
+  peek() { return this.b[this.p]; }
+  varint() { // unsigned LEB128 (as JS number, safe to 2^53)
+    let r = 0, s = 1, byte;
+    do { byte = this.b[this.p++]; r += (byte & 0x7f) * s; s *= 128; } while (byte & 0x80);
+    return r;
+  }
+  zigzag() { const v = this.varint(); return (v % 2) ? -(v + 1) / 2 : v / 2; }
+  double() {
+    const dv = new DataView(this.b.buffer, this.b.byteOffset + this.p, 8);
+    this.p += 8; return dv.getFloat64(0, true);
+  }
+  oneByte() { const n = this.varint(); let s = ""; const end = this.p + n;
+    while (this.p < end) s += String.fromCharCode(this.b[this.p++]); return s; }
+  twoByte() { const n = this.varint(); let s = ""; const end = this.p + n;
+    while (this.p < end) { s += String.fromCharCode(this.b[this.p] | (this.b[this.p+1] << 8)); this.p += 2; } return s; }
+  utf8() { const n = this.varint(); const slice = this.b.subarray(this.p, this.p + n); this.p += n;
+    return new TextDecoder("utf-8").decode(slice); }
+
+  value() {
+    const t = this.u8();
+    switch (t) {
+      case TAG.VERSION: this.varint(); return this.value();
+      case TAG.PADDING: return this.value();
+      case TAG.VERIFY: this.varint(); return this.value();
+      case TAG.BEGIN_OBJ: return this.readObject();
+      case TAG.BEGIN_DENSE: return this.readDense();
+      case TAG.BEGIN_SPARSE: return this.readSparse();
+      case TAG.ONE_BYTE: return this.oneByte();
+      case TAG.TWO_BYTE: return this.twoByte();
+      case TAG.UTF8: return this.utf8();
+      case TAG.INT32: return this.zigzag();
+      case TAG.UINT32: return this.varint();
+      case TAG.DOUBLE: return this.double();
+      case TAG.NULL: return null;
+      case TAG.UNDEFINED: return undefined;
+      case TAG.THE_HOLE: return undefined;
+      case TAG.TRUE: return true;
+      case TAG.FALSE: return false;
+      case TAG.TRUE_OBJ: return true;
+      case TAG.FALSE_OBJ: return false;
+      case TAG.NUMBER_OBJ: return this.double();
+      case TAG.STRING_OBJ: return this.value();
+      case TAG.DATE: { const ms = this.double(); return new Date(ms); }
+      case TAG.OBJ_REF: { const id = this.varint(); return this.refs[id]; }
+      case TAG.BIGINT: { const bl = this.varint(); this.p += (bl >> 4); return null; }
+      default:
+        throw new Error("Unknown tag 0x" + t.toString(16) + " at offset " + (this.p - 1));
+    }
+  }
+  readObject() {
+    const obj = {}; this.refs.push(obj);
+    while (this.peek() !== TAG.END_OBJ) {
+      const k = this.value(); const v = this.value(); obj[k] = v;
+    }
+    this.u8(); this.varint(); // END_OBJ + propertyCount
+    return obj;
+  }
+  readDense() {
+    const len = this.varint(); const arr = new Array(len); this.refs.push(arr);
+    for (let i = 0; i < len; i++) {
+      if (this.peek() === TAG.THE_HOLE) { this.u8(); arr[i] = undefined; }
+      else arr[i] = this.value();
+    }
+    while (this.peek() !== TAG.END_DENSE) { const k = this.value(); const v = this.value(); arr[k] = v; }
+    this.u8(); this.varint(); this.varint(); // END_DENSE + propCount + length
+    return arr;
+  }
+  readSparse() {
+    const len = this.varint(); const arr = new Array(len); this.refs.push(arr);
+    while (this.peek() !== TAG.END_SPARSE) { const k = this.value(); const v = this.value(); arr[k] = v; }
+    this.u8(); this.varint(); this.varint();
+    return arr;
+  }
+}
+
+// Find the most plausible start of the top-level object and decode it.
+function decodeBlob(bytes) {
+  const candidates = [];
+  for (let i = 0; i + 1 < bytes.length; i++) {
+    if (bytes[i] === TAG.BEGIN_OBJ && bytes[i + 1] === TAG.ONE_BYTE) candidates.push(i);
+    if (candidates.length > 40) break;
+  }
+  let best = null;
+  for (const start of candidates) {
+    try {
+      const r = new Reader(bytes, start);
+      const obj = r.value();
+      if (obj && typeof obj === "object") {
+        const score = (obj.records ? 1e6 : 0) + Object.keys(obj).length + (r.p - start);
+        if (!best || score > best.score) best = { obj, score, start, consumed: r.p - start };
+      }
+    } catch (e) { /* try next candidate */ }
+  }
+  if (!best) throw new Error("Could not locate a decodable object in this file.");
+  return best;
+}
+
+// ---- UI / analysis ---------------------------------------------------------
+const snapshots = []; // {name, obj, recordCount, ...}
+
+function asText(v) {
+  if (v == null) return "";
+  if (v instanceof Date) return v.toISOString();
+  return String(v);
+}
+function fmtTs(ms) { if (!ms) return ""; const d = new Date(Number(ms)); return isNaN(d) ? "" : d.toLocaleString(); }
+
+function analyze(name, obj) {
+  const records = Array.isArray(obj.records) ? obj.records : [];
+  const headers = Array.isArray(obj.headers) ? obj.headers : [];
+  let sold = 0, rowStamped = 0, maxRowTs = 0;
+  const statusCounts = {};
+  for (const r of records) {
+    if (!r || typeof r !== "object") continue;
+    const st = asText(r["Status"]).trim();
+    if (st) statusCounts[st] = (statusCounts[st] || 0) + 1;
+    if (st.toLowerCase() === "sold") sold++;
+    const ts = Number(r._rowUpdatedAt) || 0;
+    if (ts) { rowStamped++; if (ts > maxRowTs) maxRowTs = ts; }
+  }
+  return {
+    name, obj, headers, records,
+    recordCount: records.length,
+    columnCount: headers.length,
+    sold, rowStamped, maxRowTs,
+    updatedAt: Number(obj._updatedAt) || 0,
+    statusCounts,
+  };
+}
+
+function render() {
+  snapshots.sort((a, b) => (b.maxRowTs || b.updatedAt) - (a.maxRowTs || a.updatedAt));
+  let html = `<table><thead><tr>
+    <th>Snapshot (file)</th><th>Records</th><th>Cols</th>
+    <th>Rows w/ edit stamp</th><th>Newest row edit</th><th>_updatedAt</th>
+    <th>Sold</th><th>Top statuses</th><th>Download</th></tr></thead><tbody>`;
+  snapshots.forEach((s, i) => {
+    const stamp = s.rowStamped;
+    const stampCls = stamp > 20 ? "ok" : stamp > 0 ? "warn" : "bad";
+    const tops = Object.entries(s.statusCounts).sort((a,b)=>b[1]-a[1]).slice(0,4)
+      .map(([k,v]) => `${k}:${v}`).join(", ");
+    html += `<tr>
+      <td><a href="#" onclick="selectSnap(${i});return false" style="color:#9ec1ff">${s.name}</a></td>
+      <td>${s.recordCount}</td>
+      <td>${s.columnCount}</td>
+      <td class="${stampCls}">${stamp}</td>
+      <td>${fmtTs(s.maxRowTs) || '<span class=dim>none</span>'}</td>
+      <td>${fmtTs(s.updatedAt) || '<span class=dim>none</span>'}</td>
+      <td>${s.sold}</td>
+      <td class="dim">${tops}</td>
+      <td><button onclick="downloadSnap(${i})">JSON</button></td>
+    </tr>`;
+  });
+  html += `</tbody></table>
+   <div class="sub" style="margin-top:10px">Higher <b>rows-with-edit-stamp</b> + a recent <b>newest row edit</b> = the snapshot with the most of your real work. Click a filename to search its records below.</div>`;
+  $("results").innerHTML = html;
+}
+
+let selected = -1;
+window.selectSnap = (i) => {
+  selected = i; $("searchWrap").style.display = "block";
+  $("searchSnap").textContent = "— " + snapshots[i].name + " (" + snapshots[i].recordCount + " records)";
+  doSearch();
+};
+function doSearch() {
+  if (selected < 0) return;
+  const q = $("search").value.trim().toLowerCase();
+  const s = snapshots[selected];
+  const hits = [];
+  for (const r of s.records) {
+    if (!r || typeof r !== "object") continue;
+    if (!q) { if (hits.length < 50) hits.push(r); continue; }
+    for (const k in r) { if (asText(r[k]).toLowerCase().includes(q)) { hits.push(r); break; } }
+    if (hits.length >= 200) break;
+  }
+  const cols = ["Account","Company","BFO Company Name","Scope","Stage","Status","Quoted Amount","Close Date"];
+  let html = `<div class="sub">${hits.length} match(es)</div><table><thead><tr>` +
+    cols.map(c=>`<th>${c}</th>`).join("") + `<th>edit stamp</th></tr></thead><tbody>`;
+  for (const r of hits.slice(0,200)) {
+    html += "<tr>" + cols.map(c=>`<td>${escapeHtml(asText(r[c]))}</td>`).join("") +
+      `<td class="dim">${fmtTs(Number(r._rowUpdatedAt)||0)}</td></tr>`;
+  }
+  html += "</tbody></table>";
+  $("searchOut").innerHTML = html;
+}
+function escapeHtml(s){ return s.replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+window.downloadSnap = (i) => {
+  const s = snapshots[i];
+  const out = {};
+  for (const k of ["headers","records","columnLinks","dropdownLists"]) if (k in s.obj) out[k] = s.obj[k];
+  const json = JSON.stringify(out, null, 2);
+  const blob = new Blob([json], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "opps2-recovered-" + s.name.replace(/[^a-z0-9]+/gi,"_") + ".json";
+  a.click(); URL.revokeObjectURL(a.href);
+  log("Downloaded JSON for " + s.name + " (" + s.recordCount + " records).");
+};
+
+async function handleFiles(fileList) {
+  for (const f of fileList) {
+    try {
+      const buf = new Uint8Array(await f.arrayBuffer());
+      const { obj, consumed, start } = decodeBlob(buf);
+      const a = analyze(f.name + (f.webkitRelativePath ? "" : ""), obj);
+      snapshots.push(a);
+      log("OK  " + f.name + "  → " + a.recordCount + " records, " + a.columnCount +
+          " cols, " + a.rowStamped + " edit-stamped (start@" + start + ", " + consumed + " bytes)");
+    } catch (e) {
+      log("SKIP " + f.name + "  — " + e.message);
+    }
+  }
+  if (snapshots.length) render();
+}
+
+// wiring
+$("pick").onclick = () => $("file").click();
+$("file").onchange = (e) => handleFiles(e.target.files);
+$("search").oninput = doSearch;
+const drop = $("drop");
+["dragenter","dragover"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("hover"); }));
+["dragleave","drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("hover"); }));
+drop.addEventListener("drop", async (e) => {
+  const items = e.dataTransfer.files; if (items && items.length) handleFiles(items);
+});
+log("Ready. Drop the Opps 2 blob files to begin.");
+</script>
+</body>
+</html>
