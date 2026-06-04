@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Opps 2 — IndexedDB Blob Decoder / Recovery (v2)</title>
+<title>Opps 2 — IndexedDB Blob Decoder / Recovery (v3)</title>
 <style>
   :root { font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
   body { margin: 0; background: #0f1115; color: #e6e6e6; }
@@ -29,8 +29,8 @@
 </head>
 <body>
 <header>
-  <h1>Opps 2 — IndexedDB Blob Decoder &amp; Recovery <span class="dim">v2</span></h1>
-  <div class="sub">Runs 100% locally in your browser. Nothing is uploaded. Drop the Opps 2 blob files (under <code>Default__blob\4\…</code>) to decode &amp; compare snapshots.</div>
+  <h1>Opps 2 — IndexedDB Blob Decoder &amp; Recovery <span class="dim">v3 (Snappy-aware)</span></h1>
+  <div class="sub">Runs 100% locally in your browser. Nothing is uploaded. Drop the Opps 2 blob files (under <code>Default__blob\4\…</code> and <code>Default__blob\c\…</code>) to decode &amp; compare snapshots.</div>
 </header>
 <main>
   <div id="drop">
@@ -39,8 +39,8 @@
   </div>
   <div id="results"></div>
   <div class="search" id="searchWrap">
-    <div style="margin-bottom:8px;color:#cfe0ff">Search records in the selected snapshot (type part of an Account / Company / Scope, e.g. <code>Blackstone</code> or <code>Strateg</code>):</div>
-    <input type="text" id="search" placeholder="search account / any field…" />
+    <div style="margin-bottom:8px;color:#cfe0ff">Search records in the selected snapshot (type part of an Account / Scope / Status, e.g. <code>Oxea</code>, <code>CD&amp;R</code>, <code>Strateg</code>, <code>Blackstone</code>):</div>
+    <input type="text" id="search" placeholder="search any field…" />
     <span class="dim" id="searchSnap"></span>
     <div id="searchOut" style="margin-top:10px"></div>
   </div>
@@ -52,26 +52,49 @@
 const $ = (id) => document.getElementById(id);
 const log = (m) => { $("log").textContent += m + "\n"; $("log").scrollTop = 1e9; };
 
-const TAG = {
-  VERSION:0xFF, PADDING:0x00, VERIFY:0x3F, THE_HOLE:0x2D, UNDEFINED:0x5F,
-  NULL:0x30, TRUE:0x54, FALSE:0x46, INT32:0x49, UINT32:0x55, DOUBLE:0x4E,
-  BIGINT:0x5A, UTF8:0x53, ONE_BYTE:0x22, TWO_BYTE:0x63, OBJ_REF:0x5E,
-  BEGIN_OBJ:0x6F, END_OBJ:0x7B, BEGIN_SPARSE:0x61, END_SPARSE:0x40,
-  BEGIN_DENSE:0x41, END_DENSE:0x24, DATE:0x44, TRUE_OBJ:0x79, FALSE_OBJ:0x78,
-  NUMBER_OBJ:0x6E, STRING_OBJ:0x73,
-};
-
-function hexDump(bytes, off, n) {
-  n = n || 28; const s = Math.max(0, off - 6), e = Math.min(bytes.length, off + n);
-  let hex = "", asc = "";
-  for (let i = s; i < e; i++) {
-    const b = bytes[i];
-    hex += (i === off ? "[" : "") + b.toString(16).padStart(2, "0") + (i === off ? "]" : "") + " ";
-    asc += (b >= 32 && b < 127) ? String.fromCharCode(b) : ".";
+// ---- Snappy decompression --------------------------------------------------
+function snappyDecompress(buf, start) {
+  let p = start, ln = 0, sh = 0, byte;
+  do { byte = buf[p++]; ln += (byte & 0x7f) * Math.pow(2, sh); sh += 7; } while (byte & 0x80);
+  if (ln <= 0 || ln > 64 * 1024 * 1024) throw new Error("implausible length " + ln);
+  const out = new Uint8Array(ln); let o = 0;
+  while (p < buf.length && o < ln) {
+    const tag = buf[p++], t = tag & 3;
+    if (t === 0) {
+      let l = (tag >> 2) + 1;
+      if (l >= 61) { const nb = l - 60; l = 0; for (let k = 0; k < nb; k++) l += buf[p + k] * Math.pow(2, 8 * k); l += 1; p += nb; }
+      if (p + l > buf.length) l = buf.length - p;            // tolerate truncation
+      out.set(buf.subarray(p, p + l), o); o += l; p += l;
+    } else {
+      let l, off;
+      if (t === 1) { l = ((tag >> 2) & 7) + 4; off = ((tag >> 5) << 8) | buf[p++]; }
+      else if (t === 2) { l = (tag >> 2) + 1; off = buf[p] | (buf[p + 1] << 8); p += 2; }
+      else { l = (tag >> 2) + 1; off = (buf[p] | (buf[p + 1] << 8) | (buf[p + 2] << 16) | (buf[p + 3] << 24)) >>> 0; p += 4; }
+      if (off === 0 || off > o) break;
+      for (let k = 0; k < l && o < ln; k++) { out[o] = out[o - off]; o++; }
+    }
   }
-  return "@" + off + "  " + hex + " | " + asc;
+  return out.subarray(0, o);
 }
 
+const HEADERS_SEQ = [0x22,0x07,0x68,0x65,0x61,0x64,0x65,0x72,0x73]; // "headers" key
+function indexOfSeq(buf, seq, from) {
+  from = from || 0;
+  outer: for (let i = from; i <= buf.length - seq.length; i++) {
+    for (let j = 0; j < seq.length; j++) if (buf[i + j] !== seq[j]) continue outer;
+    return i;
+  }
+  return -1;
+}
+
+// ---- V8 / Blink ValueSerializer reader -------------------------------------
+const TAG = { END_OBJ:0x7b, END_DENSE:0x24, END_SPARSE:0x40, THE_HOLE:0x2d, BEGIN_OBJ:0x6f, ONE_BYTE:0x22 };
+function hexDump(bytes, off, n) {
+  n = n || 24; const s = Math.max(0, off - 4), e = Math.min(bytes.length, off + n);
+  let hex = "", asc = "";
+  for (let i = s; i < e; i++) { const b = bytes[i]; hex += (i === off ? "[" : "") + b.toString(16).padStart(2, "0") + (i === off ? "]" : "") + " "; asc += (b >= 32 && b < 127) ? String.fromCharCode(b) : "."; }
+  return "@" + off + "  " + hex + " | " + asc;
+}
 class Reader {
   constructor(bytes, start) { this.b = bytes; this.p = start || 0; this.refs = []; this.abort = false; this.diag = null; }
   u8() { return this.b[this.p++]; }
@@ -80,58 +103,52 @@ class Reader {
   zigzag() { const v = this.varint(); return (v % 2) ? -(v + 1) / 2 : v / 2; }
   double() { const dv = new DataView(this.b.buffer, this.b.byteOffset + this.p, 8); this.p += 8; return dv.getFloat64(0, true); }
   oneByte() { const n = this.varint(); let s = "", end = this.p + n; while (this.p < end) s += String.fromCharCode(this.b[this.p++]); return s; }
-  twoByte() { const n = this.varint(); let s = "", end = this.p + n; while (this.p < end) { s += String.fromCharCode(this.b[this.p] | (this.b[this.p+1] << 8)); this.p += 2; } return s; }
+  twoByte() { const n = this.varint(); let s = "", end = this.p + n; while (this.p < end) { s += String.fromCharCode(this.b[this.p] | (this.b[this.p + 1] << 8)); this.p += 2; } return s; }
   utf8() { const n = this.varint(); const sl = this.b.subarray(this.p, this.p + n); this.p += n; return new TextDecoder("utf-8").decode(sl); }
-
   value() {
     const off = this.p, t = this.u8();
     switch (t) {
-      case TAG.VERSION: this.varint(); return this.value();
-      case TAG.PADDING: return this.value();
-      case TAG.VERIFY: this.varint(); return this.value();
-      case TAG.BEGIN_OBJ: return this.readObject();
-      case TAG.BEGIN_DENSE: return this.readDense();
-      case TAG.BEGIN_SPARSE: return this.readSparse();
-      case TAG.ONE_BYTE: return this.oneByte();
-      case TAG.TWO_BYTE: return this.twoByte();
-      case TAG.UTF8: return this.utf8();
-      case TAG.INT32: return this.zigzag();
-      case TAG.UINT32: return this.varint();
-      case TAG.DOUBLE: return this.double();
-      case TAG.NULL: return null;
-      case TAG.UNDEFINED: case TAG.THE_HOLE: return undefined;
-      case TAG.TRUE: case TAG.TRUE_OBJ: return true;
-      case TAG.FALSE: case TAG.FALSE_OBJ: return false;
-      case TAG.NUMBER_OBJ: return this.double();
-      case TAG.STRING_OBJ: return this.value();
-      case TAG.DATE: return new Date(this.double());
-      case TAG.OBJ_REF: return this.refs[this.varint()];
-      default: {
-        const d = { tag: "0x" + t.toString(16), offset: off, dump: hexDump(this.b, off) };
-        const err = new Error("unknown tag " + d.tag); err.diag = d; throw err;
-      }
+      case 0xff: this.varint(); return this.value();
+      case 0x00: return this.value();
+      case 0x3f: this.varint(); return this.value();
+      case 0x6f: return this.readObject();
+      case 0x41: return this.readDense();
+      case 0x61: return this.readSparse();
+      case 0x22: return this.oneByte();
+      case 0x63: return this.twoByte();
+      case 0x53: return this.utf8();
+      case 0x49: return this.zigzag();
+      case 0x55: return this.varint();
+      case 0x4e: return this.double();
+      case 0x30: return null;
+      case 0x5f: case 0x2d: return undefined;
+      case 0x54: case 0x79: return true;
+      case 0x46: case 0x78: return false;
+      case 0x6e: return this.double();
+      case 0x73: return this.value();
+      case 0x44: return new Date(this.double());
+      case 0x5e: return this.refs[this.varint()];
+      default: { const d = { tag: "0x" + t.toString(16), offset: off, dump: hexDump(this.b, off) }; const e = new Error("unknown tag " + d.tag); e.diag = d; throw e; }
     }
   }
   readObject() {
     const obj = {}; this.refs.push(obj);
     while (!this.abort && this.peek() !== TAG.END_OBJ) {
       let k, v;
-      try { k = this.value(); v = this.value(); }
-      catch (e) { this.abort = true; if (!this.diag) this.diag = e.diag || { message: e.message, offset: this.p }; return obj; }
+      try { k = this.value(); v = this.value(); } catch (e) { this.abort = true; if (!this.diag) this.diag = e.diag || { message: e.message, offset: this.p }; return obj; }
       obj[k] = v;
     }
     if (!this.abort) { this.u8(); this.varint(); }
     return obj;
   }
   readDense() {
-    const len = this.varint(); const arr = []; this.refs.push(arr);
+    const len = this.varint(); const arr = []; this.refs.push(arr); arr._declared = len;
     for (let i = 0; i < len && !this.abort; i++) {
       if (this.peek() === TAG.THE_HOLE) { this.u8(); arr.push(undefined); continue; }
-      try { arr.push(this.value()); }
-      catch (e) { this.abort = true; if (!this.diag) this.diag = e.diag || { message: e.message, offset: this.p }; break; }
+      try { arr.push(this.value()); } catch (e) { this.abort = true; if (!this.diag) this.diag = e.diag || { message: e.message, offset: this.p }; break; }
     }
     if (!this.abort) {
-      while (this.peek() !== TAG.END_DENSE) { try { const k = this.value(), v = this.value(); arr[k] = v; } catch (e) { this.abort = true; break; } }
+      while (this.peek() !== TAG.END_DENSE) { try { this.value(); this.value(); } catch (e) { this.abort = true; break; } }
       if (!this.abort) { this.u8(); this.varint(); this.varint(); }
     }
     return arr;
@@ -143,71 +160,76 @@ class Reader {
     return arr;
   }
 }
-
-function findKeyStart(bytes, name) {
-  for (let i = 0; i + 2 + name.length < bytes.length; i++) {
-    if (bytes[i] === 0x22 && bytes[i + 1] === name.length) {
-      let ok = true;
-      for (let j = 0; j < name.length; j++) { if (bytes[i + 2 + j] !== name.charCodeAt(j)) { ok = false; break; } }
-      if (ok) return i;
-    }
-  }
+function findV8Start(bytes) {
+  const h = indexOfSeq(bytes, HEADERS_SEQ);
+  if (h > 0 && bytes[h - 1] === TAG.BEGIN_OBJ) return h - 1;
+  if (h >= 1) return h - 1;
+  for (let i = 0; i + 1 < bytes.length; i++) if (bytes[i] === 0x6f && bytes[i + 1] === 0x22) return i;
   return -1;
 }
-function findTopStart(bytes) {
-  // Anchor on the first top-level key of known shapes; the opening 'o'
-  // (0x6F) sits just before that key's string tag.
-  for (const k of ["headers", "key", "timestamp", "records", "data"]) {
-    const off = findKeyStart(bytes, k);
-    if (off > 0 && bytes[off - 1] === TAG.BEGIN_OBJ) return off - 1;
-  }
-  // Fallback: first 'o"' pair.
-  for (let i = 0; i + 1 < bytes.length; i++) if (bytes[i] === 0x6F && bytes[i + 1] === 0x22) return i;
-  return -1;
-}
-function decodeBlob(bytes) {
-  const start = findTopStart(bytes);
-  if (start < 0) throw new Error("no object start found");
+function parseBuffer(bytes) {
+  const start = findV8Start(bytes);
+  if (start < 0) return null;
   const r = new Reader(bytes, start);
-  let obj;
-  try { obj = r.value(); } catch (e) { obj = undefined; if (!r.diag) r.diag = e.diag || { message: e.message }; }
-  return { obj, start, consumed: r.p - start, diag: r.diag, aborted: r.abort };
+  let obj; try { obj = r.value(); } catch (e) { obj = null; }
+  return obj && typeof obj === "object" ? { obj, diag: r.diag } : null;
+}
+// Try compressed (Snappy) and raw; keep whichever yields the most records.
+function decode(bytes) {
+  const tries = [];
+  for (const s of [3, 2, 4, 0]) {
+    try {
+      const d = snappyDecompress(bytes, s);
+      if (d.length > 500 && indexOfSeq(d, HEADERS_SEQ) >= 0) tries.push({ how: "snappy@" + s, buf: d });
+    } catch (e) { /* not snappy at this offset */ }
+  }
+  tries.push({ how: "raw", buf: bytes });
+  let best = null;
+  for (const t of tries) {
+    const res = parseBuffer(t.buf);
+    if (!res) continue;
+    const rc = Array.isArray(res.obj.records) ? res.obj.records.length : 0;
+    const declared = (res.obj.records && res.obj.records._declared) || rc;
+    if (!best || rc > best.rc) best = { obj: res.obj, rc, declared, how: t.how, diag: res.diag };
+  }
+  if (!best) throw new Error("no decodable structured-clone object found");
+  return best;
 }
 
 // ---- analysis / UI ---------------------------------------------------------
 const snapshots = [];
 const asText = (v) => v == null ? "" : (v instanceof Date ? v.toISOString() : String(v));
 const fmtTs = (ms) => { if (!ms) return ""; const d = new Date(Number(ms)); return isNaN(d) ? "" : d.toLocaleString(); };
-
-function analyze(name, obj, diag) {
-  const records = Array.isArray(obj && obj.records) ? obj.records : [];
-  const headers = Array.isArray(obj && obj.headers) ? obj.headers : [];
+function analyze(name, dec) {
+  const obj = dec.obj;
+  const records = Array.isArray(obj.records) ? obj.records : [];
+  const headers = Array.isArray(obj.headers) ? obj.headers : [];
   let sold = 0, rowStamped = 0, maxRowTs = 0; const statusCounts = {};
   for (const r of records) {
     if (!r || typeof r !== "object") continue;
-    const st = asText(r["Status"]).trim();
+    const st = asText(r["Stage"] || r["Status"]).trim();
     if (st) statusCounts[st] = (statusCounts[st] || 0) + 1;
-    if (st.toLowerCase() === "sold") sold++;
-    const ts = Number(r._rowUpdatedAt) || 0;
-    if (ts) { rowStamped++; if (ts > maxRowTs) maxRowTs = ts; }
+    if (asText(r["Stage"]).toLowerCase() === "sold" || asText(r["Status"]).toLowerCase() === "sold") sold++;
+    const ts = Number(r._rowUpdatedAt) || 0; if (ts) { rowStamped++; if (ts > maxRowTs) maxRowTs = ts; }
   }
-  return { name, obj, headers, records, recordCount: records.length, columnCount: headers.length,
-           sold, rowStamped, maxRowTs, updatedAt: Number(obj && obj._updatedAt) || 0, statusCounts, diag };
+  return { name, obj, headers, records, recordCount: records.length, declared: dec.declared, how: dec.how,
+           columnCount: headers.length, sold, rowStamped, maxRowTs, updatedAt: Number(obj._updatedAt) || 0, statusCounts, diag: dec.diag };
 }
 function render() {
-  snapshots.sort((a, b) => (b.maxRowTs || b.updatedAt || b.recordCount) - (a.maxRowTs || a.updatedAt || a.recordCount));
-  let html = `<table><thead><tr><th>Snapshot</th><th>Records</th><th>Cols</th><th>Rows w/ edit stamp</th><th>Newest row edit</th><th>_updatedAt</th><th>Sold</th><th>Top statuses</th><th>Partial?</th><th></th></tr></thead><tbody>`;
+  snapshots.sort((a, b) => (b.recordCount - a.recordCount) || ((b.maxRowTs || b.updatedAt) - (a.maxRowTs || a.updatedAt)));
+  let html = `<table><thead><tr><th>Snapshot</th><th>Records</th><th>Cols</th><th>Edit-stamped</th><th>Newest edit</th><th>_updatedAt</th><th>Sold</th><th>Top Stage/Status</th><th>Decode</th><th></th></tr></thead><tbody>`;
   snapshots.forEach((s, i) => {
-    const cls = s.rowStamped > 20 ? "ok" : s.rowStamped > 0 ? "warn" : "bad";
     const tops = Object.entries(s.statusCounts).sort((a,b)=>b[1]-a[1]).slice(0,4).map(([k,v])=>`${k}:${v}`).join(", ");
+    const complete = s.recordCount >= s.declared && !s.diag;
     html += `<tr><td><a href="#" onclick="selectSnap(${i});return false" style="color:#9ec1ff">${s.name}</a></td>
-      <td>${s.recordCount}</td><td>${s.columnCount}</td><td class="${cls}">${s.rowStamped}</td>
+      <td>${s.recordCount}${s.declared && s.recordCount < s.declared ? `<span class=warn>/${s.declared}</span>` : ""}</td>
+      <td>${s.columnCount}</td><td class="${s.rowStamped>20?'ok':s.rowStamped>0?'warn':'dim'}">${s.rowStamped}</td>
       <td>${fmtTs(s.maxRowTs)||'<span class=dim>none</span>'}</td><td>${fmtTs(s.updatedAt)||'<span class=dim>none</span>'}</td>
       <td>${s.sold}</td><td class="dim">${tops}</td>
-      <td>${s.diag?'<span class=warn>yes</span>':'<span class=ok>full</span>'}</td>
+      <td class="${complete?'ok':'warn'}">${s.how}${complete?' ✓':' ⚠'}</td>
       <td><button onclick="downloadSnap(${i})">JSON</button></td></tr>`;
   });
-  html += `</tbody></table><div class="sub" style="margin-top:10px">Most <b>records</b> + most <b>edit-stamped rows</b> + recent <b>newest row edit</b> = the snapshot with the most of your real work. Click a name to search its records.</div>`;
+  html += `</tbody></table><div class="sub" style="margin-top:10px">Click a snapshot name to search its records. Compare the same deal across snapshots to find the one with your latest edits, then hit <b>JSON</b> to export it.</div>`;
   $("results").innerHTML = html;
 }
 let selected = -1;
@@ -219,31 +241,32 @@ function doSearch() {
     if (!r || typeof r !== "object") continue;
     if (!q) { if (hits.length < 50) hits.push(r); continue; }
     for (const k in r) { if (asText(r[k]).toLowerCase().includes(q)) { hits.push(r); break; } }
-    if (hits.length >= 200) break;
+    if (hits.length >= 300) break;
   }
-  const cols = ["Account","Company","BFO Company Name","Scope","Stage","Status","Quoted Amount","Close Date"];
+  const cols = ["Account","Scope","Stage","Status","Quoted Amount","Close Date","Follow Up"];
   let html = `<div class="sub">${hits.length} match(es)</div><table><thead><tr>${cols.map(c=>`<th>${c}</th>`).join("")}<th>edit stamp</th></tr></thead><tbody>`;
-  for (const r of hits.slice(0,200)) html += "<tr>" + cols.map(c=>`<td>${escapeHtml(asText(r[c]))}</td>`).join("") + `<td class="dim">${fmtTs(Number(r._rowUpdatedAt)||0)}</td></tr>`;
+  for (const r of hits.slice(0,300)) html += "<tr>" + cols.map(c=>`<td>${escapeHtml(asText(r[c]))}</td>`).join("") + `<td class="dim">${fmtTs(Number(r._rowUpdatedAt)||0)}</td></tr>`;
   $("searchOut").innerHTML = html + "</tbody></table>";
 }
 const escapeHtml = (s) => s.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 window.downloadSnap = (i) => {
   const s = snapshots[i], out = {};
   for (const k of ["headers","records","columnLinks","dropdownLists"]) if (s.obj && k in s.obj) out[k] = s.obj[k];
-  const blob = new Blob([JSON.stringify(out, null, 2)], { type: "application/json" });
+  // records array carries a hidden _declared prop; JSON.stringify ignores it (arrays only serialize indices)
+  const blob = new Blob([JSON.stringify(out)], { type: "application/json" });
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
   a.download = "opps2-recovered-" + s.name.replace(/[^a-z0-9]+/gi,"_") + ".json"; a.click(); URL.revokeObjectURL(a.href);
-  log("Downloaded JSON for " + s.name + " (" + s.recordCount + " records).");
+  log("Downloaded " + s.name + " → " + s.recordCount + " records.");
 };
 async function handleFiles(fileList) {
   for (const f of fileList) {
     try {
       const buf = new Uint8Array(await f.arrayBuffer());
-      const res = decodeBlob(buf);
-      const a = analyze(f.name, res.obj || {}, res.diag);
+      const dec = decode(buf);
+      const a = analyze(f.name, dec);
       snapshots.push(a);
-      let line = "OK  " + f.name + "  → " + a.recordCount + " records, " + a.columnCount + " cols, " + a.rowStamped + " edit-stamped (start@" + res.start + ")";
-      if (res.diag) line += "   ⚠ stopped: " + (res.diag.tag ? ("tag " + res.diag.tag + " " + (res.diag.dump||"")) : res.diag.message);
+      let line = "OK  " + f.name + "  → " + a.recordCount + (a.declared && a.recordCount < a.declared ? "/" + a.declared : "") + " records, " + a.columnCount + " cols  [" + a.how + "]";
+      if (a.diag) line += "   ⚠ stopped: " + (a.diag.tag ? ("tag " + a.diag.tag + " " + (a.diag.dump || "")) : a.diag.message);
       log(line);
     } catch (e) { log("SKIP " + f.name + "  — " + e.message); }
   }
@@ -256,7 +279,7 @@ const drop = $("drop");
 ["dragenter","dragover"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("hover"); }));
 ["dragleave","drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("hover"); }));
 drop.addEventListener("drop", (e) => { const f = e.dataTransfer.files; if (f && f.length) handleFiles(f); });
-log("Ready (v2). Drop the Opps 2 blob files to begin.");
+log("Ready (v3, Snappy-aware). Drop the Opps 2 blob files to begin.");
 </script>
 </body>
 </html>
