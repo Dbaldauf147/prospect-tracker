@@ -173,7 +173,20 @@ const ENSURED_COLUMNS = [...COMPUTED_COLUMNS, 'Next Steps', 'Pricing Option', 'N
 
 // Record-level merge lives in opps2Store as `mergeOpps2Datasets` so the
 // real-time listener, hydration reconcile, and the guarded flush all
-// resolve conflicts identically (newest `_rowUpdatedAt` per row wins).
+// resolve conflicts identically (field-level by `_fieldUpdatedAt`).
+
+// Build the `_fieldUpdatedAt` map for an edit: carry the row's prior
+// per-field stamps forward and set `now` on every field that changed
+// between `prev` and `next`. Lets the merge resolve concurrent edits to
+// different fields of the same opp without one clobbering the other.
+function stampChangedFields(prev, next, now) {
+  const stamps = { ...(prev._fieldUpdatedAt || {}) };
+  for (const k of new Set([...Object.keys(prev), ...Object.keys(next)])) {
+    if (k === '_fieldUpdatedAt' || k === '_rowUpdatedAt') continue;
+    if (next[k] !== prev[k]) stamps[k] = now;
+  }
+  return stamps;
+}
 
 function todayISO() {
   const d = new Date();
@@ -5342,7 +5355,8 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         ...prev,
         records: records.map(r => {
           if (r._id !== id) return r;
-          const next = { ...r, [field]: value, _rowUpdatedAt: Date.now() };
+          const now = Date.now();
+          const next = { ...r, [field]: value, _rowUpdatedAt: now };
           // When the source date for a computed column changes, drop
           // any sheet-imported stored value on the computed column so
           // the render falls back to a live recompute. Without this, an
@@ -5389,6 +5403,11 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             if (norm === 'no') next._nfatSetAt = new Date().toISOString();
             else delete next._nfatSetAt;
           }
+          // Record per-field edit times so a concurrent edit to a
+          // *different* field of this same opp on another device merges
+          // field-by-field, instead of one whole-row version clobbering
+          // the other. Stamp exactly the fields this edit changed.
+          next._fieldUpdatedAt = stampChangedFields(r, next, now);
           return next;
         }),
       };
@@ -5456,7 +5475,13 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   const deleteOpp = useCallback((id) => {
     setData(prev => {
       const records = prev?.records || [];
-      return { ...prev, records: records.filter(r => r._id !== id) };
+      // Tombstone the id so the delete propagates across devices instead
+      // of the row resurrecting from a stale copy on the next merge.
+      return {
+        ...prev,
+        records: records.filter(r => r._id !== id),
+        _deletedIds: { ...(prev?._deletedIds || {}), [String(id)]: Date.now() },
+      };
     });
     setSelectedIds(prev => {
       if (!prev.has(id)) return prev;
@@ -5476,7 +5501,8 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         ...prev,
         records: records.map(r => {
           if (!idSet.has(r._id)) return r;
-          const next = { ...r, [field]: value, _rowUpdatedAt: Date.now() };
+          const now = Date.now();
+          const next = { ...r, [field]: value, _rowUpdatedAt: now };
           // Same stage-entry stamp the single-row path applies, so bulk
           // moves through Days-in-Stage start the clock at the bulk
           // edit instead of the rows' original Start Date. Also append
@@ -5503,6 +5529,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             if (norm === 'no') next._nfatSetAt = new Date().toISOString();
             else delete next._nfatSetAt;
           }
+          next._fieldUpdatedAt = stampChangedFields(r, next, now);
           return next;
         }),
       };
@@ -5514,7 +5541,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     if (!idSet.size) return;
     setData(prev => {
       const records = prev?.records || [];
-      return { ...prev, records: records.filter(r => !idSet.has(r._id)) };
+      const now = Date.now();
+      const deletedIds = { ...(prev?._deletedIds || {}) };
+      for (const id of idSet) deletedIds[String(id)] = now;
+      return { ...prev, records: records.filter(r => !idSet.has(r._id)), _deletedIds: deletedIds };
     });
     setSelectedIds(new Set());
   }, []);

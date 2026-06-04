@@ -44,23 +44,62 @@ export function stampUpdatedAt(data) {
   return { ...(data || {}), _updatedAt: Date.now() };
 }
 
-// Per-row merge of two Opps 2 datasets. The newest `_rowUpdatedAt` wins
-// for each opp, so a stale whole-document copy can never revert a row
-// that was edited more recently on another device. This is the single
-// source of truth for conflict resolution — used by hydration, the
-// real-time listener, and the guarded flush below.
+// Per-row merge of two Opps 2 datasets, with field-level resolution and
+// deletion tombstones. The single source of truth for conflict
+// resolution — used by hydration, the real-time listener, and the
+// guarded flush below.
 // Strategy:
-//   • Rows only in `base`     → keep (don't drop an in-flight new row).
-//   • Rows only in `incoming` → add (a new opp from the other device).
-//   • Rows in both            → newer `_rowUpdatedAt` wins; a row with no
-//     stamp counts as oldest (ts 0), so an unstamped bulk/restore copy
-//     can never masquerade as the freshest.
-//   • Headers                 → union, `base` order preserved.
+//   • Rows in both → merged FIELD-BY-FIELD: each field takes the value
+//     from whichever side stamped it more recently (`_fieldUpdatedAt`),
+//     so two devices editing *different* fields of the same opp both
+//     survive. Rows with no field stamps fall back to whole-row newest
+//     `_rowUpdatedAt` — identical to the previous behavior, so existing
+//     data is unaffected until it's edited.
+//   • Rows only in one side → kept (don't drop an in-flight new row).
+//   • Deletions → propagated via a `_deletedIds` map ({id: deletedAt}).
+//     A row whose id is tombstoned with a time newer than the row's last
+//     edit is dropped, so a delete on one device no longer resurrects
+//     from a stale copy. Re-creating/editing a row after its delete (row
+//     stamp newer than the tombstone) keeps it.
+//   • Headers → union, `base` order preserved.
 //   • columnLinks/dropdownLists → prefer `base` (the editing device).
-// Deletions are intentionally NOT propagated here (a row absent on one
-// side is kept from the other) — losing an edit is the failure we're
-// fixing, and resurrecting a rare deleted row is the safer default.
-// Tombstone-based deletes belong with the per-opp-document refactor.
+const TOMBSTONE_TTL_MS = 180 * 24 * 60 * 60 * 1000; // prune deletes older than ~6 months
+
+function fieldTime(row, fieldStamps, key) {
+  const t = fieldStamps && Number(fieldStamps[key]);
+  return Number.isFinite(t) ? t : (Number(row._rowUpdatedAt) || 0);
+}
+
+// Merge two versions of the SAME opp. Field-level when stamps exist,
+// else whole-row newest wins (back-compat).
+function mergeOpps2Row(a, b) {
+  const aFs = a._fieldUpdatedAt || null;
+  const bFs = b._fieldUpdatedAt || null;
+  if (!aFs && !bFs) {
+    return (Number(b._rowUpdatedAt) || 0) > (Number(a._rowUpdatedAt) || 0) ? b : a;
+  }
+  const out = { ...a };
+  const stamps = { ...(aFs || {}) };
+  for (const k of Object.keys(b)) {
+    if (k === '_fieldUpdatedAt' || k === '_rowUpdatedAt') continue;
+    if (!(k in a)) {
+      // Field present only on the incoming side — keep it (union; never
+      // lose a value). Field-level deletes are not propagated, matching
+      // the conservative row-level deletion stance.
+      out[k] = b[k];
+      if (bFs && bFs[k] != null) stamps[k] = Number(bFs[k]);
+    } else if (fieldTime(b, bFs, k) > fieldTime(a, aFs, k)) {
+      out[k] = b[k];
+      if (bFs && bFs[k] != null) stamps[k] = Number(bFs[k]);
+    }
+  }
+  out._id = a._id;
+  out.id = a.id ?? b.id;
+  out._rowUpdatedAt = Math.max(Number(a._rowUpdatedAt) || 0, Number(b._rowUpdatedAt) || 0);
+  if (Object.keys(stamps).length) out._fieldUpdatedAt = stamps;
+  return out;
+}
+
 export function mergeOpps2Datasets(base, incoming) {
   const byId = (arr) => {
     const m = new Map();
@@ -77,28 +116,45 @@ export function mergeOpps2Datasets(base, incoming) {
   for (const [id, baseRow] of baseById) {
     seen.add(id);
     const incomingRow = incomingById.get(id);
-    if (!incomingRow) { merged.push(baseRow); continue; }
-    const baseTs = Number(baseRow._rowUpdatedAt) || 0;
-    const incomingTs = Number(incomingRow._rowUpdatedAt) || 0;
-    merged.push(incomingTs > baseTs ? incomingRow : baseRow);
+    merged.push(incomingRow ? mergeOpps2Row(baseRow, incomingRow) : baseRow);
   }
   for (const [id, incomingRow] of incomingById) {
     if (!seen.has(id)) merged.push(incomingRow);
   }
+
+  // Union the deletion tombstones (newest wins per id), prune ancient
+  // ones, then drop any row a tombstone has buried (unless the row was
+  // edited after it was deleted, i.e. re-created).
+  const cutoff = Date.now() - TOMBSTONE_TTL_MS;
+  const deletedIds = {};
+  for (const src of [base?._deletedIds, incoming?._deletedIds]) {
+    if (!src) continue;
+    for (const [id, t] of Object.entries(src)) {
+      const ts = Number(t) || 0;
+      if (ts >= cutoff && ts > (deletedIds[id] || 0)) deletedIds[id] = ts;
+    }
+  }
+  const records = merged.filter(r => {
+    const t = deletedIds[String(r._id)];
+    return t == null || (Number(r._rowUpdatedAt) || 0) > t;
+  });
 
   const baseHeaders = base?.headers || incoming?.headers || [];
   const headerSet = new Set(baseHeaders);
   const extraHeaders = (incoming?.headers || []).filter(h => h && !headerSet.has(h));
   const headers = extraHeaders.length ? [...baseHeaders, ...extraHeaders] : baseHeaders;
 
-  return {
+  const out = {
     ...(incoming || {}),
     ...(base || {}),
     headers,
-    records: merged,
+    records,
     columnLinks: base?.columnLinks ?? incoming?.columnLinks,
     dropdownLists: base?.dropdownLists ?? incoming?.dropdownLists,
   };
+  if (Object.keys(deletedIds).length) out._deletedIds = deletedIds;
+  else delete out._deletedIds;
+  return out;
 }
 
 export async function loadOpps2Cache() {
