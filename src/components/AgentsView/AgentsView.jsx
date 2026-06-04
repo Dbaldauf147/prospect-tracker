@@ -759,7 +759,50 @@ function OppPicker({ oppsCache, onSelect, triggerLabel = '+ Pick opportunity', c
   );
 }
 
-export function AgentsView({ prospects = [], settings }) {
+// Editable BFO Company Name cell for the New BFO Opp table. When a Table
+// View company matches the opp's account, the value is an editable input
+// that writes straight back to that company's `bfoCompanyName` (so it
+// ties to the Table View / Opps 2). With no match there's nowhere to
+// store it, so it stays a read-only dash with a hint.
+function NewBfoCompanyNameCell({ prospect, value, onCommit }) {
+  if (!prospect) {
+    return (
+      <td
+        className={styles.muted}
+        title="No Table View company matches this account. Add the company on the Table View first to store a BFO Company Name."
+      >—</td>
+    );
+  }
+  const initial = String(value ?? '');
+  const commit = (el) => {
+    const next = el.value.trim();
+    if (next !== initial.trim()) onCommit(next);
+  };
+  return (
+    <td>
+      <input
+        key={initial}
+        type="text"
+        defaultValue={initial}
+        placeholder="Enter BFO Company Name…"
+        onBlur={(e) => commit(e.currentTarget)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+          else if (e.key === 'Escape') { e.preventDefault(); e.currentTarget.value = initial; e.currentTarget.blur(); }
+        }}
+        style={{
+          width: '100%', boxSizing: 'border-box', padding: '2px 5px',
+          border: '1px solid transparent', borderRadius: 4, font: 'inherit',
+          background: 'transparent', color: 'inherit',
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.border = '1px solid var(--color-border)'; }}
+        onMouseLeave={(e) => { if (document.activeElement !== e.currentTarget) e.currentTarget.style.border = '1px solid transparent'; }}
+      />
+    </td>
+  );
+}
+
+export function AgentsView({ prospects = [], settings, updateProspect }) {
   const { isAdmin } = useAuth();
   // Configured per-user via Settings → CDM Name. The Sent emails section
   // matches HubSpot's hs_email_from_email against this address; blank
@@ -1392,6 +1435,18 @@ export function AgentsView({ prospects = [], settings }) {
       // First match wins so the lookup is deterministic when two
       // prospect rows happen to normalize to the same key.
       if (!map.has(norm)) map.set(norm, bfo);
+    }
+    return map;
+  }, [prospects]);
+
+  // Normalized company → Table View prospect, so the New BFO Opp table
+  // can write an entered BFO Company Name straight back to that company's
+  // record (the same field Opps 2 / Table View read). First match wins.
+  const prospectByNorm = useMemo(() => {
+    const map = new Map();
+    for (const p of prospects) {
+      const norm = normalizeCompany(p.company);
+      if (norm && !map.has(norm)) map.set(norm, p);
     }
     return map;
   }, [prospects]);
@@ -2277,7 +2332,9 @@ export function AgentsView({ prospects = [], settings }) {
                     <tr className={styles.emptyRow}>
                       <td colSpan={14}>No Opps currently match (Stage ≠ Not Started / Not Sold / Sold and BFO Opportunity Name is &ldquo;-&rdquo;).</td>
                     </tr>
-                  ) : newBfoOpps.map(o => (
+                  ) : newBfoOpps.map(o => {
+                    const matchedProspect = prospectByNorm.get(normalizeCompany(o.company)) || null;
+                    return (
                     <tr key={o.id}>
                       <td>
                         {o.raw && (
@@ -2296,7 +2353,11 @@ export function AgentsView({ prospects = [], settings }) {
                         )}
                       </td>
                       <td className={o.company && o.company !== '—' ? '' : styles.muted}>{o.company || '—'}</td>
-                      <td className={o.bfoCompanyName ? '' : styles.muted}>{o.bfoCompanyName || '—'}</td>
+                      <NewBfoCompanyNameCell
+                        prospect={matchedProspect}
+                        value={o.bfoCompanyName}
+                        onCommit={(v) => updateProspect && matchedProspect && updateProspect(matchedProspect.id, { bfoCompanyName: v })}
+                      />
                       <td className={o.leadSource && o.leadSource !== '—' ? '' : styles.muted}>{o.leadSource || '—'}</td>
                       <td>
                         <span style={{
@@ -2316,7 +2377,8 @@ export function AgentsView({ prospects = [], settings }) {
                       <td className={o.class ? '' : styles.muted}>{o.class || '—'}</td>
                       <td className={o.years ? '' : styles.muted}>{o.years || '—'}</td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
