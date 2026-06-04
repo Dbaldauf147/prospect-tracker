@@ -1,9 +1,9 @@
 // Vercel Cron entry point. Runs once a day (see vercel.json `crons`) and,
 // for every user with data, writes a full JSON snapshot of their
-// Firestore data to a private Google Drive folder, prunes to the last 30,
-// and emails a summary (counts only — no raw data leaves Firestore except
-// into Drive). If a count dropped sharply versus the previous run, the
-// email is flagged as an urgent anomaly alert.
+// Firestore data to a private Google Cloud Storage bucket, prunes to the
+// last 30, and emails a summary (counts only — no raw data leaves
+// Firestore except into the bucket). If a count dropped sharply versus
+// the previous run, the email is flagged as an urgent anomaly alert.
 //
 // Protected by CRON_SECRET exactly like pe-opps-scheduler: Vercel attaches
 // `Authorization: Bearer <CRON_SECRET>`; a `?secret=` query param also
@@ -11,17 +11,17 @@
 //
 // Required env:
 //   FIREBASE_SERVICE_ACCOUNT_KEY  — already set (Firestore admin)
-//   GOOGLE_SERVICE_ACCOUNT_KEY    — already set (Drive, via JWT)
+//   GOOGLE_SERVICE_ACCOUNT_KEY    — already set (GCS, via JWT)
 //   GMAIL_USER / GMAIL_APP_PASSWORD — already set (summary email)
-//   BACKUP_DRIVE_FOLDER_ID        — NEW: a Drive folder shared (editor)
-//                                   with the service-account email
+//   BACKUP_GCS_BUCKET             — NEW: a GCS bucket in the same project
+//                                   the service account can write to
 // Optional env:
 //   BACKUP_NOTIFY_EMAIL — send every summary here instead of each user's
 //                         own email (handy for a single-operator setup)
 
 import { adminDb, adminAuth } from './_lib/firebaseAdmin.js';
 import { collectUserBackup, detectAnomalies } from './_lib/dataBackup.js';
-import { uploadTextToDrive, listBackupFiles, deleteDriveFile } from './_lib/googleDrive.js';
+import { uploadJsonToGcs, listBackupObjects, deleteGcsObject } from './_lib/gcs.js';
 import { sendEmail } from './_lib/mailer.js';
 
 const RETAIN = 30;
@@ -59,7 +59,7 @@ function summaryHtml({ fileName, summary, alerts, prevCounts }) {
     <div style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;color:#334155">
       <h2 style="color:#009530;margin:0 0 8px">Daily backup ${alerts.length ? '⚠' : '✓'}</h2>
       ${alertBlock}
-      <p style="font-size:13px;margin:0 0 4px">Saved to Google Drive as <strong>${esc(fileName)}</strong> (last ${RETAIN} kept).</p>
+      <p style="font-size:13px;margin:0 0 4px">Saved to cloud storage as <strong>${esc(fileName)}</strong> (last ${RETAIN} kept).</p>
       <table style="border-collapse:collapse;font-size:13px;margin:12px 0">
         <thead><tr>
           <th style="padding:4px 10px;text-align:left;border-bottom:2px solid #ddd">Dataset</th>
@@ -70,7 +70,7 @@ function summaryHtml({ fileName, summary, alerts, prevCounts }) {
       </table>
       <p style="font-size:12px;color:#64748b">Captured: ${summary.captured.map(esc).join(', ') || 'none'}.</p>
       ${errorBlock}
-      <p style="color:#8896A6;font-size:11px;margin-top:20px">Sent automatically from Prospect Tracker. To restore, download the JSON from Drive.</p>
+      <p style="color:#8896A6;font-size:11px;margin-top:20px">Sent automatically from Prospect Tracker. Restore from the in-app "Restore from backup" picker, or download the JSON from cloud storage.</p>
     </div>`;
 }
 
@@ -82,8 +82,8 @@ export default async function handler(req, res) {
     if (token !== secret) return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  const folderId = process.env.BACKUP_DRIVE_FOLDER_ID;
-  if (!folderId) return res.status(500).json({ error: 'BACKUP_DRIVE_FOLDER_ID not configured' });
+  const bucket = process.env.BACKUP_GCS_BUCKET;
+  if (!bucket) return res.status(500).json({ error: 'BACKUP_GCS_BUCKET not configured' });
 
   let db;
   try { db = adminDb(); }
@@ -111,12 +111,12 @@ export default async function handler(req, res) {
       if (totalCaptured === 0) { results.push({ uid, status: 'skipped-empty' }); continue; }
 
       const fileName = `prospect-tracker-backup-${uid}-${date}.json`;
-      await uploadTextToDrive({ folderId, name: fileName, content: JSON.stringify(backup) });
+      await uploadJsonToGcs({ bucket, name: fileName, content: JSON.stringify(backup) });
 
       // Retention: keep the newest RETAIN, delete the rest. Best-effort.
       try {
-        const files = await listBackupFiles({ folderId, prefix: `prospect-tracker-backup-${uid}-` });
-        for (const f of files.slice(RETAIN)) await deleteDriveFile(f.id);
+        const files = await listBackupObjects({ bucket, prefix: `prospect-tracker-backup-${uid}-` });
+        for (const f of files.slice(RETAIN)) await deleteGcsObject({ bucket, name: f.name });
       } catch (e) { console.warn('backup retention prune failed', e); }
 
       // Anomaly check vs the previous run.
@@ -127,7 +127,7 @@ export default async function handler(req, res) {
       } catch { /* first run */ }
       const alerts = detectAnomalies(prevCounts, summary.counts);
 
-      // Email the summary (best-effort — the Drive copy is the real save).
+      // Email the summary (best-effort — the bucket copy is the real save).
       const to = process.env.BACKUP_NOTIFY_EMAIL || email;
       let emailed = false;
       if (to) {
