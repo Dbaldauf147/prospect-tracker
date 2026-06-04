@@ -6,7 +6,8 @@
     }
   },
   "crons": [
-    { "path": "/api/pe-opps-scheduler", "schedule": "0 * * * *" }
+    { "path": "/api/pe-opps-scheduler", "schedule": "0 * * * *" },
+    { "path": "/api/daily-backup", "schedule": "0 11 * * *" }
   ],
   "headers": [
     {
