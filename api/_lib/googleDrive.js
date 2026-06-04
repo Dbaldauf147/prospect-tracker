@@ -87,6 +87,26 @@ export async function listBackupFiles({ folderId, prefix }) {
   return (data.files || []).filter(f => String(f.name || '').startsWith(prefix));
 }
 
+// Metadata (name + createdTime) for one file the service account owns.
+export async function getDriveFileMeta(id) {
+  const token = await getDriveToken();
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${id}?fields=id,name,createdTime`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`Drive meta ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  return res.json();
+}
+
+// Raw file contents as a UTF-8 string.
+export async function downloadDriveFile(id) {
+  const token = await getDriveToken();
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`Drive download ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  return res.text();
+}
+
 export async function deleteDriveFile(id) {
   const token = await getDriveToken();
   const res = await fetch(`https://www.googleapis.com/drive/v3/files/${id}`, {
