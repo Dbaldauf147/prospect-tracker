@@ -4773,6 +4773,18 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     const unsub = onSnapshot(parentRef, async (snap) => {
       // Skip until our own initial load (getDoc + reconcile) is done.
       if (!hydratedRef.current) return;
+      // Skip snapshots that only reflect our OWN un-acknowledged local
+      // writes. Firestore's latency compensation fires the listener with
+      // the locally-buffered value (metadata.hasPendingWrites === true)
+      // before the server acks. Acting on those echoes merges them back
+      // into state, which triggers another debounced save, which fires
+      // the listener again — an infinite loop that enqueues a fresh
+      // multi-megabyte chunked write each pass until the SDK throws
+      // "resource-exhausted: Write stream exhausted maximum allowed
+      // queued writes". We only care about server-confirmed updates here
+      // (genuine edits from another device), which always arrive with
+      // hasPendingWrites === false.
+      if (snap.metadata?.hasPendingWrites) return;
       if (!snap.exists()) return;
       const raw = snap.data() || {};
       // Convert the ISO updatedAt field on the Firestore doc to ms so we
