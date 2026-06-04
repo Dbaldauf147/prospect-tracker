@@ -711,6 +711,19 @@ function BulkUploadModal({ onUpload, onClose, uploading, progress }) {
 }
 
 
+// Guess First / Last name from an email's local part, e.g.
+// john.smith@co.com → { firstName: 'John', lastName: 'Smith' }.
+// Handles first.last / first_last / first-last. Returns empty strings
+// when the local part isn't a clear two-part name (so callers can fall
+// back to other sources / leave the fields untouched).
+function guessNameFromEmail(email) {
+  const local = String(email || '').split('@')[0] || '';
+  const parts = local.split(/[._-]/).filter(Boolean);
+  if (parts.length < 2) return { firstName: '', lastName: '' };
+  const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+  return { firstName: cap(parts[0]), lastName: cap(parts[parts.length - 1]) };
+}
+
 function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptions, ccMap, toAlsoMap, onSaveCcMap, onSaveToAlsoMap, contactOldEmails = {}, onSaveOldEmails, companyDomainsMap = {}, contactNicknames = {}, onSaveNickname, contactFamilies = {}, onSaveFamily }) {
   const isNew = !contact;
   const cid = contact?.id || contact?.vid;
@@ -840,6 +853,19 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
 
   function set(key, value) { setFields(prev => ({ ...prev, [key]: value })); }
 
+  // When an email is entered and a name field is still blank, fill it in
+  // from the email's local part (e.g. john.smith@co.com → John Smith).
+  // Only touches empty fields, so a name the user typed is never lost.
+  function guessNamesFromEmail(email) {
+    const { firstName, lastName } = guessNameFromEmail(email);
+    if (!firstName && !lastName) return;
+    setFields(prev => ({
+      ...prev,
+      firstname: prev.firstname?.trim() ? prev.firstname : firstName,
+      lastname: prev.lastname?.trim() ? prev.lastname : lastName,
+    }));
+  }
+
   function addCc(email) {
     if (!email.trim() || ccEmails.includes(email.trim())) return;
     setCcEmails(prev => [...prev, email.trim()]);
@@ -919,7 +945,7 @@ function ContactModal({ contact, onSave, onClose, saving, companyNames, tagOptio
             </div>
             <div className={styles.modalSpan2}>
               <label className={styles.modalLabel}>Email <span style={{ fontWeight: 400, textTransform: 'none', color: '#DC2626' }}>*</span></label>
-              <input className={styles.modalInput} type="email" value={fields.email} onChange={e => set('email', e.target.value)} />
+              <input className={styles.modalInput} type="email" value={fields.email} onChange={e => set('email', e.target.value)} onBlur={e => guessNamesFromEmail(e.target.value)} />
               {isNew && (() => {
                 const first = (fields.firstname || '').toLowerCase().trim().replace(/[^a-z]/g, '');
                 const last = (fields.lastname || '').toLowerCase().trim().replace(/[^a-z]/g, '');
@@ -2138,13 +2164,9 @@ export function HubSpotView({ prospects, settings, updateSettings, emailFilterMo
         if (!c.firstname || !c.lastname) {
           // Try email first: john.smith@company.com → John Smith
           if (c.email) {
-            const local = c.email.split('@')[0] || '';
-            // Common patterns: first.last, first_last, firstlast (if short)
-            const parts = local.split(/[._-]/).filter(Boolean);
-            if (parts.length >= 2) {
-              if (!c.firstname) guessedFirstName = parts[0].charAt(0).toUpperCase() + parts[0].slice(1).toLowerCase();
-              if (!c.lastname) guessedLastName = parts[parts.length - 1].charAt(0).toUpperCase() + parts[parts.length - 1].slice(1).toLowerCase();
-            }
+            const g = guessNameFromEmail(c.email);
+            if (!c.firstname) guessedFirstName = g.firstName;
+            if (!c.lastname) guessedLastName = g.lastName;
           }
           // Try LinkedIn URL: linkedin.com/in/john-smith → John Smith
           if ((!guessedFirstName || !guessedLastName)) {
