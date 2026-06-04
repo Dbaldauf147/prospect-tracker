@@ -26,6 +26,19 @@ const KEY = 'current';
 const PREFS_KEY = 'prefs';
 const LEAD_SOURCE_COL = 'Lead Source';
 
+// Values an Opps 2 "BFO Link" (BFO Opportunity Name) cell can hold that
+// mean "no name yet". New opps are seeded with a dash placeholder (see
+// makeBlankOpp in OppsView2), and sheet imports leave #N/A — neither is
+// a real tag, so they must not count as "already tagged".
+const BFO_BLANK_SENTINELS = new Set(['', '-', '#n/a', 'n/a']);
+
+// The opp's BFO Opportunity Name, or '' when it holds only a blank
+// placeholder. Use this everywhere we decide whether an opp is tagged.
+function bfoOppName(r) {
+  const v = String(r?.['BFO Link'] || '').trim();
+  return BFO_BLANK_SENTINELS.has(v.toLowerCase()) ? '' : v;
+}
+
 function parseTSV(text) {
   if (!text) return { headers: [], rows: [] };
   const lines = text.replace(/\r\n?/g, '\n').split('\n').filter(l => l.length > 0);
@@ -241,7 +254,7 @@ export function BFOActivityView({ prospects = [] } = {}) {
     const map = new Map();
     const records = (opps && Array.isArray(opps.records)) ? opps.records : [];
     for (const r of records) {
-      const k = String(r['BFO Link'] || '').trim().toLowerCase();
+      const k = bfoOppName(r).toLowerCase();
       if (!k) continue;
       const src = (r['Lead Source'] || r['Source'] || '').toString().trim();
       if (src) map.set(k, src);
@@ -256,7 +269,7 @@ export function BFOActivityView({ prospects = [] } = {}) {
     const set = new Set();
     const records = (opps && Array.isArray(opps.records)) ? opps.records : [];
     for (const r of records) {
-      const k = String(r['BFO Link'] || '').trim().toLowerCase();
+      const k = bfoOppName(r).toLowerCase();
       if (k) set.add(k);
     }
     return set;
@@ -301,9 +314,12 @@ export function BFOActivityView({ prospects = [] } = {}) {
   }, [prospects]);
 
   // Opps 2 opps that have NO BFO Opportunity Name yet, indexed by every
-  // key we might match a BFO Activity row on: the normalized Account and
-  // the normalized BFO Company Name (the mutual identifier carried on the
-  // Table View company). These are the assignment targets we suggest.
+  // key we might match a BFO Activity row on: the normalized Account, the
+  // opp's own normalized BFO Company Name field, and the normalized BFO
+  // Company Name carried on the matching Table View company. Indexing on
+  // the opp's BFO Company Name lets a row whose Account reads "Simon
+  // Property Group" still match a BFO row for "Simon Property Group, Inc.
+  // - Headquarters" when that fuller name is stored on the opp.
   // Closed opps (Stage "Sold" / "Not Sold") are excluded — there's no
   // point tagging a finished deal with a BFO Opportunity Name.
   const unlinkedOppsByKey = useMemo(() => {
@@ -320,10 +336,11 @@ export function BFOActivityView({ prospects = [] } = {}) {
     };
     const records = (opps && Array.isArray(opps.records)) ? opps.records : [];
     for (const r of records) {
-      if (String(r['BFO Link'] || '').trim() !== '') continue;
+      if (bfoOppName(r) !== '') continue;
       if (isClosedStage(r.Stage)) continue;
       const acctKey = normalizeCompany(r.Account || '');
       add(acctKey, r);
+      add(normalizeCompany(r['BFO Company Name'] || ''), r);
       const bfo = bfoCompanyByAccount.get(acctKey);
       if (bfo) add(normalizeCompany(bfo), r);
     }

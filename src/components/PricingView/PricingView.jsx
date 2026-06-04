@@ -491,13 +491,23 @@ Type a value to override.`
         const ctsPassRev = Array.isArray(passThroughRevenueByYear) ? passThroughRevenueByYear : ctsPasses;
         const revLessPass = grand.map((v, i) => v - (ctsPassRev[i] || 0) - (altPasses[i] || 0));
         const anyPassThrough = passes.some(v => v > 0);
+        // "Deal margin" is the deal's cumulative margin through each year,
+        // not that single year's margin in isolation: a heavy Year-1 setup
+        // fee keeps lifting the blended margin in later years. Accumulate
+        // fee / cost (and the pass-through carve-outs) year over year, then
+        // apply the same pass-through-excluded formula to the running totals.
+        let cumFee = 0;
+        let cumCost = 0;
+        let cumCtsPass = 0;
+        let cumAltPass = 0;
         const margins = grand.map((fee, i) => {
-          const cost = costs[i] || 0;
-          const ctsPass = ctsPasses[i] || 0;
-          const altPass = altPasses[i] || 0;
-          const adjFee = fee - ctsPass - altPass;
+          cumFee += fee;
+          cumCost += costs[i] || 0;
+          cumCtsPass += ctsPasses[i] || 0;
+          cumAltPass += altPasses[i] || 0;
+          const adjFee = cumFee - cumCtsPass - cumAltPass;
           if (adjFee <= 0) return null;
-          const adjCost = cost - ctsPass;
+          const adjCost = cumCost - cumCtsPass;
           return (adjFee - adjCost) / adjFee;
         });
         const fmtPctCell = (n) => n == null ? '' : `${(n * 100).toFixed(1)}%`;
@@ -3890,7 +3900,53 @@ export function PricingView({ settings } = {}) {
                           return sum;
                         });
 
+                        // Cost line items whose Linked To doesn't match any
+                        // alt-fee tag in this section — either blank or a
+                        // tag with no corresponding fee row. Their cost is
+                        // invisible to the Deal-margin / Linked CTS totals
+                        // above, so flag them. Aggregate distinct items
+                        // (description + type + tag) and sum their face cost.
+                        const unlinkedByKey = new Map();
+                        for (const sec of opt.sections) {
+                          for (const it of sec.items) {
+                            const cost = ctsItemEffectiveCost(it);
+                            if (!(cost > 0)) continue;
+                            const tag = resolvedLinkedTo(it).trim();
+                            if (tag && altTagSet.has(tag.toLowerCase())) continue;
+                            const type = effectiveType(it);
+                            const desc = String(it.description || '').trim() || '(unnamed line item)';
+                            const key = `${desc.toLowerCase()}|${type.toLowerCase()}|${tag.toLowerCase()}`;
+                            const prev = unlinkedByKey.get(key);
+                            if (prev) { prev.cost += cost; }
+                            else unlinkedByKey.set(key, { desc, type, tag, cost });
+                          }
+                        }
+                        const unlinkedCostItems = [...unlinkedByKey.values()]
+                          .sort((a, b) => b.cost - a.cost);
+
                         return (
+                          <>
+                          {unlinkedCostItems.length > 0 && (
+                            <div className={styles.unlinkedWarning} role="alert">
+                              <strong>
+                                ⚠ {unlinkedCostItems.length} cost line item{unlinkedCostItems.length === 1 ? '' : 's'} not linked to any fee in this section
+                              </strong>
+                              {' '}— their cost isn&apos;t captured in the Deal margin / Linked CTS totals. Set each row&apos;s Linked To to a fee tag.
+                              <ul>
+                                {unlinkedCostItems.map((u, i) => (
+                                  <li key={`unlinked-${i}`}>
+                                    {u.desc}
+                                    {u.type ? ` · ${u.type}` : ''}
+                                    {' '}
+                                    <span className={styles.unlinkedNote}>
+                                      ({u.tag ? <>Linked To &ldquo;<span className={styles.unlinkedTag}>{u.tag}</span>&rdquo; — no matching fee</> : 'no Linked To'}
+                                      {`, cost ${fmtMoney(u.cost)}`})
+                                    </span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
                           <AltFeeTable
                             rows={altFees[opt.optionNumber] || altFeeStarter()}
                             globalGmPct={globalGmPct}
@@ -3913,6 +3969,7 @@ export function PricingView({ settings } = {}) {
                             onAppendRows={(rows) => appendAltFeeRows(opt.optionNumber, rows)}
                             onClearRows={() => replaceAltFeeRows(opt.optionNumber, altFeeStarter())}
                           />
+                          </>
                         );
                       })()}
                       </div>
