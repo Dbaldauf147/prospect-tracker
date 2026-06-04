@@ -4076,6 +4076,11 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   const [data, setData] = useState({ headers: DEFAULT_HEADERS, records: [] });
   const [loading, setLoading] = useState(true);
   const [error] = useState(null);
+  // Set when a Firestore cloud save fails so the failure is visible in
+  // the UI instead of only the console. A silent failure here once let
+  // edits live only in local IndexedDB while other devices kept showing
+  // stale data; the banner makes that state impossible to miss.
+  const [syncError, setSyncError] = useState(false);
 
   // HubSpot contacts cache feeds the Contact column's per-row picker.
   // Most contact rosters live here (not on the prospect record), so
@@ -4822,7 +4827,15 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     if (firestoreSaveTimerRef.current) clearTimeout(firestoreSaveTimerRef.current);
     firestoreSaveTimerRef.current = setTimeout(async () => {
       const ts = await trySaveOpps2ToFirestore(user.uid, data);
-      if (ts != null) lastFsSavedAtRef.current = ts;
+      // ts is the saved timestamp on success, null on failure. Surface
+      // the failure so a denied/exhausted cloud write can't go unnoticed
+      // while edits sit only in the local cache.
+      if (ts != null) {
+        lastFsSavedAtRef.current = ts;
+        setSyncError(false);
+      } else {
+        setSyncError(true);
+      }
     }, 1500);
     return () => {
       if (firestoreSaveTimerRef.current) clearTimeout(firestoreSaveTimerRef.current);
@@ -6037,6 +6050,26 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
 
   return (
     <div className={styles.wrapper}>
+      {syncError && (
+        <div className={styles.syncBanner} role="alert">
+          <span>
+            <strong>Cloud sync failed.</strong> Your latest changes are saved on
+            this device but couldn't be written to the cloud, so other devices
+            may show older data. Check your connection and Firestore access, then
+            retry.
+          </span>
+          <button
+            type="button"
+            className={styles.syncBannerRetry}
+            onClick={() => {
+              setSyncError(false);
+              setData(prev => ({ ...prev }));
+            }}
+          >
+            Retry now
+          </button>
+        </div>
+      )}
       <div className={styles.header}>
         <div>
           <h2 className={styles.title}>Opps 2</h2>
