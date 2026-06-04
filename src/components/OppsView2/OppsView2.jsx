@@ -26,6 +26,7 @@ import {
   flushOpps2ToFirestore,
   mergeOpps2Datasets,
 } from '../../utils/opps2Store';
+import { pushOpps2Backup, listOpps2Backups, getOpps2Backup } from '../../utils/opps2Backup';
 import { loadOptionLinks, setOppOptionLink, OPTION_LINKS_EVENT } from '../../utils/pricingOptionLinks';
 import { OPPS_PRICING_SNAPSHOT_EVENT } from '../../utils/oppsPricingSnapshot';
 import { fmtMoneyWhole, toNum, unitCountOrOne, rowYearRevenue } from '../../utils/pricingOptionCalc';
@@ -4022,6 +4023,80 @@ function NextStepsEditor({ opp, onClose, updateOppField }) {
   );
 }
 
+// Rolling-backup browser + restore. Lists the local IndexedDB snapshot
+// ring (session-load / autosave / pre-import) so recovering a clobbered
+// dataset is a click instead of a forensic dig through Chrome blobs.
+function Opps2BackupsModal({ onRestore, onClose }) {
+  const [rows, setRows] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    listOpps2Backups().then(r => { if (alive) setRows(r); });
+    return () => { alive = false; };
+  }, []);
+
+  const downloadOne = useCallback(async (ts) => {
+    const entry = await getOpps2Backup(ts);
+    if (!entry?.data) { window.alert('That backup could not be loaded.'); return; }
+    const payload = JSON.stringify(entry.data, null, 2);
+    const url = URL.createObjectURL(new Blob([payload], { type: 'application/json' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `opps2-backup-${new Date(ts).toISOString().replace(/[:.]/g, '-')}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  }, []);
+
+  return createPortal(
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: 'var(--color-surface, #fff)', color: 'var(--color-text)', borderRadius: 8, padding: '1.25rem', width: 'min(680px, 92vw)', maxHeight: '80vh', overflow: 'auto', boxShadow: '0 10px 40px rgba(0,0,0,0.3)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+          <h3 style={{ margin: 0, fontSize: '1.05rem' }}>Opps 2 backups</h3>
+          <button type="button" onClick={onClose} style={{ background: 'transparent', border: 'none', fontSize: '1.2rem', cursor: 'pointer', color: 'inherit' }}>×</button>
+        </div>
+        <p style={{ marginTop: 0, fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
+          Local snapshots kept on this device (newest first). Restoring re-stamps every row so the snapshot wins the next sync and replaces the current data everywhere.
+        </p>
+        {rows == null ? <div style={{ padding: '1rem' }}>Loading…</div>
+          : rows.length === 0 ? <div style={{ padding: '1rem', color: 'var(--color-text-muted)' }}>No backups captured yet.</div>
+          : (
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
+            <thead>
+              <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--color-border)' }}>
+                <th style={{ padding: '0.4rem 0.5rem' }}>When</th>
+                <th style={{ padding: '0.4rem 0.5rem' }}>Reason</th>
+                <th style={{ padding: '0.4rem 0.5rem', textAlign: 'right' }}>Rows</th>
+                <th style={{ padding: '0.4rem 0.5rem' }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(b => (
+                <tr key={b.timestamp} style={{ borderBottom: '1px solid var(--color-border)' }}>
+                  <td style={{ padding: '0.4rem 0.5rem', whiteSpace: 'nowrap' }}>{new Date(b.timestamp).toLocaleString()}</td>
+                  <td style={{ padding: '0.4rem 0.5rem', color: 'var(--color-text-muted)' }}>{b.reason || '—'}</td>
+                  <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right' }}>{b.recordCount ?? '?'}</td>
+                  <td style={{ padding: '0.4rem 0.5rem', whiteSpace: 'nowrap', textAlign: 'right' }}>
+                    <button type="button" onClick={() => downloadOne(b.timestamp)} style={{ marginRight: 8, cursor: 'pointer' }}>Download</button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (window.confirm(`Restore the ${new Date(b.timestamp).toLocaleString()} backup (${b.recordCount ?? '?'} rows)? This replaces the current Opps 2 data on every device.`)) {
+                          onRestore(b.timestamp);
+                        }
+                      }}
+                      style={{ cursor: 'pointer', fontWeight: 600 }}
+                    >Restore</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 export function OppsView2({ settings, updateSettings, prospects = [], updateProspect, onSelectProspect } = {}) {
   const { user } = useAuth();
   // Seeded with DEFAULT_HEADERS so the table renders columns immediately;
@@ -4270,6 +4345,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // label.
   const [importingFromOpps, setImportingFromOpps] = useState(false);
   const [bulkImportOpen, setBulkImportOpen] = useState(false);
+  const [backupsOpen, setBackupsOpen] = useState(false);
 
   // Dedup key for the Opps → Opps 2 one-time import. BFO Link is the
   // natural unique id; for rows that lack one we fall back to a
@@ -4357,6 +4433,9 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       // the next load the stale Firestore copy wins over IndexedDB).
       const nextRecords = [...additions, ...(data?.records || [])];
       const nextState = { ...(data || {}), headers: mergedHeaders, records: nextRecords };
+      // Snapshot the pre-import dataset (forced) so a bad import is one
+      // click to undo from the Backups dropdown.
+      await pushOpps2Backup(data, 'pre-import (Opps tab)', { force: true });
       setData(nextState);
       // Cancel any in-flight debounced Firestore save so the explicit
       // write below isn't immediately followed by a stale debounced one.
@@ -4454,6 +4533,9 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       : baseRecords;
     const nextRecords = [...stamped, ...flaggedExistingRecords];
     const nextState = { ...(data || {}), headers: mergedHeaders, records: nextRecords };
+    // Snapshot the pre-import dataset (forced) so a bad bulk import is
+    // one click to undo from the Backups dropdown.
+    await pushOpps2Backup(data, 'pre-import (bulk paste)', { force: true });
     setData(nextState);
     if (firestoreSaveTimerRef.current) {
       clearTimeout(firestoreSaveTimerRef.current);
@@ -4479,6 +4561,40 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       ? `\n\nFlagged for review: ${flaggedNewCount} imported row${flaggedNewCount === 1 ? '' : 's'}${flaggedExistingCount > 0 ? ` + ${flaggedExistingCount} existing row${flaggedExistingCount === 1 ? '' : 's'}` : ''}. Look in the Review column.`
       : '';
     window.alert(`Imported ${additions.length} row${additions.length === 1 ? '' : 's'} from the pasted sheet.${flagSuffix}${firestoreWarning}`);
+  }, [data, user?.uid]);
+
+  // Restore a rolling backup. Re-stamps every row to "now" so the
+  // recovered snapshot decisively wins the per-row merge against any
+  // clobbered copy in the cloud or on another device — this is a
+  // deliberate, confirmed recovery, so it should override. Persists
+  // through the normal cache + Firestore path.
+  const restoreOpps2Backup = useCallback(async (timestamp) => {
+    const entry = await getOpps2Backup(timestamp);
+    if (!entry?.data || !Array.isArray(entry.data.records)) {
+      window.alert('That backup could not be loaded.');
+      return;
+    }
+    const now = Date.now();
+    const restored = {
+      ...entry.data,
+      records: entry.data.records.map(r => ({ ...r, _rowUpdatedAt: now })),
+      _updatedAt: now,
+    };
+    // Snapshot what we're about to replace, so an unwanted restore is
+    // itself reversible.
+    await pushOpps2Backup(data, 'pre-restore', { force: true });
+    setData(restored);
+    if (firestoreSaveTimerRef.current) {
+      clearTimeout(firestoreSaveTimerRef.current);
+      firestoreSaveTimerRef.current = null;
+    }
+    await saveOpps2Cache(restored);
+    if (user?.uid) {
+      const ts = await trySaveOpps2ToFirestore(user.uid, restored);
+      if (ts != null) lastFsSavedAtRef.current = ts;
+    }
+    setBackupsOpen(false);
+    window.alert(`Restored ${restored.records.length} rows from the ${new Date(timestamp).toLocaleString()} backup.`);
   }, [data, user?.uid]);
 
   // Look the tagged contact's full HubSpot record up by email (most
@@ -4667,7 +4783,13 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         next = fromFs;
         saveOpps2Cache(next);
       }
-      if (next) applyResult(next);
+      if (next) {
+        applyResult(next);
+        // Snapshot the dataset we loaded this session into the rolling
+        // backup ring (forced, bypassing the throttle) so there's always
+        // a known-good restore point captured before any local edits.
+        pushOpps2Backup(next, 'session-load', { force: true });
+      }
       setLoading(false);
       hydratedRef.current = true;
     }
@@ -4819,6 +4941,10 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       } else {
         setSyncError(true);
       }
+      // Drop a throttled snapshot into the rolling backup ring once edits
+      // have settled. pushOpps2Backup self-throttles (one per few minutes)
+      // and dedups by _updatedAt, so this is cheap on a flurry of saves.
+      pushOpps2Backup(data, 'autosave');
     }, 1500);
     return () => {
       if (firestoreSaveTimerRef.current) clearTimeout(firestoreSaveTimerRef.current);
@@ -6142,6 +6268,17 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           >Export backup</button>
           <button
             type="button"
+            onClick={() => setBackupsOpen(true)}
+            style={{
+              padding: '0.45rem 0.85rem', background: 'transparent',
+              border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)',
+              fontSize: 'var(--font-size-sm)', fontWeight: 600, fontFamily: 'inherit',
+              color: 'var(--color-text)', cursor: 'pointer',
+            }}
+            title="Browse and restore local rolling backups of the Opps 2 dataset"
+          >Backups</button>
+          <button
+            type="button"
             onClick={undoLastChange}
             disabled={!undoStack.length}
             style={{
@@ -6181,6 +6318,13 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           dedupKeyFor={oppDedupKeyForImport}
           onClose={() => setBulkImportOpen(false)}
           onImport={commitBulkImport}
+        />
+      )}
+
+      {backupsOpen && (
+        <Opps2BackupsModal
+          onRestore={restoreOpps2Backup}
+          onClose={() => setBackupsOpen(false)}
         />
       )}
 
