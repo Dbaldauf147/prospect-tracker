@@ -16,6 +16,7 @@ import {
 } from '../common/columnLinks';
 import { getEffectiveDropdownLists } from '../../utils/dropdownListsStore';
 import { dbGet } from '../../utils/db';
+import { TYPES as COMPANY_TYPES } from '../../data/enums';
 import {
   OPPS2_FIRESTORE_COLLECTION,
   loadOpps2Cache,
@@ -2130,8 +2131,11 @@ function resolveColumnLink(columnName, userLinks) {
 // pick one and commit, or cancel (no opp gets created). Account is
 // passed through so the prompt can display "for <company>" when the
 // flow came from the Add Company combobox.
-function NewOppSourceModal({ account, companyType, options, onCreate, onCancel }) {
+function NewOppSourceModal({ account, companyType, onChangeType, options, onCreate, onCancel }) {
   const [source, setSource] = useState('');
+  // Local mirror of the company type so the dropdown responds instantly;
+  // onChangeType persists the edit back to the Table View company.
+  const [typeDraft, setTypeDraft] = useState(String(companyType || ''));
   return createPortal(
     <div
       onClick={onCancel}
@@ -2160,11 +2164,26 @@ function NewOppSourceModal({ account, companyType, options, onCreate, onCancel }
               : 'Pick a Source so the new row is tagged correctly. You can skip and fill it in later.'}
           </div>
           {account && (
-            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
-              Company type:{' '}
-              <strong style={{ color: 'var(--color-text)' }}>
-                {String(companyType || '').trim() || 'Unknown (no Table View company)'}
-              </strong>
+            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 6, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              <span>Company type:</span>
+              {onChangeType ? (
+                <select
+                  value={typeDraft}
+                  onChange={(e) => { setTypeDraft(e.target.value); onChangeType(e.target.value); }}
+                  style={{
+                    padding: '0.2rem 0.4rem', border: '1px solid var(--color-border)', borderRadius: 4,
+                    fontSize: '0.78rem', fontFamily: 'inherit', background: '#fff', color: 'var(--color-text)',
+                  }}
+                >
+                  <option value="">— Select —</option>
+                  {COMPANY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                  {typeDraft && !COMPANY_TYPES.includes(typeDraft) && (
+                    <option value={typeDraft}>{typeDraft}</option>
+                  )}
+                </select>
+              ) : (
+                <strong style={{ color: 'var(--color-text)' }}>Unknown (no Table View company)</strong>
+              )}
             </div>
           )}
         </div>
@@ -6643,18 +6662,29 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         />
       )}
 
-      {pendingNewOpp && (
-        <NewOppSourceModal
-          account={pendingNewOpp.account}
-          companyType={pendingNewOpp.account ? (findProspectForAccount(pendingNewOpp.account, prospects)?.type || '') : ''}
-          options={listRegistry.get('source')?.options || []}
-          onCreate={(source) => {
-            addNewOpp(pendingNewOpp.account, source);
-            setPendingNewOpp(null);
-          }}
-          onCancel={() => setPendingNewOpp(null)}
-        />
-      )}
+      {pendingNewOpp && (() => {
+        // The Table View company matching this account, if any. When one
+        // exists we let the user edit its Type right from the prompt;
+        // otherwise the type is shown as unknown (nothing to write to).
+        const matchedProspect = pendingNewOpp.account
+          ? findProspectForAccount(pendingNewOpp.account, prospects)
+          : null;
+        return (
+          <NewOppSourceModal
+            account={pendingNewOpp.account}
+            companyType={matchedProspect?.type || ''}
+            onChangeType={(matchedProspect && updateProspect)
+              ? (t) => updateProspect(matchedProspect.id, { type: t })
+              : null}
+            options={listRegistry.get('source')?.options || []}
+            onCreate={(source) => {
+              addNewOpp(pendingNewOpp.account, source);
+              setPendingNewOpp(null);
+            }}
+            onCancel={() => setPendingNewOpp(null)}
+          />
+        );
+      })()}
 
       {notSoldPromptId != null && (() => {
         const opp = records.find(r => r._id === notSoldPromptId);
