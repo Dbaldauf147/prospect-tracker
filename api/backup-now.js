@@ -7,15 +7,15 @@
 import { withAuth } from './_lib/http.js';
 import { adminDb } from './_lib/firebaseAdmin.js';
 import { collectUserBackup } from './_lib/dataBackup.js';
-import { uploadTextToDrive, listBackupFiles, deleteDriveFile } from './_lib/googleDrive.js';
+import { uploadJsonToGcs, listBackupObjects, deleteGcsObject } from './_lib/gcs.js';
 
 const RETAIN = 30;
 
 async function handler(req, res, auth) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const folderId = process.env.BACKUP_DRIVE_FOLDER_ID;
-  if (!folderId) return res.status(500).json({ error: 'BACKUP_DRIVE_FOLDER_ID not configured' });
+  const bucket = process.env.BACKUP_GCS_BUCKET;
+  if (!bucket) return res.status(500).json({ error: 'BACKUP_GCS_BUCKET not configured' });
 
   let db;
   try { db = adminDb(); }
@@ -29,12 +29,12 @@ async function handler(req, res, auth) {
 
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     const fileName = `prospect-tracker-backup-${auth.uid}-manual-${stamp}.json`;
-    const uploaded = await uploadTextToDrive({ folderId, name: fileName, content: JSON.stringify(backup) });
+    await uploadJsonToGcs({ bucket, name: fileName, content: JSON.stringify(backup) });
 
     // Share the same 30-deep ring as the daily backups (prefix match).
     try {
-      const files = await listBackupFiles({ folderId, prefix: `prospect-tracker-backup-${auth.uid}-` });
-      for (const f of files.slice(RETAIN)) await deleteDriveFile(f.id);
+      const files = await listBackupObjects({ bucket, prefix: `prospect-tracker-backup-${auth.uid}-` });
+      for (const f of files.slice(RETAIN)) await deleteGcsObject({ bucket, name: f.name });
     } catch (e) { console.warn('backup-now retention prune failed', e); }
 
     // Record the run so the daily anomaly check has the latest baseline.
@@ -50,7 +50,6 @@ async function handler(req, res, auth) {
     return res.status(200).json({
       status: 'ok',
       file: fileName,
-      driveId: uploaded?.id || null,
       counts: summary.counts,
       captured: summary.captured,
       errors: summary.errors,
