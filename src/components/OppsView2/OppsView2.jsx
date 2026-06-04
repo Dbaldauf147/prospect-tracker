@@ -877,20 +877,20 @@ function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onCh
     const esc = Number(snapshot.escPct) || 0;
     let setupOneTime = 0;
     let recurringMonthly = 0;
+    let recurringAnnual = 0;
     for (const r of rows) {
       if (String(r.type || '').toLowerCase().startsWith('recurring')) {
         recurringMonthly += (toNum(r.fee) || 0) * unitCountOrOne(r.unitCount);
+        // Year-1 recurring revenue — matches the pricing page's Year 1
+        // "Recurring" column. Uses rowYearRevenue so a line that starts
+        // after month 1 bills only its active months (not a flat ×12).
+        recurringAnnual += rowYearRevenue(r, 1, years, esc);
       } else {
         // Setup / One Time lines bill a single month — rowYearRevenue
         // returns their amount only when that month lands in Year 1.
         setupOneTime += rowYearRevenue(r, 1, years, esc);
       }
     }
-    // Annual recurring = the monthly figure billed across a full year
-    // (Year 1 has no escalator, so it's a straight ×12). Year-1 total is
-    // the frozen snapshot's own Year-1 quote (Setup + One Time + 12×
-    // recurring) — shown so the popup surfaces the headline quoted number.
-    const recurringAnnual = recurringMonthly * 12;
     const year1Total = Number(snapshot.year1Total) || 0;
     return { name: String(snapshot.name || '').trim(), setupOneTime, recurringMonthly, recurringAnnual, year1Total };
   }, [snapshot]);
