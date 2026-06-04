@@ -4141,6 +4141,7 @@ export function PricingView({ settings } = {}) {
                 name: label,
                 years: Math.max(1, Math.round((termMonths || 12) / 12)),
                 escPct: (Number(annualEscalator) || 0) * 100,
+                services: (opt && pricingOptionServices) ? (pricingOptionServices[opt.sheetName] || []) : [],
                 rows,
               });
               try {
