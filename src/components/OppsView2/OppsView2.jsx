@@ -4825,6 +4825,21 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       const headerSet = new Set((next.headers || []).map(h => String(h || '').trim()).filter(Boolean));
       const extra = ENSURED_COLUMNS.filter(c => !headerSet.has(c));
       let withCols = extra.length ? { ...next, headers: [...(next.headers || []), ...extra] } : next;
+      // Mirror `id` ← `_id` on every loaded record. New / imported rows
+      // already carry this (see makeBlankOpp), but legacy and sheet-synced
+      // rows can arrive with only `_id`. DataTable keys its row identity —
+      // including the Call In freeze-sort snapshot — on `id`, so a missing
+      // `id` would drop the row from that snapshot and the Call In header
+      // click would appear to do nothing.
+      {
+        const recs = withCols.records || [];
+        if (recs.some(r => r && r.id == null && r._id != null)) {
+          withCols = {
+            ...withCols,
+            records: recs.map(r => (r && r.id == null && r._id != null ? { ...r, id: r._id } : r)),
+          };
+        }
+      }
       // Initial-load only: order rows by Call In ascending so the most
       // urgent rows land at the top. Once hydratedRef flips true (after
       // reconcile finishes), every later setData skips this branch so
