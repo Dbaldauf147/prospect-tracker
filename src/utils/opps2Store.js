@@ -354,7 +354,12 @@ export async function loadOpps2Newest(userId) {
 // the newest available data first so we don't clobber a concurrent
 // edit from the Opps 2 tab. Returns the updated data object; throws if
 // the data isn't loaded yet or the opp can't be found.
-export async function setOppBfoLink(userId, oppId, bfoLink) {
+// Set a single field on one Opps 2 opp from outside the Opps 2 view
+// (e.g. the PE Opps table). Stamps both the row and the specific field
+// (_fieldUpdatedAt) so the edit wins the field-level cross-device merge
+// without clobbering other fields edited elsewhere. Persists to the
+// local cache and best-effort to Firestore.
+export async function setOppField(userId, oppId, field, value) {
   const data = await loadOpps2Newest(userId);
   if (!data || !Array.isArray(data.records)) {
     throw new Error('Opps 2 data has not loaded yet.');
@@ -363,7 +368,14 @@ export async function setOppBfoLink(userId, oppId, bfoLink) {
   const records = data.records.map((r) => {
     if (String(r?._id) === String(oppId)) {
       found = true;
-      return { ...r, 'BFO Link': bfoLink, _rowUpdatedAt: Date.now() };
+      const now = Date.now();
+      const prevStamps = (r._fieldUpdatedAt && typeof r._fieldUpdatedAt === 'object') ? r._fieldUpdatedAt : null;
+      return {
+        ...r,
+        [field]: value,
+        _rowUpdatedAt: now,
+        _fieldUpdatedAt: { ...(prevStamps || {}), [field]: now },
+      };
     }
     return r;
   });
@@ -372,4 +384,8 @@ export async function setOppBfoLink(userId, oppId, bfoLink) {
   await saveOpps2Cache(next);
   await trySaveOpps2ToFirestore(userId, next);
   return next;
+}
+
+export async function setOppBfoLink(userId, oppId, bfoLink) {
+  return setOppField(userId, oppId, 'BFO Link', bfoLink);
 }

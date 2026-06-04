@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
-import { loadOpps2Newest } from '../../utils/opps2Store';
+import { loadOpps2Newest, setOppField } from '../../utils/opps2Store';
 import { formatAum } from '../../utils/formatters';
 import { formatDateDisplay } from '../../utils/oppsCallIn';
 import { PE_STAGES } from '../../data/enums';
@@ -100,7 +100,7 @@ function useOppsRecords(userId) {
     })();
     return () => { cancelled = true; };
   }, [userId]);
-  return records;
+  return [records, setRecords];
 }
 
 export function PEPortfolioView({ prospects = [], onSelectProspect }) {
@@ -201,7 +201,24 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
     setSortDir(prev => (sortKey === key ? (prev === 'asc' ? 'desc' : 'asc') : 'desc'));
     setSortKey(key);
   }
-  const oppsRecords = useOppsRecords(user?.uid);
+  const [oppsRecords, setOppsRecords] = useOppsRecords(user?.uid);
+
+  // Edit a single field on a PE opp directly from the PE Opps table.
+  // Optimistically updates the in-memory rows, then persists to the
+  // shared Opps 2 store (cache + Firestore). On failure the persisted
+  // value never lands; the next reload reconciles from the store.
+  const updateOppField = async (oppId, field, value) => {
+    setOppsRecords(prev => prev.map(r => (
+      String(r._id) === String(oppId)
+        ? { ...r, [field]: value, _rowUpdatedAt: Date.now() }
+        : r
+    )));
+    try {
+      await setOppField(user?.uid, oppId, field, value);
+    } catch (err) {
+      console.error('PE Opps: failed to save field edit', { field, oppId, err });
+    }
+  };
 
   // PE Opps sub-tab: every Opps 2 row whose Type is "Private Equity"
   // OR whose Source is "PE partner" (case/space-insensitive so minor
@@ -603,6 +620,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
           oppsLoaded={oppsRecords.length > 0}
           prospects={prospects}
           onSelectProspect={onSelectProspect}
+          onEditField={updateOppField}
           user={user}
         />
       ) : subtab === 'stages' ? (
@@ -1229,18 +1247,58 @@ function PEStagesTab({ firms, portfolioByPe, onSelectProspect }) {
   );
 }
 
+// Inline-editable table cell (used for the Sales Partner column).
+// Commits on blur / Enter; Escape reverts. Click and key events are
+// stopped from bubbling so editing doesn't trigger the row's
+// navigate-to-prospect handler. The input is uncontrolled and keyed on
+// the stored value: the DOM owns the text while focused (no per-key
+// React state), and an external change (e.g. a re-sort after commit)
+// remounts it with the new value — no sync effect needed.
+function EditableCell({ value, align, onCommit }) {
+  const initial = String(value ?? '');
+  const commit = (el) => {
+    const next = el.value.trim();
+    if (next !== initial.trim()) onCommit(next);
+  };
+  return (
+    <div
+      onClick={(e) => e.stopPropagation()}
+      style={{ padding: '0.25rem 0.35rem', borderRight: '1px solid #F1F5F9', display: 'flex' }}
+    >
+      <input
+        key={initial}
+        type="text"
+        defaultValue={initial}
+        placeholder="—"
+        onBlur={(e) => commit(e.currentTarget)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+          else if (e.key === 'Escape') { e.preventDefault(); e.currentTarget.value = initial; e.currentTarget.blur(); }
+        }}
+        style={{
+          width: '100%', padding: '0.25rem 0.35rem', border: '1px solid transparent',
+          borderRadius: 4, fontSize: '0.74rem', fontFamily: 'inherit', color: '#334155',
+          background: 'transparent', textAlign: align || 'left',
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.border = '1px solid #E2E8F0'; }}
+        onMouseLeave={(e) => { if (document.activeElement !== e.currentTarget) e.currentTarget.style.border = '1px solid transparent'; }}
+      />
+    </div>
+  );
+}
+
 // Flat table of PE-channel opportunities pulled straight from the
 // Opps 2 store — anything with Type = "Private Equity" or Source =
 // "PE partner". Rows link back to the matching prospect when one
 // exists so the user can jump into the company popup.
-function PEOppsTab({ opps, totalOpps, query, setQuery, oppsLoaded, prospects, onSelectProspect, user }) {
+function PEOppsTab({ opps, totalOpps, query, setQuery, oppsLoaded, prospects, onSelectProspect, onEditField, user }) {
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const ALL_COLUMNS = [
     { key: 'Account', label: 'Account', width: '1.6fr' },
     { key: 'Stage', label: 'Stage', width: '1fr' },
     { key: 'Type', label: 'Type', width: '1fr' },
     { key: 'Source', label: 'Source', width: '1fr' },
-    { key: 'Sales Partner', label: 'Sales Partner', width: '1.2fr' },
+    { key: 'Sales Partner', label: 'Sales Partner', width: '1.2fr', editable: true },
     { key: 'Scope', label: 'Scope', width: '0.9fr' },
     { key: 'Quoted Amount', label: 'Quoted Amount', width: '1fr', align: 'right' },
     { key: 'Status', label: 'Status', width: '1.4fr' },
@@ -1488,6 +1546,16 @@ function PEOppsTab({ opps, totalOpps, query, setQuery, oppsLoaded, prospects, on
                   {COLUMNS.map(c => {
                     const val = cellValue(r, c) || '';
                     const isAccount = c.key === 'Account';
+                    if (c.editable && onEditField) {
+                      return (
+                        <EditableCell
+                          key={c.key}
+                          value={r[c.key] ?? ''}
+                          align={c.align}
+                          onCommit={(v) => onEditField(r._id, c.key, v)}
+                        />
+                      );
+                    }
                     return (
                       <div
                         key={c.key}
