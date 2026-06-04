@@ -2832,6 +2832,11 @@ function FollowUpStatusModal({ opp, statusOptions, onSave, onClose }) {
             {opp?.['Scope'] ? <> &middot; {opp['Scope']}</> : null}
             {' '}has a new <strong>Follow Up</strong> date. Pick the current Status and review the Next Steps below.
           </div>
+          {String(opp?.['Sales Partner'] || '').trim() && (
+            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
+              Sales Partner: <strong style={{ color: 'var(--color-text)' }}>{String(opp['Sales Partner']).trim()}</strong>
+            </div>
+          )}
         </div>
 
         <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.7rem', overflow: 'auto' }}>
@@ -4081,8 +4086,15 @@ function NextStepsEditor({ opp, onClose, updateOppField }) {
         }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem', gap: '1rem' }}>
-          <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            Next Steps — {account}
+          <div style={{ overflow: 'hidden' }}>
+            <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              Next Steps — {account}
+            </div>
+            {String(opp?.['Sales Partner'] || '').trim() && (
+              <div style={{ fontSize: '0.72rem', color: '#64748B', marginTop: 2 }}>
+                Sales Partner: <strong style={{ color: '#334155' }}>{String(opp['Sales Partner']).trim()}</strong>
+              </div>
+            )}
           </div>
           <button
             type="button"
