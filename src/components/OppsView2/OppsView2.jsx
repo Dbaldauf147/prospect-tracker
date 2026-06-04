@@ -6121,15 +6121,6 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   const stageOrder = ['Lead', 'Not Started', 'Qualifying', 'Quoting', 'Quoted', 'Verbal', 'Sold', 'Not Sold'];
   const CLOSED_STAGES = useMemo(() => new Set(['Sold', 'Not Sold']), []);
 
-  const statusOptions = useMemo(() => {
-    const set = new Set();
-    for (const r of records) {
-      const v = (r['Status'] || '').trim();
-      if (v && v !== '-' && v !== '#N/A') set.add(v);
-    }
-    return Array.from(set).sort();
-  }, [records]);
-
   // Rows the current Date / Status / Show / Hide-history filters allow.
   // Always computed so `hiddenByFilterCount` stays accurate even when
   // the Show-hidden toggle is on.
@@ -6840,37 +6831,9 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       </div>
 
       <div className={styles.filterRow}>
-        <label className={styles.filterLabel}>
-          Start Date from
-          <input
-            type="date"
-            className={styles.filterInput}
-            value={dateFrom}
-            onChange={e => setDateFrom(e.target.value)}
-          />
-        </label>
-        <label className={styles.filterLabel}>
-          to
-          <input
-            type="date"
-            className={styles.filterInput}
-            value={dateTo}
-            onChange={e => setDateTo(e.target.value)}
-          />
-        </label>
-        <label className={styles.filterLabel}>
-          Status
-          <select
-            className={styles.filterInput}
-            value={statusFilter}
-            onChange={e => setStatusFilter(e.target.value)}
-          >
-            <option value="all">All</option>
-            {statusOptions.map(s => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </select>
-        </label>
+        {/* Start Date range + Status filters intentionally hidden — the
+            underlying state stays at its no-op defaults (empty range,
+            status "all") so nothing is filtered out. */}
         <label className={styles.filterLabel}>
           Show
           <select
