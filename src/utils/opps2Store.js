@@ -44,6 +44,63 @@ export function stampUpdatedAt(data) {
   return { ...(data || {}), _updatedAt: Date.now() };
 }
 
+// Per-row merge of two Opps 2 datasets. The newest `_rowUpdatedAt` wins
+// for each opp, so a stale whole-document copy can never revert a row
+// that was edited more recently on another device. This is the single
+// source of truth for conflict resolution — used by hydration, the
+// real-time listener, and the guarded flush below.
+// Strategy:
+//   • Rows only in `base`     → keep (don't drop an in-flight new row).
+//   • Rows only in `incoming` → add (a new opp from the other device).
+//   • Rows in both            → newer `_rowUpdatedAt` wins; a row with no
+//     stamp counts as oldest (ts 0), so an unstamped bulk/restore copy
+//     can never masquerade as the freshest.
+//   • Headers                 → union, `base` order preserved.
+//   • columnLinks/dropdownLists → prefer `base` (the editing device).
+// Deletions are intentionally NOT propagated here (a row absent on one
+// side is kept from the other) — losing an edit is the failure we're
+// fixing, and resurrecting a rare deleted row is the safer default.
+// Tombstone-based deletes belong with the per-opp-document refactor.
+export function mergeOpps2Datasets(base, incoming) {
+  const byId = (arr) => {
+    const m = new Map();
+    for (const r of (arr?.records || [])) {
+      if (r && r._id != null) m.set(String(r._id), r);
+    }
+    return m;
+  };
+  const baseById = byId(base);
+  const incomingById = byId(incoming);
+
+  const merged = [];
+  const seen = new Set();
+  for (const [id, baseRow] of baseById) {
+    seen.add(id);
+    const incomingRow = incomingById.get(id);
+    if (!incomingRow) { merged.push(baseRow); continue; }
+    const baseTs = Number(baseRow._rowUpdatedAt) || 0;
+    const incomingTs = Number(incomingRow._rowUpdatedAt) || 0;
+    merged.push(incomingTs > baseTs ? incomingRow : baseRow);
+  }
+  for (const [id, incomingRow] of incomingById) {
+    if (!seen.has(id)) merged.push(incomingRow);
+  }
+
+  const baseHeaders = base?.headers || incoming?.headers || [];
+  const headerSet = new Set(baseHeaders);
+  const extraHeaders = (incoming?.headers || []).filter(h => h && !headerSet.has(h));
+  const headers = extraHeaders.length ? [...baseHeaders, ...extraHeaders] : baseHeaders;
+
+  return {
+    ...(incoming || {}),
+    ...(base || {}),
+    headers,
+    records: merged,
+    columnLinks: base?.columnLinks ?? incoming?.columnLinks,
+    dropdownLists: base?.dropdownLists ?? incoming?.dropdownLists,
+  };
+}
+
 export async function loadOpps2Cache() {
   try { return await dbGet(OPPS2_STORE, OPPS2_CACHE_KEY); }
   catch (err) { console.error('opps2: IndexedDB load failed', err); return null; }
@@ -166,6 +223,25 @@ export async function saveOpps2ToFirestore(userId, data) {
 export async function trySaveOpps2ToFirestore(userId, data) {
   try { return await saveOpps2ToFirestore(userId, data); }
   catch (err) { console.error('opps2: Firestore save failed', err); return null; }
+}
+
+// Guarded flush for the unmount / beforeunload paths. Those fire from
+// tabs that may hold a STALE full dataset; a blind overwrite there is
+// exactly how a background tab closing hours later reverted edits made
+// elsewhere. Merge against the current cloud copy first so the write can
+// only ever carry rows that are newer than (or equal to) what's already
+// in Firestore — a stale row can no longer win. Returns the saved
+// timestamp on success, null on failure (best-effort; never throws).
+export async function flushOpps2ToFirestore(userId, data) {
+  if (!userId || !data) return null;
+  try {
+    const remote = await loadOpps2FromFirestore(userId);
+    const merged = remote ? mergeOpps2Datasets(data, remote) : data;
+    return await saveOpps2ToFirestore(userId, merged);
+  } catch (err) {
+    console.error('opps2: guarded flush failed', err);
+    return null;
+  }
 }
 
 // Pick the strictly-newer of the IndexedDB cache and the Firestore doc,

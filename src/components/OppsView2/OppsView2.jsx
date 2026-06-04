@@ -23,6 +23,8 @@ import {
   loadOpps2FromFirestore,
   saveOpps2ToFirestore,
   trySaveOpps2ToFirestore,
+  flushOpps2ToFirestore,
+  mergeOpps2Datasets,
 } from '../../utils/opps2Store';
 import { loadOptionLinks, setOppOptionLink, OPTION_LINKS_EVENT } from '../../utils/pricingOptionLinks';
 import { OPPS_PRICING_SNAPSHOT_EVENT } from '../../utils/oppsPricingSnapshot';
@@ -167,57 +169,9 @@ const COMPUTED_COLUMNS = ['Last Spoke', 'Call In'];
 const ENSURED_COLUMNS = [...COMPUTED_COLUMNS, 'Next Steps', 'Pricing Option', 'No Further Action Today', 'Sales Partner',
   'Quoted On', 'Chance?', 'Margin Email Date - Sales Leader Review Date', 'BFO Company Name'];
 
-// Merge a remote Firestore snapshot into local React state at the record
-// level so two browsers open on the same page stay in sync without full
-// overwrites. Called from the onSnapshot listener.
-// Strategy:
-//   • Rows only in local  → keep (conservative; prevents in-flight new
-//     rows from disappearing before the debounced save lands).
-//   • Rows only in remote → add (new opp created in the other browser).
-//   • Rows in both        → whichever has the newer _rowUpdatedAt wins.
-//   • Headers             → union (local order preserved).
-//   • Column links / dropdown lists → prefer local (user may be editing).
-function mergeOpps2Data(local, remote) {
-  const localById = new Map();
-  for (const r of (local?.records || [])) {
-    if (r?._id != null) localById.set(String(r._id), r);
-  }
-  const remoteById = new Map();
-  for (const r of (remote?.records || [])) {
-    if (r?._id != null) remoteById.set(String(r._id), r);
-  }
-
-  const merged = [];
-  const seen = new Set();
-
-  for (const [id, localRow] of localById) {
-    seen.add(id);
-    const remoteRow = remoteById.get(id);
-    if (!remoteRow) {
-      merged.push(localRow);
-    } else {
-      const localTs = Number(localRow._rowUpdatedAt) || 0;
-      const remoteTs = Number(remoteRow._rowUpdatedAt) || 0;
-      merged.push(remoteTs > localTs ? remoteRow : localRow);
-    }
-  }
-  for (const [id, remoteRow] of remoteById) {
-    if (!seen.has(id)) merged.push(remoteRow);
-  }
-
-  const localHeaders = local?.headers || DEFAULT_HEADERS;
-  const localHeaderSet = new Set(localHeaders);
-  const extraHeaders = (remote?.headers || []).filter(h => h && !localHeaderSet.has(h));
-  const headers = extraHeaders.length ? [...localHeaders, ...extraHeaders] : localHeaders;
-
-  return {
-    ...local,
-    headers,
-    records: merged,
-    columnLinks: local?.columnLinks ?? remote?.columnLinks,
-    dropdownLists: local?.dropdownLists ?? remote?.dropdownLists,
-  };
-}
+// Record-level merge lives in opps2Store as `mergeOpps2Datasets` so the
+// real-time listener, hydration reconcile, and the guarded flush all
+// resolve conflicts identically (newest `_rowUpdatedAt` per row wins).
 
 function todayISO() {
   const d = new Date();
@@ -4377,7 +4331,9 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         if (!key || existingKeys.has(key)) { skippedDuplicate += 1; continue; }
         existingKeys.add(key);
         nextId += 1;
-        additions.push({ ...r, _id: nextId, id: nextId, _source: 'opps-import' });
+        // Stamp the row so per-row merge has a real signal — without it
+        // an imported row counts as ts 0 (oldest) and could be dropped.
+        additions.push({ ...r, _id: nextId, id: nextId, _source: 'opps-import', _rowUpdatedAt: Date.now() });
       }
       if (!additions.length) {
         window.alert(
@@ -4473,7 +4429,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       const id = ++nextId;
       const newRank = baseExistingCount + idx + 1;
       const { _reviewReason, _existingMatchId, ...rest } = r;
-      const out = { ...rest, _id: id, id, _source: 'bulk-import' };
+      const out = { ...rest, _id: id, id, _source: 'bulk-import', _rowUpdatedAt: Date.now() };
       if (_reviewReason) out['Review'] = _reviewReason;
       if (_existingMatchId != null) {
         const list = existingFlagsByMatchId.get(_existingMatchId) || [];
@@ -4491,7 +4447,9 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
             : `Possible duplicate of imported opps# ${matches.join(', ')}`;
           const existing = String(r['Review'] || '').trim();
           const next = existing ? `${existing} · ${label}` : label;
-          return { ...r, Review: next };
+          // This is a modification of an existing row — stamp it so the
+          // Review note wins a merge against another device's copy.
+          return { ...r, Review: next, _rowUpdatedAt: Date.now() };
         })
       : baseRecords;
     const nextRecords = [...stamped, ...flaggedExistingRecords];
@@ -4660,22 +4618,18 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       // would clobber the snapshot on `saveOpps2Cache`.
       const fsHas = fromFs && (Array.isArray(fromFs.records) || Array.isArray(fromFs.headers));
       const idbHas = fromIdb && (Array.isArray(fromIdb.records) || Array.isArray(fromIdb.headers));
-      const fsTs = Number(fromFs?._updatedAt) || 0;
-      const idbTs = Number(fromIdb?._updatedAt) || 0;
-      const preferIdb = idbHas && (!fsHas || idbTs > fsTs);
       let next = null;
-      if (preferIdb) {
-        next = fromIdb;
-        // Push the IDB copy back to Firestore so the cloud catches up
-        // to whatever local writes never made the round trip.
-        trySaveOpps2ToFirestore(user.uid, next)
-          .then(ts => { if (ts != null) lastFsSavedAtRef.current = ts; });
-      } else if (fsHas) {
-        next = fromFs;
-        // Any record on IDB that already carries a `_pricingOption`
-        // snapshot wins over the Firestore version of that record,
-        // since the snapshot was likely written by the Pricing tab
-        // seconds before this hydration.
+      if (fsHas && idbHas) {
+        // PER-ROW reconcile (not whole-document last-write-wins). The
+        // newest `_rowUpdatedAt` wins for each opp, so a stale full copy
+        // on either side — e.g. a background tab that flushed later, or a
+        // manual blob restore — can no longer revert rows edited more
+        // recently on another device. IDB is the merge base so any
+        // IDB-only Pricing-Option snapshot survives the union.
+        next = mergeOpps2Datasets(fromIdb, fromFs);
+        // Pricing-Option carve-out: a row the Pricing tab wrote into IDB
+        // seconds ago may carry a `_pricingOption` that the merged
+        // (possibly remote-won) row lacks. Re-apply those from IDB.
         const idbById = new Map();
         for (const r of (fromIdb?.records || [])) {
           if (r?._id != null) idbById.set(String(r._id), r);
@@ -4694,6 +4648,23 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           return r;
         });
         if (touched) next = { ...next, records: reconciled };
+        // Persist the merged union to BOTH stores so they converge and
+        // the cloud reflects every device's latest rows. Replaces the old
+        // "push only when IDB looked newer" path, which let a whole-doc
+        // timestamp decide and so dropped rows that lived only in the
+        // copy that happened to look older.
+        saveOpps2Cache(next);
+        trySaveOpps2ToFirestore(user.uid, next)
+          .then(ts => { if (ts != null) lastFsSavedAtRef.current = ts; });
+      } else if (idbHas) {
+        // Cloud empty / unreadable — local cache is all we have; push it
+        // up so the cloud catches up to whatever never made the round trip.
+        next = fromIdb;
+        trySaveOpps2ToFirestore(user.uid, next)
+          .then(ts => { if (ts != null) lastFsSavedAtRef.current = ts; });
+      } else if (fsHas) {
+        // Cold local cache — seed it from the cloud.
+        next = fromFs;
         saveOpps2Cache(next);
       }
       if (next) applyResult(next);
@@ -4765,7 +4736,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
   // a page reload. The listener skips our own saves (identified by
   // lastFsSavedAtRef) and the initial snapshot that fires before hydration
   // completes. Incoming data is merged at the record level via
-  // mergeOpps2Data so in-flight local edits are never overwritten by a
+  // mergeOpps2Datasets so in-flight local edits are never overwritten by a
   // stale remote value for the same row.
   useEffect(() => {
     if (!user?.uid) return;
@@ -4810,7 +4781,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         }
         if (!json) return;
         const remote = JSON.parse(json);
-        setData(local => mergeOpps2Data(local, remote));
+        setData(local => mergeOpps2Datasets(local, remote));
       } catch (err) {
         console.error('opps2: real-time sync failed to apply remote update', err);
       }
@@ -4864,7 +4835,11 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       if (firestoreSaveTimerRef.current && latestUidRef.current) {
         clearTimeout(firestoreSaveTimerRef.current);
         firestoreSaveTimerRef.current = null;
-        trySaveOpps2ToFirestore(latestUidRef.current, latestDataRef.current)
+        // Guarded flush: merge against the cloud copy first so this
+        // (possibly stale) tab can't blind-overwrite rows that are newer
+        // in Firestore. App stays alive across an in-app tab switch, so
+        // the async read-merge-write completes.
+        flushOpps2ToFirestore(latestUidRef.current, latestDataRef.current)
           .then(ts => { if (ts != null) lastFsSavedAtRef.current = ts; });
       }
     };
@@ -4878,7 +4853,11 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       if (firestoreSaveTimerRef.current && user?.uid) {
         clearTimeout(firestoreSaveTimerRef.current);
         firestoreSaveTimerRef.current = null;
-        trySaveOpps2ToFirestore(user.uid, data);
+        // Guarded flush (best-effort on unload): merge against the cloud
+        // so a stale tab closing can't revert newer rows. If the async
+        // write doesn't finish before the tab dies, IDB still holds the
+        // data and the next per-row hydration reconcile recovers it.
+        flushOpps2ToFirestore(user.uid, data);
       }
     }
     window.addEventListener('beforeunload', flush);
@@ -5291,7 +5270,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           // Bump the row clock so the cleared value wins the cross-device
           // merge. Without this the swept row keeps yesterday's
           // _rowUpdatedAt, ties the stale 'no' still sitting on another
-          // device, and mergeOpps2Data's tie-break keeps that stale mark.
+          // device, and mergeOpps2Datasets's tie-break keeps that stale mark.
           copy._rowUpdatedAt = Date.now();
           return copy;
         });
