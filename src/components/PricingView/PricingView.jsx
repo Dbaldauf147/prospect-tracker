@@ -640,7 +640,7 @@ Type a value to override.`
 // matches case-insensitively. Rows come from two sources combined:
 // every line item in the current workbook option plus every saved
 // mapping (so entries stay reachable after the workbook is cleared).
-function LineItemServicesSection({ workbookItems, lineItemServices, setLineItemServices, solutionsOptions }) {
+function LineItemServicesSection({ workbookItems, lineItemServices, setLineItemServices, lineItemIgnored, setLineItemIgnored, solutionsOptions }) {
   const [draftItem, setDraftItem] = useState('');
   const [filter, setFilter] = useState('');
 
@@ -685,6 +685,22 @@ function LineItemServicesSection({ workbookItems, lineItemServices, setLineItemS
     }
     setLineItemServices(next);
   }
+
+  function toggleIgnore(key) {
+    const next = { ...(lineItemIgnored || {}) };
+    if (next[key]) delete next[key];
+    else next[key] = true;
+    setLineItemIgnored(next);
+  }
+
+  // Line items still missing a service mapping, excluding the ones the
+  // user has chosen to ignore. Drives the warning banner so it only
+  // flags rows that genuinely need attention.
+  const unmappedRows = useMemo(() => rows.filter(r => {
+    if (lineItemIgnored?.[r.key]) return false;
+    const svcs = lineItemServices?.[r.key];
+    return !(Array.isArray(svcs) && svcs.length > 0);
+  }), [rows, lineItemServices, lineItemIgnored]);
 
   function addLineItem() {
     const name = draftItem.trim();
@@ -753,6 +769,18 @@ function LineItemServicesSection({ workbookItems, lineItemServices, setLineItemS
           Solutions / Service Catalog list is empty. Add services to it on the Dropdowns tab first.
         </div>
       )}
+      {unmappedRows.length > 0 && (
+        <div
+          style={{
+            display: 'flex', alignItems: 'center', gap: '0.4rem',
+            margin: '0 0 0.5rem', padding: '0.4rem 0.6rem',
+            background: '#FEF3C7', border: '1px solid #FCD34D', borderRadius: 4,
+            fontSize: '0.8rem', color: '#92400E',
+          }}
+        >
+          ⚠ {unmappedRows.length} line item{unmappedRows.length === 1 ? '' : 's'} missing a service mapping. Map them below, or click <strong>Ignore</strong> to set the ones you don't need aside.
+        </div>
+      )}
       {filteredRows.length === 0 ? (
         <div className={styles.linkedEmptyInline}>
           {rows.length === 0
@@ -765,20 +793,33 @@ function LineItemServicesSection({ workbookItems, lineItemServices, setLineItemS
             <tr>
               <th style={{ width: '32%' }}>Line Item</th>
               <th>Services</th>
+              <th style={{ width: 70 }}>Ignore</th>
               <th style={{ width: 32 }} />
             </tr>
           </thead>
           <tbody>
             {filteredRows.map(row => {
               const services = Array.isArray(lineItemServices?.[row.key]) ? lineItemServices[row.key] : [];
+              const ignored = !!lineItemIgnored?.[row.key];
               return (
-                <tr key={row.key}>
+                <tr key={row.key} style={ignored ? { opacity: 0.5 } : undefined}>
                   <td>{row.name}</td>
                   <td>
                     <ServicesPicker
                       selected={services}
                       options={solutionsOptions}
                       onChange={(next) => updateServices(row.key, next)}
+                    />
+                  </td>
+                  <td style={{ textAlign: 'center' }}>
+                    <input
+                      type="checkbox"
+                      checked={ignored}
+                      onChange={() => toggleIgnore(row.key)}
+                      title={ignored
+                        ? 'Ignored — greyed out and excluded from the missing-mapping warning. Uncheck to track it again.'
+                        : 'Ignore this line item — greys it out and drops it from the missing-mapping warning.'}
+                      style={{ cursor: 'pointer' }}
                     />
                   </td>
                   <td>
@@ -1161,6 +1202,8 @@ function LinkedToPanel({
         workbookItems={flatItems}
         lineItemServices={lineItemServices}
         setLineItemServices={setLineItemServices}
+        lineItemIgnored={lineItemIgnored}
+        setLineItemIgnored={setLineItemIgnored}
         solutionsOptions={solutionsOptions}
       />
 
@@ -1365,6 +1408,12 @@ const LINKED_TO_PASS_THROUGH_DEFAULTS_KEY = 'linkedToPassThroughDefaults';
 // defaults.
 const LINE_ITEM_SERVICES_KEY = 'lineItemServices';
 const LINE_ITEM_SERVICES_EVENT = 'pricing:lineItemServicesChanged';
+// Line items the user has chosen to ignore in the Line Item → Services
+// table. Keyed by lowercase line item name (same shape as the services
+// map) and persisted on its own key so the choice survives parser bumps
+// and Clear-button wipes. Ignored rows are greyed out and excluded from
+// the "missing a service mapping" warning.
+const LINE_ITEM_IGNORED_KEY = 'lineItemIgnored';
 // Per-Option services bundle derived from the loaded workbook + the
 // Line Item → Services mapping. Persisted separately so Opps 2 can
 // offer an "Add from Pricing Option" picker on its Scope cell without
@@ -1425,6 +1474,7 @@ export function PricingView({ settings } = {}) {
   const [linkedToStartMonthDefaults, setLinkedToStartMonthDefaults] = useState({}); // { [`${lineItem}::${type}`]: number } — overrides the CTS row's startMonth for the auto-derive that feeds alt-fee rows
   const [linkedToPassThroughDefaults, setLinkedToPassThroughDefaults] = useState({}); // { [`${lineItem}::${type}`]: true } — sets pass-through for every CTS row matching the pair, unless the per-row override says otherwise
   const [lineItemServices, setLineItemServices] = useState({}); // { [lineItemKey]: string[] }
+  const [lineItemIgnored, setLineItemIgnored] = useState({}); // { [lineItemKey]: true } — line items the user opted to ignore (greyed out, excluded from the unmapped warning)
   const [termMonths, setTermMonths] = useState(36);
   const [annualEscalator, setAnnualEscalator] = useState(0.03);
   // Separate escalator for CTS costs — defaults to 3.85% so margin
@@ -1433,6 +1483,7 @@ export function PricingView({ settings } = {}) {
   const [costEscalator, setCostEscalator] = useState(0.0385);
   const [chartTag, setChartTag] = useState(''); // selected line-item / tag for the breakdown chart
   const [chartView, setChartView] = useState('chart'); // 'chart' | 'table'
+  const [chartVisible, setChartVisible] = useState(false); // "Line item year-over-year" panel — hidden by default, user opts in via Show
   const [techDeprPct, setTechDeprPct] = useState(0.04);
   const [colVisibility, setColVisibility] = useState({}); // upper table: { [colKey]: bool, default true }
   const [summaryColWidths, setSummaryColWidths] = useState({});
@@ -1485,6 +1536,10 @@ export function PricingView({ settings } = {}) {
         if (!cancelled && savedLineItemServices && typeof savedLineItemServices === 'object') {
           setLineItemServices(savedLineItemServices);
         }
+        const savedLineItemIgnored = await dbGet(STORE, LINE_ITEM_IGNORED_KEY);
+        if (!cancelled && savedLineItemIgnored && typeof savedLineItemIgnored === 'object') {
+          setLineItemIgnored(savedLineItemIgnored);
+        }
         const saved = await dbGet(STORE, KEY);
         if (cancelled || !saved) { hydratedRef.current = true; return; }
         // Drop caches written by an older parser — their workbook
@@ -1510,11 +1565,13 @@ export function PricingView({ settings } = {}) {
         if (!savedStartMonthDefaults && saved.linkedToStartMonthDefaults) setLinkedToStartMonthDefaults(saved.linkedToStartMonthDefaults);
         if (!savedPassThroughDefaults && saved.linkedToPassThroughDefaults) setLinkedToPassThroughDefaults(saved.linkedToPassThroughDefaults);
         if (!savedLineItemServices && saved.lineItemServices && typeof saved.lineItemServices === 'object') setLineItemServices(saved.lineItemServices);
+        if (!savedLineItemIgnored && saved.lineItemIgnored && typeof saved.lineItemIgnored === 'object') setLineItemIgnored(saved.lineItemIgnored);
         if (typeof saved.termMonths === 'number') setTermMonths(saved.termMonths);
         if (typeof saved.annualEscalator === 'number') setAnnualEscalator(saved.annualEscalator);
         if (typeof saved.costEscalator === 'number') setCostEscalator(saved.costEscalator);
         if (typeof saved.chartTag === 'string') setChartTag(saved.chartTag);
         if (saved.chartView === 'chart' || saved.chartView === 'table') setChartView(saved.chartView);
+        if (typeof saved.chartVisible === 'boolean') setChartVisible(saved.chartVisible);
         if (typeof saved.techDeprPct === 'number') setTechDeprPct(saved.techDeprPct);
         if (saved.colVisibility) setColVisibility(saved.colVisibility);
         if (saved.summaryColWidths) setSummaryColWidths(saved.summaryColWidths);
@@ -1536,9 +1593,9 @@ export function PricingView({ settings } = {}) {
   // Persist on changes (skip the first render until hydration finishes).
   useEffect(() => {
     if (!hydratedRef.current) return;
-    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, lineItemServices, termMonths, annualEscalator, costEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData };
+    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData };
     dbPut(STORE, payload, KEY).catch(err => console.warn('Failed to save pricing cache:', err));
-  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, lineItemServices, termMonths, annualEscalator, costEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData]);
+  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, lineItemServices, lineItemIgnored, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData]);
 
   // Mirror Linked-To defaults under their dedicated key so they
   // outlive the main cache (parser-version bumps, Clear button,
@@ -1574,6 +1631,14 @@ export function PricingView({ settings } = {}) {
       window.dispatchEvent(new CustomEvent(LINE_ITEM_SERVICES_EVENT, { detail: lineItemServices }));
     } catch { /* CustomEvent unavailable */ }
   }, [lineItemServices]);
+
+  // Persist the ignored-line-item set on its own key so it outlives the
+  // main cache (parser bumps, Clear button). No broadcast event — the
+  // ignore flag is only consumed inside this view's mapping table.
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    dbPut(STORE, lineItemIgnored, LINE_ITEM_IGNORED_KEY).catch(err => console.warn('Failed to save ignored line items:', err));
+  }, [lineItemIgnored]);
 
   // Derive a per-Pricing-Option services bundle by walking each option's
   // line items, looking up their saved services in lineItemServices,
@@ -1998,6 +2063,7 @@ export function PricingView({ settings } = {}) {
     if (typeof s.costEscalator === 'number') setCostEscalator(s.costEscalator);
     if (typeof s.chartTag === 'string') setChartTag(s.chartTag);
     if (s.chartView === 'chart' || s.chartView === 'table') setChartView(s.chartView);
+    if (typeof s.chartVisible === 'boolean') setChartVisible(s.chartVisible);
     if (typeof s.techDeprPct === 'number') setTechDeprPct(s.techDeprPct);
     setColVisibility(s.colVisibility || {});
     setSummaryColWidths(s.summaryColWidths || {});
@@ -2567,7 +2633,7 @@ export function PricingView({ settings } = {}) {
       parserVersion: PARSER_VERSION,
       workbook, globalGmPct, overrides, activeOption, colWidths,
       altFees, linkedToDefaults, termMonths, annualEscalator, costEscalator,
-      chartTag, chartView, techDeprPct, colVisibility,
+      chartTag, chartView, chartVisible, techDeprPct, colVisibility,
       summaryColWidths, summaryColVisibility,
     };
     const json = JSON.stringify(snapshot);
@@ -4012,33 +4078,43 @@ export function PricingView({ settings } = {}) {
                             <div className={styles.chartHeader}>
                               <h3 className={styles.summaryTitle} style={{ margin: 0 }}>Line item year-over-year</h3>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
-                                <div className={styles.viewToggle}>
-                                  <button
-                                    type="button"
-                                    className={chartView === 'chart' ? styles.viewToggleOn : styles.viewToggleBtn}
-                                    onClick={() => setChartView('chart')}
-                                  >Chart</button>
-                                  <button
-                                    type="button"
-                                    className={chartView === 'table' ? styles.viewToggleOn : styles.viewToggleBtn}
-                                    onClick={() => setChartView('table')}
-                                  >Table</button>
-                                </div>
-                                <label className={styles.chartTagLabel}>
-                                  Line item:{' '}
-                                  <select
-                                    className={styles.chartTagSelect}
-                                    value={tag}
-                                    onChange={(e) => setChartTag(e.target.value)}
-                                    disabled={tagOptions.length === 0}
-                                  >
-                                    {tagOptions.length === 0 && <option value="">(no tagged items yet)</option>}
-                                    {tagOptions.map(t => <option key={t} value={t}>{t}</option>)}
-                                  </select>
-                                </label>
+                                {chartVisible && (
+                                  <>
+                                    <div className={styles.viewToggle}>
+                                      <button
+                                        type="button"
+                                        className={chartView === 'chart' ? styles.viewToggleOn : styles.viewToggleBtn}
+                                        onClick={() => setChartView('chart')}
+                                      >Chart</button>
+                                      <button
+                                        type="button"
+                                        className={chartView === 'table' ? styles.viewToggleOn : styles.viewToggleBtn}
+                                        onClick={() => setChartView('table')}
+                                      >Table</button>
+                                    </div>
+                                    <label className={styles.chartTagLabel}>
+                                      Line item:{' '}
+                                      <select
+                                        className={styles.chartTagSelect}
+                                        value={tag}
+                                        onChange={(e) => setChartTag(e.target.value)}
+                                        disabled={tagOptions.length === 0}
+                                      >
+                                        {tagOptions.length === 0 && <option value="">(no tagged items yet)</option>}
+                                        {tagOptions.map(t => <option key={t} value={t}>{t}</option>)}
+                                      </select>
+                                    </label>
+                                  </>
+                                )}
+                                <button
+                                  type="button"
+                                  className={styles.viewToggleBtn}
+                                  onClick={() => setChartVisible(v => !v)}
+                                  title={chartVisible ? 'Hide the line item year-over-year breakdown' : 'Show the line item year-over-year breakdown'}
+                                >{chartVisible ? 'Hide' : 'Show'}</button>
                               </div>
                             </div>
-                            {tag ? (
+                            {chartVisible && (tag ? (
                               chartView === 'table' ? (
                                 <table className={styles.summaryTable}>
                                   <thead>
@@ -4092,7 +4168,7 @@ export function PricingView({ settings } = {}) {
                               <div style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)', padding: '1rem 0' }}>
                                 Tag at least one CTS row's <strong>Linked To</strong> column or fill in the <strong>Alternative Fee Structure / Schedule</strong> with an item name to populate this chart.
                               </div>
-                            )}
+                            ))}
                           </div>
                         );
                       })()}
