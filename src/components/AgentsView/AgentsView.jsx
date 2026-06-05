@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { loadOppsFromCache, searchOpps } from '../../utils/oppsCache';
+import { setOppField } from '../../utils/opps2Store';
 import { dbGet, dbPut } from '../../utils/db';
 import { userLsGet, userLsSet } from '../../utils/userLs';
 import { getOppsSheetCsvUrl } from '../../utils/oppsSheetUrl';
@@ -456,6 +457,44 @@ function detectBfoUrl(rawOpp) {
   return '';
 }
 
+// A BFO field counts as "missing" when it's blank, "-", or an "#N/A"
+// variant — the same placeholders Opps 2 uses for "no value yet".
+function bfoFieldBlank(v) {
+  const s = String(v ?? '').trim().toLowerCase();
+  return s === '' || s === '-' || s === '#n/a' || s === 'n/a';
+}
+
+// Inline editor for the BFO Address in the AI BFO Prep table. Uncontrolled
+// and keyed on the stored value (so an external refresh / the row dropping
+// off the list remounts it cleanly). Commits on blur / Enter; Escape
+// reverts. A bare host like "se.bfo.com/x" is prefixed with https:// so it
+// registers as a URL downstream (detectBfoUrl expects an http(s) link).
+function BfoAddressCell({ value, onCommit }) {
+  const initial = String(value ?? '');
+  const commit = (el) => {
+    let next = el.value.trim();
+    if (next && !/^https?:\/\//i.test(next)) next = `https://${next}`;
+    if (next !== initial.trim()) onCommit(next);
+  };
+  return (
+    <input
+      key={initial}
+      type="text"
+      defaultValue={initial}
+      placeholder="Paste BFO website address…"
+      onBlur={(e) => commit(e.currentTarget)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+        else if (e.key === 'Escape') { e.preventDefault(); e.currentTarget.value = initial; e.currentTarget.blur(); }
+      }}
+      style={{
+        width: '100%', boxSizing: 'border-box', padding: '3px 6px',
+        border: '1px solid var(--color-border)', borderRadius: 4, font: 'inherit',
+      }}
+    />
+  );
+}
+
 // Phone-touch detection for the Next Steps column — matches "call",
 // "called", "calls", "calling", any "voicemail", and "left a vm" / "left
 // vm". Shared by detectNextStepsType (email-table Type cell) and the
@@ -803,7 +842,7 @@ function NewBfoCompanyNameCell({ prospect, value, onCommit }) {
 }
 
 export function AgentsView({ prospects = [], settings, updateProspect }) {
-  const { isAdmin } = useAuth();
+  const { isAdmin, user } = useAuth();
   // Configured per-user via Settings → CDM Name. The Sent emails section
   // matches HubSpot's hs_email_from_email against this address; blank
   // means "no outbound to show yet — set your work email in Settings".
@@ -1853,6 +1892,43 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
     return rows;
   }, [oppsCache, bfoActivity]);
 
+  // AI BFO Prep — Opps 2 opps that have a BFO Opportunity Name (BFO Link)
+  // but no BFO Address yet (the "Missing Data" rows). The user fills in
+  // each BFO Address inline; once set, the opp drops off this list.
+  const bfoPrepOpps = useMemo(() => {
+    const recs = oppsCache?.records || [];
+    const rows = [];
+    for (const r of recs) {
+      const name = String(r['BFO Link'] ?? '').trim();
+      if (bfoFieldBlank(name)) continue;
+      if (!bfoFieldBlank(r['BFO Address'])) continue;
+      rows.push({
+        id: r._id,
+        name,
+        account: String(r.Account || '').trim(),
+        bfoAddress: String(r['BFO Address'] ?? '').trim(),
+      });
+    }
+    rows.sort((a, b) => a.account.localeCompare(b.account) || a.name.localeCompare(b.name));
+    return rows;
+  }, [oppsCache]);
+
+  const [bfoPrepCopyFlash, setBfoPrepCopyFlash] = useState('');
+
+  // Persist a BFO Address edit straight to Opps 2 (cache + Firestore) and
+  // optimistically update the local cache so the row reflects it / drops
+  // off the prep list immediately.
+  const updateOppBfoAddress = async (oppId, value) => {
+    setOppsCache(prev => (prev && Array.isArray(prev.records))
+      ? { ...prev, records: prev.records.map(r => (String(r._id) === String(oppId) ? { ...r, 'BFO Address': value } : r)) }
+      : prev);
+    try {
+      await setOppField(user?.uid, oppId, 'BFO Address', value);
+    } catch (err) {
+      console.error('AI BFO Prep: failed to save BFO Address', { oppId, err });
+    }
+  };
+
   const dateLabel = useMemo(() => parseIsoDate(referenceDate).toLocaleDateString('en-US', {
     weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
   }), [referenceDate]);
@@ -2191,6 +2267,63 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
             <button type="button" className={styles.linkBtn} onClick={clearExcludedRecipients}>Restore all</button>
           </p>
         )}
+      </section>
+
+      <section className={styles.section}>
+        <h2 className={styles.sectionHeader}>
+          AI BFO Prep
+          <span className={styles.sectionCount}>{bfoPrepOpps.length}</span>
+        </h2>
+        <p className={styles.subnote}>
+          Opps that have a BFO Opportunity Name but no BFO Address yet (the &ldquo;Missing Data&rdquo; rows from Opps 2). Paste each opp&rsquo;s BFO website address below — it saves straight to Opps 2 and the row drops off this list once set.
+        </p>
+        <div className={styles.aiPromptControls}>
+          <button
+            type="button"
+            className={styles.aiPromptBtn}
+            disabled={bfoPrepOpps.length === 0}
+            onClick={async () => {
+              const text = bfoPrepOpps.map(o => o.name).join('\n');
+              try {
+                await navigator.clipboard.writeText(text);
+                setBfoPrepCopyFlash('Copied!');
+              } catch {
+                setBfoPrepCopyFlash('Copy failed');
+              }
+              window.setTimeout(() => setBfoPrepCopyFlash(''), 1500);
+            }}
+          >Copy Opportunity Names</button>
+          {bfoPrepCopyFlash && <span className={styles.copyFlash}>{bfoPrepCopyFlash}</span>}
+        </div>
+        <div style={{ marginTop: '0.5rem', overflowX: 'auto' }}>
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                <th>Company</th>
+                <th>BFO Opportunity Name</th>
+                <th style={{ minWidth: 280 }}>BFO Address</th>
+              </tr>
+            </thead>
+            <tbody>
+              {bfoPrepOpps.length === 0 ? (
+                <tr className={styles.emptyRow}>
+                  <td colSpan={3}>No opps are missing a BFO Address (every opp with a BFO Opportunity Name already has one).</td>
+                </tr>
+              ) : bfoPrepOpps.map(o => (
+                <tr key={o.id}>
+                  <td className={o.account ? '' : styles.muted}>{o.account || '—'}</td>
+                  <td>{o.name}</td>
+                  <td>
+                    <BfoAddressCell
+                      value={o.bfoAddress}
+                      onCommit={(v) => updateOppBfoAddress(o.id, v)}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       {(() => {
