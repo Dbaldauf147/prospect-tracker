@@ -608,3 +608,50 @@
   border-color: var(--color-accent);
   background: var(--color-surface);
 }
+
+/* Clickable attendee name that opens the contact details popup. */
+.attendeeNameLink {
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: 600;
+  color: var(--color-accent);
+  cursor: pointer;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.attendeeNameLink:hover {
+  color: var(--color-accent-hover, #1d4ed8);
+}
+
+/* Label/value grid inside the attendee contact details popup. */
+.contactDetailTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.contactDetailTable th {
+  text-align: left;
+  vertical-align: top;
+  padding: 0.3rem 0.7rem 0.3rem 0;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  width: 110px;
+}
+
+.contactDetailTable td {
+  padding: 0.3rem 0;
+  vertical-align: top;
+  color: var(--color-text);
+  word-break: break-word;
+}
+
+.contactDetailTable a {
+  color: var(--color-accent);
+}
