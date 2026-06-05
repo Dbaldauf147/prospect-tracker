@@ -2779,6 +2779,7 @@ function QuotedFollowUpModal({ opp, chanceOptions, onSave, onClose }) {
 function FollowUpStatusModal({ opp, statusOptions, onSave, onClose }) {
   const curStatus = opp?.['Status'] ?? '';
   const [status, setStatus] = useState(String(curStatus ?? ''));
+  const [salesPartner, setSalesPartner] = useState(String(opp?.['Sales Partner'] ?? ''));
 
   // Seed the Next Steps rows from the same source the standalone
   // NextStepsEditor uses so this popup edits them in the identical
@@ -2801,7 +2802,7 @@ function FollowUpStatusModal({ opp, statusOptions, onSave, onClose }) {
     const kept = rows.filter(r => (r.note || '').trim() || (r.waitingOn || '').trim());
     const nextSteps = kept.map(r => (r.note || '').trim()).join('\n');
     const nextStepsWaiting = kept.map(r => (r.waitingOn || '').trim());
-    onSave({ status, nextSteps, nextStepsWaiting });
+    onSave({ status, nextSteps, nextStepsWaiting, salesPartner: salesPartner.trim() });
   }
 
   const hintStyle = { fontSize: '0.68rem', color: 'var(--color-text-muted)', marginTop: 3 };
@@ -2864,6 +2865,16 @@ function FollowUpStatusModal({ opp, statusOptions, onSave, onClose }) {
               ))}
             </select>
             {textHint(curStatus)}
+          </div>
+          <div>
+            <label style={labelStyle}>Sales Partner</label>
+            <input
+              type="text"
+              value={salesPartner}
+              onChange={(e) => setSalesPartner(e.target.value)}
+              placeholder="—"
+              style={inputStyle}
+            />
           </div>
           <div>
             <label style={labelStyle}>Next Steps</label>
@@ -4095,9 +4106,29 @@ function NextStepsEditor({ opp, onClose, updateOppField }) {
           boxShadow: '0 18px 50px rgba(15, 23, 42, 0.32)',
         }}
       >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem', gap: '1rem' }}>
-          <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            Next Steps — {account}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.6rem', gap: '1rem' }}>
+          <div style={{ overflow: 'hidden' }}>
+            <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              Next Steps — {account}
+            </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, fontSize: '0.72rem', color: '#64748B' }}>
+              Sales Partner
+              <input
+                key={String(opp?.['Sales Partner'] ?? '')}
+                type="text"
+                defaultValue={String(opp?.['Sales Partner'] ?? '')}
+                placeholder="—"
+                onBlur={(e) => {
+                  const v = e.currentTarget.value.trim();
+                  if (v !== String(opp?.['Sales Partner'] ?? '').trim()) updateOppField(opp._id, 'Sales Partner', v);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+                  else if (e.key === 'Escape') { e.preventDefault(); e.currentTarget.value = String(opp?.['Sales Partner'] ?? ''); e.currentTarget.blur(); }
+                }}
+                style={{ padding: '2px 6px', border: '1px solid #CBD5E1', borderRadius: 4, fontSize: '0.78rem', fontFamily: 'inherit', color: '#334155', minWidth: 170 }}
+              />
+            </label>
           </div>
           <button
             type="button"
@@ -6810,12 +6841,15 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           <FollowUpStatusModal
             opp={opp}
             statusOptions={statusOpts}
-            onSave={({ status, nextSteps, nextStepsWaiting }) => {
+            onSave={({ status, nextSteps, nextStepsWaiting, salesPartner }) => {
               if (status !== String(opp['Status'] ?? '')) {
                 updateOppField(opp._id, 'Status', status);
               }
               if (nextSteps !== String(opp['Next Steps'] ?? '')) {
                 updateOppField(opp._id, 'Next Steps', nextSteps);
+              }
+              if (salesPartner !== String(opp['Sales Partner'] ?? '').trim()) {
+                updateOppField(opp._id, 'Sales Partner', salesPartner);
               }
               const curWaiting = Array.isArray(opp._nextStepsWaiting) ? opp._nextStepsWaiting : [];
               if (JSON.stringify(nextStepsWaiting) !== JSON.stringify(curWaiting)) {
