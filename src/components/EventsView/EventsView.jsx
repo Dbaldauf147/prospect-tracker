@@ -214,6 +214,7 @@ export function EventsView({
   // Company names currently being pushed to the Table View, so the
   // "+ Add" button can show progress until the prospects list updates.
   const [addingCompanies, setAddingCompanies] = useState(() => new Set());
+  const [bulkAdding, setBulkAdding] = useState(false);
 
   // Index every Table View prospect by the app's canonical company
   // dedupe key so each lookup row can find its matching prospect the
@@ -376,6 +377,36 @@ export function EventsView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [lookups, prospectByCompanyKey],
   );
+  const newLookupCount = lookups.length - lookupMatchCount;
+
+  // Push every lookup company that isn't yet in the Table View, in one
+  // go. De-duped (case-insensitive) so a company listed twice is only
+  // added once; addProspect is idempotent so re-running is safe.
+  async function addAllNewToTableView() {
+    const names = [];
+    const seen = new Set();
+    for (const l of lookups) {
+      const name = String(l.company || '').trim();
+      if (!name || matchProspect(name)) continue;
+      const key = name.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      names.push(name);
+    }
+    if (names.length === 0) return;
+    if (!window.confirm(`Add ${names.length} new compan${names.length === 1 ? 'y' : 'ies'} to the Table View, attributed to ${cdmName || 'your CDM'}?`)) return;
+    setBulkAdding(true);
+    setAddingCompanies(prev => { const next = new Set(prev); names.forEach(n => next.add(n)); return next; });
+    try {
+      for (const name of names) {
+        try { await onAddProspect({ company: name, cdm: cdmName || '' }); }
+        catch (err) { console.warn('Bulk add to Table View failed for', name, err); }
+      }
+    } finally {
+      setBulkAdding(false);
+      setAddingCompanies(prev => { const next = new Set(prev); names.forEach(n => next.delete(n)); return next; });
+    }
+  }
 
   return (
     <div className={styles.wrapper}>
@@ -515,8 +546,20 @@ export function EventsView({
           <div className={styles.sectionTitle}>
             Find people on LinkedIn
             <span className={styles.countPill}>{lookups.length}</span>
+            {newLookupCount > 0 && (
+              <button
+                type="button"
+                className={styles.exportBtn}
+                style={{ background: '#DCFCE7', borderColor: '#86EFAC', color: '#166534' }}
+                onClick={addAllNewToTableView}
+                disabled={bulkAdding}
+                title="Create a Table View prospect for every company here that isn't already tracked"
+              >
+                {bulkAdding ? 'Adding…' : `+ Add all ${newLookupCount} new to Table View`}
+              </button>
+            )}
             {lookups.length > 0 && (
-              <button type="button" className={styles.exportBtn} style={{ background: '#FEF2F2', borderColor: '#FECACA', color: '#B91C1C' }} onClick={clearLookups}>
+              <button type="button" className={styles.exportBtn} style={{ background: '#FEF2F2', borderColor: '#FECACA', color: '#B91C1C', marginLeft: 0 }} onClick={clearLookups}>
                 Clear list
               </button>
             )}
