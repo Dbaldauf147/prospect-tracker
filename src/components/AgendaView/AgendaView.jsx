@@ -377,6 +377,31 @@ function detectLocalPattern(email, firstname, lastname) {
   return null;
 }
 
+// Materialise an email address from a company's recorded naming pattern.
+// A prospect's Email Domain field holds one or more "<pattern>@<domain>"
+// entries (e.g. "firstinitiallastname@coatue.com"), where the pattern half is
+// one of the EMAIL_PATTERN_RULES keys. Given a name and that field, build the
+// address. Returns '' when no usable pattern is on record — a bare domain with
+// no naming pattern, an unrecognised pattern, or a name we can't fill it with.
+function buildEmailFromPattern(emailDomainField, firstname, lastname) {
+  const f = String(firstname || '').toLowerCase().replace(/[^a-z]/g, '');
+  const l = String(lastname || '').toLowerCase().replace(/[^a-z]/g, '');
+  if (!f && !l) return '';
+  const entries = String(emailDomainField || '').split(/[\n;,]+/).map(s => s.trim()).filter(Boolean);
+  for (const entry of entries) {
+    const at = entry.lastIndexOf('@');
+    if (at <= 0) continue; // bare domain, no naming pattern recorded
+    const patternKey = entry.slice(0, at).toLowerCase();
+    const domain = entry.slice(at + 1).toLowerCase();
+    if (!domain) continue;
+    const rule = EMAIL_PATTERN_RULES.find(r => r.key === patternKey);
+    if (!rule) continue;
+    const local = rule.build(f, l);
+    if (local) return `${local}@${domain}`;
+  }
+  return '';
+}
+
 const FREE_MAIL_DOMAINS = new Set([
   'gmail.com', 'outlook.com', 'hotmail.com', 'yahoo.com', 'icloud.com',
   'aol.com', 'me.com', 'proton.me', 'protonmail.com', 'live.com', 'msn.com',
@@ -447,6 +472,14 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
   const [bulkEditField, setBulkEditField] = useState('company');
   const [bulkEditValue, setBulkEditValue] = useState('');
   const [bulkEditMode, setBulkEditMode] = useState('replace'); // 'replace' | 'append'
+  // "Add a contact by name" mini-form: type first/last/title/company and the
+  // email is guessed from the company's recorded naming pattern. manualEmail is
+  // kept editable; manualEmailTouched tracks whether the user has overridden the
+  // guess so we stop auto-syncing it once they do.
+  const [manualEntry, setManualEntry] = useState({ firstname: '', lastname: '', jobtitle: '', company: '' });
+  const [manualEmail, setManualEmail] = useState('');
+  const [manualEmailTouched, setManualEmailTouched] = useState(false);
+  const [manualMsg, setManualMsg] = useState('');
   function applyBulkEdit() {
     const field = bulkEditField;
     const value = bulkEditValue;
@@ -952,6 +985,48 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
     });
     if (newlyEnriched.length > 0) patchProspectDomains(newlyEnriched);
   }, [enrichRow, patchProspectDomains, companyRules]);
+
+  // Guess an email for the "Add a contact by name" form: match the typed
+  // company to a Table View prospect, then apply that prospect's recorded
+  // naming pattern. Returns '' when the company isn't matched or has no pattern.
+  const guessEmailFromCompany = useCallback((firstname, lastname, company) => {
+    const m = matchProspectByCompanyName(company);
+    if (!m) return '';
+    return buildEmailFromPattern(m.emailDomain, firstname, lastname);
+  }, [matchProspectByCompanyName]);
+
+  const manualGuessedEmail = useMemo(
+    () => guessEmailFromCompany(manualEntry.firstname, manualEntry.lastname, manualEntry.company),
+    [guessEmailFromCompany, manualEntry],
+  );
+  // Keep the email box in sync with the guess until the user edits it by hand.
+  useEffect(() => {
+    if (!manualEmailTouched) setManualEmail(manualGuessedEmail);
+  }, [manualGuessedEmail, manualEmailTouched]);
+
+  function addManualContact() {
+    const email = manualEmail.trim().toLowerCase();
+    const { firstname, lastname, jobtitle, company } = manualEntry;
+    if (!firstname.trim() && !lastname.trim()) { setManualMsg('Add a first or last name'); return; }
+    if (!email) { setManualMsg('No email yet — type one, or add a company whose pattern is on record'); return; }
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { setManualMsg('That email doesn’t look valid'); return; }
+    if (email.endsWith('@se.com')) { setManualMsg('@se.com addresses are skipped'); return; }
+    if (rows.some(r => r.email === email)) { setManualMsg('That email is already in the list'); return; }
+    // Reuse the upload pipeline so the new row is enriched (prospect match,
+    // company suggestion, Table View backfill) exactly like a pasted one.
+    mergeNewRows([{
+      email,
+      firstname: firstname.trim(),
+      lastname: lastname.trim(),
+      company: company.trim(),
+      jobtitle: jobtitle.trim(),
+      phone: '', mobilePhone: '', linkedinUrl: '', city: '', state: '', country: '', dans_tags: '',
+    }]);
+    setManualEntry({ firstname: '', lastname: '', jobtitle: '', company: '' });
+    setManualEmail('');
+    setManualEmailTouched(false);
+    setManualMsg('Added — see it at the top of the list below');
+  }
 
   function handleDrop(e) {
     e.preventDefault();
@@ -2194,6 +2269,58 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
             </div>
           </div>
         )}
+
+        {activeTab === 'contacts' && (() => {
+          const set = (patch) => { setManualEntry(prev => ({ ...prev, ...patch })); if (manualMsg) setManualMsg(''); };
+          const companyTyped = manualEntry.company.trim().length >= 2;
+          const guessed = !manualEmailTouched && !!manualGuessedEmail;
+          const inputStyle = { padding: '0.32rem 0.45rem', border: '1px solid var(--color-border)', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit', minWidth: 0 };
+          return (
+            <div style={{ border: '1px solid var(--color-border)', borderRadius: 8, padding: '0.7rem 0.85rem', margin: '0.75rem 0 0.25rem', background: '#F8FAFC' }}>
+              <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--color-text-secondary)', marginBottom: '0.5rem' }}>
+                Add a contact by name
+                <span style={{ fontWeight: 400, color: '#64748B', marginLeft: '0.4rem' }}>
+                  — email is guessed from the company’s recorded pattern
+                </span>
+              </div>
+              <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                <input style={{ ...inputStyle, flex: '1 1 110px' }} placeholder="First name"
+                  value={manualEntry.firstname} onChange={e => set({ firstname: e.target.value })}
+                  onKeyDown={e => { if (e.key === 'Enter') addManualContact(); }} />
+                <input style={{ ...inputStyle, flex: '1 1 110px' }} placeholder="Last name"
+                  value={manualEntry.lastname} onChange={e => set({ lastname: e.target.value })}
+                  onKeyDown={e => { if (e.key === 'Enter') addManualContact(); }} />
+                <input style={{ ...inputStyle, flex: '1 1 140px' }} placeholder="Job title"
+                  value={manualEntry.jobtitle} onChange={e => set({ jobtitle: e.target.value })}
+                  onKeyDown={e => { if (e.key === 'Enter') addManualContact(); }} />
+                <input style={{ ...inputStyle, flex: '1 1 160px' }} placeholder="Company"
+                  value={manualEntry.company} onChange={e => set({ company: e.target.value })}
+                  onKeyDown={e => { if (e.key === 'Enter') addManualContact(); }} />
+                <input
+                  style={{ ...inputStyle, flex: '1 1 200px', background: guessed ? '#ECFDF5' : '#fff', borderColor: guessed ? '#86EFAC' : 'var(--color-border)' }}
+                  placeholder="Email (auto-guessed)"
+                  value={manualEmail}
+                  onChange={e => { setManualEmail(e.target.value); setManualEmailTouched(true); if (manualMsg) setManualMsg(''); }}
+                  onKeyDown={e => { if (e.key === 'Enter') addManualContact(); }}
+                  title={guessed ? 'Guessed from the company’s recorded email pattern — edit if it’s wrong' : 'Type the email, or add a company whose pattern is on record to auto-guess'}
+                />
+                <button type="button" className={styles.primaryBtn} onClick={addManualContact}
+                  style={{ flex: '0 0 auto', whiteSpace: 'nowrap' }}>
+                  + Add contact
+                </button>
+              </div>
+              <div style={{ fontSize: '0.72rem', marginTop: '0.4rem', minHeight: '1em', color: manualMsg ? '#B45309' : (guessed ? '#15803D' : '#64748B') }}>
+                {manualMsg
+                  ? manualMsg
+                  : guessed
+                    ? `Guessed “${manualEmail}” from ${manualEntry.company.trim()}’s recorded email pattern.`
+                    : companyTyped && (manualEntry.firstname.trim() || manualEntry.lastname.trim()) && !manualEmail
+                      ? 'No email pattern on record for that company — type the email manually, or it’ll fill in once a pattern is known.'
+                      : 'Type a name + company; if the company’s email pattern is on record, the address fills in automatically.'}
+              </div>
+            </div>
+          );
+        })()}
 
         {activeTab === 'contacts' && rows.length === 0 ? (
           <div
