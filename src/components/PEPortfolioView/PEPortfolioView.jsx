@@ -83,22 +83,27 @@ function useOppsRecords(userId) {
   const [records, setRecords] = useState([]);
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      // Read the canonical Opps 2 store the way the rest of the app does:
-      // the strictly-newer of the local IndexedDB cache and the Firestore
-      // doc, with Firestore's chunked payload reassembled. The inline
-      // reader this replaced only read the doc's `json` field and bailed
-      // when the doc was chunked (large datasets), and it always preferred
-      // local IDB even when Firestore was newer. That let the on-screen PE
-      // Opps table drift from the server-built PE Opps email, which reads
-      // the same (chunk-aware) Firestore doc.
+    // Read the canonical Opps 2 store the way the rest of the app does:
+    // the strictly-newer of the local IndexedDB cache and the Firestore
+    // doc, with Firestore's chunked payload reassembled. The inline
+    // reader this replaced only read the doc's `json` field and bailed
+    // when the doc was chunked (large datasets), and it always preferred
+    // local IDB even when Firestore was newer. That let the on-screen PE
+    // Opps table drift from the server-built PE Opps email, which reads
+    // the same (chunk-aware) Firestore doc.
+    const refresh = async () => {
       try {
         const data = await loadOpps2Newest(userId);
         const recs = Array.isArray(data?.records) ? data.records : null;
         if (!cancelled && recs && recs.length > 0) setRecords(recs);
       } catch { /* leave records empty on failure */ }
-    })();
-    return () => { cancelled = true; };
+    };
+    refresh();
+    // Re-pull when Opps 2 writes its cache (e.g. an inline Sales Partner
+    // edit here, or an edit on the Opps 2 tab) so the table stays live.
+    const onUpdate = () => { refresh(); };
+    window.addEventListener('opps2-cache-updated', onUpdate);
+    return () => { cancelled = true; window.removeEventListener('opps2-cache-updated', onUpdate); };
   }, [userId]);
   return [records, setRecords];
 }

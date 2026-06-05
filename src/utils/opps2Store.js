@@ -165,6 +165,14 @@ export async function loadOpps2Cache() {
 export async function saveOpps2Cache(data) {
   try { await dbPut(OPPS2_STORE, stampUpdatedAt(data), OPPS2_CACHE_KEY); }
   catch (err) { console.error('opps2: IndexedDB save failed', err); }
+  // Let other open views (Agents, PE Opps, …) that hold a cached copy of
+  // the Opps 2 data know it changed, so they can re-pull without waiting
+  // for a window refocus or a full reload.
+  try {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('opps2-cache-updated'));
+    }
+  } catch { /* CustomEvent unavailable */ }
 }
 
 export async function loadOpps2FromFirestore(userId) {

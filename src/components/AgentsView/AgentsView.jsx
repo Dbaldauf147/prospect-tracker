@@ -1244,7 +1244,14 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
     };
     refresh();
     window.addEventListener('focus', refresh);
-    return () => { cancelled = true; window.removeEventListener('focus', refresh); };
+    // Re-pull when Opps 2 writes its cache (an edit on the Opps 2 tab or
+    // an inline save here) so matches reflect the latest data live.
+    window.addEventListener('opps2-cache-updated', refresh);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('focus', refresh);
+      window.removeEventListener('opps2-cache-updated', refresh);
+    };
   }, []);
 
   // BFO Activity rows — pasted on the BFO Activity tab, persisted in
@@ -1303,7 +1310,12 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
       if (!contactRaw) continue;
       const emails = contactRaw.match(EMAIL_RE) || [];
       for (const e of emails) {
-        if (!byEmail.has(e)) byEmail.set(e, entry);
+        const existing = byEmail.get(e);
+        // First match wins — except a BFO-tagged opp always beats an
+        // untagged one that shares the same contact email, so a row with
+        // a real BFO Opportunity Name isn't shadowed by a duplicate opp
+        // that doesn't have one.
+        if (!existing || (!existing.bfoOpp && entry.bfoOpp)) byEmail.set(e, entry);
       }
     }
     return { byEmail, byBfoOpp, allOpps };
