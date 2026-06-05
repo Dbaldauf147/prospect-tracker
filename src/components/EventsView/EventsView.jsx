@@ -367,7 +367,7 @@ function ContactPickerModal({ company, title, contacts, attendees, onAdd, onRemo
   function addManual() {
     const name = query.trim();
     if (!name) return;
-    onAdd({ contactId: '', name, email: '', company: company || '', title: title || '' });
+    onAdd({ contactId: '', name, email: '', company: company || '', title: title || '', originalTitle: title || '' });
     setQuery('');
   }
 
@@ -408,7 +408,7 @@ function ContactPickerModal({ company, title, contacts, attendees, onAdd, onRemo
                 key={String(c.id || c.vid)}
                 type="button"
                 className={styles.modalRow}
-                onClick={() => (att ? onRemove(att) : onAdd(contactToAttendee(c)))}
+                onClick={() => (att ? onRemove(att) : onAdd({ ...contactToAttendee(c), originalTitle: title || '' }))}
               >
                 <span style={{ flex: 1, minWidth: 0 }}>
                   <div className={styles.optionName}>{contactDisplayName(c)}</div>
@@ -469,6 +469,73 @@ function RowContactAdder({ company, title, contacts, attendees, onAdd, onRemove 
   );
 }
 
+// Read-only details popup for a mapped attendee. Merges the stored
+// attendee fields (original title kept from the lookup row) with the
+// full cached HubSpot contact record when one was matched, so phone /
+// LinkedIn / location surface even though the attendee row only saves a
+// slim subset.
+function AttendeeContactModal({ attendee, contact, onClose }) {
+  useEffect(() => {
+    function onKey(e) { if (e.key === 'Escape') onClose(); }
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const name = contact ? contactDisplayName(contact) : (attendee.name || 'Contact');
+  const contactTitle = contact?.jobtitle || attendee.title || '';
+  const company = contact?.company || attendee.company || '';
+  const email = contact?.email || attendee.email || '';
+  const phone = contact?.phone || '';
+  const linkedin = contact?.hs_linkedin_url || contact?.linkedin_url || contact?.hs_linkedinid || '';
+  const location = [contact?.city, contact?.state, contact?.country].filter(Boolean).join(', ');
+
+  const rows = [
+    ['Original title', attendee.originalTitle || '—'],
+    ['Contact title', contactTitle || '—'],
+    ['Company', company || '—'],
+    ['Email', email ? <a href={`mailto:${email}`}>{email}</a> : '—'],
+    ['Phone', phone || '—'],
+    ['Location', location || '—'],
+    ['LinkedIn', linkedin ? <a href={linkedin} target="_blank" rel="noopener noreferrer">View profile</a> : '—'],
+  ];
+
+  return createPortal(
+    <div className={styles.modalOverlay} onMouseDown={onClose}>
+      <div className={styles.modalPanel} onMouseDown={e => e.stopPropagation()}>
+        <div className={styles.modalHeader}>
+          <span>
+            <strong>{name}</strong>
+            {!attendee.contactId && (
+              <span style={{ marginLeft: 6, fontSize: '0.7rem', fontWeight: 400, color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
+                (manual — not in HubSpot)
+              </span>
+            )}
+          </span>
+          <button type="button" className={styles.modalClose} onClick={onClose} aria-label="Close">×</button>
+        </div>
+        <div style={{ padding: '0.7rem 0.9rem' }}>
+          <table className={styles.contactDetailTable}>
+            <tbody>
+              {rows.map(([label, value]) => (
+                <tr key={label}>
+                  <th>{label}</th>
+                  <td>{value}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {!contact && attendee.contactId && (
+            <div style={{ marginTop: '0.6rem', fontSize: '0.74rem', color: 'var(--color-text-muted)' }}>
+              The full contact record isn't in the synced HubSpot cache right now — showing the details saved with this event.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 export function EventsView({
   settings = {},
   updateSettings = () => {},
@@ -492,6 +559,8 @@ export function EventsView({
   // "+ Add" button can show progress until the prospects list updates.
   const [addingCompanies, setAddingCompanies] = useState(() => new Set());
   const [bulkAdding, setBulkAdding] = useState(false);
+  // Attendee whose contact details popup is open (null = closed).
+  const [contactPopup, setContactPopup] = useState(null);
 
   // Index every Table View prospect by the app's canonical company
   // dedupe key so each lookup row can find its matching prospect the
@@ -647,6 +716,20 @@ export function EventsView({
     updateEvent(selected.id, { attendees: next });
   }
 
+  // Resolve a mapped attendee back to its full cached contact record
+  // (by HubSpot id, else by name + company) and open the details popup.
+  function openAttendeeContact(att) {
+    const byId = att.contactId
+      ? searchableContacts.find(c => String(c.id || c.vid || '') === String(att.contactId))
+      : null;
+    const byName = !byId
+      ? searchableContacts.find(c =>
+          contactDisplayName(c).toLowerCase() === String(att.name || '').toLowerCase()
+          && normalizeCompany(c.company) === normalizeCompany(att.company))
+      : null;
+    setContactPopup({ attendee: att, contact: byId || byName || null });
+  }
+
   function exportAttendeesCsv() {
     if (!selected) return;
     const list = Array.isArray(selected.attendees) ? selected.attendees : [];
@@ -654,8 +737,8 @@ export function EventsView({
       const s = v === null || v === undefined ? '' : String(v);
       return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
     };
-    const headers = ['Name', 'Title', 'Company', 'Email'];
-    const rows = list.map(a => [a.name, a.title, a.company, a.email].map(escape).join(','));
+    const headers = ['Name', 'Original Title', 'Contact Title', 'Company', 'Email'];
+    const rows = list.map(a => [a.name, a.originalTitle, a.title, a.company, a.email].map(escape).join(','));
     const csv = headers.join(',') + '\n' + rows.join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -893,7 +976,8 @@ export function EventsView({
               <thead>
                 <tr>
                   <th>Name</th>
-                  <th>Title</th>
+                  <th>Original Title</th>
+                  <th>Contact Title</th>
                   <th>Company</th>
                   <th>Email</th>
                   <th aria-label="Actions" />
@@ -903,13 +987,21 @@ export function EventsView({
                 {attendees.map((a, i) => (
                   <tr key={`${a.contactId || 'manual'}-${i}`}>
                     <td>
-                      {a.name}
+                      <button
+                        type="button"
+                        className={styles.attendeeNameLink}
+                        onClick={() => openAttendeeContact(a)}
+                        title="View contact details"
+                      >
+                        {a.name}
+                      </button>
                       {!a.contactId && (
                         <span style={{ marginLeft: 6, fontSize: '0.64rem', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
                           (manual)
                         </span>
                       )}
                     </td>
+                    <td>{a.originalTitle || '—'}</td>
                     <td>{a.title || '—'}</td>
                     <td>{a.company || '—'}</td>
                     <td>{a.email || '—'}</td>
@@ -1086,6 +1178,13 @@ export function EventsView({
             </table>
           )}
         </div>
+      )}
+      {contactPopup && (
+        <AttendeeContactModal
+          attendee={contactPopup.attendee}
+          contact={contactPopup.contact}
+          onClose={() => setContactPopup(null)}
+        />
       )}
     </div>
   );
