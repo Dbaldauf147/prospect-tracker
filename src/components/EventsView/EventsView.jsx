@@ -11,15 +11,11 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
+import { attendeeFromContact, contactDisplayName } from '../../utils/eventsStore';
 import styles from './EventsView.module.css';
 
 function newId() {
   return `evt_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function contactName(c) {
-  const n = [c.firstname, c.lastname].filter(Boolean).join(' ').trim();
-  return n || c.email || c.company || 'Unnamed contact';
 }
 
 function formatDate(iso) {
@@ -53,7 +49,7 @@ function AttendeePicker({ contacts, existingIds, onAdd }) {
     for (const c of contacts) {
       const id = String(c.id || c.vid || '');
       if (!id || existingIds.has(id)) continue;
-      const hay = `${contactName(c)} ${c.email || ''} ${c.company || ''} ${c.jobtitle || ''}`.toLowerCase();
+      const hay = `${contactDisplayName(c)} ${c.email || ''} ${c.company || ''} ${c.jobtitle || ''}`.toLowerCase();
       if (hay.includes(q)) out.push(c);
       if (out.length >= 40) break;
     }
@@ -61,13 +57,7 @@ function AttendeePicker({ contacts, existingIds, onAdd }) {
   }, [query, contacts, existingIds]);
 
   function addContact(c) {
-    onAdd({
-      contactId: String(c.id || c.vid || ''),
-      name: contactName(c),
-      email: c.email || '',
-      company: c.company || '',
-      title: c.jobtitle || '',
-    });
+    onAdd(attendeeFromContact(c));
     setQuery('');
     setOpen(false);
   }
@@ -108,7 +98,7 @@ function AttendeePicker({ contacts, existingIds, onAdd }) {
               className={styles.option}
               onClick={() => addContact(c)}
             >
-              <div className={styles.optionName}>{contactName(c)}</div>
+              <div className={styles.optionName}>{contactDisplayName(c)}</div>
               <div className={styles.optionMeta}>
                 {[c.jobtitle, c.company, c.email].filter(Boolean).join(' · ') || '—'}
               </div>

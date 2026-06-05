@@ -4,6 +4,7 @@ import { doc, collection, getDocs, onSnapshot } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
+import { toggleContactInEvents } from '../../utils/eventsStore';
 import { DataTable } from '../common/DataTable';
 import {
   buildListRegistry,
@@ -6950,6 +6951,8 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
           onSaveToAlsoMap={(m) => updateSettings({ toAlsoMap: m })}
           contactFamilies={settings?.contactFamilies || {}}
           onSaveFamily={saveContactFamily}
+          events={settings?.events || []}
+          onToggleContactEvent={(eventId, c) => updateSettings({ events: toggleContactInEvents(settings?.events || [], eventId, c) })}
           companyContacts={(hubspotContacts || []).filter(c => {
             const cCompany = String(c?.company || '').trim().toLowerCase();
             const tgt = String(editingContact?.company || '').trim().toLowerCase();

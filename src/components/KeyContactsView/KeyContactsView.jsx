@@ -6,6 +6,7 @@ import { userLsGet } from '../../utils/userLs';
 import { loadOpps2Newest } from '../../utils/opps2Store';
 import { formatAum } from '../../utils/formatters';
 import { ContactEditModal } from '../ProspectModal/ProspectModal';
+import { toggleContactInEvents } from '../../utils/eventsStore';
 import { buildCompanyGuessIndex, guessCompanyForContact } from '../../utils/companyGuess';
 import { matchesCdm } from '../../utils/cdmMatch';
 import { useDraftCampaignQueue, toggleQueuedContact, setQueuedContactIds } from '../../utils/draftCampaignQueue';
@@ -3148,6 +3149,8 @@ function KeyContactsViewInner({
               else next[contactId] = { partner, kids };
               updateSettings({ contactFamilies: next });
             }}
+            events={settings?.events || []}
+            onToggleContactEvent={(eventId, c) => updateSettings({ events: toggleContactInEvents(settings?.events || [], eventId, c) })}
             companyContacts={sameCompanyContacts}
             emailDomains={emailDomains}
             companyNames={prospects.map(p => p.company).filter(Boolean)}
