@@ -12,6 +12,7 @@ import { DEFAULT_EMAIL_SIGNATURE } from '../../data/emailSignature';
 import { useAuth } from '../../contexts/AuthContext';
 import { saveSourceFile as savePortfolioSourceFileToIDB, loadSourceFile as loadPortfolioSourceFileFromIDB, clearSourceFile as clearPortfolioSourceFileFromIDB, renameSourceFile as renamePortfolioSourceFile } from '../../utils/portfolioSourceFileStore';
 import { computeListFlags, LIST_FLAG_BY_LABEL } from '../../utils/listFlags';
+import { isContactInEvent, toggleContactInEvents } from '../../utils/eventsStore';
 import { CommitOnBlurInput } from '../common/CommitOnBlurInput';
 import { getHubspotCache, updateHubspotCache, notifyCacheUpdated, setHubspotCache } from '../../utils/hubspotContactsCache';
 import { userLsGet } from '../../utils/userLs';
@@ -679,7 +680,7 @@ async function lookupStateForCity(city, countryHint) {
   }
 }
 
-export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, companyContacts = [], emailDomains = [], companyNames = [] }) {
+export const ContactEditModal = memo(function ContactEditModal({ contact, onSave, onClose, tagOptions = TAG_OPTIONS, contactNotes = {}, onSaveNote, contactOldEmails = {}, onSaveOldEmails, contactNicknames = {}, onSaveNickname, contactTeamNames = {}, onSaveTeamName, contactReportsTo = {}, onSaveReportsTo, ccMap = {}, onSaveCcMap, toAlsoMap = {}, onSaveToAlsoMap, contactFamilies = {}, onSaveFamily, events = [], onToggleContactEvent, companyContacts = [], emailDomains = [], companyNames = [] }) {
   const rawTags = contact.dans_tags || contact.dan_s_tags || contact.dans_tag || '';
   // Parse existing tags; track which known tags are checked separately from free-text extras
   const parsedTags = rawTags.split(';').map(t => t.trim()).filter(Boolean);
@@ -1420,6 +1421,39 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
           <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>Old Emails <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(comma-separated, inactive)</span></label><input style={inputStyle} value={f.oldEmails} onChange={e => set('oldEmails', e.target.value)} placeholder="old.email@company.com" /></div>
           <div style={{ gridColumn: 'span 2' }}><label style={labelStyle}>Notes</label><textarea style={{ ...inputStyle, resize: 'vertical', minHeight: '50px', lineHeight: 1.4 }} value={f.notes} onChange={e => set('notes', e.target.value)} rows={2} placeholder="Add notes about this contact..." /></div>
           <div style={{ gridColumn: 'span 2' }}>
+            <label style={labelStyle}>Events <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(click to add / remove this contact from an event&apos;s attendee list)</span></label>
+            {(!cid) ? (
+              <div style={{ fontSize: '0.72rem', color: '#94A3B8', padding: '0.3rem 0' }}>Save the contact first to add them to events.</div>
+            ) : events.length === 0 ? (
+              <div style={{ fontSize: '0.72rem', color: '#94A3B8', padding: '0.3rem 0' }}>No events yet — create one in <strong>Contacts → Events</strong>.</div>
+            ) : (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', padding: '0.4rem', border: '1px solid #CBD5E1', borderRadius: 6, background: '#fff', maxHeight: 120, overflowY: 'auto' }}>
+                {events.map(ev => {
+                  const inEvent = isContactInEvent(ev, cid);
+                  return (
+                    <button
+                      key={ev.id}
+                      type="button"
+                      onClick={() => onToggleContactEvent && onToggleContactEvent(ev.id, contact)}
+                      title={inEvent ? 'Remove from this event' : 'Add to this event'}
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
+                        padding: '0.2rem 0.55rem', borderRadius: 999,
+                        fontSize: '0.72rem', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+                        background: inEvent ? '#DCFCE7' : '#F8FAFC',
+                        border: `1px solid ${inEvent ? '#86EFAC' : '#CBD5E1'}`,
+                        color: inEvent ? '#166534' : '#475569',
+                      }}
+                    >
+                      <span style={{ fontWeight: 800 }}>{inEvent ? '✓' : '+'}</span>
+                      {ev.name || 'Untitled event'}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          <div style={{ gridColumn: 'span 2' }}>
             <label style={labelStyle}>CC Emails <span style={{ fontWeight: 400, textTransform: 'none', color: '#94A3B8' }}>(auto-CC when drafting an email to this contact)</span></label>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem', padding: '0.35rem', border: '1px solid #CBD5E1', borderRadius: 6, minHeight: 36, alignItems: 'center', background: '#fff' }}>
               {ccEmails.map(email => (
@@ -1695,7 +1729,13 @@ export const ContactEditModal = memo(function ContactEditModal({ contact, onSave
   const nextMgrs = JSON.stringify((next.contactReportsTo || {})[nextId] || []);
   const companyContactsEqual = (prev.companyContacts || []).length === (next.companyContacts || []).length
     && (prev.companyContacts || []).every((c, i) => (c.id || c.vid) === ((next.companyContacts || [])[i]?.id || (next.companyContacts || [])[i]?.vid));
-  return prevId === nextId && prev.onSave === next.onSave && prev.onClose === next.onClose && prev.tagOptions === next.tagOptions && prev.onSaveNote === next.onSaveNote && prev.onSaveOldEmails === next.onSaveOldEmails && prev.onSaveNickname === next.onSaveNickname && prev.onSaveReportsTo === next.onSaveReportsTo && prevMgrs === nextMgrs && companyContactsEqual && domainsEqual;
+  // Re-render when this contact's event membership (or any event's
+  // id/name) changes, so the Events chips reflect toggles immediately.
+  const eventSig = (events, id) => JSON.stringify((events || []).map(e => [
+    e.id, e.name, (e.attendees || []).some(a => a.contactId && String(a.contactId) === String(id)),
+  ]));
+  const eventsEqual = eventSig(prev.events, prevId) === eventSig(next.events, nextId);
+  return prevId === nextId && prev.onSave === next.onSave && prev.onClose === next.onClose && prev.tagOptions === next.tagOptions && prev.onSaveNote === next.onSaveNote && prev.onSaveOldEmails === next.onSaveOldEmails && prev.onSaveNickname === next.onSaveNickname && prev.onSaveReportsTo === next.onSaveReportsTo && prevMgrs === nextMgrs && companyContactsEqual && domainsEqual && eventsEqual;
 });
 
 function SearchableSelect({ options, value, onChange, placeholder = 'Select…', allowCustom = true }) {
@@ -7477,6 +7517,8 @@ export function ProspectModal({ prospect, prospects = [], onSave, onClose, isNew
             else next[contactId] = { partner, kids };
             updateSettings({ contactFamilies: next });
           }}
+          events={settings.events || []}
+          onToggleContactEvent={(eventId, c) => updateSettings({ events: toggleContactInEvents(settings.events || [], eventId, c) })}
           companyContacts={companyContacts}
           emailDomains={(fields.emailDomain || '').split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)}
           companyNames={(prospects || []).map(p => p.company).filter(Boolean)}

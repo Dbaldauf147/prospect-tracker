@@ -520,6 +520,15 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
   const [manualEmail, setManualEmail] = useState('');
   const [manualEmailTouched, setManualEmailTouched] = useState(false);
   const [manualMsg, setManualMsg] = useState('');
+  // Collapse the "Add a contact by name" panel by default so the parsed
+  // contacts table (and its sortable / filterable header) gets more
+  // vertical room. Remembered per browser.
+  const [showManualAdd, setShowManualAdd] = useState(() => {
+    try { return localStorage.getItem('bulk-add:show-manual') === '1'; } catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('bulk-add:show-manual', showManualAdd ? '1' : '0'); } catch { /* ignore */ }
+  }, [showManualAdd]);
   function applyBulkEdit() {
     const field = bulkEditField;
     const value = bulkEditValue;
@@ -2346,14 +2355,21 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
           const guessed = !manualEmailTouched && !!manualGuessedEmail;
           const inputStyle = { padding: '0.32rem 0.45rem', border: '1px solid var(--color-border)', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit', minWidth: 0 };
           return (
-            <div style={{ border: '1px solid var(--color-border)', borderRadius: 8, padding: '0.7rem 0.85rem', margin: '0.75rem 0 0.25rem', background: '#F8FAFC' }}>
-              <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--color-text-secondary)', marginBottom: '0.5rem' }}>
+            <div style={{ border: '1px solid var(--color-border)', borderRadius: 8, padding: showManualAdd ? '0.55rem 0.85rem' : '0.3rem 0.6rem', margin: '0.4rem 0 0', background: '#F8FAFC' }}>
+              <button
+                type="button"
+                onClick={() => setShowManualAdd(v => !v)}
+                style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', width: '100%', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '0.78rem', fontWeight: 700, color: 'var(--color-text-secondary)', textAlign: 'left' }}
+                title={showManualAdd ? 'Collapse' : 'Expand to add a single contact by name'}
+              >
+                <span style={{ fontSize: '0.7rem', color: '#94A3B8' }}>{showManualAdd ? '▾' : '▸'}</span>
                 Add a contact by name
-                <span style={{ fontWeight: 400, color: '#64748B', marginLeft: '0.4rem' }}>
+                <span style={{ fontWeight: 400, color: '#64748B' }}>
                   — email is guessed from the company’s recorded pattern
                 </span>
-              </div>
-              <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+              </button>
+              {showManualAdd && (<>
+              <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', alignItems: 'flex-end', marginTop: '0.5rem' }}>
                 <input style={{ ...inputStyle, flex: '1 1 110px' }} placeholder="First name"
                   value={manualEntry.firstname} onChange={e => set({ firstname: e.target.value })}
                   onKeyDown={e => { if (e.key === 'Enter') addManualContact(); }} />
@@ -2388,6 +2404,7 @@ export function AgendaView({ prospects = [], onUpdateProspect, cdmName, settings
                       ? 'No email pattern on record for that company — type the email manually, or it’ll fill in once a pattern is known.'
                       : 'Type a name + company; if the company’s email pattern is on record, the address fills in automatically.'}
               </div>
+              </>)}
             </div>
           );
         })()}
