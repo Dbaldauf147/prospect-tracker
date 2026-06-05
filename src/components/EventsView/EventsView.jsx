@@ -475,6 +475,8 @@ export function EventsView({
   // Draft text for the "Find people on LinkedIn" import box.
   const [lookupDraft, setLookupDraft] = useState('');
   const lookupFileRef = useRef(null);
+  // Active CDM filter for the lookup table ('' = show all).
+  const [cdmFilter, setCdmFilter] = useState('');
   // Company names currently being pushed to the Table View, so the
   // "+ Add" button can show progress until the prospects list updates.
   const [addingCompanies, setAddingCompanies] = useState(() => new Set());
@@ -698,6 +700,20 @@ export function EventsView({
   );
   const newLookupCount = lookups.length - lookupMatchCount;
 
+  // Distinct CDMs across the matched prospects in this lookup list, for
+  // the CDM filter dropdown. Reset the active filter when the selected
+  // event changes so a stale CDM doesn't hide every row.
+  const lookupCdms = useMemo(() => {
+    const set = new Set();
+    for (const l of lookups) {
+      const cdm = String(matchProspect(l.company)?.cdm || '').trim();
+      if (cdm) set.add(cdm);
+    }
+    return [...set].sort((a, b) => a.localeCompare(b));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lookups, prospectByCompanyKey]);
+  useEffect(() => { setCdmFilter(''); }, [selectedId]);
+
   // Unique, sorted Table View company names for the Suggested cell's
   // manual-search dropdown.
   const prospectCompanies = useMemo(() => {
@@ -865,6 +881,19 @@ export function EventsView({
           <div className={styles.sectionTitle}>
             Find people on LinkedIn
             <span className={styles.countPill}>{lookups.length}</span>
+            {lookupCdms.length > 0 && (
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', fontWeight: 600, color: 'var(--color-text-muted)' }}>
+                CDM
+                <select
+                  value={cdmFilter}
+                  onChange={e => setCdmFilter(e.target.value)}
+                  style={{ fontSize: '0.74rem', fontFamily: 'inherit', padding: '2px 4px', border: '1px solid var(--color-border)', borderRadius: 5, background: cdmFilter ? '#EFF6FF' : 'var(--color-surface)', color: 'var(--color-text)' }}
+                >
+                  <option value="">All</option>
+                  {lookupCdms.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </label>
+            )}
             {newLookupCount > 0 && (
               <button
                 type="button"
@@ -929,6 +958,9 @@ export function EventsView({
               <tbody>
                 {lookups.map((l, i) => {
                   const prospect = matchProspect(l.company);
+                  // Apply the CDM filter (kept on original index i so
+                  // edit / remove still target the right row).
+                  if (cdmFilter && String(prospect?.cdm || '').trim() !== cdmFilter) return null;
                   const suggestion = prospect ? null : suggestProspect(l.company);
                   const adding = addingCompanies.has(String(l.company || '').trim());
                   return (
