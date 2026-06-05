@@ -318,3 +318,69 @@
 .exportBtn:hover {
   background: #DBEAFE;
 }
+
+.tvLink {
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--color-accent);
+  cursor: pointer;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.tvLink:hover {
+  color: var(--color-accent-hover, #1d4ed8);
+}
+
+.tvAdd {
+  padding: 0.15rem 0.55rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: #166534;
+  background: #DCFCE7;
+  border: 1px solid #86EFAC;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.tvAdd:hover:not(:disabled) {
+  background: #BBF7D0;
+}
+
+.tvAdd:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.tvMuted {
+  color: var(--color-text-muted);
+}
+
+.cdmInput {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.25rem 0.4rem;
+  font-size: 0.78rem;
+  font-family: inherit;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--color-text);
+}
+
+.cdmInput:hover {
+  border-color: var(--color-border);
+  background: var(--color-surface);
+}
+
+.cdmInput:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  background: var(--color-surface);
+}
