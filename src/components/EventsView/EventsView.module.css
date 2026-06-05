@@ -362,6 +362,26 @@
   color: var(--color-text-muted);
 }
 
+.tvSuggest {
+  padding: 0.15rem 0.55rem;
+  font-size: 0.74rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: #92400E;
+  background: #FEF3C7;
+  border: 1px solid #FCD34D;
+  border-radius: 999px;
+  cursor: pointer;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tvSuggest:hover {
+  background: #FDE68A;
+}
+
 .cdmInput {
   width: 100%;
   box-sizing: border-box;
