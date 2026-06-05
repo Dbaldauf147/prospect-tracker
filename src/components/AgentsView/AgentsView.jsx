@@ -2076,7 +2076,10 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
     }
     const closeNotSoldBlock = closeNotSoldLines.join('\n');
 
+    const bfoPrepBlock = ['BFO Opportunity Names', ...bfoPrepOpps.map(o => o.name)].join('\n');
+
     const sections = [
+      { title: 'BFO Prep', prompt: bfoPrepPrompt, block: bfoPrepBlock },
       { title: 'Activity', prompt: aiPrompt, block: activityBlock },
       { title: 'New BFO Opp', prompt: newBfoOppPrompt, block: newBfoBlock },
       { title: 'Close Dates', prompt: closeDatesPrompt, block: closeDatesBlock },
@@ -2095,8 +2098,8 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
   }, [
     aiPrompt, newBfoOppPrompt, closeDatesPrompt, amountUpdatesPrompt,
     stageChangePrompt, closeNotSoldsPrompt, updateBfoActivityPrompt,
-    todaysOutbound, calledOpps, newBfoOpps, closeDateOpps,
-    amountUpdateOpps, stageChangeOpps, closeNotSoldOpps,
+    bfoPrepPrompt, todaysOutbound, calledOpps, newBfoOpps, closeDateOpps,
+    amountUpdateOpps, stageChangeOpps, closeNotSoldOpps, bfoPrepOpps,
   ]);
 
   const [copyAllFlash, setCopyAllFlash] = useState('');
