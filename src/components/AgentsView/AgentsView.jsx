@@ -2024,9 +2024,9 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
     }
     const activityBlock = activityLines.join('\n');
 
-    const newBfoLines = ['BFO Opportunities to Create', 'BFO Company Name | Project Name'];
+    const newBfoLines = ['BFO Opportunities to Create', 'BFO Company Name | Project Name | Product Line | Local Project Name'];
     for (const o of newBfoOpps) {
-      newBfoLines.push([o.bfoCompanyName, o.projectName].join(' | '));
+      newBfoLines.push([o.bfoCompanyName, o.projectName, o.productLine, o.localProjectName].join(' | '));
     }
     const newBfoBlock = newBfoLines.join('\n');
 
@@ -2473,12 +2473,14 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
         // Project Name in the pasted block; the rest of the fields stay
         // on the New BFO Opp table for review but are dropped from the
         // prompt to keep the AI focused.
-        const header = 'BFO Company Name | Project Name';
+        const header = 'BFO Company Name | Project Name | Product Line | Local Project Name';
         const lines = ['BFO Opportunities to Create', header];
         for (const o of newBfoOpps) {
           lines.push([
             o.bfoCompanyName,
             o.projectName,
+            o.productLine,
+            o.localProjectName,
           ].join(' | '));
         }
         const block = lines.join('\n');
