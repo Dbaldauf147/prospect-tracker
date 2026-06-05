@@ -28,6 +28,59 @@ function formatDate(iso) {
   return `${months[Number(m[2]) - 1]} ${Number(m[3])}, ${m[1]}`;
 }
 
+// LinkedIn people-search deep link for a title + company. Opening it
+// runs the search in the browser so the user can spot and connect with
+// the actual person.
+function linkedInSearchUrl(title, company) {
+  const kw = [title, company].map(s => String(s || '').trim()).filter(Boolean).join(' ');
+  return `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(kw)}`;
+}
+
+// Split one delimited line into fields, honoring double-quoted values
+// so a company like "Smith, Jones & Co" pasted from a sheet stays in
+// one cell. Tabs win over commas when both are present (sheet pastes
+// are tab-separated).
+function splitLine(line) {
+  const delim = line.includes('\t') ? '\t' : ',';
+  const out = [];
+  let cur = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (line[i + 1] === '"') { cur += '"'; i++; } else inQuotes = false;
+      } else cur += ch;
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === delim) {
+      out.push(cur); cur = '';
+    } else cur += ch;
+  }
+  out.push(cur);
+  return out.map(s => s.trim());
+}
+
+// Parse pasted / uploaded text into [{ title, company }] rows. Accepts
+// CSV or TSV with the first two columns as Title, Company; a leading
+// header row (containing "title"/"company") is skipped.
+function parseLookups(text) {
+  const lines = String(text || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const rows = [];
+  lines.forEach((line, idx) => {
+    const cells = splitLine(line);
+    const title = (cells[0] || '').trim();
+    const company = (cells[1] || '').trim();
+    if (!title && !company) return;
+    if (idx === 0) {
+      const lc = `${title} ${company}`.toLowerCase();
+      if (lc.includes('title') && (lc.includes('company') || lc.includes('account'))) return;
+    }
+    rows.push({ title, company });
+  });
+  return rows;
+}
+
 // Search box that surfaces matching HubSpot contacts and lets the user
 // add either a matched contact or a free-text manual attendee.
 function AttendeePicker({ contacts, existingIds, onAdd }) {
@@ -123,6 +176,9 @@ export function EventsView({ settings = {}, updateSettings = () => {} }) {
     [settings?.events],
   );
   const [selectedId, setSelectedId] = useState(null);
+  // Draft text for the "Find people on LinkedIn" import box.
+  const [lookupDraft, setLookupDraft] = useState('');
+  const lookupFileRef = useRef(null);
 
   // Mirror of the synced HubSpot contacts cache, refreshed when the
   // cache-updated event fires (e.g. after the Refresh contacts button).
@@ -207,6 +263,42 @@ export function EventsView({ settings = {}, updateSettings = () => {} }) {
     URL.revokeObjectURL(url);
   }
 
+  // ---- LinkedIn lookup list ----------------------------------------
+  function addLookupsFromText(text) {
+    if (!selected) return;
+    const parsed = parseLookups(text);
+    if (parsed.length === 0) return;
+    const cur = Array.isArray(selected.lookups) ? selected.lookups : [];
+    const seen = new Set(cur.map(l => `${(l.title || '').toLowerCase()}|${(l.company || '').toLowerCase()}`));
+    const merged = [...cur];
+    for (const row of parsed) {
+      const key = `${row.title.toLowerCase()}|${row.company.toLowerCase()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(row);
+    }
+    updateEvent(selected.id, { lookups: merged });
+    setLookupDraft('');
+  }
+
+  function handleLookupFile(e) {
+    const file = e.target.files && e.target.files[0];
+    if (file) file.text().then(addLookupsFromText).catch(() => {});
+    e.target.value = '';
+  }
+
+  function removeLookup(index) {
+    if (!selected) return;
+    const list = Array.isArray(selected.lookups) ? selected.lookups : [];
+    updateEvent(selected.id, { lookups: list.filter((_, i) => i !== index) });
+  }
+
+  function clearLookups() {
+    if (!selected) return;
+    if (!window.confirm('Clear the entire LinkedIn lookup list for this event?')) return;
+    updateEvent(selected.id, { lookups: [] });
+  }
+
   const existingIds = useMemo(() => {
     const set = new Set();
     for (const a of (selected?.attendees || [])) if (a.contactId) set.add(a.contactId);
@@ -214,6 +306,7 @@ export function EventsView({ settings = {}, updateSettings = () => {} }) {
   }, [selected]);
 
   const attendees = selected && Array.isArray(selected.attendees) ? selected.attendees : [];
+  const lookups = selected && Array.isArray(selected.lookups) ? selected.lookups : [];
 
   return (
     <div className={styles.wrapper}>
@@ -341,6 +434,72 @@ export function EventsView({ settings = {}, updateSettings = () => {} }) {
                     <td>{a.email || '—'}</td>
                     <td style={{ textAlign: 'right' }}>
                       <button type="button" className={styles.removeBtn} onClick={() => removeAttendee(i)}>
+                        Remove
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+
+          <div className={styles.sectionTitle}>
+            Find people on LinkedIn
+            <span className={styles.countPill}>{lookups.length}</span>
+            {lookups.length > 0 && (
+              <button type="button" className={styles.exportBtn} style={{ background: '#FEF2F2', borderColor: '#FECACA', color: '#B91C1C' }} onClick={clearLookups}>
+                Clear list
+              </button>
+            )}
+          </div>
+          <div style={{ fontSize: '0.74rem', color: 'var(--color-text-muted)', marginBottom: '0.5rem' }}>
+            Paste or upload a list of <strong>titles and company names</strong> (two columns — CSV or tab-separated). Each row gets a button that opens a LinkedIn people search for that title at that company.
+          </div>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start', marginBottom: '0.6rem', flexWrap: 'wrap' }}>
+            <textarea
+              className={styles.textarea}
+              style={{ flex: 1, minWidth: 260, boxSizing: 'border-box', minHeight: 56 }}
+              value={lookupDraft}
+              placeholder={'Title, Company\nVP Finance, Acme Corp\nHead of Sustainability, Globex'}
+              onChange={e => setLookupDraft(e.target.value)}
+            />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+              <button type="button" className={styles.newBtn} onClick={() => addLookupsFromText(lookupDraft)} disabled={!lookupDraft.trim()}>
+                Add rows
+              </button>
+              <button type="button" className={styles.exportBtn} style={{ margin: 0 }} onClick={() => lookupFileRef.current?.click()}>
+                Upload CSV
+              </button>
+              <input ref={lookupFileRef} type="file" accept=".csv,.tsv,.txt,text/csv,text/plain" style={{ display: 'none' }} onChange={handleLookupFile} />
+            </div>
+          </div>
+
+          {lookups.length > 0 && (
+            <table className={styles.attendeeTable}>
+              <thead>
+                <tr>
+                  <th>Title</th>
+                  <th>Company</th>
+                  <th aria-label="Actions" />
+                </tr>
+              </thead>
+              <tbody>
+                {lookups.map((l, i) => (
+                  <tr key={`${l.title}-${l.company}-${i}`}>
+                    <td>{l.title || '—'}</td>
+                    <td>{l.company || '—'}</td>
+                    <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      <a
+                        href={linkedInSearchUrl(l.title, l.company)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={styles.exportBtn}
+                        style={{ margin: 0, display: 'inline-block', textDecoration: 'none' }}
+                        title={`Search LinkedIn for "${[l.title, l.company].filter(Boolean).join(' at ')}"`}
+                      >
+                        🔍 LinkedIn
+                      </a>
+                      <button type="button" className={styles.removeBtn} style={{ marginLeft: 6 }} onClick={() => removeLookup(i)}>
                         Remove
                       </button>
                     </td>
