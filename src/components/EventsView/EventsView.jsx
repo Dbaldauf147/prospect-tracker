@@ -12,7 +12,31 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { attendeeFromContact, contactDisplayName } from '../../utils/eventsStore';
+import { companyDedupeKey } from '../../utils/firestoreSync';
 import styles from './EventsView.module.css';
+
+// Inline-editable CDM cell for a matched Table View prospect. Seeds
+// from the prospect's stored CDM and commits on blur / Enter, so the
+// user can edit Table View data straight from the lookup list.
+function CdmCell({ prospect, onCommit }) {
+  const [val, setVal] = useState(prospect?.cdm || '');
+  useEffect(() => { setVal(prospect?.cdm || ''); }, [prospect?.id, prospect?.cdm]);
+  if (!prospect) return <span className={styles.tvMuted}>—</span>;
+  const commit = () => {
+    const next = val.trim();
+    if (next !== String(prospect.cdm || '').trim()) onCommit(next);
+  };
+  return (
+    <input
+      className={styles.cdmInput}
+      value={val}
+      placeholder="CDM…"
+      onChange={e => setVal(e.target.value)}
+      onBlur={commit}
+      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }}
+    />
+  );
+}
 
 function newId() {
   return `evt_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -170,7 +194,15 @@ function AttendeePicker({ contacts, existingIds, onAdd }) {
   );
 }
 
-export function EventsView({ settings = {}, updateSettings = () => {} }) {
+export function EventsView({
+  settings = {},
+  updateSettings = () => {},
+  prospects = [],
+  onSelectProspect = () => {},
+  onAddProspect = () => {},
+  onUpdateProspect = () => {},
+  cdmName = '',
+}) {
   const events = useMemo(
     () => (Array.isArray(settings?.events) ? settings.events : []),
     [settings?.events],
@@ -179,6 +211,38 @@ export function EventsView({ settings = {}, updateSettings = () => {} }) {
   // Draft text for the "Find people on LinkedIn" import box.
   const [lookupDraft, setLookupDraft] = useState('');
   const lookupFileRef = useRef(null);
+  // Company names currently being pushed to the Table View, so the
+  // "+ Add" button can show progress until the prospects list updates.
+  const [addingCompanies, setAddingCompanies] = useState(() => new Set());
+
+  // Index every Table View prospect by the app's canonical company
+  // dedupe key so each lookup row can find its matching prospect the
+  // same way addProspect de-dupes (regional qualifiers respected).
+  const prospectByCompanyKey = useMemo(() => {
+    const map = new Map();
+    for (const p of (prospects || [])) {
+      const key = companyDedupeKey(p?.company);
+      if (key && !map.has(key)) map.set(key, p);
+    }
+    return map;
+  }, [prospects]);
+  const matchProspect = (company) => {
+    const key = companyDedupeKey(company);
+    return key ? (prospectByCompanyKey.get(key) || null) : null;
+  };
+
+  async function addCompanyToTableView(company) {
+    const name = String(company || '').trim();
+    if (!name) return;
+    setAddingCompanies(prev => new Set(prev).add(name));
+    try {
+      await onAddProspect({ company: name, cdm: cdmName || '' });
+    } catch (err) {
+      console.warn('Add to Table View failed', err);
+    } finally {
+      setAddingCompanies(prev => { const next = new Set(prev); next.delete(name); return next; });
+    }
+  }
 
   // Mirror of the synced HubSpot contacts cache, refreshed when the
   // cache-updated event fires (e.g. after the Refresh contacts button).
@@ -307,6 +371,11 @@ export function EventsView({ settings = {}, updateSettings = () => {} }) {
 
   const attendees = selected && Array.isArray(selected.attendees) ? selected.attendees : [];
   const lookups = selected && Array.isArray(selected.lookups) ? selected.lookups : [];
+  const lookupMatchCount = useMemo(
+    () => lookups.reduce((n, l) => n + (matchProspect(l.company) ? 1 : 0), 0),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [lookups, prospectByCompanyKey],
+  );
 
   return (
     <div className={styles.wrapper}>
@@ -453,7 +522,14 @@ export function EventsView({ settings = {}, updateSettings = () => {} }) {
             )}
           </div>
           <div style={{ fontSize: '0.74rem', color: 'var(--color-text-muted)', marginBottom: '0.5rem' }}>
-            Paste or upload a list of <strong>titles and company names</strong> (two columns — CSV or tab-separated). Each row gets a button that opens a LinkedIn people search for that title at that company.
+            Paste or upload a list of <strong>titles and company names</strong> (two columns — CSV or tab-separated). Each row gets a LinkedIn people-search button, a <strong>Table View</strong> match (click to open, or <strong>+ Add</strong> a new prospect), and an editable <strong>CDM</strong>.
+            {lookups.length > 0 && (
+              <span style={{ marginLeft: 6 }}>
+                <span style={{ color: '#166534', fontWeight: 600 }}>{lookupMatchCount} in Table View</span>
+                {' · '}
+                <span style={{ color: '#B45309', fontWeight: 600 }}>{lookups.length - lookupMatchCount} new</span>
+              </span>
+            )}
           </div>
           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start', marginBottom: '0.6rem', flexWrap: 'wrap' }}>
             <textarea
@@ -480,31 +556,62 @@ export function EventsView({ settings = {}, updateSettings = () => {} }) {
                 <tr>
                   <th>Title</th>
                   <th>Company</th>
+                  <th>Table View</th>
+                  <th style={{ width: 140 }}>CDM</th>
                   <th aria-label="Actions" />
                 </tr>
               </thead>
               <tbody>
-                {lookups.map((l, i) => (
-                  <tr key={`${l.title}-${l.company}-${i}`}>
-                    <td>{l.title || '—'}</td>
-                    <td>{l.company || '—'}</td>
-                    <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                      <a
-                        href={linkedInSearchUrl(l.title, l.company)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className={styles.exportBtn}
-                        style={{ margin: 0, display: 'inline-block', textDecoration: 'none' }}
-                        title={`Search LinkedIn for "${[l.title, l.company].filter(Boolean).join(' at ')}"`}
-                      >
-                        🔍 LinkedIn
-                      </a>
-                      <button type="button" className={styles.removeBtn} style={{ marginLeft: 6 }} onClick={() => removeLookup(i)}>
-                        Remove
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {lookups.map((l, i) => {
+                  const prospect = matchProspect(l.company);
+                  const adding = addingCompanies.has(String(l.company || '').trim());
+                  return (
+                    <tr key={`${l.title}-${l.company}-${i}`}>
+                      <td>{l.title || '—'}</td>
+                      <td>{l.company || '—'}</td>
+                      <td>
+                        {prospect ? (
+                          <button
+                            type="button"
+                            className={styles.tvLink}
+                            title={`Open "${prospect.company}" in the Table View`}
+                            onClick={() => onSelectProspect(prospect)}
+                          >
+                            {prospect.company}
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className={styles.tvAdd}
+                            disabled={adding || !String(l.company || '').trim()}
+                            onClick={() => addCompanyToTableView(l.company)}
+                            title="Add this company to the Table View as a new prospect"
+                          >
+                            {adding ? 'Adding…' : '+ Add'}
+                          </button>
+                        )}
+                      </td>
+                      <td>
+                        <CdmCell prospect={prospect} onCommit={v => onUpdateProspect(prospect.id, { cdm: v })} />
+                      </td>
+                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                        <a
+                          href={linkedInSearchUrl(l.title, l.company)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={styles.exportBtn}
+                          style={{ margin: 0, display: 'inline-block', textDecoration: 'none' }}
+                          title={`Search LinkedIn for "${[l.title, l.company].filter(Boolean).join(' at ')}"`}
+                        >
+                          🔍 LinkedIn
+                        </a>
+                        <button type="button" className={styles.removeBtn} style={{ marginLeft: 6 }} onClick={() => removeLookup(i)}>
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}

@@ -213,7 +213,15 @@ export function ContactsView({
           />
         )}
         {subtab === 'events' && (
-          <EventsView settings={settings} updateSettings={updateSettings} />
+          <EventsView
+            settings={settings}
+            updateSettings={updateSettings}
+            prospects={prospects}
+            onSelectProspect={onSelectProspect}
+            onAddProspect={onAddProspect}
+            onUpdateProspect={onUpdateProspect}
+            cdmName={cdmName}
+          />
         )}
         {subtab === 'zoominfo' && (
           <ZoomInfoView prospects={prospects} settings={settings} updateSettings={updateSettings} onAddProspect={onAddProspect} />
