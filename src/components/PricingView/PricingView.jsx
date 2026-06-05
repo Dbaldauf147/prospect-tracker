@@ -1433,6 +1433,7 @@ export function PricingView({ settings } = {}) {
   const [costEscalator, setCostEscalator] = useState(0.0385);
   const [chartTag, setChartTag] = useState(''); // selected line-item / tag for the breakdown chart
   const [chartView, setChartView] = useState('chart'); // 'chart' | 'table'
+  const [chartVisible, setChartVisible] = useState(false); // "Line item year-over-year" panel — hidden by default, user opts in via Show
   const [techDeprPct, setTechDeprPct] = useState(0.04);
   const [colVisibility, setColVisibility] = useState({}); // upper table: { [colKey]: bool, default true }
   const [summaryColWidths, setSummaryColWidths] = useState({});
@@ -1515,6 +1516,7 @@ export function PricingView({ settings } = {}) {
         if (typeof saved.costEscalator === 'number') setCostEscalator(saved.costEscalator);
         if (typeof saved.chartTag === 'string') setChartTag(saved.chartTag);
         if (saved.chartView === 'chart' || saved.chartView === 'table') setChartView(saved.chartView);
+        if (typeof saved.chartVisible === 'boolean') setChartVisible(saved.chartVisible);
         if (typeof saved.techDeprPct === 'number') setTechDeprPct(saved.techDeprPct);
         if (saved.colVisibility) setColVisibility(saved.colVisibility);
         if (saved.summaryColWidths) setSummaryColWidths(saved.summaryColWidths);
@@ -1536,9 +1538,9 @@ export function PricingView({ settings } = {}) {
   // Persist on changes (skip the first render until hydration finishes).
   useEffect(() => {
     if (!hydratedRef.current) return;
-    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, lineItemServices, termMonths, annualEscalator, costEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData };
+    const payload = { parserVersion: PARSER_VERSION, workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, lineItemServices, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData };
     dbPut(STORE, payload, KEY).catch(err => console.warn('Failed to save pricing cache:', err));
-  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, lineItemServices, termMonths, annualEscalator, costEscalator, chartTag, chartView, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData]);
+  }, [workbook, globalGmPct, overrides, activeOption, colWidths, altFees, linkedToDefaults, linkedToUnitDefaults, linkedToStartMonthDefaults, linkedToPassThroughDefaults, lineItemServices, termMonths, annualEscalator, costEscalator, chartTag, chartView, chartVisible, techDeprPct, colVisibility, summaryColWidths, summaryColVisibility, pageSubtab, optionsTabData, compareTabData, brokerFeesData, s2cTabData]);
 
   // Mirror Linked-To defaults under their dedicated key so they
   // outlive the main cache (parser-version bumps, Clear button,
@@ -1998,6 +2000,7 @@ export function PricingView({ settings } = {}) {
     if (typeof s.costEscalator === 'number') setCostEscalator(s.costEscalator);
     if (typeof s.chartTag === 'string') setChartTag(s.chartTag);
     if (s.chartView === 'chart' || s.chartView === 'table') setChartView(s.chartView);
+    if (typeof s.chartVisible === 'boolean') setChartVisible(s.chartVisible);
     if (typeof s.techDeprPct === 'number') setTechDeprPct(s.techDeprPct);
     setColVisibility(s.colVisibility || {});
     setSummaryColWidths(s.summaryColWidths || {});
@@ -2567,7 +2570,7 @@ export function PricingView({ settings } = {}) {
       parserVersion: PARSER_VERSION,
       workbook, globalGmPct, overrides, activeOption, colWidths,
       altFees, linkedToDefaults, termMonths, annualEscalator, costEscalator,
-      chartTag, chartView, techDeprPct, colVisibility,
+      chartTag, chartView, chartVisible, techDeprPct, colVisibility,
       summaryColWidths, summaryColVisibility,
     };
     const json = JSON.stringify(snapshot);
@@ -4012,33 +4015,43 @@ export function PricingView({ settings } = {}) {
                             <div className={styles.chartHeader}>
                               <h3 className={styles.summaryTitle} style={{ margin: 0 }}>Line item year-over-year</h3>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
-                                <div className={styles.viewToggle}>
-                                  <button
-                                    type="button"
-                                    className={chartView === 'chart' ? styles.viewToggleOn : styles.viewToggleBtn}
-                                    onClick={() => setChartView('chart')}
-                                  >Chart</button>
-                                  <button
-                                    type="button"
-                                    className={chartView === 'table' ? styles.viewToggleOn : styles.viewToggleBtn}
-                                    onClick={() => setChartView('table')}
-                                  >Table</button>
-                                </div>
-                                <label className={styles.chartTagLabel}>
-                                  Line item:{' '}
-                                  <select
-                                    className={styles.chartTagSelect}
-                                    value={tag}
-                                    onChange={(e) => setChartTag(e.target.value)}
-                                    disabled={tagOptions.length === 0}
-                                  >
-                                    {tagOptions.length === 0 && <option value="">(no tagged items yet)</option>}
-                                    {tagOptions.map(t => <option key={t} value={t}>{t}</option>)}
-                                  </select>
-                                </label>
+                                {chartVisible && (
+                                  <>
+                                    <div className={styles.viewToggle}>
+                                      <button
+                                        type="button"
+                                        className={chartView === 'chart' ? styles.viewToggleOn : styles.viewToggleBtn}
+                                        onClick={() => setChartView('chart')}
+                                      >Chart</button>
+                                      <button
+                                        type="button"
+                                        className={chartView === 'table' ? styles.viewToggleOn : styles.viewToggleBtn}
+                                        onClick={() => setChartView('table')}
+                                      >Table</button>
+                                    </div>
+                                    <label className={styles.chartTagLabel}>
+                                      Line item:{' '}
+                                      <select
+                                        className={styles.chartTagSelect}
+                                        value={tag}
+                                        onChange={(e) => setChartTag(e.target.value)}
+                                        disabled={tagOptions.length === 0}
+                                      >
+                                        {tagOptions.length === 0 && <option value="">(no tagged items yet)</option>}
+                                        {tagOptions.map(t => <option key={t} value={t}>{t}</option>)}
+                                      </select>
+                                    </label>
+                                  </>
+                                )}
+                                <button
+                                  type="button"
+                                  className={styles.viewToggleBtn}
+                                  onClick={() => setChartVisible(v => !v)}
+                                  title={chartVisible ? 'Hide the line item year-over-year breakdown' : 'Show the line item year-over-year breakdown'}
+                                >{chartVisible ? 'Hide' : 'Show'}</button>
                               </div>
                             </div>
-                            {tag ? (
+                            {chartVisible && (tag ? (
                               chartView === 'table' ? (
                                 <table className={styles.summaryTable}>
                                   <thead>
@@ -4092,7 +4105,7 @@ export function PricingView({ settings } = {}) {
                               <div style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)', padding: '1rem 0' }}>
                                 Tag at least one CTS row's <strong>Linked To</strong> column or fill in the <strong>Alternative Fee Structure / Schedule</strong> with an item name to populate this chart.
                               </div>
-                            )}
+                            ))}
                           </div>
                         );
                       })()}
