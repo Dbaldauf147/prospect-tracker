@@ -10,6 +10,75 @@ import { useDraftCampaignQueue, clearQueuedContacts, setQueuedContactIds } from 
 import { userLsGet, userLsSet } from '../../utils/userLs';
 import styles from './DraftEmailView.module.css';
 
+// Quill emits one <p> per line and <p><br></p> for an intentionally blank
+// line. Outlook's Word-based renderer applies its stock "Normal" paragraph
+// spacing to those bare <p> tags the moment a draft is opened and sent, which
+// silently injects a blank line between every paragraph — the body looks tight
+// in the compose window but balloons once Send round-trips it through Word's
+// HTML normaliser. To keep what-you-typed-is-what-sends we zero every
+// <p>/<li>/list margin (inline AND via a <style> block, since compose editors
+// strip one or the other depending on client) and turn Quill's empty
+// <p><br></p> markers into bare <br>s, which reliably hold a single line of
+// height. Shared by the Outlook draft (Graph API), the .eml export, and the
+// clipboard-paste paths so all three render identically.
+function buildStyledBodyHtml(pBodyHtml, { signature = '' } = {}) {
+  // Merge a `key:value` declaration into a tag's existing style="…" attrs,
+  // replacing any prior value for that key.
+  const setStyle = (attrs, key, value) => {
+    const m = /style\s*=\s*"([^"]*)"/i.exec(attrs);
+    if (m) {
+      const re = new RegExp(`${key}\\s*:[^;]*;?`, 'i');
+      const cleaned = m[1].replace(re, '').replace(/;\s*;/g, ';').replace(/^\s*;|\s*;\s*$/g, '').trim();
+      const next = (cleaned ? cleaned + ';' : '') + `${key}:${value}`;
+      return attrs.replace(/style\s*=\s*"[^"]*"/i, `style="${next}"`);
+    }
+    return `${attrs} style="${key}:${value}"`;
+  };
+  // Zero out every margin-related property Outlook honours on a block tag.
+  const zeroBlockSpacing = (attrs) => {
+    let a = setStyle(attrs || '', 'margin', '0pt');
+    a = setStyle(a, 'margin-top', '0pt');
+    a = setStyle(a, 'margin-bottom', '0pt');
+    a = setStyle(a, 'mso-margin-top-alt', '0pt');
+    a = setStyle(a, 'mso-margin-bottom-alt', '0pt');
+    return a;
+  };
+  const zeroListSpacing = (attrs) => {
+    let a = setStyle(attrs || '', 'margin', '0pt');
+    a = setStyle(a, 'padding-left', '1.5em');
+    a = setStyle(a, 'mso-margin-top-alt', '0pt');
+    a = setStyle(a, 'mso-margin-bottom-alt', '0pt');
+    return a;
+  };
+
+  let htmlContent = pBodyHtml
+    // Replace non-breaking spaces with regular spaces — pasted text often has
+    // &nbsp; for every space which prevents wrapping. First mark double spaces
+    // (e.g. after periods) to preserve them.
+    .replace(/&nbsp;&nbsp;/g, '\x00DOUBLE\x00')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\x00DOUBLE\x00/g, '&nbsp;&nbsp;')
+    // Convert empty paragraphs (Quill's <p><br></p> double-Enter markers) into
+    // a stand-alone <br>. Outlook's Word renderer collapses <p><br></p> to zero
+    // height once we've zeroed the <p> margins, which was killing the user's
+    // typed blank lines. A bare <br> always consumes a line of height.
+    .replace(/<p[^>]*>\s*(?:<br\s*\/?>\s*)*<\/p>/gi, '<br>')
+    // Force zero margins on EVERY remaining <p>: a single Enter then produces a
+    // tight line break and the standalone <br>s above are the only source of
+    // visible blank lines.
+    .replace(/<p(\s[^>]*)?>/gi, (_, a = '') => `<p${zeroBlockSpacing(a)}>`)
+    .replace(/<ul(\s[^>]*)?>/gi, (_, a = '') => `<ul${zeroListSpacing(a)}>`)
+    .replace(/<ol(\s[^>]*)?>/gi, (_, a = '') => `<ol${zeroListSpacing(a)}>`)
+    .replace(/<li(\s[^>]*)?>/gi, (_, a = '') => `<li${zeroBlockSpacing(a)}>`);
+  // Insert line breaks after closing tags — Outlook's MIME parser can misrender
+  // very long single-line HTML.
+  htmlContent = htmlContent.replace(/<\/p>/gi, '</p>\n').replace(/<\/li>/gi, '</li>\n').replace(/<\/ul>/gi, '</ul>\n').replace(/<\/ol>/gi, '</ol>\n');
+  // Signature attaches directly — no leading <br>, since every <p> in the body
+  // is now zero-margin. Visible blank lines come from the <br>s above.
+  const sigBlock = signature ? `\n<div>\n${signature}\n</div>` : '';
+  return `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">\n<head>\n<!--[if gte mso 9]><xml><w:WordDocument><w:DontHyphenate/><w:DoNotHyphenateCaps/></w:WordDocument></xml><![endif]-->\n<style>\np{margin:0pt;mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;}\nul,ol{margin:0pt;padding-left:1.5em;mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;}\nli{margin:0pt;mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;}\ndiv{mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;}\n</style>\n</head>\n<body style="margin:0;padding:0;">\n<div style="font-family:Aptos,Calibri,Arial,sans-serif;font-size:12pt;">\n${htmlContent}\n</div>${sigBlock}\n</body>\n</html>`;
+}
+
 // Pulls contacts whose notes (HubSpot's `notes` / `hs_content_membership_notes`
 // / `message` fields, plus the local-only override stored at
 // settings.contactNotes[contactId]) contain the typed text. Same UX
@@ -917,7 +986,12 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
       const allCc = [...new Set([...contactCc, ...draftCc])];
       const toAlso = toAlsoMap[c.email] || [];
       const allTo = [c.email, ...toAlso].join(';');
-      return { to: allTo, name: c.name, subject: pSubject, body: pBodyHtml, cc: allCc };
+      // Run the body through the same paragraph-spacing fix the .eml path uses
+      // (zeroed <p> margins + <p><br></p> → <br>). Without it Outlook's Word
+      // renderer adds a blank line between every paragraph on Send. No
+      // signature is appended here — Outlook adds the user's own signature when
+      // the draft is opened, so injecting one would duplicate it.
+      return { to: allTo, name: c.name, subject: pSubject, body: buildStyledBodyHtml(pBodyHtml), cc: allCc };
     });
 
     try {
@@ -1011,7 +1085,7 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
 
   function openDraftForContact(c) {
     const personalBodyHtml = personalizeForContact(body, c);
-    const styledHtml = buildStyledHtml(personalBodyHtml);
+    const styledHtml = buildStyledBodyHtml(personalBodyHtml);
     const personalBodyPlain = htmlToPlainText(personalBodyHtml);
     const personalSubject = personalizeForContact(subject, c);
     let trimmedBody = personalBodyPlain;
@@ -1106,73 +1180,10 @@ export function DraftEmailView({ prospects, settings, updateSettings }) {
       const toHeader = allTo.map((addr, j) => j === 0 ? `${c.name} <${addr}>` : `<${addr}>`).join(', ');
       const ccHeader = allCc.length > 0 ? `Cc: ${allCc.join(', ')}\r\n` : '';
 
-      // Merge a `key:value` declaration into a tag's existing style="…"
-      // attrs, replacing any prior value for that key. Used below to
-      // zero a <p>'s margin-bottom only in the spots where the user's
-      // text touches a list or the signature.
-      const setStyle = (attrs, key, value) => {
-        const m = /style\s*=\s*"([^"]*)"/i.exec(attrs);
-        if (m) {
-          const re = new RegExp(`${key}\\s*:[^;]*;?`, 'i');
-          const cleaned = m[1].replace(re, '').replace(/;\s*;/g, ';').replace(/^\s*;|\s*;\s*$/g, '').trim();
-          const next = (cleaned ? cleaned + ';' : '') + `${key}:${value}`;
-          return attrs.replace(/style\s*=\s*"[^"]*"/i, `style="${next}"`);
-        }
-        return `${attrs} style="${key}:${value}"`;
-      };
-
-      // Zero out every margin-related property Outlook honours on
-      // the given attrs string. Used on <div>s we synthesise above
-      // lists / before the signature, and on every <li> so the
-      // first/last items don't pick up Word's stock auto spacing.
-      const zeroBlockSpacing = (attrs) => {
-        let a = setStyle(attrs || '', 'margin', '0pt');
-        a = setStyle(a, 'margin-top', '0pt');
-        a = setStyle(a, 'margin-bottom', '0pt');
-        a = setStyle(a, 'mso-margin-top-alt', '0pt');
-        a = setStyle(a, 'mso-margin-bottom-alt', '0pt');
-        return a;
-      };
-      const zeroListSpacing = (attrs) => {
-        let a = setStyle(attrs || '', 'margin', '0pt');
-        a = setStyle(a, 'padding-left', '1.5em');
-        a = setStyle(a, 'mso-margin-top-alt', '0pt');
-        a = setStyle(a, 'mso-margin-bottom-alt', '0pt');
-        return a;
-      };
-
-      let htmlContent = pBodyHtml
-        // Replace non-breaking spaces with regular spaces — pasted text often has &nbsp; for every space which prevents wrapping
-        // First, mark double spaces (e.g. after periods) to preserve them
-        .replace(/&nbsp;&nbsp;/g, '\x00DOUBLE\x00')
-        .replace(/&nbsp;/g, ' ')
-        .replace(/\x00DOUBLE\x00/g, '&nbsp;&nbsp;')
-        // Convert empty paragraphs (Quill's <p><br></p> double-Enter
-        // markers) into a stand-alone <br>. Outlook's Word renderer
-        // collapses <p><br></p> to zero height once we've zeroed the
-        // <p> margins, which was killing the user's typed blank
-        // lines. A bare <br> always consumes a line of height, so
-        // double Enter reliably shows a visible blank line again.
-        .replace(/<p[^>]*>\s*(?:<br\s*\/?>\s*)*<\/p>/gi, '<br>')
-        // Force zero margins on EVERY remaining <p>. With <p> margins
-        // at 0pt, a single Enter produces a tight line break (line2
-        // sits directly under line1, no auto Normal-style gap), and
-        // the standalone <br>s synthesised above are the only source
-        // of visible blank lines.
-        .replace(/<p(\s[^>]*)?>/gi, (_, a = '') => `<p${zeroBlockSpacing(a)}>`)
-        // Lists themselves so they sit flush.
-        .replace(/<ul(\s[^>]*)?>/gi, (_, a = '') => `<ul${zeroListSpacing(a)}>`)
-        .replace(/<ol(\s[^>]*)?>/gi, (_, a = '') => `<ol${zeroListSpacing(a)}>`)
-        // And every <li> — Word's stock auto top spacing would
-        // otherwise re-introduce a gap on the first item.
-        .replace(/<li(\s[^>]*)?>/gi, (_, a = '') => `<li${zeroBlockSpacing(a)}>`);
-      // Insert line breaks after closing tags — Outlook's MIME parser can misrender very long single-line HTML
-      htmlContent = htmlContent.replace(/<\/p>/gi, '</p>\n').replace(/<\/li>/gi, '</li>\n').replace(/<\/ul>/gi, '</ul>\n').replace(/<\/ol>/gi, '</ol>\n');
-      // Signature attaches directly — no leading <br>, since every
-      // <p> in the body is now zero-margin. Visible blank lines
-      // come from <p><br></p> blocks the user typed.
-      const sigBlock = signature ? `\n<div>\n${signature}\n</div>` : '';
-      htmlContent = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">\n<head>\n<!--[if gte mso 9]><xml><w:WordDocument><w:DontHyphenate/><w:DoNotHyphenateCaps/></w:WordDocument></xml><![endif]-->\n<style>\np{margin:0pt;mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;}\nul,ol{margin:0pt;padding-left:1.5em;mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;}\nli{margin:0pt;mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;}\ndiv{mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;}\n</style>\n</head>\n<body style="margin:0;padding:0;">\n<div style="font-family:Aptos,Calibri,Arial,sans-serif;font-size:12pt;">\n${htmlContent}\n</div>${sigBlock}\n</body>\n</html>`;
+      // Same paragraph-spacing fix as the Outlook draft path, plus the
+      // signature block (the .eml is opened/sent as-is, so it carries its own
+      // signature rather than relying on Outlook to add one).
+      const htmlContent = buildStyledBodyHtml(pBodyHtml, { signature });
 
       let eml;
       if (attachments.length > 0) {
