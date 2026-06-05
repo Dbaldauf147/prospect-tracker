@@ -10,6 +10,7 @@
 // notes, and the other Contacts-page settings do.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { attendeeFromContact, contactDisplayName } from '../../utils/eventsStore';
 import { companyDedupeKey } from '../../utils/firestoreSync';
@@ -53,6 +54,82 @@ function CdmCell({ prospect, onCommit }) {
       onBlur={commit}
       onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }}
     />
+  );
+}
+
+// Suggested-company cell for an unmatched lookup row. Surfaces the fuzzy
+// match (if any, and not rejected) with actions to Use it (rewrite the
+// row's company to the canonical Table View name), Reject it, or open a
+// predictive search over every Table View company to pick a different
+// mapping. Kept narrow — the name wraps instead of stretching the column.
+function SuggestedCell({ rejected, suggestion, prospectCompanies, onAccept, onReject }) {
+  const [searching, setSearching] = useState(false);
+  const [query, setQuery] = useState('');
+  const wrapRef = useRef(null);
+
+  useEffect(() => {
+    if (!searching) return;
+    function onDown(e) { if (!wrapRef.current?.contains(e.target)) { setSearching(false); setQuery(''); } }
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [searching]);
+
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    const pre = [];
+    const sub = [];
+    for (const name of prospectCompanies) {
+      const n = name.toLowerCase();
+      if (n.startsWith(q)) pre.push(name);
+      else if (n.includes(q)) sub.push(name);
+      if (pre.length + sub.length >= 40) break;
+    }
+    return [...pre, ...sub].slice(0, 20);
+  }, [query, prospectCompanies]);
+
+  const showSuggestion = suggestion && !rejected;
+  const pick = (name) => { onAccept(name); setSearching(false); setQuery(''); };
+
+  return (
+    <div ref={wrapRef} style={{ position: 'relative' }}>
+      {showSuggestion ? (
+        <>
+          <span className={styles.suggestName} title={suggestion.company}>≈ {suggestion.company}</span>
+          <div className={styles.suggestBtns}>
+            <button type="button" className={styles.suggestUse} onClick={() => pick(suggestion.company)} title="Use this name — rewrites this row's company to the Table View name">✓ Use</button>
+            <button type="button" className={styles.suggestReject} onClick={onReject} title="Reject this suggestion">✕</button>
+            <button type="button" className={styles.suggestSearchBtn} onClick={() => setSearching(s => !s)} title="Search for a different company">🔍</button>
+          </div>
+        </>
+      ) : (
+        <button type="button" className={styles.suggestSearchBtn} onClick={() => setSearching(true)} title="Search Table View companies to map this row">🔍 Search</button>
+      )}
+      {searching && (
+        <div className={styles.dropdown} style={{ minWidth: 220 }}>
+          <div style={{ padding: '0.3rem 0.4rem', borderBottom: '1px solid var(--color-border)' }}>
+            <input
+              autoFocus
+              value={query}
+              placeholder="Search Table View companies…"
+              onChange={e => setQuery(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && matches[0]) { e.preventDefault(); pick(matches[0]); }
+                else if (e.key === 'Escape') { setSearching(false); setQuery(''); }
+              }}
+              style={{ width: '100%', boxSizing: 'border-box', fontSize: '0.76rem', padding: '4px 6px', fontFamily: 'inherit', border: '1px solid var(--color-border)', borderRadius: 4 }}
+            />
+          </div>
+          {query.trim() && matches.length === 0 ? (
+            <div style={{ padding: '0.5rem 0.6rem', fontSize: '0.74rem', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>No Table View company matches.</div>
+          ) : matches.map(name => (
+            <button key={name} type="button" className={styles.option} onClick={() => pick(name)}>
+              <div className={styles.optionName}>{name}</div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -225,25 +302,20 @@ function AttendeePicker({ contacts, existingIds, onAdd }) {
   );
 }
 
-// Per-row contact picker scoped to one company — the same flow as the
-// Opps 2 page's "+ Add from <company>": predictive search across the
-// HubSpot contacts already on file for that company, with a manual-add
-// fallback when nobody matches. Adding a contact drops them into the
-// event's attendee list.
-function RowContactAdder({ company, title, contacts, attendees, onAdd }) {
+// Modal roster picker for one company — the Opps 2 "+ Add from
+// <company>" flow as a popup: search the HubSpot contacts on file for
+// that company, toggle them on/off the attendee list, or add someone
+// manually when nobody matches. Rendered in a portal so it isn't
+// clipped by the table's scroll container.
+function ContactPickerModal({ company, title, contacts, attendees, onAdd, onRemove, onClose }) {
   const [query, setQuery] = useState('');
-  const [open, setOpen] = useState(false);
-  const wrapRef = useRef(null);
 
   useEffect(() => {
-    if (!open) return;
-    function onDown(e) { if (!wrapRef.current?.contains(e.target)) setOpen(false); }
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [open]);
+    function onKey(e) { if (e.key === 'Escape') onClose(); }
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
 
-  // Contacts whose HubSpot company matches this row's company, matched
-  // on the normalized name so suffix / casing drift doesn't hide them.
   const companyNorm = useMemo(() => normalizeCompany(company), [company]);
   const roster = useMemo(() => {
     if (!companyNorm) return [];
@@ -256,22 +328,20 @@ function RowContactAdder({ company, title, contacts, attendees, onAdd }) {
     return out;
   }, [contacts, companyNorm]);
 
-  // Names / ids already on the attendee list, so options show a ✓.
-  const added = useMemo(() => {
-    const ids = new Set();
-    const names = new Set();
+  const addedAtt = useMemo(() => {
+    const byId = new Map();
+    const byName = new Map();
     for (const a of (attendees || [])) {
-      if (a.contactId) ids.add(String(a.contactId));
-      names.add(String(a.name || '').toLowerCase());
+      if (a.contactId) byId.set(String(a.contactId), a);
+      byName.set(String(a.name || '').toLowerCase(), a);
     }
-    return { ids, names };
+    return { byId, byName };
   }, [attendees]);
-  const isAdded = (c) => added.ids.has(String(c.id || c.vid || '')) || added.names.has(contactDisplayName(c).toLowerCase());
+  const attendeeFor = (c) => addedAtt.byId.get(String(c.id || c.vid || '')) || addedAtt.byName.get(contactDisplayName(c).toLowerCase()) || null;
 
-  // Prefix-then-substring predictive match (same ranking as Opps 2).
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return roster.slice(0, 8);
+    if (!q) return roster;
     const pre = [];
     const sub = [];
     for (const c of roster) {
@@ -280,57 +350,109 @@ function RowContactAdder({ company, title, contacts, attendees, onAdd }) {
       if (name.startsWith(q)) pre.push(c);
       else if (name.includes(q) || email.includes(q)) sub.push(c);
     }
-    return [...pre, ...sub].slice(0, 12);
+    return [...pre, ...sub];
   }, [roster, query]);
 
-  function addContact(c) { onAdd(attendeeFromContact(c)); setQuery(''); setOpen(false); }
   function addManual() {
     const name = query.trim();
     if (!name) return;
     onAdd({ contactId: '', name, email: '', company: company || '', title: title || '' });
     setQuery('');
-    setOpen(false);
   }
 
-  return (
-    <div className={styles.picker} ref={wrapRef} style={{ minWidth: 170 }}>
-      <input
-        className={styles.cdmInput}
-        style={{ border: '1px solid var(--color-border)' }}
-        value={query}
-        placeholder="Add contact…"
-        onChange={e => { setQuery(e.target.value); setOpen(true); }}
-        onFocus={() => setOpen(true)}
-        onKeyDown={e => {
-          if (e.key === 'Enter') { e.preventDefault(); if (matches[0]) addContact(matches[0]); else addManual(); }
-          else if (e.key === 'Escape') setOpen(false);
-        }}
-      />
-      {open && (
-        <div className={styles.dropdown} style={{ minWidth: 240 }}>
-          {matches.map(c => {
-            const tagged = isAdded(c);
+  return createPortal(
+    <div className={styles.modalOverlay} onMouseDown={onClose}>
+      <div className={styles.modalPanel} onMouseDown={e => e.stopPropagation()}>
+        <div className={styles.modalHeader}>
+          <span>Add contacts from <strong>{company || 'this company'}</strong></span>
+          <button type="button" className={styles.modalClose} onClick={onClose} aria-label="Close">×</button>
+        </div>
+        <div style={{ padding: '0.6rem 0.8rem' }}>
+          <input
+            autoFocus
+            className={styles.input}
+            style={{ width: '100%', boxSizing: 'border-box' }}
+            value={query}
+            placeholder="Filter or type a name to add manually…"
+            onChange={e => setQuery(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && matches.length === 0) { e.preventDefault(); addManual(); } }}
+          />
+        </div>
+        <div className={styles.modalList}>
+          {matches.length === 0 ? (
+            <div style={{ padding: '0.6rem 0.8rem', color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>
+              {roster.length === 0
+                ? 'No HubSpot contacts on file for this company yet.'
+                : 'No contacts match your filter.'}
+              {query.trim() && (
+                <button type="button" className={styles.modalManualBtn} onClick={addManual}>
+                  + Add "{query.trim()}" manually
+                </button>
+              )}
+            </div>
+          ) : matches.map(c => {
+            const att = attendeeFor(c);
             return (
-              <button key={String(c.id || c.vid)} type="button" className={styles.option} onClick={() => addContact(c)}>
-                <div className={styles.optionName}>
-                  {contactDisplayName(c)}{tagged && <span style={{ color: '#15803D', marginLeft: 6 }}>✓</span>}
-                </div>
-                <div className={styles.optionMeta}>
-                  {[c.jobtitle, c.email].filter(Boolean).join(' · ') || '—'}
-                </div>
+              <button
+                key={String(c.id || c.vid)}
+                type="button"
+                className={styles.modalRow}
+                onClick={() => (att ? onRemove(att) : onAdd(attendeeFromContact(c)))}
+              >
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <div className={styles.optionName}>{contactDisplayName(c)}</div>
+                  <div className={styles.optionMeta}>{[c.jobtitle, c.email].filter(Boolean).join(' · ') || '—'}</div>
+                </span>
+                <span className={att ? styles.modalTagged : styles.modalAddTag}>{att ? '✓ Added' : '+ Add'}</span>
               </button>
             );
           })}
-          {query.trim() ? (
-            <button type="button" className={`${styles.option} ${styles.addManual}`} onClick={addManual}>
-              + Add "{query.trim()}" manually
-            </button>
-          ) : matches.length === 0 ? (
-            <div style={{ padding: '0.5rem 0.7rem', fontSize: '0.74rem', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
-              No contacts on file for this company. Type a name to add them manually.
-            </div>
-          ) : null}
         </div>
+        {query.trim() && matches.length > 0 && (
+          <button type="button" className={styles.modalManualBtn} style={{ margin: '0 0.8rem 0.7rem' }} onClick={addManual}>
+            + Add "{query.trim()}" as a manual contact
+          </button>
+        )}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+// Per-row Add Contact cell: shows the contacts already added for this
+// company as removable chips, plus a button that opens the roster popup.
+function RowContactAdder({ company, title, contacts, attendees, onAdd, onRemove }) {
+  const [open, setOpen] = useState(false);
+
+  // Attendees attributed to this row's company, surfaced inline so the
+  // user can see who they've added without opening the popup.
+  const companyNorm = useMemo(() => normalizeCompany(company), [company]);
+  const addedHere = useMemo(() => {
+    if (!companyNorm) return [];
+    return (attendees || []).filter(a => normalizeCompany(a.company) === companyNorm);
+  }, [attendees, companyNorm]);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
+      {addedHere.map((a, idx) => (
+        <span key={`${a.contactId || a.name}-${idx}`} className={styles.contactChip} title={a.email || a.name}>
+          {a.name}
+          <button type="button" onClick={() => onRemove(a)} aria-label={`Remove ${a.name}`}>×</button>
+        </span>
+      ))}
+      <button type="button" className={styles.addContactBtn} onClick={() => setOpen(true)}>
+        + Add contact
+      </button>
+      {open && (
+        <ContactPickerModal
+          company={company}
+          title={title}
+          contacts={contacts}
+          attendees={attendees}
+          onAdd={onAdd}
+          onRemove={onRemove}
+          onClose={() => setOpen(false)}
+        />
       )}
     </div>
   );
@@ -486,6 +608,17 @@ export function EventsView({
     updateEvent(selected.id, { attendees: list.filter((_, i) => i !== index) });
   }
 
+  // Remove an attendee by reference (HubSpot id when present, else
+  // name + company) — used by the per-row Add Contact chips / popup.
+  function removeAttendeeObj(att) {
+    if (!selected) return;
+    const list = Array.isArray(selected.attendees) ? selected.attendees : [];
+    const next = list.filter(a => att.contactId
+      ? String(a.contactId) !== String(att.contactId)
+      : !(!a.contactId && a.name === att.name && (a.company || '') === (att.company || '')));
+    updateEvent(selected.id, { attendees: next });
+  }
+
   function exportAttendeesCsv() {
     if (!selected) return;
     const list = Array.isArray(selected.attendees) ? selected.attendees : [];
@@ -538,6 +671,12 @@ export function EventsView({
     updateEvent(selected.id, { lookups: list.filter((_, i) => i !== index) });
   }
 
+  function updateLookup(index, patch) {
+    if (!selected) return;
+    const list = Array.isArray(selected.lookups) ? selected.lookups : [];
+    updateEvent(selected.id, { lookups: list.map((r, i) => (i === index ? { ...r, ...patch } : r)) });
+  }
+
   function clearLookups() {
     if (!selected) return;
     if (!window.confirm('Clear the entire LinkedIn lookup list for this event?')) return;
@@ -558,6 +697,17 @@ export function EventsView({
     [lookups, prospectByCompanyKey],
   );
   const newLookupCount = lookups.length - lookupMatchCount;
+
+  // Unique, sorted Table View company names for the Suggested cell's
+  // manual-search dropdown.
+  const prospectCompanies = useMemo(() => {
+    const set = new Set();
+    for (const p of (prospects || [])) {
+      const c = String(p?.company || '').trim();
+      if (c) set.add(c);
+    }
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [prospects]);
 
   // Push every lookup company that isn't yet in the Table View, in one
   // go. De-duped (case-insensitive) so a company listed twice is only
@@ -769,7 +919,7 @@ export function EventsView({
                   <th>Title</th>
                   <th>Company</th>
                   <th>Table View</th>
-                  <th>Suggested</th>
+                  <th style={{ width: 190 }}>Suggested</th>
                   <th style={{ width: 150 }}>Type</th>
                   <th style={{ width: 140 }}>CDM</th>
                   <th style={{ width: 180 }}>Add Contact</th>
@@ -807,20 +957,17 @@ export function EventsView({
                           </button>
                         )}
                       </td>
-                      <td>
+                      <td style={{ verticalAlign: 'top' }}>
                         {prospect ? (
                           <span className={styles.tvMuted}>—</span>
-                        ) : suggestion ? (
-                          <button
-                            type="button"
-                            className={styles.tvSuggest}
-                            title={`Fuzzy match — open "${suggestion.company}" in the Table View`}
-                            onClick={() => onSelectProspect(suggestion)}
-                          >
-                            ≈ {suggestion.company}
-                          </button>
                         ) : (
-                          <span className={styles.tvMuted}>—</span>
+                          <SuggestedCell
+                            rejected={!!l.suggestRejected}
+                            suggestion={suggestion}
+                            prospectCompanies={prospectCompanies}
+                            onAccept={company => updateLookup(i, { company, suggestRejected: false })}
+                            onReject={() => updateLookup(i, { suggestRejected: true })}
+                          />
                         )}
                       </td>
                       <td>
@@ -836,6 +983,7 @@ export function EventsView({
                           contacts={contacts}
                           attendees={attendees}
                           onAdd={addAttendee}
+                          onRemove={removeAttendeeObj}
                         />
                       </td>
                       <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
