@@ -1399,9 +1399,24 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
         const account = override?.account || matchedOpp?.account || '';
         const bfoOpp = override?.bfoOpp || matchedOpp?.bfoOpp || '';
         const company = account || hubspotCompany || domainCompanyGuess(recipients[0]);
-        // Look up the full opp record by name so manual overrides
-        // pick up the same URL / Next Steps fields the auto-match has.
-        const oppForRow = bfoOpp ? oppIndex.byBfoOpp.get(bfoOpp.toLowerCase()) : matchedOpp;
+        // Resolve the full opp record for this row's BFO URL / Next
+        // Steps. Prefer a manual override's named opp, else the opp we
+        // actually matched. Re-looking an auto-match up by name (the old
+        // behavior) could land on a *different* record that shares the
+        // BFO Opportunity Name — e.g. a duplicate that has no BFO Address
+        // — which dropped the BFO Link even though the real opp has one.
+        let oppForRow = override?.bfoOpp
+          ? oppIndex.byBfoOpp.get(override.bfoOpp.toLowerCase())
+          : matchedOpp;
+        // If the chosen record has no BFO Address but another opp with
+        // the same BFO Opportunity Name does, use that one for the link.
+        if (bfoOpp && !detectBfoUrl(oppForRow?.raw)) {
+          const key = bfoOpp.toLowerCase();
+          const withUrl = oppIndex.allOpps.find(
+            o => o.bfoOpp && o.bfoOpp.toLowerCase() === key && detectBfoUrl(o.raw),
+          );
+          if (withUrl) oppForRow = withUrl;
+        }
         const bfoUrl = detectBfoUrl(oppForRow?.raw);
         const nextStepsType = detectNextStepsType(oppForRow?.raw);
         return {
