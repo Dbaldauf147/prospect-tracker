@@ -605,6 +605,18 @@ export function EventsView({
     updateEvent(selected.id, { attendees: [...list, attendee] });
   }
 
+  // Add an attendee from a lookup row and drop that row from the lookup
+  // table in the same write — both touch selected.events, so doing them
+  // as one updateEvent avoids the second call clobbering the first.
+  function addAttendeeFromLookup(attendee, lookupIndex) {
+    if (!selected) return;
+    const list = Array.isArray(selected.attendees) ? selected.attendees : [];
+    const nextAttendees = attendeeExists(list, attendee) ? list : [...list, attendee];
+    const curLookups = Array.isArray(selected.lookups) ? selected.lookups : [];
+    const nextLookups = curLookups.filter((_, i) => i !== lookupIndex);
+    updateEvent(selected.id, { attendees: nextAttendees, lookups: nextLookups });
+  }
+
   function removeAttendee(index) {
     if (!selected) return;
     const list = Array.isArray(selected.attendees) ? selected.attendees : [];
@@ -1053,7 +1065,7 @@ export function EventsView({
                           title={l.title}
                           contacts={searchableContacts}
                           attendees={attendees}
-                          onAdd={addAttendee}
+                          onAdd={att => addAttendeeFromLookup(att, i)}
                           onRemove={removeAttendeeObj}
                         />
                       </td>
