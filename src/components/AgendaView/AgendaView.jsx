@@ -47,6 +47,10 @@ const HEADER_MATCH_RULES = [
   ['country',                 ['country']],
   ['company',                 ['accountname', 'companyname', 'organization', 'company', 'account']],
   ['dans_tags',               ['danstags', 'tags']],
+  // Full Name last: every more-specific name-ish header (First/Last/Company
+  // Name, etc.) is claimed by an earlier rule first, so this only catches a
+  // single combined-name column like "Full Name" / "Contact Name" / "Name".
+  ['fullName',                ['fullname', 'fullcontactname', 'contactfullname', 'contactname', 'employeefullname', 'employeename', 'personname', 'displayname', 'name']],
 ];
 
 // Headers that should never be auto-mapped, even if a rule pattern
@@ -72,6 +76,7 @@ const FIELD_OPTIONS = [
   { key: 'email',                    label: 'Email (required)' },
   { key: 'firstname',                label: 'First Name' },
   { key: 'lastname',                 label: 'Last Name' },
+  { key: 'fullName',                 label: 'Full Name (splits to First / Last)' },
   { key: 'company',                  label: 'Company' },
   { key: 'phone',                    label: 'Work Phone Number' },
   { key: 'mobilePhone',              label: 'Cell Phone Number' },
@@ -129,9 +134,21 @@ function applyMappingToRows(rawRows, mapping) {
       city: '', state: '', country: '', dans_tags: '',
     };
     for (const f of PROSPECT_BACKFILL_FIELDS) out1[`_upload_${f.key}`] = '';
+    let fullName = '';
     for (const [src, dst] of Object.entries(mapping)) {
       if (!dst) continue;
-      out1[dst] = String(r[src] ?? '').trim();
+      const val = String(r[src] ?? '').trim();
+      // Full Name is a composite — capture it and split below rather than
+      // writing it to a real row field.
+      if (dst === 'fullName') { fullName = val; continue; }
+      out1[dst] = val;
+    }
+    // Split a mapped Full Name into first/last (handles "Last, First" too),
+    // but let explicitly-mapped First/Last columns win when both are present.
+    if (fullName && !out1.firstname && !out1.lastname) {
+      const { firstname, lastname } = splitFullName(fullName);
+      out1.firstname = firstname;
+      out1.lastname = lastname;
     }
     if (!out1.email) continue;
     out1.email = out1.email.toLowerCase();
