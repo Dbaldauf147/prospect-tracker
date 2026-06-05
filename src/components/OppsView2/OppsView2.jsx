@@ -210,6 +210,27 @@ function formatQuotedAmount(raw) {
   return fmtMoneyWhole(Math.round(n));
 }
 
+// Live-format the Amount field as the user types in the Quoted Amount
+// popup, so the "$" and thousands separators appear on the fly (e.g.
+// typing "25000" shows "$25,000"). Keeps a trailing decimal point and
+// cents the user is mid-entering. Non-numeric free text (e.g. "TBD") is
+// passed through untouched so legacy values stay editable.
+function formatQuotedAmountLive(raw) {
+  const s = String(raw ?? '');
+  if (!s.trim()) return '';
+  // Keep only digits and decimal points; drop "$", commas, spaces, etc.
+  const cleaned = s.replace(/[^0-9.]/g, '');
+  if (cleaned === '') return s.trim(); // free text like "TBD" — leave it
+  const firstDot = cleaned.indexOf('.');
+  const hasDot = firstDot !== -1;
+  let intPart = hasDot ? cleaned.slice(0, firstDot) : cleaned;
+  // Collapse any extra decimal points and cap cents at two digits.
+  const decPart = hasDot ? cleaned.slice(firstDot + 1).replace(/\./g, '').slice(0, 2) : '';
+  intPart = intPart.replace(/^0+(?=\d)/, ''); // trim leading zeros
+  const withCommas = (intPart || '0').replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return `$${withCommas}${hasDot ? `.${decPart}` : ''}`;
+}
+
 function makeBlankOpp(id, headers, accountOverride, sourceOverride) {
   const row = { _id: id, id, _rowUpdatedAt: Date.now() }; // id mirrored so DataTable's row key stays stable across edits
   const cols = (Array.isArray(headers) && headers.length) ? headers : DEFAULT_HEADERS;
@@ -971,7 +992,7 @@ function QuotedAmountCell({ value, onChange, snapshot, onViewSnapshot, url, onCh
                 autoFocus
                 type="text"
                 value={draftAmount}
-                onChange={(e) => setDraftAmount(e.target.value)}
+                onChange={(e) => setDraftAmount(formatQuotedAmountLive(e.target.value))}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') { e.preventDefault(); save(); }
                   else if (e.key === 'Escape') { e.preventDefault(); closePopup(); }
