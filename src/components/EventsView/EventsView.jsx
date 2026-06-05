@@ -150,6 +150,17 @@ function normalizeCompany(s) {
     .trim();
 }
 
+// Convert a search-list entry to a stored attendee. Manually-created
+// pseudo-contacts (flagged `_manual`) are saved back as manual
+// attendees (no contactId) so they de-dupe by name against the original
+// rather than minting a parallel id-bearing copy.
+function contactToAttendee(c) {
+  if (c && c._manual) {
+    return { contactId: '', name: contactDisplayName(c), email: c.email || '', company: c.company || '', title: c.jobtitle || '' };
+  }
+  return attendeeFromContact(c);
+}
+
 function formatDate(iso) {
   if (!iso) return '';
   // iso is a yyyy-mm-dd string from <input type="date">. Render it
@@ -242,7 +253,7 @@ function AttendeePicker({ contacts, existingIds, onAdd }) {
   }, [query, contacts, existingIds]);
 
   function addContact(c) {
-    onAdd(attendeeFromContact(c));
+    onAdd(contactToAttendee(c));
     setQuery('');
     setOpen(false);
   }
@@ -397,7 +408,7 @@ function ContactPickerModal({ company, title, contacts, attendees, onAdd, onRemo
                 key={String(c.id || c.vid)}
                 type="button"
                 className={styles.modalRow}
-                onClick={() => (att ? onRemove(att) : onAdd(attendeeFromContact(c)))}
+                onClick={() => (att ? onRemove(att) : onAdd(contactToAttendee(c)))}
               >
                 <span style={{ flex: 1, minWidth: 0 }}>
                   <div className={styles.optionName}>{contactDisplayName(c)}</div>
@@ -593,15 +604,30 @@ export function EventsView({
     saveEvents(events.filter(e => e.id !== id));
   }
 
+  function attendeeExists(list, attendee) {
+    return attendee.contactId
+      ? list.some(a => a.contactId && a.contactId === attendee.contactId)
+      : list.some(a => !a.contactId && a.name.toLowerCase() === attendee.name.toLowerCase());
+  }
+
   function addAttendee(attendee) {
     if (!selected) return;
     // De-dupe HubSpot contacts by id; manual attendees by lowercased name.
     const list = Array.isArray(selected.attendees) ? selected.attendees : [];
-    const dup = attendee.contactId
-      ? list.some(a => a.contactId && a.contactId === attendee.contactId)
-      : list.some(a => !a.contactId && a.name.toLowerCase() === attendee.name.toLowerCase());
-    if (dup) return;
+    if (attendeeExists(list, attendee)) return;
     updateEvent(selected.id, { attendees: [...list, attendee] });
+  }
+
+  // Add an attendee from a lookup row and drop that row from the lookup
+  // table in the same write — both touch selected.events, so doing them
+  // as one updateEvent avoids the second call clobbering the first.
+  function addAttendeeFromLookup(attendee, lookupIndex) {
+    if (!selected) return;
+    const list = Array.isArray(selected.attendees) ? selected.attendees : [];
+    const nextAttendees = attendeeExists(list, attendee) ? list : [...list, attendee];
+    const curLookups = Array.isArray(selected.lookups) ? selected.lookups : [];
+    const nextLookups = curLookups.filter((_, i) => i !== lookupIndex);
+    updateEvent(selected.id, { attendees: nextAttendees, lookups: nextLookups });
   }
 
   function removeAttendee(index) {
@@ -690,6 +716,26 @@ export function EventsView({
     for (const a of (selected?.attendees || [])) if (a.contactId) set.add(a.contactId);
     return set;
   }, [selected]);
+
+  // Manually-added contacts (no contactId) harvested from every event's
+  // attendee list, shaped like HubSpot contacts so they surface in the
+  // contact search / roster lists. Flagged `_manual` so adding one saves
+  // it back as a manual attendee instead of a synthetic id-bearing copy.
+  const manualContacts = useMemo(() => {
+    const byKey = new Map();
+    for (const ev of events) {
+      for (const a of (ev.attendees || [])) {
+        if (a.contactId) continue;
+        const name = String(a.name || '').trim();
+        if (!name) continue;
+        const key = `manual:${name.toLowerCase()}|${String(a.company || '').toLowerCase()}`;
+        if (byKey.has(key)) continue;
+        byKey.set(key, { id: key, firstname: name, lastname: '', email: a.email || '', company: a.company || '', jobtitle: a.title || '', _manual: true });
+      }
+    }
+    return [...byKey.values()];
+  }, [events]);
+  const searchableContacts = useMemo(() => [...manualContacts, ...contacts], [manualContacts, contacts]);
 
   const attendees = selected && Array.isArray(selected.attendees) ? selected.attendees : [];
   const lookups = selected && Array.isArray(selected.lookups) ? selected.lookups : [];
@@ -836,7 +882,7 @@ export function EventsView({
             )}
           </div>
 
-          <AttendeePicker contacts={contacts} existingIds={existingIds} onAdd={addAttendee} />
+          <AttendeePicker contacts={searchableContacts} existingIds={existingIds} onAdd={addAttendee} />
 
           {attendees.length === 0 ? (
             <div className={styles.emptyAttendees}>
@@ -1012,9 +1058,9 @@ export function EventsView({
                         <RowContactAdder
                           company={l.company}
                           title={l.title}
-                          contacts={contacts}
+                          contacts={searchableContacts}
                           attendees={attendees}
-                          onAdd={addAttendee}
+                          onAdd={att => addAttendeeFromLookup(att, i)}
                           onRemove={removeAttendeeObj}
                         />
                       </td>
