@@ -562,6 +562,41 @@ function parseIsoDate(iso) {
   return new Date(y, m - 1, d);
 }
 
+// Whole calendar days from today to an ISO/parseable date (negative when
+// the date is in the past). Mirrors Opps 2's daysFromToday so a Call In
+// resolved here matches what the Opps 2 tab shows.
+function daysFromTodayAgents(rawISO) {
+  const iso = toISODate(rawISO);
+  if (!iso) return null;
+  const [y, m, d] = iso.split('-').map(n => parseInt(n, 10));
+  const target = new Date(y, m - 1, d);
+  target.setHours(0, 0, 0, 0);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Math.round((target - today) / 86400000);
+}
+
+// Resolve an opp's Call In the way Opps 2 does: a blank sentinel stored
+// under "Call In" means "no call in"; otherwise compute live from the
+// Follow Up date; otherwise fall back to a stored numeric Call In.
+// Returns null when there's no resolvable value (i.e. Call In is blank).
+function resolveOppCallIn(row) {
+  if (row && 'Call In' in row) {
+    const s = String(row['Call In'] ?? '').trim().toLowerCase();
+    if (s === '' || s === '-' || s === '#n/a' || s === 'n/a') return null;
+  }
+  const live = daysFromTodayAgents(row?.['Follow Up']);
+  if (live != null) return live;
+  if (row && 'Call In' in row) {
+    const n = parseFloat(String(row['Call In'] ?? '').replace(/[,$%]/g, ''));
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+// Stages that mean the opp is closed (no longer live).
+const CLOSED_OPP_STAGES = new Set(['sold', 'not sold']);
+
 function boundsForDate(iso) {
   const d = parseIsoDate(iso);
   const start = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
@@ -1892,9 +1927,10 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
     return rows;
   }, [oppsCache, bfoActivity]);
 
-  // AI BFO Prep — Opps 2 opps that have a BFO Opportunity Name (BFO Link)
-  // but no BFO Address yet (the "Missing Data" rows). The user fills in
-  // each BFO Address inline; once set, the opp drops off this list.
+  // AI BFO Prep — live Opps 2 opps (Stage not Sold / Not Sold) that have
+  // a non-blank Call In, carry a BFO Opportunity Name (BFO Link), but
+  // have no BFO Address yet. The user fills in each BFO Address inline;
+  // once set, the opp drops off this list.
   const bfoPrepOpps = useMemo(() => {
     const recs = oppsCache?.records || [];
     const rows = [];
@@ -1902,6 +1938,10 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
       const name = String(r['BFO Link'] ?? '').trim();
       if (bfoFieldBlank(name)) continue;
       if (!bfoFieldBlank(r['BFO Address'])) continue;
+      // Live opps only — drop closed stages.
+      if (CLOSED_OPP_STAGES.has(String(r.Stage || '').trim().toLowerCase())) continue;
+      // Only opps with an actual Call In number (on a callback schedule).
+      if (resolveOppCallIn(r) == null) continue;
       rows.push({
         id: r._id,
         name,
@@ -2275,7 +2315,7 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
           <span className={styles.sectionCount}>{bfoPrepOpps.length}</span>
         </h2>
         <p className={styles.subnote}>
-          Opps that have a BFO Opportunity Name but no BFO Address yet (the &ldquo;Missing Data&rdquo; rows from Opps 2). Paste each opp&rsquo;s BFO website address below — it saves straight to Opps 2 and the row drops off this list once set.
+          Live Opps 2 opps (Stage not Sold / Not Sold) with a Call In number that have a BFO Opportunity Name but no BFO Address yet. Paste each opp&rsquo;s BFO website address below — it saves straight to Opps 2 and the row drops off this list once set.
         </p>
         <div className={styles.aiPromptControls}>
           <button
