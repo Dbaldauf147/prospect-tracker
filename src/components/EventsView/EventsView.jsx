@@ -13,7 +13,25 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { attendeeFromContact, contactDisplayName } from '../../utils/eventsStore';
 import { companyDedupeKey } from '../../utils/firestoreSync';
+import { TYPES } from '../../data/enums';
 import styles from './EventsView.module.css';
+
+// Inline Type dropdown for a matched Table View prospect — same enum
+// options as the Table View's Type column. Commits immediately on
+// change so the lookup list can set/correct Type without leaving Events.
+function TypeCell({ prospect, onCommit }) {
+  if (!prospect) return <span className={styles.tvMuted}>—</span>;
+  return (
+    <select
+      className={styles.cdmInput}
+      value={prospect.type || ''}
+      onChange={e => onCommit(e.target.value)}
+    >
+      <option value="">—</option>
+      {TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+    </select>
+  );
+}
 
 // Inline-editable CDM cell for a matched Table View prospect. Seeds
 // from the prospect's stored CDM and commits on blur / Enter, so the
@@ -40,6 +58,19 @@ function CdmCell({ prospect, onCommit }) {
 
 function newId() {
   return `evt_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// Normalize a company name for fuzzy matching: drop parentheticals,
+// strip common corporate suffixes, and collapse to lowercase tokens.
+const COMPANY_SUFFIX_RE = /\b(inc|incorporated|corp|corporation|co|company|ltd|limited|llc|plc|lp|llp|sa|ag|gmbh|nv|bv|holdings|group|grp)\b\.?/g;
+function normalizeCompany(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/\s*\([^)]*\)\s*/g, ' ')
+    .replace(COMPANY_SUFFIX_RE, ' ')
+    .replace(/[^a-z0-9 ]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function formatDate(iso) {
@@ -194,6 +225,117 @@ function AttendeePicker({ contacts, existingIds, onAdd }) {
   );
 }
 
+// Per-row contact picker scoped to one company — the same flow as the
+// Opps 2 page's "+ Add from <company>": predictive search across the
+// HubSpot contacts already on file for that company, with a manual-add
+// fallback when nobody matches. Adding a contact drops them into the
+// event's attendee list.
+function RowContactAdder({ company, title, contacts, attendees, onAdd }) {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e) { if (!wrapRef.current?.contains(e.target)) setOpen(false); }
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+
+  // Contacts whose HubSpot company matches this row's company, matched
+  // on the normalized name so suffix / casing drift doesn't hide them.
+  const companyNorm = useMemo(() => normalizeCompany(company), [company]);
+  const roster = useMemo(() => {
+    if (!companyNorm) return [];
+    const out = [];
+    for (const c of contacts) {
+      const cn = normalizeCompany(c.company);
+      if (!cn) continue;
+      if (cn === companyNorm || cn.includes(companyNorm) || companyNorm.includes(cn)) out.push(c);
+    }
+    return out;
+  }, [contacts, companyNorm]);
+
+  // Names / ids already on the attendee list, so options show a ✓.
+  const added = useMemo(() => {
+    const ids = new Set();
+    const names = new Set();
+    for (const a of (attendees || [])) {
+      if (a.contactId) ids.add(String(a.contactId));
+      names.add(String(a.name || '').toLowerCase());
+    }
+    return { ids, names };
+  }, [attendees]);
+  const isAdded = (c) => added.ids.has(String(c.id || c.vid || '')) || added.names.has(contactDisplayName(c).toLowerCase());
+
+  // Prefix-then-substring predictive match (same ranking as Opps 2).
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return roster.slice(0, 8);
+    const pre = [];
+    const sub = [];
+    for (const c of roster) {
+      const name = contactDisplayName(c).toLowerCase();
+      const email = String(c.email || '').toLowerCase();
+      if (name.startsWith(q)) pre.push(c);
+      else if (name.includes(q) || email.includes(q)) sub.push(c);
+    }
+    return [...pre, ...sub].slice(0, 12);
+  }, [roster, query]);
+
+  function addContact(c) { onAdd(attendeeFromContact(c)); setQuery(''); setOpen(false); }
+  function addManual() {
+    const name = query.trim();
+    if (!name) return;
+    onAdd({ contactId: '', name, email: '', company: company || '', title: title || '' });
+    setQuery('');
+    setOpen(false);
+  }
+
+  return (
+    <div className={styles.picker} ref={wrapRef} style={{ minWidth: 170 }}>
+      <input
+        className={styles.cdmInput}
+        style={{ border: '1px solid var(--color-border)' }}
+        value={query}
+        placeholder="Add contact…"
+        onChange={e => { setQuery(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={e => {
+          if (e.key === 'Enter') { e.preventDefault(); if (matches[0]) addContact(matches[0]); else addManual(); }
+          else if (e.key === 'Escape') setOpen(false);
+        }}
+      />
+      {open && (
+        <div className={styles.dropdown} style={{ minWidth: 240 }}>
+          {matches.map(c => {
+            const tagged = isAdded(c);
+            return (
+              <button key={String(c.id || c.vid)} type="button" className={styles.option} onClick={() => addContact(c)}>
+                <div className={styles.optionName}>
+                  {contactDisplayName(c)}{tagged && <span style={{ color: '#15803D', marginLeft: 6 }}>✓</span>}
+                </div>
+                <div className={styles.optionMeta}>
+                  {[c.jobtitle, c.email].filter(Boolean).join(' · ') || '—'}
+                </div>
+              </button>
+            );
+          })}
+          {query.trim() ? (
+            <button type="button" className={`${styles.option} ${styles.addManual}`} onClick={addManual}>
+              + Add "{query.trim()}" manually
+            </button>
+          ) : matches.length === 0 ? (
+            <div style={{ padding: '0.5rem 0.7rem', fontSize: '0.74rem', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
+              No contacts on file for this company. Type a name to add them manually.
+            </div>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function EventsView({
   settings = {},
   updateSettings = () => {},
@@ -230,6 +372,44 @@ export function EventsView({
   const matchProspect = (company) => {
     const key = companyDedupeKey(company);
     return key ? (prospectByCompanyKey.get(key) || null) : null;
+  };
+
+  // Pre-normalized prospect names for the fuzzy "Suggested" column —
+  // built once per prospects change. Each entry keeps a normalized
+  // string (corporate suffixes / parentheticals stripped) and its
+  // token set for overlap scoring.
+  const prospectNorms = useMemo(() => {
+    const out = [];
+    for (const p of (prospects || [])) {
+      const norm = normalizeCompany(p?.company);
+      if (!norm) continue;
+      out.push({ p, norm, tokens: new Set(norm.split(' ').filter(t => t.length >= 3)) });
+    }
+    return out;
+  }, [prospects]);
+
+  // Best fuzzy Table View match for a company that has no exact
+  // dedupe-key match. Returns the candidate prospect when confidence
+  // clears the threshold, else null. Tuned to suggest (user reviews),
+  // not auto-apply.
+  const suggestProspect = (company) => {
+    const q = normalizeCompany(company);
+    if (!q) return null;
+    const qTokens = q.split(' ').filter(t => t.length >= 3);
+    let best = null;
+    let bestScore = 0;
+    for (const { p, norm, tokens } of prospectNorms) {
+      let score = 0;
+      if (norm === q) score = 1;
+      else if (norm.includes(q) || q.includes(norm)) score = 0.9;
+      else if (qTokens.length && tokens.size) {
+        let common = 0;
+        for (const t of qTokens) if (tokens.has(t)) common += 1;
+        score = common / Math.max(qTokens.length, tokens.size);
+      }
+      if (score > bestScore) { bestScore = score; best = p; }
+    }
+    return bestScore >= 0.5 ? best : null;
   };
 
   async function addCompanyToTableView(company) {
@@ -480,17 +660,6 @@ export function EventsView({
             </label>
           </div>
 
-          <label className={styles.field} style={{ display: 'block', marginBottom: '0.5rem' }}>
-            <span className={styles.fieldLabel}>Notes</span>
-            <textarea
-              className={styles.textarea}
-              style={{ width: '100%', boxSizing: 'border-box', marginTop: '0.2rem' }}
-              value={selected.notes || ''}
-              placeholder="Agenda, takeaways, follow-ups…"
-              onChange={e => updateEvent(selected.id, { notes: e.target.value })}
-            />
-          </label>
-
           <div className={styles.sectionTitle}>
             Attendees
             <span className={styles.countPill}>{attendees.length}</span>
@@ -600,13 +769,17 @@ export function EventsView({
                   <th>Title</th>
                   <th>Company</th>
                   <th>Table View</th>
+                  <th>Suggested</th>
+                  <th style={{ width: 150 }}>Type</th>
                   <th style={{ width: 140 }}>CDM</th>
+                  <th style={{ width: 180 }}>Add Contact</th>
                   <th aria-label="Actions" />
                 </tr>
               </thead>
               <tbody>
                 {lookups.map((l, i) => {
                   const prospect = matchProspect(l.company);
+                  const suggestion = prospect ? null : suggestProspect(l.company);
                   const adding = addingCompanies.has(String(l.company || '').trim());
                   return (
                     <tr key={`${l.title}-${l.company}-${i}`}>
@@ -635,7 +808,35 @@ export function EventsView({
                         )}
                       </td>
                       <td>
+                        {prospect ? (
+                          <span className={styles.tvMuted}>—</span>
+                        ) : suggestion ? (
+                          <button
+                            type="button"
+                            className={styles.tvSuggest}
+                            title={`Fuzzy match — open "${suggestion.company}" in the Table View`}
+                            onClick={() => onSelectProspect(suggestion)}
+                          >
+                            ≈ {suggestion.company}
+                          </button>
+                        ) : (
+                          <span className={styles.tvMuted}>—</span>
+                        )}
+                      </td>
+                      <td>
+                        <TypeCell prospect={prospect} onCommit={v => onUpdateProspect(prospect.id, { type: v })} />
+                      </td>
+                      <td>
                         <CdmCell prospect={prospect} onCommit={v => onUpdateProspect(prospect.id, { cdm: v })} />
+                      </td>
+                      <td>
+                        <RowContactAdder
+                          company={l.company}
+                          title={l.title}
+                          contacts={contacts}
+                          attendees={attendees}
+                          onAdd={addAttendee}
+                        />
                       </td>
                       <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                         <a
