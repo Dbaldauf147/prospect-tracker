@@ -32,6 +32,7 @@ const AMOUNT_UPDATES_PROMPT_STORAGE_KEY = 'agents-ai-prompt-amount-updates';
 const STAGE_CHANGE_PROMPT_STORAGE_KEY = 'agents-ai-prompt-stage-change';
 const CLOSE_NOT_SOLDS_PROMPT_STORAGE_KEY = 'agents-ai-prompt-close-not-solds';
 const UPDATE_BFO_ACTIVITY_PROMPT_STORAGE_KEY = 'agents-ai-prompt-update-bfo-activity';
+const BFO_PREP_PROMPT_STORAGE_KEY = 'agents-ai-prompt-bfo-prep';
 
 // IndexedDB store + key the BFO Activity tab persists its pasted rows
 // into. The Close Dates + Amount Updates prompts read it so each row's
@@ -114,6 +115,9 @@ const DEFAULT_AI_PROMPT_CLOSE_NOT_SOLDS = `1.  Reference the BFO links below.
 7.  Then select the corresponding Status from the menu below.
 8.  Then select the corresponding Reason from the menu below.
 9.  Repeat this process for all Opportunities listed below.`;
+
+const DEFAULT_AI_PROMPT_BFO_PREP = `1.  I am logged on to this website https://se.lightning.force.com/lightning/o/Opportunity/list?filterName=00B8V00000B0XsD&0.sfdcIFrameOrigin=https%3A%2F%2Fse.lightning.force.com
+2.  Reference the BFO Opportunity names below.  My goal is to have you open their websites and copy and paste the BFO website Address to the BFO address table here on the Agents tab of this website https://prospect-tracker-ashen.vercel.app/ in the AI BFO Prep table.`;
 
 // Opps 2 "Reason Not Sold" → corresponding BFO Status + Reason. Used by
 // the Close Not Solds prompt so the AI assistant can advance each BFO
@@ -326,6 +330,19 @@ function readUpdateBfoActivityPrompt() {
 
 function writeUpdateBfoActivityPrompt(next) {
   try { userLsSet(UPDATE_BFO_ACTIVITY_PROMPT_STORAGE_KEY, next); } catch {}
+}
+
+function readBfoPrepPrompt() {
+  try {
+    const raw = userLsGet(BFO_PREP_PROMPT_STORAGE_KEY);
+    return raw == null ? DEFAULT_AI_PROMPT_BFO_PREP : raw;
+  } catch {
+    return DEFAULT_AI_PROMPT_BFO_PREP;
+  }
+}
+
+function writeBfoPrepPrompt(next) {
+  try { userLsSet(BFO_PREP_PROMPT_STORAGE_KEY, next); } catch { /* ignore persistence failures */ }
 }
 
 // Pull the leading stage digit from BFO Sales Stage values like
@@ -923,6 +940,7 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
   const [stageChangePrompt, setStageChangePrompt] = useState(readStageChangePrompt);
   const [closeNotSoldsPrompt, setCloseNotSoldsPrompt] = useState(readCloseNotSoldsPrompt);
   const [updateBfoActivityPrompt, setUpdateBfoActivityPrompt] = useState(readUpdateBfoActivityPrompt);
+  const [bfoPrepPrompt, setBfoPrepPrompt] = useState(readBfoPrepPrompt);
   const [bfoActivity, setBfoActivity] = useState(null);
   const [copyFlash, setCopyFlash] = useState('');
   const [newBfoOppCopyFlash, setNewBfoOppCopyFlash] = useState('');
@@ -994,6 +1012,12 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
     writeUpdateBfoActivityPrompt(next);
   };
   const resetUpdateBfoActivityPrompt = () => updateUpdateBfoActivityPrompt(DEFAULT_AI_PROMPT_UPDATE_BFO_ACTIVITY);
+
+  const updateBfoPrepPrompt = (next) => {
+    setBfoPrepPrompt(next);
+    writeBfoPrepPrompt(next);
+  };
+  const resetBfoPrepPrompt = () => updateBfoPrepPrompt(DEFAULT_AI_PROMPT_BFO_PREP);
 
   // The "Update BFO Activity" prompt is appended to the end of every
   // individual prompt copy (and the Copy-all bundle). Helper keeps that
@@ -2315,24 +2339,40 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
           <span className={styles.sectionCount}>{bfoPrepOpps.length}</span>
         </h2>
         <p className={styles.subnote}>
-          Live Opps 2 opps (Stage not Sold / Not Sold) with a Call In number that have a BFO Opportunity Name but no BFO Address yet. Paste each opp&rsquo;s BFO website address below — it saves straight to Opps 2 and the row drops off this list once set.
+          Live Opps 2 opps (Stage not Sold / Not Sold) with a Call In number that have a BFO Opportunity Name but no BFO Address yet. Copy the prompt to have your AI assistant look up each opp&rsquo;s BFO website address, then paste it into the BFO Address column below — it saves straight to Opps 2 and the row drops off once set.
         </p>
+        {revealedPrompts.bfoPrep && (
+          <textarea
+            className={styles.aiPromptInput}
+            value={bfoPrepPrompt}
+            onChange={(e) => updateBfoPrepPrompt(e.target.value)}
+            rows={12}
+            spellCheck={false}
+          />
+        )}
         <div className={styles.aiPromptControls}>
           <button
             type="button"
             className={styles.aiPromptBtn}
             disabled={bfoPrepOpps.length === 0}
             onClick={async () => {
-              const text = bfoPrepOpps.map(o => o.name).join('\n');
+              const block = ['BFO Opportunity Names', ...bfoPrepOpps.map(o => o.name)].join('\n');
+              const fullPrompt = `${bfoPrepPrompt}\n\n${block}`;
               try {
-                await navigator.clipboard.writeText(text);
+                await navigator.clipboard.writeText(fullPrompt);
                 setBfoPrepCopyFlash('Copied!');
               } catch {
                 setBfoPrepCopyFlash('Copy failed');
               }
               window.setTimeout(() => setBfoPrepCopyFlash(''), 1500);
             }}
-          >Copy Opportunity Names</button>
+          >Copy full prompt</button>
+          <button type="button" className={styles.aiPromptBtnGhost} onClick={() => togglePrompt('bfoPrep')}>
+            {revealedPrompts.bfoPrep ? 'Hide prompt' : 'Edit prompt'}
+          </button>
+          {revealedPrompts.bfoPrep && (
+            <button type="button" className={styles.aiPromptBtnGhost} onClick={resetBfoPrepPrompt}>Reset to default</button>
+          )}
           {bfoPrepCopyFlash && <span className={styles.copyFlash}>{bfoPrepCopyFlash}</span>}
         </div>
         <div style={{ marginTop: '0.5rem', overflowX: 'auto' }}>
