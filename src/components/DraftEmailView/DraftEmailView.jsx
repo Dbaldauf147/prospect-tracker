@@ -11,71 +11,54 @@ import { userLsGet, userLsSet } from '../../utils/userLs';
 import styles from './DraftEmailView.module.css';
 
 // Quill emits one <p> per line and <p><br></p> for an intentionally blank
-// line. Outlook's Word-based renderer applies its stock "Normal" paragraph
-// spacing to those bare <p> tags the moment a draft is opened and sent, which
-// silently injects a blank line between every paragraph — the body looks tight
-// in the compose window but balloons once Send round-trips it through Word's
-// HTML normaliser. To keep what-you-typed-is-what-sends we zero every
-// <p>/<li>/list margin (inline AND via a <style> block, since compose editors
-// strip one or the other depending on client) and turn Quill's empty
-// <p><br></p> markers into bare <br>s, which reliably hold a single line of
-// height. Shared by the Outlook draft (Graph API), the .eml export, and the
+// line. The trap: every <p> is its own Word paragraph, and when Outlook
+// re-serialises the message on *Send* it re-applies its compose-time "space
+// after paragraph" setting to each one — re-inflating the gaps no matter how
+// aggressively we zero the <p> margins inline or via a <style> block. That's
+// why the body looks tight while composing but the gaps double once it's sent.
+//
+// The fix is to stop using paragraph blocks at all: collapse the whole body
+// into a SINGLE block whose lines are separated by <br>. Inside one paragraph
+// a <br> is just a line break, not a paragraph boundary, so Word has no
+// inter-paragraph spacing to add — two <br>s render exactly one blank line, in
+// the draft AND in the sent message. Lists are kept as real lists (with their
+// stock Word margins zeroed) since they can't be expressed with <br>s.
+//
+// Shared by the Outlook draft (Graph API), the .eml export, and the
 // clipboard-paste paths so all three render identically.
 function buildStyledBodyHtml(pBodyHtml, { signature = '' } = {}) {
-  // Merge a `key:value` declaration into a tag's existing style="…" attrs,
-  // replacing any prior value for that key.
-  const setStyle = (attrs, key, value) => {
-    const m = /style\s*=\s*"([^"]*)"/i.exec(attrs);
-    if (m) {
-      const re = new RegExp(`${key}\\s*:[^;]*;?`, 'i');
-      const cleaned = m[1].replace(re, '').replace(/;\s*;/g, ';').replace(/^\s*;|\s*;\s*$/g, '').trim();
-      const next = (cleaned ? cleaned + ';' : '') + `${key}:${value}`;
-      return attrs.replace(/style\s*=\s*"[^"]*"/i, `style="${next}"`);
-    }
-    return `${attrs} style="${key}:${value}"`;
-  };
-  // Zero out every margin-related property Outlook honours on a block tag.
-  const zeroBlockSpacing = (attrs) => {
-    let a = setStyle(attrs || '', 'margin', '0pt');
-    a = setStyle(a, 'margin-top', '0pt');
-    a = setStyle(a, 'margin-bottom', '0pt');
-    a = setStyle(a, 'mso-margin-top-alt', '0pt');
-    a = setStyle(a, 'mso-margin-bottom-alt', '0pt');
-    return a;
-  };
-  const zeroListSpacing = (attrs) => {
-    let a = setStyle(attrs || '', 'margin', '0pt');
-    a = setStyle(a, 'padding-left', '1.5em');
-    a = setStyle(a, 'mso-margin-top-alt', '0pt');
-    a = setStyle(a, 'mso-margin-bottom-alt', '0pt');
-    return a;
-  };
-
-  let htmlContent = pBodyHtml
+  const htmlContent = pBodyHtml
     // Replace non-breaking spaces with regular spaces — pasted text often has
     // &nbsp; for every space which prevents wrapping. First mark double spaces
     // (e.g. after periods) to preserve them.
     .replace(/&nbsp;&nbsp;/g, '\x00DOUBLE\x00')
     .replace(/&nbsp;/g, ' ')
     .replace(/\x00DOUBLE\x00/g, '&nbsp;&nbsp;')
-    // Convert empty paragraphs (Quill's <p><br></p> double-Enter markers) into
-    // a stand-alone <br>. Outlook's Word renderer collapses <p><br></p> to zero
-    // height once we've zeroed the <p> margins, which was killing the user's
-    // typed blank lines. A bare <br> always consumes a line of height.
-    .replace(/<p[^>]*>\s*(?:<br\s*\/?>\s*)*<\/p>/gi, '<br>')
-    // Force zero margins on EVERY remaining <p>: a single Enter then produces a
-    // tight line break and the standalone <br>s above are the only source of
-    // visible blank lines.
-    .replace(/<p(\s[^>]*)?>/gi, (_, a = '') => `<p${zeroBlockSpacing(a)}>`)
-    .replace(/<ul(\s[^>]*)?>/gi, (_, a = '') => `<ul${zeroListSpacing(a)}>`)
-    .replace(/<ol(\s[^>]*)?>/gi, (_, a = '') => `<ol${zeroListSpacing(a)}>`)
-    .replace(/<li(\s[^>]*)?>/gi, (_, a = '') => `<li${zeroBlockSpacing(a)}>`);
-  // Insert line breaks after closing tags — Outlook's MIME parser can misrender
-  // very long single-line HTML.
-  htmlContent = htmlContent.replace(/<\/p>/gi, '</p>\n').replace(/<\/li>/gi, '</li>\n').replace(/<\/ul>/gi, '</ul>\n').replace(/<\/ol>/gi, '</ol>\n');
-  // Signature attaches directly — no leading <br>, since every <p> in the body
-  // is now zero-margin. Visible blank lines come from the <br>s above.
-  const sigBlock = signature ? `\n<div>\n${signature}\n</div>` : '';
+    // Empty paragraphs (Quill's <p><br></p> blank-line markers) → a single
+    // sentinel so they survive the paragraph-stripping below as one <br>.
+    .replace(/<p[^>]*>\s*(?:<br\s*\/?>\s*)*<\/p>/gi, '\x00BR\x00')
+    // Every remaining paragraph: drop the opening tag and turn the close into a
+    // single <br>, so consecutive lines sit directly underneath one another
+    // (single Enter = tight line break, double Enter = one blank line).
+    .replace(/<p[^>]*>/gi, '')
+    .replace(/<\/p>/gi, '\x00BR\x00')
+    // Keep lists as lists, but zero the stock Word margins so they sit flush
+    // with the surrounding lines instead of gaining auto spacing on Send.
+    .replace(/<(ul|ol)([^>]*)>/gi, (_, tag, a = '') => `<${tag}${a} style="margin:0;padding-left:1.5em;mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;">`)
+    .replace(/<li([^>]*)>/gi, (_, a = '') => `<li${a} style="margin:0;mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;">`)
+    // Materialise the sentinels as real <br>s now that all <p> tags are gone.
+    .replace(/\x00BR\x00/g, '<br>\n')
+    // A list is already block-level, so a <br> butting straight up against it
+    // would add a phantom blank line — drop those.
+    .replace(/(?:<br>\s*)+(<(?:ul|ol)\b)/gi, '$1')
+    .replace(/(<\/(?:ul|ol)>)\s*(?:<br>\s*)+/gi, '$1\n')
+    // Trim leading/trailing blank lines so the message neither opens nor closes
+    // on an empty line.
+    .replace(/^(?:\s*<br>\s*)+/i, '')
+    .replace(/(?:\s*<br>\s*)+$/i, '');
+
+  // Signature sits one blank line below the body.
+  const sigBlock = signature ? `<br>\n<div>\n${signature}\n</div>` : '';
   return `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">\n<head>\n<!--[if gte mso 9]><xml><w:WordDocument><w:DontHyphenate/><w:DoNotHyphenateCaps/></w:WordDocument></xml><![endif]-->\n<style>\np{margin:0pt;mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;}\nul,ol{margin:0pt;padding-left:1.5em;mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;}\nli{margin:0pt;mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;}\ndiv{mso-margin-top-alt:0pt;mso-margin-bottom-alt:0pt;}\n</style>\n</head>\n<body style="margin:0;padding:0;">\n<div style="font-family:Aptos,Calibri,Arial,sans-serif;font-size:12pt;">\n${htmlContent}\n</div>${sigBlock}\n</body>\n</html>`;
 }
 
