@@ -12,6 +12,7 @@ import { DedupeView } from '../DedupeView/DedupeView';
 import { ZoomInfoView } from '../ZoomInfoView/ZoomInfoView';
 import { AllContactsView } from '../AllContactsView/AllContactsView';
 import { KeyProspectsView } from '../KeyProspectsView/KeyProspectsView';
+import { EventsView } from '../EventsView/EventsView';
 import { setHubspotCache } from '../../utils/hubspotContactsCache';
 
 const ALL_SUBTABS = [
@@ -24,6 +25,7 @@ const ALL_SUBTABS = [
   { key: 'active',     label: 'Active Contacts' },
   { key: 'clients',    label: 'Client Contacts' },
   { key: 'changed',    label: 'Changed Jobs' },
+  { key: 'events',     label: 'Events' },
   { key: 'zoominfo',   label: 'Zoom Info' },
   { key: 'dedupe',     label: 'Deduplication' },
 ];
@@ -209,6 +211,9 @@ export function ContactsView({
             updateSettings={updateSettings}
             cdmName={cdmName}
           />
+        )}
+        {subtab === 'events' && (
+          <EventsView settings={settings} updateSettings={updateSettings} />
         )}
         {subtab === 'zoominfo' && (
           <ZoomInfoView prospects={prospects} settings={settings} updateSettings={updateSettings} onAddProspect={onAddProspect} />
