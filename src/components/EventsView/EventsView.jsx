@@ -1574,6 +1574,131 @@ export function EventsView({
     () => attendees.filter(a => a.contactId && contactsById.has(String(a.contactId))),
     [attendees, contactsById],
   );
+
+  // ---- Add attendees to HubSpot ------------------------------------
+  // Can this attendee be created in HubSpot? Only when it isn't already
+  // there (reuses the "In HubSpot" column's attendeeInHubspot check) and
+  // it carries a syntactically valid email (HubSpot requires an email to
+  // create a contact).
+  const canAddToHubSpot = (a) => {
+    const e = String(a.email || '').trim();
+    if (!e || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return false;
+    return !attendeeInHubspot(a);
+  };
+
+  const attendeesNeedingHubSpot = useMemo(
+    () => attendees.map((a, i) => ({ a, i })).filter(({ a }) => canAddToHubSpot(a)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [attendees, contactsById, contactsByEmail],
+  );
+
+  const [hubspotAddingIdx, setHubspotAddingIdx] = useState(() => new Set());
+  const [hubspotBulkAdding, setHubspotBulkAdding] = useState(false);
+  const [hubspotAddStatus, setHubspotAddStatus] = useState('');
+
+  const splitAttendeeName = (a) => {
+    const cid = a.contactId ? String(a.contactId) : '';
+    const live = cid ? contactsById.get(cid) : null;
+    if (live && (live.firstname || live.lastname)) {
+      return { first: live.firstname || '', last: live.lastname || '' };
+    }
+    const parts = String(a.name || '').trim().split(/\s+/).filter(Boolean);
+    return { first: parts[0] || '', last: parts.length > 1 ? parts.slice(1).join(' ') : '' };
+  };
+
+  // Create one attendee in HubSpot (or recover the existing contact on a
+  // 409). Returns the contact record { id, ... } on success, else null.
+  const createHubSpotContact = async (a) => {
+    const { first, last } = splitAttendeeName(a);
+    const res = await apiFetch('/api/hubspot?action=create-contact', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        properties: {
+          email: String(a.email || '').trim(),
+          firstname: first,
+          lastname: last,
+          company: a.company || '',
+          jobtitle: a.title || a.originalTitle || '',
+        },
+      }),
+    });
+    const data = await res.json();
+    if (!data?.success || !data.contact?.id) {
+      throw new Error(data?.error || 'Failed to add contact');
+    }
+    return data.contact;
+  };
+
+  // Merge freshly created/looked-up contacts into the local HubSpot cache
+  // so the attendee immediately reads as "in HubSpot" without a full sync.
+  const mergeContactsIntoCache = async (list) => {
+    if (list.length === 0) return;
+    try {
+      await updateHubspotCache(draft => {
+        for (const c of list) {
+          const id = String(c.id || c.vid || '');
+          if (id && !draft.contacts.some(x => String(x.id || x.vid || '') === id)) {
+            draft.contacts.push({ ...c, _source: 'manual' });
+          }
+        }
+      });
+    } catch { /* cache merge is best-effort */ }
+  };
+
+  // Add a single attendee (by original index) to HubSpot and link the
+  // resulting contactId back onto the attendee row.
+  async function addAttendeeToHubSpot(index) {
+    if (!selected) return;
+    const list = Array.isArray(selected.attendees) ? selected.attendees : [];
+    const a = list[index];
+    if (!a || !canAddToHubSpot(a)) return;
+    setHubspotAddingIdx(prev => { const n = new Set(prev); n.add(index); return n; });
+    try {
+      const contact = await createHubSpotContact(a);
+      updateAttendeeAt(index, { contactId: String(contact.id) });
+      await mergeContactsIntoCache([contact]);
+      setHubspotAddStatus(`Added ${a.name || a.email} to HubSpot`);
+    } catch (err) {
+      setHubspotAddStatus(`Failed: ${err?.message || 'could not add contact'}`);
+    } finally {
+      setHubspotAddingIdx(prev => { const n = new Set(prev); n.delete(index); return n; });
+      setTimeout(() => setHubspotAddStatus(''), 4000);
+    }
+  }
+
+  // Add every attendee that isn't yet in HubSpot (and has a valid email)
+  // in one pass, then apply all new contactIds in a single settings write.
+  async function addAllAttendeesToHubSpot() {
+    if (!selected) return;
+    const list = Array.isArray(selected.attendees) ? selected.attendees : [];
+    const targets = list.map((a, i) => ({ a, i })).filter(({ a }) => canAddToHubSpot(a));
+    if (targets.length === 0) return;
+    setHubspotBulkAdding(true);
+    setHubspotAddStatus('');
+    const idByIndex = new Map();
+    const created = [];
+    let failed = 0;
+    for (const { a, i } of targets) {
+      try {
+        const contact = await createHubSpotContact(a);
+        idByIndex.set(i, String(contact.id));
+        created.push(contact);
+      } catch { failed += 1; }
+    }
+    if (idByIndex.size > 0) {
+      // Re-read the latest attendees so a concurrent edit during the
+      // awaits isn't clobbered, then stamp the new contactIds on by index.
+      const latest = Array.isArray(selected.attendees) ? selected.attendees : list;
+      const next = latest.map((a, i) => (idByIndex.has(i) ? { ...a, contactId: idByIndex.get(i) } : a));
+      updateEvent(selected.id, { attendees: next });
+    }
+    await mergeContactsIntoCache(created);
+    setHubspotBulkAdding(false);
+    setHubspotAddStatus(`${created.length} added to HubSpot${failed ? `, ${failed} failed` : ''}`);
+    setTimeout(() => setHubspotAddStatus(''), 5000);
+  }
+
   // Attendees that pass the active per-column filters, paired with their
   // original index so Remove / checkboxes still target the right row.
   const visibleAttendees = useMemo(() => {
@@ -1810,7 +1935,7 @@ export function EventsView({
       )
     ) },
   ];
-  const ATTENDEE_ACTIONS = { key: 'actions', label: 'Actions', width: 90 };
+  const ATTENDEE_ACTIONS = { key: 'actions', label: 'Actions', width: 200 };
 
   const lookupColumns = [
     { key: 'name', label: 'Name', width: 150, filterable: true, render: (l, { i }) => (
@@ -1962,6 +2087,23 @@ export function EventsView({
                 Export CSV
               </button>
             )}
+            {attendeesNeedingHubSpot.length > 0 && (
+              <button
+                type="button"
+                className={styles.exportBtn}
+                style={{ background: '#FFF7ED', borderColor: '#FED7AA', color: '#C2410C' }}
+                onClick={addAllAttendeesToHubSpot}
+                disabled={hubspotBulkAdding}
+                title="Create a HubSpot contact for every attendee here who isn't already in HubSpot (requires an email)"
+              >
+                {hubspotBulkAdding ? 'Adding…' : `+ Add ${attendeesNeedingHubSpot.length} to HubSpot`}
+              </button>
+            )}
+            {hubspotAddStatus && (
+              <span style={{ fontSize: '0.72rem', fontWeight: 600, color: hubspotAddStatus.startsWith('Failed') ? '#B91C1C' : '#166534' }}>
+                {hubspotAddStatus}
+              </span>
+            )}
             {attendees.length > 0 && (
               <ColumnsMenu
                 columns={attendeeColumns}
@@ -2066,7 +2208,19 @@ export function EventsView({
                         {attendeeCols.visible.map(c => (
                           <td key={c.key}>{c.render(a, ctx)}</td>
                         ))}
-                        <td style={{ textAlign: 'right' }}>
+                        <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                          {canAddToHubSpot(a) && (
+                            <button
+                              type="button"
+                              className={styles.guessBtn}
+                              style={{ marginRight: 6 }}
+                              disabled={hubspotAddingIdx.has(i)}
+                              onClick={() => addAttendeeToHubSpot(i)}
+                              title="Add this attendee to HubSpot as a new contact"
+                            >
+                              {hubspotAddingIdx.has(i) ? 'Adding…' : '+ HubSpot'}
+                            </button>
+                          )}
                           <button type="button" className={styles.removeBtn} onClick={() => removeAttendee(i)}>
                             Remove
                           </button>
