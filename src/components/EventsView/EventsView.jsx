@@ -58,6 +58,28 @@ function CdmCell({ prospect, onCommit }) {
   );
 }
 
+// Inline-editable Name cell for a lookup row. The name isn't usually in
+// the pasted title/company data, so this lets the user record the person
+// they find on LinkedIn. Commits on blur / Enter back onto the row.
+function LookupNameCell({ value, onCommit }) {
+  const [val, setVal] = useState(value || '');
+  useEffect(() => { setVal(value || ''); }, [value]);
+  const commit = () => {
+    const next = val.trim();
+    if (next !== String(value || '').trim()) onCommit(next);
+  };
+  return (
+    <input
+      className={styles.cdmInput}
+      value={val}
+      placeholder="Name…"
+      onChange={e => setVal(e.target.value)}
+      onBlur={commit}
+      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }}
+    />
+  );
+}
+
 // Suggested-company cell for an unmatched lookup row. Surfaces the fuzzy
 // match (if any, and not rejected) with actions to Use it (rewrite the
 // row's company to the canonical Table View name), Reject it, or open a
@@ -154,7 +176,7 @@ function normalizeCompany(s) {
 // Filterable columns for the two Events tables (keys map to the value
 // pulled for each row in the filter predicates below).
 const ATT_FILTER_KEYS = ['name', 'originalTitle', 'title', 'company', 'email', 'tags'];
-const LOOKUP_FILTER_KEYS = ['title', 'company', 'tableView', 'type'];
+const LOOKUP_FILTER_KEYS = ['name', 'title', 'company', 'tableView', 'type'];
 
 // HubSpot stores Dan's Tags as a single semicolon-separated string.
 // Split it into a clean list of individual tags.
@@ -293,24 +315,60 @@ function splitLine(line) {
   return out.map(s => s.trim());
 }
 
-// Parse pasted / uploaded text into [{ title, company }] rows. Accepts
-// CSV or TSV with the first two columns as Title, Company; a leading
-// header row (containing "title"/"company") is skipped.
-function parseLookups(text) {
-  const lines = String(text || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-  const rows = [];
-  lines.forEach((line, idx) => {
-    const cells = splitLine(line);
-    const title = (cells[0] || '').trim();
-    const company = (cells[1] || '').trim();
-    if (!title && !company) return;
-    if (idx === 0) {
-      const lc = `${title} ${company}`.toLowerCase();
-      if (lc.includes('title') && (lc.includes('company') || lc.includes('account'))) return;
-    }
-    rows.push({ title, company });
-  });
-  return rows;
+// Parse pasted / uploaded text into a grid of cells (rows × columns),
+// making no assumption about which column is which — the column-mapping
+// modal decides that. Accepts CSV or TSV.
+function parseGrid(text) {
+  return String(text || '')
+    .split(/\r?\n/)
+    .map(l => l.trim())
+    .filter(Boolean)
+    .map(splitLine);
+}
+
+// Fields a lookup row can hold, in the order they're offered in the
+// column-mapping dropdowns.
+const LOOKUP_FIELDS = [
+  { key: 'name', label: 'Name' },
+  { key: 'title', label: 'Title' },
+  { key: 'company', label: 'Company' },
+];
+
+// Does this row look like a header (column names) rather than data?
+function looksLikeHeader(cells) {
+  const lc = (cells || []).map(c => String(c || '').toLowerCase());
+  const hasTitle = lc.some(c => /\b(title|role|position)\b/.test(c));
+  const hasCompany = lc.some(c => /company|account|organi[sz]ation|employer/.test(c));
+  const hasName = lc.some(c => /\bname\b/.test(c));
+  return hasTitle || hasCompany || hasName;
+}
+
+// Best-guess mapping of source columns → lookup fields. Uses header text
+// when present, then falls back to position (first column → Title,
+// second → Company) for any essential field still unmapped.
+function guessLookupMapping(headerCells, hasHeader, columnCount) {
+  const mapping = Array(columnCount).fill('');
+  const used = new Set();
+  if (hasHeader) {
+    (headerCells || []).forEach((h, idx) => {
+      if (idx >= columnCount) return;
+      const lc = String(h || '').toLowerCase();
+      if (!used.has('company') && /company|account|organi[sz]ation|employer/.test(lc)) {
+        mapping[idx] = 'company'; used.add('company');
+      } else if (!used.has('title') && /\b(title|role|position)\b/.test(lc)) {
+        mapping[idx] = 'title'; used.add('title');
+      } else if (!used.has('name') && /\bname\b/.test(lc)) {
+        mapping[idx] = 'name'; used.add('name');
+      }
+    });
+  }
+  // Fill essentials still unmapped by position (Title first, then Company).
+  for (const field of ['title', 'company']) {
+    if (used.has(field)) continue;
+    const idx = mapping.findIndex(m => m === '');
+    if (idx !== -1) { mapping[idx] = field; used.add(field); }
+  }
+  return mapping;
 }
 
 // Search box that surfaces matching HubSpot contacts and lets the user
@@ -631,6 +689,128 @@ function AttendeeContactModal({ attendee, contact, onClose }) {
   );
 }
 
+// Column-mapping popup shown when data is dropped / pasted / uploaded
+// into the lookup list. The user maps each source column to a lookup
+// field (Title / Company / don't import); a preview reflects the choice
+// live. Company must be mapped before the rows can be added.
+function LookupMappingModal({ grid, onCancel, onConfirm }) {
+  const columnCount = useMemo(() => grid.reduce((n, r) => Math.max(n, r.length), 0), [grid]);
+  const [hasHeader, setHasHeader] = useState(() => looksLikeHeader(grid[0]));
+  const headerCells = grid[0] || [];
+  const [mapping, setMapping] = useState(() => guessLookupMapping(headerCells, hasHeader, columnCount));
+
+  // Re-guess when the header toggle flips — that changes which row is
+  // data and the available header text, so prior guesses no longer hold.
+  useEffect(() => {
+    setMapping(guessLookupMapping(grid[0] || [], hasHeader, columnCount));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasHeader]);
+
+  useEffect(() => {
+    function onKey(e) { if (e.key === 'Escape') onCancel(); }
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onCancel]);
+
+  const dataRows = hasHeader ? grid.slice(1) : grid;
+  const titleIdx = mapping.indexOf('title');
+  const companyIdx = mapping.indexOf('company');
+  const builtRows = useMemo(() => dataRows
+    .map(cells => ({
+      title: titleIdx >= 0 ? String(cells[titleIdx] || '').trim() : '',
+      company: companyIdx >= 0 ? String(cells[companyIdx] || '').trim() : '',
+    }))
+    .filter(r => r.title || r.company), [dataRows, titleIdx, companyIdx]);
+
+  // Each field may map to only one column — picking it for one column
+  // clears it from any other.
+  function setColumnField(colIdx, field) {
+    setMapping(prev => {
+      const next = prev.map((m, i) => (field && m === field && i !== colIdx ? '' : m));
+      next[colIdx] = field;
+      return next;
+    });
+  }
+
+  const colLabel = (idx) => (hasHeader && headerCells[idx] ? headerCells[idx] : `Column ${idx + 1}`);
+  const previewRows = dataRows.slice(0, 5);
+  const canConfirm = companyIdx >= 0 && builtRows.length > 0;
+
+  return createPortal(
+    <div className={styles.modalOverlay} onMouseDown={onCancel}>
+      <div className={styles.modalPanel} style={{ width: 720, maxWidth: '100%' }} onMouseDown={e => e.stopPropagation()}>
+        <div className={styles.modalHeader}>
+          <span>Map your columns</span>
+          <button type="button" className={styles.modalClose} onClick={onCancel} aria-label="Close">×</button>
+        </div>
+        <div style={{ padding: '0.7rem 0.9rem', overflow: 'auto', flex: 1, minHeight: 0 }}>
+          <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', marginBottom: '0.6rem' }}>
+            Choose which column holds the <strong>Title</strong> and which holds the <strong>Company</strong>. {columnCount} column{columnCount === 1 ? '' : 's'} · {dataRows.length} row{dataRows.length === 1 ? '' : 's'} detected.
+          </div>
+          <label className={styles.mapHeaderToggle}>
+            <input type="checkbox" checked={hasHeader} onChange={e => setHasHeader(e.target.checked)} />
+            First row is a header (column names, not data)
+          </label>
+          <div className={styles.tableScroll} style={{ marginTop: '0.6rem', border: '1px solid var(--color-border)', borderRadius: 8 }}>
+            <table className={styles.mapTable}>
+              <thead>
+                <tr>
+                  {Array.from({ length: columnCount }).map((_, idx) => (
+                    <th key={idx}>
+                      <div className={styles.mapColName} title={colLabel(idx)}>{colLabel(idx)}</div>
+                      <select
+                        className={styles.mapSelect}
+                        value={mapping[idx] || ''}
+                        onChange={e => setColumnField(idx, e.target.value)}
+                      >
+                        <option value="">Don't import</option>
+                        {LOOKUP_FIELDS.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
+                      </select>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {previewRows.length === 0 ? (
+                  <tr><td colSpan={columnCount} className={styles.tvMuted} style={{ padding: '0.5rem', textAlign: 'center' }}>No data rows to preview.</td></tr>
+                ) : previewRows.map((cells, r) => (
+                  <tr key={r}>
+                    {Array.from({ length: columnCount }).map((_, idx) => (
+                      <td key={idx} className={mapping[idx] ? styles.mapCellMapped : undefined}>
+                        {String(cells[idx] || '')}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {dataRows.length > previewRows.length && (
+            <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: '0.4rem' }}>
+              Showing first {previewRows.length} of {dataRows.length} rows.
+            </div>
+          )}
+        </div>
+        <div className={styles.mapFooter}>
+          {companyIdx < 0 && (
+            <span className={styles.mapWarn}>Map a column to <strong>Company</strong> to continue.</span>
+          )}
+          <button type="button" className={styles.mapCancelBtn} onClick={onCancel}>Cancel</button>
+          <button
+            type="button"
+            className={styles.newBtn}
+            disabled={!canConfirm}
+            onClick={() => onConfirm(builtRows)}
+          >
+            Add {builtRows.length} row{builtRows.length === 1 ? '' : 's'}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 // Inline type-to-filter control for a column header. A funnel toggle
 // reveals a text input; rows are matched by case-insensitive substring
 // on that column (handled by the parent). The input stays visible while
@@ -854,6 +1034,8 @@ export function EventsView({
   const [selectedId, setSelectedId] = useState(null);
   // Draft text for the "Find people on LinkedIn" import box.
   const [lookupDraft, setLookupDraft] = useState('');
+  // Parsed grid awaiting column mapping (null = mapping popup closed).
+  const [lookupMapping, setLookupMapping] = useState(null);
   const lookupFileRef = useRef(null);
   // Active CDM filter for the lookup table ('' = show all).
   const [cdmFilter, setCdmFilter] = useState('');
@@ -1185,26 +1367,39 @@ export function EventsView({
   }
 
   // ---- LinkedIn lookup list ----------------------------------------
-  function addLookupsFromText(text) {
+  // Parse dropped / pasted / uploaded text into a grid and open the
+  // column-mapping popup so the user picks which column is which.
+  function openLookupMapping(text) {
     if (!selected) return;
-    const parsed = parseLookups(text);
-    if (parsed.length === 0) return;
+    const grid = parseGrid(text);
+    if (grid.length === 0) return;
+    setLookupMapping(grid);
+  }
+
+  // Commit the mapped rows ([{ title, company }]) to the lookup list,
+  // de-duping against existing rows (case-insensitive title|company).
+  function commitMappedLookups(rows) {
+    if (!selected) { setLookupMapping(null); return; }
     const cur = Array.isArray(selected.lookups) ? selected.lookups : [];
     const seen = new Set(cur.map(l => `${(l.title || '').toLowerCase()}|${(l.company || '').toLowerCase()}`));
     const merged = [...cur];
-    for (const row of parsed) {
-      const key = `${row.title.toLowerCase()}|${row.company.toLowerCase()}`;
+    for (const row of rows) {
+      const title = String(row.title || '').trim();
+      const company = String(row.company || '').trim();
+      if (!title && !company) continue;
+      const key = `${title.toLowerCase()}|${company.toLowerCase()}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      merged.push(row);
+      merged.push({ title, company });
     }
     updateEvent(selected.id, { lookups: merged });
     setLookupDraft('');
+    setLookupMapping(null);
   }
 
   function handleLookupFile(e) {
     const file = e.target.files && e.target.files[0];
-    if (file) file.text().then(addLookupsFromText).catch(() => {});
+    if (file) file.text().then(openLookupMapping).catch(() => {});
     e.target.value = '';
   }
 
@@ -1421,6 +1616,7 @@ export function EventsView({
     setTagStatus('');
     setAttFilters({});
     setLookupFilters({});
+    setLookupMapping(null);
   }, [selectedId]);
 
   // Unique, sorted Table View company names for the Suggested cell's
@@ -1550,6 +1746,9 @@ export function EventsView({
   const ATTENDEE_ACTIONS = { key: 'actions', label: 'Actions', width: 90 };
 
   const lookupColumns = [
+    { key: 'name', label: 'Name', width: 150, filterable: true, render: (l, { i }) => (
+      <LookupNameCell value={l.name} onCommit={v => updateLookup(i, { name: v })} />
+    ) },
     { key: 'title', label: 'Title', width: 150, filterable: true, render: (l) => l.title || '—' },
     { key: 'company', label: 'Company', width: 160, filterable: true, render: (l) => l.company || '—' },
     { key: 'emailDomain', label: 'Email Domain', width: 150, render: (l) => renderDomainCell(l.company) },
@@ -1856,7 +2055,7 @@ export function EventsView({
             )}
           </div>
           <div style={{ fontSize: '0.74rem', color: 'var(--color-text-muted)', marginBottom: '0.5rem' }}>
-            Paste or upload a list of <strong>titles and company names</strong> (two columns — CSV or tab-separated). Each row gets a LinkedIn people-search button, a <strong>Table View</strong> match (click to open, or <strong>+ Add</strong> a new prospect), and an editable <strong>CDM</strong>.
+            Paste, drop, or upload a list of <strong>titles and company names</strong> (CSV or tab-separated) — a <strong>column-mapping</strong> popup lets you pick which column is which. Each row gets a LinkedIn people-search button, a <strong>Table View</strong> match (click to open, or <strong>+ Add</strong> a new prospect), and an editable <strong>CDM</strong>.
             {lookups.length > 0 && (
               <span style={{ marginLeft: 6 }}>
                 <span style={{ color: '#166534', fontWeight: 600 }}>{lookupMatchCount} in Table View</span>
@@ -1872,9 +2071,15 @@ export function EventsView({
               value={lookupDraft}
               placeholder={'Title, Company\nVP Finance, Acme Corp\nHead of Sustainability, Globex'}
               onChange={e => setLookupDraft(e.target.value)}
+              onDrop={e => {
+                // Dropping a CSV/text file onto the box jumps straight to
+                // the column-mapping popup instead of pasting a file path.
+                const file = e.dataTransfer?.files?.[0];
+                if (file) { e.preventDefault(); file.text().then(openLookupMapping).catch(() => {}); }
+              }}
             />
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-              <button type="button" className={styles.newBtn} onClick={() => addLookupsFromText(lookupDraft)} disabled={!lookupDraft.trim()}>
+              <button type="button" className={styles.newBtn} onClick={() => openLookupMapping(lookupDraft)} disabled={!lookupDraft.trim()}>
                 Add rows
               </button>
               <button type="button" className={styles.exportBtn} style={{ margin: 0 }} onClick={() => lookupFileRef.current?.click()}>
@@ -1906,6 +2111,7 @@ export function EventsView({
                     if (cdmFilter && String(prospect?.cdm || '').trim() !== cdmFilter) return null;
                     // Apply the per-column type-to-filter drafts.
                     const lookupVals = {
+                      name: l.name || '',
                       title: l.title || '',
                       company: l.company || '',
                       tableView: prospect?.company || '',
@@ -2002,6 +2208,13 @@ export function EventsView({
           attendee={contactPopup.attendee}
           contact={contactPopup.contact}
           onClose={() => setContactPopup(null)}
+        />
+      )}
+      {lookupMapping && (
+        <LookupMappingModal
+          grid={lookupMapping}
+          onCancel={() => setLookupMapping(null)}
+          onConfirm={commitMappedLookups}
         />
       )}
     </div>
