@@ -134,6 +134,14 @@ function buildFirstRowSeeds(cdmName) {
   };
 }
 
+// Seed values for the CLOSING (last) row of certain tables so a fresh form
+// always ends with a fixed wrap-up line. Keyed by table.key. The agenda
+// always closes with a 5-minute "Determine next steps" slot that carries no
+// Subject Owner — mirroring the seeded "Introductions" opener.
+const LAST_ROW_SEEDS = {
+  agenda: { subject: 'Determine next steps', duration: '5' },
+};
+
 function emptyFormData(template = DEFAULT_FORM_TEMPLATE, cdmName) {
   const fieldValues = {};
   for (const f of template.fields) fieldValues[f.key] = '';
@@ -141,15 +149,17 @@ function emptyFormData(template = DEFAULT_FORM_TEMPLATE, cdmName) {
   const firstRowSeeds = buildFirstRowSeeds(cdmName);
   for (const t of template.tables) {
     const seed = firstRowSeeds[t.key] || null;
-    tables[t.key] = Array.from({ length: 2 }, (_, idx) => {
-      const row = Object.fromEntries(t.columns.map(c => [c.key, '']));
-      if (idx === 0 && seed) {
-        for (const [k, v] of Object.entries(seed)) {
-          if (k in row) row[k] = v;
-        }
-      }
+    const lastSeed = LAST_ROW_SEEDS[t.key] || null;
+    const makeRow = () => Object.fromEntries(t.columns.map(c => [c.key, '']));
+    const applySeed = (row, s) => {
+      for (const [k, v] of Object.entries(s)) if (k in row) row[k] = v;
       return row;
-    });
+    };
+    // Opening row (seeded for some tables) plus a blank working row, then a
+    // closing row appended at the end for tables that carry a wrap-up seed.
+    const rows = [seed ? applySeed(makeRow(), seed) : makeRow(), makeRow()];
+    if (lastSeed) rows.push(applySeed(makeRow(), lastSeed));
+    tables[t.key] = rows;
   }
   return { fieldValues, tables, linkedBfoLink: null, linkedOppName: null, meeting: null };
 }
