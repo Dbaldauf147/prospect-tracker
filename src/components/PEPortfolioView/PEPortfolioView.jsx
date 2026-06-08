@@ -6,6 +6,7 @@ import { formatAum } from '../../utils/formatters';
 import { formatDateDisplay } from '../../utils/oppsCallIn';
 import { PE_STAGES } from '../../data/enums';
 import { PEOppsScheduleModal } from './PEOppsScheduleModal';
+import { DataTable } from '../common/DataTable';
 
 // Closed/invalid stages from the Opps tab — these shouldn't count toward "active pipeline".
 const CLOSED_STAGES = new Set(['Sold', 'Not Sold', 'Closed', 'Lost']);
@@ -308,6 +309,12 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
       .sort((a, b) => (a.company || '').localeCompare(b.company || ''))
   ), [prospects]);
 
+  // Total mapped portfolio companies across every PE firm — drives the
+  // "All Companies" sub-tab count.
+  const allPortfolioCompanyCount = useMemo(() => (
+    peFirms.reduce((s, pe) => s + (Array.isArray(pe.portfolioCompanies) ? pe.portfolioCompanies.length : 0), 0)
+  ), [peFirms]);
+
   // Portfolio company → PE firm (lowercased name) lookup, from each prospect's peOwner field.
   const portfolioByPe = useMemo(() => {
     const map = new Map();
@@ -605,6 +612,8 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
               ? <>Every prospect with Type = <code>Private Equity</code>, sorted by pipeline from their portfolio companies. Opportunity counts come from the <strong>Opps</strong> tab (same as the Opps column in My Accounts).</>
               : subtab === 'stages'
               ? <>PE firms grouped by their <strong>PE Stage</strong> (set in each firm's company popup): <code>Discovery</code>, <code>Piloting</code>, and <code>Existing Partnership</code>.</>
+              : subtab === 'companies'
+              ? <>Every mapped <strong>portfolio company</strong> across all PE firms (from each firm's Portfolio Companies tab), merged into one searchable, filterable table.</>
               : <>Every opportunity from the <strong>Opps 2</strong> tab with Type = <code>Private Equity</code> or Source = <code>PE partner</code>.</>}
           </div>
         </div>
@@ -621,6 +630,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
         {[
           { key: 'portfolio', label: 'Portfolio', count: peFirms.length },
           { key: 'stages', label: 'PE Stages', count: peFirms.length },
+          { key: 'companies', label: 'All Companies', count: allPortfolioCompanyCount },
           { key: 'opps', label: 'PE Opps', count: peOpps.length },
         ].map(t => {
           const isActive = subtab === t.key;
@@ -674,6 +684,11 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
         <PEStagesTab
           firms={peFirms}
           portfolioByPe={portfolioByPe}
+          onSelectProspect={onSelectProspect}
+        />
+      ) : subtab === 'companies' ? (
+        <PEAllCompaniesTab
+          firms={peFirms}
           onSelectProspect={onSelectProspect}
         />
       ) : (
@@ -1112,6 +1127,120 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
       </>
       )}
     </div>
+  );
+}
+
+// "All Companies" sub-tab: every PE firm's mapped portfolio companies
+// (the entries in each firm's Portfolio Companies tab) flattened into a
+// single table, with a global search plus per-column filters and sorting
+// via the shared DataTable. A leading PE Firm column records which firm
+// each company came from and links back to that firm's company popup.
+function PEAllCompaniesTab({ firms, onSelectProspect }) {
+  const [search, setSearch] = useState('');
+
+  const rows = useMemo(() => {
+    const out = [];
+    let id = 0;
+    for (const pe of firms) {
+      const pcs = Array.isArray(pe.portfolioCompanies) ? pe.portfolioCompanies : [];
+      for (const pc of pcs) {
+        out.push({
+          id: id++,
+          _peId: pe.id,
+          peFirm: pe.company || '',
+          companyName: pc.companyName || '',
+          sector: pc.sector || pc.industry || '',
+          subsector: pc.subsector || '',
+          subsectorScore: pc.subsectorScore ?? '',
+          strategy: pc.strategy || '',
+          hqCity: pc.hqCity || '',
+          hqCountry: pc.hqCountry || '',
+          energyGwh: pc.energyGwh ?? '',
+          estElectricity: pc.estElectricity ?? '',
+          estNaturalGas: pc.estNaturalGas ?? '',
+          siteCount: pc.siteCount ?? '',
+          acquisitionYear: pc.acquisitionYear ?? '',
+          raClientMatch: pc.raClientMatch || '',
+          clientManager: pc.clientManager || '',
+          targetAccount: pc.targetAccount || '',
+          pcDescription: pc.pcDescription || '',
+          notes: pc.notes || '',
+        });
+      }
+    }
+    return out;
+  }, [firms]);
+
+  const columns = useMemo(() => [
+    { key: 'peFirm', label: 'PE Firm', defaultWidth: 190, sticky: true, render: (r) => (
+      <button
+        type="button"
+        onClick={() => { const pe = firms.find(f => f.id === r._peId); if (pe) onSelectProspect?.(pe); }}
+        title={`Open "${r.peFirm}" in the Table View`}
+        style={{ background: 'none', border: 'none', padding: 0, color: '#7C3AED', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', fontSize: 'inherit', textAlign: 'left' }}
+      >
+        {r.peFirm || '—'}
+      </button>
+    ) },
+    { key: 'companyName', label: 'Company Name', defaultWidth: 220 },
+    { key: 'sector', label: 'Sector', defaultWidth: 200 },
+    { key: 'subsector', label: 'Subsector', defaultWidth: 180 },
+    { key: 'subsectorScore', label: 'Subsector Score', defaultWidth: 120 },
+    { key: 'strategy', label: 'Strategy', defaultWidth: 140 },
+    { key: 'hqCity', label: 'HQ City', defaultWidth: 150 },
+    { key: 'hqCountry', label: 'HQ Country', defaultWidth: 130 },
+    { key: 'energyGwh', label: 'Est. Energy (GWh/yr)', defaultWidth: 150 },
+    { key: 'estElectricity', label: 'Est. Electricity', defaultWidth: 130 },
+    { key: 'estNaturalGas', label: 'Est. Natural Gas', defaultWidth: 130 },
+    { key: 'siteCount', label: 'Site Count', defaultWidth: 100 },
+    { key: 'acquisitionYear', label: 'Acquisition Year', defaultWidth: 120 },
+    { key: 'raClientMatch', label: 'RA Client Match', defaultWidth: 160 },
+    { key: 'clientManager', label: 'Client Manager', defaultWidth: 160 },
+    { key: 'targetAccount', label: 'Target Account', defaultWidth: 160 },
+    { key: 'pcDescription', label: 'PC Description', defaultWidth: 320 },
+    { key: 'notes', label: 'Notes', defaultWidth: 220 },
+  ], [firms, onSelectProspect]);
+
+  const filtered = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    if (!term) return rows;
+    return rows.filter(r => Object.values(r).some(v => String(v).toLowerCase().includes(term)));
+  }, [search, rows]);
+
+  return (
+    <>
+      <div style={{ padding: '0 1.25rem 0.5rem', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder={`Search ${rows.length} portfolio compan${rows.length === 1 ? 'y' : 'ies'}…`}
+          style={{ flex: 1, maxWidth: 400, padding: '0.4rem 0.6rem', border: '1px solid #E2E8F0', borderRadius: 6, fontSize: '0.78rem', fontFamily: 'inherit' }}
+        />
+        {search.trim() && <span style={{ fontSize: '0.72rem', color: '#64748B', whiteSpace: 'nowrap' }}>{filtered.length} of {rows.length}</span>}
+      </div>
+      <div style={{ flex: 1, overflow: 'auto', padding: '0 1.25rem 1.25rem', minHeight: 0 }}>
+        {rows.length === 0 ? (
+          <div style={{ padding: '1.25rem', textAlign: 'center', background: '#fff', border: '2px dashed #CBD5E1', borderRadius: 8, color: '#475569' }}>
+            <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>No portfolio companies mapped yet</div>
+            <div style={{ fontSize: '0.78rem' }}>
+              Open a PE firm's company popup and add companies in its <strong>Portfolio Companies</strong> tab — they'll be merged here.
+            </div>
+          </div>
+        ) : (
+          <DataTable
+            tableId="pe-all-portfolio-companies"
+            columns={columns}
+            rows={filtered}
+            alwaysVisible={['peFirm']}
+            enableColumnFilters
+            emptyMessage="No portfolio companies match your filters"
+            exportFileName="pe_portfolio_companies"
+            exportPrimarySheetName="Portfolio Companies"
+          />
+        )}
+      </div>
+    </>
   );
 }
 
