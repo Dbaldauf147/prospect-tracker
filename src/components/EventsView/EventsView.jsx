@@ -1576,25 +1576,32 @@ export function EventsView({
   );
 
   // ---- Add attendees to HubSpot ------------------------------------
-  // Can this attendee be created in HubSpot? Only when it isn't already
-  // there (reuses the "In HubSpot" column's attendeeInHubspot check) and
-  // it carries a syntactically valid email (HubSpot requires an email to
-  // create a contact).
-  const canAddToHubSpot = (a) => {
-    const e = String(a.email || '').trim();
-    if (!e || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return false;
-    return !attendeeInHubspot(a);
+  // The email domain(s) a user has explicitly mapped on the matched
+  // Table View prospect record (bare domain, full address, or URL —
+  // normalized to a hostname). Defined here so both the Email Domain
+  // column and the add-to-HubSpot helpers below can reuse it.
+  const savedDomainsFor = (company) => {
+    const prospect = matchProspect(company);
+    const raw = prospect?.emailDomain;
+    if (!raw) return [];
+    const out = [];
+    for (const entry of String(raw).split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)) {
+      const at = entry.lastIndexOf('@');
+      let d = (at >= 0 ? entry.slice(at + 1) : entry).toLowerCase().trim();
+      d = d.replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '');
+      if (d && !out.includes(d)) out.push(d);
+    }
+    return out;
   };
 
-  const attendeesNeedingHubSpot = useMemo(
-    () => attendees.map((a, i) => ({ a, i })).filter(({ a }) => canAddToHubSpot(a)),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [attendees, contactsById, contactsByEmail],
-  );
-
-  const [hubspotAddingIdx, setHubspotAddingIdx] = useState(() => new Set());
-  const [hubspotBulkAdding, setHubspotBulkAdding] = useState(false);
-  const [hubspotAddStatus, setHubspotAddStatus] = useState('');
+  // The domain + pattern used to guess a missing email address. The
+  // hand-mapped emailDomain wins (same precedence as the Email Domain
+  // column); fall back to the domain inferred from HubSpot contacts.
+  const resolveEmailDomain = (company) => {
+    const info = companyEmailInfo(company);
+    const saved = savedDomainsFor(company);
+    return { domain: saved[0] || info.domain, pattern: info.pattern || '{f}.{l}' };
+  };
 
   const splitAttendeeName = (a) => {
     const cid = a.contactId ? String(a.contactId) : '';
@@ -1606,16 +1613,56 @@ export function EventsView({
     return { first: parts[0] || '', last: parts.length > 1 ? parts.slice(1).join(' ') : '' };
   };
 
+  const isValidEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(e || '').trim());
+
+  // The address we'd create this attendee in HubSpot with: their existing
+  // email when valid, otherwise one guessed from the company's email
+  // domain + the contact's name — so manually-added attendees that only
+  // have a known domain (no typed email yet) can still be added. Returns
+  // { email, guessed }; email is '' when nothing usable can be built.
+  const effectiveAttendeeEmail = (a) => {
+    const existing = String(a.email || '').trim();
+    if (isValidEmail(existing)) return { email: existing, guessed: !!a.emailGuessed };
+    if (existing) return { email: '', guessed: false };
+    const { domain, pattern } = resolveEmailDomain(a.company);
+    if (!domain) return { email: '', guessed: false };
+    const { first, last } = splitAttendeeName(a);
+    const guessed = buildGuessedEmail(first, last, domain, pattern);
+    return isValidEmail(guessed) ? { email: guessed, guessed: true } : { email: '', guessed: false };
+  };
+
+  // Can this attendee be created in HubSpot? Only when it isn't already
+  // there (reuses the "In HubSpot" column's attendeeInHubspot check) and
+  // we can resolve an email for it — a typed one, or a guess from the
+  // company's email domain.
+  const canAddToHubSpot = (a) => {
+    if (attendeeInHubspot(a)) return false;
+    return !!effectiveAttendeeEmail(a).email;
+  };
+
+  const attendeesNeedingHubSpot = useMemo(
+    () => attendees.map((a, i) => ({ a, i })).filter(({ a }) => canAddToHubSpot(a)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [attendees, contactsById, contactsByEmail, prospects],
+  );
+
+  const [hubspotAddingIdx, setHubspotAddingIdx] = useState(() => new Set());
+  const [hubspotBulkAdding, setHubspotBulkAdding] = useState(false);
+  const [hubspotAddStatus, setHubspotAddStatus] = useState('');
+
   // Create one attendee in HubSpot (or recover the existing contact on a
-  // 409). Returns the contact record { id, ... } on success, else null.
+  // 409). Uses the attendee's email or a domain-based guess. Returns the
+  // contact record { id, ... } on success, else throws.
   const createHubSpotContact = async (a) => {
+    const { email } = effectiveAttendeeEmail(a);
+    if (!email) throw new Error('No email available to create this contact');
     const { first, last } = splitAttendeeName(a);
     const res = await apiFetch('/api/hubspot?action=create-contact', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         properties: {
-          email: String(a.email || '').trim(),
+          email,
           firstname: first,
           lastname: last,
           company: a.company || '',
@@ -1655,10 +1702,15 @@ export function EventsView({
     if (!a || !canAddToHubSpot(a)) return;
     setHubspotAddingIdx(prev => { const n = new Set(prev); n.add(index); return n; });
     try {
+      const hadEmail = !!String(a.email || '').trim();
       const contact = await createHubSpotContact(a);
-      updateAttendeeAt(index, { contactId: String(contact.id) });
+      const patch = { contactId: String(contact.id) };
+      // Persist the guessed address back onto the attendee so the row
+      // shows the email it was created with.
+      if (!hadEmail && contact.email) { patch.email = contact.email; patch.emailGuessed = true; }
+      updateAttendeeAt(index, patch);
       await mergeContactsIntoCache([contact]);
-      setHubspotAddStatus(`Added ${a.name || a.email} to HubSpot`);
+      setHubspotAddStatus(`Added ${a.name || contact.email || 'contact'} to HubSpot`);
     } catch (err) {
       setHubspotAddStatus(`Failed: ${err?.message || 'could not add contact'}`);
     } finally {
@@ -1676,21 +1728,25 @@ export function EventsView({
     if (targets.length === 0) return;
     setHubspotBulkAdding(true);
     setHubspotAddStatus('');
-    const idByIndex = new Map();
+    const patchByIndex = new Map();
     const created = [];
     let failed = 0;
     for (const { a, i } of targets) {
       try {
+        const hadEmail = !!String(a.email || '').trim();
         const contact = await createHubSpotContact(a);
-        idByIndex.set(i, String(contact.id));
+        const patch = { contactId: String(contact.id) };
+        if (!hadEmail && contact.email) { patch.email = contact.email; patch.emailGuessed = true; }
+        patchByIndex.set(i, patch);
         created.push(contact);
       } catch { failed += 1; }
     }
-    if (idByIndex.size > 0) {
+    if (patchByIndex.size > 0) {
       // Re-read the latest attendees so a concurrent edit during the
-      // awaits isn't clobbered, then stamp the new contactIds on by index.
+      // awaits isn't clobbered, then stamp the new contactIds (and any
+      // guessed email) on by index.
       const latest = Array.isArray(selected.attendees) ? selected.attendees : list;
-      const next = latest.map((a, i) => (idByIndex.has(i) ? { ...a, contactId: idByIndex.get(i) } : a));
+      const next = latest.map((a, i) => (patchByIndex.has(i) ? { ...a, ...patchByIndex.get(i) } : a));
       updateEvent(selected.id, { attendees: next });
     }
     await mergeContactsIntoCache(created);
@@ -1790,36 +1846,8 @@ export function EventsView({
   // Shared renderer for the "Email Domain" column on both tables: the
   // company's dominant corporate domain as a chip (with a count tooltip),
   // or a note when only personal emails / no emails are on file.
-  // The email domain(s) a user has explicitly mapped on the matched
-  // Table View prospect record. Each entry may be a bare domain, a full
-  // address, or a URL — normalize them all down to a hostname. This is
-  // the authoritative, hand-entered value, so it wins over the domain
-  // inferred from HubSpot contact emails below.
-  const savedDomainsFor = (company) => {
-    const prospect = matchProspect(company);
-    const raw = prospect?.emailDomain;
-    if (!raw) return [];
-    const out = [];
-    for (const entry of String(raw).split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)) {
-      const at = entry.lastIndexOf('@');
-      let d = (at >= 0 ? entry.slice(at + 1) : entry).toLowerCase().trim();
-      d = d.replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '');
-      if (d && !out.includes(d)) out.push(d);
-    }
-    return out;
-  };
-
-  // The domain + pattern used to guess a missing email address. The
-  // hand-mapped emailDomain wins (same precedence as the Email Domain
-  // column); fall back to the domain inferred from HubSpot contacts.
-  // The pattern (e.g. "{f}.{l}") is still taken from the inferred
-  // samples, defaulting to first.last when none are available.
-  const resolveEmailDomain = (company) => {
-    const info = companyEmailInfo(company);
-    const saved = savedDomainsFor(company);
-    return { domain: saved[0] || info.domain, pattern: info.pattern || '{f}.{l}' };
-  };
-
+  // (savedDomainsFor / resolveEmailDomain are defined earlier, alongside
+  // the add-to-HubSpot helpers that also use them.)
   const renderDomainCell = (company) => {
     const saved = savedDomainsFor(company);
     if (saved.length > 0) {
