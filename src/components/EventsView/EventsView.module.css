@@ -278,9 +278,18 @@
 
 .resizable th {
   position: relative;
+  vertical-align: top;
+  padding-right: 12px;
+}
+
+/* Header label that ellipsizes when its column is narrowed. */
+.thLabel {
+  display: block;
+  flex: 1 1 auto;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .resizable td {
@@ -850,4 +859,123 @@
 
 .contactDetailTable a {
   color: var(--color-accent);
+}
+
+/* Bulk Dan's Tags editor toolbar above the attendee table. */
+.bulkTagBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.5rem 0 0.35rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface-muted, #F8FAFC);
+}
+
+.bulkTagCount {
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.bulkTagSelect {
+  font-size: 0.78rem;
+  font-family: inherit;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  min-width: 150px;
+}
+
+.bulkTagBtn {
+  font-size: 0.76rem;
+  font-family: inherit;
+  font-weight: 600;
+  padding: 0.3rem 0.65rem;
+  border: 1px solid #86EFAC;
+  border-radius: 6px;
+  background: #DCFCE7;
+  color: #166534;
+  cursor: pointer;
+}
+
+.bulkTagBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.bulkTagBtnRemove {
+  border-color: #FECACA;
+  background: #FEF2F2;
+  color: #B91C1C;
+}
+
+.bulkTagStatus {
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+/* Column header with an inline type-to-filter control. */
+.thFilter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.3rem;
+}
+
+.filterBtn,
+.filterBtnActive {
+  flex: 0 0 auto;
+  background: none;
+  border: none;
+  padding: 0 2px;
+  font-size: 0.82rem;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--color-text-muted);
+}
+
+.filterBtnActive {
+  color: var(--color-accent);
+}
+
+.filterBtn:hover {
+  color: var(--color-text);
+}
+
+.filterInput {
+  margin-top: 3px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.15rem 0.3rem;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-family: inherit;
+  font-weight: 400;
+  color: var(--color-text);
+  background: var(--color-surface);
+}
+
+.filterInput:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+/* Tag pill shown in the attendee Tags column and contact popup. */
+.tagChip {
+  display: inline-block;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: #EFF6FF;
+  border: 1px solid #BFDBFE;
+  color: #1E40AF;
+  font-size: 0.68rem;
+  font-weight: 600;
+  white-space: nowrap;
 }
