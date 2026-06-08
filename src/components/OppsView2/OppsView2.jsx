@@ -161,6 +161,18 @@ function findCloseDerivedColumns(headers) {
 const TRACKED_STAGES = ['Not Started', 'Lead', 'Qualifying', 'Quoting', 'Quoted', 'Contracting', 'Agreement Sent'];
 const TRACKED_STAGES_SET = new Set(TRACKED_STAGES);
 
+// Stage-specific "stalled too long" thresholds. An opp that has sat in
+// one of these stages for more than `days` calendar days surfaces in the
+// Days-in-Stage "Needs action" buckets with the paired suggestion. Stages
+// not listed (Quoting, Contracting, Agreement Sent) have no threshold, so
+// they never raise an action prompt.
+const STAGE_ACTION_THRESHOLDS = {
+  'Not Started': { days: 120, suggestion: 'Qualify or kill' },
+  'Lead':        { days: 90,  suggestion: 'Qualify or kill' },
+  'Qualifying':  { days: 60,  suggestion: 'Quote or kill' },
+  'Quoted':      { days: 90,  suggestion: 'Contract or kill' },
+};
+
 // Read-only columns whose value is derived from other cells.
 //   Call In    = calendar days from today to the Follow Up date
 //   Last Spoke = business days from Last Client Heard From Us to today
@@ -6479,6 +6491,23 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     return map;
   }, [stageDaysRows]);
 
+  // "Needs action" buckets: one per threshold-bearing stage, holding the
+  // opps that have sat in that stage longer than the stage's limit. Built
+  // off stageDaysRows (already sorted longest-stalling first), so each
+  // bucket leads with the most overdue opp. Stages without a threshold or
+  // with no overdue opps are skipped, so only actionable buckets render.
+  const stageActionBuckets = useMemo(() => {
+    const buckets = [];
+    for (const stage of TRACKED_STAGES) {
+      const rule = STAGE_ACTION_THRESHOLDS[stage];
+      if (!rule) continue;
+      const items = (stageDaysByStage.get(stage) || []).filter(r => r.days != null && r.days > rule.days);
+      if (items.length === 0) continue;
+      buckets.push({ stage, ...rule, items });
+    }
+    return buckets;
+  }, [stageDaysByStage]);
+
   // Rows for the Stage History tab. Same gate as the Days-in-Stage tab
   // so the two tabs cover the same set of opps. For each row we sum
   // historical days per TRACKED_STAGE from `_stageHistory` (an opp can
@@ -7261,6 +7290,72 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               Hide Not Started ({(stageDaysByStage.get('Not Started') || []).length})
             </label>
           </div>
+          {stageActionBuckets.length > 0 && (
+            <div style={{
+              background: '#FFFBEB', border: '1px solid #FCD34D',
+              borderRadius: 8, padding: 12, marginBottom: 4,
+            }}>
+              <div style={{
+                fontWeight: 700, fontSize: '0.85rem', color: '#92400E',
+                marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6,
+              }}>
+                ⚠ Needs action
+                <span style={{ fontWeight: 500, fontSize: '0.74rem', color: '#B45309' }}>
+                  opps that have stalled past their stage limit
+                </span>
+              </div>
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+                {stageActionBuckets.map(bucket => (
+                  <div key={bucket.stage} style={{
+                    flex: '0 0 240px', width: 240,
+                    background: '#FFFFFF', border: '1px solid #FDE68A',
+                    borderRadius: 6, padding: 8,
+                    display: 'flex', flexDirection: 'column', gap: 8,
+                  }}>
+                    <div style={{ padding: '2px 4px 6px', borderBottom: '1px solid #FDE68A' }}>
+                      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+                        <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>{bucket.stage}</span>
+                        <span style={{ fontSize: '0.72rem', color: '#64748B' }}>{bucket.items.length}</span>
+                      </div>
+                      <div style={{ fontSize: '0.72rem', color: '#B45309', marginTop: 2 }}>
+                        &gt; {bucket.days}d → <strong>{bucket.suggestion}</strong>
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {bucket.items.map(row => {
+                        const dayBadgeTitle = row.enteredAt
+                          ? `Stage entered ${formatDateDisplay(row.enteredAt)}${row._hasExplicitEntry ? '' : ' (fallback to Start Date)'}`
+                          : 'No entry date recorded.';
+                        const accountTitle = row.scope ? `Scope: ${row.scope}` : 'No scope set on this opp.';
+                        return (
+                          <div key={row.id} style={{
+                            background: '#FEF3C7', borderRadius: 4,
+                            border: '1px solid #FDE68A', padding: '6px 8px',
+                            display: 'flex', alignItems: 'center',
+                            justifyContent: 'space-between', gap: 8,
+                          }}>
+                            <span title={accountTitle} style={{
+                              fontSize: '0.8rem', fontWeight: 500,
+                              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                              minWidth: 0, cursor: 'help',
+                            }}>
+                              {row.Account || <span style={{ color: '#94A3B8' }}>(no account)</span>}
+                            </span>
+                            <span title={dayBadgeTitle} style={{
+                              fontSize: '0.72rem', fontWeight: 700, color: '#B45309',
+                              fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
+                            }}>
+                              {row.days}d
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <div style={{
             display: 'flex', gap: 12, overflowX: 'auto',
             padding: '12px 0', alignItems: 'flex-start',
