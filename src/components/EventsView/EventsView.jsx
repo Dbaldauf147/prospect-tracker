@@ -1133,6 +1133,27 @@ export function EventsView({
     return m;
   }, [contacts]);
 
+  // Email index over the synced HubSpot contacts, so a manual attendee
+  // (no contactId) that was later added to HubSpot under a matching
+  // address still reads as "in HubSpot" in the status column below.
+  const contactsByEmail = useMemo(() => {
+    const m = new Map();
+    for (const c of contacts) {
+      const email = String(c.email || c.properties?.email || '').trim().toLowerCase();
+      if (email && !m.has(email)) m.set(email, c);
+    }
+    return m;
+  }, [contacts]);
+
+  // Does this attendee exist in the synced HubSpot contacts? True when it
+  // carries a contactId we have cached, or (for manual attendees) when its
+  // email matches a cached contact.
+  function attendeeInHubspot(a) {
+    if (a.contactId && contactsById.has(String(a.contactId))) return true;
+    const email = String(a.email || '').trim().toLowerCase();
+    return !!email && contactsByEmail.has(email);
+  }
+
   // Valid Dan's Tags options for the bulk editor — the same union the
   // HubSpot Contacts tab uses: every tag already in the synced contacts,
   // supplemented by the property's enumerated options from HubSpot.
@@ -1772,6 +1793,13 @@ export function EventsView({
       );
     } },
     { key: 'emailDomain', label: 'Email Domain', width: 150, render: (a) => renderDomainCell(a.company) },
+    { key: 'inHubspot', label: 'In HubSpot', width: 110, render: (a) => (
+      attendeeInHubspot(a) ? (
+        <span className={styles.hsYes} title="This contact exists in the synced HubSpot contacts">In HubSpot</span>
+      ) : (
+        <span className={styles.hsNo} title="Not found in the synced HubSpot contacts">Not added</span>
+      )
+    ) },
     { key: 'tags', label: 'Tags', width: 180, filterable: true, render: (a, { tags }) => (
       tags.length ? (
         <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4 }}>

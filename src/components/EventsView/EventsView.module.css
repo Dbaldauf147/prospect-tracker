@@ -1101,3 +1101,27 @@
   font-weight: 600;
   white-space: nowrap;
 }
+
+/* "In HubSpot" status pills shown in the Attendees table. Green when the
+   contact is in the synced HubSpot cache, muted grey when it isn't. */
+.hsYes,
+.hsNo {
+  display: inline-block;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.66rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.hsYes {
+  background: #DCFCE7;
+  border: 1px solid #86EFAC;
+  color: #166534;
+}
+
+.hsNo {
+  background: #F1F5F9;
+  border: 1px solid #CBD5E1;
+  color: #64748B;
+}
