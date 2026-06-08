@@ -9,7 +9,7 @@
 // sync across devices the same way the per-contact Events log, contact
 // notes, and the other Contacts-page settings do.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { getHubspotCache } from '../../utils/hubspotContactsCache';
 import { attendeeFromContact, contactDisplayName } from '../../utils/eventsStore';
@@ -135,6 +135,17 @@ function SuggestedCell({ rejected, suggestion, prospectCompanies, onAccept, onRe
 
 function newId() {
   return `evt_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// Tags a contact carries (HubSpot "Dan's tags" field, ';'-separated),
+// lowercased — mirrors the helper the Prospect modal / Progress views
+// use. Drives the decision-maker detection below.
+function getContactTags(c) {
+  const raw = c?.dans_tags || c?.dan_s_tags || c?.dans_tag || '';
+  return String(raw).split(';').map(t => t.trim().toLowerCase()).filter(Boolean);
+}
+function isDecisionMaker(c) {
+  return getContactTags(c).includes('decision maker');
 }
 
 // Normalize a company name for fuzzy matching: drop parentheticals,
@@ -936,6 +947,22 @@ export function EventsView({
     updateEvent(selected.id, { lookups: [] });
   }
 
+  // Map a suggested decision maker to its company by saving them as an
+  // attendee (de-duped by HubSpot id), keeping the lookup row in place.
+  function addDecisionMaker(contact, lookupRow) {
+    addAttendee({ ...contactToAttendee(contact), originalTitle: lookupRow.title || '' });
+  }
+  // Hide a suggested decision maker for one lookup row without adding
+  // them. The ignore list is stored on the row so it persists.
+  function ignoreDecisionMaker(contactId, lookupIndex) {
+    const list = Array.isArray(selected?.lookups) ? selected.lookups : [];
+    const row = list[lookupIndex];
+    if (!row) return;
+    const cur = Array.isArray(row.ignoredContactIds) ? row.ignoredContactIds : [];
+    if (cur.includes(contactId)) return;
+    updateLookup(lookupIndex, { ignoredContactIds: [...cur, contactId] });
+  }
+
   const existingIds = useMemo(() => {
     const set = new Set();
     for (const a of (selected?.attendees || [])) if (a.contactId) set.add(a.contactId);
@@ -961,6 +988,23 @@ export function EventsView({
     return [...byKey.values()];
   }, [events]);
   const searchableContacts = useMemo(() => [...manualContacts, ...contacts], [manualContacts, contacts]);
+
+  // HubSpot contacts tagged "Decision Maker" — used to surface the
+  // decision maker(s) for each lookup company right under its row.
+  const decisionMakerContacts = useMemo(
+    () => (contacts || []).filter(isDecisionMaker),
+    [contacts],
+  );
+  // Decision-maker contacts whose company matches `company`, using the
+  // same fuzzy company match the roster popup uses.
+  function decisionMakersForCompany(company) {
+    const norm = normalizeCompany(company);
+    if (!norm) return [];
+    return decisionMakerContacts.filter(c => {
+      const cn = normalizeCompany(c.company);
+      return cn && (cn === norm || cn.includes(norm) || norm.includes(cn));
+    });
+  }
 
   const attendees = selected && Array.isArray(selected.attendees) ? selected.attendees : [];
   const lookups = selected && Array.isArray(selected.lookups) ? selected.lookups : [];
@@ -1334,27 +1378,75 @@ export function EventsView({
                     const suggestion = prospect ? null : suggestProspect(l.company);
                     const adding = addingCompanies.has(String(l.company || '').trim());
                     const ctx = { i, prospect, suggestion, adding };
+                    // Decision maker(s) on file for this row's company that
+                    // haven't already been added as attendees or ignored.
+                    const ignoredIds = Array.isArray(l.ignoredContactIds) ? l.ignoredContactIds : [];
+                    const dmSuggestions = decisionMakersForCompany(l.company).filter(c => {
+                      const id = String(c.id || c.vid || '');
+                      if (!id) return false;
+                      if (attendees.some(a => a.contactId && String(a.contactId) === id)) return false;
+                      return !ignoredIds.includes(id);
+                    });
                     return (
-                      <tr key={`${l.title}-${l.company}-${i}`}>
-                        {lookupCols.visible.map(c => (
-                          <td key={c.key}>{c.render(l, ctx)}</td>
-                        ))}
-                        <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                          <a
-                            href={linkedInSearchUrl(l.title, l.company)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className={styles.exportBtn}
-                            style={{ margin: 0, display: 'inline-block', textDecoration: 'none' }}
-                            title={`Search LinkedIn for "${[l.title, l.company].filter(Boolean).join(' at ')}"`}
-                          >
-                            🔍 LinkedIn
-                          </a>
-                          <button type="button" className={styles.removeBtn} style={{ marginLeft: 6 }} onClick={() => removeLookup(i)}>
-                            Remove
-                          </button>
-                        </td>
-                      </tr>
+                      <Fragment key={`${l.title}-${l.company}-${i}`}>
+                        <tr>
+                          {lookupCols.visible.map(c => (
+                            <td key={c.key}>{c.render(l, ctx)}</td>
+                          ))}
+                          <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                            <a
+                              href={linkedInSearchUrl(l.title, l.company)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className={styles.exportBtn}
+                              style={{ margin: 0, display: 'inline-block', textDecoration: 'none' }}
+                              title={`Search LinkedIn for "${[l.title, l.company].filter(Boolean).join(' at ')}"`}
+                            >
+                              🔍 LinkedIn
+                            </a>
+                            <button type="button" className={styles.removeBtn} style={{ marginLeft: 6 }} onClick={() => removeLookup(i)}>
+                              Remove
+                            </button>
+                          </td>
+                        </tr>
+                        {dmSuggestions.length > 0 && (
+                          <tr className={styles.dmRow}>
+                            <td colSpan={lookupCols.visible.length + 1}>
+                              <div className={styles.dmWrap}>
+                                <span className={styles.dmLabel}>
+                                  ★ Decision maker{dmSuggestions.length > 1 ? 's' : ''} at {l.company || 'this company'}
+                                </span>
+                                {dmSuggestions.map(c => {
+                                  const id = String(c.id || c.vid || '');
+                                  const name = contactDisplayName(c);
+                                  return (
+                                    <span key={id} className={styles.dmChip}>
+                                      <span className={styles.dmName}>{name}</span>
+                                      {c.jobtitle && <span className={styles.dmTitle}>{c.jobtitle}</span>}
+                                      <button
+                                        type="button"
+                                        className={styles.dmAdd}
+                                        onClick={() => addDecisionMaker(c, l)}
+                                        title={`Map ${name} to ${l.company || 'this company'} as an attendee`}
+                                      >
+                                        + Add
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className={styles.dmIgnore}
+                                        onClick={() => ignoreDecisionMaker(id, i)}
+                                        title="Hide this suggestion"
+                                      >
+                                        Ignore
+                                      </button>
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
                     );
                   })}
                 </tbody>
