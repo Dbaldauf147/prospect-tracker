@@ -11,6 +11,7 @@ import {
   loadClientStatusMap, setClientStatus, CLIENT_STATUS_EVENT,
   loadClientNotesMap, setClientNotes, CLIENT_NOTES_EVENT,
   loadClientUntrackedMap, setClientUntracked, CLIENT_UNTRACKED_EVENT,
+  loadClientLouisvilleMap, setClientLouisville, CLIENT_LOUISVILLE_EVENT,
 } from '../../utils/clientManagerStore';
 import {
   asDate, fmtCurrency, fmtPercent, fmtDate, isTruthy,
@@ -364,6 +365,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
   const [statusMap, setStatusMap] = useState(() => loadClientStatusMap());
   const [notesMap, setNotesMap] = useState(() => loadClientNotesMap());
   const [untrackedMap, setUntrackedMap] = useState(() => loadClientUntrackedMap());
+  const [louisvilleMap, setLouisvilleMap] = useState(() => loadClientLouisvilleMap());
   useEffect(() => {
     function onStorage(e) {
       if (e.key === 'deals-list-override') setDealsList(loadDealsList().data);
@@ -373,6 +375,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
       if (e.key === 'clients-status-map') setStatusMap(loadClientStatusMap());
       if (e.key === 'clients-notes-map') setNotesMap(loadClientNotesMap());
       if (e.key === 'clients-untracked-map') setUntrackedMap(loadClientUntrackedMap());
+      if (e.key === 'clients-louisville-map') setLouisvilleMap(loadClientLouisvilleMap());
     }
     function onClientMap() { setClientMap(loadDealClientMap()); }
     function onManagerMap() { setManagerMap(loadClientManagerMap()); }
@@ -380,6 +383,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
     function onStatusMap() { setStatusMap(loadClientStatusMap()); }
     function onNotesMap() { setNotesMap(loadClientNotesMap()); }
     function onUntrackedMap() { setUntrackedMap(loadClientUntrackedMap()); }
+    function onLouisvilleMap() { setLouisvilleMap(loadClientLouisvilleMap()); }
     window.addEventListener('storage', onStorage);
     window.addEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
     window.addEventListener(CLIENT_MANAGER_EVENT, onManagerMap);
@@ -387,6 +391,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
     window.addEventListener(CLIENT_STATUS_EVENT, onStatusMap);
     window.addEventListener(CLIENT_NOTES_EVENT, onNotesMap);
     window.addEventListener(CLIENT_UNTRACKED_EVENT, onUntrackedMap);
+    window.addEventListener(CLIENT_LOUISVILLE_EVENT, onLouisvilleMap);
     return () => {
       window.removeEventListener('storage', onStorage);
       window.removeEventListener(DEALS_CLIENT_MAP_EVENT, onClientMap);
@@ -395,6 +400,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
       window.removeEventListener(CLIENT_STATUS_EVENT, onStatusMap);
       window.removeEventListener(CLIENT_NOTES_EVENT, onNotesMap);
       window.removeEventListener(CLIENT_UNTRACKED_EVENT, onUntrackedMap);
+      window.removeEventListener(CLIENT_LOUISVILLE_EVENT, onLouisvilleMap);
     };
   }, []);
   // Refresh deals + client map whenever we switch back to the Clients
@@ -409,6 +415,7 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
       setStatusMap(loadClientStatusMap());
       setNotesMap(loadClientNotesMap());
       setUntrackedMap(loadClientUntrackedMap());
+      setLouisvilleMap(loadClientLouisvilleMap());
     }
   }, [subtab]);
 
@@ -509,11 +516,12 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
       daysUntilExpiration: untracked ? null : next.days,
       clientManager: managerMap[ck] || '',
       inPersonMeeting: !!inPersonMap[ck],
+      invitedToLouisville: !!louisvilleMap[ck],
       Status: statusMap[ck] || '',
       notes: notesMap[ck] || '',
       untracked,
     };
-  }), [filtered, dealsByClient, managerMap, inPersonMap, statusMap, notesMap, untrackedMap]);
+  }), [filtered, dealsByClient, managerMap, inPersonMap, louisvilleMap, statusMap, notesMap, untrackedMap]);
 
   const columns = useMemo(() => [
     {
@@ -594,6 +602,18 @@ export function ClientsView({ prospects = [], cdmName, settings, updateSettings,
           company={row.company}
           checked={row.inPersonMeeting}
           onChange={setClientInPerson}
+        />
+      ),
+    },
+    {
+      key: 'invitedToLouisville', label: 'Invited to Louisville?', defaultWidth: 160,
+      getSortValue: (row) => row.invitedToLouisville ? 1 : 0,
+      getFilterValue: (row) => row.invitedToLouisville ? 'Yes' : 'No',
+      render: (row) => (
+        <InPersonCell
+          company={row.company}
+          checked={row.invitedToLouisville}
+          onChange={setClientLouisville}
         />
       ),
     },
