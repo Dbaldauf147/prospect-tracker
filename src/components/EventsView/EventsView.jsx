@@ -713,14 +713,16 @@ function LookupMappingModal({ grid, onCancel, onConfirm }) {
   }, [onCancel]);
 
   const dataRows = hasHeader ? grid.slice(1) : grid;
+  const nameIdx = mapping.indexOf('name');
   const titleIdx = mapping.indexOf('title');
   const companyIdx = mapping.indexOf('company');
   const builtRows = useMemo(() => dataRows
     .map(cells => ({
+      name: nameIdx >= 0 ? String(cells[nameIdx] || '').trim() : '',
       title: titleIdx >= 0 ? String(cells[titleIdx] || '').trim() : '',
       company: companyIdx >= 0 ? String(cells[companyIdx] || '').trim() : '',
     }))
-    .filter(r => r.title || r.company), [dataRows, titleIdx, companyIdx]);
+    .filter(r => r.name || r.title || r.company), [dataRows, nameIdx, titleIdx, companyIdx]);
 
   // Each field may map to only one column — picking it for one column
   // clears it from any other.
@@ -1376,21 +1378,22 @@ export function EventsView({
     setLookupMapping(grid);
   }
 
-  // Commit the mapped rows ([{ title, company }]) to the lookup list,
-  // de-duping against existing rows (case-insensitive title|company).
+  // Commit the mapped rows ([{ name, title, company }]) to the lookup
+  // list, de-duping against existing rows (case-insensitive title|company).
   function commitMappedLookups(rows) {
     if (!selected) { setLookupMapping(null); return; }
     const cur = Array.isArray(selected.lookups) ? selected.lookups : [];
     const seen = new Set(cur.map(l => `${(l.title || '').toLowerCase()}|${(l.company || '').toLowerCase()}`));
     const merged = [...cur];
     for (const row of rows) {
+      const name = String(row.name || '').trim();
       const title = String(row.title || '').trim();
       const company = String(row.company || '').trim();
-      if (!title && !company) continue;
+      if (!name && !title && !company) continue;
       const key = `${title.toLowerCase()}|${company.toLowerCase()}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      merged.push({ title, company });
+      merged.push({ name, title, company });
     }
     updateEvent(selected.id, { lookups: merged });
     setLookupDraft('');
