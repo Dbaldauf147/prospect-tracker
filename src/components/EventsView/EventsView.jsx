@@ -1528,7 +1528,7 @@ export function EventsView({
   // Fill an attendee's missing email by guessing from the company's
   // domain + inferred pattern, flagged so the UI can show it's a guess.
   function guessAttendeeEmail(attendee, index) {
-    const info = companyEmailInfo(attendee.company);
+    const info = resolveEmailDomain(attendee.company);
     if (!info.domain) return;
     let first = '';
     let last = '';
@@ -1663,6 +1663,17 @@ export function EventsView({
     return out;
   };
 
+  // The domain + pattern used to guess a missing email address. The
+  // hand-mapped emailDomain wins (same precedence as the Email Domain
+  // column); fall back to the domain inferred from HubSpot contacts.
+  // The pattern (e.g. "{f}.{l}") is still taken from the inferred
+  // samples, defaulting to first.last when none are available.
+  const resolveEmailDomain = (company) => {
+    const info = companyEmailInfo(company);
+    const saved = savedDomainsFor(company);
+    return { domain: saved[0] || info.domain, pattern: info.pattern || '{f}.{l}' };
+  };
+
   const renderDomainCell = (company) => {
     const saved = savedDomainsFor(company);
     if (saved.length > 0) {
@@ -1747,7 +1758,7 @@ export function EventsView({
           </span>
         );
       }
-      const info = companyEmailInfo(a.company);
+      const info = resolveEmailDomain(a.company);
       if (!info.domain) return <span className={styles.tvMuted}>—</span>;
       return (
         <button
