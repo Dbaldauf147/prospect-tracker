@@ -55,6 +55,11 @@ import styles from './OppsView2.module.css';
 // array of field names.
 const OPP_DETAIL_HIDDEN_FIELDS_KEY = 'opp-detail-hidden-fields';
 
+// Stores the Eastern calendar date (YYYY-MM-DD) on which we last ran the
+// first-load-of-the-day "blank all No Further Action Today" clear, so it
+// fires only once per Eastern day per user.
+const NFAT_DAILY_CLEAR_KEY = 'opps2-nfat-daily-clear-date';
+
 function loadHiddenDetailFields() {
   try {
     const raw = userLsGet(OPP_DETAIL_HIDDEN_FIELDS_KEY);
@@ -577,6 +582,18 @@ function mostRecent2pmEasternMs(nowMs = Date.now()) {
   // the calendar date from ~24h earlier so DST never skews the day.
   if ((Number(parts.hour) % 24) < 14) parts = readParts(nowMs - 24 * 60 * 60 * 1000);
   return easternWallToUtcMs(Number(parts.year), Number(parts.month), Number(parts.day), 14, 0);
+}
+
+// Today's calendar date (YYYY-MM-DD) in America/New_York. Used by the
+// once-per-day "blank all No Further Action Today" clear so the day
+// boundary is Eastern midnight for every user/device, independent of
+// the browser's local timezone.
+function easternDateStr(nowMs = Date.now()) {
+  const fmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  });
+  return fmt.format(new Date(nowMs)); // en-CA yields YYYY-MM-DD
 }
 
 // Values the Opps Google sheet uses to mean "no data" in cells where
@@ -5756,6 +5773,39 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     const t = window.setInterval(sweep, 60_000);
     return () => window.clearInterval(t);
   }, []);
+
+  // First load of each Eastern calendar day: blank EVERY "No Further
+  // Action Today" value, regardless of when it was marked. This is a
+  // start-of-day reset that runs once per Eastern day (tracked in
+  // per-user localStorage), and sits alongside the 2 PM sweep above —
+  // the sweep keeps clearing morning marks at 2 PM during the day.
+  useEffect(() => {
+    // Wait until opps have actually loaded — running before records
+    // arrive would stamp the day "cleared" and skip the real clear once
+    // the data hydrates.
+    if (!data?.records?.length) return;
+    const today = easternDateStr();
+    if (userLsGet(NFAT_DAILY_CLEAR_KEY) === today) return;
+    setData(prev => {
+      const records = prev?.records || [];
+      let touched = false;
+      const nextRecords = records.map(r => {
+        const nfat = String(r?.['No Further Action Today'] || '').trim();
+        if (nfat === '') return r;
+        touched = true;
+        const copy = { ...r };
+        copy['No Further Action Today'] = '';
+        delete copy._nfatSetAt;
+        // Bump the row clock so the cleared value wins the cross-device
+        // merge over a stale mark still sitting on another device.
+        copy._rowUpdatedAt = Date.now();
+        return copy;
+      });
+      if (!touched) return prev;
+      return { ...prev, records: nextRecords };
+    });
+    userLsSet(NFAT_DAILY_CLEAR_KEY, today);
+  }, [data?.records?.length]);
 
   const headers = data?.headers || [];
   const columnLinks = data?.columnLinks || {};
