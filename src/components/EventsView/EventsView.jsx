@@ -811,41 +811,6 @@ function LookupMappingModal({ grid, onCancel, onConfirm }) {
   );
 }
 
-// Inline type-to-filter control for a column header. A funnel toggle
-// reveals a text input; rows are matched by case-insensitive substring
-// on that column (handled by the parent). The input stays visible while
-// it holds a value so an active filter is always obvious.
-function FilterToggle({ label, value, onChange }) {
-  const [open, setOpen] = useState(false);
-  const active = !!String(value || '').trim();
-  return (
-    <>
-      <div className={styles.thFilter}>
-        <span className={styles.thLabel}>{label}</span>
-        <button
-          type="button"
-          className={active ? styles.filterBtnActive : styles.filterBtn}
-          onClick={() => setOpen(o => !o)}
-          title={`Filter by ${label}`}
-          aria-label={`Filter by ${label}`}
-        >
-          🔍
-        </button>
-      </div>
-      {(open || active) && (
-        <input
-          className={styles.filterInput}
-          value={value || ''}
-          autoFocus={open}
-          placeholder={`Filter ${label}…`}
-          onChange={e => onChange(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Escape') { onChange(''); setOpen(false); } }}
-        />
-      )}
-    </>
-  );
-}
-
 // ---- Configurable / resizable table columns ----------------------
 // Column visibility + widths are personal display prefs, so they live in
 // localStorage (keyed per table) rather than the synced Firestore event
@@ -978,10 +943,12 @@ function ColumnsMenu({ columns, visibleKeys, onToggle, onReset }) {
 }
 
 // Header for a resizable table: a <colgroup> drives the fixed column
-// widths and each <th> carries its label, an optional type-to-filter
-// funnel, and a drag handle. `leading` / `trailing` are optional
-// always-on columns (e.g. a select-all checkbox or row actions).
+// widths and each <th> carries its label and a drag handle. When the
+// table is filterable a second row of always-visible type-to-filter
+// inputs sits directly beneath the headers. `leading` / `trailing` are
+// optional always-on columns (e.g. a select-all checkbox or row actions).
 function ResizableHead({ columns, widths, startResize, filters, onFilterChange, leading, trailing }) {
+  const showFilterRow = !!onFilterChange && columns.some(c => c.filterable);
   return (
     <>
       <colgroup>
@@ -994,15 +961,7 @@ function ResizableHead({ columns, widths, startResize, filters, onFilterChange, 
           {leading && <th style={{ textAlign: 'center' }}>{leading.content}</th>}
           {columns.map(c => (
             <th key={c.key} title={c.label}>
-              {c.filterable && onFilterChange ? (
-                <FilterToggle
-                  label={c.label}
-                  value={filters?.[c.key]}
-                  onChange={v => onFilterChange(c.key, v)}
-                />
-              ) : (
-                <span className={styles.thLabel}>{c.label}</span>
-              )}
+              <span className={styles.thLabel}>{c.label}</span>
               <span
                 className={styles.resizeHandle}
                 onMouseDown={e => startResize(c.key, e)}
@@ -1013,6 +972,26 @@ function ResizableHead({ columns, widths, startResize, filters, onFilterChange, 
           ))}
           {trailing && <th aria-label={trailing.label} />}
         </tr>
+        {showFilterRow && (
+          <tr className={styles.filterRow}>
+            {leading && <th />}
+            {columns.map(c => (
+              <th key={c.key}>
+                {c.filterable && (
+                  <input
+                    className={styles.filterInput}
+                    value={filters?.[c.key] || ''}
+                    placeholder={`Filter ${c.label}…`}
+                    aria-label={`Filter by ${c.label}`}
+                    onChange={e => onFilterChange(c.key, e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Escape') onFilterChange(c.key, ''); }}
+                  />
+                )}
+              </th>
+            ))}
+            {trailing && <th />}
+          </tr>
+        )}
       </thead>
     </>
   );
