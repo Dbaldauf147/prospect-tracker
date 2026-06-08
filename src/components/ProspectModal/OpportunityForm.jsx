@@ -432,6 +432,26 @@ function displayAttendeeName(a, nicknames = {}) {
   return `${base} - Goes by ${nick}`;
 }
 
+// Fields we snapshot from a matched HubSpot contact onto the saved
+// attendee. Mirrors every match.* field read by displayAttendeeName,
+// renderAttendee and the Excel export so the Attendees section keeps
+// rendering names, titles, company, location, notes and LinkedIn even
+// when the live HubSpot contact pool hasn't been (re)loaded this session.
+const ATTENDEE_SNAPSHOT_FIELDS = [
+  'id', 'vid', 'firstname', 'lastname', 'email', 'jobtitle', 'company',
+  'city', 'country', 'notes', 'hs_content_membership_notes', 'message',
+  'hs_linkedin_url', 'linkedin_url', 'hs_linkedinid',
+];
+function snapshotFromMatch(match) {
+  if (!match) return null;
+  const snap = {};
+  for (const k of ATTENDEE_SNAPSHOT_FIELDS) {
+    const v = match[k];
+    if (v !== undefined && v !== null && v !== '') snap[k] = v;
+  }
+  return Object.keys(snap).length ? snap : null;
+}
+
 function matchProspectByName(name, prospects) {
   if (!name || !prospects?.length) return null;
   const strip = s => String(s || '').toLowerCase().replace(/\b(inc|llc|ltd|corp|co|lp|gmbh)\b\.?/g, '').replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
@@ -1945,7 +1965,10 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
       const key = em || `name:${(a.name || '').toLowerCase().trim()}`;
       if (seen.has(key)) continue; // dedupe if same email/name on both sides
       seen.add(key);
-      const match = em ? byEmail.get(em) : null;
+      // Prefer the live HubSpot contact, but fall back to the snapshot
+      // persisted on the attendee so the section still populates when the
+      // contact pool hasn't been loaded/refreshed this session.
+      const match = (em ? byEmail.get(em) : null) || a.matchSnapshot || null;
       const matchedCompany = (match?.company || '').trim();
       const matchedOtherCompany = !!matchedCompany && matchedCompany.toLowerCase() !== thisCompany;
       const enriched = { ...a, match, matchedCompany, matchedOtherCompany };
@@ -1985,6 +2008,38 @@ export function OpportunityForm({ value, onChange, onLinkOpp, companyName, compa
   }, [formData.meeting, allHubspotContacts, companyContacts, companyName]);
 
   const totalAttendees = (seAttendees?.length || 0) + (customerAttendees?.length || 0);
+
+  // Persist a snapshot of each attendee's matched HubSpot contact onto the
+  // saved meeting so the Attendees section still populates (name, title,
+  // company, location, notes, LinkedIn) without re-loading the HubSpot
+  // contact pool. Only runs when the live pool is present and only writes
+  // when a snapshot actually changed, so it can't loop. When no live pool
+  // is loaded we leave any existing snapshots untouched.
+  useEffect(() => {
+    const mt = formData.meeting;
+    if (!mt) return;
+    const pool = (allHubspotContacts && allHubspotContacts.length > 0) ? allHubspotContacts : companyContacts;
+    if (!pool || pool.length === 0) return;
+    const byEmail = new Map();
+    for (const c of pool) {
+      const em = (c.email || '').toLowerCase().trim();
+      if (em && !byEmail.has(em)) byEmail.set(em, c);
+    }
+    let changed = false;
+    const sync = (list) => (list || []).map(a => {
+      const em = (a.email || '').toLowerCase().trim();
+      const live = em ? byEmail.get(em) : null;
+      if (!live) return a; // no live match — keep whatever snapshot is already there
+      const snap = snapshotFromMatch(live);
+      if (JSON.stringify(a.matchSnapshot || null) === JSON.stringify(snap)) return a;
+      changed = true;
+      return { ...a, matchSnapshot: snap };
+    });
+    const attendees = sync(mt.attendees);
+    const manualAttendees = sync(mt.manualAttendees);
+    if (changed) set({ meeting: { ...mt, attendees, manualAttendees } });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.meeting, allHubspotContacts, companyContacts]);
 
   // --- Manual attendees -------------------------------------------------
   // Users can add attendees on top of those imported from Outlook. Stored
