@@ -176,7 +176,7 @@ function normalizeCompany(s) {
 // Filterable columns for the two Events tables (keys map to the value
 // pulled for each row in the filter predicates below).
 const ATT_FILTER_KEYS = ['name', 'originalTitle', 'title', 'company', 'email', 'tags'];
-const LOOKUP_FILTER_KEYS = ['name', 'title', 'company', 'tableView', 'type'];
+const LOOKUP_FILTER_KEYS = ['name', 'title', 'company', 'tableView', 'type', 'cdm'];
 
 // HubSpot stores Dan's Tags as a single semicolon-separated string.
 // Split it into a clean list of individual tags.
@@ -1787,7 +1787,7 @@ export function EventsView({
     { key: 'type', label: 'Type', width: 150, filterable: true, render: (l, { prospect }) => (
       <TypeCell prospect={prospect} onCommit={v => onUpdateProspect(prospect.id, { type: v })} />
     ) },
-    { key: 'cdm', label: 'CDM', width: 140, render: (l, { prospect }) => (
+    { key: 'cdm', label: 'CDM', width: 140, filterable: true, render: (l, { prospect }) => (
       <CdmCell prospect={prospect} onCommit={v => onUpdateProspect(prospect.id, { cdm: v })} />
     ) },
     { key: 'addContact', label: 'Add Contact', width: 190, render: (l, { i }) => (
@@ -2113,6 +2113,7 @@ export function EventsView({
                       company: l.company || '',
                       tableView: prospect?.company || '',
                       type: prospect?.type || '',
+                      cdm: prospect?.cdm || '',
                     };
                     if (!LOOKUP_FILTER_KEYS.every(key => {
                       const q = String(lookupFilters[key] || '').trim().toLowerCase();
