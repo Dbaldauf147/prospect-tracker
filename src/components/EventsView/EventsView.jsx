@@ -536,6 +536,148 @@ function AttendeeContactModal({ attendee, contact, onClose }) {
   );
 }
 
+// ---- Configurable / resizable table columns ----------------------
+// Column visibility + widths are personal display prefs, so they live in
+// localStorage (keyed per table) rather than the synced Firestore event
+// settings — same approach the Key Contacts table uses.
+const LS_PREFIX = 'events-view';
+function colsLsGet(key) { try { return localStorage.getItem(`${LS_PREFIX}:${key}`); } catch { return null; } }
+function colsLsSet(key, val) { try { localStorage.setItem(`${LS_PREFIX}:${key}`, val); } catch { /* ignore */ } }
+
+// Manage which columns are shown and how wide they are for one table.
+// `columns` is the full ordered definition ([{ key, label, width }…]);
+// the returned `visible` is the subset to render (in definition order).
+function useTableColumns(tableKey, columns) {
+  const defaultVisible = columns.map(c => c.key);
+  const defaultWidths = Object.fromEntries(columns.map(c => [c.key, c.width]));
+
+  const [visibleKeys, setVisibleKeys] = useState(() => {
+    try {
+      const saved = JSON.parse(colsLsGet(`${tableKey}-visible`));
+      if (Array.isArray(saved)) {
+        // Keep only keys we still know about; if everything saved is
+        // stale, fall back to the defaults so the table isn't empty.
+        const known = new Set(defaultVisible);
+        const filtered = saved.filter(k => known.has(k));
+        if (filtered.length) return filtered;
+      }
+    } catch { /* ignore */ }
+    return defaultVisible;
+  });
+  useEffect(() => { colsLsSet(`${tableKey}-visible`, JSON.stringify(visibleKeys)); }, [tableKey, visibleKeys]);
+
+  const [widths, setWidths] = useState(() => {
+    try {
+      const saved = JSON.parse(colsLsGet(`${tableKey}-widths`)) || {};
+      return { ...defaultWidths, ...saved };
+    } catch { return defaultWidths; }
+  });
+  useEffect(() => { colsLsSet(`${tableKey}-widths`, JSON.stringify(widths)); }, [tableKey, widths]);
+
+  // Toggle a column on/off, but never let the user hide the last one.
+  function toggle(key) {
+    setVisibleKeys(prev => {
+      if (prev.includes(key)) return prev.length <= 1 ? prev : prev.filter(k => k !== key);
+      return [...prev, key];
+    });
+  }
+  function reset() { setVisibleKeys(defaultVisible); setWidths(defaultWidths); }
+
+  // Drag-to-resize a column. Start metrics are captured in local scope
+  // so a stray mousemove after mouseup can't throw on a null ref.
+  const resizingRef = useRef(null);
+  function startResize(key, e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startWidth = widths[key] || 120;
+    resizingRef.current = { key };
+    const onMove = (ev) => {
+      if (!resizingRef.current) return;
+      const next = Math.max(60, startWidth + (ev.clientX - startX));
+      setWidths(prev => ({ ...prev, [key]: next }));
+    };
+    const onUp = () => {
+      resizingRef.current = null;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
+  const visible = columns.filter(c => visibleKeys.includes(c.key));
+  return { visible, visibleKeys, widths, toggle, reset, startResize };
+}
+
+// "Columns ▾" dropdown: checkboxes to show/hide each column plus a reset.
+function ColumnsMenu({ columns, visibleKeys, onToggle, onReset }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e) { if (!ref.current?.contains(e.target)) setOpen(false); }
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+  return (
+    <div ref={ref} className={styles.colsMenuWrap}>
+      <button type="button" className={styles.colsBtn} onClick={() => setOpen(o => !o)} title="Show or hide columns">
+        Columns ▾
+      </button>
+      {open && (
+        <div className={styles.colsMenu}>
+          {columns.map(c => {
+            const checked = visibleKeys.includes(c.key);
+            return (
+              <label key={c.key} className={styles.colsMenuItem}>
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  disabled={checked && visibleKeys.length <= 1}
+                  onChange={() => onToggle(c.key)}
+                />
+                {c.label}
+              </label>
+            );
+          })}
+          <button type="button" className={styles.colsMenuReset} onClick={onReset}>Reset to default</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Header row for a resizable table: renders a <colgroup> driving the
+// fixed column widths and a <th> per visible column with a drag handle.
+// `trailing` is an optional always-on column (e.g. row actions).
+function ResizableHead({ columns, widths, startResize, trailing }) {
+  return (
+    <>
+      <colgroup>
+        {columns.map(c => <col key={c.key} style={{ width: widths[c.key] }} />)}
+        {trailing && <col style={{ width: trailing.width }} />}
+      </colgroup>
+      <thead>
+        <tr>
+          {columns.map(c => (
+            <th key={c.key} title={c.label}>
+              {c.label}
+              <span
+                className={styles.resizeHandle}
+                onMouseDown={e => startResize(c.key, e)}
+                role="separator"
+                aria-label={`Resize ${c.label} column`}
+              />
+            </th>
+          ))}
+          {trailing && <th aria-label={trailing.label} />}
+        </tr>
+      </thead>
+    </>
+  );
+}
+
 export function EventsView({
   settings = {},
   updateSettings = () => {},
@@ -883,6 +1025,97 @@ export function EventsView({
     }
   }
 
+  // ---- Configurable columns for the two tables ---------------------
+  // Each column carries its default width and a render function for the
+  // body cell. The trailing "Actions" column is always shown (it's how
+  // you remove a row / open LinkedIn), so it lives outside this set.
+  const attendeeColumns = [
+    { key: 'name', label: 'Name', width: 180, render: (a) => (
+      <>
+        <button
+          type="button"
+          className={styles.attendeeNameLink}
+          onClick={() => openAttendeeContact(a)}
+          title="View contact details"
+        >
+          {a.name}
+        </button>
+        {!a.contactId && (
+          <span style={{ marginLeft: 6, fontSize: '0.64rem', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
+            (manual)
+          </span>
+        )}
+      </>
+    ) },
+    { key: 'originalTitle', label: 'Original Title', width: 150, render: (a) => a.originalTitle || '—' },
+    { key: 'title', label: 'Contact Title', width: 150, render: (a) => a.title || '—' },
+    { key: 'company', label: 'Company', width: 160, render: (a) => a.company || '—' },
+    { key: 'email', label: 'Email', width: 220, render: (a) => a.email || '—' },
+  ];
+  const ATTENDEE_ACTIONS = { key: 'actions', label: 'Actions', width: 90 };
+
+  const lookupColumns = [
+    { key: 'title', label: 'Title', width: 150, render: (l) => l.title || '—' },
+    { key: 'company', label: 'Company', width: 160, render: (l) => l.company || '—' },
+    { key: 'tableView', label: 'Table View', width: 160, render: (l, { prospect, adding }) => (
+      prospect ? (
+        <button
+          type="button"
+          className={styles.tvLink}
+          title={`Open "${prospect.company}" in the Table View`}
+          onClick={() => onSelectProspect(prospect)}
+        >
+          {prospect.company}
+        </button>
+      ) : (
+        <button
+          type="button"
+          className={styles.tvAdd}
+          disabled={adding || !String(l.company || '').trim()}
+          onClick={() => addCompanyToTableView(l.company)}
+          title="Add this company to the Table View as a new prospect"
+        >
+          {adding ? 'Adding…' : '+ Add'}
+        </button>
+      )
+    ) },
+    { key: 'suggested', label: 'Suggested', width: 190, render: (l, { i, prospect, suggestion }) => (
+      prospect ? (
+        <span className={styles.tvMuted}>—</span>
+      ) : (
+        <SuggestedCell
+          rejected={!!l.suggestRejected}
+          suggestion={suggestion}
+          prospectCompanies={prospectCompanies}
+          onAccept={company => updateLookup(i, { company, suggestRejected: false })}
+          onReject={() => updateLookup(i, { suggestRejected: true })}
+        />
+      )
+    ) },
+    { key: 'type', label: 'Type', width: 150, render: (l, { prospect }) => (
+      <TypeCell prospect={prospect} onCommit={v => onUpdateProspect(prospect.id, { type: v })} />
+    ) },
+    { key: 'cdm', label: 'CDM', width: 140, render: (l, { prospect }) => (
+      <CdmCell prospect={prospect} onCommit={v => onUpdateProspect(prospect.id, { cdm: v })} />
+    ) },
+    { key: 'addContact', label: 'Add Contact', width: 190, render: (l, { i }) => (
+      <RowContactAdder
+        company={l.company}
+        title={l.title}
+        contacts={searchableContacts}
+        attendees={attendees}
+        onAdd={att => addAttendeeFromLookup(att, i)}
+        onRemove={removeAttendeeObj}
+      />
+    ) },
+  ];
+  const LOOKUP_ACTIONS = { key: 'actions', label: 'Actions', width: 200 };
+
+  const attendeeCols = useTableColumns('attendees', attendeeColumns);
+  const lookupCols = useTableColumns('lookups', lookupColumns);
+  const attendeeTableWidth = attendeeCols.visible.reduce((s, c) => s + (attendeeCols.widths[c.key] || 0), 0) + ATTENDEE_ACTIONS.width;
+  const lookupTableWidth = lookupCols.visible.reduce((s, c) => s + (lookupCols.widths[c.key] || 0), 0) + LOOKUP_ACTIONS.width;
+
   return (
     <div className={styles.wrapper}>
       <div className={styles.sidebar}>
@@ -963,6 +1196,14 @@ export function EventsView({
                 Export CSV
               </button>
             )}
+            {attendees.length > 0 && (
+              <ColumnsMenu
+                columns={attendeeColumns}
+                visibleKeys={attendeeCols.visibleKeys}
+                onToggle={attendeeCols.toggle}
+                onReset={attendeeCols.reset}
+              />
+            )}
           </div>
 
           <AttendeePicker contacts={searchableContacts} existingIds={existingIds} onAdd={addAttendee} />
@@ -972,48 +1213,33 @@ export function EventsView({
               No attendees saved yet. Use the search box above to add contacts.
             </div>
           ) : (
-            <table className={styles.attendeeTable}>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Original Title</th>
-                  <th>Contact Title</th>
-                  <th>Company</th>
-                  <th>Email</th>
-                  <th aria-label="Actions" />
-                </tr>
-              </thead>
-              <tbody>
-                {attendees.map((a, i) => (
-                  <tr key={`${a.contactId || 'manual'}-${i}`}>
-                    <td>
-                      <button
-                        type="button"
-                        className={styles.attendeeNameLink}
-                        onClick={() => openAttendeeContact(a)}
-                        title="View contact details"
-                      >
-                        {a.name}
-                      </button>
-                      {!a.contactId && (
-                        <span style={{ marginLeft: 6, fontSize: '0.64rem', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
-                          (manual)
-                        </span>
-                      )}
-                    </td>
-                    <td>{a.originalTitle || '—'}</td>
-                    <td>{a.title || '—'}</td>
-                    <td>{a.company || '—'}</td>
-                    <td>{a.email || '—'}</td>
-                    <td style={{ textAlign: 'right' }}>
-                      <button type="button" className={styles.removeBtn} onClick={() => removeAttendee(i)}>
-                        Remove
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div className={styles.tableScroll}>
+              <table
+                className={`${styles.attendeeTable} ${styles.resizable}`}
+                style={{ width: attendeeTableWidth, minWidth: attendeeTableWidth }}
+              >
+                <ResizableHead
+                  columns={attendeeCols.visible}
+                  widths={attendeeCols.widths}
+                  startResize={attendeeCols.startResize}
+                  trailing={ATTENDEE_ACTIONS}
+                />
+                <tbody>
+                  {attendees.map((a, i) => (
+                    <tr key={`${a.contactId || 'manual'}-${i}`}>
+                      {attendeeCols.visible.map(c => (
+                        <td key={c.key}>{c.render(a, { i })}</td>
+                      ))}
+                      <td style={{ textAlign: 'right' }}>
+                        <button type="button" className={styles.removeBtn} onClick={() => removeAttendee(i)}>
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
 
           <div className={styles.sectionTitle}>
@@ -1049,6 +1275,14 @@ export function EventsView({
                 Clear list
               </button>
             )}
+            {lookups.length > 0 && (
+              <ColumnsMenu
+                columns={lookupColumns}
+                visibleKeys={lookupCols.visibleKeys}
+                onToggle={lookupCols.toggle}
+                onReset={lookupCols.reset}
+              />
+            )}
           </div>
           <div style={{ fontSize: '0.74rem', color: 'var(--color-text-muted)', marginBottom: '0.5rem' }}>
             Paste or upload a list of <strong>titles and company names</strong> (two columns — CSV or tab-separated). Each row gets a LinkedIn people-search button, a <strong>Table View</strong> match (click to open, or <strong>+ Add</strong> a new prospect), and an editable <strong>CDM</strong>.
@@ -1080,102 +1314,52 @@ export function EventsView({
           </div>
 
           {lookups.length > 0 && (
-            <table className={styles.attendeeTable}>
-              <thead>
-                <tr>
-                  <th>Title</th>
-                  <th>Company</th>
-                  <th>Table View</th>
-                  <th style={{ width: 190 }}>Suggested</th>
-                  <th style={{ width: 150 }}>Type</th>
-                  <th style={{ width: 140 }}>CDM</th>
-                  <th style={{ width: 180 }}>Add Contact</th>
-                  <th aria-label="Actions" />
-                </tr>
-              </thead>
-              <tbody>
-                {lookups.map((l, i) => {
-                  const prospect = matchProspect(l.company);
-                  // Apply the CDM filter (kept on original index i so
-                  // edit / remove still target the right row).
-                  if (cdmFilter && String(prospect?.cdm || '').trim() !== cdmFilter) return null;
-                  const suggestion = prospect ? null : suggestProspect(l.company);
-                  const adding = addingCompanies.has(String(l.company || '').trim());
-                  return (
-                    <tr key={`${l.title}-${l.company}-${i}`}>
-                      <td>{l.title || '—'}</td>
-                      <td>{l.company || '—'}</td>
-                      <td>
-                        {prospect ? (
-                          <button
-                            type="button"
-                            className={styles.tvLink}
-                            title={`Open "${prospect.company}" in the Table View`}
-                            onClick={() => onSelectProspect(prospect)}
+            <div className={styles.tableScroll}>
+              <table
+                className={`${styles.attendeeTable} ${styles.resizable}`}
+                style={{ width: lookupTableWidth, minWidth: lookupTableWidth }}
+              >
+                <ResizableHead
+                  columns={lookupCols.visible}
+                  widths={lookupCols.widths}
+                  startResize={lookupCols.startResize}
+                  trailing={LOOKUP_ACTIONS}
+                />
+                <tbody>
+                  {lookups.map((l, i) => {
+                    const prospect = matchProspect(l.company);
+                    // Apply the CDM filter (kept on original index i so
+                    // edit / remove still target the right row).
+                    if (cdmFilter && String(prospect?.cdm || '').trim() !== cdmFilter) return null;
+                    const suggestion = prospect ? null : suggestProspect(l.company);
+                    const adding = addingCompanies.has(String(l.company || '').trim());
+                    const ctx = { i, prospect, suggestion, adding };
+                    return (
+                      <tr key={`${l.title}-${l.company}-${i}`}>
+                        {lookupCols.visible.map(c => (
+                          <td key={c.key}>{c.render(l, ctx)}</td>
+                        ))}
+                        <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                          <a
+                            href={linkedInSearchUrl(l.title, l.company)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className={styles.exportBtn}
+                            style={{ margin: 0, display: 'inline-block', textDecoration: 'none' }}
+                            title={`Search LinkedIn for "${[l.title, l.company].filter(Boolean).join(' at ')}"`}
                           >
-                            {prospect.company}
+                            🔍 LinkedIn
+                          </a>
+                          <button type="button" className={styles.removeBtn} style={{ marginLeft: 6 }} onClick={() => removeLookup(i)}>
+                            Remove
                           </button>
-                        ) : (
-                          <button
-                            type="button"
-                            className={styles.tvAdd}
-                            disabled={adding || !String(l.company || '').trim()}
-                            onClick={() => addCompanyToTableView(l.company)}
-                            title="Add this company to the Table View as a new prospect"
-                          >
-                            {adding ? 'Adding…' : '+ Add'}
-                          </button>
-                        )}
-                      </td>
-                      <td style={{ verticalAlign: 'top' }}>
-                        {prospect ? (
-                          <span className={styles.tvMuted}>—</span>
-                        ) : (
-                          <SuggestedCell
-                            rejected={!!l.suggestRejected}
-                            suggestion={suggestion}
-                            prospectCompanies={prospectCompanies}
-                            onAccept={company => updateLookup(i, { company, suggestRejected: false })}
-                            onReject={() => updateLookup(i, { suggestRejected: true })}
-                          />
-                        )}
-                      </td>
-                      <td>
-                        <TypeCell prospect={prospect} onCommit={v => onUpdateProspect(prospect.id, { type: v })} />
-                      </td>
-                      <td>
-                        <CdmCell prospect={prospect} onCommit={v => onUpdateProspect(prospect.id, { cdm: v })} />
-                      </td>
-                      <td>
-                        <RowContactAdder
-                          company={l.company}
-                          title={l.title}
-                          contacts={searchableContacts}
-                          attendees={attendees}
-                          onAdd={att => addAttendeeFromLookup(att, i)}
-                          onRemove={removeAttendeeObj}
-                        />
-                      </td>
-                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                        <a
-                          href={linkedInSearchUrl(l.title, l.company)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className={styles.exportBtn}
-                          style={{ margin: 0, display: 'inline-block', textDecoration: 'none' }}
-                          title={`Search LinkedIn for "${[l.title, l.company].filter(Boolean).join(' at ')}"`}
-                        >
-                          🔍 LinkedIn
-                        </a>
-                        <button type="button" className={styles.removeBtn} style={{ marginLeft: 6 }} onClick={() => removeLookup(i)}>
-                          Remove
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       )}
