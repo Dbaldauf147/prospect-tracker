@@ -208,14 +208,34 @@ function MatchPctCell({ row, myAccountMapping, myAccountDismissed, portfolioMapp
   );
 }
 
+// Resolve a list row's value for a header name, case-insensitively and
+// ignoring the internal bookkeeping keys. Returns undefined when the
+// column isn't present.
+function valueFromColumn(row, colName) {
+  if (!colName) return undefined;
+  const target = String(colName).trim().toLowerCase();
+  for (const k of Object.keys(row)) {
+    if (k === 'id' || k === '__matchKey__' || k === '__rawName__') continue;
+    if (String(k).trim().toLowerCase() === target) return row[k];
+  }
+  return undefined;
+}
+
 // Looks up the Table View prospect that best matches a list row and
 // either shows that prospect's existing field value (e.g. its BFO
 // Company Name) or, when the prospect has a similar name but no value
-// yet, offers a one-click button to fill it with the list row's name.
-function ProspectFillCell({ row, mapping, dismissed, prospectSuggestionFor, prospectsByNorm, field, label, onFill }) {
+// yet, offers a one-click button to fill it. The value written is the
+// row's matched name by default, or — when `fillFromColumn` is set — the
+// value of that named list column (e.g. "Account Name").
+function ProspectFillCell({ row, mapping, dismissed, prospectSuggestionFor, prospectsByNorm, field, label, fillFromColumn, onFill }) {
   const [busy, setBusy] = useState(false);
   const mk = row.__matchKey__;
   const raw = row.__rawName__ || '';
+  // The value we'd write into Table View: a specific list column when
+  // configured (resolved case-insensitively), otherwise the matched name.
+  const fillValue = fillFromColumn
+    ? String(valueFromColumn(row, fillFromColumn) ?? '').trim()
+    : raw;
   // Prefer a confirmed Table View mapping; otherwise fall back to the
   // best live similar-name suggestion (unless the row was dismissed).
   let prospect = null;
@@ -235,8 +255,8 @@ function ProspectFillCell({ row, mapping, dismissed, prospectSuggestionFor, pros
       </span>
     );
   }
-  if (!raw) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>—</span>;
-  // Blank in Table View — offer to set it to this row's company name.
+  if (!fillValue) return <span style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem' }}>—</span>;
+  // Blank in Table View — offer to set it to this row's fill value.
   return (
     <button
       type="button"
@@ -245,9 +265,9 @@ function ProspectFillCell({ row, mapping, dismissed, prospectSuggestionFor, pros
         e.stopPropagation();
         if (busy) return;
         setBusy(true);
-        try { await onFill(prospect.id, raw); } finally { setBusy(false); }
+        try { await onFill(prospect.id, fillValue); } finally { setBusy(false); }
       }}
-      title={`Set ${prospect.company}'s ${label} to "${raw}"`}
+      title={`Set ${prospect.company}'s ${label} to "${fillValue}"`}
       style={{
         padding: '1px 8px', borderRadius: 999, border: '1px solid #FCD34D',
         background: '#FEF3C7', color: '#92400E', fontSize: '0.65rem', fontWeight: 700,
@@ -488,6 +508,7 @@ function buildColumns(data, ctx) {
             prospectsByNorm={prospectsByNorm}
             field={prospectFieldFill.field}
             label={prospectFieldFill.label || prospectFieldFill.field}
+            fillFromColumn={prospectFieldFill.fillFromColumn}
             onFill={onFillProspectField}
           />
         ),
