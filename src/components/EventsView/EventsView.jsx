@@ -11,7 +11,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { getHubspotCache } from '../../utils/hubspotContactsCache';
+import { apiFetch } from '../../utils/apiFetch';
+import { getHubspotCache, updateHubspotCache } from '../../utils/hubspotContactsCache';
 import { attendeeFromContact, contactDisplayName } from '../../utils/eventsStore';
 import { companyDedupeKey } from '../../utils/firestoreSync';
 import { TYPES } from '../../data/enums';
@@ -148,6 +149,23 @@ function normalizeCompany(s) {
     .replace(/[^a-z0-9 ]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+// Filterable columns for the two Events tables (keys map to the value
+// pulled for each row in the filter predicates below).
+const ATT_FILTER_KEYS = ['name', 'originalTitle', 'title', 'company', 'email', 'tags'];
+const LOOKUP_FILTER_KEYS = ['title', 'company', 'tableView', 'type'];
+
+// HubSpot stores Dan's Tags as a single semicolon-separated string.
+// Split it into a clean list of individual tags.
+function parseTags(str) {
+  return String(str || '').split(';').map(s => s.trim()).filter(Boolean);
+}
+
+// Pull the current Dan's Tags off a cached HubSpot contact record,
+// tolerating the property's a few historical field spellings.
+function contactTags(contact) {
+  return parseTags(contact?.dans_tags || contact?.dan_s_tags || contact?.dans_tag || '');
 }
 
 // Convert a search-list entry to a stored attendee. Manually-created
@@ -488,6 +506,7 @@ function AttendeeContactModal({ attendee, contact, onClose }) {
   const phone = contact?.phone || '';
   const linkedin = contact?.hs_linkedin_url || contact?.linkedin_url || contact?.hs_linkedinid || '';
   const location = [contact?.city, contact?.state, contact?.country].filter(Boolean).join(', ');
+  const tags = contactTags(contact);
 
   const rows = [
     ['Original title', attendee.originalTitle || '—'],
@@ -497,6 +516,11 @@ function AttendeeContactModal({ attendee, contact, onClose }) {
     ['Phone', phone || '—'],
     ['Location', location || '—'],
     ['LinkedIn', linkedin ? <a href={linkedin} target="_blank" rel="noopener noreferrer">View profile</a> : '—'],
+    ['Tags', tags.length ? (
+      <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4 }}>
+        {tags.map(t => <span key={t} className={styles.tagChip}>{t}</span>)}
+      </span>
+    ) : '—'],
   ];
 
   return createPortal(
@@ -536,6 +560,41 @@ function AttendeeContactModal({ attendee, contact, onClose }) {
   );
 }
 
+// Column header with a built-in type-to-filter box. A funnel toggle
+// reveals a text input; rows are matched by case-insensitive substring
+// on that column (handled by the parent). The input stays visible while
+// it holds a value so an active filter is always obvious.
+function FilterHeader({ label, value, onChange, width }) {
+  const [open, setOpen] = useState(false);
+  const active = !!String(value || '').trim();
+  return (
+    <th style={width ? { width } : undefined}>
+      <div className={styles.thFilter}>
+        <span>{label}</span>
+        <button
+          type="button"
+          className={active ? styles.filterBtnActive : styles.filterBtn}
+          onClick={() => setOpen(o => !o)}
+          title={`Filter by ${label}`}
+          aria-label={`Filter by ${label}`}
+        >
+          🔍
+        </button>
+      </div>
+      {(open || active) && (
+        <input
+          className={styles.filterInput}
+          value={value || ''}
+          autoFocus={open}
+          placeholder={`Filter ${label}…`}
+          onChange={e => onChange(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Escape') { onChange(''); setOpen(false); } }}
+        />
+      )}
+    </th>
+  );
+}
+
 export function EventsView({
   settings = {},
   updateSettings = () => {},
@@ -561,6 +620,18 @@ export function EventsView({
   const [bulkAdding, setBulkAdding] = useState(false);
   // Attendee whose contact details popup is open (null = closed).
   const [contactPopup, setContactPopup] = useState(null);
+  // Bulk tag editor: which mapped contacts are selected (by HubSpot id),
+  // the tag being applied, and transient save state / status text.
+  const [selectedContactIds, setSelectedContactIds] = useState(() => new Set());
+  const [bulkTag, setBulkTag] = useState('');
+  const [tagSaving, setTagSaving] = useState(false);
+  const [tagStatus, setTagStatus] = useState('');
+  const [tagOptions, setTagOptions] = useState([]);
+  // Per-column type-to-filter drafts for the two tables (keyed by column).
+  const [attFilters, setAttFilters] = useState({});
+  const [lookupFilters, setLookupFilters] = useState({});
+  const setAttFilter = (key, v) => setAttFilters(prev => ({ ...prev, [key]: v }));
+  const setLookupFilter = (key, v) => setLookupFilters(prev => ({ ...prev, [key]: v }));
 
   // Index every Table View prospect by the app's canonical company
   // dedupe key so each lookup row can find its matching prospect the
@@ -643,6 +714,48 @@ export function EventsView({
     window.addEventListener('hubspot-cache-updated', refresh);
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
+
+  // Index the synced HubSpot contacts by id so a mapped attendee (which
+  // only stores a slim snapshot) can resolve back to its live record for
+  // its current Dan's Tags.
+  const contactsById = useMemo(() => {
+    const m = new Map();
+    for (const c of contacts) {
+      const id = String(c.id || c.vid || '');
+      if (id) m.set(id, c);
+    }
+    return m;
+  }, [contacts]);
+
+  // Valid Dan's Tags options for the bulk editor — the same union the
+  // HubSpot Contacts tab uses: every tag already in the synced contacts,
+  // supplemented by the property's enumerated options from HubSpot.
+  useEffect(() => {
+    let cancelled = false;
+    const vals = new Set();
+    for (const c of contacts) for (const t of contactTags(c)) vals.add(t);
+    if (!cancelled && vals.size) setTagOptions([...vals].sort((a, b) => a.localeCompare(b)));
+    (async () => {
+      try {
+        const res = await apiFetch('/api/hubspot?action=properties');
+        const json = await res.json();
+        const prop = (json.properties || []).find(p =>
+          p.name === 'dans_tags' || p.name === 'dan_s_tags' || p.name === 'dans_tag' ||
+          ((p.label || '').toLowerCase().includes('dan') && (p.label || '').toLowerCase().includes('tag')));
+        if (!prop) return;
+        const dRes = await apiFetch(`/api/hubspot?action=property-detail&name=${prop.name}`);
+        const detail = await dRes.json();
+        if (detail.options?.length) {
+          for (const o of detail.options) {
+            const v = typeof o === 'string' ? o : (o.label || o.value || '');
+            if (v) vals.add(v);
+          }
+          if (!cancelled) setTagOptions([...vals].sort((a, b) => a.localeCompare(b)));
+        }
+      } catch { /* options stay as derived from the cache */ }
+    })();
+    return () => { cancelled = true; };
+  }, [contacts]);
 
   // Keep a valid selection: default to the first event, and recover if
   // the selected event is deleted.
@@ -730,6 +843,79 @@ export function EventsView({
     setContactPopup({ attendee: att, contact: byId || byName || null });
   }
 
+  // ---- Bulk Dan's Tags editing for mapped attendees ----------------
+  // Only attendees backed by a HubSpot contact (have a contactId that
+  // resolves in the synced cache) can be tag-edited; manual attendees
+  // have no HubSpot record to write to. (`taggableAttendees` /
+  // `allTaggableSelected` are derived below, once `attendees` exists.)
+  function toggleContactSelected(id) {
+    setSelectedContactIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  // Operates on the currently-visible taggable rows so it respects any
+  // active column filters.
+  function toggleSelectAll() {
+    setSelectedContactIds(prev => {
+      const ids = visibleTaggable.map(({ a }) => String(a.contactId));
+      const allSelected = ids.length > 0 && ids.every(id => prev.has(id));
+      const next = new Set(prev);
+      if (allSelected) ids.forEach(id => next.delete(id));
+      else ids.forEach(id => next.add(id));
+      return next;
+    });
+  }
+
+  // Add or remove `bulkTag` across every selected contact, writing each
+  // change to HubSpot and the local cache (which refreshes the table).
+  async function applyBulkTag(mode) {
+    const tag = bulkTag.trim();
+    const ids = [...selectedContactIds].filter(id => contactsById.has(String(id)));
+    if (!tag || ids.length === 0) return;
+    setTagSaving(true);
+    setTagStatus('');
+    let changed = 0;
+    let failed = 0;
+    for (const id of ids) {
+      const cur = contactTags(contactsById.get(String(id)));
+      const has = cur.some(t => t.toLowerCase() === tag.toLowerCase());
+      if (mode === 'add' && has) continue;
+      if (mode === 'remove' && !has) continue;
+      const next = mode === 'add' ? [...cur, tag] : cur.filter(t => t.toLowerCase() !== tag.toLowerCase());
+      const nextStr = next.join(';');
+      try {
+        const res = await apiFetch('/api/hubspot?action=update-contact', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contactId: id, properties: { dans_tags: nextStr } }),
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok || json.error) throw new Error(json?.message || json?.error || `HubSpot ${res.status}`);
+        await updateHubspotCache(draft => {
+          const idx = draft.contacts.findIndex(c => String(c.id || c.vid) === String(id));
+          if (idx !== -1) draft.contacts[idx] = { ...draft.contacts[idx], dans_tags: nextStr };
+        });
+        changed += 1;
+      } catch (err) {
+        console.error('[Events bulk tag] update failed for', id, err);
+        failed += 1;
+      }
+    }
+    setTagSaving(false);
+    const verb = mode === 'add' ? 'Added' : 'Removed';
+    setTagStatus(
+      failed
+        ? `${verb} "${tag}" on ${changed} — ${failed} failed`
+        : changed
+          ? `${verb} "${tag}" on ${changed} contact${changed === 1 ? '' : 's'}`
+          : 'No changes needed',
+    );
+    setTimeout(() => setTagStatus(''), 4000);
+  }
+
   function exportAttendeesCsv() {
     if (!selected) return;
     const list = Array.isArray(selected.attendees) ? selected.attendees : [];
@@ -737,8 +923,11 @@ export function EventsView({
       const s = v === null || v === undefined ? '' : String(v);
       return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
     };
-    const headers = ['Name', 'Original Title', 'Contact Title', 'Company', 'Email'];
-    const rows = list.map(a => [a.name, a.originalTitle, a.title, a.company, a.email].map(escape).join(','));
+    const headers = ['Name', 'Original Title', 'Contact Title', 'Company', 'Email', 'Tags'];
+    const rows = list.map(a => {
+      const tags = a.contactId ? contactTags(contactsById.get(String(a.contactId))).join('; ') : '';
+      return [a.name, a.originalTitle, a.title, a.company, a.email, tags].map(escape).join(',');
+    });
     const csv = headers.join(',') + '\n' + rows.join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -820,7 +1009,35 @@ export function EventsView({
   }, [events]);
   const searchableContacts = useMemo(() => [...manualContacts, ...contacts], [manualContacts, contacts]);
 
-  const attendees = selected && Array.isArray(selected.attendees) ? selected.attendees : [];
+  const attendees = useMemo(
+    () => (selected && Array.isArray(selected.attendees) ? selected.attendees : []),
+    [selected],
+  );
+  // Mapped attendees that resolve to a synced HubSpot contact — the only
+  // ones the bulk tag editor can write to.
+  const taggableAttendees = useMemo(
+    () => attendees.filter(a => a.contactId && contactsById.has(String(a.contactId))),
+    [attendees, contactsById],
+  );
+  // Attendees that pass the active per-column filters, paired with their
+  // original index so Remove / checkboxes still target the right row.
+  const visibleAttendees = useMemo(() => {
+    const tagsOf = a => (a.contactId ? contactTags(contactsById.get(String(a.contactId))).join(' ') : '');
+    const matches = a => ATT_FILTER_KEYS.every(key => {
+      const q = String(attFilters[key] || '').trim().toLowerCase();
+      if (!q) return true;
+      const val = key === 'tags' ? tagsOf(a) : (a[key] || '');
+      return String(val).toLowerCase().includes(q);
+    });
+    return attendees.map((a, i) => ({ a, i })).filter(({ a }) => matches(a));
+  }, [attendees, attFilters, contactsById]);
+  // Taggable subset of the currently-visible rows, so select-all and the
+  // header checkbox operate on what the user can actually see.
+  const visibleTaggable = visibleAttendees.filter(
+    ({ a }) => a.contactId && contactsById.has(String(a.contactId)),
+  );
+  const allTaggableSelected = visibleTaggable.length > 0
+    && visibleTaggable.every(({ a }) => selectedContactIds.has(String(a.contactId)));
   const lookups = selected && Array.isArray(selected.lookups) ? selected.lookups : [];
   const lookupMatchCount = useMemo(
     () => lookups.reduce((n, l) => n + (matchProspect(l.company) ? 1 : 0), 0),
@@ -841,7 +1058,13 @@ export function EventsView({
     return [...set].sort((a, b) => a.localeCompare(b));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lookups, prospectByCompanyKey]);
-  useEffect(() => { setCdmFilter(''); }, [selectedId]);
+  useEffect(() => {
+    setCdmFilter('');
+    setSelectedContactIds(new Set());
+    setTagStatus('');
+    setAttFilters({});
+    setLookupFilters({});
+  }, [selectedId]);
 
   // Unique, sorted Table View company names for the Suggested cell's
   // manual-search dropdown.
@@ -967,6 +1190,39 @@ export function EventsView({
 
           <AttendeePicker contacts={searchableContacts} existingIds={existingIds} onAdd={addAttendee} />
 
+          {taggableAttendees.length > 0 && (
+            <div className={styles.bulkTagBar}>
+              <span className={styles.bulkTagCount}>
+                {selectedContactIds.size} of {taggableAttendees.length} selected
+              </span>
+              <select
+                className={styles.bulkTagSelect}
+                value={bulkTag}
+                onChange={e => setBulkTag(e.target.value)}
+              >
+                <option value="">{tagOptions.length ? 'Choose a tag…' : 'No tags available'}</option>
+                {tagOptions.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+              <button
+                type="button"
+                className={styles.bulkTagBtn}
+                disabled={!bulkTag || selectedContactIds.size === 0 || tagSaving}
+                onClick={() => applyBulkTag('add')}
+              >
+                {tagSaving ? 'Saving…' : '+ Add to selected'}
+              </button>
+              <button
+                type="button"
+                className={`${styles.bulkTagBtn} ${styles.bulkTagBtnRemove}`}
+                disabled={!bulkTag || selectedContactIds.size === 0 || tagSaving}
+                onClick={() => applyBulkTag('remove')}
+              >
+                − Remove from selected
+              </button>
+              {tagStatus && <span className={styles.bulkTagStatus}>{tagStatus}</span>}
+            </div>
+          )}
+
           {attendees.length === 0 ? (
             <div className={styles.emptyAttendees}>
               No attendees saved yet. Use the search box above to add contacts.
@@ -975,17 +1231,49 @@ export function EventsView({
             <table className={styles.attendeeTable}>
               <thead>
                 <tr>
-                  <th>Name</th>
-                  <th>Original Title</th>
-                  <th>Contact Title</th>
-                  <th>Company</th>
-                  <th>Email</th>
+                  <th style={{ width: 28 }}>
+                    <input
+                      type="checkbox"
+                      aria-label="Select all mapped contacts"
+                      title="Select all mapped contacts"
+                      disabled={taggableAttendees.length === 0}
+                      checked={allTaggableSelected}
+                      ref={el => { if (el) el.indeterminate = selectedContactIds.size > 0 && !allTaggableSelected; }}
+                      onChange={toggleSelectAll}
+                    />
+                  </th>
+                  <FilterHeader label="Name" value={attFilters.name} onChange={v => setAttFilter('name', v)} />
+                  <FilterHeader label="Original Title" value={attFilters.originalTitle} onChange={v => setAttFilter('originalTitle', v)} />
+                  <FilterHeader label="Contact Title" value={attFilters.title} onChange={v => setAttFilter('title', v)} />
+                  <FilterHeader label="Company" value={attFilters.company} onChange={v => setAttFilter('company', v)} />
+                  <FilterHeader label="Email" value={attFilters.email} onChange={v => setAttFilter('email', v)} />
+                  <FilterHeader label="Tags" value={attFilters.tags} onChange={v => setAttFilter('tags', v)} />
                   <th aria-label="Actions" />
                 </tr>
               </thead>
               <tbody>
-                {attendees.map((a, i) => (
+                {visibleAttendees.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className={styles.tvMuted} style={{ padding: '0.6rem', textAlign: 'center' }}>
+                      No attendees match the current filters.
+                    </td>
+                  </tr>
+                ) : visibleAttendees.map(({ a, i }) => {
+                  const cid = a.contactId ? String(a.contactId) : '';
+                  const taggable = cid && contactsById.has(cid);
+                  const tags = taggable ? contactTags(contactsById.get(cid)) : [];
+                  return (
                   <tr key={`${a.contactId || 'manual'}-${i}`}>
+                    <td style={{ textAlign: 'center' }}>
+                      {taggable && (
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${a.name}`}
+                          checked={selectedContactIds.has(cid)}
+                          onChange={() => toggleContactSelected(cid)}
+                        />
+                      )}
+                    </td>
                     <td>
                       <button
                         type="button"
@@ -1005,13 +1293,23 @@ export function EventsView({
                     <td>{a.title || '—'}</td>
                     <td>{a.company || '—'}</td>
                     <td>{a.email || '—'}</td>
+                    <td>
+                      {tags.length ? (
+                        <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4 }}>
+                          {tags.map(t => <span key={t} className={styles.tagChip}>{t}</span>)}
+                        </span>
+                      ) : (
+                        <span className={styles.tvMuted}>—</span>
+                      )}
+                    </td>
                     <td style={{ textAlign: 'right' }}>
                       <button type="button" className={styles.removeBtn} onClick={() => removeAttendee(i)}>
                         Remove
                       </button>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           )}
@@ -1083,11 +1381,11 @@ export function EventsView({
             <table className={styles.attendeeTable}>
               <thead>
                 <tr>
-                  <th>Title</th>
-                  <th>Company</th>
-                  <th>Table View</th>
+                  <FilterHeader label="Title" value={lookupFilters.title} onChange={v => setLookupFilter('title', v)} />
+                  <FilterHeader label="Company" value={lookupFilters.company} onChange={v => setLookupFilter('company', v)} />
+                  <FilterHeader label="Table View" value={lookupFilters.tableView} onChange={v => setLookupFilter('tableView', v)} />
                   <th style={{ width: 190 }}>Suggested</th>
-                  <th style={{ width: 150 }}>Type</th>
+                  <FilterHeader label="Type" value={lookupFilters.type} onChange={v => setLookupFilter('type', v)} width={150} />
                   <th style={{ width: 140 }}>CDM</th>
                   <th style={{ width: 180 }}>Add Contact</th>
                   <th aria-label="Actions" />
@@ -1099,6 +1397,17 @@ export function EventsView({
                   // Apply the CDM filter (kept on original index i so
                   // edit / remove still target the right row).
                   if (cdmFilter && String(prospect?.cdm || '').trim() !== cdmFilter) return null;
+                  // Apply the per-column type-to-filter drafts.
+                  const lookupVals = {
+                    title: l.title || '',
+                    company: l.company || '',
+                    tableView: prospect?.company || '',
+                    type: prospect?.type || '',
+                  };
+                  if (!LOOKUP_FILTER_KEYS.every(key => {
+                    const q = String(lookupFilters[key] || '').trim().toLowerCase();
+                    return !q || String(lookupVals[key]).toLowerCase().includes(q);
+                  })) return null;
                   const suggestion = prospect ? null : suggestProspect(l.company);
                   const adding = addingCompanies.has(String(l.company || '').trim());
                   return (
