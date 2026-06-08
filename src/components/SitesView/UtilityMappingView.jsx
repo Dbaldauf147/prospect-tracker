@@ -177,7 +177,7 @@ export function UtilityMappingView({ siteUtilities = [] }) {
   const cardLabel = { fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 2 };
 
   return (
-    <div style={{ padding: '0.75rem 1rem 2rem' }}>
+    <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '0.75rem 1rem 2rem' }}>
       <div className={styles.header}>
         <div>
           <h1 className={styles.title}>Utility Mapping</h1>
