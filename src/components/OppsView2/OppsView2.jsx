@@ -673,6 +673,22 @@ function resolveComputedDays(row, storedKey, sourceField, compute) {
 const resolveCallIn = (row) => resolveComputedDays(row, 'Call In', 'Follow Up', daysFromToday);
 const resolveLastSpoke = (row) => resolveComputedDays(row, 'Last Spoke', 'Last Client Heard From Us', businessDaysSince);
 
+// Days-in-Stage stall flag for an opp record. Returns { days, suggestion }
+// when the opp has sat in its current stage longer than that stage's limit
+// (same gates as the Days-in-Stage board: tracked stage, has a Call In,
+// not a pull-through), or null otherwise. Ignores the per-opp
+// `_ignoreStallFlag` so callers can offer an explicit ignore/restore.
+function oppStageStall(row) {
+  const stage = String(row?.['Stage'] || '').trim();
+  if (!TRACKED_STAGES_SET.has(stage)) return null;
+  if (resolveCallIn(row) == null) return null;
+  if (PULL_THROUGH_RE.test(String(row?.['Scope'] || ''))) return null;
+  const enteredISO = toISODate(row?._stageEnteredAt) || toISODate(row?.['Start Date']);
+  const days = enteredISO ? -daysFromToday(enteredISO) : null;
+  const rule = stageActionFor(stage, days);
+  return rule ? { days, suggestion: rule.suggestion, limit: rule.days } : null;
+}
+
 // One-shot Call-In ascending sort used during initial hydration. Rows
 // without a resolvable Call In sink to the bottom. A stable tiebreaker
 // (original index) keeps the order deterministic when many rows share
@@ -6279,29 +6295,88 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         >i</button>
       ),
     };
-    // "Missing Data" — flags opps that carry a BFO Opportunity Name but
-    // no BFO Address yet. Synthetic (not a stored field), placed right
+    // "Flags" — surfaces per-opp attention flags: a BFO Opportunity Name
+    // with no BFO Address yet, and the Days-in-Stage stall flag (opp sat
+    // in its stage past the limit). The stall flag can be ignored per opp
+    // (stored on `_ignoreStallFlag`), which also clears it on the
+    // Days-in-Stage board. Synthetic (not a stored field), placed right
     // after the BFO Opportunity Name column for context; falls back to
     // the end when that column is hidden.
+    const chipBase = {
+      display: 'inline-block', padding: '1px 8px', borderRadius: 999,
+      fontSize: '0.65rem', fontWeight: 700, whiteSpace: 'nowrap',
+    };
+    const flagSummary = (row) => {
+      const parts = [];
+      if (oppMissingBfoAddress(row)) parts.push('Missing BFO Address');
+      const stall = oppStageStall(row);
+      if (stall && !row?._ignoreStallFlag) parts.push(`Stalled: ${stall.suggestion}`);
+      return parts.join('; ');
+    };
     const missingDataCol = {
       key: '_missingData',
-      label: 'Missing Data',
-      defaultWidth: 130,
-      getFilterValue: (row) => (oppMissingBfoAddress(row) ? 'Missing BFO Address' : ''),
-      getSortValue: (row) => (oppMissingBfoAddress(row) ? 1 : 0),
-      exportValue: (row) => (oppMissingBfoAddress(row) ? 'Missing BFO Address' : ''),
-      render: (row) => (oppMissingBfoAddress(row) ? (
-        <span
-          title="Has a BFO Opportunity Name but no BFO Address — add the BFO Address."
-          style={{
-            display: 'inline-block', padding: '1px 8px', borderRadius: 999,
-            fontSize: '0.65rem', fontWeight: 700, whiteSpace: 'nowrap',
-            background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5',
-          }}
-        >⚠ No BFO Address</span>
-      ) : (
-        <span style={{ color: 'var(--color-text-muted)' }}>—</span>
-      )),
+      label: 'Flags',
+      defaultWidth: 200,
+      getFilterValue: (row) => flagSummary(row),
+      getSortValue: (row) => {
+        let n = 0;
+        if (oppMissingBfoAddress(row)) n += 1;
+        if (oppStageStall(row) && !row?._ignoreStallFlag) n += 1;
+        return n;
+      },
+      exportValue: (row) => flagSummary(row),
+      render: (row) => {
+        const missingAddr = oppMissingBfoAddress(row);
+        const stall = oppStageStall(row);
+        const ignored = !!row?._ignoreStallFlag;
+        if (!missingAddr && !stall) return <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
+        return (
+          <span style={{ display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: 4 }}>
+            {missingAddr && (
+              <span
+                title="Has a BFO Opportunity Name but no BFO Address — add the BFO Address."
+                style={{ ...chipBase, background: '#FEE2E2', color: '#991B1B', border: '1px solid #FCA5A5' }}
+              >⚠ No BFO Address</span>
+            )}
+            {stall && !ignored && (
+              <>
+                <span
+                  title={`Stalled ${stall.days}d in ${row['Stage']} (limit ${stall.limit}d) → ${stall.suggestion}`}
+                  style={{ ...chipBase, background: '#FEF3C7', color: '#92400E', border: '1px solid #FCD34D' }}
+                >⚠ {stall.suggestion}</span>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); updateOppField(row._id, '_ignoreStallFlag', true); }}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  title="Ignore this stall flag for this opp (also clears it on the Days in Stage board)"
+                  style={{
+                    border: 'none', background: 'none', cursor: 'pointer', padding: '0 2px',
+                    fontSize: '0.62rem', color: '#92400E', fontFamily: 'inherit', textDecoration: 'underline',
+                  }}
+                >ignore</button>
+              </>
+            )}
+            {stall && ignored && (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <span
+                  title={`Stall flag ignored (${stall.days}d in ${row['Stage']}).`}
+                  style={{ ...chipBase, fontWeight: 600, background: '#F1F5F9', color: '#94A3B8', border: '1px solid #E2E8F0' }}
+                >stall ignored</span>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); updateOppField(row._id, '_ignoreStallFlag', false); }}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  title="Restore this stall flag"
+                  style={{
+                    border: 'none', background: 'none', cursor: 'pointer', padding: '0 2px',
+                    fontSize: '0.62rem', color: 'var(--color-accent)', fontFamily: 'inherit', textDecoration: 'underline',
+                  }}
+                >restore</button>
+              </span>
+            )}
+          </span>
+        );
+      },
     };
     const bfoLinkIdx = mapped.findIndex(c => c.key === 'BFO Link');
     if (bfoLinkIdx >= 0) mapped.splice(bfoLinkIdx + 1, 0, missingDataCol);
@@ -6482,6 +6557,7 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
         startDate: toISODate(r['Start Date']) || '',
         scope: scope && scope !== '-' && scope !== '#N/A' ? scope : '',
         _hasExplicitEntry: !!toISODate(r._stageEnteredAt),
+        ignoreStall: !!r._ignoreStallFlag,
       });
     }
     rows.sort((a, b) => {
@@ -7330,8 +7406,9 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                       // Flagged opps (stalled past the stage's limit) stay
                       // in the same column but render in amber, with the
                       // suggested move on the card and in the hover — so
-                      // the board doubles as the "needs action" list.
-                      const action = stageActionFor(row.Stage, row.days);
+                      // the board doubles as the "needs action" list. Opps
+                      // the user ignored on the Opps tab don't flag here.
+                      const action = row.ignoreStall ? null : stageActionFor(row.Stage, row.days);
                       // Account-name hover surfaces the row's Scope so
                       // the kanban reads like a triage board — no need
                       // to bounce back to the Opportunities tab to see
