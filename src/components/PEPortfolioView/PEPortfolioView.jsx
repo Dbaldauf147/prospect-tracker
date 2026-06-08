@@ -5,7 +5,7 @@ import { loadOpps2Newest, setOppField } from '../../utils/opps2Store';
 import { formatAum } from '../../utils/formatters';
 import { formatDateDisplay } from '../../utils/oppsCallIn';
 import { PE_STAGES } from '../../data/enums';
-import { downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
+import { computePortfolioFitScore, downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
 import { PEOppsScheduleModal } from './PEOppsScheduleModal';
 import { DataTable } from '../common/DataTable';
 
@@ -292,7 +292,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
   ), [prospects]);
 
   // Total mapped portfolio companies across every PE firm — drives the
-  // "All Companies" sub-tab count.
+  // "All PCs" sub-tab count.
   const allPortfolioCompanyCount = useMemo(() => (
     peFirms.reduce((s, pe) => s + (Array.isArray(pe.portfolioCompanies) ? pe.portfolioCompanies.length : 0), 0)
   ), [peFirms]);
@@ -595,7 +595,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
               : subtab === 'stages'
               ? <>PE firms grouped by their <strong>PE Stage</strong> (set in each firm's company popup): <code>Discovery</code>, <code>Piloting</code>, and <code>Existing Partnership</code>.</>
               : subtab === 'companies'
-              ? <>Every mapped <strong>portfolio company</strong> across all PE firms (from each firm's Portfolio Companies tab), merged into one searchable, filterable table.</>
+              ? <>Every mapped <strong>portfolio company</strong> across all PE firms (from each firm's Portfolio Companies tab), merged into one searchable, filterable table. <strong>Opportunity Score</strong> is ranked within each PC's own firm — matching that firm's export.</>
               : <>Every opportunity from the <strong>Opps 2</strong> tab with Type = <code>Private Equity</code> or Source = <code>PE partner</code>.</>}
           </div>
         </div>
@@ -612,7 +612,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
         {[
           { key: 'portfolio', label: 'Portfolio', count: peFirms.length },
           { key: 'stages', label: 'PE Stages', count: peFirms.length },
-          { key: 'companies', label: 'All Companies', count: allPortfolioCompanyCount },
+          { key: 'companies', label: 'All PCs', count: allPortfolioCompanyCount },
           { key: 'opps', label: 'PE Opps', count: peOpps.length },
         ].map(t => {
           const isActive = subtab === t.key;
@@ -1112,7 +1112,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
   );
 }
 
-// "All Companies" sub-tab: every PE firm's mapped portfolio companies
+// "All PCs" sub-tab: every PE firm's mapped portfolio companies
 // (the entries in each firm's Portfolio Companies tab) flattened into a
 // single table, with a global search plus per-column filters and sorting
 // via the shared DataTable. A leading PE Firm column records which firm
@@ -1125,10 +1125,18 @@ function PEAllCompaniesTab({ firms, onSelectProspect }) {
     let id = 0;
     for (const pe of firms) {
       const pcs = Array.isArray(pe.portfolioCompanies) ? pe.portfolioCompanies : [];
+      // Opportunity Score is normalized within each firm's own portfolio —
+      // same maxima/year-range basis as the firm's "Download Current Data"
+      // export — so a PC's score here matches what it shows in that export.
+      const maxE = pcs.reduce((m, r) => Math.max(m, Number(r.energyGwh) || 0), 0);
+      const maxS = pcs.reduce((m, r) => Math.max(m, Number(r.siteCount) || 0), 0);
+      const years = pcs.map(r => Number(r.acquisitionYear)).filter(y => y > 0);
+      const yearRange = years.length > 0 ? { min: Math.min(...years), max: Math.max(...years) } : null;
       for (const pc of pcs) {
         out.push({
           id: id++,
           _peId: pe.id,
+          score: computePortfolioFitScore(pc, maxE, maxS, yearRange),
           peFirm: pe.company || '',
           companyName: pc.companyName || '',
           sector: pc.sector || pc.industry || '',
@@ -1165,6 +1173,7 @@ function PEAllCompaniesTab({ firms, onSelectProspect }) {
       </button>
     ) },
     { key: 'companyName', label: 'Company Name', defaultWidth: 220 },
+    { key: 'score', label: 'Opportunity Score', defaultWidth: 130, getSortValue: (r) => r.score, render: (r) => (r.score == null ? 'N/A' : r.score) },
     { key: 'sector', label: 'Sector', defaultWidth: 200 },
     { key: 'subsector', label: 'Subsector', defaultWidth: 180 },
     { key: 'subsectorScore', label: 'Subsector Score', defaultWidth: 120 },
@@ -1215,6 +1224,7 @@ function PEAllCompaniesTab({ firms, onSelectProspect }) {
             columns={columns}
             rows={filtered}
             alwaysVisible={['peFirm']}
+            defaultSort={{ key: 'score', direction: 'desc' }}
             enableColumnFilters
             emptyMessage="No portfolio companies match your filters"
             exportFileName="pe_portfolio_companies"
