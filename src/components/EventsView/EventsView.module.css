@@ -314,6 +314,55 @@
   opacity: 0.45;
 }
 
+/* Email-domain chip + email-guessing controls */
+.domainChip {
+  display: inline-block;
+  max-width: 100%;
+  padding: 0.1rem 0.45rem;
+  font-size: 0.74rem;
+  font-weight: 600;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #3730A3;
+  background: #EEF2FF;
+  border: 1px solid #C7D2FE;
+  border-radius: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.guessBtn {
+  padding: 0.12rem 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: #1E40AF;
+  background: #EFF6FF;
+  border: 1px dashed #93C5FD;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.guessBtn:hover {
+  background: #DBEAFE;
+}
+
+.guessTag {
+  margin-left: 6px;
+  padding: 0 5px;
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #92400E;
+  background: #FEF3C7;
+  border: 1px solid #FCD34D;
+  border-radius: 4px;
+  vertical-align: middle;
+}
+
 /* Decision-maker suggestion sub-row under a lookup company */
 .dmRow td {
   padding: 0.3rem 0.5rem 0.45rem 1.4rem;

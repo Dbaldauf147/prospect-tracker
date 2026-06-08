@@ -173,6 +173,72 @@ function isDecisionMaker(contact) {
   return contactTags(contact).some(t => t.toLowerCase() === 'decision maker');
 }
 
+// ---- Email domain detection & guessing ---------------------------
+// Free / personal mail providers — these never count as a company's
+// email domain (and aren't used to guess a colleague's address).
+const FREE_EMAIL_DOMAINS = new Set([
+  'gmail.com', 'googlemail.com', 'yahoo.com', 'ymail.com', 'hotmail.com', 'outlook.com',
+  'live.com', 'msn.com', 'aol.com', 'icloud.com', 'me.com', 'mac.com', 'protonmail.com',
+  'proton.me', 'gmx.com', 'mail.com', 'comcast.net', 'verizon.net', 'att.net', 'sbcglobal.net',
+]);
+
+function emailDomain(email) {
+  const m = /@([^@\s]+)$/.exec(String(email || '').trim().toLowerCase());
+  return m ? m[1] : '';
+}
+const cleanNamePart = (s) => String(s || '').toLowerCase().normalize('NFKD').replace(/[^a-z]/g, '');
+
+// Infer the dominant local-part pattern (e.g. first.last) from sample
+// {email, first, last} records whose domain matches `domain`.
+function inferEmailPattern(samples, domain) {
+  const counts = new Map();
+  for (const s of samples) {
+    if (domain && emailDomain(s.email) !== domain) continue;
+    const local = s.email.split('@')[0];
+    const f = cleanNamePart(s.first);
+    const l = cleanNamePart(s.last);
+    if (!f || !l) continue;
+    const fi = f[0];
+    const li = l[0];
+    let pat = null;
+    if (local === `${f}.${l}`) pat = '{f}.{l}';
+    else if (local === `${f}${l}`) pat = '{f}{l}';
+    else if (local === `${fi}${l}`) pat = '{fi}{l}';
+    else if (local === `${fi}.${l}`) pat = '{fi}.{l}';
+    else if (local === `${f}.${li}`) pat = '{f}.{li}';
+    else if (local === `${f}_${l}`) pat = '{f}_{l}';
+    else if (local === `${l}.${f}`) pat = '{l}.{f}';
+    else if (local === `${l}${f}`) pat = '{l}{f}';
+    if (pat) counts.set(pat, (counts.get(pat) || 0) + 1);
+  }
+  let best = '{f}.{l}';
+  let bestN = 0;
+  for (const [p, n] of counts) if (n > bestN) { bestN = n; best = p; }
+  return best;
+}
+
+// Build a guessed address from a name + domain + inferred pattern.
+function buildGuessedEmail(first, last, domain, pattern) {
+  if (!domain) return '';
+  const f = cleanNamePart(first);
+  const l = cleanNamePart(last);
+  const fi = f.slice(0, 1);
+  const li = l.slice(0, 1);
+  let local;
+  switch (pattern) {
+    case '{f}{l}': local = `${f}${l}`; break;
+    case '{fi}{l}': local = `${fi}${l}`; break;
+    case '{fi}.{l}': local = fi && l ? `${fi}.${l}` : ''; break;
+    case '{f}.{li}': local = f && li ? `${f}.${li}` : ''; break;
+    case '{f}_{l}': local = f && l ? `${f}_${l}` : ''; break;
+    case '{l}.{f}': local = l && f ? `${l}.${f}` : ''; break;
+    case '{l}{f}': local = `${l}${f}`; break;
+    case '{f}.{l}':
+    default: local = f && l ? `${f}.${l}` : (f || l); break;
+  }
+  return local ? `${local}@${domain}` : '';
+}
+
 // Convert a search-list entry to a stored attendee. Manually-created
 // pseudo-contacts (flagged `_manual`) are saved back as manual
 // attendees (no contactId) so they de-dupe by name against the original
@@ -621,14 +687,33 @@ function useTableColumns(tableKey, columns) {
       if (Array.isArray(saved)) {
         // Keep only keys we still know about; if everything saved is
         // stale, fall back to the defaults so the table isn't empty.
-        const known = new Set(defaultVisible);
-        const filtered = saved.filter(k => known.has(k));
-        if (filtered.length) return filtered;
+        const knownSet = new Set(defaultVisible);
+        const filtered = saved.filter(k => knownSet.has(k));
+        if (filtered.length) {
+          // Surface columns the user has never been offered before
+          // (added in a later version) instead of silently hiding them.
+          // The "-known" record is what makes this precise; before it
+          // exists (first load after this shipped) every column reads as
+          // new, so a one-time re-show of any hidden column is expected.
+          // From then on, columns the user hides stay hidden.
+          let offered = [];
+          try { offered = JSON.parse(colsLsGet(`${tableKey}-known`)) || []; } catch { /* ignore */ }
+          const offeredSet = new Set(offered);
+          const result = [...filtered];
+          for (const k of defaultVisible) {
+            if (!offeredSet.has(k) && !result.includes(k)) result.push(k);
+          }
+          return result;
+        }
       }
     } catch { /* ignore */ }
     return defaultVisible;
   });
   useEffect(() => { colsLsSet(`${tableKey}-visible`, JSON.stringify(visibleKeys)); }, [tableKey, visibleKeys]);
+  // Record the full set of columns we've now offered, so a column added
+  // in a future version can be detected as new (and shown) on next load.
+  const knownKeysStr = defaultVisible.join(',');
+  useEffect(() => { colsLsSet(`${tableKey}-known`, JSON.stringify(knownKeysStr.split(','))); }, [tableKey, knownKeysStr]);
 
   const [widths, setWidths] = useState(() => {
     try {
@@ -1200,6 +1285,87 @@ export function EventsView({
     });
   }
 
+  // HubSpot contacts grouped by normalized company name, so the email
+  // domain lookup below can find a company's contacts without scanning
+  // the whole cache on every call.
+  const contactsByCompanyNorm = useMemo(() => {
+    const map = new Map();
+    for (const c of (contacts || [])) {
+      const key = normalizeCompany(c.company);
+      if (!key) continue;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(c);
+    }
+    return map;
+  }, [contacts]);
+
+  // Email-domain info for a company, derived from its HubSpot contacts:
+  // the most common corporate domain (free providers excluded), how many
+  // contacts have any email, and the local-part pattern to guess with.
+  // Memoized with an internal cache keyed by normalized company name.
+  const companyEmailInfo = useMemo(() => {
+    const cache = new Map();
+    const contactsForCompany = (norm) => {
+      if (!norm) return [];
+      const exact = contactsByCompanyNorm.get(norm);
+      if (exact) return exact;
+      const out = [];
+      for (const [key, list] of contactsByCompanyNorm) {
+        if (key.includes(norm) || norm.includes(key)) out.push(...list);
+      }
+      return out;
+    };
+    return (company) => {
+      const norm = normalizeCompany(company);
+      if (!norm) return { domain: '', emailCount: 0, corporateCount: 0, pattern: '{f}.{l}' };
+      if (cache.has(norm)) return cache.get(norm);
+      const list = contactsForCompany(norm);
+      let emailCount = 0;
+      const domainCounts = new Map();
+      const samples = [];
+      for (const c of list) {
+        const email = String(c.email || '').trim().toLowerCase();
+        if (!email.includes('@')) continue;
+        emailCount += 1;
+        const dom = emailDomain(email);
+        if (!dom || FREE_EMAIL_DOMAINS.has(dom)) continue;
+        domainCounts.set(dom, (domainCounts.get(dom) || 0) + 1);
+        samples.push({ email, first: c.firstname, last: c.lastname });
+      }
+      let domain = '';
+      let corporateCount = 0;
+      for (const [dom, n] of domainCounts) if (n > corporateCount) { corporateCount = n; domain = dom; }
+      const info = { domain, emailCount, corporateCount, pattern: inferEmailPattern(samples, domain) };
+      cache.set(norm, info);
+      return info;
+    };
+  }, [contactsByCompanyNorm]);
+
+  // Patch one attendee in place (by original index).
+  function updateAttendeeAt(index, patch) {
+    if (!selected) return;
+    const list = Array.isArray(selected.attendees) ? selected.attendees : [];
+    updateEvent(selected.id, { attendees: list.map((a, i) => (i === index ? { ...a, ...patch } : a)) });
+  }
+
+  // Fill an attendee's missing email by guessing from the company's
+  // domain + inferred pattern, flagged so the UI can show it's a guess.
+  function guessAttendeeEmail(attendee, index) {
+    const info = companyEmailInfo(attendee.company);
+    if (!info.domain) return;
+    let first = '';
+    let last = '';
+    const contact = attendee.contactId ? contactsById.get(String(attendee.contactId)) : null;
+    if (contact) { first = contact.firstname || ''; last = contact.lastname || ''; }
+    else {
+      const parts = String(attendee.name || '').trim().split(/\s+/).filter(Boolean);
+      first = parts[0] || '';
+      last = parts.length > 1 ? parts[parts.length - 1] : '';
+    }
+    const email = buildGuessedEmail(first, last, info.domain, info.pattern);
+    if (email) updateAttendeeAt(index, { email, emailGuessed: true });
+  }
+
   const attendees = useMemo(
     () => (selected && Array.isArray(selected.attendees) ? selected.attendees : []),
     [selected],
@@ -1297,6 +1463,28 @@ export function EventsView({
     }
   }
 
+  // Shared renderer for the "Email Domain" column on both tables: the
+  // company's dominant corporate domain as a chip (with a count tooltip),
+  // or a note when only personal emails / no emails are on file.
+  const renderDomainCell = (company) => {
+    const info = companyEmailInfo(company);
+    if (info.domain) {
+      return (
+        <span className={styles.domainChip} title={`${info.corporateCount} contact${info.corporateCount === 1 ? '' : 's'} with @${info.domain}`}>
+          @{info.domain}
+        </span>
+      );
+    }
+    if (info.emailCount > 0) {
+      return (
+        <span className={styles.tvMuted} title="Only personal email domains on file for this company">
+          {info.emailCount} email{info.emailCount === 1 ? '' : 's'}
+        </span>
+      );
+    }
+    return <span className={styles.tvMuted}>—</span>;
+  };
+
   // ---- Configurable columns for the two tables ---------------------
   // Each column carries its default width, an optional `filterable` flag
   // (renders a type-to-filter funnel, wired to the per-column filter
@@ -1324,7 +1512,31 @@ export function EventsView({
     { key: 'originalTitle', label: 'Original Title', width: 150, filterable: true, render: (a) => a.originalTitle || '—' },
     { key: 'title', label: 'Contact Title', width: 150, filterable: true, render: (a) => a.title || '—' },
     { key: 'company', label: 'Company', width: 160, filterable: true, render: (a) => a.company || '—' },
-    { key: 'email', label: 'Email', width: 200, filterable: true, render: (a) => a.email || '—' },
+    { key: 'email', label: 'Email', width: 220, filterable: true, render: (a, { i }) => {
+      if (a.email) {
+        return (
+          <span>
+            {a.email}
+            {a.emailGuessed && (
+              <span className={styles.guessTag} title="Guessed from the company email domain — verify before using">guess</span>
+            )}
+          </span>
+        );
+      }
+      const info = companyEmailInfo(a.company);
+      if (!info.domain) return <span className={styles.tvMuted}>—</span>;
+      return (
+        <button
+          type="button"
+          className={styles.guessBtn}
+          onClick={() => guessAttendeeEmail(a, i)}
+          title={`Guess an address at @${info.domain} from this contact's name`}
+        >
+          Guess @{info.domain}
+        </button>
+      );
+    } },
+    { key: 'emailDomain', label: 'Email Domain', width: 150, render: (a) => renderDomainCell(a.company) },
     { key: 'tags', label: 'Tags', width: 180, filterable: true, render: (a, { tags }) => (
       tags.length ? (
         <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4 }}>
@@ -1340,6 +1552,7 @@ export function EventsView({
   const lookupColumns = [
     { key: 'title', label: 'Title', width: 150, filterable: true, render: (l) => l.title || '—' },
     { key: 'company', label: 'Company', width: 160, filterable: true, render: (l) => l.company || '—' },
+    { key: 'emailDomain', label: 'Email Domain', width: 150, render: (l) => renderDomainCell(l.company) },
     { key: 'tableView', label: 'Table View', width: 160, filterable: true, render: (l, { prospect, adding }) => (
       prospect ? (
         <button
