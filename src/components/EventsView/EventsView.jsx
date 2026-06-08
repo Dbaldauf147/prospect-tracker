@@ -1689,7 +1689,22 @@ export function EventsView({
     ) },
     { key: 'originalTitle', label: 'Original Title', width: 150, filterable: true, render: (a) => a.originalTitle || '—' },
     { key: 'title', label: 'Contact Title', width: 150, filterable: true, render: (a) => a.title || '—' },
-    { key: 'company', label: 'Company', width: 160, filterable: true, render: (a) => a.company || '—' },
+    { key: 'company', label: 'Company', width: 160, filterable: true, render: (a) => {
+      const prospect = matchProspect(a.company);
+      if (prospect) {
+        return (
+          <button
+            type="button"
+            className={styles.tvLink}
+            title={`Open "${prospect.company}" in the Table View`}
+            onClick={() => onSelectProspect(prospect)}
+          >
+            {a.company}
+          </button>
+        );
+      }
+      return a.company || '—';
+    } },
     { key: 'email', label: 'Email', width: 220, filterable: true, render: (a, { i }) => {
       if (a.email) {
         return (
