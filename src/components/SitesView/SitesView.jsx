@@ -28,6 +28,7 @@ import {
   formatRate,
 } from '../../utils/utilityRates';
 import { parseAllSheets, parseBestSheet, parseSplitSitesTemplate, readRoundTripState, isIndicativeSavingsExport } from '../../utils/xlsxParse';
+import { UtilityMappingView } from './UtilityMappingView';
 import { saveIndicativeAnalysis, deleteIndicativeAnalysis } from '../../utils/firestoreSync';
 import { injectLiveLineChart } from '../../utils/xlsxLiveChart';
 import { findFuzzyMatch } from '../../utils/utilityNameMatch';
@@ -279,6 +280,9 @@ function SupplierAutocomplete({ initialValue, onCommit, onCancel }) {
 }
 
 export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
+  // Top-level toggle between the Utility Lookup page and the nested
+  // Utility Mapping view (interval-data availability by utility).
+  const [mainTab, setMainTab] = useState('lookup'); // 'lookup' | 'mapping'
   const [sitesData, setSitesData] = useState([]);
   const [sitesLoaded, setSitesLoaded] = useState(false);
   const [utility, setUtility] = useState(null); // { zipMap, meta }
@@ -2044,6 +2048,16 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       suggestedPct: suggestedSeen.size ? Math.round((suggestedDecided / suggestedSeen.size) * 100) : 0,
     };
   }, [rows, utility]);
+
+  // Lightweight projection of each site's matched electric/gas utility,
+  // handed to the nested Utility Mapping view so it can roll the
+  // portfolio up by utility without re-running the whole rows pipeline.
+  const siteUtilities = useMemo(() => rows.map(r => ({
+    siteName: siteNameColumn ? String(r[siteNameColumn] || '').trim() : '',
+    state: r.__state__ || '',
+    electricUtility: r.__electric__ || '',
+    gasUtility: r.__gas__ || '',
+  })), [rows, siteNameColumn]);
 
   const utilMeta = utility?.meta || null;
 
@@ -7983,7 +7997,28 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     URL.revokeObjectURL(url);
   }
 
+  const mainTabBtn = (active) => ({
+    padding: '0.35rem 0.9rem',
+    border: '1px solid var(--color-border)',
+    borderBottom: active ? '2px solid var(--color-accent)' : '1px solid var(--color-border)',
+    background: active ? '#fff' : '#F1F5F9',
+    color: active ? 'var(--color-accent)' : '#475569',
+    borderRadius: '6px 6px 0 0',
+    fontSize: '0.8rem',
+    fontWeight: 600,
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+  });
+
   return (
+    <>
+      <div style={{ display: 'flex', gap: '0.25rem', padding: '0.5rem 1rem 0', borderBottom: '1px solid var(--color-border)' }}>
+        <button type="button" style={mainTabBtn(mainTab === 'lookup')} onClick={() => setMainTab('lookup')}>Utility Lookup</button>
+        <button type="button" style={mainTabBtn(mainTab === 'mapping')} onClick={() => setMainTab('mapping')}>Utility Mapping</button>
+      </div>
+      {mainTab === 'mapping' ? (
+        <UtilityMappingView siteUtilities={siteUtilities} />
+      ) : (
     <div
       className={styles.wrapper}
       onDrop={handleDrop}
@@ -8707,5 +8742,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         document.body
       )}
     </div>
+      )}
+    </>
   );
 }
