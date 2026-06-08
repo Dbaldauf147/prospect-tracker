@@ -12,7 +12,6 @@ export const UPLOADED_LISTS = [
   { key: 'gresb', label: 'GRESB', storageKey: 'gresb-list-override' },
   { key: 'sbt', label: 'SBT', storageKey: 'sbt-list-override' },
   { key: 'ecovadis', label: 'Ecovadis', storageKey: 'ecovadis-list-override' },
-  { key: 'unpri', label: 'UN PRI', storageKey: 'unpri-list-override' },
   { key: 'casb', label: 'CA SB', storageKey: 'casb-list-override' },
   { key: 'nzam', label: 'NZAM', storageKey: 'nzam-list-override' },
   { key: 'betterbuildings', label: 'Better Buildings', storageKey: 'better-buildings-override' },

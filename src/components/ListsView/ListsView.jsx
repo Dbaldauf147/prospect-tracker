@@ -23,7 +23,6 @@ const SUBTABS = [
   { key: 'cdp', label: 'CDP', storageKey: 'cdp-list-override' },
   { key: 'gresb', label: 'GRESB', storageKey: 'gresb-list-override' },
   { key: 'sbt', label: 'SBT', storageKey: 'sbt-list-override' },
-  { key: 'unpri', label: 'UN PRI', storageKey: 'unpri-list-override' },
   { key: 'casb', label: 'CA SB', storageKey: 'casb-list-override' },
   { key: 'betterbuildings', label: 'Better Buildings', storageKey: 'better-buildings-override' },
   { key: 'bfoopps', label: 'BFO Opps', storageKey: 'bfo-opps-override' },
@@ -452,21 +451,6 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             title="SBT"
             singular="company"
             plural="companies"
-            prospects={prospects}
-            onSelectProspect={onSelectProspect}
-            cdmName={cdmName}
-            settings={settings}
-            updateSettings={updateSettings}
-            updateSettingsPath={updateSettingsPath}
-          />
-        )}
-        {subtab === 'unpri' && (
-          <UploadedListView
-            storageKey="unpri-list-override"
-            tableIdPrefix="unpri-list"
-            title="UN PRI"
-            singular="signatory"
-            plural="signatories"
             prospects={prospects}
             onSelectProspect={onSelectProspect}
             cdmName={cdmName}
