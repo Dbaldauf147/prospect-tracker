@@ -7997,24 +7997,19 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     URL.revokeObjectURL(url);
   }
 
-  const mainTabBtn = (active) => ({
-    padding: '0.35rem 0.9rem',
-    border: '1px solid var(--color-border)',
-    borderBottom: active ? '2px solid var(--color-accent)' : '1px solid var(--color-border)',
-    background: active ? '#fff' : '#F1F5F9',
-    color: active ? 'var(--color-accent)' : '#475569',
-    borderRadius: '6px 6px 0 0',
-    fontSize: '0.8rem',
-    fontWeight: 600,
-    cursor: 'pointer',
-    fontFamily: 'inherit',
-  });
-
   return (
-    <>
-      <div style={{ display: 'flex', gap: '0.25rem', padding: '0.5rem 1rem 0', borderBottom: '1px solid var(--color-border)' }}>
-        <button type="button" style={mainTabBtn(mainTab === 'lookup')} onClick={() => setMainTab('lookup')}>Utility Lookup</button>
-        <button type="button" style={mainTabBtn(mainTab === 'mapping')} onClick={() => setMainTab('mapping')}>Utility Mapping</button>
+    <div className={styles.pageWrap}>
+      <div className={styles.subtabBar}>
+        <button
+          type="button"
+          className={mainTab === 'lookup' ? styles.subtabActive : styles.subtab}
+          onClick={() => setMainTab('lookup')}
+        >Utility Lookup</button>
+        <button
+          type="button"
+          className={mainTab === 'mapping' ? styles.subtabActive : styles.subtab}
+          onClick={() => setMainTab('mapping')}
+        >Utility Mapping</button>
       </div>
       {mainTab === 'mapping' ? (
         <UtilityMappingView siteUtilities={siteUtilities} />
@@ -8743,6 +8738,6 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       )}
     </div>
       )}
-    </>
+    </div>
   );
 }
