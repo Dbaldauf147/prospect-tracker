@@ -5,6 +5,7 @@ import { loadOpps2Newest, setOppField } from '../../utils/opps2Store';
 import { formatAum } from '../../utils/formatters';
 import { formatDateDisplay } from '../../utils/oppsCallIn';
 import { PE_STAGES } from '../../data/enums';
+import { downloadPortfolioCompaniesWorkbook } from '../../utils/portfolioCompaniesWorkbook';
 import { PEOppsScheduleModal } from './PEOppsScheduleModal';
 
 // Closed/invalid stages from the Opps tab — these shouldn't count toward "active pipeline".
@@ -216,38 +217,19 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
 
   // Download a PE firm's mapped portfolio companies (the entries in its
   // Portfolio Companies tab — the same array behind the PC Mapping
-  // column) as an Excel file. Column order matches the popup's portfolio
-  // template/import so a downloaded file re-imports cleanly.
+  // column) as an Excel file. Uses the shared workbook builder so the
+  // output is identical to the company pop-up's "Download Current Data"
+  // button: Schneider-branded, opportunity-score ranked, with the Top 5
+  // Overview / Deep Dives / Methodology aux tabs carried over.
   const exportPortfolioCompanies = async (pe) => {
     const rows = Array.isArray(pe?.portfolioCompanies) ? pe.portfolioCompanies : [];
     if (rows.length === 0) return;
-    const XLSX = await import('xlsx');
-    const HEADERS = ['Company Name', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Electricity', 'Est. Natural Gas', 'Site Count', 'Sector', 'Subsector', 'Subsector Score', 'Strategy', 'Acquisition Year', 'PC Description', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account'];
-    const data = rows.map(r => ({
-      'Company Name': r.companyName || '',
-      'HQ City': r.hqCity || '',
-      'HQ Country': r.hqCountry || '',
-      'Est. Energy (GWh/yr)': r.energyGwh ?? '',
-      'Est. Electricity': r.estElectricity ?? '',
-      'Est. Natural Gas': r.estNaturalGas ?? '',
-      'Site Count': r.siteCount ?? '',
-      'Sector': r.sector || r.industry || '',
-      'Subsector': r.subsector || '',
-      'Subsector Score': r.subsectorScore ?? '',
-      'Strategy': r.strategy || '',
-      'Acquisition Year': r.acquisitionYear ?? '',
-      'PC Description': r.pcDescription || '',
-      'Notes': r.notes || '',
-      'RA Client Match': r.raClientMatch || '',
-      'Client Manager': r.clientManager || '',
-      'Target Account': r.targetAccount || '',
-    }));
-    const ws = XLSX.utils.json_to_sheet(data, { header: HEADERS });
-    ws['!cols'] = [30, 20, 16, 20, 16, 16, 16, 28, 22, 14, 16, 14, 48, 36, 26, 22, 26].map(wch => ({ wch }));
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Portfolio Companies');
-    const safeName = (pe.company || 'pe_firm').replace(/[^a-z0-9]+/gi, '_');
-    XLSX.writeFile(wb, `${safeName}_portfolio_companies.xlsx`);
+    await downloadPortfolioCompaniesWorkbook({
+      company: pe.company || 'pe_firm',
+      rows,
+      topFive: pe.portfolioTopFive || null,
+      overview: pe.portfolioOverview || null,
+    });
   };
 
   // Edit a single field on a PE opp directly from the PE Opps table.
