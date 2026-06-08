@@ -1499,6 +1499,26 @@ export function EventsView({
   // state), and a render function for the body cell. The leading
   // select-all checkbox and trailing "Actions" columns are always shown,
   // so they live outside this set.
+  // Render a company name as a Table View link when the company matches a
+  // tracked prospect; otherwise show it as plain text. Shared by the
+  // attendees and LinkedIn-lookup tables.
+  const renderCompanyLink = (company) => {
+    const name = String(company || '').trim();
+    if (!name) return '—';
+    const prospect = matchProspect(name);
+    if (!prospect) return company;
+    return (
+      <button
+        type="button"
+        className={styles.tvLink}
+        title={`Open "${prospect.company}" in the Table View`}
+        onClick={() => onSelectProspect(prospect)}
+      >
+        {company}
+      </button>
+    );
+  };
+
   const attendeeColumns = [
     { key: 'name', label: 'Name', width: 180, filterable: true, render: (a) => (
       <>
@@ -1519,7 +1539,7 @@ export function EventsView({
     ) },
     { key: 'originalTitle', label: 'Original Title', width: 150, filterable: true, render: (a) => a.originalTitle || '—' },
     { key: 'title', label: 'Contact Title', width: 150, filterable: true, render: (a) => a.title || '—' },
-    { key: 'company', label: 'Company', width: 160, filterable: true, render: (a) => a.company || '—' },
+    { key: 'company', label: 'Company', width: 160, filterable: true, render: (a) => renderCompanyLink(a.company) },
     { key: 'email', label: 'Email', width: 200, filterable: true, render: (a) => a.email || '—' },
     { key: 'tags', label: 'Tags', width: 180, filterable: true, render: (a, { tags }) => (
       tags.length ? (
@@ -1538,7 +1558,7 @@ export function EventsView({
       <LookupNameCell value={l.name} onCommit={v => updateLookup(i, { name: v })} />
     ) },
     { key: 'title', label: 'Title', width: 150, filterable: true, render: (l) => l.title || '—' },
-    { key: 'company', label: 'Company', width: 160, filterable: true, render: (l) => l.company || '—' },
+    { key: 'company', label: 'Company', width: 160, filterable: true, render: (l) => renderCompanyLink(l.company) },
     { key: 'tableView', label: 'Table View', width: 160, filterable: true, render: (l, { prospect, adding }) => (
       prospect ? (
         <button
