@@ -1644,7 +1644,38 @@ export function EventsView({
   // Shared renderer for the "Email Domain" column on both tables: the
   // company's dominant corporate domain as a chip (with a count tooltip),
   // or a note when only personal emails / no emails are on file.
+  // The email domain(s) a user has explicitly mapped on the matched
+  // Table View prospect record. Each entry may be a bare domain, a full
+  // address, or a URL — normalize them all down to a hostname. This is
+  // the authoritative, hand-entered value, so it wins over the domain
+  // inferred from HubSpot contact emails below.
+  const savedDomainsFor = (company) => {
+    const prospect = matchProspect(company);
+    const raw = prospect?.emailDomain;
+    if (!raw) return [];
+    const out = [];
+    for (const entry of String(raw).split(/[\n;,]+/).map(s => s.trim()).filter(Boolean)) {
+      const at = entry.lastIndexOf('@');
+      let d = (at >= 0 ? entry.slice(at + 1) : entry).toLowerCase().trim();
+      d = d.replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '');
+      if (d && !out.includes(d)) out.push(d);
+    }
+    return out;
+  };
+
   const renderDomainCell = (company) => {
+    const saved = savedDomainsFor(company);
+    if (saved.length > 0) {
+      const extra = saved.length - 1;
+      return (
+        <span
+          className={styles.domainChip}
+          title={saved.length > 1 ? `Saved email domains: ${saved.map(d => '@' + d).join(', ')}` : `Saved email domain @${saved[0]}`}
+        >
+          @{saved[0]}{extra > 0 ? ` +${extra}` : ''}
+        </span>
+      );
+    }
     const info = companyEmailInfo(company);
     if (info.domain) {
       return (
