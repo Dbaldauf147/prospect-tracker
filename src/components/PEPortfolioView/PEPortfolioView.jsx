@@ -126,9 +126,9 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
     return () => { cancelled = true; window.removeEventListener('hubspot-cache-updated', refresh); };
   }, []);
   // Persisted column widths + sort so the layout survives reloads.
-  const DEFAULT_COL_WIDTHS = { company: 240, peAum: 110, geography: 110, dm: 170, met: 170, mapping: 110, opps: 100, ratio: 120, clients: 110, keyContacts: 120, caseStudy: 110, discovery: 100, piloting: 100, existingPartnership: 150 };
+  const DEFAULT_COL_WIDTHS = { company: 240, peAum: 110, geography: 110, dm: 170, met: 170, mapping: 110, pcDownload: 120, opps: 100, ratio: 120, clients: 110, keyContacts: 120, caseStudy: 110, discovery: 100, piloting: 100, existingPartnership: 150 };
   // company is sticky and always shown — every other column is opt-in.
-  const ALL_COL_KEYS = ['company', 'peAum', 'geography', 'dm', 'met', 'mapping', 'opps', 'ratio', 'clients', 'keyContacts', 'caseStudy', 'discovery', 'piloting', 'existingPartnership'];
+  const ALL_COL_KEYS = ['company', 'peAum', 'geography', 'dm', 'met', 'mapping', 'pcDownload', 'opps', 'ratio', 'clients', 'keyContacts', 'caseStudy', 'discovery', 'piloting', 'existingPartnership'];
   const [colWidths, setColWidths] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('pe-portfolio:col-widths')) || {};
@@ -147,6 +147,12 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
         if (!localStorage.getItem('pe-portfolio:cols-pe-stage')) {
           next.add('discovery'); next.add('piloting'); next.add('existingPartnership');
           try { localStorage.setItem('pe-portfolio:cols-pe-stage', '1'); } catch {}
+        }
+        // One-time migration: reveal the PC Download column for users
+        // whose saved set predates it.
+        if (!localStorage.getItem('pe-portfolio:cols-pc-download')) {
+          next.add('pcDownload');
+          try { localStorage.setItem('pe-portfolio:cols-pc-download', '1'); } catch {}
         }
         return next;
       }
@@ -207,6 +213,42 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
     setSortKey(key);
   }
   const [oppsRecords, setOppsRecords] = useOppsRecords(user?.uid);
+
+  // Download a PE firm's mapped portfolio companies (the entries in its
+  // Portfolio Companies tab — the same array behind the PC Mapping
+  // column) as an Excel file. Column order matches the popup's portfolio
+  // template/import so a downloaded file re-imports cleanly.
+  const exportPortfolioCompanies = async (pe) => {
+    const rows = Array.isArray(pe?.portfolioCompanies) ? pe.portfolioCompanies : [];
+    if (rows.length === 0) return;
+    const XLSX = await import('xlsx');
+    const HEADERS = ['Company Name', 'HQ City', 'HQ Country', 'Est. Energy (GWh/yr)', 'Est. Electricity', 'Est. Natural Gas', 'Site Count', 'Sector', 'Subsector', 'Subsector Score', 'Strategy', 'Acquisition Year', 'PC Description', 'Notes', 'RA Client Match', 'Client Manager', 'Target Account'];
+    const data = rows.map(r => ({
+      'Company Name': r.companyName || '',
+      'HQ City': r.hqCity || '',
+      'HQ Country': r.hqCountry || '',
+      'Est. Energy (GWh/yr)': r.energyGwh ?? '',
+      'Est. Electricity': r.estElectricity ?? '',
+      'Est. Natural Gas': r.estNaturalGas ?? '',
+      'Site Count': r.siteCount ?? '',
+      'Sector': r.sector || r.industry || '',
+      'Subsector': r.subsector || '',
+      'Subsector Score': r.subsectorScore ?? '',
+      'Strategy': r.strategy || '',
+      'Acquisition Year': r.acquisitionYear ?? '',
+      'PC Description': r.pcDescription || '',
+      'Notes': r.notes || '',
+      'RA Client Match': r.raClientMatch || '',
+      'Client Manager': r.clientManager || '',
+      'Target Account': r.targetAccount || '',
+    }));
+    const ws = XLSX.utils.json_to_sheet(data, { header: HEADERS });
+    ws['!cols'] = [30, 20, 16, 20, 16, 16, 16, 28, 22, 14, 16, 14, 48, 36, 26, 22, 26].map(wch => ({ wch }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Portfolio Companies');
+    const safeName = (pe.company || 'pe_firm').replace(/[^a-z0-9]+/gi, '_');
+    XLSX.writeFile(wb, `${safeName}_portfolio_companies.xlsx`);
+  };
 
   // Edit a single field on a PE opp directly from the PE Opps table.
   // Optimistically updates the in-memory rows, then persists to the
@@ -653,7 +695,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
           {colMenuOpen && (() => {
             const COL_LABELS = {
               company: 'PE firm', peAum: 'PE AUM', geography: 'Geography', dm: 'Decision Maker Found?',
-              met: 'Met in Person', mapping: 'PC Mapping', opps: 'PC Opps', ratio: 'PC Opps 2/4',
+              met: 'Met in Person', mapping: 'PC Mapping', pcDownload: 'PC Download', opps: 'PC Opps', ratio: 'PC Opps 2/4',
               clients: 'PC Clients', keyContacts: 'Key Contacts', caseStudy: 'Case Study',
               discovery: 'Discovery', piloting: 'Piloting', existingPartnership: 'Existing Partnership',
             };
@@ -713,6 +755,7 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
             { key: 'dm',      label: 'Decision Maker Found?', align: 'left', tip: 'Sort by number of decision makers found on HubSpot' },
             { key: 'met',     label: 'Met in Person', align: 'left', tip: 'Met-in-person count / total decision makers, plus how many of them list New York / NYC as their city' },
             { key: 'mapping', label: 'PC Mapping', align: 'center', tip: 'Yes when the PE firm has entries in its Portfolio Companies tab; No otherwise' },
+            { key: 'pcDownload', label: 'PC Download', align: 'center', tip: 'Download this PE firm\'s mapped portfolio companies (from its Portfolio Companies tab) as an Excel file' },
             { key: 'opps',    label: 'PC Opps', align: 'center',    tip: 'Count of portfolio companies that have at least one opportunity in the Opps tab' },
             { key: 'ratio',   label: 'PC Opps 2/4', align: 'center', tip: 'Active / total opps aggregated across the PE firm plus every portfolio company' },
             { key: 'clients', label: 'PC Clients', align: 'center',  tip: 'Portfolio companies currently set to status = Client' },
@@ -905,6 +948,28 @@ export function PEPortfolioView({ prospects = [], onSelectProspect }) {
                         )}
                       </div>
                       )}
+
+                      {visibleCols.has('pcDownload') && (() => {
+                        const pcCount = Array.isArray(pe.portfolioCompanies) ? pe.portfolioCompanies.length : 0;
+                        return (
+                          <div style={{ padding: '0.55rem 0.6rem', textAlign: 'center' }}>
+                            {pcCount > 0 ? (
+                              <span
+                                role="button"
+                                tabIndex={0}
+                                title={`Download ${pcCount} mapped portfolio compan${pcCount === 1 ? 'y' : 'ies'} as Excel`}
+                                onClick={e => { e.stopPropagation(); exportPortfolioCompanies(pe); }}
+                                onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); exportPortfolioCompanies(pe); } }}
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.7rem', fontWeight: 700, color: '#2563EB', cursor: 'pointer', textDecoration: 'underline' }}
+                              >
+                                ⬇ {pcCount}
+                              </span>
+                            ) : (
+                              <span style={{ color: '#CBD5E1', fontSize: '0.72rem' }}>—</span>
+                            )}
+                          </div>
+                        );
+                      })()}
 
                       {visibleCols.has('opps') && (
                       <div style={{ padding: '0.55rem 0.6rem', textAlign: 'center', fontSize: '0.78rem', fontWeight: 700, color: (stats.pcOppsCount || 0) > 0 ? '#7C3AED' : '#CBD5E1' }}>
