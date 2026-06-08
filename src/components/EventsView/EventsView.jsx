@@ -58,6 +58,28 @@ function CdmCell({ prospect, onCommit }) {
   );
 }
 
+// Inline-editable Name cell for a lookup row. The name isn't usually in
+// the pasted title/company data, so this lets the user record the person
+// they find on LinkedIn. Commits on blur / Enter back onto the row.
+function LookupNameCell({ value, onCommit }) {
+  const [val, setVal] = useState(value || '');
+  useEffect(() => { setVal(value || ''); }, [value]);
+  const commit = () => {
+    const next = val.trim();
+    if (next !== String(value || '').trim()) onCommit(next);
+  };
+  return (
+    <input
+      className={styles.cdmInput}
+      value={val}
+      placeholder="Name…"
+      onChange={e => setVal(e.target.value)}
+      onBlur={commit}
+      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }}
+    />
+  );
+}
+
 // Suggested-company cell for an unmatched lookup row. Surfaces the fuzzy
 // match (if any, and not rejected) with actions to Use it (rewrite the
 // row's company to the canonical Table View name), Reject it, or open a
@@ -154,7 +176,7 @@ function normalizeCompany(s) {
 // Filterable columns for the two Events tables (keys map to the value
 // pulled for each row in the filter predicates below).
 const ATT_FILTER_KEYS = ['name', 'originalTitle', 'title', 'company', 'email', 'tags'];
-const LOOKUP_FILTER_KEYS = ['title', 'company', 'tableView', 'type'];
+const LOOKUP_FILTER_KEYS = ['name', 'title', 'company', 'tableView', 'type'];
 
 // HubSpot stores Dan's Tags as a single semicolon-separated string.
 // Split it into a clean list of individual tags.
@@ -241,6 +263,7 @@ function parseGrid(text) {
 // Fields a lookup row can hold, in the order they're offered in the
 // column-mapping dropdowns.
 const LOOKUP_FIELDS = [
+  { key: 'name', label: 'Name' },
   { key: 'title', label: 'Title' },
   { key: 'company', label: 'Company' },
 ];
@@ -250,7 +273,8 @@ function looksLikeHeader(cells) {
   const lc = (cells || []).map(c => String(c || '').toLowerCase());
   const hasTitle = lc.some(c => /\b(title|role|position)\b/.test(c));
   const hasCompany = lc.some(c => /company|account|organi[sz]ation|employer/.test(c));
-  return hasTitle || hasCompany;
+  const hasName = lc.some(c => /\bname\b/.test(c));
+  return hasTitle || hasCompany || hasName;
 }
 
 // Best-guess mapping of source columns → lookup fields. Uses header text
@@ -267,6 +291,8 @@ function guessLookupMapping(headerCells, hasHeader, columnCount) {
         mapping[idx] = 'company'; used.add('company');
       } else if (!used.has('title') && /\b(title|role|position)\b/.test(lc)) {
         mapping[idx] = 'title'; used.add('title');
+      } else if (!used.has('name') && /\bname\b/.test(lc)) {
+        mapping[idx] = 'name'; used.add('name');
       }
     });
   }
@@ -1508,6 +1534,9 @@ export function EventsView({
   const ATTENDEE_ACTIONS = { key: 'actions', label: 'Actions', width: 90 };
 
   const lookupColumns = [
+    { key: 'name', label: 'Name', width: 150, filterable: true, render: (l, { i }) => (
+      <LookupNameCell value={l.name} onCommit={v => updateLookup(i, { name: v })} />
+    ) },
     { key: 'title', label: 'Title', width: 150, filterable: true, render: (l) => l.title || '—' },
     { key: 'company', label: 'Company', width: 160, filterable: true, render: (l) => l.company || '—' },
     { key: 'tableView', label: 'Table View', width: 160, filterable: true, render: (l, { prospect, adding }) => (
@@ -1869,6 +1898,7 @@ export function EventsView({
                     if (cdmFilter && String(prospect?.cdm || '').trim() !== cdmFilter) return null;
                     // Apply the per-column type-to-filter drafts.
                     const lookupVals = {
+                      name: l.name || '',
                       title: l.title || '',
                       company: l.company || '',
                       tableView: prospect?.company || '',
