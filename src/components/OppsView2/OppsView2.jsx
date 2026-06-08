@@ -173,6 +173,20 @@ const STAGE_ACTION_THRESHOLDS = {
   'Quoted':      { days: 90,  suggestion: 'Contract or kill' },
 };
 
+// Pull-through opps ride along with a parent sale rather than running
+// their own pipeline, so they're excluded from the Days-in-Stage view.
+// Matched on the Scope text, mirroring PipelineView's close-rate filter.
+const PULL_THROUGH_RE = /pull[\s-]?through/i;
+
+// The stage-action rule an opp has tripped, or null if it's within the
+// limit (or its stage has no limit). Shared by the kanban so flagged opps
+// can render inline with their suggestion instead of in a separate list.
+function stageActionFor(stage, days) {
+  const rule = STAGE_ACTION_THRESHOLDS[stage];
+  if (!rule || days == null || days <= rule.days) return null;
+  return rule;
+}
+
 // Read-only columns whose value is derived from other cells.
 //   Call In    = calendar days from today to the Follow Up date
 //   Last Spoke = business days from Last Client Heard From Us to today
@@ -6454,6 +6468,8 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
       // Call In aren't on a callback schedule, so they shouldn't crowd
       // the kanban either.
       if (resolveCallIn(r) == null) continue;
+      // Pull-through opps follow a parent sale, so keep them off the board.
+      if (PULL_THROUGH_RE.test(String(r['Scope'] || ''))) continue;
       const enteredISO = toISODate(r._stageEnteredAt) || toISODate(r['Start Date']);
       const days = enteredISO ? -daysFromToday(enteredISO) : null;
       const scope = String(r['Scope'] ?? '').trim();
@@ -6490,23 +6506,6 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
     }
     return map;
   }, [stageDaysRows]);
-
-  // "Needs action" buckets: one per threshold-bearing stage, holding the
-  // opps that have sat in that stage longer than the stage's limit. Built
-  // off stageDaysRows (already sorted longest-stalling first), so each
-  // bucket leads with the most overdue opp. Stages without a threshold or
-  // with no overdue opps are skipped, so only actionable buckets render.
-  const stageActionBuckets = useMemo(() => {
-    const buckets = [];
-    for (const stage of TRACKED_STAGES) {
-      const rule = STAGE_ACTION_THRESHOLDS[stage];
-      if (!rule) continue;
-      const items = (stageDaysByStage.get(stage) || []).filter(r => r.days != null && r.days > rule.days);
-      if (items.length === 0) continue;
-      buckets.push({ stage, ...rule, items });
-    }
-    return buckets;
-  }, [stageDaysByStage]);
 
   // Rows for the Stage History tab. Same gate as the Days-in-Stage tab
   // so the two tabs cover the same set of opps. For each row we sum
@@ -7289,73 +7288,14 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
               />
               Hide Not Started ({(stageDaysByStage.get('Not Started') || []).length})
             </label>
+            <span style={{ fontSize: '0.72rem', color: '#B45309', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+              <span style={{
+                width: 10, height: 10, borderRadius: 2,
+                background: '#FEF3C7', border: '1px solid #FCD34D', display: 'inline-block',
+              }} />
+              ⚠ flagged = stalled past its stage limit (hover for the suggested move)
+            </span>
           </div>
-          {stageActionBuckets.length > 0 && (
-            <div style={{
-              background: '#FFFBEB', border: '1px solid #FCD34D',
-              borderRadius: 8, padding: 12, marginBottom: 4,
-            }}>
-              <div style={{
-                fontWeight: 700, fontSize: '0.85rem', color: '#92400E',
-                marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6,
-              }}>
-                ⚠ Needs action
-                <span style={{ fontWeight: 500, fontSize: '0.74rem', color: '#B45309' }}>
-                  opps that have stalled past their stage limit
-                </span>
-              </div>
-              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-                {stageActionBuckets.map(bucket => (
-                  <div key={bucket.stage} style={{
-                    flex: '0 0 240px', width: 240,
-                    background: '#FFFFFF', border: '1px solid #FDE68A',
-                    borderRadius: 6, padding: 8,
-                    display: 'flex', flexDirection: 'column', gap: 8,
-                  }}>
-                    <div style={{ padding: '2px 4px 6px', borderBottom: '1px solid #FDE68A' }}>
-                      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
-                        <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>{bucket.stage}</span>
-                        <span style={{ fontSize: '0.72rem', color: '#64748B' }}>{bucket.items.length}</span>
-                      </div>
-                      <div style={{ fontSize: '0.72rem', color: '#B45309', marginTop: 2 }}>
-                        &gt; {bucket.days}d → <strong>{bucket.suggestion}</strong>
-                      </div>
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {bucket.items.map(row => {
-                        const dayBadgeTitle = row.enteredAt
-                          ? `Stage entered ${formatDateDisplay(row.enteredAt)}${row._hasExplicitEntry ? '' : ' (fallback to Start Date)'}`
-                          : 'No entry date recorded.';
-                        const accountTitle = row.scope ? `Scope: ${row.scope}` : 'No scope set on this opp.';
-                        return (
-                          <div key={row.id} style={{
-                            background: '#FEF3C7', borderRadius: 4,
-                            border: '1px solid #FDE68A', padding: '6px 8px',
-                            display: 'flex', alignItems: 'center',
-                            justifyContent: 'space-between', gap: 8,
-                          }}>
-                            <span title={accountTitle} style={{
-                              fontSize: '0.8rem', fontWeight: 500,
-                              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                              minWidth: 0, cursor: 'help',
-                            }}>
-                              {row.Account || <span style={{ color: '#94A3B8' }}>(no account)</span>}
-                            </span>
-                            <span title={dayBadgeTitle} style={{
-                              fontSize: '0.72rem', fontWeight: 700, color: '#B45309',
-                              fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
-                            }}>
-                              {row.days}d
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
           <div style={{
             display: 'flex', gap: 12, overflowX: 'auto',
             padding: '12px 0', alignItems: 'flex-start',
@@ -7387,44 +7327,62 @@ export function OppsView2({ settings, updateSettings, prospects = [], updatePros
                       const dayBadgeTitle = row.enteredAt
                         ? `Stage entered ${formatDateDisplay(row.enteredAt)}${row._hasExplicitEntry ? '' : ' (fallback to Start Date)'}`
                         : 'No entry date recorded.';
+                      // Flagged opps (stalled past the stage's limit) stay
+                      // in the same column but render in amber, with the
+                      // suggested move on the card and in the hover — so
+                      // the board doubles as the "needs action" list.
+                      const action = stageActionFor(row.Stage, row.days);
                       // Account-name hover surfaces the row's Scope so
                       // the kanban reads like a triage board — no need
                       // to bounce back to the Opportunities tab to see
                       // what the opp is actually selling.
-                      const accountTitle = row.scope
-                        ? `Scope: ${row.scope}`
-                        : 'No scope set on this opp.';
+                      const accountTitle = action
+                        ? `Stalled ${row.days}d (> ${action.days}d) → ${action.suggestion}${row.scope ? `\nScope: ${row.scope}` : ''}`
+                        : (row.scope ? `Scope: ${row.scope}` : 'No scope set on this opp.');
                       return (
                         <div
                           key={row.id}
                           style={{
-                            background: '#FFFFFF', borderRadius: 4,
-                            border: '1px solid #E2E8F0',
+                            background: action ? '#FEF3C7' : '#FFFFFF', borderRadius: 4,
+                            border: `1px solid ${action ? '#FCD34D' : '#E2E8F0'}`,
                             padding: '6px 8px',
-                            display: 'flex', alignItems: 'center',
-                            justifyContent: 'space-between', gap: 8,
+                            display: 'flex', flexDirection: 'column', gap: 3,
                           }}
                         >
-                          <span
-                            title={accountTitle}
-                            style={{
-                              fontSize: '0.8rem', fontWeight: 500,
+                          <div style={{
+                            display: 'flex', alignItems: 'center',
+                            justifyContent: 'space-between', gap: 8,
+                          }}>
+                            <span
+                              title={accountTitle}
+                              style={{
+                                fontSize: '0.8rem', fontWeight: 500,
+                                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                minWidth: 0, cursor: 'help',
+                              }}
+                            >
+                              {action && <span title="Stalled past its stage limit">⚠ </span>}
+                              {row.Account || <span style={{ color: '#94A3B8' }}>(no account)</span>}
+                            </span>
+                            <span
+                              title={dayBadgeTitle}
+                              style={{
+                                fontSize: '0.72rem', fontWeight: action ? 700 : 600,
+                                color: action ? '#B45309' : (row.days != null && row.days > 30 ? '#DC2626' : '#475569'),
+                                fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
+                              }}
+                            >
+                              {row.days == null ? '—' : `${row.days}d`}
+                            </span>
+                          </div>
+                          {action && (
+                            <span style={{
+                              fontSize: '0.68rem', fontWeight: 600, color: '#B45309',
                               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                              minWidth: 0, cursor: 'help',
-                            }}
-                          >
-                            {row.Account || <span style={{ color: '#94A3B8' }}>(no account)</span>}
-                          </span>
-                          <span
-                            title={dayBadgeTitle}
-                            style={{
-                              fontSize: '0.72rem', fontWeight: 600,
-                              color: row.days != null && row.days > 30 ? '#DC2626' : '#475569',
-                              fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
-                            }}
-                          >
-                            {row.days == null ? '—' : `${row.days}d`}
-                          </span>
+                            }}>
+                              {action.suggestion}
+                            </span>
+                          )}
                         </div>
                       );
                     })}
