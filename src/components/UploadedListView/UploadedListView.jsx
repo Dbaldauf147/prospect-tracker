@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect } from 'react';
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { DataTable } from '../common/DataTable';
 import { saveList as saveListToIDB, loadList as loadListFromIDB, clearList as clearListFromIDB } from '../../utils/uploadedListStore';
@@ -608,6 +608,9 @@ export function UploadedListView({
   const [suggestedOnly, setSuggestedOnly] = useState(false);
   const [portfolioOnly, setPortfolioOnly] = useState(false);
   const [mappedOnly, setMappedOnly] = useState(false);
+  // "Select all suggested" turns this on so the table narrows to just the
+  // rows showing a live yellow suggestion pill (My Accounts or Portfolio).
+  const [suggestedPillsOnly, setSuggestedPillsOnly] = useState(false);
   // Default-on exclusion (e.g. hide rows whose Opportunity Leader is
   // Daniel Baldauf). Starts hidden; the user can toggle them back in.
   const [hideExcluded, setHideExcluded] = useState(true);
@@ -1275,6 +1278,18 @@ export function UploadedListView({
     [rows, excludeColKey, isExcludedRow]
   );
 
+  // A row shows a live yellow suggestion pill when it has a fuzzy match in
+  // a scope where it isn't already mapped or dismissed. Shared by the
+  // "suggested only" filter and the "Select all suggested" button so both
+  // target exactly the same rows.
+  const hasLiveSuggestion = useCallback((r) => {
+    const mk = r.__matchKey__;
+    const raw = r.__rawName__ || '';
+    const maLive = !myAccountMapping[mk] && !myAccountDismissed[mk] && !!myAccountSuggestionFor(raw);
+    const pcLive = !portfolioMapping[mk] && !portfolioDismissed[mk] && !!portfolioSuggestionFor(raw);
+    return maLive || pcLive;
+  }, [myAccountMapping, myAccountDismissed, portfolioMapping, portfolioDismissed, myAccountSuggestionFor, portfolioSuggestionFor]);
+
   const filtered = useMemo(() => {
     let result = rows;
     // Default-on exclusion (e.g. hide Daniel Baldauf's opportunities).
@@ -1301,6 +1316,11 @@ export function UploadedListView({
     if (mappedOnly) {
       result = result.filter(isMappedRow);
     }
+    // "Select all suggested" narrows the view to just the rows showing a
+    // live yellow suggestion pill, ANDing with whatever else is on.
+    if (suggestedPillsOnly) {
+      result = result.filter(hasLiveSuggestion);
+    }
     // Stamp each row with its current best-suggestion confidence (the
     // same score the % Match column displays) so the table can sort by
     // it. Mirrors MatchPctCell's "skip dismissed / mapped scopes" rule
@@ -1315,7 +1335,7 @@ export function UploadedListView({
       const best = [ma, pc].filter(Boolean).reduce((acc, s) => (acc && acc.score >= s.score ? acc : s), null);
       return { ...r, __matchPct__: best ? Math.round(best.score * 100) : null };
     });
-  }, [search, suggestedOnly, portfolioOnly, mappedOnly, hideExcluded, excludeColKey, isExcludedRow, rows, isMyAccountsRow, isPortfolioRow, isMappedRow, myAccountMapping, myAccountDismissed, portfolioMapping, portfolioDismissed, myAccountSuggestionFor, portfolioSuggestionFor]);
+  }, [search, suggestedOnly, portfolioOnly, mappedOnly, suggestedPillsOnly, hasLiveSuggestion, hideExcluded, excludeColKey, isExcludedRow, rows, isMyAccountsRow, isPortfolioRow, isMappedRow, myAccountMapping, myAccountDismissed, portfolioMapping, portfolioDismissed, myAccountSuggestionFor, portfolioSuggestionFor]);
 
   const myAccountsMatchCount = useMemo(
     () => rows.reduce((n, r) => n + (isMyAccountsRow(r) ? 1 : 0), 0),
@@ -1795,35 +1815,37 @@ export function UploadedListView({
           // Only count rows that currently show a yellow suggestion pill
           // in at least one scope — i.e. not already mapped and not
           // dismissed. The button targets exactly those rows so a single
-          // click teases up everything that still needs a decision.
+          // click teases up everything that still needs a decision. When
+          // the suggested-only filter is on, `filtered` is already these
+          // rows; when it's off we look at the whole filtered set so the
+          // count and selection cover every suggestion in view.
           const suggestedKeys = filtered
-            .filter(r => {
-              const mk = r.__matchKey__;
-              const raw = r.__rawName__ || '';
-              const maLive = !myAccountMapping[mk] && !myAccountDismissed[mk] && !!myAccountSuggestionFor(raw);
-              const pcLive = !portfolioMapping[mk] && !portfolioDismissed[mk] && !!portfolioSuggestionFor(raw);
-              return maLive || pcLive;
-            })
+            .filter(hasLiveSuggestion)
             .map(r => r.__matchKey__);
-          if (suggestedKeys.length === 0) return null;
+          if (suggestedKeys.length === 0 && !suggestedPillsOnly) return null;
           const suggestedSet = new Set(suggestedKeys);
-          // "Active" only when the current selection is exactly the
-          // suggested set — otherwise clicking should overwrite the
-          // selection so a stale prior selection (from a different
-          // filter, say) can't survive into the next bulk action.
-          const isActive = selectedKeys.size === suggestedSet.size
+          // "Active" once the table is filtered to the suggested rows and
+          // the selection is exactly that set. Clicking again clears both,
+          // so a stale prior selection can't survive into a bulk action.
+          const isActive = suggestedPillsOnly
+            && selectedKeys.size === suggestedSet.size
             && [...selectedKeys].every(k => suggestedSet.has(k));
           const toggle = () => {
-            if (isActive) setSelectedKeys(new Set());
-            else setSelectedKeys(suggestedSet);
+            if (isActive) {
+              setSelectedKeys(new Set());
+              setSuggestedPillsOnly(false);
+            } else {
+              setSelectedKeys(suggestedSet);
+              setSuggestedPillsOnly(true);
+            }
           };
           return (
             <button
               type="button"
               onClick={toggle}
               title={isActive
-                ? 'Deselect — clears the entire selection'
-                : 'Replace the current selection with every row showing a yellow suggestion (My Accounts or Portfolio)'}
+                ? 'Clear the selection and show all rows again'
+                : 'Filter the table to rows showing a yellow suggestion (My Accounts or Portfolio) and select them all'}
               style={{
                 padding: '0.35rem 0.7rem',
                 border: `1px solid ${isActive ? '#F59E0B' : 'var(--color-border)'}`,
