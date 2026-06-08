@@ -17,14 +17,15 @@ const SUBTABS = [
   { key: 'strategic', label: 'Strategic Accounts', storageKey: 'strategic-accounts-override' },
   { key: 'sites', label: 'Utility Lookup' },
   { key: 'mastersites', label: 'Master Site List' },
-  { key: 'recaclients', label: 'RECA Clients', storageKey: 'reca-clients-override' },
-  { key: 'ecoactclients', label: 'EcoAct Clients', storageKey: 'ecoact-clients-override' },
+  { key: 'recaclients', label: 'RECA', storageKey: 'reca-clients-override' },
+  { key: 'ecoactclients', label: 'EcoAct', storageKey: 'ecoact-clients-override' },
   { key: 'csrd', label: 'CSRD', storageKey: 'csrd-list-override' },
   { key: 'cdp', label: 'CDP', storageKey: 'cdp-list-override' },
   { key: 'gresb', label: 'GRESB', storageKey: 'gresb-list-override' },
   { key: 'sbt', label: 'SBT', storageKey: 'sbt-list-override' },
   { key: 'unpri', label: 'UN PRI', storageKey: 'unpri-list-override' },
   { key: 'casb', label: 'CA SB', storageKey: 'casb-list-override' },
+  { key: 'betterbuildings', label: 'Better Buildings', storageKey: 'better-buildings-override' },
   { key: 'bfoopps', label: 'BFO Opps', storageKey: 'bfo-opps-override' },
 ];
 
@@ -479,6 +480,21 @@ export function ListsView({ onTargetAccountsLoaded, prospects = [], onSelectPros
             storageKey="casb-list-override"
             tableIdPrefix="casb-list"
             title="CA SB"
+            singular="company"
+            plural="companies"
+            prospects={prospects}
+            onSelectProspect={onSelectProspect}
+            cdmName={cdmName}
+            settings={settings}
+            updateSettings={updateSettings}
+            updateSettingsPath={updateSettingsPath}
+          />
+        )}
+        {subtab === 'betterbuildings' && (
+          <UploadedListView
+            storageKey="better-buildings-override"
+            tableIdPrefix="better-buildings"
+            title="Better Buildings"
             singular="company"
             plural="companies"
             prospects={prospects}

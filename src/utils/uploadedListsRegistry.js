@@ -5,8 +5,8 @@
 // ListsView module just to scan every list.
 export const UPLOADED_LISTS = [
   { key: 'strategic', label: 'Strategic Accounts', storageKey: 'strategic-accounts-override' },
-  { key: 'recaclients', label: 'RECA Clients', storageKey: 'reca-clients-override' },
-  { key: 'ecoactclients', label: 'EcoAct Clients', storageKey: 'ecoact-clients-override' },
+  { key: 'recaclients', label: 'RECA', storageKey: 'reca-clients-override' },
+  { key: 'ecoactclients', label: 'EcoAct', storageKey: 'ecoact-clients-override' },
   { key: 'csrd', label: 'CSRD', storageKey: 'csrd-list-override' },
   { key: 'cdp', label: 'CDP', storageKey: 'cdp-list-override' },
   { key: 'gresb', label: 'GRESB', storageKey: 'gresb-list-override' },
@@ -15,5 +15,6 @@ export const UPLOADED_LISTS = [
   { key: 'unpri', label: 'UN PRI', storageKey: 'unpri-list-override' },
   { key: 'casb', label: 'CA SB', storageKey: 'casb-list-override' },
   { key: 'nzam', label: 'NZAM', storageKey: 'nzam-list-override' },
+  { key: 'betterbuildings', label: 'Better Buildings', storageKey: 'better-buildings-override' },
   { key: 'bfoopps', label: 'BFO Opps', storageKey: 'bfo-opps-override' },
 ];
