@@ -314,6 +314,100 @@
   opacity: 0.45;
 }
 
+/* Column-mapping popup for the lookup importer */
+.mapHeaderToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.mapTable {
+  border-collapse: collapse;
+  font-size: 0.78rem;
+  width: max-content;
+  min-width: 100%;
+}
+
+.mapTable th {
+  text-align: left;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--color-border);
+  border-right: 1px solid var(--color-border-light, #eef2f7);
+  background: var(--color-bg);
+  vertical-align: top;
+  min-width: 130px;
+}
+
+.mapTable td {
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid var(--color-border-light, #eef2f7);
+  border-right: 1px solid var(--color-border-light, #eef2f7);
+  color: var(--color-text);
+  white-space: nowrap;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mapColName {
+  font-weight: 600;
+  color: var(--color-text-muted);
+  margin-bottom: 0.3rem;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mapSelect {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.25rem 0.35rem;
+  font-size: 0.76rem;
+  font-family: inherit;
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.mapCellMapped {
+  background: var(--color-accent-soft, #EFF6FF);
+}
+
+.mapFooter {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.7rem 0.9rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.mapWarn {
+  font-size: 0.74rem;
+  color: #B45309;
+}
+
+.mapCancelBtn {
+  margin-left: auto;
+  padding: 0.35rem 0.8rem;
+  font-size: 0.74rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.mapCancelBtn:hover {
+  background: var(--color-bg);
+}
+
 /* Decision-maker suggestion sub-row under a lookup company */
 .dmRow td {
   padding: 0.3rem 0.5rem 0.45rem 1.4rem;
