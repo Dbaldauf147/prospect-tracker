@@ -9,7 +9,7 @@
 // sync across devices the same way the per-contact Events log, contact
 // notes, and the other Contacts-page settings do.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { apiFetch } from '../../utils/apiFetch';
 import { getHubspotCache, updateHubspotCache } from '../../utils/hubspotContactsCache';
@@ -166,6 +166,11 @@ function parseTags(str) {
 // tolerating the property's a few historical field spellings.
 function contactTags(contact) {
   return parseTags(contact?.dans_tags || contact?.dan_s_tags || contact?.dans_tag || '');
+}
+// A contact is a "decision maker" when its Dan's Tags include that tag —
+// the same convention the Prospect modal / Progress / PE views use.
+function isDecisionMaker(contact) {
+  return contactTags(contact).some(t => t.toLowerCase() === 'decision maker');
 }
 
 // Convert a search-list entry to a stored attendee. Manually-created
@@ -560,17 +565,17 @@ function AttendeeContactModal({ attendee, contact, onClose }) {
   );
 }
 
-// Column header with a built-in type-to-filter box. A funnel toggle
+// Inline type-to-filter control for a column header. A funnel toggle
 // reveals a text input; rows are matched by case-insensitive substring
 // on that column (handled by the parent). The input stays visible while
 // it holds a value so an active filter is always obvious.
-function FilterHeader({ label, value, onChange, width }) {
+function FilterToggle({ label, value, onChange }) {
   const [open, setOpen] = useState(false);
   const active = !!String(value || '').trim();
   return (
-    <th style={width ? { width } : undefined}>
+    <>
       <div className={styles.thFilter}>
-        <span>{label}</span>
+        <span className={styles.thLabel}>{label}</span>
         <button
           type="button"
           className={active ? styles.filterBtnActive : styles.filterBtn}
@@ -591,7 +596,160 @@ function FilterHeader({ label, value, onChange, width }) {
           onKeyDown={e => { if (e.key === 'Escape') { onChange(''); setOpen(false); } }}
         />
       )}
-    </th>
+    </>
+  );
+}
+
+// ---- Configurable / resizable table columns ----------------------
+// Column visibility + widths are personal display prefs, so they live in
+// localStorage (keyed per table) rather than the synced Firestore event
+// settings — same approach the Key Contacts table uses.
+const LS_PREFIX = 'events-view';
+function colsLsGet(key) { try { return localStorage.getItem(`${LS_PREFIX}:${key}`); } catch { return null; } }
+function colsLsSet(key, val) { try { localStorage.setItem(`${LS_PREFIX}:${key}`, val); } catch { /* ignore */ } }
+
+// Manage which columns are shown and how wide they are for one table.
+// `columns` is the full ordered definition ([{ key, label, width }…]);
+// the returned `visible` is the subset to render (in definition order).
+function useTableColumns(tableKey, columns) {
+  const defaultVisible = columns.map(c => c.key);
+  const defaultWidths = Object.fromEntries(columns.map(c => [c.key, c.width]));
+
+  const [visibleKeys, setVisibleKeys] = useState(() => {
+    try {
+      const saved = JSON.parse(colsLsGet(`${tableKey}-visible`));
+      if (Array.isArray(saved)) {
+        // Keep only keys we still know about; if everything saved is
+        // stale, fall back to the defaults so the table isn't empty.
+        const known = new Set(defaultVisible);
+        const filtered = saved.filter(k => known.has(k));
+        if (filtered.length) return filtered;
+      }
+    } catch { /* ignore */ }
+    return defaultVisible;
+  });
+  useEffect(() => { colsLsSet(`${tableKey}-visible`, JSON.stringify(visibleKeys)); }, [tableKey, visibleKeys]);
+
+  const [widths, setWidths] = useState(() => {
+    try {
+      const saved = JSON.parse(colsLsGet(`${tableKey}-widths`)) || {};
+      return { ...defaultWidths, ...saved };
+    } catch { return defaultWidths; }
+  });
+  useEffect(() => { colsLsSet(`${tableKey}-widths`, JSON.stringify(widths)); }, [tableKey, widths]);
+
+  // Toggle a column on/off, but never let the user hide the last one.
+  function toggle(key) {
+    setVisibleKeys(prev => {
+      if (prev.includes(key)) return prev.length <= 1 ? prev : prev.filter(k => k !== key);
+      return [...prev, key];
+    });
+  }
+  function reset() { setVisibleKeys(defaultVisible); setWidths(defaultWidths); }
+
+  // Drag-to-resize a column. Start metrics are captured in local scope
+  // so a stray mousemove after mouseup can't throw on a null ref.
+  const resizingRef = useRef(null);
+  function startResize(key, e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startWidth = widths[key] || 120;
+    resizingRef.current = { key };
+    const onMove = (ev) => {
+      if (!resizingRef.current) return;
+      const next = Math.max(60, startWidth + (ev.clientX - startX));
+      setWidths(prev => ({ ...prev, [key]: next }));
+    };
+    const onUp = () => {
+      resizingRef.current = null;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
+  const visible = columns.filter(c => visibleKeys.includes(c.key));
+  return { visible, visibleKeys, widths, toggle, reset, startResize };
+}
+
+// "Columns ▾" dropdown: checkboxes to show/hide each column plus a reset.
+function ColumnsMenu({ columns, visibleKeys, onToggle, onReset }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e) { if (!ref.current?.contains(e.target)) setOpen(false); }
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+  return (
+    <div ref={ref} className={styles.colsMenuWrap}>
+      <button type="button" className={styles.colsBtn} onClick={() => setOpen(o => !o)} title="Show or hide columns">
+        Columns ▾
+      </button>
+      {open && (
+        <div className={styles.colsMenu}>
+          {columns.map(c => {
+            const checked = visibleKeys.includes(c.key);
+            return (
+              <label key={c.key} className={styles.colsMenuItem}>
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  disabled={checked && visibleKeys.length <= 1}
+                  onChange={() => onToggle(c.key)}
+                />
+                {c.label}
+              </label>
+            );
+          })}
+          <button type="button" className={styles.colsMenuReset} onClick={onReset}>Reset to default</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Header for a resizable table: a <colgroup> drives the fixed column
+// widths and each <th> carries its label, an optional type-to-filter
+// funnel, and a drag handle. `leading` / `trailing` are optional
+// always-on columns (e.g. a select-all checkbox or row actions).
+function ResizableHead({ columns, widths, startResize, filters, onFilterChange, leading, trailing }) {
+  return (
+    <>
+      <colgroup>
+        {leading && <col style={{ width: leading.width }} />}
+        {columns.map(c => <col key={c.key} style={{ width: widths[c.key] }} />)}
+        {trailing && <col style={{ width: trailing.width }} />}
+      </colgroup>
+      <thead>
+        <tr>
+          {leading && <th style={{ textAlign: 'center' }}>{leading.content}</th>}
+          {columns.map(c => (
+            <th key={c.key} title={c.label}>
+              {c.filterable && onFilterChange ? (
+                <FilterToggle
+                  label={c.label}
+                  value={filters?.[c.key]}
+                  onChange={v => onFilterChange(c.key, v)}
+                />
+              ) : (
+                <span className={styles.thLabel}>{c.label}</span>
+              )}
+              <span
+                className={styles.resizeHandle}
+                onMouseDown={e => startResize(c.key, e)}
+                role="separator"
+                aria-label={`Resize ${c.label} column`}
+              />
+            </th>
+          ))}
+          {trailing && <th aria-label={trailing.label} />}
+        </tr>
+      </thead>
+    </>
   );
 }
 
@@ -983,6 +1141,22 @@ export function EventsView({
     updateEvent(selected.id, { lookups: [] });
   }
 
+  // Map a suggested decision maker to its company by saving them as an
+  // attendee (de-duped by HubSpot id), keeping the lookup row in place.
+  function addDecisionMaker(contact, lookupRow) {
+    addAttendee({ ...contactToAttendee(contact), originalTitle: lookupRow.title || '' });
+  }
+  // Hide a suggested decision maker for one lookup row without adding
+  // them. The ignore list is stored on the row so it persists.
+  function ignoreDecisionMaker(contactId, lookupIndex) {
+    const list = Array.isArray(selected?.lookups) ? selected.lookups : [];
+    const row = list[lookupIndex];
+    if (!row) return;
+    const cur = Array.isArray(row.ignoredContactIds) ? row.ignoredContactIds : [];
+    if (cur.includes(contactId)) return;
+    updateLookup(lookupIndex, { ignoredContactIds: [...cur, contactId] });
+  }
+
   const existingIds = useMemo(() => {
     const set = new Set();
     for (const a of (selected?.attendees || [])) if (a.contactId) set.add(a.contactId);
@@ -1008,6 +1182,23 @@ export function EventsView({
     return [...byKey.values()];
   }, [events]);
   const searchableContacts = useMemo(() => [...manualContacts, ...contacts], [manualContacts, contacts]);
+
+  // HubSpot contacts tagged "Decision Maker" — used to surface the
+  // decision maker(s) for each lookup company right under its row.
+  const decisionMakerContacts = useMemo(
+    () => (contacts || []).filter(isDecisionMaker),
+    [contacts],
+  );
+  // Decision-maker contacts whose company matches `company`, using the
+  // same fuzzy company match the roster popup uses.
+  function decisionMakersForCompany(company) {
+    const norm = normalizeCompany(company);
+    if (!norm) return [];
+    return decisionMakerContacts.filter(c => {
+      const cn = normalizeCompany(c.company);
+      return cn && (cn === norm || cn.includes(norm) || norm.includes(cn));
+    });
+  }
 
   const attendees = useMemo(
     () => (selected && Array.isArray(selected.attendees) ? selected.attendees : []),
@@ -1106,6 +1297,112 @@ export function EventsView({
     }
   }
 
+  // ---- Configurable columns for the two tables ---------------------
+  // Each column carries its default width, an optional `filterable` flag
+  // (renders a type-to-filter funnel, wired to the per-column filter
+  // state), and a render function for the body cell. The leading
+  // select-all checkbox and trailing "Actions" columns are always shown,
+  // so they live outside this set.
+  const attendeeColumns = [
+    { key: 'name', label: 'Name', width: 180, filterable: true, render: (a) => (
+      <>
+        <button
+          type="button"
+          className={styles.attendeeNameLink}
+          onClick={() => openAttendeeContact(a)}
+          title="View contact details"
+        >
+          {a.name}
+        </button>
+        {!a.contactId && (
+          <span style={{ marginLeft: 6, fontSize: '0.64rem', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
+            (manual)
+          </span>
+        )}
+      </>
+    ) },
+    { key: 'originalTitle', label: 'Original Title', width: 150, filterable: true, render: (a) => a.originalTitle || '—' },
+    { key: 'title', label: 'Contact Title', width: 150, filterable: true, render: (a) => a.title || '—' },
+    { key: 'company', label: 'Company', width: 160, filterable: true, render: (a) => a.company || '—' },
+    { key: 'email', label: 'Email', width: 200, filterable: true, render: (a) => a.email || '—' },
+    { key: 'tags', label: 'Tags', width: 180, filterable: true, render: (a, { tags }) => (
+      tags.length ? (
+        <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4 }}>
+          {tags.map(t => <span key={t} className={styles.tagChip}>{t}</span>)}
+        </span>
+      ) : (
+        <span className={styles.tvMuted}>—</span>
+      )
+    ) },
+  ];
+  const ATTENDEE_ACTIONS = { key: 'actions', label: 'Actions', width: 90 };
+
+  const lookupColumns = [
+    { key: 'title', label: 'Title', width: 150, filterable: true, render: (l) => l.title || '—' },
+    { key: 'company', label: 'Company', width: 160, filterable: true, render: (l) => l.company || '—' },
+    { key: 'tableView', label: 'Table View', width: 160, filterable: true, render: (l, { prospect, adding }) => (
+      prospect ? (
+        <button
+          type="button"
+          className={styles.tvLink}
+          title={`Open "${prospect.company}" in the Table View`}
+          onClick={() => onSelectProspect(prospect)}
+        >
+          {prospect.company}
+        </button>
+      ) : (
+        <button
+          type="button"
+          className={styles.tvAdd}
+          disabled={adding || !String(l.company || '').trim()}
+          onClick={() => addCompanyToTableView(l.company)}
+          title="Add this company to the Table View as a new prospect"
+        >
+          {adding ? 'Adding…' : '+ Add'}
+        </button>
+      )
+    ) },
+    { key: 'suggested', label: 'Suggested', width: 190, render: (l, { i, prospect, suggestion }) => (
+      prospect ? (
+        <span className={styles.tvMuted}>—</span>
+      ) : (
+        <SuggestedCell
+          rejected={!!l.suggestRejected}
+          suggestion={suggestion}
+          prospectCompanies={prospectCompanies}
+          onAccept={company => updateLookup(i, { company, suggestRejected: false })}
+          onReject={() => updateLookup(i, { suggestRejected: true })}
+        />
+      )
+    ) },
+    { key: 'type', label: 'Type', width: 150, filterable: true, render: (l, { prospect }) => (
+      <TypeCell prospect={prospect} onCommit={v => onUpdateProspect(prospect.id, { type: v })} />
+    ) },
+    { key: 'cdm', label: 'CDM', width: 140, render: (l, { prospect }) => (
+      <CdmCell prospect={prospect} onCommit={v => onUpdateProspect(prospect.id, { cdm: v })} />
+    ) },
+    { key: 'addContact', label: 'Add Contact', width: 190, render: (l, { i }) => (
+      <RowContactAdder
+        company={l.company}
+        title={l.title}
+        contacts={searchableContacts}
+        attendees={attendees}
+        onAdd={att => addAttendeeFromLookup(att, i)}
+        onRemove={removeAttendeeObj}
+      />
+    ) },
+  ];
+  const LOOKUP_ACTIONS = { key: 'actions', label: 'Actions', width: 200 };
+
+  const attendeeCols = useTableColumns('attendees', attendeeColumns);
+  const lookupCols = useTableColumns('lookups', lookupColumns);
+  const ATTENDEE_SELECT = { width: 28 };
+  const attendeeTableWidth = ATTENDEE_SELECT.width + attendeeCols.visible.reduce((s, c) => s + (attendeeCols.widths[c.key] || 0), 0) + ATTENDEE_ACTIONS.width;
+  const lookupTableWidth = lookupCols.visible.reduce((s, c) => s + (lookupCols.widths[c.key] || 0), 0) + LOOKUP_ACTIONS.width;
+  // colSpan helpers for the full-width "no matches" / DM sub-rows.
+  const attendeeColSpan = 1 + attendeeCols.visible.length + 1;
+  const lookupColSpan = lookupCols.visible.length + 1;
+
   return (
     <div className={styles.wrapper}>
       <div className={styles.sidebar}>
@@ -1186,6 +1483,14 @@ export function EventsView({
                 Export CSV
               </button>
             )}
+            {attendees.length > 0 && (
+              <ColumnsMenu
+                columns={attendeeColumns}
+                visibleKeys={attendeeCols.visibleKeys}
+                onToggle={attendeeCols.toggle}
+                onReset={attendeeCols.reset}
+              />
+            )}
           </div>
 
           <AttendeePicker contacts={searchableContacts} existingIds={existingIds} onAdd={addAttendee} />
@@ -1228,90 +1533,71 @@ export function EventsView({
               No attendees saved yet. Use the search box above to add contacts.
             </div>
           ) : (
-            <table className={styles.attendeeTable}>
-              <thead>
-                <tr>
-                  <th style={{ width: 28 }}>
-                    <input
-                      type="checkbox"
-                      aria-label="Select all mapped contacts"
-                      title="Select all mapped contacts"
-                      disabled={taggableAttendees.length === 0}
-                      checked={allTaggableSelected}
-                      ref={el => { if (el) el.indeterminate = selectedContactIds.size > 0 && !allTaggableSelected; }}
-                      onChange={toggleSelectAll}
-                    />
-                  </th>
-                  <FilterHeader label="Name" value={attFilters.name} onChange={v => setAttFilter('name', v)} />
-                  <FilterHeader label="Original Title" value={attFilters.originalTitle} onChange={v => setAttFilter('originalTitle', v)} />
-                  <FilterHeader label="Contact Title" value={attFilters.title} onChange={v => setAttFilter('title', v)} />
-                  <FilterHeader label="Company" value={attFilters.company} onChange={v => setAttFilter('company', v)} />
-                  <FilterHeader label="Email" value={attFilters.email} onChange={v => setAttFilter('email', v)} />
-                  <FilterHeader label="Tags" value={attFilters.tags} onChange={v => setAttFilter('tags', v)} />
-                  <th aria-label="Actions" />
-                </tr>
-              </thead>
-              <tbody>
-                {visibleAttendees.length === 0 ? (
-                  <tr>
-                    <td colSpan={8} className={styles.tvMuted} style={{ padding: '0.6rem', textAlign: 'center' }}>
-                      No attendees match the current filters.
-                    </td>
-                  </tr>
-                ) : visibleAttendees.map(({ a, i }) => {
-                  const cid = a.contactId ? String(a.contactId) : '';
-                  const taggable = cid && contactsById.has(cid);
-                  const tags = taggable ? contactTags(contactsById.get(cid)) : [];
-                  return (
-                  <tr key={`${a.contactId || 'manual'}-${i}`}>
-                    <td style={{ textAlign: 'center' }}>
-                      {taggable && (
-                        <input
-                          type="checkbox"
-                          aria-label={`Select ${a.name}`}
-                          checked={selectedContactIds.has(cid)}
-                          onChange={() => toggleContactSelected(cid)}
-                        />
-                      )}
-                    </td>
-                    <td>
-                      <button
-                        type="button"
-                        className={styles.attendeeNameLink}
-                        onClick={() => openAttendeeContact(a)}
-                        title="View contact details"
-                      >
-                        {a.name}
-                      </button>
-                      {!a.contactId && (
-                        <span style={{ marginLeft: 6, fontSize: '0.64rem', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
-                          (manual)
-                        </span>
-                      )}
-                    </td>
-                    <td>{a.originalTitle || '—'}</td>
-                    <td>{a.title || '—'}</td>
-                    <td>{a.company || '—'}</td>
-                    <td>{a.email || '—'}</td>
-                    <td>
-                      {tags.length ? (
-                        <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4 }}>
-                          {tags.map(t => <span key={t} className={styles.tagChip}>{t}</span>)}
-                        </span>
-                      ) : (
-                        <span className={styles.tvMuted}>—</span>
-                      )}
-                    </td>
-                    <td style={{ textAlign: 'right' }}>
-                      <button type="button" className={styles.removeBtn} onClick={() => removeAttendee(i)}>
-                        Remove
-                      </button>
-                    </td>
-                  </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+            <div className={styles.tableScroll}>
+              <table
+                className={`${styles.attendeeTable} ${styles.resizable}`}
+                style={{ width: attendeeTableWidth, minWidth: attendeeTableWidth }}
+              >
+                <ResizableHead
+                  columns={attendeeCols.visible}
+                  widths={attendeeCols.widths}
+                  startResize={attendeeCols.startResize}
+                  filters={attFilters}
+                  onFilterChange={setAttFilter}
+                  leading={{
+                    width: ATTENDEE_SELECT.width,
+                    content: (
+                      <input
+                        type="checkbox"
+                        aria-label="Select all mapped contacts"
+                        title="Select all mapped contacts"
+                        disabled={taggableAttendees.length === 0}
+                        checked={allTaggableSelected}
+                        ref={el => { if (el) el.indeterminate = selectedContactIds.size > 0 && !allTaggableSelected; }}
+                        onChange={toggleSelectAll}
+                      />
+                    ),
+                  }}
+                  trailing={ATTENDEE_ACTIONS}
+                />
+                <tbody>
+                  {visibleAttendees.length === 0 ? (
+                    <tr>
+                      <td colSpan={attendeeColSpan} className={styles.tvMuted} style={{ padding: '0.6rem', textAlign: 'center' }}>
+                        No attendees match the current filters.
+                      </td>
+                    </tr>
+                  ) : visibleAttendees.map(({ a, i }) => {
+                    const cid = a.contactId ? String(a.contactId) : '';
+                    const taggable = cid && contactsById.has(cid);
+                    const tags = taggable ? contactTags(contactsById.get(cid)) : [];
+                    const ctx = { i, cid, taggable, tags };
+                    return (
+                      <tr key={`${a.contactId || 'manual'}-${i}`}>
+                        <td style={{ textAlign: 'center' }}>
+                          {taggable && (
+                            <input
+                              type="checkbox"
+                              aria-label={`Select ${a.name}`}
+                              checked={selectedContactIds.has(cid)}
+                              onChange={() => toggleContactSelected(cid)}
+                            />
+                          )}
+                        </td>
+                        {attendeeCols.visible.map(c => (
+                          <td key={c.key}>{c.render(a, ctx)}</td>
+                        ))}
+                        <td style={{ textAlign: 'right' }}>
+                          <button type="button" className={styles.removeBtn} onClick={() => removeAttendee(i)}>
+                            Remove
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
 
           <div className={styles.sectionTitle}>
@@ -1347,6 +1633,14 @@ export function EventsView({
                 Clear list
               </button>
             )}
+            {lookups.length > 0 && (
+              <ColumnsMenu
+                columns={lookupColumns}
+                visibleKeys={lookupCols.visibleKeys}
+                onToggle={lookupCols.toggle}
+                onReset={lookupCols.reset}
+              />
+            )}
           </div>
           <div style={{ fontSize: '0.74rem', color: 'var(--color-text-muted)', marginBottom: '0.5rem' }}>
             Paste or upload a list of <strong>titles and company names</strong> (two columns — CSV or tab-separated). Each row gets a LinkedIn people-search button, a <strong>Table View</strong> match (click to open, or <strong>+ Add</strong> a new prospect), and an editable <strong>CDM</strong>.
@@ -1378,113 +1672,115 @@ export function EventsView({
           </div>
 
           {lookups.length > 0 && (
-            <table className={styles.attendeeTable}>
-              <thead>
-                <tr>
-                  <FilterHeader label="Title" value={lookupFilters.title} onChange={v => setLookupFilter('title', v)} />
-                  <FilterHeader label="Company" value={lookupFilters.company} onChange={v => setLookupFilter('company', v)} />
-                  <FilterHeader label="Table View" value={lookupFilters.tableView} onChange={v => setLookupFilter('tableView', v)} />
-                  <th style={{ width: 190 }}>Suggested</th>
-                  <FilterHeader label="Type" value={lookupFilters.type} onChange={v => setLookupFilter('type', v)} width={150} />
-                  <th style={{ width: 140 }}>CDM</th>
-                  <th style={{ width: 180 }}>Add Contact</th>
-                  <th aria-label="Actions" />
-                </tr>
-              </thead>
-              <tbody>
-                {lookups.map((l, i) => {
-                  const prospect = matchProspect(l.company);
-                  // Apply the CDM filter (kept on original index i so
-                  // edit / remove still target the right row).
-                  if (cdmFilter && String(prospect?.cdm || '').trim() !== cdmFilter) return null;
-                  // Apply the per-column type-to-filter drafts.
-                  const lookupVals = {
-                    title: l.title || '',
-                    company: l.company || '',
-                    tableView: prospect?.company || '',
-                    type: prospect?.type || '',
-                  };
-                  if (!LOOKUP_FILTER_KEYS.every(key => {
-                    const q = String(lookupFilters[key] || '').trim().toLowerCase();
-                    return !q || String(lookupVals[key]).toLowerCase().includes(q);
-                  })) return null;
-                  const suggestion = prospect ? null : suggestProspect(l.company);
-                  const adding = addingCompanies.has(String(l.company || '').trim());
-                  return (
-                    <tr key={`${l.title}-${l.company}-${i}`}>
-                      <td>{l.title || '—'}</td>
-                      <td>{l.company || '—'}</td>
-                      <td>
-                        {prospect ? (
-                          <button
-                            type="button"
-                            className={styles.tvLink}
-                            title={`Open "${prospect.company}" in the Table View`}
-                            onClick={() => onSelectProspect(prospect)}
-                          >
-                            {prospect.company}
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            className={styles.tvAdd}
-                            disabled={adding || !String(l.company || '').trim()}
-                            onClick={() => addCompanyToTableView(l.company)}
-                            title="Add this company to the Table View as a new prospect"
-                          >
-                            {adding ? 'Adding…' : '+ Add'}
-                          </button>
+            <div className={styles.tableScroll}>
+              <table
+                className={`${styles.attendeeTable} ${styles.resizable}`}
+                style={{ width: lookupTableWidth, minWidth: lookupTableWidth }}
+              >
+                <ResizableHead
+                  columns={lookupCols.visible}
+                  widths={lookupCols.widths}
+                  startResize={lookupCols.startResize}
+                  filters={lookupFilters}
+                  onFilterChange={setLookupFilter}
+                  trailing={LOOKUP_ACTIONS}
+                />
+                <tbody>
+                  {lookups.map((l, i) => {
+                    const prospect = matchProspect(l.company);
+                    // Apply the CDM filter (kept on original index i so
+                    // edit / remove still target the right row).
+                    if (cdmFilter && String(prospect?.cdm || '').trim() !== cdmFilter) return null;
+                    // Apply the per-column type-to-filter drafts.
+                    const lookupVals = {
+                      title: l.title || '',
+                      company: l.company || '',
+                      tableView: prospect?.company || '',
+                      type: prospect?.type || '',
+                    };
+                    if (!LOOKUP_FILTER_KEYS.every(key => {
+                      const q = String(lookupFilters[key] || '').trim().toLowerCase();
+                      return !q || String(lookupVals[key]).toLowerCase().includes(q);
+                    })) return null;
+                    const suggestion = prospect ? null : suggestProspect(l.company);
+                    const adding = addingCompanies.has(String(l.company || '').trim());
+                    const ctx = { i, prospect, suggestion, adding };
+                    // Decision maker(s) on file for this row's company that
+                    // haven't already been added as attendees or ignored.
+                    const ignoredIds = Array.isArray(l.ignoredContactIds) ? l.ignoredContactIds : [];
+                    const dmSuggestions = decisionMakersForCompany(l.company).filter(c => {
+                      const id = String(c.id || c.vid || '');
+                      if (!id) return false;
+                      if (attendees.some(a => a.contactId && String(a.contactId) === id)) return false;
+                      return !ignoredIds.includes(id);
+                    });
+                    return (
+                      <Fragment key={`${l.title}-${l.company}-${i}`}>
+                        <tr>
+                          {lookupCols.visible.map(c => (
+                            <td key={c.key} style={c.key === 'suggested' ? { verticalAlign: 'top' } : undefined}>
+                              {c.render(l, ctx)}
+                            </td>
+                          ))}
+                          <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                            <a
+                              href={linkedInSearchUrl(l.title, l.company)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className={styles.exportBtn}
+                              style={{ margin: 0, display: 'inline-block', textDecoration: 'none' }}
+                              title={`Search LinkedIn for "${[l.title, l.company].filter(Boolean).join(' at ')}"`}
+                            >
+                              🔍 LinkedIn
+                            </a>
+                            <button type="button" className={styles.removeBtn} style={{ marginLeft: 6 }} onClick={() => removeLookup(i)}>
+                              Remove
+                            </button>
+                          </td>
+                        </tr>
+                        {dmSuggestions.length > 0 && (
+                          <tr className={styles.dmRow}>
+                            <td colSpan={lookupColSpan}>
+                              <div className={styles.dmWrap}>
+                                <span className={styles.dmLabel}>
+                                  ★ Decision maker{dmSuggestions.length > 1 ? 's' : ''} at {l.company || 'this company'}
+                                </span>
+                                {dmSuggestions.map(c => {
+                                  const id = String(c.id || c.vid || '');
+                                  const name = contactDisplayName(c);
+                                  return (
+                                    <span key={id} className={styles.dmChip}>
+                                      <span className={styles.dmName}>{name}</span>
+                                      {c.jobtitle && <span className={styles.dmTitle}>{c.jobtitle}</span>}
+                                      <button
+                                        type="button"
+                                        className={styles.dmAdd}
+                                        onClick={() => addDecisionMaker(c, l)}
+                                        title={`Map ${name} to ${l.company || 'this company'} as an attendee`}
+                                      >
+                                        + Add
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className={styles.dmIgnore}
+                                        onClick={() => ignoreDecisionMaker(id, i)}
+                                        title="Hide this suggestion"
+                                      >
+                                        Ignore
+                                      </button>
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            </td>
+                          </tr>
                         )}
-                      </td>
-                      <td style={{ verticalAlign: 'top' }}>
-                        {prospect ? (
-                          <span className={styles.tvMuted}>—</span>
-                        ) : (
-                          <SuggestedCell
-                            rejected={!!l.suggestRejected}
-                            suggestion={suggestion}
-                            prospectCompanies={prospectCompanies}
-                            onAccept={company => updateLookup(i, { company, suggestRejected: false })}
-                            onReject={() => updateLookup(i, { suggestRejected: true })}
-                          />
-                        )}
-                      </td>
-                      <td>
-                        <TypeCell prospect={prospect} onCommit={v => onUpdateProspect(prospect.id, { type: v })} />
-                      </td>
-                      <td>
-                        <CdmCell prospect={prospect} onCommit={v => onUpdateProspect(prospect.id, { cdm: v })} />
-                      </td>
-                      <td>
-                        <RowContactAdder
-                          company={l.company}
-                          title={l.title}
-                          contacts={searchableContacts}
-                          attendees={attendees}
-                          onAdd={att => addAttendeeFromLookup(att, i)}
-                          onRemove={removeAttendeeObj}
-                        />
-                      </td>
-                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                        <a
-                          href={linkedInSearchUrl(l.title, l.company)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className={styles.exportBtn}
-                          style={{ margin: 0, display: 'inline-block', textDecoration: 'none' }}
-                          title={`Search LinkedIn for "${[l.title, l.company].filter(Boolean).join(' at ')}"`}
-                        >
-                          🔍 LinkedIn
-                        </a>
-                        <button type="button" className={styles.removeBtn} style={{ marginLeft: 6 }} onClick={() => removeLookup(i)}>
-                          Remove
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       )}

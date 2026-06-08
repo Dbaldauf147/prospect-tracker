@@ -263,6 +263,211 @@
   font-size: 0.82rem;
 }
 
+/* Horizontal scroll wrapper so wide / resized tables don't overflow
+   the detail pane. */
+.tableScroll {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+/* Resizable variant: fixed layout so the explicit column widths set via
+   the <colgroup> are honored, with clipped headers and a drag handle. */
+.resizable {
+  table-layout: fixed;
+}
+
+.resizable th {
+  position: relative;
+  vertical-align: top;
+  padding-right: 12px;
+}
+
+/* Header label that ellipsizes when its column is narrowed. */
+.thLabel {
+  display: block;
+  flex: 1 1 auto;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.resizable td {
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.resizeHandle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 7px;
+  height: 100%;
+  cursor: col-resize;
+  user-select: none;
+  touch-action: none;
+}
+
+.resizeHandle:hover,
+.resizeHandle:active {
+  background: var(--color-accent);
+  opacity: 0.45;
+}
+
+/* Decision-maker suggestion sub-row under a lookup company */
+.dmRow td {
+  padding: 0.3rem 0.5rem 0.45rem 1.4rem;
+  background: #F0FDF4;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.dmWrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.dmLabel {
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #166534;
+}
+
+.dmChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.15rem 0.35rem 0.15rem 0.6rem;
+  background: var(--color-surface);
+  border: 1px solid #86EFAC;
+  border-radius: 999px;
+  font-size: 0.76rem;
+}
+
+.dmName {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.dmTitle {
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+}
+
+.dmAdd {
+  padding: 0.1rem 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: #166534;
+  background: #DCFCE7;
+  border: 1px solid #86EFAC;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.dmAdd:hover {
+  background: #BBF7D0;
+}
+
+.dmIgnore {
+  padding: 0.1rem 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: #64748B;
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.dmIgnore:hover {
+  background: #FEF2F2;
+  border-color: #FECACA;
+  color: #B91C1C;
+}
+
+/* "Columns ▾" show/hide menu */
+.colsMenuWrap {
+  position: relative;
+  margin-left: 0.4rem;
+}
+
+.colsBtn {
+  padding: 0.3rem 0.7rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.colsBtn:hover {
+  background: var(--color-bg);
+}
+
+.colsMenu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  z-index: 40;
+  min-width: 180px;
+  padding: 0.35rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.14);
+}
+
+.colsMenuItem {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.45rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--color-text);
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.colsMenuItem:hover {
+  background: var(--color-bg);
+}
+
+.colsMenuItem input {
+  cursor: pointer;
+}
+
+.colsMenuReset {
+  display: block;
+  width: 100%;
+  margin-top: 0.3rem;
+  padding: 0.35rem 0.45rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-family: inherit;
+  text-align: left;
+  color: var(--color-accent);
+  background: none;
+  border: none;
+  border-top: 1px solid var(--color-border);
+  border-radius: 0 0 6px 6px;
+  cursor: pointer;
+}
+
+.colsMenuReset:hover {
+  background: var(--color-bg);
+}
+
 .attendeeTable th {
   text-align: left;
   font-size: 0.66rem;
@@ -725,6 +930,7 @@
 
 .filterBtn,
 .filterBtnActive {
+  flex: 0 0 auto;
   background: none;
   border: none;
   padding: 0 2px;
