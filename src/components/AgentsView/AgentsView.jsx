@@ -2079,22 +2079,28 @@ export function AgentsView({ prospects = [], settings, updateProspect }) {
     const bfoPrepBlock = ['BFO Opportunity Names', ...bfoPrepOpps.map(o => o.name)].join('\n');
 
     const sections = [
-      { title: 'BFO Prep', prompt: bfoPrepPrompt, block: bfoPrepBlock },
-      { title: 'Activity', prompt: aiPrompt, block: activityBlock },
-      { title: 'New BFO Opp', prompt: newBfoOppPrompt, block: newBfoBlock },
-      { title: 'Close Dates', prompt: closeDatesPrompt, block: closeDatesBlock },
-      { title: 'Amount Updates', prompt: amountUpdatesPrompt, block: amountBlock },
-      { title: 'Stage Change', prompt: stageChangePrompt, block: stageBlock },
-      { title: 'Close Not Solds', prompt: closeNotSoldsPrompt, block: closeNotSoldBlock },
+      { title: 'BFO Prep', prompt: bfoPrepPrompt, block: bfoPrepBlock, hasData: bfoPrepOpps.length > 0 },
+      { title: 'Activity', prompt: aiPrompt, block: activityBlock, hasData: activityLines.length > 1 },
+      { title: 'New BFO Opp', prompt: newBfoOppPrompt, block: newBfoBlock, hasData: newBfoOpps.length > 0 },
+      { title: 'Close Dates', prompt: closeDatesPrompt, block: closeDatesBlock, hasData: closeDateOpps.length > 0 },
+      { title: 'Amount Updates', prompt: amountUpdatesPrompt, block: amountBlock, hasData: amountUpdateOpps.length > 0 },
+      { title: 'Stage Change', prompt: stageChangePrompt, block: stageBlock, hasData: stageChangeOpps.length > 0 },
+      { title: 'Close Not Solds', prompt: closeNotSoldsPrompt, block: closeNotSoldBlock, hasData: closeNotSoldLines.length > 1 },
     ];
+    // Skip sections that carry no data — when a section is just its prompt
+    // with an empty data block (no BFO links, names, or opportunities to
+    // act on), there's nothing for the assistant to do, so leave it out of
+    // the bundle. hasData checks the underlying rows (the header-only line
+    // count for the deduped / filtered blocks) rather than the prompt text.
     const base = sections
+      .filter(s => s.hasData)
       .map(s => `===== ${s.title} =====\n${s.prompt}\n\n${s.block}`)
       .join('\n\n');
     // Update BFO Activity closes out the bundle (no data block of its own).
     const bfoSuffix = (updateBfoActivityPrompt || '').trim();
-    return bfoSuffix
-      ? `${base}\n\n===== Update BFO Activity =====\n${bfoSuffix}`
-      : base;
+    if (!bfoSuffix) return base;
+    const suffixSection = `===== Update BFO Activity =====\n${bfoSuffix}`;
+    return base ? `${base}\n\n${suffixSection}` : suffixSection;
   }, [
     aiPrompt, newBfoOppPrompt, closeDatesPrompt, amountUpdatesPrompt,
     stageChangePrompt, closeNotSoldsPrompt, updateBfoActivityPrompt,
