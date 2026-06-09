@@ -6186,14 +6186,15 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       };
     }
 
-    // ---- Property Type Estimates sheet ------------------------------
+    // ---- Property Type Estimates (per site) -------------------------
     // Reference-table-driven estimate of annual consumption and the
     // expected utility-account count per commodity, keyed off the
     // Property Type column on the source sheet. Optional Size_ft2
     // column scales the consumption numbers proportionally to the
     // reference Size_ft2 baked into the table; account counts are
     // independent of size. Skips sites with no recognized property
-    // type, and skips the whole sheet when no site carried one.
+    // type. These per-site rows are rendered as a section on the hidden
+    // Methodology tab (no longer a standalone sheet).
     const propertyTypeSiteRows = rows
       .map((r) => {
         const canonicalType = r.__propertyType__;
@@ -6218,112 +6219,6 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         };
       })
       .filter(Boolean);
-
-    if (propertyTypeSiteRows.length > 0) {
-      const ws = wb.addWorksheet('Property Type Estimates', {
-        properties: { tabColor: { argb: SE_GREEN } },
-        views: [{ showGridLines: false, state: 'frozen', ySplit: 2, xSplit: 1 }],
-      });
-      const ptCols = [
-        { label: 'Site Name',                  width: 28, get: (s) => s.siteName },
-        { label: 'ST / Prov / Country',        width: 22, get: (s) => s.state || s.country },
-        { label: 'Property Type',              width: 30, get: (s) => s.propertyType },
-        { label: 'Category',                   width: 11, get: (s) => s.category },
-        { label: 'Size (ft²)',                 width: 13, get: (s) => s.sizeFt2 ?? '', numFmt: '#,##0' },
-        { label: 'Reference Size (ft²)',       width: 16, get: (s) => s.referenceSizeFt2 ?? '', numFmt: '#,##0' },
-        { label: 'Est. Annual Electric (kWh)', width: 22, get: (s) => s.electricKwh ?? '', numFmt: '#,##0' },
-        { label: 'Est. Annual Gas (Dth)',      width: 18, get: (s) => s.gasDth ?? '', numFmt: '#,##0' },
-        { label: 'Est. Annual Gas (kWh equiv)', width: 22, get: (s) => s.gasKwh ?? '', numFmt: '#,##0' },
-        { label: 'Est. Total Energy (kWh equiv)', width: 24, get: (s) => s.totalKwh ?? '', numFmt: '#,##0' },
-        { label: 'Water Accounts',    width: 13, get: (s) => s.accounts?.water?.label ?? '',    sumValue: (s) => s.accounts?.water?.count ?? 0,    numFmt: '0.##' },
-        { label: 'Steam Accounts',    width: 13, get: (s) => s.accounts?.steam?.label ?? '',    sumValue: (s) => s.accounts?.steam?.count ?? 0,    numFmt: '0.##' },
-        { label: 'Gas Accounts',      width: 14, get: (s) => s.accounts?.gas?.label ?? '',      sumValue: (s) => s.accounts?.gas?.count ?? 0,      numFmt: '0.##' },
-        { label: 'Electric Accounts', width: 14, get: (s) => s.accounts?.electric?.label ?? '', sumValue: (s) => s.accounts?.electric?.count ?? 0, numFmt: '0.##' },
-        { label: 'Waste Accounts',    width: 13, get: (s) => s.accounts?.waste?.label ?? '',    sumValue: (s) => s.accounts?.waste?.count ?? 0,    numFmt: '0.##' },
-      ];
-      ws.columns = ptCols.map((c) => ({ width: c.width }));
-
-      ws.mergeCells(1, 1, 1, ptCols.length);
-      const ptTitle = ws.getCell(1, 1);
-      ptTitle.value = 'Property Type Estimates';
-      ptTitle.font = { name: 'Nunito Sans', bold: true, size: 16, color: { argb: 'FFFFFFFF' } };
-      ptTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
-      ptTitle.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-      ws.getRow(1).height = 28;
-
-      const ptHdr = ws.getRow(2);
-      ptCols.forEach((c, i) => {
-        const cell = ptHdr.getCell(i + 1);
-        cell.value = c.label;
-        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
-        cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
-        cell.border = {
-          bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } },
-          right:  { style: 'hair', color: { argb: 'FFFFFFFF' } },
-        };
-      });
-      ptHdr.height = 36;
-
-      propertyTypeSiteRows.forEach((s, idx) => {
-        const dataRow = ws.getRow(3 + idx);
-        ptCols.forEach((c, i) => {
-          const cell = dataRow.getCell(i + 1);
-          const v = c.get(s);
-          if (v === '' || v == null) {
-            writeBlank(cell, !!c.numFmt);
-          } else {
-            cell.value = v;
-          }
-          cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
-          cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-          if (c.numFmt) cell.numFmt = c.numFmt;
-          cell.border = {
-            bottom: { style: 'hair', color: { argb: SE_BORDER } },
-            right:  { style: 'hair', color: { argb: SE_BORDER } },
-          };
-        });
-        dataRow.height = 18;
-      });
-
-      // Totals row — sum the numeric columns (consumption + the
-      // count-fields-via-sumValue accessor for accounts). "Multiple"
-      // is treated as 3 for totals; the label still reads "Multiple"
-      // on the per-site row so the user keeps the qualitative signal.
-      const totalIdx = 3 + propertyTypeSiteRows.length;
-      const totalRow = ws.getRow(totalIdx);
-      ptCols.forEach((c, i) => {
-        const cell = totalRow.getCell(i + 1);
-        if (i === 0) {
-          cell.value = 'Total';
-        } else if (c.sumValue) {
-          const sum = propertyTypeSiteRows.reduce((a, s) => a + (Number(c.sumValue(s)) || 0), 0);
-          cell.value = Math.round(sum * 100) / 100;
-        } else if (c.numFmt && c.label.startsWith('Est.')) {
-          const sum = propertyTypeSiteRows.reduce((a, s) => {
-            const v = c.get(s);
-            return a + (Number.isFinite(Number(v)) ? Number(v) : 0);
-          }, 0);
-          cell.value = Math.round(sum);
-        } else {
-          writeBlank(cell, !!c.numFmt);
-        }
-        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_GREEN_DARK } };
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
-        cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-        if (c.numFmt) cell.numFmt = c.numFmt;
-        cell.border = {
-          top:    { style: 'thin', color: { argb: SE_GREEN_DARK } },
-          bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } },
-        };
-      });
-      totalRow.height = 20;
-
-      ws.autoFilter = {
-        from: { row: 2, column: 1 },
-        to:   { row: 2 + propertyTypeSiteRows.length, column: ptCols.length },
-      };
-    }
 
     // ---- Contract Overview sheet ------------------------------------
     // One row per (site, commodity) where any contract field is filled
@@ -7603,8 +7498,12 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         // → Methodology to see the reference tables when needed.
         state: 'hidden',
       });
-      const COLS = 7;
-      ws.columns = [38, 13, 17, 19, 17, 21, 24].map(w => ({ width: w }));
+      // 15 columns wide: the three reference sections use columns 1–7,
+      // and the per-site Property Type Estimates section (section 4)
+      // uses all 15. Title band + section banners merge across COLS so
+      // they span the full width of the widest section.
+      const COLS = 15;
+      ws.columns = [38, 13, 17, 19, 17, 21, 24, 18, 22, 24, 13, 13, 14, 14, 13].map(w => ({ width: w }));
 
       let r = 1;
 
@@ -7745,6 +7644,95 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         from: { row: countryTableHeaderRow, column: 1 },
         to:   { row: r - 1, column: 5 },
       };
+
+      // ---- Section 4: Property Type Estimates (per site) ----
+      // The per-site application of the section 1 & 2 reference profiles:
+      // estimated annual consumption (scaled by Size_ft² when provided)
+      // and expected utility-account counts for each site that carried a
+      // recognized property type. Moved here from its own standalone tab.
+      if (propertyTypeSiteRows.length > 0) {
+        blank();
+        blank();
+        sectionBanner('4. Property Type Estimates — Per Site');
+        paragraph('Per-site application of the reference profiles above: estimated annual consumption (scaled linearly by Size_ft² when provided) and expected utility-account counts. The Total row sums the numeric columns; account labels such as "Multiple" / "0 – 1" / "N/A" map to 3 / 0.5 / 0 for that roll-up while the per-site cell keeps the original label.');
+        blank();
+        const ptCols = [
+          { label: 'Site Name',                     get: (s) => s.siteName },
+          { label: 'ST / Prov / Country',           get: (s) => s.state || s.country },
+          { label: 'Property Type',                 get: (s) => s.propertyType },
+          { label: 'Category',                      get: (s) => s.category },
+          { label: 'Size (ft²)',                    get: (s) => s.sizeFt2 ?? '', numFmt: '#,##0' },
+          { label: 'Reference Size (ft²)',          get: (s) => s.referenceSizeFt2 ?? '', numFmt: '#,##0' },
+          { label: 'Est. Annual Electric (kWh)',    get: (s) => s.electricKwh ?? '', numFmt: '#,##0' },
+          { label: 'Est. Annual Gas (Dth)',         get: (s) => s.gasDth ?? '', numFmt: '#,##0' },
+          { label: 'Est. Annual Gas (kWh equiv)',   get: (s) => s.gasKwh ?? '', numFmt: '#,##0' },
+          { label: 'Est. Total Energy (kWh equiv)', get: (s) => s.totalKwh ?? '', numFmt: '#,##0' },
+          { label: 'Water Accounts',    get: (s) => s.accounts?.water?.label ?? '',    sumValue: (s) => s.accounts?.water?.count ?? 0,    numFmt: '0.##' },
+          { label: 'Steam Accounts',    get: (s) => s.accounts?.steam?.label ?? '',    sumValue: (s) => s.accounts?.steam?.count ?? 0,    numFmt: '0.##' },
+          { label: 'Gas Accounts',      get: (s) => s.accounts?.gas?.label ?? '',      sumValue: (s) => s.accounts?.gas?.count ?? 0,      numFmt: '0.##' },
+          { label: 'Electric Accounts', get: (s) => s.accounts?.electric?.label ?? '', sumValue: (s) => s.accounts?.electric?.count ?? 0, numFmt: '0.##' },
+          { label: 'Waste Accounts',    get: (s) => s.accounts?.waste?.label ?? '',    sumValue: (s) => s.accounts?.waste?.count ?? 0,    numFmt: '0.##' },
+        ];
+        // Header row.
+        ptCols.forEach((c, i) => {
+          const cell = ws.getCell(r, i + 1);
+          cell.value = c.label;
+          cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+          cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
+          cell.border = {
+            bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } },
+            right:  { style: 'hair', color: { argb: 'FFFFFFFF' } },
+          };
+        });
+        ws.getRow(r).height = 36;
+        r += 1;
+        // Per-site data rows.
+        propertyTypeSiteRows.forEach((s) => {
+          ptCols.forEach((c, i) => {
+            const cell = ws.getCell(r, i + 1);
+            const v = c.get(s);
+            cell.value = (v === '' || v == null) ? ' ' : v;
+            cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+            cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+            if (c.numFmt) cell.numFmt = c.numFmt;
+            cell.border = {
+              bottom: { style: 'hair', color: { argb: SE_BORDER } },
+              right:  { style: 'hair', color: { argb: SE_BORDER } },
+            };
+          });
+          ws.getRow(r).height = 18;
+          r += 1;
+        });
+        // Totals row — "Multiple" counts as 3, "0 – 1" as 0.5, "N/A" as 0.
+        ptCols.forEach((c, i) => {
+          const cell = ws.getCell(r, i + 1);
+          if (i === 0) {
+            cell.value = 'Total';
+          } else if (c.sumValue) {
+            const sum = propertyTypeSiteRows.reduce((a, s) => a + (Number(c.sumValue(s)) || 0), 0);
+            cell.value = Math.round(sum * 100) / 100;
+          } else if (c.numFmt && c.label.startsWith('Est.')) {
+            const sum = propertyTypeSiteRows.reduce((a, s) => {
+              const v = c.get(s);
+              return a + (Number.isFinite(Number(v)) ? Number(v) : 0);
+            }, 0);
+            cell.value = Math.round(sum);
+          } else {
+            cell.value = ' ';
+          }
+          cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_GREEN_DARK } };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+          cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          if (c.numFmt) cell.numFmt = c.numFmt;
+          cell.border = {
+            top:    { style: 'thin', color: { argb: SE_GREEN_DARK } },
+            bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } },
+          };
+        });
+        ws.getRow(r).height = 20;
+        r += 1;
+      }
     }
 
     // Findings & Recommendations rule catalog. Lists every alert
