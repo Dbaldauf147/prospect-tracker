@@ -8204,9 +8204,11 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         : { status: 'none', detail: 'No interval data', matched: hit.name, interval: iv };
     };
 
-    // Per-site detail rows + per-state buckets for the map.
+    // Per-site detail rows + per-state (NAM) and per-country (Global)
+    // buckets for the two maps.
     const detailRows = [];
     const buckets = new Map(); // key -> { center, total, available, none, unmapped, label, stateCode, countryLabel }
+    const countryBuckets = new Map(); // normalized country -> { total, available, none, unmapped }
     let totAvailable = 0, totNone = 0, totUnmapped = 0;
     for (const r of rows) {
       const siteName = siteNameColumn ? String(r[siteNameColumn] || '').trim() : '';
@@ -8218,6 +8220,14 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       if (cls.status === 'available') totAvailable++;
       else if (cls.status === 'none') totNone++;
       else totUnmapped++;
+      if (country) {
+        let cb = countryBuckets.get(country);
+        if (!cb) { cb = { total: 0, available: 0, none: 0, unmapped: 0 }; countryBuckets.set(country, cb); }
+        cb.total++;
+        if (cls.status === 'available') cb.available++;
+        else if (cls.status === 'none') cb.none++;
+        else cb.unmapped++;
+      }
       detailRows.push({
         siteName,
         state: r.__stateProvinceDisplay__ || stateCode || '',
@@ -8426,7 +8436,182 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       totalRow.height = 20;
     }
 
-    // ---- Sheet 2: Site Detail ----
+    // ---- Sheet 2: Global interval-data dot map ----
+    // World view so non-NA sites are represented too: one dot per country
+    // at its centroid, sized by total portfolio sites and shaded by the
+    // share with interval data (grey = all sites unmapped). NA countries
+    // appear as single aggregated dots here; the NAM sheet carries the
+    // state-level detail.
+    {
+      const COLS = 16;
+      const ws = wb.addWorksheet('Global', {
+        properties: { tabColor: { argb: SE_GREEN } },
+        views: [{ showGridLines: false }],
+      });
+      ws.columns = Array.from({ length: COLS }, () => ({ width: 12 }));
+
+      const MAP_W = 960, MAP_H = 480, PAD = 16, TITLE_H = 30, LEGEND_H = 70;
+      const W = MAP_W + PAD * 2;
+      const H = TITLE_H + MAP_H + LEGEND_H + PAD * 2;
+      const canvas = document.createElement('canvas');
+      canvas.width = W; canvas.height = H;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#FFFFFF'; ctx.fillRect(0, 0, W, H);
+
+      // Equirectangular world fit into the panel, aspect preserved.
+      const originX = PAD, originY = TITLE_H + PAD;
+      const worldScale = Math.min(MAP_W / 360, MAP_H / 180);
+      const worldOffX = (MAP_W - 360 * worldScale) / 2;
+      const worldOffY = (MAP_H - 180 * worldScale) / 2;
+      const project = (lng, lat) => [
+        originX + worldOffX + (lng + 180) * worldScale,
+        originY + worldOffY + (90 - lat) * worldScale,
+      ];
+      const drawFeature = (rings, fill, stroke) => {
+        ctx.fillStyle = fill; ctx.strokeStyle = stroke; ctx.lineWidth = 0.5;
+        for (const ring of rings) {
+          const subRings = []; let cur = []; let prevLng = null;
+          for (const pt of ring) {
+            if (prevLng !== null && Math.abs(pt[0] - prevLng) > 180) { if (cur.length > 2) subRings.push(cur); cur = []; }
+            cur.push(pt); prevLng = pt[0];
+          }
+          if (cur.length > 2) subRings.push(cur);
+          for (const sr of subRings) {
+            ctx.beginPath();
+            for (let i = 0; i < sr.length; i++) { const [px, py] = project(sr[i][0], sr[i][1]); if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py); }
+            ctx.closePath(); ctx.fill(); ctx.stroke();
+          }
+        }
+      };
+
+      ctx.save();
+      ctx.beginPath(); ctx.rect(originX, originY, MAP_W, MAP_H); ctx.clip();
+      ctx.fillStyle = '#F1F5F9'; ctx.fillRect(originX, originY, MAP_W, MAP_H); // ocean
+      for (const feat of getCountryFeatures()) drawFeature(feat.rings, '#E5E7EB', '#9CA3AF');
+      ctx.restore();
+
+      const lerp = (a, b, t) => a + (b - a) * t;
+      const GREEN_LIGHT = [187, 247, 208];
+      const GREEN_DARK = [4, 120, 87];
+      const GRAY = 'rgb(156,163,175)';
+      const pctFill = (b) => {
+        if (b.available + b.none === 0) return GRAY;
+        const t = b.available / b.total;
+        return `rgb(${Math.round(lerp(GREEN_LIGHT[0], GREEN_DARK[0], t))},${Math.round(lerp(GREEN_LIGHT[1], GREEN_DARK[1], t))},${Math.round(lerp(GREEN_LIGHT[2], GREEN_DARK[2], t))})`;
+      };
+      // Dots, largest first. Countries without a known centroid are
+      // dropped from the map but kept in the breakdown table below.
+      const maxCountryTotal = Math.max(1, ...Array.from(countryBuckets.values()).map(b => b.total));
+      let globalNoCenter = 0;
+      ctx.save();
+      ctx.beginPath(); ctx.rect(originX, originY, MAP_W, MAP_H); ctx.clip();
+      const ordered = Array.from(countryBuckets.entries()).sort((a, b) => b[1].total - a[1].total);
+      for (const [country, b] of ordered) {
+        const center = COUNTRY_CENTERS[country];
+        if (!center) { globalNoCenter++; continue; }
+        const [px, py] = project(center[0], center[1]);
+        const radius = 5 + 20 * Math.sqrt(b.total / maxCountryTotal);
+        ctx.beginPath(); ctx.arc(px, py, radius, 0, Math.PI * 2);
+        ctx.globalAlpha = 0.85; ctx.fillStyle = pctFill(b); ctx.fill(); ctx.globalAlpha = 1;
+        ctx.lineWidth = 1.2; ctx.strokeStyle = '#0F172A'; ctx.stroke();
+      }
+      ctx.restore();
+
+      // Legend.
+      const legendY = originY + MAP_H + PAD;
+      ctx.textBaseline = 'middle'; ctx.textAlign = 'left'; ctx.font = '13px Nunito Sans, Arial, sans-serif';
+      const gradX = originX, gradW = 260, gradH = 16;
+      const grad = ctx.createLinearGradient(gradX, 0, gradX + gradW, 0);
+      grad.addColorStop(0, `rgb(${GREEN_LIGHT.join(',')})`);
+      grad.addColorStop(1, `rgb(${GREEN_DARK.join(',')})`);
+      ctx.fillStyle = grad; ctx.fillRect(gradX, legendY, gradW, gradH);
+      ctx.strokeStyle = '#9CA3AF'; ctx.lineWidth = 0.8; ctx.strokeRect(gradX, legendY, gradW, gradH);
+      ctx.fillStyle = '#0F172A';
+      ctx.fillText('0%', gradX, legendY + gradH + 13);
+      ctx.textAlign = 'right'; ctx.fillText('100 % of sites with interval data', gradX + gradW, legendY + gradH + 13);
+      ctx.textAlign = 'left';
+      const gx = gradX + gradW + 48;
+      ctx.fillStyle = GRAY; ctx.fillRect(gx, legendY, gradH, gradH);
+      ctx.strokeStyle = '#9CA3AF'; ctx.strokeRect(gx, legendY, gradH, gradH);
+      ctx.fillStyle = '#0F172A'; ctx.fillText('All sites unmapped', gx + gradH + 8, legendY + gradH / 2);
+      ctx.fillStyle = '#475569'; ctx.font = '12px Nunito Sans, Arial, sans-serif';
+      ctx.fillText('Dot size = total portfolio sites in the country', gx, legendY + gradH + 13);
+
+      const dataUrl = canvas.toDataURL('image/png');
+      const imageId = wb.addImage({ base64: dataUrl, extension: 'png' });
+
+      ws.mergeCells(1, 1, 1, COLS);
+      const title = ws.getCell(1, 1);
+      title.value = 'Interval Data Coverage — Global';
+      title.font = { name: 'Nunito Sans', bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
+      title.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+      title.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(1).height = 30;
+
+      ws.mergeCells(2, 1, 2, COLS);
+      const sub = ws.getCell(2, 1);
+      const noCenterNote = globalNoCenter > 0 ? ` (${globalNoCenter} countr${globalNoCenter === 1 ? 'y' : 'ies'} without a map centroid shown in the table only)` : '';
+      sub.value = `${countryBuckets.size} countr${countryBuckets.size === 1 ? 'y' : 'ies'} across the portfolio. Each is a dot sized by site count and shaded by the share of its sites with interval data (grey = all sites unmapped).${noCenterNote}`;
+      sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
+      sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+      ws.getRow(2).height = 36;
+
+      ws.addImage(imageId, { tl: { col: 0, row: 3 }, ext: { width: W, height: H } });
+
+      const SUMMARY_START = 3 + Math.ceil(H / 15) + 2;
+      ws.mergeCells(SUMMARY_START, 1, SUMMARY_START, COLS);
+      const sumHdr = ws.getCell(SUMMARY_START, 1);
+      sumHdr.value = 'Interval Data by Country';
+      sumHdr.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
+      sumHdr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+      sumHdr.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(SUMMARY_START).height = 22;
+
+      const tableHeaderRow = SUMMARY_START + 1;
+      const breakdownCols = ['Country', 'Total Sites', 'Interval Available', 'No Interval', 'Unmapped', '% With Interval'];
+      const hdr = ws.getRow(tableHeaderRow);
+      breakdownCols.forEach((label, i) => {
+        const cell = hdr.getCell(i + 1);
+        cell.value = label;
+        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+        cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+        cell.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
+      });
+      hdr.height = 24;
+      const cbRows = Array.from(countryBuckets.entries())
+        .sort((a, b) => b[1].total - a[1].total || a[0].localeCompare(b[0]));
+      cbRows.forEach(([country, b], i) => {
+        const row = ws.getRow(tableHeaderRow + 1 + i);
+        const vals = [country, b.total, b.available, b.none, b.unmapped, b.total ? b.available / b.total : 0];
+        const fmts = [null, '#,##0', '#,##0', '#,##0', '#,##0', '0%'];
+        vals.forEach((v, ci) => {
+          const cell = row.getCell(ci + 1);
+          cell.value = v;
+          cell.font = { name: 'Nunito Sans', size: 10, color: { argb: SE_TEXT_DARK } };
+          cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          if (fmts[ci]) cell.numFmt = fmts[ci];
+          cell.border = { bottom: { style: 'hair', color: { argb: SE_BORDER } } };
+        });
+        row.height = 18;
+      });
+      const totalRow = ws.getRow(tableHeaderRow + 1 + cbRows.length);
+      const total = totAvailable + totNone + totUnmapped;
+      const totVals = ['Total', total, totAvailable, totNone, totUnmapped, total ? totAvailable / total : 0];
+      const totFmts = [null, '#,##0', '#,##0', '#,##0', '#,##0', '0%'];
+      totVals.forEach((v, ci) => {
+        const cell = totalRow.getCell(ci + 1);
+        cell.value = v;
+        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: SE_GREEN_DARK } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+        cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+        if (totFmts[ci]) cell.numFmt = totFmts[ci];
+        cell.border = { top: { style: 'thin', color: { argb: SE_GREEN_DARK } }, bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
+      });
+      totalRow.height = 20;
+    }
+
+    // ---- Sheet 3: Site Detail ----
     {
       const ws = wb.addWorksheet('Site Detail', {
         properties: { tabColor: { argb: SE_GREEN } },
