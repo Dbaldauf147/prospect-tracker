@@ -8389,11 +8389,20 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
 
       ctx.save();
       ctx.beginPath(); ctx.rect(originX, originY, MAP_W, MAP_H); ctx.clip();
-      ctx.fillStyle = '#F1F5F9'; ctx.fillRect(originX, originY, MAP_W, MAP_H); // ocean
+      // Uniform grey panel background — matches the Indicative Savings NAM
+      // map. No ocean tint, so no-site land (notably the Canadian
+      // territories above BC / AB / SK) blends into the background instead
+      // of reading as a hard grey "cap" that makes the provinces look cut
+      // off half-way up.
+      ctx.fillStyle = NO_SITES_FILL; ctx.fillRect(originX, originY, MAP_W, MAP_H);
       const countryFeatures = getCountryFeatures();
       const naFeatures = getNAAdmin1Features();
-      // Mexico + other country outlines as a light-grey backdrop.
-      for (const feat of countryFeatures) drawFeature(feat.rings, NO_SITES_FILL, NO_SITES_STROKE);
+      // Only Mexico from the country layer — the US + Canada landmass is the
+      // admin-1 state / province polygons themselves, drawn next.
+      for (const feat of countryFeatures) {
+        if ((TOPO_NAME_TO_DEREG_KEY[feat.name] || feat.name) !== 'Mexico' && feat.name !== 'Mexico') continue;
+        drawFeature(feat.rings, NO_SITES_FILL, NO_SITES_STROKE);
+      }
       // States / provinces shaded by mapping coverage; hairline borders.
       for (const feat of naFeatures) {
         const b = buckets.get(`${feat.admin}/${feat.postal}`);
