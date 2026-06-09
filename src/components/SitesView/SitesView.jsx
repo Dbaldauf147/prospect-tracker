@@ -5260,7 +5260,14 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const TOO_LOW_FILL = 'FFFEEAD2';
       const isTooLow = (row) => {
         const flags = String(row?.flags || '');
-        return flags.includes('small electric market') || flags.includes('too low for sourcing');
+        if (flags.includes('small electric market') || flags.includes('too low for sourcing')) return true;
+        // Deregulated markets that surface no deregulated spend have
+        // nothing to pursue — tint them amber like the small markets so
+        // the user can scan past them. Catches rows like OH whose status
+        // is Deregulated but every site there is regulated / carries no
+        // spend on file, which the "small market" flag (spend > 0) skips.
+        if (!row?.isParent && !(Number(row?.spend) > 0)) return true;
+        return false;
       };
       // Hide regulated leaf rows outright. Statuses 'no' (US/CA per-
       // state regulated), 'Regulated', 'Unlikely', and 'No opportunity'
