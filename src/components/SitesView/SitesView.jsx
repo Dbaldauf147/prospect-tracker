@@ -7705,7 +7705,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
 
       // ---- Section 3: Country deregulation reference ----
       sectionBanner('3. Country Deregulation Reference');
-      paragraph('Per-country bucket for each commodity. "Deregulated" / "Some deregulation" on Electric Power or Gas opens the commodity-savings motion (2 – 4 % on annual spend). "Deregulated" / "Some deregulation" on Power Rate Optimization opens the regulated-rate motion (0.25 % on regulated electric spend) — the two motions are mutually exclusive per site, so a country whose Electric Power is already deregulated does not also earn reg-rate savings on top. "Unlikely" and "No opportunity" disqualify a country from each motion.');
+      paragraph('Per-country bucket for each commodity. "Deregulated" / "Some deregulation" on Electric Power or Gas opens the commodity-savings motion (2 – 4 % on annual spend) — except in European markets, which surface "TBD" rather than a committed range. "Deregulated" / "Some deregulation" on Power Rate Optimization opens the regulated-rate motion (0.25 % on regulated electric spend) — the two motions are mutually exclusive per site, so a country whose Electric Power is already deregulated does not also earn reg-rate savings on top. "Unlikely" and "No opportunity" disqualify a country from each motion.');
       blank();
       headerRow(['Country', 'Region', 'Electric Power', 'Gas', 'Power Rate Optimization', '', '']);
       const countryRows = Object.entries(COUNTRY_DEREGULATION)
@@ -7760,7 +7760,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       blank();
       blank();
       sectionBanner('4. Indicative Savings Range by State / Province');
-      paragraph('Per-state / province deregulation status and the indicative savings range applied to that jurisdiction\'s deregulated annual spend on the Indicative Savings tabs. "Deregulated" markets earn the listed range; "Limited" / "Large load only" markets are surfaced for visibility but resolve to 0 %. States / provinces not listed are treated as regulated and earn no commodity savings. Country-level markets apply a flat 2 – 4 % when the country is Deregulated / Some deregulation — see section 3.');
+      paragraph('Per-state / province deregulation status and the indicative savings range applied to that jurisdiction\'s deregulated annual spend on the Indicative Savings tabs. "Deregulated" markets earn the listed range; "Limited" / "Large load only" markets are surfaced for visibility but resolve to 0 %. States / provinces not listed are treated as regulated and earn no commodity savings. Country-level markets apply a flat 2 – 4 % when the country is Deregulated / Some deregulation (European markets surface "TBD" instead of a committed range) — see section 3.');
       blank();
 
       const savingsStatusLabel = (s) => (s === 'yes' ? 'Deregulated' : s);
