@@ -32,6 +32,7 @@ const NAME_MAP_FIELDS = [
   { key: 'state', label: 'State / Province', required: false, match: (h) => /\b(state|province|st|prov|region)\b/i.test(h) },
   { key: 'country', label: 'Country', required: false, match: (h) => /\b(country|nation)\b/i.test(h) },
   { key: 'status', label: 'Status', required: false, match: (h) => /\bstatus\b|\bstage\b|disposition|outreach|\bactive\b|availab/i.test(h) },
+  { key: 'requirements', label: 'Requirements / Comments', required: false, match: (h) => /requirement|comment|note|remark/i.test(h) },
 ];
 
 // Paste-status import: a utility-name column plus the status to attach to
@@ -53,6 +54,7 @@ const NAME_MAP_COLUMNS = [
   { key: 'country', label: 'Country', width: 90 },
   { key: 'mappedTo', label: 'Map to known utility', width: 320 },
   { key: 'status', label: 'Status', width: 170 },
+  { key: 'requirements', label: 'Requirements / Comments', width: 260 },
   { key: 'mapping', label: 'Mapping', width: 140 },
 ];
 
@@ -183,6 +185,7 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
       const stateCol = pickColumn(headers, /\b(state|province|st|prov|region)\b/i);
       const countryCol = pickColumn(headers, /\b(country|nation)\b/i);
       const statusCol = pickColumn(headers, /\bstatus\b|\bstage\b|disposition|outreach|\bactive\b|availab/i);
+      const requirementsCol = pickColumn(headers, /requirement|comment|note|remark/i);
       const parsed = rows
         .map(r => ({
           ...r,
@@ -191,6 +194,7 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
           state: stateCol ? String(r[stateCol] ?? '').trim() : '',
           country: countryCol ? String(r[countryCol] ?? '').trim() : '',
           status: statusCol ? String(r[statusCol] ?? '').trim() : '',
+          requirements: requirementsCol ? String(r[requirementsCol] ?? '').trim() : '',
           _fileName: file.name,
           _nameCol: nameCol,
         }))
@@ -279,12 +283,12 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
 
   function downloadNameMapTemplate() {
     const ws = XLSX.utils.aoa_to_sheet([
-      ['Utility', 'Commodity', 'State', 'Country'],
-      ['Pacific Gas & Electric', 'Electric', 'CA', 'USA'],
-      ['Consolidated Edison', 'Gas', 'NY', 'USA'],
-      ['Hydro One', 'Electric', 'ON', 'Canada'],
+      ['Utility', 'Commodity', 'State', 'Country', 'Status', 'Requirements / Comments'],
+      ['Pacific Gas & Electric', 'Electric', 'CA', 'USA', '', 'Needs LOA before bid'],
+      ['Consolidated Edison', 'Gas', 'NY', 'USA', '', ''],
+      ['Hydro One', 'Electric', 'ON', 'Canada', '', ''],
     ]);
-    ws['!cols'] = [{ wch: 32 }, { wch: 14 }, { wch: 10 }, { wch: 14 }];
+    ws['!cols'] = [{ wch: 32 }, { wch: 14 }, { wch: 10 }, { wch: 14 }, { wch: 14 }, { wch: 32 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Utilities');
     const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
@@ -425,6 +429,16 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
             type="text"
             value={r.status || ''}
             onChange={e => setRowField(idx, 'status', e.target.value)}
+            placeholder="—"
+            style={cellInputStyle}
+          />
+        );
+      case 'requirements':
+        return (
+          <input
+            type="text"
+            value={r.requirements || ''}
+            onChange={e => setRowField(idx, 'requirements', e.target.value)}
             placeholder="—"
             style={cellInputStyle}
           />
