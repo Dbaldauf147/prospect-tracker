@@ -10,12 +10,7 @@ import { findFuzzyMatch } from '../../utils/utilityNameMatch';
 import { UtilityPasteImportModal } from './UtilityPasteImportModal';
 import styles from './SitesView.module.css';
 
-// IndexedDB key for the uploaded "utilities → interval data availability"
-// list. Mirrors the SITES_STORAGE_KEY / utility-rates pattern so the list
-// survives refreshes and syncs to Firestore via uploadedListStore.
-const INTERVAL_LIST_KEY = 'utility-interval-list-override';
-
-// IndexedDB key for the second section's uploaded utility list — the one
+// IndexedDB key for the uploaded utility list — the one
 // the user maps onto the app's known utility names. Each row carries the
 // uploaded name + commodity / state / country, plus a `mappedTo` field
 // holding the reference utility name the user matched it to.
@@ -59,7 +54,6 @@ const NAME_MAP_COLUMNS = [
   { key: 'mappedTo', label: 'Map to known utility', width: 320 },
   { key: 'status', label: 'Status', width: 170 },
   { key: 'mapping', label: 'Mapping', width: 140 },
-  { key: 'interval', label: 'Interval Data', width: 140 },
 ];
 
 const COL_WIDTHS_KEY = 'utility-name-map-col-widths';
@@ -85,35 +79,8 @@ function pickColumn(headers, re, fallback = '') {
   return headers.find(h => re.test(String(h))) || fallback;
 }
 
-// Header heuristics for the two columns we care about in the uploaded
-// file: the utility/provider name, and the interval-data-availability
-// flag. Everything else on the row is preserved as-is so the user can
-// keep extra notes columns in their source file.
-function pickUtilityNameColumn(headers) {
-  return headers.find(h => /\b(utility|provider|lse|ldc|company|name)\b/i.test(String(h))) || headers[0] || '';
-}
-function pickIntervalColumn(headers) {
-  return headers.find(h => /interval|\bami\b|granular|smart\s*meter|green\s*button|availab/i.test(String(h))) || '';
-}
-
-// Interval data is "available" when the cell carries a real positive
-// value. Treat the usual negatives / blanks / placeholders as
-// unavailable; anything else (including a granularity like "15-min" or
-// "hourly") counts as available.
-function intervalIsAvailable(v) {
-  const s = String(v ?? '').trim().toLowerCase();
-  if (!s) return false;
-  return !/^(no|n|none|false|0|unavailable|not\s*available|n\/a|na|tbd|unknown|-)$/.test(s);
-}
-
 export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames = [], onExportSiteMapping }) {
-  const [list, setList] = useState([]); // [{ name, interval, _raw }]
-  const [meta, setMeta] = useState(null); // { fileName, count, nameCol, intervalCol }
-  const [busy, setBusy] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const [error, setError] = useState('');
-  const [showPaste, setShowPaste] = useState(false);
-  const fileRef = useRef(null);
 
   // ---- Name-mapping section state --------------------------------------
   const [nameMapList, setNameMapList] = useState([]); // [{ name, commodity, state, country, mappedTo }]
@@ -166,85 +133,6 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
 
   const toggleColumn = useCallback((key) => {
     setColVisible(prev => ({ ...prev, [key]: prev[key] === false }));
-  }, []);
-
-  // Restore any previously-uploaded list on mount.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const saved = await loadListFromIDB(INTERVAL_LIST_KEY);
-      if (cancelled || !Array.isArray(saved) || saved.length === 0) return;
-      setList(saved);
-      const first = saved[0] || {};
-      setMeta({
-        fileName: first._fileName || 'saved list',
-        count: saved.length,
-        nameCol: first._nameCol || 'Utility',
-        intervalCol: first._intervalCol || 'Interval Data',
-      });
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
-  const handleUpload = useCallback(async (e) => {
-    const file = e.target.files?.[0];
-    if (fileRef.current) fileRef.current.value = '';
-    if (!file) return;
-    setBusy(true);
-    setError('');
-    try {
-      const buf = await file.arrayBuffer();
-      const { rows, headers } = parseBestSheet(buf);
-      if (!rows.length) throw new Error('No data rows found in the file.');
-      const nameCol = pickUtilityNameColumn(headers);
-      const intervalCol = pickIntervalColumn(headers);
-      if (!intervalCol) {
-        throw new Error('Could not find an interval-data column. Add a column whose header includes "Interval", "AMI", "Granularity", or "Available".');
-      }
-      const parsed = rows
-        .map(r => ({
-          ...r,
-          name: String(r[nameCol] ?? '').trim(),
-          interval: String(r[intervalCol] ?? '').trim(),
-          _fileName: file.name,
-          _nameCol: nameCol,
-          _intervalCol: intervalCol,
-        }))
-        .filter(r => r.name);
-      if (!parsed.length) throw new Error('No utility names found in the chosen name column.');
-      await saveListToIDB(INTERVAL_LIST_KEY, parsed);
-      setList(parsed);
-      setMeta({ fileName: file.name, count: parsed.length, nameCol, intervalCol });
-    } catch (err) {
-      setError(err?.message || 'Failed to read the utilities file.');
-    } finally {
-      setBusy(false);
-    }
-  }, []);
-
-  const handleClear = useCallback(async () => {
-    if (!window.confirm('Remove the uploaded utilities list?')) return;
-    await clearListFromIDB(INTERVAL_LIST_KEY);
-    setList([]);
-    setMeta(null);
-  }, []);
-
-  // Pasted data arrives already parsed + column-mapped by the modal, in
-  // the same row shape as handleUpload's `parsed`. Persist it the same
-  // way so it survives refresh / Firestore sync.
-  const handlePasteImport = useCallback(async (parsed, pasteMeta) => {
-    setBusy(true);
-    setError('');
-    try {
-      await saveListToIDB(INTERVAL_LIST_KEY, parsed);
-      setList(parsed);
-      setMeta(pasteMeta);
-      setShowPaste(false);
-    } catch (err) {
-      setError(err?.message || 'Failed to import the pasted utilities.');
-    } finally {
-      setBusy(false);
-    }
   }, []);
 
   // ---- Name-mapping section: restore + upload + paste + persist --------
@@ -410,91 +298,23 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
     URL.revokeObjectURL(url);
   }
 
-  function downloadTemplate() {
-    const ws = XLSX.utils.aoa_to_sheet([
-      ['Utility', 'Interval Data Available'],
-      ['Pacific Gas & Electric', 'Yes'],
-      ['Consolidated Edison', 'Hourly'],
-      ['Some Municipal Utility', 'No'],
-    ]);
-    ws['!cols'] = [{ wch: 32 }, { wch: 24 }];
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Utilities');
-    const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-    const url = URL.createObjectURL(new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'Utility Interval Data Template.xlsx';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-  }
-
-  // Export the styled site interval-data mapping (NAM map + Site Detail).
-  // The geographic render + per-site classification live in SitesView
-  // (which holds the full uploaded site rows + geo data); we hand it the
-  // interval list this view already loaded.
+  // Export the styled utility-mapping analysis (NAM + Global maps + Site
+  // Detail). The geographic render + per-site classification live in
+  // SitesView (which holds the full uploaded site rows + geo data); we
+  // hand it the Utility Name Mapping table this view maintains so each
+  // site's electric utility is classified by its mapping there.
   async function handleExportSiteMapping() {
     if (!onExportSiteMapping) return;
-    setError('');
+    setNameMapError('');
     setExporting(true);
     try {
-      await onExportSiteMapping(list);
+      await onExportSiteMapping(nameMapList);
     } catch (err) {
-      setError(err?.message || 'Failed to export the site interval-data mapping.');
+      setNameMapError(err?.message || 'Failed to export the utility-mapping analysis.');
     } finally {
       setExporting(false);
     }
   }
-
-  // Resolve each list entry's interval value by utility name. Names are
-  // matched fuzzily (same matcher the Utility Lookup uses) so "PG&E" in
-  // the portfolio lines up with "Pacific Gas & Electric" in the list.
-  const listNames = useMemo(() => list.map(r => r.name).filter(Boolean), [list]);
-  const intervalByName = useMemo(() => {
-    const m = new Map();
-    for (const r of list) if (r.name) m.set(r.name, r.interval);
-    return m;
-  }, [list]);
-
-  // Roll the portfolio's sites up by their matched electric utility, then
-  // resolve interval-data availability for each utility from the list.
-  const mapping = useMemo(() => {
-    const byUtility = new Map(); // utility name -> site count
-    let noUtility = 0;
-    for (const s of siteUtilities) {
-      const u = (s.electricUtility || '').trim();
-      if (!u) { noUtility++; continue; }
-      byUtility.set(u, (byUtility.get(u) || 0) + 1);
-    }
-    const utilities = [...byUtility.entries()].map(([utility, siteCount]) => {
-      const hit = listNames.length ? findFuzzyMatch(utility, listNames, { threshold: 40 }) : null;
-      const intervalRaw = hit ? intervalByName.get(hit.name) : null;
-      const inList = !!hit;
-      const available = inList && intervalIsAvailable(intervalRaw);
-      return {
-        utility,
-        siteCount,
-        inList,
-        matchedName: hit?.name || '',
-        interval: intervalRaw || '',
-        available,
-      };
-    }).sort((a, b) => b.siteCount - a.siteCount || a.utility.localeCompare(b.utility));
-
-    const sitesWithUtility = siteUtilities.length - noUtility;
-    const availableSites = utilities.filter(u => u.available).reduce((n, u) => n + u.siteCount, 0);
-    const unknownSites = utilities.filter(u => !u.inList).reduce((n, u) => n + u.siteCount, 0);
-    return {
-      utilities,
-      noUtility,
-      sitesWithUtility,
-      availableSites,
-      unknownSites,
-      pct: sitesWithUtility > 0 ? Math.round((availableSites / sitesWithUtility) * 100) : 0,
-    };
-  }, [siteUtilities, listNames, intervalByName]);
 
   // Sorted, de-duped reference utility names for the datalist the user
   // picks from. A single shared <datalist> backs every row's input, so
@@ -524,49 +344,21 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
     return { mapped, unmatched, unmapped: nameMapList.length - mapped - unmatched };
   }, [nameMapList, referenceSet]);
 
-  // Interval-data availability for each name-map row, resolved against the
-  // list loaded in the first section. Look the utility up by its mapped
-  // reference name when one is set (the canonical app name lines up best
-  // with the interval list), otherwise by the uploaded name. Keyed by the
-  // row's original index so the filtered table can read it directly. When
-  // no interval list is loaded the map stays empty and the column shows a
-  // muted hint instead of a status.
-  const availabilityByIdx = useMemo(() => {
-    const out = new Map();
-    if (!listNames.length) return out;
-    for (let i = 0; i < nameMapList.length; i++) {
-      const r = nameMapList[i];
-      const lookupName = String(r.mappedTo || '').trim() || String(r.name || '').trim();
-      if (!lookupName) continue;
-      const hit = findFuzzyMatch(lookupName, listNames, { threshold: 40 });
-      if (!hit) { out.set(i, { inList: false }); continue; }
-      const intervalRaw = intervalByName.get(hit.name);
-      out.set(i, { inList: true, available: intervalIsAvailable(intervalRaw), interval: intervalRaw || '' });
-    }
-    return out;
-  }, [nameMapList, listNames, intervalByName]);
-
   // Plain-text value of a column for a row — used by both the per-column
-  // header search and (for derived columns) as the display fallback. The
-  // `mapping` and `interval` columns have no stored field, so their text is
-  // computed from the same logic the cells render.
-  const getColText = useCallback((key, r, idx) => {
+  // header search and (for the derived `mapping` column) as the display
+  // fallback. `mapping` has no stored field, so its text is computed from
+  // the same logic the cell renders.
+  const getColText = useCallback((key, r) => {
     switch (key) {
       case 'mapping': {
         const v = String(r.mappedTo || '').trim();
         if (!v) return 'Unmapped';
         return referenceSet.has(v) ? 'Mapped' : 'Not a known utility';
       }
-      case 'interval': {
-        if (!list.length) return '';
-        const a = availabilityByIdx.get(idx);
-        if (!a?.inList) return 'Not in list';
-        return a.available ? (a.interval || 'Available') : (a.interval || 'Not available');
-      }
       default:
         return String(r[key] ?? '');
     }
-  }, [referenceSet, availabilityByIdx, list.length]);
+  }, [referenceSet]);
 
   // Filtered view of the uploaded name-map rows. Keep the original index on
   // each row so edits write back to the right entry in nameMapList. Rows
@@ -607,7 +399,7 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
   const cellInputStyle = { width: '100%', boxSizing: 'border-box', padding: '0.3rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 5, fontSize: '0.78rem', fontFamily: 'inherit', background: '#fff' };
 
   // Render a single table cell for a column key. Editable columns (mappedTo,
-  // status) render inputs; mapping / interval render derived indicators.
+  // status) render inputs; mapping renders a derived indicator.
   function renderCell(key, r, idx) {
     switch (key) {
       case 'name':
@@ -651,22 +443,6 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
           </span>
         );
       }
-      case 'interval': {
-        if (list.length === 0) {
-          return <span style={{ color: '#CBD5E1' }} title="Upload an interval-data list in the section above to resolve availability.">—</span>;
-        }
-        const a = availabilityByIdx.get(idx);
-        if (!a?.inList) return <span style={{ color: '#92400E', fontWeight: 600 }}>Not in list</span>;
-        return a.available ? (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: '#166534', fontWeight: 600 }}>
-            <span aria-hidden="true">✓</span>{a.interval || 'Available'}
-          </span>
-        ) : (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: '#B91C1C', fontWeight: 600 }}>
-            <span aria-hidden="true">✗</span>{a.interval || 'Not available'}
-          </span>
-        );
-      }
       default:
         return null;
     }
@@ -674,159 +450,10 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
 
   return (
     <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '0.75rem 1rem 2rem' }}>
-      <div className={styles.header}>
-        <div>
-          <h1 className={styles.title}>Utility Mapping</h1>
-          <div className={styles.subtitle}>
-            Map your Utility Lookup portfolio to interval-data availability using an uploaded list of utilities.
-          </div>
-        </div>
-        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            onChange={handleUpload}
-            style={{ display: 'none' }}
-          />
-          <button
-            type="button"
-            onClick={downloadTemplate}
-            title="Download a two-column template: Utility name + Interval Data Available."
-            style={{ padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: '#fff', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit', color: '#1E293B' }}
-          >⬇ Template</button>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => { setError(''); setShowPaste(true); }}
-            title="Paste utility rows copied from Excel / Google Sheets and map the columns."
-            style={{ padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: '#fff', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit', color: '#1E293B' }}
-          >📋 Paste Data</button>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => fileRef.current?.click()}
-            title="Upload an Excel/CSV list of utilities with an interval-data-availability column."
-            style={{ padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: '#fff', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit' }}
-          >{busy ? 'Working…' : (list.length ? 'Replace Utilities List' : 'Upload Utilities List')}</button>
-          {(() => {
-            const noSites = siteUtilities.length === 0;
-            const noList = list.length === 0;
-            const disabled = busy || exporting || noSites || noList;
-            const title = noSites
-              ? 'Upload your site list on the Utility Lookup tab first.'
-              : noList
-                ? 'Upload (or paste) an interval-data list above first so each site can be classified.'
-                : 'Download the styled analysis: a North-America interval-data coverage map plus a per-site detail tab.';
-            return (
-              <button
-                type="button"
-                disabled={disabled}
-                onClick={handleExportSiteMapping}
-                title={title}
-                style={{ padding: '0.4rem 0.9rem', border: '1px solid', borderColor: disabled ? 'var(--color-border)' : '#009530', background: disabled ? '#F1F5F9' : '#009530', borderRadius: 6, fontSize: '0.8rem', fontWeight: 600, cursor: disabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit', color: disabled ? '#94A3B8' : '#fff' }}
-              >{exporting ? 'Exporting…' : '⬇ Download Analysis'}</button>
-            );
-          })()}
-          {list.length > 0 && (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={handleClear}
-              style={{ padding: '0.4rem 0.8rem', border: '1px solid #FCA5A5', background: '#fff', color: '#B91C1C', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit' }}
-            >Clear</button>
-          )}
-        </div>
-      </div>
-
-      {error && (
-        <div style={{ margin: '0.5rem 0', padding: '0.5rem 0.75rem', borderRadius: 6, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', fontSize: '0.8rem' }}>
-          {error}
-        </div>
-      )}
-
-      {list.length > 0 && meta && (
-        <div style={{ margin: '0.25rem 0 0.75rem', fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
-          ✓ {meta.count.toLocaleString()} utilities loaded from <strong>{meta.fileName}</strong>
-          {' '}· matching on “{meta.nameCol}”, availability from “{meta.intervalCol}”
-        </div>
-      )}
-
-      {list.length === 0 ? (
-        <div style={{ marginTop: '1rem', padding: '1.5rem', borderRadius: 8, border: '1px dashed var(--color-border)', background: '#F8FAFC', color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>
-          No utilities list yet. Upload an Excel/CSV with a utility-name column and an interval-data-availability column
-          (e.g. <em>Yes/No</em> or a granularity like <em>15-min</em>/<em>hourly</em>). The portfolio below is built from the
-          sites loaded on the Utility Lookup tab.
-        </div>
-      ) : siteUtilities.length === 0 ? (
-        <div style={{ marginTop: '1rem', padding: '1.5rem', borderRadius: 8, border: '1px dashed var(--color-border)', background: '#F8FAFC', color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>
-          No sites loaded. Upload a sites file on the <strong>Utility Lookup</strong> tab and they'll be mapped here automatically.
-        </div>
-      ) : (
-        <>
-          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', margin: '0.5rem 0 1rem' }}>
-            <div style={card}>
-              <div style={{ ...cardNum, color: '#166534' }}>{mapping.pct}%</div>
-              <div style={cardLabel}>portfolio interval-data availability</div>
-            </div>
-            <div style={card}>
-              <div style={cardNum}>{mapping.availableSites.toLocaleString()}<span style={{ fontSize: '0.9rem', color: 'var(--color-text-muted)', fontWeight: 500 }}> / {mapping.sitesWithUtility.toLocaleString()}</span></div>
-              <div style={cardLabel}>sites with interval data available</div>
-            </div>
-            <div style={card}>
-              <div style={{ ...cardNum, color: mapping.unknownSites ? '#92400E' : '#1E293B' }}>{mapping.unknownSites.toLocaleString()}</div>
-              <div style={cardLabel}>sites on a utility not in the list</div>
-            </div>
-            {mapping.noUtility > 0 && (
-              <div style={card}>
-                <div style={{ ...cardNum, color: '#92400E' }}>{mapping.noUtility.toLocaleString()}</div>
-                <div style={cardLabel}>sites with no utility identified</div>
-              </div>
-            )}
-          </div>
-
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
-            <thead>
-              <tr style={{ textAlign: 'left', borderBottom: '2px solid var(--color-border)' }}>
-                <th style={{ padding: '0.4rem 0.5rem' }}>Electric Utility (from portfolio)</th>
-                <th style={{ padding: '0.4rem 0.5rem', textAlign: 'right' }}># Sites</th>
-                <th style={{ padding: '0.4rem 0.5rem' }}>Interval Data</th>
-                <th style={{ padding: '0.4rem 0.5rem' }}>Matched list entry</th>
-              </tr>
-            </thead>
-            <tbody>
-              {mapping.utilities.map((u) => (
-                <tr key={u.utility} style={{ borderBottom: '1px solid var(--color-border)' }}>
-                  <td style={{ padding: '0.4rem 0.5rem', fontWeight: 600, color: '#1E293B' }}>{u.utility}</td>
-                  <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right' }}>{u.siteCount.toLocaleString()}</td>
-                  <td style={{ padding: '0.4rem 0.5rem' }}>
-                    {!u.inList ? (
-                      <span style={{ color: '#92400E', fontWeight: 600 }}>Not in list</span>
-                    ) : u.available ? (
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: '#166534', fontWeight: 600 }}>
-                        <span aria-hidden="true">✓</span>{u.interval || 'Available'}
-                      </span>
-                    ) : (
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: '#B91C1C', fontWeight: 600 }}>
-                        <span aria-hidden="true">✗</span>{u.interval || 'Not available'}
-                      </span>
-                    )}
-                  </td>
-                  <td style={{ padding: '0.4rem 0.5rem', color: 'var(--color-text-muted)' }}>
-                    {u.matchedName || <span style={{ color: '#CBD5E1' }}>—</span>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </>
-      )}
-
-      {/* ---- Section 2: map uploaded utility names → known utilities --- */}
-      <div style={{ marginTop: '2rem', paddingTop: '1.25rem', borderTop: '2px solid var(--color-border)' }}>
+      <div>
         <div className={styles.header}>
           <div>
-            <h2 className={styles.title} style={{ fontSize: '1.05rem' }}>Utility Name Mapping</h2>
+            <h1 className={styles.title}>Utility Name Mapping</h1>
             <div className={styles.subtitle}>
               Upload a list of utility names (with optional commodity, state, and country) and map each one to the
               app's known utility names. Suggestions are pre-filled by fuzzy match — confirm or override per row.
@@ -869,6 +496,25 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
               title="Upload an Excel/CSV list of utility names to map."
               style={{ padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', background: '#fff', borderRadius: 6, fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit' }}
             >{nameMapBusy ? 'Working…' : (nameMapList.length ? 'Replace List' : 'Upload Utilities List')}</button>
+            {(() => {
+              const noSites = siteUtilities.length === 0;
+              const noMap = nameMapList.length === 0;
+              const disabled = nameMapBusy || exporting || noSites || noMap;
+              const title = noSites
+                ? 'Upload your site list on the Utility Lookup tab first.'
+                : noMap
+                  ? 'Upload or paste a utility list in this section first so each site’s utility can be classified.'
+                  : 'Download the styled analysis: NAM + Global utility-mapping coverage maps plus a per-site detail tab.';
+              return (
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={handleExportSiteMapping}
+                  title={title}
+                  style={{ padding: '0.4rem 0.9rem', border: '1px solid', borderColor: disabled ? 'var(--color-border)' : '#009530', background: disabled ? '#F1F5F9' : '#009530', borderRadius: 6, fontSize: '0.8rem', fontWeight: 600, cursor: disabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit', color: disabled ? '#94A3B8' : '#fff' }}
+                >{exporting ? 'Exporting…' : '⬇ Download Analysis'}</button>
+              );
+            })()}
             {nameMapList.length > 0 && (
               <button
                 type="button"
@@ -879,6 +525,14 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
             )}
           </div>
         </div>
+
+        {(siteUtilities.length === 0 || nameMapList.length === 0) && (
+          <div style={{ margin: '0.25rem 0 0', fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+            <strong>⬇ Download Analysis</strong> needs both: sites on the <strong>Utility Lookup</strong> tab
+            {' '}({siteUtilities.length > 0 ? '✓ loaded' : 'not loaded'}) and a utility list in this section
+            {' '}({nameMapList.length > 0 ? '✓ loaded' : 'upload or paste one'}).
+          </div>
+        )}
 
         {nameMapError && (
           <div style={{ margin: '0.5rem 0', padding: '0.5rem 0.75rem', borderRadius: 6, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', fontSize: '0.8rem' }}>
@@ -1020,13 +674,6 @@ export function UtilityMappingView({ siteUtilities = [], referenceUtilityNames =
           </>
         )}
       </div>
-
-      {showPaste && (
-        <UtilityPasteImportModal
-          onClose={() => setShowPaste(false)}
-          onImport={handlePasteImport}
-        />
-      )}
 
       {showNameMapPaste && (
         <UtilityPasteImportModal
