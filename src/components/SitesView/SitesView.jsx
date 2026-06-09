@@ -5398,6 +5398,11 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
     ws.getRow(3).height = 30;
 
     let r = 5;
+    // Captures each section's Total → Indicative Annual Savings cell
+    // address + its Base (mid) dollar value, so the Savings Summary band
+    // at the top of the sheet can sum electric + gas with a live,
+    // scenario-aware formula. Keyed by the section label.
+    const annualTotals = {};
     function writeSection(label, sectionRows, columnDefs) {
       // Section header band — light green wash with dark green text.
       ws.mergeCells(r, 1, r, SPAN);
@@ -5705,6 +5710,17 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       // States / Canada) carry sum-of-children values; summing them
       // alongside their children would double-count the totals.
       const summable = visibleRows.filter(row => !row.isParent);
+      // Record this section's Total → Indicative Annual Savings cell (the
+      // total row is at `r`) and its Base value for the Savings Summary
+      // band. Base = sum of each visible leaf row's mid annual savings.
+      const annualColIdx = columnDefs.findIndex(c => c.formulaKind === 'annualSavings');
+      if (annualColIdx >= 0) {
+        const annualBaseMid = summable.reduce((sum, row) => {
+          const t = row.annualSavings;
+          return sum + (t && typeof t === 'object' && Number.isFinite(t.mid) ? t.mid : 0);
+        }, 0);
+        annualTotals[label] = { cell: `${colLetterFor(annualColIdx + 1)}${r}`, base: annualBaseMid };
+      }
       for (const c of columnDefs) {
         if (!c.sumKey) continue;
         if (c.scenario) {
@@ -5941,6 +5957,14 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       summaryFindings.push(`Natural gas consumption might be too low for sourcing (<$30K) — ${smallGasStates.join(', ')}`);
     }
 
+    // Reserve the top-of-body rows for the Savings Summary band. It's
+    // filled in after the Electric / Gas sections are written (so their
+    // Total cells exist to reference), but it lives here — above the
+    // Findings & Recommendations band and the by-state tables.
+    const summaryBandHeaderRow = r;
+    const summaryBandValueRow = r + 1;
+    r += 3; // band header + value line + a breather row
+
     if (summaryFindings.length > 0) {
       // Section band, same look as the Electric Power / Natural Gas
       // bands so it reads as a peer section.
@@ -6065,6 +6089,51 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
 
     writeSection('Electric Power', restructureForGlobal(electricRows), electricCols);
     writeSection('Natural Gas',   restructureForGlobal(gasRows),       gasCols);
+
+    // ---- Savings Summary band (top of the Indicative Savings sheet) --
+    // Combined indicative annual savings across electric + gas, written
+    // into the rows reserved above. Uses a live formula that sums each
+    // section's Total → Indicative Annual Savings cell, so the headline
+    // follows the Savings Scenario toggle exactly like the tables below.
+    {
+      ws.mergeCells(summaryBandHeaderRow, 1, summaryBandHeaderRow, SPAN);
+      const sHead = ws.getCell(summaryBandHeaderRow, 1);
+      sHead.value = 'Savings Summary';
+      sHead.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_GREEN_DARK } };
+      sHead.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_LIGHT } };
+      sHead.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      ws.getRow(summaryBandHeaderRow).height = 22;
+
+      const elecTot = annualTotals['Electric Power'];
+      const gasTot = annualTotals['Natural Gas'];
+      const refs = [elecTot?.cell, gasTot?.cell].filter(Boolean);
+      const baseResult = Math.round((elecTot?.base || 0) + (gasTot?.base || 0));
+
+      // Label (cols 1–9) · value (col 10) · note (cols 11–SPAN).
+      ws.mergeCells(summaryBandValueRow, 1, summaryBandValueRow, 9);
+      const sLabel = ws.getCell(summaryBandValueRow, 1);
+      sLabel.value = 'Total Indicative Annual Savings (Electric + Natural Gas)';
+      sLabel.font = { name: 'Nunito Sans', bold: true, size: 12, color: { argb: SE_TEXT_DARK } };
+      sLabel.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+
+      const sValue = ws.getCell(summaryBandValueRow, 10);
+      if (refs.length) {
+        sValue.value = { formula: refs.join('+'), result: baseResult };
+        sValue.ignoredErrors = { formula: true };
+      } else {
+        sValue.value = baseResult;
+      }
+      sValue.numFmt = '"$"#,##0';
+      sValue.font = { name: 'Nunito Sans', bold: true, size: 14, color: { argb: SE_GREEN_DARK } };
+      sValue.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+
+      ws.mergeCells(summaryBandValueRow, 11, summaryBandValueRow, SPAN);
+      const sNote = ws.getCell(summaryBandValueRow, 11);
+      sNote.value = 'Follows the Savings Scenario toggle above (Base = average of the Low / High range).';
+      sNote.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
+      sNote.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+      ws.getRow(summaryBandValueRow).height = 24;
+    }
 
     // ---- Second sheet: Site Detail ---------------------------------
     // Flat per-site listing so the user can see the underlying data
