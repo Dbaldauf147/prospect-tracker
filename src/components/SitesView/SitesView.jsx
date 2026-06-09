@@ -3675,27 +3675,24 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         return String(a.country).localeCompare(String(b.country));
       });
 
-      // Canvas render — equirectangular projection. Formatting and
-      // legend mirror the NAM View: NAM-style STATUS_FILL palette,
-      // density-shaded choropleth (sqrt scaling on per-country site
-      // count), and an on-canvas legend strip at the bottom.
-      const MAP_W = 1200;
-      const MAP_H = 600;
-      const LEGEND_H = 80;
-      const W = MAP_W;
-      const H = MAP_H + LEGEND_H;
+      // Canvas render — two side-by-side equirectangular world maps,
+      // Natural Gas on the left and Electric Power on the right, mirroring
+      // the NAM View. Each country is shaded by its deregulation status
+      // (hue) and portfolio site count (darker = more sites); countries
+      // with no sites stay light grey. No dots or site-count labels — the
+      // choropleth alone carries the distribution.
+      const MAP_W = 900;
+      const MAP_H = 450; // 2:1 equirectangular aspect
+      const PAD = 16;
+      const TITLE_H = 36;
+      const LEGEND_H = 70;
+      const W = MAP_W * 2 + PAD * 3;
+      const H = TITLE_H + MAP_H + LEGEND_H + PAD * 2;
       const canvas = document.createElement('canvas');
       canvas.width = W; canvas.height = H;
       const ctx = canvas.getContext('2d');
-      // White canvas background — matches NAM (the legend strip lives
-      // on this background) and keeps the no-sites grey distinct.
       ctx.fillStyle = '#FFFFFF';
       ctx.fillRect(0, 0, W, H);
-      // Ocean tint inside the map area only.
-      ctx.fillStyle = '#F1F5F9';
-      ctx.fillRect(0, 0, MAP_W, MAP_H);
-
-      const project = (lng, lat) => [((lng + 180) / 360) * MAP_W, ((90 - lat) / 180) * MAP_H];
 
       // NAM-style palette + helpers. statusTier returns
       // dereg/some/reg/unknown for a country; map to the NAM
@@ -3738,29 +3735,16 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         return rgbToHex([blend(r), blend(g), blend(b)]);
       };
 
-      // Country choropleth — every country's color comes from its
-      // COUNTRY_DEREGULATION entry. Portfolio has sites → status hue
-      // shaded by density; no sites → uniform light grey so the
-      // sites-having countries dominate visually.
       const countryFeatures = getCountryFeatures();
-      for (const feat of countryFeatures) {
-        const derGKey = TOPO_NAME_TO_DEREG_KEY[feat.name] || feat.name;
-        const c = COUNTRY_DEREGULATION[derGKey];
-        const tier = c ? statusTier(c.electric) : 'unknown';
-        const status = tierToStatus(tier);
-        const sites = countryAggs.get(derGKey)?.sites || 0;
-        ctx.fillStyle = sites > 0 ? shadeForCount(STATUS_FILL[status], sites) : NO_SITES_FILL;
-        ctx.strokeStyle = NO_SITES_STROKE;
-        ctx.lineWidth = 0.5;
-        // Antimeridian-aware sub-ring splitting: countries that
-        // cross the date line (Russia, Fiji, the Aleutians) have
-        // adjacent ring points whose longitudes jump by ~360°.
-        // Drawing those connectors straight in equirectangular space
-        // streaks a long line across the entire map. Splitting the
-        // ring at each big jump and drawing each sub-ring as its
-        // own closed polygon keeps the fill intact without the
-        // wraparound artifact.
-        for (const ring of feat.rings) {
+
+      // Antimeridian-aware feature drawing: countries that cross the date
+      // line (Russia, Fiji, the Aleutians) have adjacent ring points whose
+      // longitudes jump ~360°. Drawing those connectors straight in
+      // equirectangular space streaks a line across the map, so we split
+      // the ring at each big jump and draw each sub-ring as its own
+      // closed polygon.
+      const drawFeature = (project, rings) => {
+        for (const ring of rings) {
           const subRings = [];
           let cur = [];
           let prevLng = null;
@@ -3784,64 +3768,71 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
             ctx.stroke();
           }
         }
-      }
+      };
 
-      // Plot dots — radius scales with sqrt(count) so a 100-site
-      // bucket isn't 100× the area of a 1-site bucket. Halves now
-      // pull from the NAM-style palette via tierToStatus so dot
-      // colors stay in lock-step with the legend chips below.
-      const maxCount = Math.max(1, ...Array.from(buckets.values()).map(b => b.count));
-      const dots = Array.from(buckets.values());
-      // Larger dots first so smaller dots don't get hidden underneath.
-      dots.sort((a, b) => b.count - a.count);
-      for (const b of dots) {
-        const [x, y] = project(b.location[0], b.location[1]);
-        const r = 6 + Math.sqrt(b.count / maxCount) * 18;
-        // Two-tone fill: electric (left half) + gas (right half).
+      // One world-map panel. Every country's color comes from its
+      // COUNTRY_DEREGULATION entry for the chosen commodity (gas / electric)
+      // — portfolio has sites → status hue shaded by density; no sites →
+      // uniform light grey so the sites-having countries dominate visually.
+      const drawPanel = (originX, commodity, headerLabel) => {
+        const project = (lng, lat) => [
+          originX + ((lng + 180) / 360) * MAP_W,
+          TITLE_H + ((90 - lat) / 180) * MAP_H,
+        ];
+        // Panel header above the map.
+        ctx.fillStyle = '#0F172A';
+        ctx.font = 'bold 18px Nunito Sans, Arial, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'alphabetic';
+        ctx.fillText(headerLabel, originX + MAP_W / 2, TITLE_H - 10);
+
+        // Clip every layer to the panel so geometry never bleeds past an
+        // edge onto the adjacent panel or the legend strip below.
         ctx.save();
         ctx.beginPath();
-        ctx.arc(x, y, r, Math.PI / 2, (3 * Math.PI) / 2, false);
-        ctx.closePath();
-        ctx.fillStyle = STATUS_FILL[tierToStatus(b.elecTier)];
-        ctx.fill();
-        ctx.beginPath();
-        ctx.arc(x, y, r, -Math.PI / 2, Math.PI / 2, false);
-        ctx.closePath();
-        ctx.fillStyle = STATUS_FILL[tierToStatus(b.gasTier)];
-        ctx.fill();
-        ctx.restore();
-        // Site-count number — no ring outline so each dot reads as a
-        // clean two-tone fill against the choropleth.
-        ctx.fillStyle = '#FFFFFF';
-        ctx.strokeStyle = '#0F172A';
-        ctx.font = `bold ${Math.max(10, Math.min(16, Math.round(r * 0.9)))}px Nunito Sans, Arial, sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.lineWidth = 3;
-        ctx.strokeText(String(b.count), x, y + 4);
-        ctx.fillText(String(b.count), x, y + 4);
-      }
+        ctx.rect(originX, TITLE_H, MAP_W, MAP_H);
+        ctx.clip();
 
-      // On-canvas legend strip — chips for each status hue plus a
-      // "No portfolio sites" swatch, centered along the bottom edge.
-      // Caption below explains the dot encoding so the in-map dots
-      // still read without a separate Excel-cell legend.
-      {
-        const SWATCH = 22;
-        const GAP_SWATCH_LABEL = 8;
-        const GAP_ITEMS = 22;
-        ctx.font = '13px Nunito Sans, Arial, sans-serif';
-        ctx.textBaseline = 'middle';
-        ctx.textAlign = 'left';
+        // Ocean tint inside the map area so land (no-sites grey) stays
+        // distinct from sea.
+        ctx.fillStyle = '#F1F5F9';
+        ctx.fillRect(originX, TITLE_H, MAP_W, MAP_H);
+
+        ctx.lineWidth = 0.5;
+        ctx.strokeStyle = NO_SITES_STROKE;
+        for (const feat of countryFeatures) {
+          const derGKey = TOPO_NAME_TO_DEREG_KEY[feat.name] || feat.name;
+          const c = COUNTRY_DEREGULATION[derGKey];
+          const tier = c ? statusTier(commodity === 'gas' ? c.gas : c.electric) : 'unknown';
+          const status = tierToStatus(tier);
+          const sites = countryAggs.get(derGKey)?.sites || 0;
+          ctx.fillStyle = sites > 0 ? shadeForCount(STATUS_FILL[status], sites) : NO_SITES_FILL;
+          drawFeature(project, feat.rings);
+        }
+        ctx.restore();
+      };
+
+      drawPanel(PAD,             'gas',      'Natural Gas Markets');
+      drawPanel(PAD * 2 + MAP_W, 'electric', 'Electric Power Markets');
+
+      // Per-panel legends along the bottom — same chip set on both maps.
+      const SWATCH = 22;
+      const GAP_SWATCH_LABEL = 8;
+      const GAP_ITEMS = 22;
+      ctx.font = '13px Nunito Sans, Arial, sans-serif';
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'left';
+      const itemW = (label) => SWATCH + GAP_SWATCH_LABEL + ctx.measureText(label).width;
+      const drawPanelLegend = (originX) => {
         const labels = [
           { color: STATUS_FILL.dereg,   label: STATUS_LABEL.dereg },
           { color: STATUS_FILL.limited, label: STATUS_LABEL.limited },
           { color: STATUS_FILL.reg,     label: STATUS_LABEL.reg },
           { color: NO_SITES_FILL,       label: 'No portfolio sites' },
         ];
-        const itemW = (label) => SWATCH + GAP_SWATCH_LABEL + ctx.measureText(label).width;
         const totalW = labels.reduce((a, it) => a + itemW(it.label), 0) + GAP_ITEMS * (labels.length - 1);
-        let cursorX = (W - totalW) / 2;
-        const legendY = MAP_H + 18;
+        let cursorX = originX + (MAP_W - totalW) / 2;
+        const legendY = TITLE_H + MAP_H + PAD * 2;
         for (const it of labels) {
           ctx.fillStyle = it.color;
           ctx.fillRect(cursorX, legendY, SWATCH, SWATCH);
@@ -3852,16 +3843,9 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
           ctx.fillText(it.label, cursorX + SWATCH + GAP_SWATCH_LABEL, legendY + SWATCH / 2);
           cursorX += itemW(it.label) + GAP_ITEMS;
         }
-        // Caption for the dots — italic gray, centered.
-        ctx.font = 'italic 11px Nunito Sans, Arial, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillStyle = '#64748B';
-        ctx.fillText(
-          'Site dots — left half = Electric tier, right half = Gas tier. Dot size scales with the site count in that bucket.',
-          W / 2,
-          MAP_H + 18 + SWATCH + 14,
-        );
-      }
+      };
+      drawPanelLegend(PAD);
+      drawPanelLegend(PAD * 2 + MAP_W);
 
       const dataUrl = canvas.toDataURL('image/png');
       const imageId = wb.addImage({ base64: dataUrl, extension: 'png' });
@@ -3879,7 +3863,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       const sub = ws.getCell(2, 1);
       const subtotal = mappedSites;
       const skippedNote = skippedCount > 0 ? ` (${skippedCount} site${skippedCount === 1 ? '' : 's'} skipped — country not in the geographic reference)` : '';
-      sub.value = `${subtotal} site${subtotal === 1 ? '' : 's'} plotted across ${buckets.size} bucket${buckets.size === 1 ? '' : 's'}. Dots are split vertically — left half is the Electric deregulation tier, right half is the Gas tier. Dot size scales with the number of sites in that state / country.${skippedNote}`;
+      sub.value = `${subtotal} site${subtotal === 1 ? '' : 's'} across ${buckets.size} market${buckets.size === 1 ? '' : 's'}. Natural Gas (left) and Electric Power (right) maps each shade every country by its market status (hue) and portfolio site count (darker = more sites); countries with no sites stay light grey.${skippedNote}`;
       sub.font = { name: 'Nunito Sans', italic: true, size: 10, color: { argb: SE_SLATE } };
       sub.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
       ws.getRow(2).height = 36;
