@@ -8283,11 +8283,11 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
   // Mapping page's "Download Analysis" button. Sheets:
   //   1. NAM — a North-America choropleth: each state / province shaded by
   //      the share of its portfolio sites mapped to a known utility.
-  //   2. Site Detail — one row per site with its mapping state, the matched
-  //      uploaded name, mapped-to utility, Status, and Requirements / Comments.
-  //   3. State Breakdown — one row per state / province with mapping counts,
+  //   2. State Breakdown — one row per state / province with mapping counts,
   //      unique-utility count, and the Has Access split (sorted by most
   //      Has Access sites).
+  //   3. Site Detail — one row per site with its mapping state, zip, the
+  //      matched uploaded name, mapped-to utility, Status, and Requirements.
   // `nameMapList` is the Utility Name Mapping table passed up from
   // UtilityMappingView; each site's electric utility is classified against it.
   async function exportUtilityMappingAnalysis(nameMapList) {
@@ -8385,6 +8385,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         siteName,
         state: stateDisplay,
         country: rawCountry,
+        zip: r.__zipNorm__ || '',
         electricUtility,
         matched: cls.matched,
         mappedTo: cls.mappedTo,
@@ -8587,57 +8588,7 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
       totalRow.height = 20;
     }
 
-    // ---- Sheet 3: Site Detail ----
-    {
-      const ws = wb.addWorksheet('Site Detail', {
-        properties: { tabColor: { argb: SE_GREEN } },
-        views: [{ showGridLines: false, state: 'frozen', ySplit: 1 }],
-      });
-      const cols = [
-        { label: 'Site Name', get: (s) => s.siteName, width: 30 },
-        { label: 'ST / Prov', get: (s) => s.state, width: 12 },
-        { label: 'Country', get: (s) => s.country, width: 16 },
-        { label: 'Electric Utility', get: (s) => s.electricUtility, width: 28 },
-        { label: 'Matched Uploaded Name', get: (s) => s.matched, width: 28 },
-        { label: 'Mapped-To Known Utility', get: (s) => s.mappedTo, width: 28 },
-        { label: 'Status', get: (s) => s.rowStatus, width: 18 },
-        { label: 'Requirements / Comments', get: (s) => s.requirements, width: 36 },
-        { label: 'Mapping State', get: (s) => s.status, width: 18 },
-        { label: 'Detail', get: (s) => s.detail, width: 34 },
-      ];
-      ws.columns = cols.map(c => ({ width: c.width }));
-      const head = ws.getRow(1);
-      cols.forEach((c, i) => {
-        const cell = head.getCell(i + 1);
-        cell.value = c.label;
-        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
-        cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
-        cell.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } }, right: { style: 'hair', color: { argb: 'FFFFFFFF' } } };
-      });
-      head.height = 30;
-      // Mapped → Unmapped → Not in mapping list, then site name.
-      const order = { Mapped: 0, Unmapped: 1, 'Not in mapping list': 2 };
-      const sorted = detailRows.slice().sort((a, b) =>
-        (order[a.status] - order[b.status]) || String(a.siteName).localeCompare(String(b.siteName)));
-      const STATUS_TEXT = { Mapped: 'FF166534', Unmapped: 'FF92400E', 'Not in mapping list': 'FFB91C1C' };
-      sorted.forEach((s, ri) => {
-        const row = ws.getRow(2 + ri);
-        cols.forEach((c, i) => {
-          const cell = row.getCell(i + 1);
-          const v = c.get(s);
-          cell.value = (v === '' || v == null) ? ' ' : v;
-          const isStatus = c.label === 'Mapping State';
-          cell.font = { name: 'Nunito Sans', size: 10, bold: isStatus, color: { argb: isStatus ? (STATUS_TEXT[s.status] || SE_TEXT_DARK) : SE_TEXT_DARK } };
-          cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-          cell.border = { bottom: { style: 'hair', color: { argb: SE_BORDER } }, right: { style: 'hair', color: { argb: SE_BORDER } } };
-        });
-        row.height = 18;
-      });
-      ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: cols.length } };
-    }
-
-    // ---- Sheet 4: State Breakdown ----
+    // ---- Sheet 2: State Breakdown ----
     // One row per state / province (across every country in the portfolio)
     // with its utility-mapping coverage, so the user can scan jurisdictions
     // without reading the map.
@@ -8708,6 +8659,57 @@ export function SitesView({ settings, updateSettings, prospects = [] } = {}) {
         cell.border = { top: { style: 'thin', color: { argb: SE_GREEN_DARK } }, bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } } };
       });
       totalRow.height = 20;
+      ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: cols.length } };
+    }
+
+    // ---- Sheet 3: Site Detail ----
+    {
+      const ws = wb.addWorksheet('Site Detail', {
+        properties: { tabColor: { argb: SE_GREEN } },
+        views: [{ showGridLines: false, state: 'frozen', ySplit: 1 }],
+      });
+      const cols = [
+        { label: 'Site Name', get: (s) => s.siteName, width: 30 },
+        { label: 'ST / Prov', get: (s) => s.state, width: 12 },
+        { label: 'Country', get: (s) => s.country, width: 16 },
+        { label: 'Zip', get: (s) => s.zip, width: 9 },
+        { label: 'Electric Utility', get: (s) => s.electricUtility, width: 28 },
+        { label: 'Matched Uploaded Name', get: (s) => s.matched, width: 28 },
+        { label: 'Mapped-To Known Utility', get: (s) => s.mappedTo, width: 28 },
+        { label: 'Status', get: (s) => s.rowStatus, width: 18 },
+        { label: 'Requirements / Comments', get: (s) => s.requirements, width: 36 },
+        { label: 'Mapping State', get: (s) => s.status, width: 18 },
+        { label: 'Detail', get: (s) => s.detail, width: 34 },
+      ];
+      ws.columns = cols.map(c => ({ width: c.width }));
+      const head = ws.getRow(1);
+      cols.forEach((c, i) => {
+        const cell = head.getCell(i + 1);
+        cell.value = c.label;
+        cell.font = { name: 'Nunito Sans', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SE_GREEN_DARK } };
+        cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true, indent: 1 };
+        cell.border = { bottom: { style: 'thin', color: { argb: SE_GREEN_DARK } }, right: { style: 'hair', color: { argb: 'FFFFFFFF' } } };
+      });
+      head.height = 30;
+      // Mapped → Unmapped → Not in mapping list, then site name.
+      const order = { Mapped: 0, Unmapped: 1, 'Not in mapping list': 2 };
+      const sorted = detailRows.slice().sort((a, b) =>
+        (order[a.status] - order[b.status]) || String(a.siteName).localeCompare(String(b.siteName)));
+      const STATUS_TEXT = { Mapped: 'FF166534', Unmapped: 'FF92400E', 'Not in mapping list': 'FFB91C1C' };
+      sorted.forEach((s, ri) => {
+        const row = ws.getRow(2 + ri);
+        cols.forEach((c, i) => {
+          const cell = row.getCell(i + 1);
+          const v = c.get(s);
+          cell.value = (v === '' || v == null) ? ' ' : v;
+          const isStatus = c.label === 'Mapping State';
+          cell.font = { name: 'Nunito Sans', size: 10, bold: isStatus, color: { argb: isStatus ? (STATUS_TEXT[s.status] || SE_TEXT_DARK) : SE_TEXT_DARK } };
+          cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+          cell.border = { bottom: { style: 'hair', color: { argb: SE_BORDER } }, right: { style: 'hair', color: { argb: SE_BORDER } } };
+        });
+        row.height = 18;
+      });
       ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: cols.length } };
     }
 
